@@ -1,7 +1,10 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from tldw_chatbook.Notifications import ClientNotificationsDB, NotificationDispatchService
+from tldw_chatbook.Notifications import (
+    ClientNotificationsDB,
+    NotificationDispatchService,
+)
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 
 
@@ -191,7 +194,9 @@ def test_notification_dispatch_service_suppresses_disabled_category(tmp_path):
     assert disabled["reason"] == "category_notifications_disabled"
     assert disabled["persisted"] is False
     assert allowed["title"] == "Research alert"
-    assert [row["category"] for row in store.list_notifications(limit=10)] == ["research"]
+    assert [row["category"] for row in store.list_notifications(limit=10)] == [
+        "research"
+    ]
     app.show_toast.assert_called_once_with(
         message="Research alert: This category should still be delivered.",
         severity="info",
@@ -227,7 +232,9 @@ def test_notification_dispatch_service_applies_category_channel_preferences(tmp_
     assert persisted["title"] == "Persist only"
     assert transient["persisted"] is False
     assert transient["skipped"] is False
-    assert [row["category"] for row in store.list_notifications(limit=10)] == ["watchlists"]
+    assert [row["category"] for row in store.list_notifications(limit=10)] == [
+        "watchlists"
+    ]
     app.show_toast.assert_called_once_with(
         message="Toast only: Category persistence is disabled.",
         severity="info",

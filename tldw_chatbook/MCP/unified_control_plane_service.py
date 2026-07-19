@@ -45,7 +45,11 @@ class UnifiedMCPControlPlaneService:
         self.context_store = context_store
         self.local_service = local_service
         self.server_service = server_service
-        self.context = self.context_store.load() if self.context_store is not None else UnifiedMCPContext()
+        self.context = (
+            self.context_store.load()
+            if self.context_store is not None
+            else UnifiedMCPContext()
+        )
         self._execution_log: MCPExecutionLog | None = None
         self._permission_store: MCPPermissionStore | None = None
         # Chat bridge (Phase 5): in-memory-only, app-run-lifetime session
@@ -64,9 +68,14 @@ class UnifiedMCPControlPlaneService:
         return self.context
 
     async def select_source(self, source: str) -> UnifiedMCPContext:
-        normalized_source = "server" if str(source or "").strip() == "server" else "local"
+        normalized_source = (
+            "server" if str(source or "").strip() == "server" else "local"
+        )
         self.context = replace(self.context, selected_source=normalized_source)
-        if normalized_source == "server" and self.context.selected_active_server_id is None:
+        if (
+            normalized_source == "server"
+            and self.context.selected_active_server_id is None
+        ):
             default_target = self._resolve_target(None)
             if default_target is not None:
                 return await self.select_server_target(default_target.server_id)
@@ -80,19 +89,26 @@ class UnifiedMCPControlPlaneService:
         if self.server_service is None:
             raise ValueError("Server Unified MCP service is unavailable.")
 
-        restored_state = self.context.per_server_state.get(target.server_id, ServerAccessContext(server_id=target.server_id))
+        restored_state = self.context.per_server_state.get(
+            target.server_id, ServerAccessContext(server_id=target.server_id)
+        )
         access_context = await self._maybe_await(
             self.server_service.resolve_access_context(
                 target=target,
-                selected_scope=restored_state.selected_scope or self.context.selected_scope,
-                selected_scope_ref=restored_state.selected_scope_ref or self.context.selected_scope_ref,
-                selected_section=restored_state.selected_section or self.context.selected_section,
+                selected_scope=restored_state.selected_scope
+                or self.context.selected_scope,
+                selected_scope_ref=restored_state.selected_scope_ref
+                or self.context.selected_scope_ref,
+                selected_section=restored_state.selected_section
+                or self.context.selected_section,
             )
         )
         self._apply_server_access_context(target.server_id, access_context)
         return self.context
 
-    async def select_scope(self, scope: str | None, scope_ref: str | None = None) -> UnifiedMCPContext:
+    async def select_scope(
+        self, scope: str | None, scope_ref: str | None = None
+    ) -> UnifiedMCPContext:
         if self.context.selected_source != "server":
             self.context = replace(
                 self.context,
@@ -141,7 +157,9 @@ class UnifiedMCPControlPlaneService:
                 await self.select_server_target(target.server_id)
                 access_context = self.context.per_server_state.get(target.server_id)
             if access_context is None:
-                raise RuntimeError("Failed to resolve Unified MCP server access context.")
+                raise RuntimeError(
+                    "Failed to resolve Unified MCP server access context."
+                )
             if access_context.selected_section != effective_section:
                 await self.select_section(effective_section)
                 access_context = self.context.per_server_state[target.server_id]
@@ -220,7 +238,9 @@ class UnifiedMCPControlPlaneService:
             return {
                 "source": "local",
                 "section": "governance",
-                "rules": list(await self._maybe_await(self.local_service.get_governance())),
+                "rules": list(
+                    await self._maybe_await(self.local_service.get_governance())
+                ),
             }
         if effective_section == "advanced":
             return await self._maybe_await(self.local_service.get_advanced())
@@ -231,7 +251,9 @@ class UnifiedMCPControlPlaneService:
             return await value
         return value
 
-    def _with_server_context(self, payload: dict[str, Any], *, section: str) -> dict[str, Any]:
+    def _with_server_context(
+        self, payload: dict[str, Any], *, section: str
+    ) -> dict[str, Any]:
         return {
             **dict(payload or {}),
             "source": "server",
@@ -339,19 +361,19 @@ class UnifiedMCPControlPlaneService:
                         "name": "runtime.protocol.inspect",
                         "label": "Inspect Local Protocol",
                         "action_id": "mcp.runtime.observe.local",
-                        "payload_template": '{}',
+                        "payload_template": "{}",
                     },
                     {
                         "name": "runtime.health.get",
                         "label": "Get Local Runtime Health",
                         "action_id": "mcp.runtime.observe.local",
-                        "payload_template": '{}',
+                        "payload_template": "{}",
                     },
                     {
                         "name": "approval_requests.list",
                         "label": "List Local Approval Requests",
                         "action_id": "mcp.governance.observe.local",
-                        "payload_template": '{}',
+                        "payload_template": "{}",
                     },
                     {
                         "name": "approval_request.approve",
@@ -375,7 +397,7 @@ class UnifiedMCPControlPlaneService:
                         "name": "runtime.status.get",
                         "label": "Get Local Runtime Status",
                         "action_id": "mcp.runtime.observe.local",
-                        "payload_template": '{}',
+                        "payload_template": "{}",
                     },
                     {
                         "name": "runtime.request",
@@ -393,7 +415,11 @@ class UnifiedMCPControlPlaneService:
             return []
 
         if (self.context.selected_section or "overview") == "catalogs":
-            if (self.context.selected_scope or "personal") not in {"team", "org", "system_admin"}:
+            if (self.context.selected_scope or "personal") not in {
+                "team",
+                "org",
+                "system_admin",
+            }:
                 return []
             return [
                 {
@@ -423,7 +449,11 @@ class UnifiedMCPControlPlaneService:
             ]
 
         if (self.context.selected_section or "overview") == "external_servers":
-            if (self.context.selected_scope or "personal") not in {"team", "org", "system_admin"}:
+            if (self.context.selected_scope or "personal") not in {
+                "team",
+                "org",
+                "system_admin",
+            }:
                 return []
             return [
                 {
@@ -831,7 +861,11 @@ class UnifiedMCPControlPlaneService:
                     "payload_template": '{"workspace_set_object_id":6,"workspace_id":"ws-1"}',
                 },
             ]
-            if (self.context.selected_scope or "personal") in {"team", "org", "system_admin"}:
+            if (self.context.selected_scope or "personal") in {
+                "team",
+                "org",
+                "system_admin",
+            }:
                 actions[0:0] = [
                     {
                         "name": "capability_mapping.preview",
@@ -898,71 +932,122 @@ class UnifiedMCPControlPlaneService:
         access_context = None
         if target is not None:
             access_context = self.context.per_server_state.get(target.server_id)
-        target_status = access_context.target_status if access_context is not None else None
+        target_status = (
+            access_context.target_status if access_context is not None else None
+        )
         return RuntimeSourceState(
             active_source="server",
-            active_server_id=(target.server_id if target is not None else self.context.selected_active_server_id),
+            active_server_id=(
+                target.server_id
+                if target is not None
+                else self.context.selected_active_server_id
+            ),
             server_configured=target is not None,
             server_reachability=(
                 target_status.last_known_reachability
-                if target_status is not None and target_status.last_known_reachability is not None
+                if target_status is not None
+                and target_status.last_known_reachability is not None
                 else "reachable"
             ),
             server_auth_state=(
                 target_status.last_known_auth_state
-                if target_status is not None and target_status.last_known_auth_state is not None
+                if target_status is not None
+                and target_status.last_known_auth_state is not None
                 else "authenticated"
             ),
             last_known_server_label=(
                 target_status.last_known_server_label
-                if target_status is not None and target_status.last_known_server_label is not None
+                if target_status is not None
+                and target_status.last_known_server_label is not None
                 else (target.label if target is not None else None)
             ),
         )
 
-    async def run_action(self, action_name: str, payload: dict[str, Any] | None = None) -> Any:
+    async def run_action(
+        self, action_name: str, payload: dict[str, Any] | None = None
+    ) -> Any:
         payload = dict(payload or {})
         if self.context.selected_source != "server":
             if action_name == "profile.save":
-                return await self._maybe_await(self.local_service.save_external_profile(payload))
+                return await self._maybe_await(
+                    self.local_service.save_external_profile(payload)
+                )
             if action_name == "profile.delete":
-                return await self._maybe_await(self.local_service.delete_external_profile(self._require_field(payload, "profile_id")))
+                return await self._maybe_await(
+                    self.local_service.delete_external_profile(
+                        self._require_field(payload, "profile_id")
+                    )
+                )
             if action_name == "profile.connect":
-                return await self._maybe_await(self.local_service.connect_profile(self._require_field(payload, "profile_id")))
+                return await self._maybe_await(
+                    self.local_service.connect_profile(
+                        self._require_field(payload, "profile_id")
+                    )
+                )
             if action_name == "profile.disconnect":
-                return await self._maybe_await(self.local_service.disconnect_profile(self._require_field(payload, "profile_id")))
+                return await self._maybe_await(
+                    self.local_service.disconnect_profile(
+                        self._require_field(payload, "profile_id")
+                    )
+                )
             if action_name == "profile.test":
-                return await self._maybe_await(self.local_service.test_external_profile(self._require_field(payload, "profile_id")))
+                return await self._maybe_await(
+                    self.local_service.test_external_profile(
+                        self._require_field(payload, "profile_id")
+                    )
+                )
             if action_name == "profile.refresh":
-                return await self._maybe_await(self.local_service.refresh_external_profile(self._require_field(payload, "profile_id")))
+                return await self._maybe_await(
+                    self.local_service.refresh_external_profile(
+                        self._require_field(payload, "profile_id")
+                    )
+                )
             if action_name == "tool.execute":
                 return await self._maybe_await(
                     self.local_service.execute_tool(
                         self._require_field(payload, "tool_name"),
-                        payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {},
+                        payload.get("arguments")
+                        if isinstance(payload.get("arguments"), dict)
+                        else {},
                     )
                 )
             if action_name == "resource.read":
                 return await self._maybe_await(
-                    self.local_service.read_resource(self._require_field(payload, "resource_uri"))
+                    self.local_service.read_resource(
+                        self._require_field(payload, "resource_uri")
+                    )
                 )
             if action_name == "prompt.get":
                 return await self._maybe_await(
                     self.local_service.get_prompt(
                         self._require_field(payload, "prompt_name"),
-                        payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {},
+                        payload.get("arguments")
+                        if isinstance(payload.get("arguments"), dict)
+                        else {},
                     )
                 )
             if action_name == "governance_rule.save":
-                return await self._maybe_await(self.local_service.save_governance_rule(payload))
+                return await self._maybe_await(
+                    self.local_service.save_governance_rule(payload)
+                )
             if action_name == "governance_rule.preview":
                 return await self._maybe_await(
-                    self.local_service.preview_governance_decision(self._require_field(payload, "capability_id"))
+                    self.local_service.preview_governance_decision(
+                        self._require_field(payload, "capability_id")
+                    )
                 )
             if action_name == "governance_rule.delete":
-                return await self._maybe_await(self.local_service.delete_governance_rule(self._require_field(payload, "rule_id")))
+                return await self._maybe_await(
+                    self.local_service.delete_governance_rule(
+                        self._require_field(payload, "rule_id")
+                    )
+                )
             if action_name == "runtime.access.preview":
-                nested_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+                nested_payload = (
+                    payload.get("payload")
+                    if isinstance(payload.get("payload"), dict)
+                    else {}
+                )
                 return await self._maybe_await(
                     self.local_service.preview_runtime_access(
                         self._require_field(payload, "action_name"),
@@ -970,9 +1055,15 @@ class UnifiedMCPControlPlaneService:
                     )
                 )
             if action_name == "runtime.activity.list":
-                return await self._maybe_await(self.local_service.get_runtime_activity(int(payload.get("limit", 20))))
+                return await self._maybe_await(
+                    self.local_service.get_runtime_activity(
+                        int(payload.get("limit", 20))
+                    )
+                )
             if action_name == "runtime.protocol.inspect":
-                return await self._maybe_await(self.local_service.get_runtime_protocol_diagnostics())
+                return await self._maybe_await(
+                    self.local_service.get_runtime_protocol_diagnostics()
+                )
             if action_name == "runtime.health.get":
                 return await self._maybe_await(self.local_service.get_runtime_health())
             if action_name == "approval_requests.list":
@@ -981,20 +1072,28 @@ class UnifiedMCPControlPlaneService:
                 return await self._maybe_await(
                     self.local_service.list_approval_requests(
                         str(status).strip() if status is not None else None,
-                        str(resolved_action_id).strip() if resolved_action_id is not None else None,
+                        str(resolved_action_id).strip()
+                        if resolved_action_id is not None
+                        else None,
                     )
                 )
             if action_name == "approval_request.approve":
                 return await self._maybe_await(
-                    self.local_service.approve_approval_request(self._require_field(payload, "request_id"))
+                    self.local_service.approve_approval_request(
+                        self._require_field(payload, "request_id")
+                    )
                 )
             if action_name == "approval_request.deny":
                 return await self._maybe_await(
-                    self.local_service.deny_approval_request(self._require_field(payload, "request_id"))
+                    self.local_service.deny_approval_request(
+                        self._require_field(payload, "request_id")
+                    )
                 )
             if action_name == "approval_request.delete":
                 return await self._maybe_await(
-                    self.local_service.delete_approval_request(self._require_field(payload, "request_id"))
+                    self.local_service.delete_approval_request(
+                        self._require_field(payload, "request_id")
+                    )
                 )
             if action_name == "runtime.status.get":
                 return await self._maybe_await(self.local_service.get_runtime_status())
@@ -1002,14 +1101,18 @@ class UnifiedMCPControlPlaneService:
                 return await self._maybe_await(
                     self.local_service.run_runtime_request(
                         self._require_field(payload, "method"),
-                        payload.get("params") if isinstance(payload.get("params"), dict) else {},
+                        payload.get("params")
+                        if isinstance(payload.get("params"), dict)
+                        else {},
                     )
                 )
             if action_name == "runtime.batch":
                 requests = payload.get("requests")
                 if not isinstance(requests, list):
                     raise ValueError("Unified MCP action requires 'requests'.")
-                return await self._maybe_await(self.local_service.run_runtime_batch(requests))
+                return await self._maybe_await(
+                    self.local_service.run_runtime_batch(requests)
+                )
             raise ValueError(f"Unsupported Unified MCP local action: {action_name}")
 
         target = self._require_active_server_target()
@@ -1019,11 +1122,15 @@ class UnifiedMCPControlPlaneService:
 
         if action_name == "catalog.create":
             return await self._maybe_await(
-                self.server_service.create_catalog(target=target, access_context=access_context, payload=payload)
+                self.server_service.create_catalog(
+                    target=target, access_context=access_context, payload=payload
+                )
             )
         if action_name == "catalog.entry.create":
             catalog_id = self._require_field(payload, "catalog_id")
-            entry_payload = {key: value for key, value in payload.items() if key != "catalog_id"}
+            entry_payload = {
+                key: value for key, value in payload.items() if key != "catalog_id"
+            }
             return await self._maybe_await(
                 self.server_service.create_catalog_entry(
                     target=target,
@@ -1051,11 +1158,15 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "external_server.create":
             return await self._maybe_await(
-                self.server_service.create_external_server(target=target, access_context=access_context, payload=payload)
+                self.server_service.create_external_server(
+                    target=target, access_context=access_context, payload=payload
+                )
             )
         if action_name == "external_server.update":
             server_id = self._require_field(payload, "server_id")
-            update_payload = {key: value for key, value in payload.items() if key != "server_id"}
+            update_payload = {
+                key: value for key, value in payload.items() if key != "server_id"
+            }
             return await self._maybe_await(
                 self.server_service.update_external_server(
                     target=target,
@@ -1082,7 +1193,9 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "external_server.auth_template.update":
             server_id = self._require_field(payload, "server_id")
-            update_payload = {key: value for key, value in payload.items() if key != "server_id"}
+            update_payload = {
+                key: value for key, value in payload.items() if key != "server_id"
+            }
             return await self._maybe_await(
                 self.server_service.update_external_server_auth_template(
                     target=target,
@@ -1101,7 +1214,9 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "external_server.slot.create":
             server_id = self._require_field(payload, "server_id")
-            slot_payload = {key: value for key, value in payload.items() if key != "server_id"}
+            slot_payload = {
+                key: value for key, value in payload.items() if key != "server_id"
+            }
             return await self._maybe_await(
                 self.server_service.create_external_server_credential_slot(
                     target=target,
@@ -1174,7 +1289,9 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "permission_profile.update":
             profile_id = self._require_field(payload, "profile_id")
-            update_payload = {key: value for key, value in payload.items() if key != "profile_id"}
+            update_payload = {
+                key: value for key, value in payload.items() if key != "profile_id"
+            }
             return await self._maybe_await(
                 self.server_service.update_permission_profile(
                     target=target,
@@ -1201,7 +1318,9 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "policy_assignment.update":
             assignment_id = self._require_field(payload, "assignment_id")
-            update_payload = {key: value for key, value in payload.items() if key != "assignment_id"}
+            update_payload = {
+                key: value for key, value in payload.items() if key != "assignment_id"
+            }
             return await self._maybe_await(
                 self.server_service.update_policy_assignment(
                     target=target,
@@ -1228,7 +1347,9 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "policy_assignment.override.upsert":
             assignment_id = self._require_field(payload, "assignment_id")
-            override_payload = {key: value for key, value in payload.items() if key != "assignment_id"}
+            override_payload = {
+                key: value for key, value in payload.items() if key != "assignment_id"
+            }
             return await self._maybe_await(
                 self.server_service.upsert_policy_assignment_override(
                     target=target,
@@ -1273,7 +1394,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.delete_approval_policy(
                     target=target,
                     access_context=access_context,
-                    approval_policy_id=self._require_field(payload, "approval_policy_id"),
+                    approval_policy_id=self._require_field(
+                        payload, "approval_policy_id"
+                    ),
                 )
             )
         if action_name == "approval_decision.create":
@@ -1474,7 +1597,9 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "acp_profile.update":
             profile_id = self._require_field(payload, "profile_id")
-            update_payload = {key: value for key, value in payload.items() if key != "profile_id"}
+            update_payload = {
+                key: value for key, value in payload.items() if key != "profile_id"
+            }
             return await self._maybe_await(
                 self.server_service.update_acp_profile(
                     target=target,
@@ -1528,7 +1653,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.check_governance_pack_updates(
                     target=target,
                     access_context=access_context,
-                    governance_pack_id=self._require_field(payload, "governance_pack_id"),
+                    governance_pack_id=self._require_field(
+                        payload, "governance_pack_id"
+                    ),
                 )
             )
         if action_name == "governance_pack.prepare_upgrade_candidate":
@@ -1536,7 +1663,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.prepare_governance_pack_upgrade_candidate(
                     target=target,
                     access_context=access_context,
-                    governance_pack_id=self._require_field(payload, "governance_pack_id"),
+                    governance_pack_id=self._require_field(
+                        payload, "governance_pack_id"
+                    ),
                 )
             )
         if action_name == "governance_pack.dry_run_upgrade":
@@ -1592,7 +1721,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.get_governance_pack_detail(
                     target=target,
                     access_context=access_context,
-                    governance_pack_id=self._require_field(payload, "governance_pack_id"),
+                    governance_pack_id=self._require_field(
+                        payload, "governance_pack_id"
+                    ),
                 )
             )
         if action_name == "governance_pack.upgrade_history.list":
@@ -1600,7 +1731,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.list_governance_pack_upgrade_history(
                     target=target,
                     access_context=access_context,
-                    governance_pack_id=self._require_field(payload, "governance_pack_id"),
+                    governance_pack_id=self._require_field(
+                        payload, "governance_pack_id"
+                    ),
                 )
             )
         if action_name == "path_scope_object.create":
@@ -1613,7 +1746,11 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "path_scope_object.update":
             path_scope_object_id = self._require_field(payload, "path_scope_object_id")
-            update_payload = {key: value for key, value in payload.items() if key != "path_scope_object_id"}
+            update_payload = {
+                key: value
+                for key, value in payload.items()
+                if key != "path_scope_object_id"
+            }
             return await self._maybe_await(
                 self.server_service.update_path_scope_object(
                     target=target,
@@ -1627,7 +1764,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.delete_path_scope_object(
                     target=target,
                     access_context=access_context,
-                    path_scope_object_id=self._require_field(payload, "path_scope_object_id"),
+                    path_scope_object_id=self._require_field(
+                        payload, "path_scope_object_id"
+                    ),
                 )
             )
         if action_name == "capability_mapping.preview":
@@ -1647,7 +1786,9 @@ class UnifiedMCPControlPlaneService:
                 )
             )
         if action_name == "capability_mapping.update":
-            capability_adapter_mapping_id = self._require_field(payload, "capability_adapter_mapping_id")
+            capability_adapter_mapping_id = self._require_field(
+                payload, "capability_adapter_mapping_id"
+            )
             update_payload = {
                 key: value
                 for key, value in payload.items()
@@ -1666,7 +1807,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.delete_capability_mapping(
                     target=target,
                     access_context=access_context,
-                    capability_adapter_mapping_id=self._require_field(payload, "capability_adapter_mapping_id"),
+                    capability_adapter_mapping_id=self._require_field(
+                        payload, "capability_adapter_mapping_id"
+                    ),
                 )
             )
         if action_name == "workspace_set_object.create":
@@ -1678,7 +1821,9 @@ class UnifiedMCPControlPlaneService:
                 )
             )
         if action_name == "workspace_set_object.update":
-            workspace_set_object_id = self._require_field(payload, "workspace_set_object_id")
+            workspace_set_object_id = self._require_field(
+                payload, "workspace_set_object_id"
+            )
             update_payload = {
                 key: value
                 for key, value in payload.items()
@@ -1697,7 +1842,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.delete_workspace_set_object(
                     target=target,
                     access_context=access_context,
-                    workspace_set_object_id=self._require_field(payload, "workspace_set_object_id"),
+                    workspace_set_object_id=self._require_field(
+                        payload, "workspace_set_object_id"
+                    ),
                 )
             )
         if action_name == "workspace_set_object.members.list":
@@ -1705,11 +1852,15 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.list_workspace_set_members(
                     target=target,
                     access_context=access_context,
-                    workspace_set_object_id=self._require_field(payload, "workspace_set_object_id"),
+                    workspace_set_object_id=self._require_field(
+                        payload, "workspace_set_object_id"
+                    ),
                 )
             )
         if action_name == "workspace_set_object.member.add":
-            workspace_set_object_id = self._require_field(payload, "workspace_set_object_id")
+            workspace_set_object_id = self._require_field(
+                payload, "workspace_set_object_id"
+            )
             member_payload = {
                 key: value
                 for key, value in payload.items()
@@ -1728,7 +1879,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.delete_workspace_set_member(
                     target=target,
                     access_context=access_context,
-                    workspace_set_object_id=self._require_field(payload, "workspace_set_object_id"),
+                    workspace_set_object_id=self._require_field(
+                        payload, "workspace_set_object_id"
+                    ),
                     workspace_id=self._require_field(payload, "workspace_id"),
                 )
             )
@@ -1760,7 +1913,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.delete_shared_workspace(
                     target=target,
                     access_context=access_context,
-                    shared_workspace_id=self._require_field(payload, "shared_workspace_id"),
+                    shared_workspace_id=self._require_field(
+                        payload, "shared_workspace_id"
+                    ),
                 )
             )
         raise ValueError(f"Unsupported Unified MCP server action: {action_name}")
@@ -1816,25 +1971,31 @@ class UnifiedMCPControlPlaneService:
         except (TypeError, ValueError):
             return 45.0
 
-    def _record_local_attempt(self, profile_id: str, action: str, *,
-                              ok: bool, error: str | None) -> None:
+    def _record_local_attempt(
+        self, profile_id: str, action: str, *, ok: bool, error: str | None
+    ) -> None:
         store = getattr(self.local_service, "store", None)
         if store is None:
             return
         now = datetime.now(timezone.utc).isoformat()
         try:
             previous = store.get_profile_runtime_state(profile_id) or {}
-            store.save_profile_runtime_state(profile_id, {
-                "last_attempt_at": now,
-                "last_action": action,
-                "ok": ok,
-                "last_ok_at": now if ok else previous.get("last_ok_at"),
-                "last_error": None if ok else (error or "")[:300],
-            })
+            store.save_profile_runtime_state(
+                profile_id,
+                {
+                    "last_attempt_at": now,
+                    "last_action": action,
+                    "ok": ok,
+                    "last_ok_at": now if ok else previous.get("last_ok_at"),
+                    "last_error": None if ok else (error or "")[:300],
+                },
+            )
         except Exception as exc:
             # Recording is best-effort: it must never mask the lifecycle
             # result or the original exception being propagated.
-            logger.warning(f"MCP lifecycle attempt record failed for {profile_id}: {exc}")
+            logger.warning(
+                f"MCP lifecycle attempt record failed for {profile_id}: {exc}"
+            )
 
     async def _run_local_lifecycle(self, action: str, profile_id: str, coro):
         timeout = self._lifecycle_timeout()
@@ -1855,19 +2016,25 @@ class UnifiedMCPControlPlaneService:
 
     async def connect_local_profile(self, profile_id: str) -> dict:
         return await self._run_local_lifecycle(
-            "connect", profile_id, self.local_service.connect_profile(profile_id))
+            "connect", profile_id, self.local_service.connect_profile(profile_id)
+        )
 
     async def disconnect_local_profile(self, profile_id: str) -> bool:
         return await self._run_local_lifecycle(
-            "disconnect", profile_id, self.local_service.disconnect_profile(profile_id))
+            "disconnect", profile_id, self.local_service.disconnect_profile(profile_id)
+        )
 
     async def test_local_profile(self, profile_id: str) -> dict:
         return await self._run_local_lifecycle(
-            "test", profile_id, self.local_service.test_external_profile(profile_id))
+            "test", profile_id, self.local_service.test_external_profile(profile_id)
+        )
 
     async def refresh_local_profile(self, profile_id: str) -> dict:
         return await self._run_local_lifecycle(
-            "refresh", profile_id, self.local_service.refresh_external_profile(profile_id))
+            "refresh",
+            profile_id,
+            self.local_service.refresh_external_profile(profile_id),
+        )
 
     async def save_local_profile(self, payload: dict) -> dict:
         return self.local_service.save_external_profile(dict(payload or {}))
@@ -1955,7 +2122,9 @@ class UnifiedMCPControlPlaneService:
                 # `_run_tool_test()`), so a secret echoed back in a tool's
                 # result can never reach disk unredacted.
                 result_excerpt=(
-                    json.dumps(redact_mapping(result), default=str)[:RESULT_EXCERPT_LIMIT]
+                    json.dumps(redact_mapping(result), default=str)[
+                        :RESULT_EXCERPT_LIMIT
+                    ]
                     if isinstance(result, Mapping)
                     else str(result)[:RESULT_EXCERPT_LIMIT]
                 ),
@@ -1968,7 +2137,9 @@ class UnifiedMCPControlPlaneService:
             )
             log.append(record)
         except Exception as exc:
-            logger.warning(f"MCP execution log record failed for {server_key}/{tool_name}: {exc}")
+            logger.warning(
+                f"MCP execution log record failed for {server_key}/{tool_name}: {exc}"
+            )
 
     async def execute_hub_tool(
         self,
@@ -2022,13 +2193,21 @@ class UnifiedMCPControlPlaneService:
 
         if normalized_key.startswith("local:"):
             profile_id = normalized_key.split(":", 1)[1]
-            coro = self.local_service.execute_external_tool(profile_id, normalized_tool_name, normalized_arguments)
+            coro = self.local_service.execute_external_tool(
+                profile_id, normalized_tool_name, normalized_arguments
+            )
         elif normalized_key.startswith("builtin:"):
-            coro = self.local_service.execute_tool(normalized_tool_name, normalized_arguments)
+            coro = self.local_service.execute_tool(
+                normalized_tool_name, normalized_arguments
+            )
         else:
             raise ValueError("Tool testing for server-source tools arrives in Phase 4.")
 
-        timeout = timeout_seconds if timeout_seconds is not None else self._tool_call_timeout()
+        timeout = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else self._tool_call_timeout()
+        )
         started = time.monotonic()
         try:
             result = await asyncio.wait_for(coro, timeout=timeout)
@@ -2036,25 +2215,43 @@ class UnifiedMCPControlPlaneService:
             duration_ms = int((time.monotonic() - started) * 1000)
             message = f"Timed out after {timeout:.0f}s"
             self._record_tool_execution(
-                normalized_key, normalized_tool_name, ok=False, duration_ms=duration_ms,
-                error=message, arguments=normalized_arguments, result=None,
-                initiator=initiator, decision=decision,
+                normalized_key,
+                normalized_tool_name,
+                ok=False,
+                duration_ms=duration_ms,
+                error=message,
+                arguments=normalized_arguments,
+                result=None,
+                initiator=initiator,
+                decision=decision,
             )
             raise RuntimeError(message) from None
         except Exception as exc:
             duration_ms = int((time.monotonic() - started) * 1000)
             self._record_tool_execution(
-                normalized_key, normalized_tool_name, ok=False, duration_ms=duration_ms,
-                error=str(exc), arguments=normalized_arguments, result=None,
-                initiator=initiator, decision=decision,
+                normalized_key,
+                normalized_tool_name,
+                ok=False,
+                duration_ms=duration_ms,
+                error=str(exc),
+                arguments=normalized_arguments,
+                result=None,
+                initiator=initiator,
+                decision=decision,
             )
             raise
 
         duration_ms = int((time.monotonic() - started) * 1000)
         self._record_tool_execution(
-            normalized_key, normalized_tool_name, ok=True, duration_ms=duration_ms,
-            error=None, arguments=normalized_arguments, result=result,
-            initiator=initiator, decision=decision,
+            normalized_key,
+            normalized_tool_name,
+            ok=True,
+            duration_ms=duration_ms,
+            error=None,
+            arguments=normalized_arguments,
+            result=result,
+            initiator=initiator,
+            decision=decision,
         )
         return result
 
@@ -2233,7 +2430,9 @@ class UnifiedMCPControlPlaneService:
         self._permission_store = MCPPermissionStore(permissions_path)
         return self._permission_store
 
-    def effective_tool_states(self, tools: list[HubTool]) -> dict[tuple[str, str], EffectiveToolState]:
+    def effective_tool_states(
+        self, tools: list[HubTool]
+    ) -> dict[tuple[str, str], EffectiveToolState]:
         """Resolve the effective allow/ask/deny state for every tool in ``tools``.
 
         Loads the permission-store payload once and resolves every tool
@@ -2262,7 +2461,9 @@ class UnifiedMCPControlPlaneService:
         store = self.permission_store
         if store is None:
             return {
-                (tool.server_key, tool.name): EffectiveToolState(state="ask", origin="global_default")
+                (tool.server_key, tool.name): EffectiveToolState(
+                    state="ask", origin="global_default"
+                )
                 for tool in tools
             }
 
@@ -2275,7 +2476,9 @@ class UnifiedMCPControlPlaneService:
                 self._audit_downgrade_if_fresh(store, tool)
         return results
 
-    def _audit_downgrade_if_fresh(self, store: MCPPermissionStore, tool: HubTool) -> None:
+    def _audit_downgrade_if_fresh(
+        self, store: MCPPermissionStore, tool: HubTool
+    ) -> None:
         # Best-effort, same never-raise contract as `_record_tool_execution`:
         # a persistence/logging failure here must never propagate out of
         # `effective_tool_states()` and mask the resolved states it already
@@ -2331,9 +2534,13 @@ class UnifiedMCPControlPlaneService:
         hash_value: str | None = None
         if ui_state == "allow":
             if tool is None:
-                raise ValueError("tool is required to set state 'allow' (need its description/input_schema)")
+                raise ValueError(
+                    "tool is required to set state 'allow' (need its description/input_schema)"
+                )
             hash_value = definition_hash(tool.description, tool.input_schema)
-        store.set_tool_state(server_key, tool_name, ui_state, definition_hash=hash_value)
+        store.set_tool_state(
+            server_key, tool_name, ui_state, definition_hash=hash_value
+        )
 
     def set_server_default(self, server_key: str, state: str | None) -> None:
         store = self.permission_store
@@ -2383,7 +2590,9 @@ class UnifiedMCPControlPlaneService:
         payload = store.load()
         return resolve_effective_state(payload, tool)
 
-    def gate_tool_test_by_key(self, server_key: str, tool_name: str) -> EffectiveToolState:
+    def gate_tool_test_by_key(
+        self, server_key: str, tool_name: str
+    ) -> EffectiveToolState:
         """Resolve one tool's Test Tool gate from the store alone, with no
         live ``HubTool`` to fingerprint.
 

@@ -64,7 +64,9 @@ def extract_markdown_from_server_scene(record: Mapping[str, Any]) -> tuple[str, 
     return str(record.get("content_plain") or ""), "plain_text_fallback"
 
 
-def server_content_to_markdown(content: Mapping[str, Any] | None, content_plain: str | None) -> str:
+def server_content_to_markdown(
+    content: Mapping[str, Any] | None, content_plain: str | None
+) -> str:
     """Recover Chatbook-authored Markdown from server content or fall back to plain text."""
 
     if not isinstance(content, Mapping):
@@ -82,7 +84,9 @@ def server_content_to_markdown(content: Mapping[str, Any] | None, content_plain:
             if not isinstance(node, Mapping):
                 continue
             attrs = node.get("attrs")
-            if not isinstance(attrs, Mapping) or not attrs.get("tldw_chatbook_markdown"):
+            if not isinstance(attrs, Mapping) or not attrs.get(
+                "tldw_chatbook_markdown"
+            ):
                 continue
             parts: list[str] = []
             for child in node.get("content") or []:

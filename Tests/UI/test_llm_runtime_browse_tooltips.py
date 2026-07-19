@@ -10,7 +10,9 @@ from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 class _LLMWindowHost(App):
     def compose(self) -> ComposeResult:
         app_instance = SimpleNamespace(
-            app_config={"llm_management": {"model_download_dir": "/private/tmp/tldw-models"}}
+            app_config={
+                "llm_management": {"model_download_dir": "/private/tmp/tldw-models"}
+            }
         )
         yield LLMManagementWindow(app_instance)
 

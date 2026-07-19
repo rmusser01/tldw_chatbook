@@ -116,7 +116,9 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
                 allow_blank=True,
             )
             yield Input(
-                value="" if self._settings.temperature is None else str(self._settings.temperature),
+                value=""
+                if self._settings.temperature is None
+                else str(self._settings.temperature),
                 placeholder="Temperature",
                 id="console-popover-temperature",
             )
@@ -126,8 +128,12 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
                 compact=True,
             )
             with Horizontal(id="console-popover-actions"):
-                yield Button("Full settings…", id="console-popover-full-settings", compact=True)
-                yield Button("Apply", id="console-popover-apply", variant="primary", compact=True)
+                yield Button(
+                    "Full settings…", id="console-popover-full-settings", compact=True
+                )
+                yield Button(
+                    "Apply", id="console-popover-apply", variant="primary", compact=True
+                )
 
     @on(Select.Changed, "#console-popover-provider")
     def _provider_changed(self, event: Select.Changed) -> None:
@@ -185,7 +191,9 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         event.stop()
         provider_value = self.query_one("#console-popover-provider", Select).value
         model_value = self.query_one("#console-popover-model", Select).value
-        temperature_text = self.query_one("#console-popover-temperature", Input).value.strip()
+        temperature_text = self.query_one(
+            "#console-popover-temperature", Input
+        ).value.strip()
         if not temperature_text:
             temperature = None
         else:

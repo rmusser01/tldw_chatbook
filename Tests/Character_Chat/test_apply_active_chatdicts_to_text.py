@@ -1,7 +1,9 @@
 import pytest
 
 from tldw_chatbook.Character_Chat import Chat_Dictionary_Lib as cdl
-from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
+from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
+    LocalChatDictionaryService,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -12,7 +14,9 @@ def db(tmp_path):
     database.close_connection()
 
 
-def _attach_matching_dict(db, conv_id, name="Slang", key="Warden", content="grim jailer"):
+def _attach_matching_dict(
+    db, conv_id, name="Slang", key="Warden", content="grim jailer"
+):
     dict_id = cdl.save_chat_dictionary(
         db, name, entries=[cdl.ChatDictionary(key=key, content=content)]
     )

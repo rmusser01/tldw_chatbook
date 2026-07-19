@@ -117,7 +117,9 @@ async def _run_skills_import_via_ui(
     status_text = previous
     deadline = time.monotonic() + deadline_seconds
     while time.monotonic() < deadline:
-        status_text = str(screen.query_one("#library-skills-import-status", Static).renderable)
+        status_text = str(
+            screen.query_one("#library-skills-import-status", Static).renderable
+        )
         if status_text != previous:
             return status_text
         await pilot.pause(0.02)
@@ -169,7 +171,9 @@ async def test_import_real_superpowers_skills_lands_trust_pending(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_import_skill_via_skill_md_file_path_derives_name_from_parent_directory(tmp_path):
+async def test_import_skill_via_skill_md_file_path_derives_name_from_parent_directory(
+    tmp_path,
+):
     """Pointing the Import row at the ``SKILL.md`` FILE itself (not its
     parent directory) must resolve to the SAME correct skill name as
     pointing it at the directory -- the incompatibility this guards
@@ -193,7 +197,10 @@ async def test_import_skill_via_skill_md_file_path_derives_name_from_parent_dire
 
         skill_md_path = FIXTURES_DIR / "verification-before-completion" / "SKILL.md"
         status = await _run_skills_import_via_ui(screen, pilot, skill_md_path)
-        assert status == 'Imported "verification-before-completion" · re-review it in the trust panel'
+        assert (
+            status
+            == 'Imported "verification-before-completion" · re-review it in the trust panel'
+        )
 
     record = await local_service.get_skill("verification-before-completion")
     assert record["name"] == "verification-before-completion"
@@ -246,7 +253,9 @@ async def test_import_skill_with_supporting_reference_file_threads_it_through(tm
     host = LibraryHarness(app)
 
     skill_dir = FIXTURES_DIR / "requesting-code-review"
-    real_supporting_content = (skill_dir / "code-reviewer.md").read_text(encoding="utf-8")
+    real_supporting_content = (skill_dir / "code-reviewer.md").read_text(
+        encoding="utf-8"
+    )
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
@@ -254,7 +263,10 @@ async def test_import_skill_with_supporting_reference_file_threads_it_through(tm
         await _open_skills_import_row(screen, pilot)
 
         status = await _run_skills_import_via_ui(screen, pilot, skill_dir)
-        assert status == 'Imported "requesting-code-review" · re-review it in the trust panel'
+        assert (
+            status
+            == 'Imported "requesting-code-review" · re-review it in the trust panel'
+        )
 
     record = await local_service.get_skill("requesting-code-review")
     assert record["supporting_files"] == {"code-reviewer.md": real_supporting_content}
@@ -288,9 +300,14 @@ async def test_import_skill_with_extra_frontmatter_fields_applies_recognized_and
         await _open_skills_import_row(screen, pilot)
 
         status = await _run_skills_import_via_ui(
-            screen, pilot, FIXTURES_DIR / "executing-plans-with-metadata",
+            screen,
+            pilot,
+            FIXTURES_DIR / "executing-plans-with-metadata",
         )
-        assert status == 'Imported "executing-plans-with-metadata" · re-review it in the trust panel'
+        assert (
+            status
+            == 'Imported "executing-plans-with-metadata" · re-review it in the trust panel'
+        )
 
     record = await local_service.get_skill("executing-plans-with-metadata")
     assert record["argument_hint"] == "plan file path"
@@ -311,7 +328,9 @@ async def test_import_skill_with_extra_frontmatter_fields_applies_recognized_and
     # frontmatter content.)
     assert "priority" not in record
     assert "tags" not in record
-    assert not any("priority" in error or "tags" in error for error in record["validation_errors"])
+    assert not any(
+        "priority" in error or "tags" in error for error in record["validation_errors"]
+    )
 
 
 @pytest.mark.asyncio
@@ -334,17 +353,24 @@ async def test_reimporting_the_same_skill_name_is_skipped_not_duplicated(tmp_pat
         await _open_skills_import_row(screen, pilot)
 
         first_status = await _run_skills_import_via_ui(screen, pilot, skill_dir)
-        assert first_status == 'Imported "executing-plans" · re-review it in the trust panel'
+        assert (
+            first_status
+            == 'Imported "executing-plans" · re-review it in the trust panel'
+        )
 
         second_status = await _run_skills_import_via_ui(screen, pilot, skill_dir)
-        assert second_status == 'Skipped — a skill named "executing-plans" already exists.'
+        assert (
+            second_status == 'Skipped — a skill named "executing-plans" already exists.'
+        )
 
     record = await local_service.get_skill("executing-plans")
     assert record["version"] == 1
 
 
 @pytest.mark.asyncio
-async def test_import_row_reports_missing_skill_md_and_unknown_path_gracefully(tmp_path):
+async def test_import_row_reports_missing_skill_md_and_unknown_path_gracefully(
+    tmp_path,
+):
     """A folder with no ``SKILL.md`` and a path that does not exist at all
     both surface a specific, honest outcome line -- never a crash, never a
     silent no-op that leaves the user guessing.
@@ -452,7 +478,9 @@ async def test_import_row_rejects_oversized_content_without_partial_state(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_import_row_skips_nested_reference_subfolder_without_failing_import(tmp_path):
+async def test_import_row_skips_nested_reference_subfolder_without_failing_import(
+    tmp_path,
+):
     """A skill directory with a NESTED reference subfolder (the real
     ``using-superpowers`` skill's own ``references/`` layout -- not
     copied into the fixtures dir to keep it small, reproduced here
@@ -478,7 +506,9 @@ async def test_import_row_skips_nested_reference_subfolder_without_failing_impor
     )
     references_dir = skill_dir / "references"
     references_dir.mkdir()
-    (references_dir / "note.md").write_text("A nested reference file.", encoding="utf-8")
+    (references_dir / "note.md").write_text(
+        "A nested reference file.", encoding="utf-8"
+    )
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
@@ -486,7 +516,9 @@ async def test_import_row_skips_nested_reference_subfolder_without_failing_impor
         await _open_skills_import_row(screen, pilot)
 
         status = await _run_skills_import_via_ui(screen, pilot, skill_dir)
-        assert status == 'Imported "nested-refs-skill" · re-review it in the trust panel'
+        assert (
+            status == 'Imported "nested-refs-skill" · re-review it in the trust panel'
+        )
 
     record = await local_service.get_skill("nested-refs-skill")
     assert record["trust_blocked"] is True

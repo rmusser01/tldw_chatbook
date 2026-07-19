@@ -169,7 +169,9 @@ class BulkGenerateRequest(BaseModel):
         for item in values:
             if isinstance(item, (int, float)):
                 if int(item) <= 0:
-                    raise ValueError("conversation_ids must contain positive identifiers.")
+                    raise ValueError(
+                        "conversation_ids must contain positive identifiers."
+                    )
                 normalized.append(str(int(item)))
                 continue
             if isinstance(item, str):

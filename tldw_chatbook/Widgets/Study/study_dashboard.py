@@ -67,17 +67,31 @@ class StudyDashboard(Widget):
     def compose(self) -> ComposeResult:
         with Vertical(id="study-dashboard"):
             yield Static("Study Dashboard", classes="study-dashboard-title")
-            yield Static("Global study", id="study-scope-summary", classes="study-dashboard-meta")
+            yield Static(
+                "Global study", id="study-scope-summary", classes="study-dashboard-meta"
+            )
             with Horizontal():
                 with Vertical(classes="study-dashboard-column"):
                     yield Static("Due Today", classes="study-dashboard-heading")
-                    yield Static("0 due today", id="study-due-today", classes="study-dashboard-value")
+                    yield Static(
+                        "0 due today",
+                        id="study-due-today",
+                        classes="study-dashboard-value",
+                    )
                 with Vertical(classes="study-dashboard-column"):
                     yield Static("Recent Decks", classes="study-dashboard-heading")
-                    yield Static("No recent decks yet.", id="study-recent-decks", classes="study-dashboard-value")
+                    yield Static(
+                        "No recent decks yet.",
+                        id="study-recent-decks",
+                        classes="study-dashboard-value",
+                    )
                 with Vertical(classes="study-dashboard-column"):
                     yield Static("Recent Quizzes", classes="study-dashboard-heading")
-                    yield Static("No recent quizzes yet.", id="study-recent-quizzes", classes="study-dashboard-value")
+                    yield Static(
+                        "No recent quizzes yet.",
+                        id="study-recent-quizzes",
+                        classes="study-dashboard-value",
+                    )
             with Horizontal(classes="study-dashboard-actions"):
                 yield Button(
                     "Resume last session",

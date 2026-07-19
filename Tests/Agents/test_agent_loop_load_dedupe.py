@@ -7,24 +7,31 @@ list-vs-set semantics at the cap boundary. The `load_tools` branch must
 filter out any schema whose name is already in `active` BEFORE slicing
 against the room budget.
 """
+
 import json
 
 from tldw_chatbook.Agents.agent_models import (
-    STEP_TOOL_RESULT, AgentConfig, ModelTurn, RunBudget, ToolSchema,
+    STEP_TOOL_RESULT,
+    AgentConfig,
+    ModelTurn,
+    RunBudget,
+    ToolSchema,
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop, FENCE_OPEN
 
 
 def _fence(name, args):
-    return f'{FENCE_OPEN}\n{json.dumps({"name": name, "arguments": args})}\n```'
+    return f"{FENCE_OPEN}\n{json.dumps({'name': name, 'arguments': args})}\n```"
 
 
 def test_load_tools_never_duplicates_an_active_schema():
     active = [ToolSchema(id="p:foo", name="foo", description="d", parameters={})]
-    turns = iter([
-        ModelTurn(text=_fence("load_tools", {"ids": ["p:foo"]})),
-        ModelTurn(text="done"),
-    ])
+    turns = iter(
+        [
+            ModelTurn(text=_fence("load_tools", {"ids": ["p:foo"]})),
+            ModelTurn(text="done"),
+        ]
+    )
     seen_active_sizes = []
 
     def call_model(messages, active_schemas):
@@ -36,13 +43,23 @@ def test_load_tools_never_duplicates_an_active_schema():
         invoke_tool=lambda call: None,
         spawn=lambda task, **k: None,
         find_tools=lambda q: [],
-        load_schemas=lambda ids: [ToolSchema(id="p:foo", name="foo", description="d", parameters={})],
+        load_schemas=lambda ids: [
+            ToolSchema(id="p:foo", name="foo", description="d", parameters={})
+        ],
         should_cancel=lambda: False,
-        clock=lambda: 0.0)
-    outcome = run_agent_loop(
-        AgentConfig(model="m", system_prompt="s", allowed_tools=("foo", "load_tools"),
-                    budget=RunBudget(max_active_tools=8)),
-        [{"role": "user", "content": "hi"}], active, deps)
+        clock=lambda: 0.0,
+    )
+    run_agent_loop(
+        AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("foo", "load_tools"),
+            budget=RunBudget(max_active_tools=8),
+        ),
+        [{"role": "user", "content": "hi"}],
+        active,
+        deps,
+    )
     # The already-active "foo" schema is not appended a second time.
     assert seen_active_sizes[-1] == 1
 
@@ -54,12 +71,14 @@ def test_load_dedupe_at_cap_boundary_still_admits_a_new_tool():
     t0 = ToolSchema(id="p:t0", name="t0", description="d", parameters={})
     t1 = ToolSchema(id="p:t1", name="t1", description="d", parameters={})
     catalog = {"p:t0": t0, "p:t1": t1}
-    turns = iter([
-        ModelTurn(text=_fence("load_tools", {"ids": ["p:t0"]})),
-        ModelTurn(text=_fence("load_tools", {"ids": ["p:t0"]})),
-        ModelTurn(text=_fence("load_tools", {"ids": ["p:t1"]})),
-        ModelTurn(text="done"),
-    ])
+    turns = iter(
+        [
+            ModelTurn(text=_fence("load_tools", {"ids": ["p:t0"]})),
+            ModelTurn(text=_fence("load_tools", {"ids": ["p:t0"]})),
+            ModelTurn(text=_fence("load_tools", {"ids": ["p:t1"]})),
+            ModelTurn(text="done"),
+        ]
+    )
     seen_active_sizes = []
 
     def call_model(messages, active_schemas):
@@ -73,12 +92,19 @@ def test_load_dedupe_at_cap_boundary_still_admits_a_new_tool():
         find_tools=lambda q: [],
         load_schemas=lambda ids: [catalog[i] for i in ids if i in catalog],
         should_cancel=lambda: False,
-        clock=lambda: 0.0)
+        clock=lambda: 0.0,
+    )
     outcome = run_agent_loop(
-        AgentConfig(model="m", system_prompt="s",
-                    allowed_tools=("t0", "t1", "load_tools"),
-                    budget=RunBudget(max_active_tools=2, max_steps=20)),
-        [{"role": "user", "content": "hi"}], [], deps)
+        AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("t0", "t1", "load_tools"),
+            budget=RunBudget(max_active_tools=2, max_steps=20),
+        ),
+        [{"role": "user", "content": "hi"}],
+        [],
+        deps,
+    )
     # 0 active at the first call, 1 after t0 loads, still 1 after the
     # redundant t0 re-load (no-op, no room consumed), then 2 once t1 is
     # admitted.
@@ -95,24 +121,36 @@ def test_load_tools_all_requested_already_active_reports_already_loaded_not_no_r
     to call the tool it already has. Requesting only already-active tools
     must be distinguishable: "already loaded: <names>"."""
     active = [ToolSchema(id="p:foo", name="foo", description="d", parameters={})]
-    turns = iter([
-        ModelTurn(text=_fence("load_tools", {"ids": ["p:foo"]})),
-        ModelTurn(text="done"),
-    ])
+    turns = iter(
+        [
+            ModelTurn(text=_fence("load_tools", {"ids": ["p:foo"]})),
+            ModelTurn(text="done"),
+        ]
+    )
     steps: list = []
     deps = LoopDeps(
         call_model=lambda messages, active_schemas: next(turns),
         invoke_tool=lambda call: None,
         spawn=lambda task, **k: None,
         find_tools=lambda q: [],
-        load_schemas=lambda ids: [ToolSchema(id="p:foo", name="foo", description="d", parameters={})],
+        load_schemas=lambda ids: [
+            ToolSchema(id="p:foo", name="foo", description="d", parameters={})
+        ],
         should_cancel=lambda: False,
         clock=lambda: 0.0,
-        on_step=steps.append)
+        on_step=steps.append,
+    )
     outcome = run_agent_loop(
-        AgentConfig(model="m", system_prompt="s", allowed_tools=("foo", "load_tools"),
-                    budget=RunBudget(max_active_tools=8)),
-        [{"role": "user", "content": "hi"}], active, deps)
+        AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("foo", "load_tools"),
+            budget=RunBudget(max_active_tools=8),
+        ),
+        [{"role": "user", "content": "hi"}],
+        active,
+        deps,
+    )
     load_result = next(s for s in steps if s.kind == STEP_TOOL_RESULT)
     assert load_result.result == "already loaded: foo"
     assert outcome.status == "done"
@@ -126,10 +164,12 @@ def test_load_tools_genuinely_out_of_room_is_still_distinct_from_already_loaded(
     occupying = ToolSchema(id="p:occ", name="occ", description="d", parameters={})
     new_tool = ToolSchema(id="p:new", name="new", description="d", parameters={})
     active = [occupying]
-    turns = iter([
-        ModelTurn(text=_fence("load_tools", {"ids": ["p:new"]})),
-        ModelTurn(text="done"),
-    ])
+    turns = iter(
+        [
+            ModelTurn(text=_fence("load_tools", {"ids": ["p:new"]})),
+            ModelTurn(text="done"),
+        ]
+    )
     steps: list = []
     deps = LoopDeps(
         call_model=lambda messages, active_schemas: next(turns),
@@ -139,11 +179,19 @@ def test_load_tools_genuinely_out_of_room_is_still_distinct_from_already_loaded(
         load_schemas=lambda ids: [new_tool],
         should_cancel=lambda: False,
         clock=lambda: 0.0,
-        on_step=steps.append)
+        on_step=steps.append,
+    )
     outcome = run_agent_loop(
-        AgentConfig(model="m", system_prompt="s", allowed_tools=("occ", "new", "load_tools"),
-                    budget=RunBudget(max_active_tools=1)),
-        [{"role": "user", "content": "hi"}], active, deps)
+        AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("occ", "new", "load_tools"),
+            budget=RunBudget(max_active_tools=1),
+        ),
+        [{"role": "user", "content": "hi"}],
+        active,
+        deps,
+    )
     load_result = next(s for s in steps if s.kind == STEP_TOOL_RESULT)
     assert load_result.result == "no room"
     assert outcome.status == "done"

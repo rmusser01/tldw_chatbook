@@ -36,7 +36,15 @@ def model(
 
 def test_cache_lists_models_by_provider_and_endpoint_fingerprint():
     cache = ModelDiscoveryCache()
-    cache.replace("OpenRouter", "fp1", (model("openrouter/auto", provider="OpenRouter", provider_list_key="OpenRouter"),))
+    cache.replace(
+        "OpenRouter",
+        "fp1",
+        (
+            model(
+                "openrouter/auto", provider="OpenRouter", provider_list_key="OpenRouter"
+            ),
+        ),
+    )
 
     assert [m.model_id for m in cache.list("OpenRouter", "fp1")] == ["openrouter/auto"]
     assert cache.list("OpenRouter", "fp2") == ()
@@ -48,7 +56,14 @@ def test_cache_clear_removes_only_requested_provider():
     cache.replace(
         "OpenRouter",
         "fp2",
-        (model("openrouter/auto", provider="OpenRouter", provider_list_key="OpenRouter", endpoint_fingerprint="fp2"),),
+        (
+            model(
+                "openrouter/auto",
+                provider="OpenRouter",
+                provider_list_key="OpenRouter",
+                endpoint_fingerprint="fp2",
+            ),
+        ),
     )
 
     cache.clear("OpenAI")
@@ -134,9 +149,9 @@ def test_capability_resolver_can_mark_model_known():
         "OpenAI",
         "gpt-4.1",
         {"vision": False},
-        capability_resolver=lambda provider, model_id: {"vision": True}
-        if provider == "OpenAI" and model_id == "gpt-4.1"
-        else None,
+        capability_resolver=lambda provider, model_id: (
+            {"vision": True} if provider == "OpenAI" and model_id == "gpt-4.1" else None
+        ),
     )
 
     assert status == "known"

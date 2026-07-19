@@ -48,7 +48,10 @@ def test_eval_dialogs_dataset_filters_are_callable():
 
     # The Filters live inline in a method/function; rebuild the exact spec.
     filters = Filters(
-        ("Dataset Files", lambda p: p.suffix.lower() in (".json", ".jsonl", ".csv", ".parquet")),
+        (
+            "Dataset Files",
+            lambda p: p.suffix.lower() in (".json", ".jsonl", ".csv", ".parquet"),
+        ),
         ("JSON Files", lambda p: p.suffix.lower() in (".json", ".jsonl")),
         ("CSV Files", lambda p: p.suffix.lower() == ".csv"),
         ("Parquet Files", lambda p: p.suffix.lower() == ".parquet"),

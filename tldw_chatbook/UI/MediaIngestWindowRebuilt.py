@@ -8,13 +8,12 @@ from local files and from server-backed ingestion sources.
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Dict, Any, Union, Mapping
-from datetime import datetime
+from typing import TYPE_CHECKING, List, Optional, Dict, Any, Mapping
 
 from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
+from textual.containers import Container, Horizontal, ScrollableContainer
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import (
@@ -28,11 +27,8 @@ from textual.widgets import (
     TabPane,
     TextArea,
     Checkbox,
-    LoadingIndicator,
     RichLog,
     Collapsible,
-    RadioSet,
-    RadioButton,
     ProgressBar,
 )
 from textual.message import Message
@@ -41,11 +37,8 @@ from textual.validation import Number, URL
 # Import ingestion modules
 from ..Local_Ingestion import (
     ingest_local_file,
-    detect_file_type,
     get_supported_extensions,
-    FileIngestionError,
 )
-from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..Widgets.Media import MediaIngestionSourcePanel
 
 if TYPE_CHECKING:
@@ -55,7 +48,7 @@ if TYPE_CHECKING:
 # Custom Messages
 class ProcessingStarted(Message):
     """Message sent when processing starts."""
-    
+
     def __init__(self, file_count: int) -> None:
         self.file_count = file_count
         super().__init__()
@@ -63,7 +56,7 @@ class ProcessingStarted(Message):
 
 class ProcessingComplete(Message):
     """Message sent when processing completes."""
-    
+
     def __init__(self, results: List[Dict[str, Any]]) -> None:
         self.results = results
         super().__init__()
@@ -71,7 +64,7 @@ class ProcessingComplete(Message):
 
 class ProcessingError(Message):
     """Message sent when processing encounters an error."""
-    
+
     def __init__(self, error: str) -> None:
         self.error = error
         super().__init__()
@@ -92,7 +85,7 @@ class LocalIngestionRequest:
 
 class LocalIngestionPanel(ScrollableContainer):
     """Panel for local file ingestion following Textual best practices."""
-    
+
     DEFAULT_CSS = """
     LocalIngestionPanel {
         layout: vertical;
@@ -150,99 +143,103 @@ class LocalIngestionPanel(ScrollableContainer):
         display: none;
     }
     """
-    
+
     # Reactive properties
     selected_files: reactive[List[Path]] = reactive(list)
     processing: reactive[bool] = reactive(False)
-    
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+
+    def __init__(self, app_instance: "TldwCli", **kwargs):
         """Initialize the local ingestion panel."""
         super().__init__(**kwargs)
         self.app_instance = app_instance
         # Get the media database from the app instance
-        self.media_db = getattr(app_instance, 'media_db', None)
+        self.media_db = getattr(app_instance, "media_db", None)
         self.supported_extensions = get_supported_extensions()
         self._call_from_thread = None
-    
+
     def compose(self) -> ComposeResult:
         """Compose the local ingestion interface."""
         with Container(classes="file-selection-container"):
             yield Label("Select Files to Ingest:")
             yield DirectoryTree(".", id="file-tree")
-        
+
         with Container(classes="options-container"):
             yield Label("Metadata (Optional):")
             yield Label("", id="batch-info-label", classes="info-label")
             with Horizontal():
                 yield Input(placeholder="Title", id="local-title")
                 yield Input(placeholder="Author", id="local-author")
-            yield Input(
-                placeholder="Keywords (comma-separated)", 
-                id="local-keywords"
-            )
-            
+            yield Input(placeholder="Keywords (comma-separated)", id="local-keywords")
+
             with Collapsible(Label("Advanced Options"), collapsed=True):
                 yield Checkbox("Perform analysis/summarization", id="local-analyze")
                 yield Checkbox("Enable chunking", value=True, id="local-chunk")
                 with Horizontal():
                     yield Label("Chunk size:")
                     yield Input("500", id="local-chunk-size", validators=[Number()])
-        
+
         with Container(classes="process-button-container"):
             yield Button(
                 "Process Selected Files",
                 variant="primary",
                 id="local-process-btn",
-                disabled=True
+                disabled=True,
             )
-            yield ProgressBar(total=100, show_eta=False, id="ingest-progress-bar", classes="hidden")
-    
+            yield ProgressBar(
+                total=100, show_eta=False, id="ingest-progress-bar", classes="hidden"
+            )
+
     @on(DirectoryTree.FileSelected)
     def handle_file_selection(self, event: DirectoryTree.FileSelected) -> None:
         """Handle file selection from the directory tree."""
         path = event.path
-        
+
         # Check if file has supported extension
-        if path.suffix.lower() in [ext for exts in self.supported_extensions.values() for ext in exts]:
+        if path.suffix.lower() in [
+            ext for exts in self.supported_extensions.values() for ext in exts
+        ]:
             if path not in self.selected_files:
                 self.selected_files.append(path)
                 self.notify(f"Selected: {path.name}", severity="information")
-                
+
                 # Enable process button if files are selected
                 process_btn = self.query_one("#local-process-btn", Button)
                 process_btn.disabled = False
-                
+
                 # Update batch label
                 count = len(self.selected_files)
                 label = self.query_one("#batch-info-label", Label)
-                label.update(f"Applying metadata to {count} selected file{'s' if count > 1 else ''}")
+                label.update(
+                    f"Applying metadata to {count} selected file{'s' if count > 1 else ''}"
+                )
                 label.remove_class("hidden")
         else:
-            self.notify(
-                f"Unsupported file type: {path.suffix}",
-                severity="warning"
-            )
-    
+            self.notify(f"Unsupported file type: {path.suffix}", severity="warning")
+
     @on(Button.Pressed, "#local-process-btn")
     def handle_process_button(self) -> None:
         """Handle the process button click."""
         if not self.selected_files:
             self.notify("No files selected", severity="warning")
             return
-        
+
         if not self.processing:
             request = self._build_ingestion_request()
             self._call_from_thread = self.app.call_from_thread
             self.processing = True
             self._start_processing_ui(len(request.files))
             self.process_files(request)
-    
+
     def _build_ingestion_request(self) -> LocalIngestionRequest:
         """Capture widget state on the UI thread before background processing."""
         title = self.query_one("#local-title", Input).value or None
         author = self.query_one("#local-author", Input).value or None
         keywords_str = self.query_one("#local-keywords", Input).value
-        keywords = tuple(k.strip() for k in keywords_str.split(",") if k.strip()) if keywords_str else None
+        keywords = (
+            tuple(k.strip() for k in keywords_str.split(",") if k.strip())
+            if keywords_str
+            else None
+        )
         perform_analysis = self.query_one("#local-analyze", Checkbox).value
         perform_chunking = self.query_one("#local-chunk", Checkbox).value
         chunk_size = int(self.query_one("#local-chunk-size", Input).value or "500")
@@ -284,18 +281,22 @@ class LocalIngestionPanel(ScrollableContainer):
                     "Database not initialized",
                 )
                 return
-            
+
             # Process each file
             for file_path in request.files:
                 try:
                     logger.info(f"Processing file: {file_path}")
-                    
-                    chunk_options = {
-                        "method": "sentences",
-                        "size": request.chunk_size,
-                        "overlap": 100,
-                    } if request.perform_chunking else None
-                    
+
+                    chunk_options = (
+                        {
+                            "method": "sentences",
+                            "size": request.chunk_size,
+                            "overlap": 100,
+                        }
+                        if request.perform_chunking
+                        else None
+                    )
+
                     result = ingest_local_file(
                         file_path=file_path,
                         media_db=self.media_db,
@@ -303,34 +304,36 @@ class LocalIngestionPanel(ScrollableContainer):
                         author=request.author,
                         keywords=list(request.keywords) if request.keywords else None,
                         perform_analysis=request.perform_analysis,
-                        chunk_options=chunk_options
+                        chunk_options=chunk_options,
                     )
-                    
-                    results.append({
-                        "file": str(file_path),
-                        "status": "success",
-                        "media_id": result.get("media_id"),
-                        "title": result.get("title")
-                    })
-                    
+
+                    results.append(
+                        {
+                            "file": str(file_path),
+                            "status": "success",
+                            "media_id": result.get("media_id"),
+                            "title": result.get("title"),
+                        }
+                    )
+
                 except Exception as e:
                     logger.error(f"Error processing {file_path}: {e}")
-                    errors.append({
-                        "file": str(file_path),
-                        "status": "error",
-                        "error": str(e)
-                    })
-                
+                    errors.append(
+                        {"file": str(file_path), "status": "error", "error": str(e)}
+                    )
+
                 # Update progress
                 self._call_from_worker(self._advance_processing_progress)
-            
+
             # Post completion message
-            self._call_from_worker(self._complete_processing, results + errors, len(results), len(errors))
-            
+            self._call_from_worker(
+                self._complete_processing, results + errors, len(results), len(errors)
+            )
+
         except Exception as e:
             logger.error(f"Processing error: {e}")
             self._call_from_worker(self._fail_processing, str(e))
-        
+
         finally:
             self._call_from_worker(self._reset_processing_ui)
 
@@ -358,12 +361,12 @@ class LocalIngestionPanel(ScrollableContainer):
         if error_count == 0:
             self.notify(
                 f"Successfully processed {success_count} file(s)",
-                severity="information"
+                severity="information",
             )
         else:
             self.notify(
                 f"Processed {success_count} file(s), {error_count} error(s)",
-                severity="warning"
+                severity="warning",
             )
 
     def _fail_processing(self, error: str) -> None:
@@ -390,7 +393,7 @@ class LocalIngestionPanel(ScrollableContainer):
 
 class RemoteIngestionPanel(ScrollableContainer):
     """Panel for server-backed media ingest jobs."""
-    
+
     DEFAULT_CSS = """
     RemoteIngestionPanel {
         layout: vertical;
@@ -450,12 +453,12 @@ class RemoteIngestionPanel(ScrollableContainer):
         background: $boost;
     }
     """
-    
+
     # Reactive properties
     media_type: reactive[str] = reactive("document")
     processing: reactive[bool] = reactive(False)
     runtime_backend: reactive[str] = reactive("local")
-    
+
     # Media type options
     MEDIA_TYPES = [
         ("Document", "document"),
@@ -466,8 +469,8 @@ class RemoteIngestionPanel(ScrollableContainer):
         ("Email", "email"),
         ("Code", "code"),
     ]
-    
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+
+    def __init__(self, app_instance: "TldwCli", **kwargs):
         """Initialize the remote ingestion panel."""
         super().__init__(**kwargs)
         self.app_instance = app_instance
@@ -475,10 +478,12 @@ class RemoteIngestionPanel(ScrollableContainer):
         self.runtime_state = getattr(app_instance, "media_runtime_state", None)
         self.last_batch_id: Optional[str] = None
         self.current_jobs: list[Dict[str, Any]] = []
-    
+
     def compose(self) -> ComposeResult:
         """Compose the remote ingestion interface."""
-        yield Static("Server ingest jobs require server mode.", id="remote-panel-disabled")
+        yield Static(
+            "Server ingest jobs require server mode.", id="remote-panel-disabled"
+        )
         with Container(id="remote-panel-main"):
             with Container(classes="media-type-container"):
                 yield Label("Select Media Type:")
@@ -498,7 +503,9 @@ class RemoteIngestionPanel(ScrollableContainer):
                 )
                 yield Label("(One URL per line)", classes="dim")
 
-            with ScrollableContainer(classes="dynamic-options", id="dynamic-options-container"):
+            with ScrollableContainer(
+                classes="dynamic-options", id="dynamic-options-container"
+            ):
                 yield Container(id="dynamic-options")
 
             with Container(classes="web-content-options", id="web-content-options"):
@@ -518,7 +525,9 @@ class RemoteIngestionPanel(ScrollableContainer):
                 yield Input("3", id="web-max-pages", validators=[Number()])
                 yield Label("Max depth:")
                 yield Input("3", id="web-max-depth", validators=[Number()])
-                yield Checkbox("Perform analysis", value=True, id="web-perform-analysis")
+                yield Checkbox(
+                    "Perform analysis", value=True, id="web-perform-analysis"
+                )
 
             with Container(classes="api-button-container"):
                 yield Button(
@@ -595,7 +604,10 @@ class RemoteIngestionPanel(ScrollableContainer):
     def _current_runtime_backend(self) -> str:
         runtime_backend = self.runtime_backend
         if self.runtime_state is not None:
-            runtime_backend = str(getattr(self.runtime_state, "runtime_backend", runtime_backend) or "local")
+            runtime_backend = str(
+                getattr(self.runtime_state, "runtime_backend", runtime_backend)
+                or "local"
+            )
         normalized_backend = str(runtime_backend or "local").strip().lower()
         if normalized_backend not in {"local", "server"}:
             return "local"
@@ -657,42 +669,48 @@ class RemoteIngestionPanel(ScrollableContainer):
         self._set_recent_watch_controls_disabled(not enabled)
         self._set_job_controls_disabled(not enabled or not self.current_jobs)
         if self.runtime_backend != "server":
-            self.query_one("#remote-job-status", Static).update("Server ingest jobs require server mode.")
+            self.query_one("#remote-job-status", Static).update(
+                "Server ingest jobs require server mode."
+            )
         elif self.scope_service is None:
-            self.query_one("#remote-job-status", Static).update("Media ingest job service is unavailable.")
-    
+            self.query_one("#remote-job-status", Static).update(
+                "Media ingest job service is unavailable."
+            )
+
     @on(Select.Changed, "#media-type-select")
     def handle_media_type_change(self, event: Select.Changed) -> None:
         """Handle media type selection change."""
         self.media_type = str(event.value)
         self.update_dynamic_options()
-    
+
     def update_dynamic_options(self) -> None:
         """Update the dynamic options based on selected media type."""
         container = self.query_one("#dynamic-options", Container)
         container.remove_children()
-        
+
         # Build list of widgets to mount based on media type
         widgets_to_mount = []
-        
+
         if self.media_type in ["video", "audio"]:
             transcription_language = Select(
                 [("English", "en"), ("Auto-detect", "auto")],
                 id="transcription-language",
             )
             transcription_language.value = "en"
-            widgets_to_mount.extend([
-                Label("Transcription Options:"),
-                Input(
-                    placeholder="Transcription model",
-                    value="deepdml/faster-whisper-large-v3-turbo-ct2",
-                    id="transcription-model"
-                ),
-                transcription_language,
-                Checkbox("Include timestamps", value=True, id="include-timestamps"),
-                Checkbox("Enable diarization", id="enable-diarization"),
-            ])
-        
+            widgets_to_mount.extend(
+                [
+                    Label("Transcription Options:"),
+                    Input(
+                        placeholder="Transcription model",
+                        value="deepdml/faster-whisper-large-v3-turbo-ct2",
+                        id="transcription-model",
+                    ),
+                    transcription_language,
+                    Checkbox("Include timestamps", value=True, id="include-timestamps"),
+                    Checkbox("Enable diarization", id="enable-diarization"),
+                ]
+            )
+
         elif self.media_type == "pdf":
             pdf_engine = Select(
                 [
@@ -703,11 +721,13 @@ class RemoteIngestionPanel(ScrollableContainer):
                 id="pdf-engine",
             )
             pdf_engine.value = "pymupdf4llm"
-            widgets_to_mount.extend([
-                Label("PDF Options:"),
-                pdf_engine,
-            ])
-        
+            widgets_to_mount.extend(
+                [
+                    Label("PDF Options:"),
+                    pdf_engine,
+                ]
+            )
+
         elif self.media_type == "ebook":
             extraction_method = Select(
                 [
@@ -718,11 +738,13 @@ class RemoteIngestionPanel(ScrollableContainer):
                 id="extraction-method",
             )
             extraction_method.value = "filtered"
-            widgets_to_mount.extend([
-                Label("E-Book Options:"),
-                extraction_method,
-            ])
-        
+            widgets_to_mount.extend(
+                [
+                    Label("E-Book Options:"),
+                    extraction_method,
+                ]
+            )
+
         # Add common chunking options section
         # Create a container for chunking options instead of Collapsible for dynamic content
         chunk_method = Select(
@@ -735,18 +757,20 @@ class RemoteIngestionPanel(ScrollableContainer):
             id="chunk-method",
         )
         chunk_method.value = "sentences"
-        widgets_to_mount.extend([
-            Label("Chunking Options:", classes="section-label"),
-            Checkbox("Enable chunking", value=True, id="enable-chunking"),
-            chunk_method,
-            Label("Chunk size:"),
-            Input("500", id="chunk-size", validators=[Number()]),
-        ])
-        
+        widgets_to_mount.extend(
+            [
+                Label("Chunking Options:", classes="section-label"),
+                Checkbox("Enable chunking", value=True, id="enable-chunking"),
+                chunk_method,
+                Label("Chunk size:"),
+                Input("500", id="chunk-size", validators=[Number()]),
+            ]
+        )
+
         # Mount all widgets at once
         if widgets_to_mount:
             container.mount(*widgets_to_mount)
-    
+
     @on(Button.Pressed, "#api-process-btn")
     def handle_process_button(self) -> None:
         """Handle the API process button click."""
@@ -754,7 +778,7 @@ class RemoteIngestionPanel(ScrollableContainer):
         if not urls_text.strip():
             self.notify("Please enter at least one URL", severity="warning")
             return
-        
+
         if not self.processing:
             self.run_worker(self.process_remote_content(urls_text), exclusive=True)
 
@@ -802,24 +826,32 @@ class RemoteIngestionPanel(ScrollableContainer):
         """Cancel the last submitted server ingest batch."""
         if self.processing:
             return
-        self.run_worker(self.cancel_last_batch_jobs(reason="user-requested"), exclusive=True)
+        self.run_worker(
+            self.cancel_last_batch_jobs(reason="user-requested"), exclusive=True
+        )
 
     @on(Button.Pressed, "#cancel-job-btn")
     def handle_cancel_selected_job(self) -> None:
         """Cancel the selected server ingest job."""
         if self.processing:
             return
-        self.run_worker(self.cancel_selected_job(reason="user-requested"), exclusive=True)
-    
+        self.run_worker(
+            self.cancel_selected_job(reason="user-requested"), exclusive=True
+        )
+
     async def process_remote_content(self, urls_text: str) -> None:
         """Submit server-backed media ingest jobs."""
         try:
             self.runtime_backend = self._current_runtime_backend()
             if self.runtime_backend != "server":
-                self.notify("Server ingest jobs require server mode.", severity="warning")
+                self.notify(
+                    "Server ingest jobs require server mode.", severity="warning"
+                )
                 return
             if self.scope_service is None:
-                self.notify("Media ingest job service is unavailable.", severity="error")
+                self.notify(
+                    "Media ingest job service is unavailable.", severity="error"
+                )
                 return
 
             self.processing = True
@@ -827,27 +859,41 @@ class RemoteIngestionPanel(ScrollableContainer):
 
             # Parse URLs
             urls = [url.strip() for url in urls_text.strip().split("\n") if url.strip()]
-            
+
             # Prepare request based on media type
             request_data = {
                 "perform_chunking": self.query_one("#enable-chunking", Checkbox).value,
                 "chunk_method": self.query_one("#chunk-method", Select).value,
                 "chunk_size": int(self.query_one("#chunk-size", Input).value or "500"),
             }
-            
+
             # Add media-specific options
             if self.media_type in ["video", "audio"]:
-                request_data.update({
-                    "transcription_model": self.query_one("#transcription-model", Input).value,
-                    "transcription_language": self.query_one("#transcription-language", Select).value,
-                    "timestamp_option": self.query_one("#include-timestamps", Checkbox).value,
-                    "diarize": self.query_one("#enable-diarization", Checkbox).value,
-                })
+                request_data.update(
+                    {
+                        "transcription_model": self.query_one(
+                            "#transcription-model", Input
+                        ).value,
+                        "transcription_language": self.query_one(
+                            "#transcription-language", Select
+                        ).value,
+                        "timestamp_option": self.query_one(
+                            "#include-timestamps", Checkbox
+                        ).value,
+                        "diarize": self.query_one(
+                            "#enable-diarization", Checkbox
+                        ).value,
+                    }
+                )
             elif self.media_type == "pdf":
-                request_data["pdf_parsing_engine"] = self.query_one("#pdf-engine", Select).value
+                request_data["pdf_parsing_engine"] = self.query_one(
+                    "#pdf-engine", Select
+                ).value
             elif self.media_type == "ebook":
-                request_data["extraction_method"] = self.query_one("#extraction-method", Select).value
-            
+                request_data["extraction_method"] = self.query_one(
+                    "#extraction-method", Select
+                ).value
+
             # Submit jobs through the runtime-policy-aware media seam.
             logger.info(f"Submitting {len(urls)} URL(s) as server media ingest job(s)")
             response = await self._maybe_await(
@@ -861,19 +907,31 @@ class RemoteIngestionPanel(ScrollableContainer):
             self._render_submission_response(dict(response or {}))
             self.notify("Server ingest jobs submitted", severity="information")
         except Exception as exc:
-            logger.opt(exception=True).error(f"Error submitting server ingest jobs: {exc}")
+            logger.opt(exception=True).error(
+                f"Error submitting server ingest jobs: {exc}"
+            )
             self.query_one("#remote-job-status", Static).update(f"Error: {exc}")
             self.notify(f"Server ingest job submission failed: {exc}", severity="error")
         finally:
             self.processing = False
-            self._set_process_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
-            self._set_recent_watch_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
-            self._set_batch_controls_disabled(
-                self.runtime_backend != "server" or self.scope_service is None or not self.last_batch_id
+            self._set_process_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
             )
-            self._set_batch_lookup_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
+            self._set_recent_watch_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
+            )
+            self._set_batch_controls_disabled(
+                self.runtime_backend != "server"
+                or self.scope_service is None
+                or not self.last_batch_id
+            )
+            self._set_batch_lookup_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
+            )
             self._set_job_controls_disabled(
-                self.runtime_backend != "server" or self.scope_service is None or not self.current_jobs
+                self.runtime_backend != "server"
+                or self.scope_service is None
+                or not self.current_jobs
             )
 
     async def process_web_content_ingest(self, urls_text: str) -> None:
@@ -881,10 +939,18 @@ class RemoteIngestionPanel(ScrollableContainer):
         try:
             self.runtime_backend = self._current_runtime_backend()
             if self.runtime_backend != "server":
-                self.notify("Server web-content ingest requires server mode.", severity="warning")
+                self.notify(
+                    "Server web-content ingest requires server mode.",
+                    severity="warning",
+                )
                 return
-            if self.scope_service is None or not hasattr(self.scope_service, "ingest_web_content"):
-                self.notify("Server web-content ingest service is unavailable.", severity="error")
+            if self.scope_service is None or not hasattr(
+                self.scope_service, "ingest_web_content"
+            ):
+                self.notify(
+                    "Server web-content ingest service is unavailable.",
+                    severity="error",
+                )
                 return
 
             self.processing = True
@@ -899,7 +965,9 @@ class RemoteIngestionPanel(ScrollableContainer):
                 "scrape_method": self.query_one("#web-scrape-method", Select).value,
                 "max_pages": int(self.query_one("#web-max-pages", Input).value or "3"),
                 "max_depth": int(self.query_one("#web-max-depth", Input).value or "3"),
-                "perform_analysis": self.query_one("#web-perform-analysis", Checkbox).value,
+                "perform_analysis": self.query_one(
+                    "#web-perform-analysis", Checkbox
+                ).value,
                 "perform_chunking": self.query_one("#enable-chunking", Checkbox).value,
                 "chunk_method": self.query_one("#chunk-method", Select).value,
                 "chunk_size": int(self.query_one("#chunk-size", Input).value or "500"),
@@ -916,19 +984,31 @@ class RemoteIngestionPanel(ScrollableContainer):
             self._render_web_content_response(dict(response or {}))
             self.notify("Server web-content ingest completed", severity="information")
         except Exception as exc:
-            logger.opt(exception=True).error(f"Error running server web-content ingest: {exc}")
+            logger.opt(exception=True).error(
+                f"Error running server web-content ingest: {exc}"
+            )
             self.query_one("#remote-job-status", Static).update(f"Error: {exc}")
             self.notify(f"Server web-content ingest failed: {exc}", severity="error")
         finally:
             self.processing = False
-            self._set_process_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
-            self._set_recent_watch_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
-            self._set_batch_controls_disabled(
-                self.runtime_backend != "server" or self.scope_service is None or not self.last_batch_id
+            self._set_process_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
             )
-            self._set_batch_lookup_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
+            self._set_recent_watch_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
+            )
+            self._set_batch_controls_disabled(
+                self.runtime_backend != "server"
+                or self.scope_service is None
+                or not self.last_batch_id
+            )
+            self._set_batch_lookup_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
+            )
             self._set_job_controls_disabled(
-                self.runtime_backend != "server" or self.scope_service is None or not self.current_jobs
+                self.runtime_backend != "server"
+                or self.scope_service is None
+                or not self.current_jobs
             )
 
     async def watch_recent_job_events(self, *, after_id: int = 0) -> None:
@@ -940,29 +1020,47 @@ class RemoteIngestionPanel(ScrollableContainer):
 
         stream_events = getattr(self.scope_service, "stream_ingest_job_events", None)
         if stream_events is None:
-            self.notify("Server ingest job event stream is unavailable.", severity="error")
+            self.notify(
+                "Server ingest job event stream is unavailable.", severity="error"
+            )
             return
 
         self.processing = True
         self._set_recent_watch_controls_disabled(True)
         self._set_batch_controls_disabled(True)
         try:
-            async for event in stream_events(mode="server", batch_id=None, after_id=after_id):
+            async for event in stream_events(
+                mode="server", batch_id=None, after_id=after_id
+            ):
                 self._apply_job_stream_event(dict(event or {}), recent=True)
-            self.notify("Recent server ingest job event stream ended", severity="information")
+            self.notify(
+                "Recent server ingest job event stream ended", severity="information"
+            )
         except Exception as exc:
-            logger.opt(exception=True).error(f"Error watching recent server ingest jobs: {exc}")
+            logger.opt(exception=True).error(
+                f"Error watching recent server ingest jobs: {exc}"
+            )
             self.query_one("#remote-job-status", Static).update(f"Error: {exc}")
-            self.notify(f"Recent server ingest job watch failed: {exc}", severity="error")
+            self.notify(
+                f"Recent server ingest job watch failed: {exc}", severity="error"
+            )
         finally:
             self.processing = False
-            self._set_recent_watch_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
-            self._set_batch_controls_disabled(
-                self.runtime_backend != "server" or self.scope_service is None or not self.last_batch_id
+            self._set_recent_watch_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
             )
-            self._set_batch_lookup_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
+            self._set_batch_controls_disabled(
+                self.runtime_backend != "server"
+                or self.scope_service is None
+                or not self.last_batch_id
+            )
+            self._set_batch_lookup_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
+            )
             self._set_job_controls_disabled(
-                self.runtime_backend != "server" or self.scope_service is None or not self.current_jobs
+                self.runtime_backend != "server"
+                or self.scope_service is None
+                or not self.current_jobs
             )
 
     async def load_batch_by_id(self, batch_id: str | None = None) -> None:
@@ -970,7 +1068,9 @@ class RemoteIngestionPanel(ScrollableContainer):
         requested_batch_id = str(batch_id or "").strip()
         if not requested_batch_id:
             try:
-                requested_batch_id = self.query_one("#server-ingest-batch-id", Input).value.strip()
+                requested_batch_id = self.query_one(
+                    "#server-ingest-batch-id", Input
+                ).value.strip()
             except Exception:
                 requested_batch_id = ""
         if not requested_batch_id:
@@ -991,28 +1091,44 @@ class RemoteIngestionPanel(ScrollableContainer):
 
         stream_events = getattr(self.scope_service, "stream_ingest_job_events", None)
         if stream_events is None:
-            self.notify("Server ingest job event stream is unavailable.", severity="error")
+            self.notify(
+                "Server ingest job event stream is unavailable.", severity="error"
+            )
             return
 
         self.processing = True
         self._set_batch_controls_disabled(True)
         try:
-            async for event in stream_events(mode="server", batch_id=self.last_batch_id, after_id=after_id):
+            async for event in stream_events(
+                mode="server", batch_id=self.last_batch_id, after_id=after_id
+            ):
                 self._apply_job_stream_event(dict(event or {}))
-            self.notify("Server ingest batch event stream ended", severity="information")
+            self.notify(
+                "Server ingest batch event stream ended", severity="information"
+            )
         except Exception as exc:
-            logger.opt(exception=True).error(f"Error watching server ingest batch: {exc}")
+            logger.opt(exception=True).error(
+                f"Error watching server ingest batch: {exc}"
+            )
             self.query_one("#remote-job-status", Static).update(f"Error: {exc}")
             self.notify(f"Server ingest batch watch failed: {exc}", severity="error")
         finally:
             self.processing = False
-            self._set_recent_watch_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
-            self._set_batch_controls_disabled(
-                self.runtime_backend != "server" or self.scope_service is None or not self.last_batch_id
+            self._set_recent_watch_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
             )
-            self._set_batch_lookup_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
+            self._set_batch_controls_disabled(
+                self.runtime_backend != "server"
+                or self.scope_service is None
+                or not self.last_batch_id
+            )
+            self._set_batch_lookup_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
+            )
             self._set_job_controls_disabled(
-                self.runtime_backend != "server" or self.scope_service is None or not self.current_jobs
+                self.runtime_backend != "server"
+                or self.scope_service is None
+                or not self.current_jobs
             )
 
     async def refresh_last_batch_jobs(self, *, limit: int = 100) -> None:
@@ -1038,18 +1154,28 @@ class RemoteIngestionPanel(ScrollableContainer):
             self._render_job_list_response(dict(response or {}))
             self.notify("Server ingest batch refreshed", severity="information")
         except Exception as exc:
-            logger.opt(exception=True).error(f"Error refreshing server ingest batch: {exc}")
+            logger.opt(exception=True).error(
+                f"Error refreshing server ingest batch: {exc}"
+            )
             self.query_one("#remote-job-status", Static).update(f"Error: {exc}")
             self.notify(f"Server ingest batch refresh failed: {exc}", severity="error")
         finally:
             self.processing = False
-            self._set_recent_watch_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
-            self._set_batch_controls_disabled(
-                self.runtime_backend != "server" or self.scope_service is None or not self.last_batch_id
+            self._set_recent_watch_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
             )
-            self._set_batch_lookup_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
+            self._set_batch_controls_disabled(
+                self.runtime_backend != "server"
+                or self.scope_service is None
+                or not self.last_batch_id
+            )
+            self._set_batch_lookup_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
+            )
             self._set_job_controls_disabled(
-                self.runtime_backend != "server" or self.scope_service is None or not self.current_jobs
+                self.runtime_backend != "server"
+                or self.scope_service is None
+                or not self.current_jobs
             )
 
     async def cancel_last_batch_jobs(self, *, reason: str | None = None) -> None:
@@ -1073,20 +1199,34 @@ class RemoteIngestionPanel(ScrollableContainer):
                 )
             )
             self._render_batch_cancel_response(dict(response or {}))
-            self.notify("Server ingest batch cancellation requested", severity="information")
+            self.notify(
+                "Server ingest batch cancellation requested", severity="information"
+            )
         except Exception as exc:
-            logger.opt(exception=True).error(f"Error cancelling server ingest batch: {exc}")
+            logger.opt(exception=True).error(
+                f"Error cancelling server ingest batch: {exc}"
+            )
             self.query_one("#remote-job-status", Static).update(f"Error: {exc}")
-            self.notify(f"Server ingest batch cancellation failed: {exc}", severity="error")
+            self.notify(
+                f"Server ingest batch cancellation failed: {exc}", severity="error"
+            )
         finally:
             self.processing = False
-            self._set_recent_watch_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
-            self._set_batch_controls_disabled(
-                self.runtime_backend != "server" or self.scope_service is None or not self.last_batch_id
+            self._set_recent_watch_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
             )
-            self._set_batch_lookup_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
+            self._set_batch_controls_disabled(
+                self.runtime_backend != "server"
+                or self.scope_service is None
+                or not self.last_batch_id
+            )
+            self._set_batch_lookup_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
+            )
             self._set_job_controls_disabled(
-                self.runtime_backend != "server" or self.scope_service is None or not self.current_jobs
+                self.runtime_backend != "server"
+                or self.scope_service is None
+                or not self.current_jobs
             )
 
     def _selected_job_id(self) -> Optional[str]:
@@ -1120,21 +1260,37 @@ class RemoteIngestionPanel(ScrollableContainer):
                     reason=reason,
                 )
             )
-            self._render_job_cancel_response(dict(response or {}), fallback_job_id=job_id)
-            self.notify("Server ingest job cancellation requested", severity="information")
+            self._render_job_cancel_response(
+                dict(response or {}), fallback_job_id=job_id
+            )
+            self.notify(
+                "Server ingest job cancellation requested", severity="information"
+            )
         except Exception as exc:
-            logger.opt(exception=True).error(f"Error cancelling server ingest job {job_id}: {exc}")
+            logger.opt(exception=True).error(
+                f"Error cancelling server ingest job {job_id}: {exc}"
+            )
             self.query_one("#remote-job-status", Static).update(f"Error: {exc}")
-            self.notify(f"Server ingest job cancellation failed: {exc}", severity="error")
+            self.notify(
+                f"Server ingest job cancellation failed: {exc}", severity="error"
+            )
         finally:
             self.processing = False
-            self._set_recent_watch_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
-            self._set_batch_controls_disabled(
-                self.runtime_backend != "server" or self.scope_service is None or not self.last_batch_id
+            self._set_recent_watch_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
             )
-            self._set_batch_lookup_controls_disabled(self.runtime_backend != "server" or self.scope_service is None)
+            self._set_batch_controls_disabled(
+                self.runtime_backend != "server"
+                or self.scope_service is None
+                or not self.last_batch_id
+            )
+            self._set_batch_lookup_controls_disabled(
+                self.runtime_backend != "server" or self.scope_service is None
+            )
             self._set_job_controls_disabled(
-                self.runtime_backend != "server" or self.scope_service is None or not self.current_jobs
+                self.runtime_backend != "server"
+                or self.scope_service is None
+                or not self.current_jobs
             )
 
     @staticmethod
@@ -1180,7 +1336,9 @@ class RemoteIngestionPanel(ScrollableContainer):
         job_select.disabled = False
         cancel_button.disabled = False
 
-    def _apply_job_stream_event(self, event: Dict[str, Any], *, recent: bool = False) -> None:
+    def _apply_job_stream_event(
+        self, event: Dict[str, Any], *, recent: bool = False
+    ) -> None:
         event_name = str(event.get("event") or "")
         if event_name == "snapshot":
             self._render_job_list_response(
@@ -1198,7 +1356,11 @@ class RemoteIngestionPanel(ScrollableContainer):
         attrs = dict(event.get("attrs") or {})
         raw_job_id = event.get("job_id")
         canonical_id = event.get("id")
-        candidates = {str(value) for value in (raw_job_id, canonical_id) if value not in (None, "")}
+        candidates = {
+            str(value)
+            for value in (raw_job_id, canonical_id)
+            if value not in (None, "")
+        }
         if isinstance(canonical_id, str) and ":" in canonical_id:
             candidates.add(canonical_id.rsplit(":", 1)[-1])
 
@@ -1277,7 +1439,11 @@ class RemoteIngestionPanel(ScrollableContainer):
         if batch_id:
             self.last_batch_id = str(batch_id)
         lines = [f"Batch: {batch_id or 'unknown'}"]
-        jobs = [dict(job) for job in list(response.get("jobs") or []) if isinstance(job, dict)]
+        jobs = [
+            dict(job)
+            for job in list(response.get("jobs") or [])
+            if isinstance(job, dict)
+        ]
         self._update_job_selection(jobs)
         for job in jobs:
             lines.append(self._format_job_status_line(job))
@@ -1287,12 +1453,22 @@ class RemoteIngestionPanel(ScrollableContainer):
             lines.extend(f"- {error}" for error in errors)
         self.query_one("#remote-job-status", Static).update("\n".join(lines))
 
-    def _render_job_list_response(self, response: Dict[str, Any], *, recent: bool = False) -> None:
+    def _render_job_list_response(
+        self, response: Dict[str, Any], *, recent: bool = False
+    ) -> None:
         batch_id = response.get("batch_id") or self.last_batch_id
         if batch_id:
             self.last_batch_id = str(batch_id)
-        lines = ["Recent visible server ingest jobs"] if recent and not batch_id else [f"Batch: {batch_id or 'unknown'}"]
-        jobs = [dict(job) for job in list(response.get("jobs") or []) if isinstance(job, dict)]
+        lines = (
+            ["Recent visible server ingest jobs"]
+            if recent and not batch_id
+            else [f"Batch: {batch_id or 'unknown'}"]
+        )
+        jobs = [
+            dict(job)
+            for job in list(response.get("jobs") or [])
+            if isinstance(job, dict)
+        ]
         self._update_job_selection(jobs)
         for job in jobs:
             lines.append(self._format_job_status_line(job))
@@ -1316,7 +1492,9 @@ class RemoteIngestionPanel(ScrollableContainer):
             lines.append(str(response["message"]))
         self.query_one("#remote-job-status", Static).update("\n".join(lines))
 
-    def _render_job_cancel_response(self, response: Dict[str, Any], *, fallback_job_id: str) -> None:
+    def _render_job_cancel_response(
+        self, response: Dict[str, Any], *, fallback_job_id: str
+    ) -> None:
         job_id = response.get("job_id") or fallback_job_id
         lines = [
             f"Job {job_id} cancellation requested",
@@ -1342,7 +1520,9 @@ class RemoteIngestionPanel(ScrollableContainer):
             lines.append(f"- {title}: {status}")
         media_ids = list(response.get("media_ids") or [])
         if media_ids:
-            lines.append(f"Media IDs: {', '.join(str(media_id) for media_id in media_ids)}")
+            lines.append(
+                f"Media IDs: {', '.join(str(media_id) for media_id in media_ids)}"
+            )
         self.query_one("#remote-job-status", Static).update("\n".join(lines))
 
 
@@ -1400,16 +1580,24 @@ class WebClipperPanel(ScrollableContainer):
     def __init__(self, app_instance: "TldwCli", **kwargs: Any):
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        self.scope_service = getattr(app_instance, "server_web_clipper_scope_service", None)
+        self.scope_service = getattr(
+            app_instance, "server_web_clipper_scope_service", None
+        )
         self.runtime_state = getattr(app_instance, "media_runtime_state", None)
 
     def compose(self) -> ComposeResult:
-        yield Static("Server Web Clipper requires server mode.", id="web-clipper-disabled")
+        yield Static(
+            "Server Web Clipper requires server mode.", id="web-clipper-disabled"
+        )
         with Container(id="web-clipper-main"):
             with Container(classes="web-clipper-section"):
                 yield Label("Clip")
-                yield Input(placeholder="Clip ID / idempotency key", id="web-clipper-clip-id")
-                yield Input(placeholder="Source URL", id="web-clipper-url", validators=[URL()])
+                yield Input(
+                    placeholder="Clip ID / idempotency key", id="web-clipper-clip-id"
+                )
+                yield Input(
+                    placeholder="Source URL", id="web-clipper-url", validators=[URL()]
+                )
                 yield Input(placeholder="Source title", id="web-clipper-title")
                 yield Input("article", placeholder="Clip type", id="web-clipper-type")
                 destination = Select(
@@ -1418,9 +1606,14 @@ class WebClipperPanel(ScrollableContainer):
                 )
                 destination.value = "note"
                 yield destination
-                yield Input(placeholder="Workspace ID (required for workspace/both)", id="web-clipper-workspace-id")
+                yield Input(
+                    placeholder="Workspace ID (required for workspace/both)",
+                    id="web-clipper-workspace-id",
+                )
                 yield Input(placeholder="Note title", id="web-clipper-note-title")
-                yield Input(placeholder="Keywords (comma-separated)", id="web-clipper-keywords")
+                yield Input(
+                    placeholder="Keywords (comma-separated)", id="web-clipper-keywords"
+                )
                 yield TextArea("", id="web-clipper-visible-body")
                 yield TextArea("", id="web-clipper-selected-text")
                 yield Label("Capture metadata JSON:")
@@ -1430,7 +1623,9 @@ class WebClipperPanel(ScrollableContainer):
                 yield Checkbox("Request OCR", id="web-clipper-run-ocr")
                 yield Checkbox("Request VLM", id="web-clipper-run-vlm")
                 with Horizontal(classes="web-clipper-actions"):
-                    yield Button("Save Clip", variant="primary", id="web-clipper-save-btn")
+                    yield Button(
+                        "Save Clip", variant="primary", id="web-clipper-save-btn"
+                    )
                     yield Button("Load Status", id="web-clipper-status-btn")
 
             with Container(classes="web-clipper-section"):
@@ -1442,14 +1637,28 @@ class WebClipperPanel(ScrollableContainer):
                 enrichment_type.value = "ocr"
                 yield enrichment_type
                 enrichment_status = Select(
-                    [("Pending", "pending"), ("Running", "running"), ("Complete", "complete"), ("Failed", "failed")],
+                    [
+                        ("Pending", "pending"),
+                        ("Running", "running"),
+                        ("Complete", "complete"),
+                        ("Failed", "failed"),
+                    ],
                     id="web-clipper-enrichment-status",
                 )
                 enrichment_status.value = "complete"
                 yield enrichment_status
-                yield Input("1", placeholder="Source note version", id="web-clipper-enrichment-version", validators=[Number()])
-                yield Input(placeholder="Inline summary", id="web-clipper-enrichment-summary")
-                yield Input(placeholder="Error (optional)", id="web-clipper-enrichment-error")
+                yield Input(
+                    "1",
+                    placeholder="Source note version",
+                    id="web-clipper-enrichment-version",
+                    validators=[Number()],
+                )
+                yield Input(
+                    placeholder="Inline summary", id="web-clipper-enrichment-summary"
+                )
+                yield Input(
+                    placeholder="Error (optional)", id="web-clipper-enrichment-error"
+                )
                 yield Label("Structured enrichment JSON:")
                 yield TextArea("{}", id="web-clipper-enrichment-json")
                 with Horizontal(classes="web-clipper-actions"):
@@ -1467,7 +1676,10 @@ class WebClipperPanel(ScrollableContainer):
     def _current_runtime_backend(self) -> str:
         runtime_backend = self.runtime_backend
         if self.runtime_state is not None:
-            runtime_backend = str(getattr(self.runtime_state, "runtime_backend", runtime_backend) or "local")
+            runtime_backend = str(
+                getattr(self.runtime_state, "runtime_backend", runtime_backend)
+                or "local"
+            )
         normalized_backend = str(runtime_backend or "local").strip().lower()
         if normalized_backend not in {"local", "server"}:
             return "local"
@@ -1511,9 +1723,13 @@ class WebClipperPanel(ScrollableContainer):
         self._show_server_ui(enabled)
         self._set_controls_disabled(not enabled)
         if self.runtime_backend != "server":
-            self.query_one("#web-clipper-status", Static).update("Server Web Clipper requires server mode.")
+            self.query_one("#web-clipper-status", Static).update(
+                "Server Web Clipper requires server mode."
+            )
         elif self.scope_service is None:
-            self.query_one("#web-clipper-status", Static).update("Server Web Clipper service is unavailable.")
+            self.query_one("#web-clipper-status", Static).update(
+                "Server Web Clipper service is unavailable."
+            )
 
     def on_mount(self) -> None:
         self.run_worker(self.refresh_for_mode(), exclusive=True)
@@ -1535,27 +1751,46 @@ class WebClipperPanel(ScrollableContainer):
         return self._clean_string(self.query_one("#web-clipper-clip-id", Input).value)
 
     def _render_payload(self, title: str, payload: Mapping[str, Any]) -> None:
-        formatted_payload = json.dumps(dict(payload), indent=2, sort_keys=True, default=str)
-        self.query_one("#web-clipper-status", Static).update(f"{title}\n{formatted_payload}")
+        formatted_payload = json.dumps(
+            dict(payload), indent=2, sort_keys=True, default=str
+        )
+        self.query_one("#web-clipper-status", Static).update(
+            f"{title}\n{formatted_payload}"
+        )
 
     def _build_save_payload(self) -> dict[str, Any]:
         clip_id = self._clip_id()
         source_url = self._clean_string(self.query_one("#web-clipper-url", Input).value)
-        source_title = self._clean_string(self.query_one("#web-clipper-title", Input).value)
-        clip_type = self._clean_string(self.query_one("#web-clipper-type", Input).value) or "article"
+        source_title = self._clean_string(
+            self.query_one("#web-clipper-title", Input).value
+        )
+        clip_type = (
+            self._clean_string(self.query_one("#web-clipper-type", Input).value)
+            or "article"
+        )
         if not clip_id or not source_url or not source_title:
             raise ValueError("Clip ID, source URL, and source title are required.")
 
-        destination_mode = str(self.query_one("#web-clipper-destination-mode", Select).value or "note")
-        workspace_id = self._clean_string(self.query_one("#web-clipper-workspace-id", Input).value)
+        destination_mode = str(
+            self.query_one("#web-clipper-destination-mode", Select).value or "note"
+        )
+        workspace_id = self._clean_string(
+            self.query_one("#web-clipper-workspace-id", Input).value
+        )
         workspace = {"workspace_id": workspace_id} if workspace_id else None
         if destination_mode in {"workspace", "both"} and workspace is None:
-            raise ValueError("Workspace ID is required when destination targets a workspace.")
+            raise ValueError(
+                "Workspace ID is required when destination targets a workspace."
+            )
 
-        note_title = self._clean_string(self.query_one("#web-clipper-note-title", Input).value)
+        note_title = self._clean_string(
+            self.query_one("#web-clipper-note-title", Input).value
+        )
         keywords = [
             keyword.strip()
-            for keyword in self._clean_string(self.query_one("#web-clipper-keywords", Input).value).split(",")
+            for keyword in self._clean_string(
+                self.query_one("#web-clipper-keywords", Input).value
+            ).split(",")
             if keyword.strip()
         ]
         note: dict[str, Any] = {}
@@ -1582,12 +1817,16 @@ class WebClipperPanel(ScrollableContainer):
             "note": note,
             "workspace": workspace,
             "content": content,
-            "attachments": list(self._parse_json_text("#web-clipper-attachments-json", default=[])),
+            "attachments": list(
+                self._parse_json_text("#web-clipper-attachments-json", default=[])
+            ),
             "enhancements": {
                 "run_ocr": bool(self.query_one("#web-clipper-run-ocr", Checkbox).value),
                 "run_vlm": bool(self.query_one("#web-clipper-run-vlm", Checkbox).value),
             },
-            "capture_metadata": dict(self._parse_json_text("#web-clipper-capture-metadata-json", default={})),
+            "capture_metadata": dict(
+                self._parse_json_text("#web-clipper-capture-metadata-json", default={})
+            ),
         }
 
     @on(Button.Pressed, "#web-clipper-save-btn")
@@ -1609,7 +1848,9 @@ class WebClipperPanel(ScrollableContainer):
             return
         try:
             payload = self._build_save_payload()
-            result = await self._maybe_await(self.scope_service.save_clip(mode="server", **payload))
+            result = await self._maybe_await(
+                self.scope_service.save_clip(mode="server", **payload)
+            )
             self._render_payload("Web Clipper save result", dict(result or {}))
             self.notify("Server Web Clipper save completed", severity="information")
         except Exception as exc:
@@ -1627,7 +1868,9 @@ class WebClipperPanel(ScrollableContainer):
             self.notify("Enter a clip ID to load.", severity="warning")
             return
         try:
-            result = await self._maybe_await(self.scope_service.get_clip_status(mode="server", clip_id=clip_id))
+            result = await self._maybe_await(
+                self.scope_service.get_clip_status(mode="server", clip_id=clip_id)
+            )
             self._render_payload("Web Clipper status", dict(result or {}))
         except Exception as exc:
             logger.opt(exception=True).error(f"Server Web Clipper status failed: {exc}")
@@ -1641,35 +1884,61 @@ class WebClipperPanel(ScrollableContainer):
             return
         clip_id = self._clip_id()
         if not clip_id:
-            self.notify("Enter a clip ID before persisting enrichment.", severity="warning")
+            self.notify(
+                "Enter a clip ID before persisting enrichment.", severity="warning"
+            )
             return
         try:
-            source_note_version = int(self.query_one("#web-clipper-enrichment-version", Input).value or "1")
-            error_text = self._clean_string(self.query_one("#web-clipper-enrichment-error", Input).value) or None
+            source_note_version = int(
+                self.query_one("#web-clipper-enrichment-version", Input).value or "1"
+            )
+            error_text = (
+                self._clean_string(
+                    self.query_one("#web-clipper-enrichment-error", Input).value
+                )
+                or None
+            )
             payload = {
-                "enrichment_type": str(self.query_one("#web-clipper-enrichment-type", Select).value or "ocr"),
-                "status": str(self.query_one("#web-clipper-enrichment-status", Select).value or "pending"),
+                "enrichment_type": str(
+                    self.query_one("#web-clipper-enrichment-type", Select).value
+                    or "ocr"
+                ),
+                "status": str(
+                    self.query_one("#web-clipper-enrichment-status", Select).value
+                    or "pending"
+                ),
                 "source_note_version": source_note_version,
                 "inline_summary": self._clean_string(
                     self.query_one("#web-clipper-enrichment-summary", Input).value
-                ) or None,
-                "structured_payload": dict(self._parse_json_text("#web-clipper-enrichment-json", default={})),
+                )
+                or None,
+                "structured_payload": dict(
+                    self._parse_json_text("#web-clipper-enrichment-json", default={})
+                ),
                 "error": error_text,
             }
             result = await self._maybe_await(
-                self.scope_service.persist_enrichment(mode="server", clip_id=clip_id, **payload)
+                self.scope_service.persist_enrichment(
+                    mode="server", clip_id=clip_id, **payload
+                )
             )
             self._render_payload("Web Clipper enrichment result", dict(result or {}))
-            self.notify("Server Web Clipper enrichment persisted", severity="information")
+            self.notify(
+                "Server Web Clipper enrichment persisted", severity="information"
+            )
         except Exception as exc:
-            logger.opt(exception=True).error(f"Server Web Clipper enrichment failed: {exc}")
+            logger.opt(exception=True).error(
+                f"Server Web Clipper enrichment failed: {exc}"
+            )
             self.query_one("#web-clipper-status", Static).update(f"Error: {exc}")
-            self.notify(f"Server Web Clipper enrichment failed: {exc}", severity="error")
+            self.notify(
+                f"Server Web Clipper enrichment failed: {exc}", severity="error"
+            )
 
 
 class IngestionResultsPanel(Container):
     """Panel for displaying ingestion results."""
-    
+
     DEFAULT_CSS = """
     IngestionResultsPanel {
         layout: vertical;
@@ -1695,17 +1964,17 @@ class IngestionResultsPanel(Container):
         height: auto;
     }
     """
-    
+
     def compose(self) -> ComposeResult:
         """Compose the results display panel."""
         with Container(classes="results-header"):
             yield Label("Processing Results:", id="results-label")
         yield RichLog(id="results-log", highlight=True, markup=True)
-    
+
     def add_result(self, result: Dict[str, Any]) -> None:
         """Add a result to the display."""
         log = self.query_one("#results-log", RichLog)
-        
+
         status = result.get("status", "unknown")
         if status == "success":
             icon = "✓"
@@ -1716,20 +1985,20 @@ class IngestionResultsPanel(Container):
         else:
             icon = "?"
             style = "yellow"
-        
+
         # Format the result message
         file_or_url = result.get("file") or result.get("url", "Unknown")
         message = f"[{style}]{icon}[/{style}] {file_or_url}"
-        
+
         if status == "success":
             if media_id := result.get("media_id"):
                 message += f" (ID: {media_id})"
         elif status == "error":
             if error := result.get("error"):
                 message += f"\n  Error: {error}"
-        
+
         log.write(message)
-    
+
     def clear_results(self) -> None:
         """Clear all results from the display."""
         log = self.query_one("#results-log", RichLog)
@@ -1739,11 +2008,11 @@ class IngestionResultsPanel(Container):
 class MediaIngestWindowRebuilt(Widget):
     """
     Main Media Ingestion Window following Textual best practices.
-    
+
     This widget provides a tabbed interface for ingesting media content
     from local files and for managing server-backed ingestion sources.
     """
-    
+
     DEFAULT_CSS = """
     MediaIngestWindowRebuilt {
         layout: vertical;
@@ -1772,39 +2041,47 @@ class MediaIngestWindowRebuilt(Widget):
         padding: 0;
     }
     """
-    
+
     # Reactive properties
     current_tab: reactive[str] = reactive("local")
     is_processing: reactive[bool] = reactive(False)
-    
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+
+    def __init__(self, app_instance: "TldwCli", **kwargs):
         """Initialize the Media Ingestion Window."""
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.runtime_state = getattr(app_instance, "media_runtime_state", None)
         logger.info("MediaIngestWindowRebuilt initialized")
-    
+
     def compose(self) -> ComposeResult:
         """Compose the main ingestion interface."""
         with TabbedContent(initial="local-tab"):
             with TabPane("Local Files", id="local-tab"):
-                self.local_panel = LocalIngestionPanel(self.app_instance, id="local-panel")
+                self.local_panel = LocalIngestionPanel(
+                    self.app_instance, id="local-panel"
+                )
                 yield self.local_panel
-            
+
             with TabPane("Server Sources", id="sources-tab"):
-                self.source_panel = MediaIngestionSourcePanel(self.app_instance, id="source-panel")
+                self.source_panel = MediaIngestionSourcePanel(
+                    self.app_instance, id="source-panel"
+                )
                 yield self.source_panel
 
             with TabPane("Server Jobs", id="remote-tab"):
-                self.remote_panel = RemoteIngestionPanel(self.app_instance, id="remote-panel")
+                self.remote_panel = RemoteIngestionPanel(
+                    self.app_instance, id="remote-panel"
+                )
                 yield self.remote_panel
 
             with TabPane("Web Clipper", id="web-clipper-tab"):
-                self.web_clipper_panel = WebClipperPanel(self.app_instance, id="web-clipper-panel")
+                self.web_clipper_panel = WebClipperPanel(
+                    self.app_instance, id="web-clipper-panel"
+                )
                 yield self.web_clipper_panel
-        
+
         yield IngestionResultsPanel(id="results-panel")
-    
+
     @on(TabbedContent.TabActivated)
     def handle_tab_change(self, event: TabbedContent.TabActivated) -> None:
         """Handle tab switching."""
@@ -1812,35 +2089,35 @@ class MediaIngestWindowRebuilt(Widget):
         self.current_tab = "local" if tabs.active == "local-tab" else "sources"
         logger.debug(f"Switched to {self.current_tab} tab")
         self.run_worker(self.refresh_backend_view(), exclusive=True)
-    
+
     @on(ProcessingStarted)
     def handle_processing_started(self, event: ProcessingStarted) -> None:
         """Handle processing started event."""
         self.is_processing = True
         results_panel = self.query_one("#results-panel", IngestionResultsPanel)
         results_panel.clear_results()
-        
+
         log = results_panel.query_one("#results-log", RichLog)
         log.write(f"[cyan]Processing {event.file_count} item(s)...[/cyan]")
-    
+
     @on(ProcessingComplete)
     def handle_processing_complete(self, event: ProcessingComplete) -> None:
         """Handle processing completion."""
         self.is_processing = False
         results_panel = self.query_one("#results-panel", IngestionResultsPanel)
-        
+
         for result in event.results:
             results_panel.add_result(result)
-    
+
     @on(ProcessingError)
     def handle_processing_error(self, event: ProcessingError) -> None:
         """Handle processing errors."""
         self.is_processing = False
         results_panel = self.query_one("#results-panel", IngestionResultsPanel)
-        
+
         log = results_panel.query_one("#results-log", RichLog)
         log.write(f"[red]Error: {event.error}[/red]")
-    
+
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
         logger.info("MediaIngestWindowRebuilt mounted")
@@ -1854,7 +2131,9 @@ class MediaIngestWindowRebuilt(Widget):
 
         runtime_backend = "local"
         if self.runtime_state is not None:
-            runtime_backend = str(getattr(self.runtime_state, "runtime_backend", "local") or "local")
+            runtime_backend = str(
+                getattr(self.runtime_state, "runtime_backend", "local") or "local"
+            )
 
         for panel_name in ("source_panel", "remote_panel", "web_clipper_panel"):
             panel = getattr(self, panel_name, None)

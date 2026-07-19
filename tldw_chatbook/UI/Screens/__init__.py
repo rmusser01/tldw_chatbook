@@ -23,16 +23,16 @@ _SCREEN_EXPORTS = {
 }
 
 __all__ = [
-    'ChatScreen',
-    'MediaIngestScreen',
-    'MediaScreen',
-    'SearchScreen',
-    'EvalsScreen',
-    'ToolsSettingsScreen',
-    'LLMScreen',
-    'CustomizeScreen',
-    'LogsScreen',
-    'StatsScreen',
+    "ChatScreen",
+    "MediaIngestScreen",
+    "MediaScreen",
+    "SearchScreen",
+    "EvalsScreen",
+    "ToolsSettingsScreen",
+    "LLMScreen",
+    "CustomizeScreen",
+    "LogsScreen",
+    "StatsScreen",
 ]
 
 

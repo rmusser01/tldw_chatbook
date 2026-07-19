@@ -26,7 +26,9 @@ def test_chapter_allows_project_level_unassigned_state():
 
 
 def test_scene_direct_manuscript_requires_manuscript_id_and_no_chapter_id():
-    with pytest.raises(ValueError, match="Direct manuscript scene requires manuscript_id"):
+    with pytest.raises(
+        ValueError, match="Direct manuscript scene requires manuscript_id"
+    ):
         WritingScene(
             source="local",
             id="s-1",
@@ -36,7 +38,9 @@ def test_scene_direct_manuscript_requires_manuscript_id_and_no_chapter_id():
             title="Scene 1",
         )
 
-    with pytest.raises(ValueError, match="Scene cannot have both chapter_id and manuscript_id"):
+    with pytest.raises(
+        ValueError, match="Scene cannot have both chapter_id and manuscript_id"
+    ):
         WritingScene(
             source="local",
             id="s-ambiguous",

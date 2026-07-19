@@ -27,7 +27,10 @@ class TabStripHost(App[None]):
 
 
 def _sessions(count: int) -> list[ConsoleChatSession]:
-    return [ConsoleChatSession(title=f"Session {i}", id=f"s{i}") for i in range(1, count + 1)]
+    return [
+        ConsoleChatSession(title=f"Session {i}", id=f"s{i}")
+        for i in range(1, count + 1)
+    ]
 
 
 @pytest.mark.asyncio

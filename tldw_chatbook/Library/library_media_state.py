@@ -6,9 +6,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
-from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
+)
 
-LIBRARY_MEDIA_EMPTY_COPY = "No media in your Library yet. Ingest something to see it here."
+LIBRARY_MEDIA_EMPTY_COPY = (
+    "No media in your Library yet. Ingest something to see it here."
+)
 
 _ID_KEYS = ("id", "media_id", "uuid")
 _TYPE_KEYS = ("type", "media_type")

@@ -190,7 +190,9 @@ class CompanionConversationPromptsResponse(BaseModel):
     prompts: list[CompanionFollowUpPrompt] = Field(default_factory=list)
 
 
-CompanionLifecycleScope = Literal["knowledge", "reflections", "derived_goals", "goal_progress"]
+CompanionLifecycleScope = Literal[
+    "knowledge", "reflections", "derived_goals", "goal_progress"
+]
 
 
 class CompanionPurgeRequest(BaseModel):

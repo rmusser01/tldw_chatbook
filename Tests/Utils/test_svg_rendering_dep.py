@@ -77,9 +77,7 @@ def test_darwin_append_is_idempotent(monkeypatch):
     )
     monkeypatch.setenv("DYLD_FALLBACK_LIBRARY_PATH", "/custom/lib:/opt/homebrew/lib")
     optional_deps.ensure_svg_rendering()
-    assert (
-        os.environ["DYLD_FALLBACK_LIBRARY_PATH"] == "/custom/lib:/opt/homebrew/lib"
-    )
+    assert os.environ["DYLD_FALLBACK_LIBRARY_PATH"] == "/custom/lib:/opt/homebrew/lib"
 
 
 def test_non_darwin_leaves_env_alone(monkeypatch):
@@ -98,7 +96,7 @@ def test_oserror_from_check_dependency_is_gated_off_and_cached(monkeypatch):
 
     def fake_check(module, feature=None):
         calls.append(module)
-        raise OSError('cannot load library \'libcairo.so.2\': dlopen failed')
+        raise OSError("cannot load library 'libcairo.so.2': dlopen failed")
 
     monkeypatch.setattr(optional_deps, "check_dependency", fake_check)
     assert optional_deps.ensure_svg_rendering() is False

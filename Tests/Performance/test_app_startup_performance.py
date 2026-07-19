@@ -93,7 +93,9 @@ def test_optional_deps_import_does_not_eagerly_check_embeddings(tmp_path: Path) 
     assert "Checking embeddings dependencies early" not in result.stderr
 
 
-def test_optional_deps_eager_env_still_initializes_dependency_checks(tmp_path: Path) -> None:
+def test_optional_deps_eager_env_still_initializes_dependency_checks(
+    tmp_path: Path,
+) -> None:
     """Explicit eager dependency mode should still run dependency initialization."""
 
     result = _run_isolated_python(
@@ -111,7 +113,10 @@ def test_optional_deps_eager_env_still_initializes_dependency_checks(tmp_path: P
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["initialized"] is True
-    assert "Eager dependency checking enabled via TLDW_EAGER_DEPENDENCY_CHECK" in result.stderr
+    assert (
+        "Eager dependency checking enabled via TLDW_EAGER_DEPENDENCY_CHECK"
+        in result.stderr
+    )
 
 
 def test_app_import_does_not_load_legacy_feature_windows(tmp_path: Path) -> None:
@@ -142,7 +147,9 @@ def test_app_import_does_not_load_legacy_feature_windows(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_ui_ready_before_nonessential_startup_services_finish(monkeypatch) -> None:
+async def test_ui_ready_before_nonessential_startup_services_finish(
+    monkeypatch,
+) -> None:
     """Optional audio/DB/cleanup startup work should not gate initial UI readiness."""
 
     from Tests.UI.test_screen_navigation import _build_test_app

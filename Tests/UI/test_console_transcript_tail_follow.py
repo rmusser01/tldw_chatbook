@@ -11,7 +11,10 @@ even from a scrolled-up position.
 import pytest
 from textual.app import App, ComposeResult
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 
@@ -29,7 +32,9 @@ class TailFollowHarness(App):
         yield ConsoleTranscript(id="console-native-transcript")
 
 
-def _msg(i: int, role: ConsoleMessageRole = ConsoleMessageRole.ASSISTANT) -> ConsoleChatMessage:
+def _msg(
+    i: int, role: ConsoleMessageRole = ConsoleMessageRole.ASSISTANT
+) -> ConsoleChatMessage:
     return ConsoleChatMessage(
         role=role,
         content="\n".join(f"line {i}.{j}" for j in range(4)),

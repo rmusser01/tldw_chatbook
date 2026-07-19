@@ -150,7 +150,9 @@ class PersonasCharacterEditorWidget(Container):
         with VerticalScroll(id="personas-char-editor-body"):
             with Vertical(classes="ds-field-row"):
                 yield Label("Name")
-                yield Input(id="personas-char-editor-name", placeholder="Character name")
+                yield Input(
+                    id="personas-char-editor-name", placeholder="Character name"
+                )
             with Vertical(classes="ds-field-row"):
                 yield Label("First message")
                 yield TextArea(id="personas-char-editor-first-message")
@@ -180,13 +182,17 @@ class PersonasCharacterEditorWidget(Container):
                     yield TextArea(id="personas-char-editor-creator-notes")
                 with Vertical(classes="ds-field-row"):
                     yield Label("Creator")
-                    yield Input(id="personas-char-editor-creator", placeholder="Creator name")
+                    yield Input(
+                        id="personas-char-editor-creator", placeholder="Creator name"
+                    )
                 with Vertical(classes="ds-field-row"):
                     yield Label("Version")
                     yield Input(id="personas-char-editor-version", value="1.0")
                 with Vertical(classes="ds-field-row"):
                     yield Label("Tags (comma-separated)")
-                    yield Input(id="personas-char-editor-tags", placeholder="tag, another tag")
+                    yield Input(
+                        id="personas-char-editor-tags", placeholder="tag, another tag"
+                    )
                 with Vertical(classes="ds-field-row"):
                     yield Label("Alternate greetings (one per line)")
                     yield TextArea(id="personas-char-editor-alt-greetings")
@@ -245,7 +251,9 @@ class PersonasCharacterEditorWidget(Container):
             record.get("system_prompt", record.get("system", "")) or ""
         )
         self._area("scenario").text = str(record.get("scenario") or "")
-        self._area("post-history").text = str(record.get("post_history_instructions") or "")
+        self._area("post-history").text = str(
+            record.get("post_history_instructions") or ""
+        )
         self._area("creator-notes").text = str(record.get("creator_notes") or "")
         self._input("creator").value = str(record.get("creator") or "")
         self._input("version").value = str(
@@ -338,7 +346,9 @@ class PersonasCharacterEditorWidget(Container):
         ]
         return data
 
-    def sync_attached_dictionaries(self, chat_dictionaries: list, new_version: int) -> None:
+    def sync_attached_dictionaries(
+        self, chat_dictionaries: list, new_version: int
+    ) -> None:
         """Patch the loaded base after an out-of-band dictionary attach/detach.
 
         Updates only ``extensions['chat_dictionaries']`` and ``version`` on the
@@ -383,9 +393,11 @@ class PersonasCharacterEditorWidget(Container):
         )
 
     def _set_avatar_status_from_record(self) -> None:
-        avatar = "embedded" if (
-            self._character_data.get("image") or self._character_data.get("avatar")
-        ) else "none"
+        avatar = (
+            "embedded"
+            if (self._character_data.get("image") or self._character_data.get("avatar"))
+            else "none"
+        )
         self.query_one("#personas-char-editor-avatar-status", Static).update(
             f"Avatar: {avatar}"
         )

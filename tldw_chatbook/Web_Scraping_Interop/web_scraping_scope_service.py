@@ -49,11 +49,15 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
 class WebScrapingScopeService:
     """Route web-scraping management calls to the active server only."""
 
-    def __init__(self, *, server_service: Any, policy_enforcer: Any | None = None) -> None:
+    def __init__(
+        self, *, server_service: Any, policy_enforcer: Any | None = None
+    ) -> None:
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: WebScrapingBackend | str | None) -> WebScrapingBackend:
+    def _normalize_mode(
+        self, mode: WebScrapingBackend | str | None
+    ) -> WebScrapingBackend:
         if mode is None:
             return WebScrapingBackend.SERVER
         if isinstance(mode, WebScrapingBackend):
@@ -66,7 +70,9 @@ class WebScrapingScopeService:
     def _require_server(self, mode: WebScrapingBackend | str | None) -> Any:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode != WebScrapingBackend.SERVER:
-            raise ValueError("Server web-scraping management is server-only; switch to server mode to use it.")
+            raise ValueError(
+                "Server web-scraping management is server-only; switch to server mode to use it."
+            )
         if self.server_service is None:
             raise ValueError("Server web-scraping backend is unavailable.")
         return self.server_service
@@ -105,7 +111,9 @@ class WebScrapingScopeService:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
-    async def get_status(self, *, mode: WebScrapingBackend | str | None = None) -> dict[str, Any]:
+    async def get_status(
+        self, *, mode: WebScrapingBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call_server(
             mode=mode,
             action_id="media.web_scraping.status.server",

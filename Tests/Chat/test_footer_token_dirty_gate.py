@@ -112,7 +112,10 @@ def test_last_message_edit_retokenizes(tokenizer_spy):
     history = _history()
 
     chat_token_events._estimate_tokens_cached(app, history, **SETTINGS)
-    history[-1] = {"role": "assistant", "content": "a completely different, much longer reply"}
+    history[-1] = {
+        "role": "assistant",
+        "content": "a completely different, much longer reply",
+    }
     edited = chat_token_events._estimate_tokens_cached(app, history, **SETTINGS)
 
     assert len(tokenizer_spy) == 2, "an edited last message must re-tokenize"

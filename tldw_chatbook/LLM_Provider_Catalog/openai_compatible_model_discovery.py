@@ -114,7 +114,11 @@ def _parse_endpoint(endpoint: str | None) -> ParseResult | None:
         parsed = urlparse(candidate)
     except ValueError:
         return None
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or not parsed.hostname
+    ):
         return None
     try:
         parsed.port
@@ -227,7 +231,14 @@ def build_models_url(endpoint: str, provider_identity: str) -> str:
         base_parsed = _parse_endpoint(base_url)
         if base_parsed is not None:
             return urlunparse(
-                (base_parsed.scheme, _safe_netloc(base_parsed), "/v1/models", "", "", "")
+                (
+                    base_parsed.scheme,
+                    _safe_netloc(base_parsed),
+                    "/v1/models",
+                    "",
+                    "",
+                    "",
+                )
             )
 
     models_path = _models_path_for_endpoint_path(path) or path
@@ -248,7 +259,11 @@ def fingerprint_endpoint(endpoint: str) -> str:
         raw_fingerprint = str(endpoint or "").split("?", 1)[0].split("#", 1)[0].strip()
         if "@" in raw_fingerprint:
             scheme, separator, _rest = raw_fingerprint.partition("://")
-            return f"{scheme}{separator}[invalid-endpoint]" if separator else "[invalid-endpoint]"
+            return (
+                f"{scheme}{separator}[invalid-endpoint]"
+                if separator
+                else "[invalid-endpoint]"
+            )
         return raw_fingerprint
 
     path = (parsed.path or "").rstrip("/") or "/"
@@ -259,15 +274,21 @@ def _is_sensitive_metadata_key(key: object) -> bool:
     """Return whether a metadata key looks credential-bearing."""
     normalized_key = str(key).strip().lower().replace("-", "_")
     compact_key = normalized_key.replace("_", "")
-    return normalized_key in _EXACT_SENSITIVE_METADATA_KEYS or any(
-        sensitive_key in normalized_key
-        for sensitive_key in _SENSITIVE_METADATA_KEY_SUBSTRINGS
-    ) or compact_key in _COMPACT_SENSITIVE_METADATA_KEYS or any(
-        sensitive_key in compact_key
-        for sensitive_key in _COMPACT_SENSITIVE_METADATA_KEY_SUBSTRINGS
-    ) or any(
-        compact_key.endswith(sensitive_suffix)
-        for sensitive_suffix in _COMPACT_SENSITIVE_METADATA_KEY_SUFFIXES
+    return (
+        normalized_key in _EXACT_SENSITIVE_METADATA_KEYS
+        or any(
+            sensitive_key in normalized_key
+            for sensitive_key in _SENSITIVE_METADATA_KEY_SUBSTRINGS
+        )
+        or compact_key in _COMPACT_SENSITIVE_METADATA_KEYS
+        or any(
+            sensitive_key in compact_key
+            for sensitive_key in _COMPACT_SENSITIVE_METADATA_KEY_SUBSTRINGS
+        )
+        or any(
+            compact_key.endswith(sensitive_suffix)
+            for sensitive_suffix in _COMPACT_SENSITIVE_METADATA_KEY_SUFFIXES
+        )
     )
 
 
@@ -391,7 +412,9 @@ async def discover_openai_compatible_models(
 
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
 
-    async def _request_payload(active_client: httpx.AsyncClient) -> tuple[Mapping[str, Any] | None, ModelDiscoveryResult | None]:
+    async def _request_payload(
+        active_client: httpx.AsyncClient,
+    ) -> tuple[Mapping[str, Any] | None, ModelDiscoveryResult | None]:
         try:
             response = await active_client.get(models_url, headers=headers)
             response.raise_for_status()
@@ -457,7 +480,9 @@ async def discover_openai_compatible_models(
             ),
         )
 
-    now_iso = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    now_iso = (
+        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
     try:
         models = normalize_models_response(
             payload,

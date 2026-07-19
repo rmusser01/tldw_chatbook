@@ -31,6 +31,7 @@ pytestmark = pytest.mark.unit
 @dataclass
 class Doc:
     """Minimal ranked item for fusion tests."""
+
     id: str
     score: float = 1.0
     metadata: Optional[Dict[str, Any]] = field(default_factory=dict)
@@ -60,9 +61,7 @@ class TestReciprocalRankFusion:
     def _fuse(alpha):
         fts = [Doc("A"), Doc("C")]
         vector = [Doc("B"), Doc("C")]
-        return reciprocal_rank_fusion(
-            fts, vector, key=lambda d: d.id, alpha=alpha
-        )
+        return reciprocal_rank_fusion(fts, vector, key=lambda d: d.id, alpha=alpha)
 
     def test_alpha_zero_is_fts_only_ordering(self):
         fused = self._fuse(alpha=0.0)
@@ -186,9 +185,7 @@ class TestReciprocalRankFusion:
     def test_provenance_and_items_preserved(self):
         a_fts = Doc("A", metadata={"leg": "fts"})
         a_vec = Doc("A", metadata={"leg": "vector"})
-        fused = reciprocal_rank_fusion(
-            [a_fts], [a_vec], key=lambda d: d.id, alpha=0.7
-        )
+        fused = reciprocal_rank_fusion([a_fts], [a_vec], key=lambda d: d.id, alpha=0.7)
         entry = fused[0]
         assert entry.fts_item is a_fts
         assert entry.vector_item is a_vec
@@ -240,8 +237,10 @@ class TestInterleaveRankings:
 class TestResolveHybridAlpha:
     def test_explicit_value_wins(self, monkeypatch):
         import tldw_chatbook.config as app_config
+
         monkeypatch.setattr(
-            app_config, "get_cli_setting",
+            app_config,
+            "get_cli_setting",
             lambda *a, **k: {"retriever": {"hybrid_alpha": 0.2}},
         )
         assert resolve_hybrid_alpha(0.4) == 0.4
@@ -258,6 +257,7 @@ class TestResolveHybridAlpha:
 
     def test_defaults_to_server_parity_when_unset(self, monkeypatch):
         import tldw_chatbook.config as app_config
+
         monkeypatch.setattr(app_config, "get_cli_setting", lambda *a, **k: {})
         assert resolve_hybrid_alpha() == DEFAULT_HYBRID_ALPHA
 
@@ -273,17 +273,22 @@ class TestResolveHybridAlpha:
 class TestResolveRrfK:
     def test_none_returns_default(self):
         from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+
         assert resolve_rrf_k(None) == DEFAULT_RRF_K
         assert resolve_rrf_k() == DEFAULT_RRF_K
 
-    @pytest.mark.parametrize("value,expected", [(60, 60), (0, 0), ("42", 42), (59.5, 59)])
+    @pytest.mark.parametrize(
+        "value,expected", [(60, 60), (0, 0), ("42", 42), (59.5, 59)]
+    )
     def test_valid_values_coerced(self, value, expected):
         from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+
         assert resolve_rrf_k(value) == expected
 
     @pytest.mark.parametrize("bad", ["abc", -1, -60, object(), None])
     def test_invalid_values_fall_back_to_default(self, bad):
         from tldw_chatbook.RAG_Search.fusion import resolve_rrf_k
+
         assert resolve_rrf_k(bad) == DEFAULT_RRF_K
 
 
@@ -293,33 +298,52 @@ class TestRAGServiceFusion:
     @staticmethod
     def _make_results():
         from tldw_chatbook.RAG_Search.simplified.citations import (
-            Citation, CitationType, SearchResultWithCitations,
+            Citation,
+            CitationType,
+            SearchResultWithCitations,
         )
 
         def cite(doc_id, start, confidence, match_type):
             return Citation(
-                document_id=doc_id, document_title=doc_id, chunk_id=f"{doc_id}_0",
-                text="snippet", start_char=start, end_char=start + 7,
-                confidence=confidence, match_type=match_type,
+                document_id=doc_id,
+                document_title=doc_id,
+                chunk_id=f"{doc_id}_0",
+                text="snippet",
+                start_char=start,
+                end_char=start + 7,
+                confidence=confidence,
+                match_type=match_type,
             )
 
         keyword = [
             SearchResultWithCitations(
-                id="A", score=0.8, document="doc a", metadata={},
+                id="A",
+                score=0.8,
+                document="doc a",
+                metadata={},
                 citations=[cite("A", 0, 0.9, CitationType.KEYWORD)],
             ),
             SearchResultWithCitations(
-                id="C", score=0.7, document="doc c", metadata={},
+                id="C",
+                score=0.7,
+                document="doc c",
+                metadata={},
                 citations=[cite("C", 0, 0.8, CitationType.KEYWORD)],
             ),
         ]
         semantic = [
             SearchResultWithCitations(
-                id="B", score=0.95, document="doc b", metadata={},
+                id="B",
+                score=0.95,
+                document="doc b",
+                metadata={},
                 citations=[cite("B", 0, 0.9, CitationType.SEMANTIC)],
             ),
             SearchResultWithCitations(
-                id="C", score=0.9, document="doc c", metadata={},
+                id="C",
+                score=0.9,
+                document="doc c",
+                metadata={},
                 citations=[cite("C", 100, 0.85, CitationType.SEMANTIC)],
             ),
         ]
@@ -393,8 +417,11 @@ class TestRAGServiceFusion:
         def run(alpha):
             keyword, semantic = self._make_results()
             return RAGService._fuse_hybrid_results(
-                keyword_results=keyword, semantic_results=semantic,
-                top_k=10, alpha=alpha, include_citations=True,
+                keyword_results=keyword,
+                semantic_results=semantic,
+                top_k=10,
+                alpha=alpha,
+                include_citations=True,
             )
 
         for bad in (1.3, -0.2):
@@ -406,7 +433,7 @@ class TestRAGServiceFusion:
             )
             assert all(r.score >= 0.0 for r in results)
             # Provenance records the resolved alpha, not the bad input
-            assert results[0].metadata['hybrid_fusion']['alpha'] == DEFAULT_HYBRID_ALPHA
+            assert results[0].metadata["hybrid_fusion"]["alpha"] == DEFAULT_HYBRID_ALPHA
 
 
 class TestPipelineRrfMerge:
@@ -415,6 +442,7 @@ class TestPipelineRrfMerge:
     @staticmethod
     def _pipeline_result(source, doc_id):
         from tldw_chatbook.RAG_Search.pipeline_types import SearchResult
+
         return SearchResult(
             source=source, id=doc_id, title=doc_id, content=f"content {doc_id}"
         )
@@ -423,19 +451,26 @@ class TestPipelineRrfMerge:
         from tldw_chatbook.RAG_Search.pipeline_builder_simple import BUILTIN_PIPELINES
 
         parallel_steps = [
-            s for s in BUILTIN_PIPELINES['hybrid']['steps']
-            if s.get('type') == 'parallel'
+            s
+            for s in BUILTIN_PIPELINES["hybrid"]["steps"]
+            if s.get("type") == "parallel"
         ]
         assert len(parallel_steps) == 1
-        assert parallel_steps[0].get('merge') == 'rrf_merge'
+        assert parallel_steps[0].get("merge") == "rrf_merge"
 
     def test_parallel_step_rrf_merge_fuses_legs(self, monkeypatch):
         from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
 
-        media = [self._pipeline_result("media", "m1"), self._pipeline_result("media", "shared")]
+        media = [
+            self._pipeline_result("media", "m1"),
+            self._pipeline_result("media", "shared"),
+        ]
         conversations = [self._pipeline_result("conversation", "c1")]
         notes = []
-        semantic = [self._pipeline_result("media", "shared"), self._pipeline_result("media", "s2")]
+        semantic = [
+            self._pipeline_result("media", "shared"),
+            self._pipeline_result("media", "s2"),
+        ]
 
         async def fake_media(app, query, top_k, keyword_filter=None):
             return list(media)
@@ -449,24 +484,30 @@ class TestPipelineRrfMerge:
         async def fake_semantic(app, query, sources, **config):
             return list(semantic)
 
-        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, 'search_media_fts5', fake_media)
-        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, 'search_conversations_fts5', fake_conversations)
-        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, 'search_notes_fts5', fake_notes)
-        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, 'search_semantic', fake_semantic)
+        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, "search_media_fts5", fake_media)
+        monkeypatch.setitem(
+            pbs.RETRIEVAL_FUNCTIONS, "search_conversations_fts5", fake_conversations
+        )
+        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, "search_notes_fts5", fake_notes)
+        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, "search_semantic", fake_semantic)
 
         step_config = {
-            'type': 'parallel',
-            'functions': [
-                {'function': 'search_media_fts5', 'config': {'top_k': 20}},
-                {'function': 'search_conversations_fts5', 'config': {'top_k': 20}},
-                {'function': 'search_notes_fts5', 'config': {'top_k': 20}},
-                {'function': 'search_semantic', 'config': {'top_k': 20}},
+            "type": "parallel",
+            "functions": [
+                {"function": "search_media_fts5", "config": {"top_k": 20}},
+                {"function": "search_conversations_fts5", "config": {"top_k": 20}},
+                {"function": "search_notes_fts5", "config": {"top_k": 20}},
+                {"function": "search_semantic", "config": {"top_k": 20}},
             ],
-            'merge': 'rrf_merge',
-            'config': {'alpha': 0.7},
+            "merge": "rrf_merge",
+            "config": {"alpha": 0.7},
         }
         context = {
-            'app': object(), 'query': 'q', 'sources': {}, 'params': {}, 'results': [],
+            "app": object(),
+            "query": "q",
+            "sources": {},
+            "params": {},
+            "results": [],
         }
 
         results = asyncio.run(pbs._execute_parallel_step(step_config, context))
@@ -489,9 +530,9 @@ class TestPipelineRrfMerge:
         assert [r.id for r in results][0] == "shared"
         # Provenance attached
         shared = next(r for r in results if r.id == "shared")
-        assert shared.metadata['hybrid_fusion']['fts_rank'] == 3
-        assert shared.metadata['hybrid_fusion']['vector_rank'] == 1
-        assert shared.metadata['hybrid_fusion']['alpha'] == 0.7
+        assert shared.metadata["hybrid_fusion"]["fts_rank"] == 3
+        assert shared.metadata["hybrid_fusion"]["vector_rank"] == 1
+        assert shared.metadata["hybrid_fusion"]["alpha"] == 0.7
 
     def test_vector_leg_live_with_real_search_semantic(self, monkeypatch):
         """Regression: the vector leg must survive the pipeline param splat.
@@ -504,40 +545,57 @@ class TestPipelineRrfMerge:
         """
         from types import SimpleNamespace
         from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
-        from tldw_chatbook.RAG_Search.simplified.vector_store import SearchResult as VSResult
+        from tldw_chatbook.RAG_Search.simplified.vector_store import (
+            SearchResult as VSResult,
+        )
 
         class StrictRagService:
-            async def search(self, query, top_k=None, search_type="semantic",
-                             filter_metadata=None, include_citations=None,
-                             score_threshold=None):
+            async def search(
+                self,
+                query,
+                top_k=None,
+                search_type="semantic",
+                filter_metadata=None,
+                include_citations=None,
+                score_threshold=None,
+            ):
                 assert search_type == "semantic"
-                return [VSResult(id="v1", score=0.9, document="vector doc", metadata={})]
+                return [
+                    VSResult(id="v1", score=0.9, document="vector doc", metadata={})
+                ]
 
         async def fake_media(app, query, top_k, keyword_filter=None):
             return [self._pipeline_result("media", "m1")]
 
-        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, 'search_media_fts5', fake_media)
+        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, "search_media_fts5", fake_media)
         # search_semantic stays the REAL implementation.
 
         step_config = {
-            'type': 'parallel',
-            'functions': [
-                {'function': 'search_media_fts5', 'config': {'top_k': 20}},
-                {'function': 'search_semantic', 'config': {'top_k': 20, 'score_threshold': 0.0}},
+            "type": "parallel",
+            "functions": [
+                {"function": "search_media_fts5", "config": {"top_k": 20}},
+                {
+                    "function": "search_semantic",
+                    "config": {"top_k": 20, "score_threshold": 0.0},
+                },
             ],
-            'merge': 'rrf_merge',
-            'config': {'alpha': 1.0},
+            "merge": "rrf_merge",
+            "config": {"alpha": 1.0},
         }
         # The exact param soup perform_hybrid_rag_search feeds the pipeline
         context = {
-            'app': SimpleNamespace(_rag_service=StrictRagService()),
-            'query': 'q',
-            'sources': {'media': True},
-            'params': {
-                'top_k': 5, 'max_context_length': 10000, 'chunk_size': 400,
-                'chunk_overlap': 100, 'chunk_type': 'words', 'keyword_filter': None,
+            "app": SimpleNamespace(_rag_service=StrictRagService()),
+            "query": "q",
+            "sources": {"media": True},
+            "params": {
+                "top_k": 5,
+                "max_context_length": 10000,
+                "chunk_size": 400,
+                "chunk_overlap": 100,
+                "chunk_type": "words",
+                "keyword_filter": None,
             },
-            'results': [],
+            "results": [],
         }
 
         results = asyncio.run(pbs._execute_parallel_step(step_config, context))
@@ -554,55 +612,82 @@ class TestPipelineRrfMerge:
             perform_hybrid_rag_search,
         )
         from tldw_chatbook.RAG_Search.pipeline_builder_simple import BUILTIN_PIPELINES
-        from tldw_chatbook.RAG_Search.simplified.vector_store import SearchResult as VSResult
+        from tldw_chatbook.RAG_Search.simplified.vector_store import (
+            SearchResult as VSResult,
+        )
 
         class StrictRagService:
-            async def search(self, query, top_k=None, search_type="semantic",
-                             filter_metadata=None, include_citations=None,
-                             score_threshold=None):
-                return [VSResult(id="v1", score=0.9, document="vector doc", metadata={})]
+            async def search(
+                self,
+                query,
+                top_k=None,
+                search_type="semantic",
+                filter_metadata=None,
+                include_citations=None,
+                score_threshold=None,
+            ):
+                return [
+                    VSResult(id="v1", score=0.9, document="vector doc", metadata={})
+                ]
 
         # FTS legs all guard out; the vector leg is live.
-        app = SimpleNamespace(media_db=None, db_config={}, _rag_service=StrictRagService())
+        app = SimpleNamespace(
+            media_db=None, db_config={}, _rag_service=StrictRagService()
+        )
 
-        results, context = asyncio.run(perform_hybrid_rag_search(
-            app, "query", {"media": True},
-            top_k=5, enable_rerank=False, hybrid_alpha=0.7,
-        ))
+        results, context = asyncio.run(
+            perform_hybrid_rag_search(
+                app,
+                "query",
+                {"media": True},
+                top_k=5,
+                enable_rerank=False,
+                hybrid_alpha=0.7,
+            )
+        )
 
-        assert [r['id'] for r in results] == ["v1"]
-        assert results[0]['score'] == pytest.approx(0.7 / (K + 1))
-        assert results[0]['metadata']['hybrid_fusion']['vector_rank'] == 1
+        assert [r["id"] for r in results] == ["v1"]
+        assert results[0]["score"] == pytest.approx(0.7 / (K + 1))
+        assert results[0]["metadata"]["hybrid_fusion"]["vector_rank"] == 1
         assert isinstance(context, str)
         # The builtin definition must not have been mutated by the call
         parallel = next(
-            s for s in BUILTIN_PIPELINES['hybrid']['steps'] if s.get('type') == 'parallel'
+            s
+            for s in BUILTIN_PIPELINES["hybrid"]["steps"]
+            if s.get("type") == "parallel"
         )
-        assert 'alpha' not in parallel.get('config', {})
+        assert "alpha" not in parallel.get("config", {})
 
     def test_vector_leg_failure_degrades_to_fts_ordering(self, monkeypatch):
         from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
 
         async def fake_media(app, query, top_k, keyword_filter=None):
-            return [self._pipeline_result("media", "m1"), self._pipeline_result("media", "m2")]
+            return [
+                self._pipeline_result("media", "m1"),
+                self._pipeline_result("media", "m2"),
+            ]
 
         async def fake_semantic(app, query, sources, **config):
             raise RuntimeError("vector store unavailable")
 
-        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, 'search_media_fts5', fake_media)
-        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, 'search_semantic', fake_semantic)
+        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, "search_media_fts5", fake_media)
+        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, "search_semantic", fake_semantic)
 
         step_config = {
-            'type': 'parallel',
-            'functions': [
-                {'function': 'search_media_fts5', 'config': {'top_k': 20}},
-                {'function': 'search_semantic', 'config': {'top_k': 20}},
+            "type": "parallel",
+            "functions": [
+                {"function": "search_media_fts5", "config": {"top_k": 20}},
+                {"function": "search_semantic", "config": {"top_k": 20}},
             ],
-            'merge': 'rrf_merge',
-            'config': {'alpha': 0.7},
+            "merge": "rrf_merge",
+            "config": {"alpha": 0.7},
         }
         context = {
-            'app': object(), 'query': 'q', 'sources': {}, 'params': {}, 'results': [],
+            "app": object(),
+            "query": "q",
+            "sources": {},
+            "params": {},
+            "results": [],
         }
 
         results = asyncio.run(pbs._execute_parallel_step(step_config, context))
@@ -623,23 +708,27 @@ class TestPipelineRrfMerge:
         async def fake_media(app, query, top_k, keyword_filter=None):
             return [self._pipeline_result("media", "m1")]
 
-        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, 'search_media_fts5', fake_media)
+        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, "search_media_fts5", fake_media)
 
         step_config = {
-            'type': 'parallel',
-            'functions': [{'function': 'search_media_fts5', 'config': {'top_k': 20}}],
-            'merge': 'rrf_merge',
-            'config': {'alpha': 0.0, 'rrf_k': bad_k},
+            "type": "parallel",
+            "functions": [{"function": "search_media_fts5", "config": {"top_k": 20}}],
+            "merge": "rrf_merge",
+            "config": {"alpha": 0.0, "rrf_k": bad_k},
         }
         context = {
-            'app': object(), 'query': 'q', 'sources': {}, 'params': {}, 'results': [],
+            "app": object(),
+            "query": "q",
+            "sources": {},
+            "params": {},
+            "results": [],
         }
 
         results = asyncio.run(pbs._execute_parallel_step(step_config, context))
 
         assert [r.id for r in results] == ["m1"]
         assert results[0].score == pytest.approx(1 / (K + 1))  # default k=60
-        assert results[0].metadata['hybrid_fusion']['rrf_k'] == K
+        assert results[0].metadata["hybrid_fusion"]["rrf_k"] == K
 
     def test_overlap_keeps_semantic_citation_metadata(self, monkeypatch):
         """A doc in both legs must keep the vector leg's citation metadata.
@@ -654,10 +743,13 @@ class TestPipelineRrfMerge:
 
         fts_item = self._pipeline_result("media", "shared")
         semantic_item = SearchResult(
-            source="media", id="shared", title="shared", content="content shared",
+            source="media",
+            id="shared",
+            title="shared",
+            content="content shared",
             metadata={
-                '_has_citations': True,
-                '_citations': [{'document_id': 'shared', 'text': 'snippet'}],
+                "_has_citations": True,
+                "_citations": [{"document_id": "shared", "text": "snippet"}],
             },
         )
 
@@ -667,20 +759,24 @@ class TestPipelineRrfMerge:
         async def fake_semantic(app, query, sources, **config):
             return [semantic_item]
 
-        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, 'search_media_fts5', fake_media)
-        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, 'search_semantic', fake_semantic)
+        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, "search_media_fts5", fake_media)
+        monkeypatch.setitem(pbs.RETRIEVAL_FUNCTIONS, "search_semantic", fake_semantic)
 
         step_config = {
-            'type': 'parallel',
-            'functions': [
-                {'function': 'search_media_fts5', 'config': {'top_k': 20}},
-                {'function': 'search_semantic', 'config': {'top_k': 20}},
+            "type": "parallel",
+            "functions": [
+                {"function": "search_media_fts5", "config": {"top_k": 20}},
+                {"function": "search_semantic", "config": {"top_k": 20}},
             ],
-            'merge': 'rrf_merge',
-            'config': {'alpha': 0.7},
+            "merge": "rrf_merge",
+            "config": {"alpha": 0.7},
         }
         context = {
-            'app': object(), 'query': 'q', 'sources': {}, 'params': {}, 'results': [],
+            "app": object(),
+            "query": "q",
+            "sources": {},
+            "params": {},
+            "results": [],
         }
 
         results = asyncio.run(pbs._execute_parallel_step(step_config, context))
@@ -688,11 +784,11 @@ class TestPipelineRrfMerge:
         assert len(results) == 1
         fused = results[0]
         assert fused is fts_item  # FTS item stays primary
-        assert fused.metadata['_has_citations'] is True
-        assert fused.metadata['_citations'] == [
-            {'document_id': 'shared', 'text': 'snippet'}
+        assert fused.metadata["_has_citations"] is True
+        assert fused.metadata["_citations"] == [
+            {"document_id": "shared", "text": "snippet"}
         ]
         # And they surface through the pipeline's dict conversion
         dicts = pbs._results_to_dicts(results)
-        assert dicts[0]['citations'] == [{'document_id': 'shared', 'text': 'snippet'}]
-        assert '_citations' not in dicts[0]['metadata']
+        assert dicts[0]["citations"] == [{"document_id": "shared", "text": "snippet"}]
+        assert "_citations" not in dicts[0]["metadata"]

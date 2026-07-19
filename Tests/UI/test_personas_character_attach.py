@@ -58,7 +58,9 @@ class CharAttachFakeDictScopeService(FakeDictScopeService):
         self.characters: dict[int, dict] = {}
         self._names: dict[int, str] = {}
 
-    async def list_character_dictionaries(self, character_id, mode: str = "local") -> dict:
+    async def list_character_dictionaries(
+        self, character_id, mode: str = "local"
+    ) -> dict:
         blocks = (
             self.characters.get(int(character_id), {})
             .get("extensions", {})
@@ -76,7 +78,9 @@ class CharAttachFakeDictScopeService(FakeDictScopeService):
             "source": "local",
         }
 
-    async def attach_to_character(self, dictionary_id, character_id, mode: str = "local") -> dict:
+    async def attach_to_character(
+        self, dictionary_id, character_id, mode: str = "local"
+    ) -> dict:
         char = self.characters.setdefault(
             int(character_id), {"extensions": {"chat_dictionaries": []}, "version": 1}
         )
@@ -93,17 +97,23 @@ class CharAttachFakeDictScopeService(FakeDictScopeService):
             "source": "local",
         }
 
-    async def detach_from_character(self, character_id, dictionary_name, mode: str = "local") -> dict:
+    async def detach_from_character(
+        self, character_id, dictionary_name, mode: str = "local"
+    ) -> dict:
         char = self.characters.get(
             int(character_id), {"extensions": {"chat_dictionaries": []}, "version": 1}
         )
         blocks = char["extensions"].get("chat_dictionaries", [])
-        char["extensions"]["chat_dictionaries"] = [b for b in blocks if b["name"] != dictionary_name]
+        char["extensions"]["chat_dictionaries"] = [
+            b for b in blocks if b["name"] != dictionary_name
+        ]
         char["version"] += 1
         return {
             "character_id": int(character_id),
             "dictionary_name": dictionary_name,
-            "character_dictionaries": [b["name"] for b in char["extensions"]["chat_dictionaries"]],
+            "character_dictionaries": [
+                b["name"] for b in char["extensions"]["chat_dictionaries"]
+            ],
             "source": "local",
         }
 
@@ -121,7 +131,9 @@ def stub_characters(monkeypatch):
     fixture of the same name stubs an EMPTY library, which this suite can't
     use since it needs to select a character row."""
     monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: [dict(c) for c in CHARACTERS]
+        character_handler_module,
+        "fetch_all_characters",
+        lambda: [dict(c) for c in CHARACTERS],
     )
     monkeypatch.setattr(
         character_handler_module,
@@ -152,7 +164,9 @@ class TestCharacterDictionaryAttach:
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
     ):
         from textual.widgets import DataTable
-        from tldw_chatbook.Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
+        from tldw_chatbook.Widgets.Persona_Widgets.dictionary_picker import (
+            DictionaryPicker,
+        )
 
         fake_dict_service._names = {1: "Slang"}  # dict id 1 -> "Slang"
 
@@ -166,7 +180,9 @@ class TestCharacterDictionaryAttach:
             async def _fake_push(screen_obj):
                 return 1 if isinstance(screen_obj, DictionaryPicker) else None
 
-            monkeypatch.setattr(screen.app, "push_screen_wait", _fake_push, raising=False)
+            monkeypatch.setattr(
+                screen.app, "push_screen_wait", _fake_push, raising=False
+            )
             monkeypatch.setattr(
                 screen,
                 "_list_attachable_dictionaries",
@@ -178,7 +194,9 @@ class TestCharacterDictionaryAttach:
             await pilot.pause()
             assert any(
                 b["name"] == "Slang"
-                for b in fake_dict_service.characters[1]["extensions"]["chat_dictionaries"]
+                for b in fake_dict_service.characters[1]["extensions"][
+                    "chat_dictionaries"
+                ]
             )
             table = screen.query_one("#personas-char-dicts-table", DataTable)
             assert table.row_count == 1
@@ -188,7 +206,9 @@ class TestCharacterDictionaryAttach:
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            assert fake_dict_service.characters[1]["extensions"]["chat_dictionaries"] == []
+            assert (
+                fake_dict_service.characters[1]["extensions"]["chat_dictionaries"] == []
+            )
 
     async def test_attach_and_unrelated_editor_edit_both_survive(
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
@@ -218,8 +238,10 @@ class TestCharacterDictionaryAttach:
         the attach could break if the base copy no longer round-trips
         through ``get_character_data`` - both directions are asserted below.
         """
-        from textual.widgets import DataTable, Input, TextArea
-        from tldw_chatbook.Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
+        from textual.widgets import Input, TextArea
+        from tldw_chatbook.Widgets.Persona_Widgets.dictionary_picker import (
+            DictionaryPicker,
+        )
         from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
             PersonasCharacterEditorWidget,
         )
@@ -232,12 +254,16 @@ class TestCharacterDictionaryAttach:
         # from chachanotes_db (not the fake dictionary-scope service), so
         # point it at a record whose embedded block mirrors what the fake
         # service will have recorded once the attach lands.
-        mock_app_instance.chachanotes_db.get_character_card_by_id = lambda character_id: {
-            "extensions": {
-                "chat_dictionaries": [{"name": "Slang", "enabled": True, "entries": []}]
-            },
-            "version": 2,
-        }
+        mock_app_instance.chachanotes_db.get_character_card_by_id = (
+            lambda character_id: {
+                "extensions": {
+                    "chat_dictionaries": [
+                        {"name": "Slang", "enabled": True, "entries": []}
+                    ]
+                },
+                "version": 2,
+            }
+        )
 
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
@@ -249,15 +275,17 @@ class TestCharacterDictionaryAttach:
             assert editor.display is True
 
             # An UNRELATED in-progress form edit, made BEFORE the attach lands.
-            screen.query_one("#personas-char-editor-personality", TextArea).text = (
-                "Gruff but fair"
-            )
+            screen.query_one(
+                "#personas-char-editor-personality", TextArea
+            ).text = "Gruff but fair"
             await pilot.pause()
 
             async def _fake_push(screen_obj):
                 return 1 if isinstance(screen_obj, DictionaryPicker) else None
 
-            monkeypatch.setattr(screen.app, "push_screen_wait", _fake_push, raising=False)
+            monkeypatch.setattr(
+                screen.app, "push_screen_wait", _fake_push, raising=False
+            )
             monkeypatch.setattr(
                 screen,
                 "_list_attachable_dictionaries",
@@ -271,7 +299,9 @@ class TestCharacterDictionaryAttach:
             # The attach landed in the (fake) dictionary-scope service...
             assert any(
                 b["name"] == "Slang"
-                for b in fake_dict_service.characters[1]["extensions"]["chat_dictionaries"]
+                for b in fake_dict_service.characters[1]["extensions"][
+                    "chat_dictionaries"
+                ]
             )
 
             # ...and the out-of-band sync patched the editor's base copy with

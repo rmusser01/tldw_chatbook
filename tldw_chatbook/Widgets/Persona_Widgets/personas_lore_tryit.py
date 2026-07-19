@@ -164,7 +164,10 @@ class PersonasLoreTryItWidget(Vertical):
         try:
             fired = sorted(
                 (r for r in records if r.get("status") == "fired"),
-                key=lambda r: (r.get("injection_order") is None, r.get("injection_order") or 0),
+                key=lambda r: (
+                    r.get("injection_order") is None,
+                    r.get("injection_order") or 0,
+                ),
             )
             fired_text = Text()
             for record in fired:

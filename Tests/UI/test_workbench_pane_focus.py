@@ -124,7 +124,10 @@ def test_workbench_screens_expose_f6_bindings_without_ctrl_arrow_conflicts():
     screen_classes = (ChatScreen, PersonasScreen)
     for screen_class in screen_classes:
         bindings = getattr(screen_class, "BINDINGS", ())
-        keys = {binding[0] if isinstance(binding, tuple) else binding.key for binding in bindings}
+        keys = {
+            binding[0] if isinstance(binding, tuple) else binding.key
+            for binding in bindings
+        }
         assert "f6" in keys
         assert "shift+f6" in keys
         assert "ctrl+left" not in keys

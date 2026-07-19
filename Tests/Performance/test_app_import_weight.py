@@ -42,6 +42,7 @@ set (`HEAVY_MODULES` below), now asserted as a hard requirement by
 numpy is intentionally NOT in the guard set: it is pulled by chromadb (and
 pymupdf), is comparatively light, and is a legitimate boot-time dependency.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -231,7 +232,10 @@ def test_ensure_torch_resolves_real_torch_when_installed() -> None:
 def test_ensure_transformers_resolves_real_transformers_when_installed() -> None:
     """`_ensure_transformers()` must resolve transformers (and AutoModel/
     AutoTokenizer) once called, and no-op afterwards."""
-    if importlib.util.find_spec("transformers") is None or importlib.util.find_spec("torch") is None:
+    if (
+        importlib.util.find_spec("transformers") is None
+        or importlib.util.find_spec("torch") is None
+    ):
         pytest.skip("torch/transformers not installed in this environment")
 
     from tldw_chatbook.Embeddings import Embeddings_Lib

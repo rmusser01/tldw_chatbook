@@ -10,7 +10,11 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Button, Label, Select, Static
 
-from tldw_chatbook.MCP.readiness import STATE_CSS_CLASSES, STATE_GLYPHS, ReadinessSnapshot
+from tldw_chatbook.MCP.readiness import (
+    STATE_CSS_CLASSES,
+    STATE_GLYPHS,
+    ReadinessSnapshot,
+)
 
 # Task 4: one-shot mount-echo consumption sentinel. `on_select_changed`'s
 # scope/scope-ref guards compare an incoming Select.Changed value against the
@@ -249,7 +253,9 @@ class MCPRail(Vertical):
         pad_width = max(
             (
                 len(f"{prefix}{label}")
-                for prefix, label in (_row_prefix_and_label(snap) for snap in self.snapshots)
+                for prefix, label in (
+                    _row_prefix_and_label(snap) for snap in self.snapshots
+                )
             ),
             default=0,
         )
@@ -305,7 +311,10 @@ class MCPRail(Vertical):
                 if self.scope_ref_options:
                     ref_options = self.scope_ref_options
                     ref_option_values = [value for _, value in ref_options]
-                    if self.scope_ref_value and self.scope_ref_value in ref_option_values:
+                    if (
+                        self.scope_ref_value
+                        and self.scope_ref_value in ref_option_values
+                    ):
                         ref_value = self.scope_ref_value
                     else:
                         # Restored/stale value not among the offered scope-ref

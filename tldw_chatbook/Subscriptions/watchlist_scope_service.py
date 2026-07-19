@@ -59,12 +59,16 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
 class WatchlistScopeService:
     """Route watchlist operations to the active local/server authority."""
 
-    def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
+    def __init__(
+        self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None
+    ):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_backend(self, runtime_backend: WatchlistBackend | str | None) -> WatchlistBackend:
+    def _normalize_backend(
+        self, runtime_backend: WatchlistBackend | str | None
+    ) -> WatchlistBackend:
         if runtime_backend is None:
             return WatchlistBackend.LOCAL
         if isinstance(runtime_backend, WatchlistBackend):
@@ -83,7 +87,9 @@ class WatchlistScopeService:
             return
         action_id = self._action_id(backend, action)
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
         elif callable(require_ui_action_allowed):
@@ -91,10 +97,14 @@ class WatchlistScopeService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or f"{action_id} is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or backend.value,
-                    authority_owner=getattr(decision, "authority_owner", None) or backend.value,
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or f"{action_id} is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or backend.value,
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or backend.value,
                 )
 
     def _service_for_backend(self, backend: WatchlistBackend) -> Any:
@@ -163,7 +173,9 @@ class WatchlistScopeService:
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "list")
         service = self._service_for_backend(backend)
-        return await self._maybe_await(service.list_sources(limit=limit, offset=offset, **filters))
+        return await self._maybe_await(
+            service.list_sources(limit=limit, offset=offset, **filters)
+        )
 
     async def get_watch_item_detail(
         self,
@@ -174,7 +186,9 @@ class WatchlistScopeService:
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "detail")
         service = self._service_for_backend(backend)
-        return await self._maybe_await(service.get_source(self._source_id_from_item_id(item_id)))
+        return await self._maybe_await(
+            service.get_source(self._source_id_from_item_id(item_id))
+        )
 
     async def create_watch_item(
         self,
@@ -204,7 +218,9 @@ class WatchlistScopeService:
         source_id = self._source_id_from_item_id(item_id)
         if backend == WatchlistBackend.LOCAL:
             return await self._maybe_await(service.update_source(source_id, payload))
-        return await self._maybe_await(service.update_source(source_id, **dict(payload)))
+        return await self._maybe_await(
+            service.update_source(source_id, **dict(payload))
+        )
 
     async def delete_watch_item(
         self,
@@ -215,7 +231,9 @@ class WatchlistScopeService:
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "delete")
         service = self._service_for_backend(backend)
-        return await self._maybe_await(service.delete_source(self._source_id_from_item_id(item_id)))
+        return await self._maybe_await(
+            service.delete_source(self._source_id_from_item_id(item_id))
+        )
 
     async def launch_run(
         self,
@@ -227,16 +245,24 @@ class WatchlistScopeService:
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "runs.launch")
         service = self._service_for_backend(backend)
-        launched = await self._maybe_await(service.launch_run(job_id=job_id, source_id=source_id))
+        launched = await self._maybe_await(
+            service.launch_run(job_id=job_id, source_id=source_id)
+        )
         if backend == WatchlistBackend.LOCAL:
             execute_run = getattr(service, "execute_run", None)
             if callable(execute_run):
-                run_id = launched.get("run_id") if isinstance(launched, Mapping) else None
+                run_id = (
+                    launched.get("run_id") if isinstance(launched, Mapping) else None
+                )
                 if run_id is None and isinstance(launched, Mapping):
                     run_id = launched.get("id")
                 if run_id is None:
-                    raise ValueError("Local watchlist run launch did not return a run identifier.")
-                return await self._maybe_await(execute_run(self._run_id_from_item_id(run_id)))
+                    raise ValueError(
+                        "Local watchlist run launch did not return a run identifier."
+                    )
+                return await self._maybe_await(
+                    execute_run(self._run_id_from_item_id(run_id))
+                )
         return launched
 
     async def list_runs(
@@ -251,7 +277,9 @@ class WatchlistScopeService:
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "runs.list")
         service = self._service_for_backend(backend)
-        return await self._maybe_await(service.list_runs(job_id=job_id, limit=limit, offset=offset, q=q))
+        return await self._maybe_await(
+            service.list_runs(job_id=job_id, limit=limit, offset=offset, q=q)
+        )
 
     async def get_run(
         self,
@@ -262,7 +290,9 @@ class WatchlistScopeService:
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "runs.detail")
         service = self._service_for_backend(backend)
-        return await self._maybe_await(service.get_run(self._run_id_from_item_id(run_id)))
+        return await self._maybe_await(
+            service.get_run(self._run_id_from_item_id(run_id))
+        )
 
     async def observe_run(
         self,
@@ -275,7 +305,9 @@ class WatchlistScopeService:
         self._enforce_policy(backend, "runs.observe")
         service = self._service_for_backend(backend)
         return await self._maybe_await(
-            service.get_run_detail(self._run_id_from_item_id(run_id), include_tallies=include_tallies)
+            service.get_run_detail(
+                self._run_id_from_item_id(run_id), include_tallies=include_tallies
+            )
         )
 
     async def list_alert_rules(
@@ -298,7 +330,9 @@ class WatchlistScopeService:
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "alert_rules.detail")
         service = self._service_for_backend(backend)
-        return await self._maybe_await(service.get_alert_rule(self._rule_id_from_item_id(rule_id)))
+        return await self._maybe_await(
+            service.get_alert_rule(self._rule_id_from_item_id(rule_id))
+        )
 
     async def create_alert_rule(
         self,
@@ -322,7 +356,9 @@ class WatchlistScopeService:
         self._enforce_policy(backend, "alert_rules.update")
         service = self._service_for_backend(backend)
         return await self._maybe_await(
-            service.update_alert_rule(self._rule_id_from_item_id(rule_id), **dict(payload))
+            service.update_alert_rule(
+                self._rule_id_from_item_id(rule_id), **dict(payload)
+            )
         )
 
     async def delete_alert_rule(
@@ -334,4 +370,6 @@ class WatchlistScopeService:
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "alert_rules.delete")
         service = self._service_for_backend(backend)
-        return await self._maybe_await(service.delete_alert_rule(self._rule_id_from_item_id(rule_id)))
+        return await self._maybe_await(
+            service.delete_alert_rule(self._rule_id_from_item_id(rule_id))
+        )

@@ -18,14 +18,13 @@ from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal, VerticalScroll, Grid
 from textual.widgets import (
     Static, Button, Input, Select, Checkbox, ListView, ListItem,
-    DataTable, Markdown, Label, TabbedContent, TabPane,
+    DataTable, Label, TabbedContent, TabPane,
     LoadingIndicator, ProgressBar, Collapsible
 )
 from textual.binding import Binding
 from textual.reactive import reactive
 from textual.css.query import NoMatches
 from rich.markup import escape
-from rich.text import Text
 from loguru import logger
 
 # Local imports
@@ -36,7 +35,7 @@ from .saved_searches_panel import SavedSearchesPanel
 from .search_handoff import build_search_chat_handoff_payload
 from .constants import (
     DEFAULT_TOP_K, DEFAULT_TEMPERATURE, DEFAULT_PARENT_SIZE,
-    MAX_CONCURRENT_SEARCHES, SEARCH_MODES, PARENT_STRATEGIES
+    SEARCH_MODES, PARENT_STRATEGIES
 )
 
 from ....Chat.chat_handoff_messages import (
@@ -128,19 +127,9 @@ try:
         perform_plain_rag_search, perform_full_rag_pipeline, perform_hybrid_rag_search
     )
     RAG_EVENTS_AVAILABLE = True
-    
-    # Try to import pipeline integration
-    try:
-        from ....RAG_Search.pipeline_integration import get_pipeline_manager
-        PIPELINE_INTEGRATION_AVAILABLE = True
-    except ImportError:
-        logger.info("Pipeline integration not available")
-        PIPELINE_INTEGRATION_AVAILABLE = False
-        
 except ImportError as e:
     logger.warning(f"RAG event handlers not available: {e}")
     RAG_EVENTS_AVAILABLE = False
-    PIPELINE_INTEGRATION_AVAILABLE = False
     # Create placeholder functions
     async def perform_plain_rag_search(*args, **kwargs):
         raise ImportError("RAG search not available - missing dependencies")
@@ -191,7 +180,7 @@ if TYPE_CHECKING:
 logger = logger.bind(module="SearchRAGWindow")
 
 # Import event handler mixin
-from .search_event_handlers import SearchEventHandlersMixin
+from .search_event_handlers import SearchEventHandlersMixin  # noqa: E402
 
 
 class SearchRAGWindow(SearchEventHandlersMixin, Container):
@@ -783,7 +772,7 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
     def _setup_collections_list(self) -> None:
         """Setup collections list for maintenance"""
         if RAG_SERVICES_AVAILABLE:
-            collections_list = self.query_one("#collections-list", ListView)
+            self.query_one("#collections-list", ListView)
             self._refresh_collections_list()
     
     def _setup_index_stats(self) -> None:

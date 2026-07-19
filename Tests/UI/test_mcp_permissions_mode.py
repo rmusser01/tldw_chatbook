@@ -40,7 +40,9 @@ def _row(
     )
 
 
-def _global_row(*, state_label: str = "Ask", cycle_current: str | None = "ask") -> PermRow:
+def _global_row(
+    *, state_label: str = "Ask", cycle_current: str | None = "ask"
+) -> PermRow:
     return _row(kind="global", state_label=state_label, cycle_current=cycle_current)
 
 
@@ -119,22 +121,36 @@ async def test_rows_render_in_given_order_with_pinned_row_keys():
         canvas = app.query_one(MCPPermissionsMode)
         rows = [
             _global_row(state_label="Ask", cycle_current="ask"),
-            _server_row(server_key="local:docs", server_label="docs", state_label="Ask"),
-            _tool_row(
-                server_key="local:docs", server_label="docs", tool_name="fetch",
-                state_label="Ask", tags_label="—",
+            _server_row(
+                server_key="local:docs", server_label="docs", state_label="Ask"
             ),
             _tool_row(
-                server_key="local:docs", server_label="docs", tool_name="search",
-                state_label="Allow •", tags_label="network",
+                server_key="local:docs",
+                server_label="docs",
+                tool_name="fetch",
+                state_label="Ask",
+                tags_label="—",
             ),
-            _server_row(server_key="local:notes", server_label="notes", state_label="Off •"),
             _tool_row(
-                server_key="local:notes", server_label="notes", tool_name="list_notes",
+                server_key="local:docs",
+                server_label="docs",
+                tool_name="search",
+                state_label="Allow •",
+                tags_label="network",
+            ),
+            _server_row(
+                server_key="local:notes", server_label="notes", state_label="Off •"
+            ),
+            _tool_row(
+                server_key="local:notes",
+                server_label="notes",
+                tool_name="list_notes",
                 state_label="Off •",
             ),
         ]
-        await canvas.update_matrix(rows, kill_switch=False, preview="Global default: Ask.")
+        await canvas.update_matrix(
+            rows, kill_switch=False, preview="Global default: Ask."
+        )
         await pilot.pause()
 
         table = app.query_one("#mcp-perm-table", DataTable)
@@ -162,7 +178,10 @@ async def test_rows_render_in_given_order_with_pinned_row_keys():
             row_key, _ = table.coordinate_to_cell_key((index, 0))
             assert row_key.value == expected_key
 
-        assert str(app.query_one("#mcp-perm-preview", Static).renderable) == "Global default: Ask."
+        assert (
+            str(app.query_one("#mcp-perm-preview", Static).renderable)
+            == "Global default: Ask."
+        )
 
 
 @pytest.mark.asyncio
@@ -181,11 +200,15 @@ async def test_update_matrix_skips_duplicate_row_keys_instead_of_crashing():
         rows = [
             _global_row(),
             _tool_row(
-                server_key="local:docs", server_label="docs", tool_name="search",
+                server_key="local:docs",
+                server_label="docs",
+                tool_name="search",
                 state_label="Ask",
             ),
             _tool_row(
-                server_key="local:docs", server_label="docs", tool_name="search",
+                server_key="local:docs",
+                server_label="docs",
+                tool_name="search",
                 state_label="Allow •",
             ),
         ]
@@ -211,7 +234,9 @@ async def test_state_label_renders_verbatim_and_markup_safe():
         rows = [
             _global_row(),
             _server_row(
-                server_key="local:[bold red]x", server_label="[bold red]x", state_label="Ask ⚠",
+                server_key="local:[bold red]x",
+                server_label="[bold red]x",
+                state_label="Ask ⚠",
             ),
         ]
         await canvas.update_matrix(rows, kill_switch=False, preview="")
@@ -247,7 +272,7 @@ async def test_update_matrix_sets_kill_switch_label_without_posting_a_toggle():
 @pytest.mark.asyncio
 async def test_kill_switch_button_default_label_reads_no():
     app = PermissionsModeApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         button = app.query_one("#mcp-perm-kill-switch", Button)
         assert str(button.label) == "block MCP tools in chat: no ▸"
 
@@ -294,7 +319,9 @@ async def test_space_on_tool_row_posts_next_state_per_cycle_helper():
             _global_row(),
             _server_row(server_key="local:docs", server_label="docs"),
             _tool_row(
-                server_key="local:docs", server_label="docs", tool_name="search",
+                server_key="local:docs",
+                server_label="docs",
+                tool_name="search",
                 cycle_current=None,
             ),
         ]
@@ -323,7 +350,9 @@ async def test_space_on_server_row_allows_cycling_back_to_inherit():
         canvas = app.query_one(MCPPermissionsMode)
         rows = [
             _global_row(),
-            _server_row(server_key="local:docs", server_label="docs", cycle_current="deny"),
+            _server_row(
+                server_key="local:docs", server_label="docs", cycle_current="deny"
+            ),
         ]
         await canvas.update_matrix(rows, kill_switch=False, preview="")
         await pilot.pause()
@@ -349,7 +378,8 @@ async def test_space_on_global_row_never_posts_none():
         canvas = app.query_one(MCPPermissionsMode)
         await canvas.update_matrix(
             [_global_row(state_label="Off", cycle_current="deny")],
-            kill_switch=False, preview="",
+            kill_switch=False,
+            preview="",
         )
         await pilot.pause()
         table = app.query_one("#mcp-perm-table", DataTable)
@@ -399,7 +429,9 @@ async def test_enter_on_tool_row_posts_row_selected_with_tool_fields():
         await pilot.press("enter")
         await pilot.pause()
 
-        events = [e for e in app.events if isinstance(e, MCPPermissionsMode.RowSelected)]
+        events = [
+            e for e in app.events if isinstance(e, MCPPermissionsMode.RowSelected)
+        ]
         assert len(events) == 1
         assert events[0].row_kind == "tool"
         assert events[0].server_key == "local:docs"
@@ -419,7 +451,9 @@ async def test_enter_on_global_row_posts_row_selected_with_no_tool_name():
         await pilot.press("enter")
         await pilot.pause()
 
-        events = [e for e in app.events if isinstance(e, MCPPermissionsMode.RowSelected)]
+        events = [
+            e for e in app.events if isinstance(e, MCPPermissionsMode.RowSelected)
+        ]
         assert len(events) == 1
         assert events[0].row_kind == "global"
         assert events[0].tool_name is None
@@ -430,7 +464,10 @@ async def test_enter_on_server_row_posts_row_selected_with_no_tool_name():
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
-        rows = [_global_row(), _server_row(server_key="local:docs", server_label="docs")]
+        rows = [
+            _global_row(),
+            _server_row(server_key="local:docs", server_label="docs"),
+        ]
         await canvas.update_matrix(rows, kill_switch=False, preview="")
         await pilot.pause()
         table = app.query_one("#mcp-perm-table", DataTable)
@@ -439,7 +476,9 @@ async def test_enter_on_server_row_posts_row_selected_with_no_tool_name():
         await pilot.press("enter")
         await pilot.pause()
 
-        events = [e for e in app.events if isinstance(e, MCPPermissionsMode.RowSelected)]
+        events = [
+            e for e in app.events if isinstance(e, MCPPermissionsMode.RowSelected)
+        ]
         assert len(events) == 1
         assert events[0].row_kind == "server"
         assert events[0].server_key == "local:docs"
@@ -505,7 +544,7 @@ async def test_legend_line_renders_fixed_marker_key():
     `PermRow`/preview text -- explaining the matrix's own State-column
     glyphs and giving Space-cycling minimal discoverability."""
     app = PermissionsModeApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
         assert legend == (
             "• override · ⚠ definition changed · ⚑ high-risk floor · "
@@ -540,7 +579,9 @@ async def test_tags_column_shown_when_any_row_has_tags():
         rows = [
             _global_row(),
             _tool_row(
-                server_key="local:docs", server_label="docs", tool_name="search",
+                server_key="local:docs",
+                server_label="docs",
+                tool_name="search",
                 tags_label="network",
             ),
         ]
@@ -563,9 +604,24 @@ def test_format_tool_state_label_marker_precedence():
     workbench's delegating staticmethod."""
     from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
-    assert format_tool_state_label(EffectiveToolState(state="allow", origin="tool_override")) == "Allow •"
-    assert format_tool_state_label(EffectiveToolState(state="ask", origin="server_default")) == "Ask"
-    assert format_tool_state_label(EffectiveToolState(state="ask", origin="global_default")) == "Ask"
+    assert (
+        format_tool_state_label(
+            EffectiveToolState(state="allow", origin="tool_override")
+        )
+        == "Allow •"
+    )
+    assert (
+        format_tool_state_label(
+            EffectiveToolState(state="ask", origin="server_default")
+        )
+        == "Ask"
+    )
+    assert (
+        format_tool_state_label(
+            EffectiveToolState(state="ask", origin="global_default")
+        )
+        == "Ask"
+    )
     assert (
         format_tool_state_label(
             EffectiveToolState(state="ask", origin="tool_override", config_changed=True)
@@ -599,7 +655,9 @@ async def test_update_server_profiles_renders_pointer_and_profile_names():
         section = app.query_one("#mcp-perm-server-profiles")
         assert section.display is True
 
-        pointer = str(app.query_one("#mcp-perm-server-profiles-pointer", Static).renderable)
+        pointer = str(
+            app.query_one("#mcp-perm-server-profiles-pointer", Static).renderable
+        )
         assert pointer == (
             "Server-side profiles are managed in the tldw_server webui. The "
             "matrix above is chatbook's client-side gate and still applies."
@@ -715,8 +773,12 @@ def test_perm_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
         assert start != -1, f"{label} is missing {selector!r}"
         end = text.find("}", start)
         block = text[start:end]
-        assert "height: auto;" in block, f"{label}'s {selector!r} block is missing 'height: auto;'"
-        assert "max-height: 70%;" in block, f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+        assert "height: auto;" in block, (
+            f"{label}'s {selector!r} block is missing 'height: auto;'"
+        )
+        assert "max-height: 70%;" in block, (
+            f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+        )
 
 
 def test_perm_preview_height_rule_pinned_in_bundle_source_and_bundle() -> None:
@@ -738,7 +800,9 @@ def test_perm_preview_height_rule_pinned_in_bundle_source_and_bundle() -> None:
         assert start != -1, f"{label} is missing {selector!r}"
         end = text.find("}", start)
         block = text[start:end]
-        assert "height: auto;" in block, f"{label}'s {selector!r} block is missing 'height: auto;'"
+        assert "height: auto;" in block, (
+            f"{label}'s {selector!r} block is missing 'height: auto;'"
+        )
 
 
 # UX batch items 2+3: the kill-switch Checkbox is gone -- the whole
@@ -777,12 +841,18 @@ async def test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css():
             _server_row(server_key="local:docs", server_label="docs"),
             _tool_row(server_key="local:docs", server_label="docs", tool_name="search"),
         ]
-        await canvas.update_matrix(rows, kill_switch=True, preview="Global default: Ask.")
+        await canvas.update_matrix(
+            rows, kill_switch=True, preview="Global default: Ask."
+        )
         await pilot.pause()
 
         table = app.query_one("#mcp-perm-table", DataTable)
-        assert table.size.width > 0, "matrix table collapsed to zero width under bundled CSS"
-        assert table.size.height > 0, "matrix table collapsed to zero height under bundled CSS"
+        assert table.size.width > 0, (
+            "matrix table collapsed to zero width under bundled CSS"
+        )
+        assert table.size.height > 0, (
+            "matrix table collapsed to zero height under bundled CSS"
+        )
 
         # UX batch items 2+3: the kill switch is now a Button, not a
         # Checkbox -- it needs no `min-height: 3` floor (the defect class
@@ -790,8 +860,12 @@ async def test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css():
         # focus-border redraw), so this only checks ordinary non-zero
         # geometry, same shape as every other Button check in this suite.
         kill_button = app.query_one("#mcp-perm-kill-switch", Button)
-        assert kill_button.size.width > 0, "kill-switch button collapsed to zero width under bundled CSS"
-        assert kill_button.size.height > 0, "kill-switch button collapsed to zero height under bundled CSS"
+        assert kill_button.size.width > 0, (
+            "kill-switch button collapsed to zero width under bundled CSS"
+        )
+        assert kill_button.size.height > 0, (
+            "kill-switch button collapsed to zero height under bundled CSS"
+        )
 
         # T8's server-source governance listing is its own dedicated slot
         # (`#mcp-perm-server-profiles-slot`, `height: auto; min-height: 0;`)
@@ -803,12 +877,20 @@ async def test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css():
         await pilot.pause()
 
         section = app.query_one("#mcp-perm-server-profiles")
-        assert section.size.width > 0, "server-profiles section collapsed to zero width under bundled CSS"
-        assert section.size.height > 0, "server-profiles section collapsed to zero height under bundled CSS"
+        assert section.size.width > 0, (
+            "server-profiles section collapsed to zero width under bundled CSS"
+        )
+        assert section.size.height > 0, (
+            "server-profiles section collapsed to zero height under bundled CSS"
+        )
 
         pointer = app.query_one("#mcp-perm-server-profiles-pointer", Static)
-        assert pointer.size.width > 0, "server-profiles pointer collapsed to zero width under bundled CSS"
-        assert pointer.size.height > 0, "server-profiles pointer collapsed to zero height under bundled CSS"
+        assert pointer.size.width > 0, (
+            "server-profiles pointer collapsed to zero width under bundled CSS"
+        )
+        assert pointer.size.height > 0, (
+            "server-profiles pointer collapsed to zero height under bundled CSS"
+        )
         # Re-check after the server-profiles mount above.
         assert kill_button.size.height > 0, (
             "kill-switch button collapsed to zero height under bundled CSS after the "

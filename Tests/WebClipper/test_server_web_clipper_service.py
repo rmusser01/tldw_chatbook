@@ -5,7 +5,9 @@ import pytest
 
 import tldw_chatbook.WebClipper.server_web_clipper_service as web_clipper_module
 import tldw_chatbook.Web_Clipper_Interop.server_web_clipper_service as web_clipper_interop_module
-from tldw_chatbook.WebClipper import ServerWebClipperService as PublicServerWebClipperService
+from tldw_chatbook.WebClipper import (
+    ServerWebClipperService as PublicServerWebClipperService,
+)
 from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 
@@ -15,7 +17,9 @@ class FakeWebClipperClient:
         self.calls = []
 
     async def save_web_clip(self, request_data):
-        self.calls.append(("save_web_clip", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            ("save_web_clip", request_data.model_dump(exclude_none=True, mode="json"))
+        )
         return {"clip_id": "clip-1", "note_id": "note-1", "status": "saved"}
 
     async def get_web_clip_status(self, clip_id):
@@ -23,7 +27,13 @@ class FakeWebClipperClient:
         return {"clip_id": clip_id, "status": "saved"}
 
     async def persist_web_clip_enrichment(self, clip_id, request_data):
-        self.calls.append(("persist_web_clip_enrichment", clip_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "persist_web_clip_enrichment",
+                clip_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"clip_id": clip_id, "status": "complete"}
 
 
@@ -69,7 +79,11 @@ async def _exercise_interop_web_clipper(service, clip_id="clip-1"):
 
 WEB_CLIPPER_IMPORT_PATHS = [
     (PublicServerWebClipperService, web_clipper_module, _exercise_public_web_clipper),
-    (ServerWebClipperService, web_clipper_interop_module, _exercise_interop_web_clipper),
+    (
+        ServerWebClipperService,
+        web_clipper_interop_module,
+        _exercise_interop_web_clipper,
+    ),
 ]
 
 
@@ -82,7 +96,9 @@ def test_server_web_clipper_service_modules_do_not_reference_legacy_config_clien
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("service_cls", "_module", "exercise"), WEB_CLIPPER_IMPORT_PATHS)
+@pytest.mark.parametrize(
+    ("service_cls", "_module", "exercise"), WEB_CLIPPER_IMPORT_PATHS
+)
 async def test_server_web_clipper_service_direct_client_takes_precedence_over_provider(
     service_cls,
     _module,
@@ -100,7 +116,9 @@ async def test_server_web_clipper_service_direct_client_takes_precedence_over_pr
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("service_cls", "_module", "exercise"), WEB_CLIPPER_IMPORT_PATHS)
+@pytest.mark.parametrize(
+    ("service_cls", "_module", "exercise"), WEB_CLIPPER_IMPORT_PATHS
+)
 async def test_server_web_clipper_service_from_server_context_provider_is_lazy(
     service_cls,
     _module,
@@ -124,7 +142,9 @@ async def test_server_web_clipper_service_from_server_context_provider_is_lazy(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("service_cls", "_module", "exercise"), WEB_CLIPPER_IMPORT_PATHS)
+@pytest.mark.parametrize(
+    ("service_cls", "_module", "exercise"), WEB_CLIPPER_IMPORT_PATHS
+)
 async def test_server_web_clipper_service_re_resolves_provider_without_service_local_client_cache(
     service_cls,
     _module,
@@ -146,7 +166,9 @@ async def test_server_web_clipper_service_re_resolves_provider_without_service_l
         assert all(value is not built_client for value in vars(service).values())
 
 
-@pytest.mark.parametrize(("service_cls", "_module", "_exercise"), WEB_CLIPPER_IMPORT_PATHS)
+@pytest.mark.parametrize(
+    ("service_cls", "_module", "_exercise"), WEB_CLIPPER_IMPORT_PATHS
+)
 def test_server_web_clipper_service_from_config_returns_provider_backed_service(
     service_cls,
     _module,
@@ -191,7 +213,9 @@ async def test_server_web_clipper_service_routes_with_policy_actions():
     assert saved["note_id"] == "note-1"
     assert status["clip_id"] == "clip-1"
     assert enrichment["status"] == "complete"
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "web_clipper.capture.server",
         "web_clipper.status.server",
         "web_clipper.capture.server",

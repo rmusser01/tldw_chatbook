@@ -52,22 +52,34 @@ def validate_entries(entries: list[dict]) -> list[ValidationFinding]:
             except Exception:
                 probe = None  # malformed sibling fields: skip the regex probe, other checks still run
             if probe is not None and not probe.is_regex:
-                findings.append(ValidationFinding(
-                    code="invalid_regex", field="pattern", entry_id=entry_id,
-                    message="Pattern does not compile; the engine will treat it as a literal.",
-                ))
+                findings.append(
+                    ValidationFinding(
+                        code="invalid_regex",
+                        field="pattern",
+                        entry_id=entry_id,
+                        message="Pattern does not compile; the engine will treat it as a literal.",
+                    )
+                )
             if entry.get("case_sensitive"):
-                findings.append(ValidationFinding(
-                    code="case_flag_on_regex", field="case_sensitive", entry_id=entry_id,
-                    message="Case-sensitive is ignored for regex entries; use the /i flag instead.",
-                ))
+                findings.append(
+                    ValidationFinding(
+                        code="case_flag_on_regex",
+                        field="case_sensitive",
+                        entry_id=entry_id,
+                        message="Case-sensitive is ignored for regex entries; use the /i flag instead.",
+                    )
+                )
 
         key = (pattern, etype)
         if key in seen:
-            findings.append(ValidationFinding(
-                code="duplicate_pattern", field="pattern", entry_id=entry_id,
-                message="Same pattern and type as an earlier entry; only one will usually fire.",
-            ))
+            findings.append(
+                ValidationFinding(
+                    code="duplicate_pattern",
+                    field="pattern",
+                    entry_id=entry_id,
+                    message="Same pattern and type as an earlier entry; only one will usually fire.",
+                )
+            )
         else:
             seen.add(key)
 
@@ -77,15 +89,23 @@ def validate_entries(entries: list[dict]) -> list[ValidationFinding]:
             try:
                 probability_value = float(probability)
             except (TypeError, ValueError):
-                findings.append(ValidationFinding(
-                    code="malformed_probability", field="probability", entry_id=entry_id,
-                    message="Probability is not a number; the editor will display 100% until it is fixed.",
-                ))
+                findings.append(
+                    ValidationFinding(
+                        code="malformed_probability",
+                        field="probability",
+                        entry_id=entry_id,
+                        message="Probability is not a number; the editor will display 100% until it is fixed.",
+                    )
+                )
         if probability_value is not None and probability_value == 0.0:
-            findings.append(ValidationFinding(
-                code="probability_zero", field="probability", entry_id=entry_id,
-                message="Probability 0 means this entry can never fire.",
-            ))
+            findings.append(
+                ValidationFinding(
+                    code="probability_zero",
+                    field="probability",
+                    entry_id=entry_id,
+                    message="Probability 0 means this entry can never fire.",
+                )
+            )
     return findings
 
 

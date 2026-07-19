@@ -27,7 +27,9 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     build_llamacpp_chat_payload,
     safe_provider_error_copy,
 )
-from tldw_chatbook.Chat.console_provider_support import resolve_console_provider_identity
+from tldw_chatbook.Chat.console_provider_support import (
+    resolve_console_provider_identity,
+)
 
 
 def test_llamacpp_payload_includes_supported_sampling_params() -> None:
@@ -97,7 +99,9 @@ async def test_llamacpp_prefers_explicit_model_but_still_probes_reachability():
     )
 
     resolved = await gateway.resolve_llamacpp(
-        LlamaCppProviderConfig(base_url="http://127.0.0.1:9099", explicit_model="explicit-model")
+        LlamaCppProviderConfig(
+            base_url="http://127.0.0.1:9099", explicit_model="explicit-model"
+        )
     )
 
     assert resolved.ready is True
@@ -119,7 +123,9 @@ async def test_llamacpp_prefers_configured_model_but_still_probes_reachability()
     )
 
     resolved = await gateway.resolve_llamacpp(
-        LlamaCppProviderConfig(base_url="http://127.0.0.1:9099", configured_model="configured-model")
+        LlamaCppProviderConfig(
+            base_url="http://127.0.0.1:9099", configured_model="configured-model"
+        )
     )
 
     assert resolved.ready is True
@@ -140,7 +146,9 @@ async def test_llamacpp_explicit_model_blocks_when_reachability_probe_cannot_con
     )
 
     resolved = await gateway.resolve_llamacpp(
-        LlamaCppProviderConfig(base_url="http://127.0.0.1:9099", explicit_model="explicit-model")
+        LlamaCppProviderConfig(
+            base_url="http://127.0.0.1:9099", explicit_model="explicit-model"
+        )
     )
 
     assert resolved.ready is False
@@ -161,7 +169,9 @@ async def test_llamacpp_uses_first_models_endpoint_result_when_no_configured_mod
         )
     )
 
-    resolved = await gateway.resolve_llamacpp(LlamaCppProviderConfig(base_url="http://127.0.0.1:9099"))
+    resolved = await gateway.resolve_llamacpp(
+        LlamaCppProviderConfig(base_url="http://127.0.0.1:9099")
+    )
 
     assert resolved.ready is True
     assert resolved.model == "server-model"
@@ -179,7 +189,9 @@ async def test_llamacpp_unreachable_server_returns_blocked_recovery_copy():
         )
     )
 
-    resolved = await gateway.resolve_llamacpp(LlamaCppProviderConfig(base_url="http://127.0.0.1:9099"))
+    resolved = await gateway.resolve_llamacpp(
+        LlamaCppProviderConfig(base_url="http://127.0.0.1:9099")
+    )
 
     assert resolved.ready is False
     assert resolved.model is None
@@ -199,11 +211,16 @@ async def test_llamacpp_empty_models_without_configured_model_returns_blocked_re
         )
     )
 
-    resolved = await gateway.resolve_llamacpp(LlamaCppProviderConfig(base_url="http://127.0.0.1:9099"))
+    resolved = await gateway.resolve_llamacpp(
+        LlamaCppProviderConfig(base_url="http://127.0.0.1:9099")
+    )
 
     assert resolved.ready is False
     assert resolved.model is None
-    assert resolved.visible_copy == "Provider blocked: select or configure a llama.cpp model."
+    assert (
+        resolved.visible_copy
+        == "Provider blocked: select or configure a llama.cpp model."
+    )
 
 
 @pytest.mark.asyncio
@@ -218,11 +235,16 @@ async def test_llamacpp_non_object_models_payload_returns_blocked_recovery_copy(
         )
     )
 
-    resolved = await gateway.resolve_llamacpp(LlamaCppProviderConfig(base_url="http://127.0.0.1:9099"))
+    resolved = await gateway.resolve_llamacpp(
+        LlamaCppProviderConfig(base_url="http://127.0.0.1:9099")
+    )
 
     assert resolved.ready is False
     assert resolved.model is None
-    assert resolved.visible_copy == "Provider blocked: select or configure a llama.cpp model."
+    assert (
+        resolved.visible_copy
+        == "Provider blocked: select or configure a llama.cpp model."
+    )
 
 
 @pytest.mark.asyncio
@@ -304,7 +326,9 @@ async def test_resolve_for_send_normalizes_scheme_less_llamacpp_base_url_before_
         seen_urls.append(str(request.url))
         return httpx.Response(200, json={"data": [{"id": "server-model"}]})
 
-    gateway = ConsoleProviderGateway(http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
 
     resolved = await gateway.resolve_for_send(
         ConsoleProviderSelection(provider="llama_cpp", base_url="127.0.0.1:9099/v1")
@@ -323,7 +347,9 @@ async def test_resolve_for_send_blocks_invalid_llamacpp_base_url_before_http():
         requests.append(request)
         return httpx.Response(200, json={"data": [{"id": "server-model"}]})
 
-    gateway = ConsoleProviderGateway(http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
 
     resolved = await gateway.resolve_for_send(
         ConsoleProviderSelection(provider="llama_cpp", base_url="file:///etc/passwd")
@@ -336,12 +362,16 @@ async def test_resolve_for_send_blocks_invalid_llamacpp_base_url_before_http():
 
 
 @pytest.mark.asyncio
-async def test_gateway_resolves_direct_llamacpp_without_importing_chat_functions(monkeypatch):
+async def test_gateway_resolves_direct_llamacpp_without_importing_chat_functions(
+    monkeypatch,
+):
     real_import = builtins.__import__
 
     def fail_chat_functions_import(name, *args, **kwargs):
         if name == "tldw_chatbook.Chat.Chat_Functions":
-            raise AssertionError("direct llama resolution should not import Chat_Functions")
+            raise AssertionError(
+                "direct llama resolution should not import Chat_Functions"
+            )
         return real_import(name, *args, **kwargs)
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -353,7 +383,9 @@ async def test_gateway_resolves_direct_llamacpp_without_importing_chat_functions
     gateway = ConsoleProviderGateway(http_client=client)
 
     resolved = await gateway.resolve_for_send(
-        ConsoleProviderSelection(provider="llama_cpp", base_url="http://127.0.0.1:9099", explicit_model="m")
+        ConsoleProviderSelection(
+            provider="llama_cpp", base_url="http://127.0.0.1:9099", explicit_model="m"
+        )
     )
 
     assert resolved.ready is True
@@ -363,7 +395,9 @@ async def test_gateway_resolves_direct_llamacpp_without_importing_chat_functions
 @pytest.mark.asyncio
 async def test_resolve_for_send_blocks_unsupported_provider_with_recovery_copy():
     gateway = ConsoleProviderGateway(
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(500)))
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(500))
+        )
     )
 
     resolved = await gateway.resolve_for_send(
@@ -394,12 +428,16 @@ async def test_resolve_for_send_blocks_unsupported_provider_with_recovery_copy()
 @pytest.mark.asyncio
 async def test_resolve_for_send_openai_uses_env_key_and_execution_key() -> None:
     gateway = ConsoleProviderGateway(
-        config_provider=lambda: {"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}},
+        config_provider=lambda: {
+            "api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
+        },
         environ={"OPENAI_API_KEY": "sk-test-secret"},
     )
 
     resolved = await gateway.resolve_for_send(
-        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1", streaming=False)
+        ConsoleProviderSelection(
+            provider="openai", explicit_model="gpt-4.1", streaming=False
+        )
     )
 
     assert resolved.ready is True
@@ -432,7 +470,9 @@ async def test_resolve_for_send_all_chat_api_handlers_are_console_supported() ->
             settings["api_key"] = f"test-key-for-{identity.readiness_key}"
 
     async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"status": "ok"}))
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"status": "ok"})
+        )
     ) as client:
         gateway = ConsoleProviderGateway(
             http_client=client,
@@ -446,7 +486,9 @@ async def test_resolve_for_send_all_chat_api_handlers_are_console_supported() ->
                 handler_keys=handler_keys,
             )
             resolved = await gateway.resolve_for_send(
-                ConsoleProviderSelection(provider=provider, explicit_model="console-sweep-model")
+                ConsoleProviderSelection(
+                    provider=provider, explicit_model="console-sweep-model"
+                )
             )
 
             assert resolved.ready is True, provider
@@ -457,9 +499,13 @@ async def test_resolve_for_send_all_chat_api_handlers_are_console_supported() ->
 
 
 @pytest.mark.asyncio
-async def test_resolve_for_send_supported_provider_missing_key_blocks_without_wip() -> None:
+async def test_resolve_for_send_supported_provider_missing_key_blocks_without_wip() -> (
+    None
+):
     gateway = ConsoleProviderGateway(
-        config_provider=lambda: {"api_settings": {"anthropic": {"api_key_env_var": "ANTHROPIC_API_KEY"}}},
+        config_provider=lambda: {
+            "api_settings": {"anthropic": {"api_key_env_var": "ANTHROPIC_API_KEY"}}
+        },
         environ={},
     )
 
@@ -480,7 +526,9 @@ async def test_resolve_for_send_custom_alias_uses_custom_openai_execution_key() 
         environ={},
     )
 
-    resolved = await gateway.resolve_for_send(ConsoleProviderSelection(provider="Custom", configured_model="m"))
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="Custom", configured_model="m")
+    )
 
     assert resolved.ready is True
     assert resolved.readiness_key == "custom"
@@ -488,9 +536,13 @@ async def test_resolve_for_send_custom_alias_uses_custom_openai_execution_key() 
 
 
 @pytest.mark.asyncio
-async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_from_config() -> None:
+async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_from_config() -> (
+    None
+):
     gateway = ConsoleProviderGateway(
-        config_provider=lambda: {"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
+        config_provider=lambda: {
+            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+        },
         environ={},
     )
 
@@ -511,10 +563,14 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
 
 
 @pytest.mark.asyncio
-async def test_resolve_for_send_ignores_cloud_session_base_url_without_configured_endpoint() -> None:
+async def test_resolve_for_send_ignores_cloud_session_base_url_without_configured_endpoint() -> (
+    None
+):
     gateway = ConsoleProviderGateway(
         config_provider=lambda: {
-            "api_settings": {"openai": {"api_key": "unit-test-key", "model": "gpt-4.1"}},
+            "api_settings": {
+                "openai": {"api_key": "unit-test-key", "model": "gpt-4.1"}
+            },
         },
         environ={},
     )
@@ -534,14 +590,22 @@ async def test_resolve_for_send_ignores_cloud_session_base_url_without_configure
 
 
 @pytest.mark.asyncio
-async def test_resolve_for_send_accepts_generic_base_url_matching_config_with_trailing_slash() -> None:
+async def test_resolve_for_send_accepts_generic_base_url_matching_config_with_trailing_slash() -> (
+    None
+):
     gateway = ConsoleProviderGateway(
-        config_provider=lambda: {"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
+        config_provider=lambda: {
+            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+        },
         environ={},
     )
 
     resolved = await gateway.resolve_for_send(
-        ConsoleProviderSelection(provider="ollama", explicit_model="llama3", base_url="http://127.0.0.1:11434/")
+        ConsoleProviderSelection(
+            provider="ollama",
+            explicit_model="llama3",
+            base_url="http://127.0.0.1:11434/",
+        )
     )
 
     assert resolved.ready is True
@@ -550,28 +614,42 @@ async def test_resolve_for_send_accepts_generic_base_url_matching_config_with_tr
 
 
 @pytest.mark.asyncio
-async def test_resolve_for_send_accepts_generic_base_url_matching_default_port() -> None:
+async def test_resolve_for_send_accepts_generic_base_url_matching_default_port() -> (
+    None
+):
     gateway = ConsoleProviderGateway(
-        config_provider=lambda: {"api_settings": {"ollama": {"api_url": "http://example.test"}}},
+        config_provider=lambda: {
+            "api_settings": {"ollama": {"api_url": "http://example.test"}}
+        },
         environ={},
     )
 
     resolved = await gateway.resolve_for_send(
-        ConsoleProviderSelection(provider="ollama", explicit_model="llama3", base_url="http://example.test:80/")
+        ConsoleProviderSelection(
+            provider="ollama",
+            explicit_model="llama3",
+            base_url="http://example.test:80/",
+        )
     )
 
     assert resolved.ready is True
 
 
 @pytest.mark.asyncio
-async def test_resolve_for_send_blocks_malformed_generic_base_url_without_crashing() -> None:
+async def test_resolve_for_send_blocks_malformed_generic_base_url_without_crashing() -> (
+    None
+):
     gateway = ConsoleProviderGateway(
-        config_provider=lambda: {"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
+        config_provider=lambda: {
+            "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+        },
         environ={},
     )
 
     resolved = await gateway.resolve_for_send(
-        ConsoleProviderSelection(provider="ollama", explicit_model="llama3", base_url="http://[::1")
+        ConsoleProviderSelection(
+            provider="ollama", explicit_model="llama3", base_url="http://[::1"
+        )
     )
 
     assert resolved.ready is False
@@ -581,8 +659,16 @@ async def test_resolve_for_send_blocks_malformed_generic_base_url_without_crashi
 @pytest.mark.asyncio
 async def test_resolve_for_send_reads_config_provider_at_resolution_time() -> None:
     configs = [
-        {"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY", "model": "old-model"}}},
-        {"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY", "model": "new-model"}}},
+        {
+            "api_settings": {
+                "openai": {"api_key_env_var": "OPENAI_API_KEY", "model": "old-model"}
+            }
+        },
+        {
+            "api_settings": {
+                "openai": {"api_key_env_var": "OPENAI_API_KEY", "model": "new-model"}
+            }
+        },
     ]
 
     def config_provider() -> dict[str, object]:
@@ -609,8 +695,8 @@ async def test_llamacpp_stream_chat_yields_content_chunks():
         assert request.url.path == "/v1/chat/completions"
         assert request.method == "POST"
         body = (
-            b"data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n"
-            b"data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n"
+            b'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n'
+            b'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n'
             b"data: [DONE]\n\n"
         )
         return httpx.Response(200, content=body)
@@ -708,7 +794,7 @@ async def test_llamacpp_stream_chat_ignores_non_object_json_sse_lines():
         body = (
             b"data: []\n\n"
             b"data: null\n\n"
-            b"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"
+            b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
             b"data: [DONE]\n\n"
         )
         return httpx.Response(200, content=body)
@@ -739,7 +825,7 @@ async def test_stream_chat_dispatches_llamacpp_resolution():
             return httpx.Response(200, json={"status": "ok"})
         return httpx.Response(
             200,
-            content=b"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n",
+            content=b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
         )
 
     gateway = ConsoleProviderGateway(
@@ -756,7 +842,12 @@ async def test_stream_chat_dispatches_llamacpp_resolution():
         )
     )
 
-    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hello"}])]
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hello"}]
+        )
+    ]
 
     assert chunks == ["ok"]
 
@@ -769,7 +860,9 @@ async def test_stream_chat_non_streaming_resolution_yields_completion_once() -> 
         seen_payloads.append(json.loads(request.content))
         return httpx.Response(200, json={"choices": [{"message": {"content": "done"}}]})
 
-    gateway = ConsoleProviderGateway(http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
     resolution = ConsoleProviderResolution(
         provider="llama_cpp",
         base_url="http://127.0.0.1:9099",
@@ -779,7 +872,12 @@ async def test_stream_chat_non_streaming_resolution_yields_completion_once() -> 
         temperature=0.2,
     )
 
-    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
 
     assert chunks == ["done"]
     assert seen_payloads == [
@@ -823,7 +921,12 @@ async def test_stream_chat_generic_non_streaming_yields_completion_once() -> Non
         )
     )
 
-    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
 
     assert chunks == ["generic done"]
     assert calls == [
@@ -859,9 +962,16 @@ async def test_stream_chat_generic_sync_generator_yields_ordered_chunks() -> Non
         config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
         chat_api_call_fn=fake_chat_api_call,
     )
-    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
 
-    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
 
     assert chunks == ["hel", "lo"]
 
@@ -875,9 +985,16 @@ async def test_stream_chat_generic_completion_dict_yields_message_content() -> N
         config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
         chat_api_call_fn=fake_chat_api_call,
     )
-    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
 
-    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
 
     assert chunks == ["complete dict"]
 
@@ -890,19 +1007,41 @@ def test_normalize_generic_provider_response_shapes() -> None:
         def __iter__(self):
             yield {"content": "do not dump"}
 
-    assert list(ConsoleProviderGateway.normalize_provider_response({"content": "body"})) == ["body"]
     assert list(
-        ConsoleProviderGateway.normalize_provider_response({"choices": [{"message": {"content": "choice"}}]})
+        ConsoleProviderGateway.normalize_provider_response({"content": "body"})
+    ) == ["body"]
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response(
+            {"choices": [{"message": {"content": "choice"}}]}
+        )
     ) == ["choice"]
-    assert list(ConsoleProviderGateway.normalize_provider_response({"generated_text": "generated"})) == ["generated"]
-    assert list(ConsoleProviderGateway.normalize_provider_response([{"content": "do not dump"}])) == [unsupported]
-    assert list(ConsoleProviderGateway.normalize_provider_response(({"content": "do not dump"},))) == [unsupported]
-    assert list(ConsoleProviderGateway.normalize_provider_response(b"hello \xff")) == ["hello \ufffd"]
-    assert list(ConsoleProviderGateway.normalize_provider_response(iter(()))) == [no_content]
-    assert list(ConsoleProviderGateway.normalize_provider_response({"unexpected": {"secret": "do not dump"}})) == [
-        unsupported
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response(
+            {"generated_text": "generated"}
+        )
+    ) == ["generated"]
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response([{"content": "do not dump"}])
+    ) == [unsupported]
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response(
+            ({"content": "do not dump"},)
+        )
+    ) == [unsupported]
+    assert list(ConsoleProviderGateway.normalize_provider_response(b"hello \xff")) == [
+        "hello \ufffd"
     ]
-    assert list(ConsoleProviderGateway.normalize_provider_response(IterableSdkResponse())) == [unsupported]
+    assert list(ConsoleProviderGateway.normalize_provider_response(iter(()))) == [
+        no_content
+    ]
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response(
+            {"unexpected": {"secret": "do not dump"}}
+        )
+    ) == [unsupported]
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response(IterableSdkResponse())
+    ) == [unsupported]
 
 
 def test_normalize_generic_provider_response_dict_precedence() -> None:
@@ -921,7 +1060,9 @@ def test_normalize_generic_provider_response_dict_precedence() -> None:
         "generated_text": "generated",
     }
 
-    assert list(ConsoleProviderGateway.normalize_provider_response(payload)) == ["delta"]
+    assert list(ConsoleProviderGateway.normalize_provider_response(payload)) == [
+        "delta"
+    ]
     assert list(
         ConsoleProviderGateway.normalize_provider_response(
             {
@@ -959,7 +1100,12 @@ def test_normalize_generic_provider_response_dict_precedence() -> None:
     ) == ["top message"]
     assert list(
         ConsoleProviderGateway.normalize_provider_response(
-            {"content": "content", "text": "text", "response": "response", "generated_text": "generated"}
+            {
+                "content": "content",
+                "text": "text",
+                "response": "response",
+                "generated_text": "generated",
+            }
         )
     ) == ["content"]
     assert list(
@@ -968,9 +1114,15 @@ def test_normalize_generic_provider_response_dict_precedence() -> None:
         )
     ) == ["text"]
     assert list(
-        ConsoleProviderGateway.normalize_provider_response({"response": "response", "generated_text": "generated"})
+        ConsoleProviderGateway.normalize_provider_response(
+            {"response": "response", "generated_text": "generated"}
+        )
     ) == ["response"]
-    assert list(ConsoleProviderGateway.normalize_provider_response({"generated_text": "generated"})) == ["generated"]
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response(
+            {"generated_text": "generated"}
+        )
+    ) == ["generated"]
 
 
 def test_normalize_google_gemini_candidates_response() -> None:
@@ -1048,9 +1200,16 @@ async def test_stream_chat_generic_sse_string_chunks_yield_content_only() -> Non
         config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
         chat_api_call_fn=fake_chat_api_call,
     )
-    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
 
-    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
 
     assert chunks == ["hel", "lo"]
 
@@ -1065,9 +1224,16 @@ async def test_stream_chat_generic_sse_byte_chunks_yield_content_only() -> None:
         config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
         chat_api_call_fn=fake_chat_api_call,
     )
-    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
 
-    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
 
     assert chunks == ["bytes"]
 
@@ -1085,7 +1251,9 @@ async def test_stream_chat_generic_cancel_ignores_late_chunks() -> None:
         config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
         chat_api_call_fn=fake_chat_api_call,
     )
-    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="m"))
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="m")
+    )
     stream = gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])
 
     assert await anext(stream) == "first"
@@ -1102,10 +1270,17 @@ async def test_stream_chat_generic_provider_error_raises_sanitized_exception() -
         config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
         chat_api_call_fn=fake_chat_api_call,
     )
-    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
 
     with pytest.raises(ChatProviderError) as exc_info:
-        _ = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+        _ = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "hi"}]
+            )
+        ]
 
     message = str(exc_info.value)
     assert message == "Provider error from openai: unexpected provider error."
@@ -1122,10 +1297,17 @@ async def test_stream_chat_generic_sse_error_raises_sanitized_exception() -> Non
         config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
         chat_api_call_fn=fake_chat_api_call,
     )
-    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
 
     with pytest.raises(ChatProviderError) as exc_info:
-        _ = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+        _ = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "hi"}]
+            )
+        ]
 
     message = str(exc_info.value)
     assert message == "Provider error from openai: unexpected provider error."
@@ -1142,10 +1324,17 @@ async def test_stream_chat_generic_sse_byte_error_raises_sanitized_exception() -
         config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
         chat_api_call_fn=fake_chat_api_call,
     )
-    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
 
     with pytest.raises(ChatProviderError) as exc_info:
-        _ = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+        _ = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "hi"}]
+            )
+        ]
 
     message = str(exc_info.value)
     assert message == "Provider error from openai: unexpected provider error."
@@ -1166,7 +1355,9 @@ async def test_gateway_closes_owned_http_client():
 
 @pytest.mark.asyncio
 async def test_gateway_does_not_close_injected_http_client():
-    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200)))
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200))
+    )
     gateway = ConsoleProviderGateway(http_client=client)
 
     await gateway.aclose()
@@ -1208,7 +1399,9 @@ async def test_llamacpp_probes_use_short_per_request_timeout():
         )
     )
 
-    explicit = await gateway.resolve_llamacpp(LlamaCppProviderConfig(explicit_model="m"))
+    explicit = await gateway.resolve_llamacpp(
+        LlamaCppProviderConfig(explicit_model="m")
+    )
     discovered = await gateway.resolve_llamacpp(LlamaCppProviderConfig())
 
     assert explicit.ready is True
@@ -1351,7 +1544,9 @@ def test_injected_http_client_is_never_swapped_across_loops():
     """Injected clients (test doubles / callers that own their own client)
     must never be silently replaced -- only the gateway's OWNED client is
     loop-swapped."""
-    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200)))
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200))
+    )
     gateway = ConsoleProviderGateway(http_client=client)
 
     async def active_client_identity() -> int:
@@ -1399,9 +1594,11 @@ def test_active_http_client_swap_is_mutually_exclusive_across_threads():
     thread_b: threading.Thread | None = None
     second_done = threading.Event()
     try:
+
         def call_a() -> None:
             async def go() -> None:
                 gateway._active_http_client()
+
             loop_a.run_until_complete(go())
 
         thread_a = threading.Thread(target=call_a)
@@ -1411,6 +1608,7 @@ def test_active_http_client_swap_is_mutually_exclusive_across_threads():
         def call_b() -> None:
             async def go() -> None:
                 gateway._active_http_client()
+
             loop_b.run_until_complete(go())
             second_done.set()
 
@@ -1441,7 +1639,9 @@ def test_active_http_client_swap_is_mutually_exclusive_across_threads():
         # the class would otherwise bind `self` as an implicit first
         # argument on the next instance access, breaking every other test
         # in this module that constructs a gateway afterward.
-        ConsoleProviderGateway._new_owned_http_client = staticmethod(original_new_client)
+        ConsoleProviderGateway._new_owned_http_client = staticmethod(
+            original_new_client
+        )
         loop_a.close()
         loop_b.close()
 
@@ -1461,7 +1661,9 @@ def test_first_swap_still_schedules_close_of_the_original_owned_client(monkeypat
         scheduled.append((id(client), loop))
 
     monkeypatch.setattr(
-        ConsoleProviderGateway, "_schedule_stale_client_close", staticmethod(fake_schedule)
+        ConsoleProviderGateway,
+        "_schedule_stale_client_close",
+        staticmethod(fake_schedule),
     )
 
     async def touch() -> None:
@@ -1469,7 +1671,9 @@ def test_first_swap_still_schedules_close_of_the_original_owned_client(monkeypat
 
     asyncio.run(touch())
 
-    assert scheduled, "the original owned client must be scheduled for close on the first swap too"
+    assert scheduled, (
+        "the original owned client must be scheduled for close on the first swap too"
+    )
     assert scheduled[0][0] == id(original_client)
 
 
@@ -1511,7 +1715,9 @@ def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_l
     errors: list[BaseException] = []
     errors_lock = threading.Lock()
 
-    def run_loop_thread(loop: asyncio.AbstractEventLoop, ready: threading.Event) -> None:
+    def run_loop_thread(
+        loop: asyncio.AbstractEventLoop, ready: threading.Event
+    ) -> None:
         asyncio.set_event_loop(loop)
         ready.set()
         loop.run_forever()
@@ -1522,7 +1728,9 @@ def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_l
         ready = threading.Event()
         loops.append(loop)
         ready_events.append(ready)
-        thread = threading.Thread(target=run_loop_thread, args=(loop, ready), daemon=True)
+        thread = threading.Thread(
+            target=run_loop_thread, args=(loop, ready), daemon=True
+        )
         loop_threads.append(thread)
         thread.start()
     for ready in ready_events:
@@ -1596,7 +1804,9 @@ TOOLS = [
 
 async def _collect(gateway, resolution, tools=None):
     items = []
-    async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "q"}], tools=tools):
+    async for chunk in gateway.stream_chat(
+        resolution, [{"role": "user", "content": "q"}], tools=tools
+    ):
         items.append(chunk)
     return items
 
@@ -1622,7 +1832,9 @@ async def test_stream_accumulates_sse_tool_call_fragments() -> None:
         chat_api_call_fn=fake_chat_api_call,
     )
     resolution = await gateway.resolve_for_send(
-        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+        ConsoleProviderSelection(
+            provider="groq", explicit_model="llama3-groq", streaming=True
+        )
     )
 
     items = await _collect(gateway, resolution, tools=TOOLS)
@@ -1635,7 +1847,9 @@ async def test_stream_accumulates_sse_tool_call_fragments() -> None:
         "type": "function",
         "function": {"name": "calculator", "arguments": '{"expression": "2+2"}'},
     }
-    assert not any(isinstance(i, str) and i.strip() for i in items[:-1])  # no copy leaked
+    assert not any(
+        isinstance(i, str) and i.strip() for i in items[:-1]
+    )  # no copy leaked
 
 
 @pytest.mark.asyncio
@@ -1648,7 +1862,11 @@ async def test_non_streaming_message_tool_calls_surface() -> None:
                 "message": {
                     "content": "Checking.",
                     "tool_calls": [
-                        {"id": "n1", "type": "function", "function": {"name": "calculator", "arguments": "{}"}}
+                        {
+                            "id": "n1",
+                            "type": "function",
+                            "function": {"name": "calculator", "arguments": "{}"},
+                        }
                     ],
                 }
             }
@@ -1663,7 +1881,9 @@ async def test_non_streaming_message_tool_calls_surface() -> None:
         chat_api_call_fn=fake_chat_api_call,
     )
     resolution = await gateway.resolve_for_send(
-        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=False)
+        ConsoleProviderSelection(
+            provider="groq", explicit_model="llama3-groq", streaming=False
+        )
     )
 
     items = await _collect(gateway, resolution, tools=TOOLS)
@@ -1694,7 +1914,9 @@ async def test_no_tools_requested_is_byte_identical() -> None:
         chat_api_call_fn=fake_chat_api_call,
     )
     resolution = await gateway.resolve_for_send(
-        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+        ConsoleProviderSelection(
+            provider="groq", explicit_model="llama3-groq", streaming=True
+        )
     )
 
     items = await _collect(gateway, resolution, tools=None)
@@ -1715,6 +1937,7 @@ async def test_tools_none_raw_dict_tool_call_chunk_keeps_baseline_copy() -> None
     surfaces it as ``UNSUPPORTED_PROVIDER_RESPONSE_COPY`` in the stream.
     Mapping-level ``tool_calls`` guards previously short-circuited this to a
     silent drop instead, which changed ``tools=None`` output."""
+
     def fake_chat_api_call(**_kwargs):
         yield "hel"
         yield {
@@ -1739,9 +1962,16 @@ async def test_tools_none_raw_dict_tool_call_chunk_keeps_baseline_copy() -> None
         config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
         chat_api_call_fn=fake_chat_api_call,
     )
-    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
 
-    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "hi"}]
+        )
+    ]
 
     assert chunks == ["hel", UNSUPPORTED_PROVIDER_RESPONSE_COPY, "lo"]
 
@@ -1768,7 +1998,9 @@ async def test_tool_call_only_stream_yields_no_fallback_copy() -> None:
         chat_api_call_fn=fake_chat_api_call,
     )
     resolution = await gateway.resolve_for_send(
-        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+        ConsoleProviderSelection(
+            provider="groq", explicit_model="llama3-groq", streaming=True
+        )
     )
 
     items = await _collect(gateway, resolution, tools=TOOLS)
@@ -1779,7 +2011,9 @@ async def test_tool_call_only_stream_yields_no_fallback_copy() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tools_run_with_neither_content_nor_calls_raises_instead_of_silent_empty() -> None:
+async def test_tools_run_with_neither_content_nor_calls_raises_instead_of_silent_empty() -> (
+    None
+):
     """PR #648 review Minor 1: a tools= turn whose provider response carries
     NEITHER visible content NOR tool-calls must surface as a provider error,
     not complete as a silent empty turn. On the fence path the same junk
@@ -1796,7 +2030,9 @@ async def test_tools_run_with_neither_content_nor_calls_raises_instead_of_silent
         chat_api_call_fn=fake_chat_api_call,
     )
     resolution = await gateway.resolve_for_send(
-        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=False)
+        ConsoleProviderSelection(
+            provider="groq", explicit_model="llama3-groq", streaming=False
+        )
     )
 
     with pytest.raises(ChatProviderError):
@@ -1817,7 +2053,9 @@ async def test_tools_run_with_real_content_and_no_calls_stays_a_normal_answer() 
         chat_api_call_fn=fake_chat_api_call,
     )
     resolution = await gateway.resolve_for_send(
-        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=False)
+        ConsoleProviderSelection(
+            provider="groq", explicit_model="llama3-groq", streaming=False
+        )
     )
 
     items = await _collect(gateway, resolution, tools=TOOLS)
@@ -1848,7 +2086,9 @@ async def test_tool_call_fragments_out_of_index_order_emit_in_index_order() -> N
         chat_api_call_fn=fake_chat_api_call,
     )
     resolution = await gateway.resolve_for_send(
-        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+        ConsoleProviderSelection(
+            provider="groq", explicit_model="llama3-groq", streaming=True
+        )
     )
 
     items = await _collect(gateway, resolution, tools=TOOLS)
@@ -1856,7 +2096,9 @@ async def test_tool_call_fragments_out_of_index_order_emit_in_index_order() -> N
     (ptc,) = [i for i in items if isinstance(i, ProviderToolCalls)]
     assert [c["id"] for c in ptc.tool_calls] == ["c0", "c1"]
     assert [c["function"]["name"] for c in ptc.tool_calls] == [
-        "calculator", "get_current_datetime"]
+        "calculator",
+        "get_current_datetime",
+    ]
 
 
 def test_tool_call_accumulator_preserves_extra_fragment_keys() -> None:
@@ -1864,20 +2106,51 @@ def test_tool_call_accumulator_preserves_extra_fragment_keys() -> None:
     Gemini 3 google_thought_signature) must survive the merge — the request
     converter has to echo them back verbatim."""
     from tldw_chatbook.Chat.console_provider_gateway import _ToolCallAccumulator
+
     acc = _ToolCallAccumulator()
-    acc.feed_payload({"choices": [{"delta": {"tool_calls": [
-        {"index": 0, "id": "c1", "type": "function",
-         "function": {"name": "calculator", "arguments": "{}"},
-         "google_thought_signature": "sig-x"}]}}]})
+    acc.feed_payload(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "c1",
+                                "type": "function",
+                                "function": {"name": "calculator", "arguments": "{}"},
+                                "google_thought_signature": "sig-x",
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
     (call,) = acc.calls()
     assert call["google_thought_signature"] == "sig-x"
     assert call["function"]["name"] == "calculator"
     # PR #662 review: falsy-but-present ALLOW-LISTED extras survive verbatim
     # (None drops); unknown extra keys are NOT forwarded (PR #662 final
     # review: open-ended passthrough let any provider inject echoed keys).
-    acc.feed_payload({"choices": [{"delta": {"tool_calls": [
-        {"index": 0, "google_thought_signature": "",
-         "arbitrary_extra": "nope", "none_extra": None}]}}]})
+    acc.feed_payload(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "google_thought_signature": "",
+                                "arbitrary_extra": "nope",
+                                "none_extra": None,
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
     (call,) = acc.calls()
     assert call["google_thought_signature"] == ""
     assert "arbitrary_extra" not in call
@@ -1899,7 +2172,9 @@ async def test_tools_run_real_answer_equal_to_fallback_copy_survives() -> None:
         chat_api_call_fn=fake_chat_api_call,
     )
     resolution = await gateway.resolve_for_send(
-        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=False)
+        ConsoleProviderSelection(
+            provider="groq", explicit_model="llama3-groq", streaming=False
+        )
     )
 
     items = await _collect(gateway, resolution, tools=TOOLS)

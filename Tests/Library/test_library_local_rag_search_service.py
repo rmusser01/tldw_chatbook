@@ -11,7 +11,10 @@ import pytest
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
-from tldw_chatbook.Library.library_fts_query import build_fts_match_query, expand_keyword_term
+from tldw_chatbook.Library.library_fts_query import (
+    build_fts_match_query,
+    expand_keyword_term,
+)
 from tldw_chatbook.Library import library_local_rag_search_service as rag_service_module
 from tldw_chatbook.Library.library_local_rag_search_service import (
     LibraryLocalRagSearchService,
@@ -74,11 +77,20 @@ class FakeMediaReadingScopeService:
         self.error = error
         self.calls: list[dict] = []
 
-    async def search_media(self, *, mode=None, query=None, limit=20, offset=0, **filters):
-        self.calls.append({"mode": mode, "query": query, "limit": limit, "offset": offset})
+    async def search_media(
+        self, *, mode=None, query=None, limit=20, offset=0, **filters
+    ):
+        self.calls.append(
+            {"mode": mode, "query": query, "limit": limit, "offset": offset}
+        )
         if self.error is not None:
             raise self.error
-        return {"items": self.items, "total": len(self.items), "offset": offset, "limit": limit}
+        return {
+            "items": self.items,
+            "total": len(self.items),
+            "offset": offset,
+            "limit": limit,
+        }
 
 
 class FakePromptScopeService:
@@ -179,7 +191,9 @@ def real_fts_app(tmp_path):
         }
     )
 
-    media_db = MediaDatabase(tmp_path / "library_plain_text_fts.db", client_id="plain-text-fts")
+    media_db = MediaDatabase(
+        tmp_path / "library_plain_text_fts.db", client_id="plain-text-fts"
+    )
     media_id, _media_uuid, _message = media_db.add_media_with_keywords(
         title="Punctuation incident recording",
         media_type="document",
@@ -210,7 +224,9 @@ def real_fts_app(tmp_path):
         "alpha omega",
     ],
 )
-async def test_public_keyword_search_treats_fts_queries_as_plain_text(real_fts_app, query):
+async def test_public_keyword_search_treats_fts_queries_as_plain_text(
+    real_fts_app, query
+):
     app, media_id, conversation_id = real_fts_app
 
     result = await LibraryLocalRagSearchService(app).search(
@@ -255,7 +271,9 @@ async def test_prompts_keyword_search_sends_widened_match_query():
     call = prompt_service.calls[0]
     assert call["mode"] == "local"
     assert call["query"] == "feedback loop"
-    assert call["fts_match_query"] == '("feedback" OR "feedbacks") AND ("loop" OR "loops")'
+    assert (
+        call["fts_match_query"] == '("feedback" OR "feedbacks") AND ("loop" OR "loops")'
+    )
 
 
 def test_prompt_row_uses_raw_local_id_not_composite_id():
@@ -292,7 +310,9 @@ async def test_prompts_seam_missing_yields_unavailable_not_blocked():
     result = await service.search("credential", ("notes", "prompts"), "search", top_k=5)
 
     assert not isinstance(result, LibraryRagSearchOutcome)
-    assert all(row["provenance"]["source_type"] != "prompt" for row in result["results"])
+    assert all(
+        row["provenance"]["source_type"] != "prompt" for row in result["results"]
+    )
 
 
 @pytest.mark.asyncio
@@ -319,9 +339,7 @@ async def test_public_search_rejects_unsafe_query_before_source_calls(query):
 @pytest.mark.asyncio
 async def test_public_search_rejects_unsafe_query_before_semantic_service_call():
     rag_service = FakeRagService()
-    service = LibraryLocalRagSearchService(
-        SimpleNamespace(_rag_service=rag_service)
-    )
+    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag_service))
 
     with pytest.raises(ValueError, match="safe Library search query"):
         await service.search("<script>unsafe</script>", ("notes",), "rag", top_k=5)
@@ -337,7 +355,14 @@ async def test_search_mode_returns_rows_from_all_three_sources(conversations_db)
         rows=[{"id": "note-1", "title": "Runbook", "content": "Rotate the credential."}]
     )
     media_service = FakeMediaReadingScopeService(
-        items=[{"id": 7, "source_id": "7", "title": "Postmortem video", "media_type": "video"}]
+        items=[
+            {
+                "id": 7,
+                "source_id": "7",
+                "title": "Postmortem video",
+                "media_type": "video",
+            }
+        ]
     )
     app = SimpleNamespace(
         notes_scope_service=notes_service,
@@ -347,7 +372,9 @@ async def test_search_mode_returns_rows_from_all_three_sources(conversations_db)
     )
     service = LibraryLocalRagSearchService(app)
 
-    result = await service.search("credential", ("notes", "media", "conversations"), "search", top_k=5)
+    result = await service.search(
+        "credential", ("notes", "media", "conversations"), "search", top_k=5
+    )
 
     assert result["runtime_backend"] == "local-fts"
     rows = result["results"]
@@ -386,7 +413,9 @@ async def test_missing_media_seam_yields_notes_and_conversations_only(conversati
     )
     service = LibraryLocalRagSearchService(app)
 
-    result = await service.search("credential", ("notes", "media", "conversations"), "search", top_k=5)
+    result = await service.search(
+        "credential", ("notes", "media", "conversations"), "search", top_k=5
+    )
 
     types = {row["provenance"]["source_type"] for row in result["results"]}
     assert types == {"note", "conversation"}
@@ -398,7 +427,9 @@ async def test_all_seams_missing_returns_blocked_outcome():
     app = SimpleNamespace()
     service = LibraryLocalRagSearchService(app)
 
-    result = await service.search("credential", ("notes", "media", "conversations"), "search", top_k=5)
+    result = await service.search(
+        "credential", ("notes", "media", "conversations"), "search", top_k=5
+    )
 
     assert isinstance(result, LibraryRagSearchOutcome)
     assert result.status == "blocked"
@@ -411,11 +442,17 @@ async def test_all_seams_missing_returns_blocked_outcome():
 # never touches the shared-service factory (the deps gate short-circuits
 # before any heavy work).
 @pytest.mark.asyncio
-async def test_rag_mode_without_deps_returns_blocked_outcome_and_skips_factory(monkeypatch):
-    monkeypatch.setattr(rag_service_module, "embeddings_rag_deps_installed", lambda: False)
+async def test_rag_mode_without_deps_returns_blocked_outcome_and_skips_factory(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        rag_service_module, "embeddings_rag_deps_installed", lambda: False
+    )
 
     def _fail_factory(*args, **kwargs):
-        raise AssertionError("get_shared_rag_service must not run when deps are missing")
+        raise AssertionError(
+            "get_shared_rag_service must not run when deps are missing"
+        )
 
     monkeypatch.setattr(rag_service_module, "get_shared_rag_service", _fail_factory)
     app = SimpleNamespace(_rag_service=None)
@@ -484,7 +521,9 @@ async def test_end_to_end_through_run_library_rag_search(conversations_db):
 # Erroring seams contribute zero rows without raising, and do not force "blocked"
 # as long as another seam is available.
 @pytest.mark.asyncio
-async def test_erroring_notes_seam_contributes_zero_rows_without_raising(conversations_db):
+async def test_erroring_notes_seam_contributes_zero_rows_without_raising(
+    conversations_db,
+):
     db, _conv_id = conversations_db
     notes_service = FakeNotesScopeService(error=RuntimeError("notes index unavailable"))
     app = SimpleNamespace(
@@ -494,7 +533,9 @@ async def test_erroring_notes_seam_contributes_zero_rows_without_raising(convers
     )
     service = LibraryLocalRagSearchService(app)
 
-    result = await service.search("credential", ("notes", "conversations"), "search", top_k=5)
+    result = await service.search(
+        "credential", ("notes", "conversations"), "search", top_k=5
+    )
 
     assert not isinstance(result, LibraryRagSearchOutcome)
     assert result["results"]
@@ -521,7 +562,9 @@ async def test_unknown_scope_type_is_ignored_quietly():
     app = SimpleNamespace()
     service = LibraryLocalRagSearchService(app)
 
-    result = await service.search("credential", ("workspaces", "collections"), "search", top_k=5)
+    result = await service.search(
+        "credential", ("workspaces", "collections"), "search", top_k=5
+    )
 
     assert isinstance(result, LibraryRagSearchOutcome)
     assert result.status == "blocked"
@@ -538,19 +581,31 @@ async def test_rag_mode_filters_semantic_rows_by_scope():
                 "id": "note-chunk",
                 "score": 0.9,
                 "document": "Note evidence.",
-                "metadata": {"title": "Note doc", "source_id": "note-1", "source_type": "note"},
+                "metadata": {
+                    "title": "Note doc",
+                    "source_id": "note-1",
+                    "source_type": "note",
+                },
             },
             {
                 "id": "media-chunk",
                 "score": 0.8,
                 "document": "Media evidence.",
-                "metadata": {"title": "Media doc", "source_id": "media-1", "source_type": "media_chunk"},
+                "metadata": {
+                    "title": "Media doc",
+                    "source_id": "media-1",
+                    "source_type": "media_chunk",
+                },
             },
             {
                 "id": "conversation-chunk",
                 "score": 0.7,
                 "document": "Conversation evidence.",
-                "metadata": {"title": "Chat doc", "source_id": "chat-1", "source_type": "chat"},
+                "metadata": {
+                    "title": "Chat doc",
+                    "source_id": "chat-1",
+                    "source_type": "chat",
+                },
             },
             {
                 "id": "unknown-chunk",
@@ -580,19 +635,31 @@ async def test_rag_mode_full_scope_keeps_all_rows():
                 "id": "note-chunk",
                 "score": 0.9,
                 "document": "Note evidence.",
-                "metadata": {"title": "Note doc", "source_id": "note-1", "source_type": "note"},
+                "metadata": {
+                    "title": "Note doc",
+                    "source_id": "note-1",
+                    "source_type": "note",
+                },
             },
             {
                 "id": "media-chunk",
                 "score": 0.8,
                 "document": "Media evidence.",
-                "metadata": {"title": "Media doc", "source_id": "media-1", "source_type": "media_chunk"},
+                "metadata": {
+                    "title": "Media doc",
+                    "source_id": "media-1",
+                    "source_type": "media_chunk",
+                },
             },
             {
                 "id": "conversation-chunk",
                 "score": 0.7,
                 "document": "Conversation evidence.",
-                "metadata": {"title": "Chat doc", "source_id": "chat-1", "source_type": "chat"},
+                "metadata": {
+                    "title": "Chat doc",
+                    "source_id": "chat-1",
+                    "source_type": "chat",
+                },
             },
         ]
     )
@@ -617,7 +684,11 @@ async def test_rag_mode_empty_scope_does_not_filter():
                 "id": "note-chunk",
                 "score": 0.9,
                 "document": "Note evidence.",
-                "metadata": {"title": "Note doc", "source_id": "note-1", "source_type": "note"},
+                "metadata": {
+                    "title": "Note doc",
+                    "source_id": "note-1",
+                    "source_type": "note",
+                },
             },
         ]
     )
@@ -638,14 +709,20 @@ async def test_rag_mode_delegates_and_maps_results():
                 "id": "chunk-1",
                 "score": 0.87,
                 "document": "Rotate the credential immediately.",
-                "metadata": {"title": "Runbook", "source_id": "note-1", "source_type": "note"},
+                "metadata": {
+                    "title": "Runbook",
+                    "source_id": "note-1",
+                    "source_type": "note",
+                },
             }
         ]
     )
     app = SimpleNamespace(_rag_service=rag_service)
     service = LibraryLocalRagSearchService(app)
 
-    result = await service.search("credential", ("notes",), "rag", top_k=3, include_citations=True)
+    result = await service.search(
+        "credential", ("notes",), "rag", top_k=3, include_citations=True
+    )
 
     assert rag_service.calls[0]["search_type"] == "semantic"
     assert rag_service.calls[0]["top_k"] == 3
@@ -689,7 +766,9 @@ _SEMANTIC_RESULT = {
 # recovery state, and caches it on the app for subsequent queries/gates.
 @pytest.mark.asyncio
 async def test_rag_mode_lazily_initializes_shared_runtime(monkeypatch):
-    monkeypatch.setattr(rag_service_module, "embeddings_rag_deps_installed", lambda: True)
+    monkeypatch.setattr(
+        rag_service_module, "embeddings_rag_deps_installed", lambda: True
+    )
     shared_service = FakeRagService(results=[_SEMANTIC_RESULT])
     factory_calls = []
 
@@ -718,8 +797,12 @@ async def test_rag_mode_lazily_initializes_shared_runtime(monkeypatch):
 # deps installed) still lands on the existing recovery state.
 @pytest.mark.asyncio
 async def test_rag_mode_factory_returning_none_yields_blocked_outcome(monkeypatch):
-    monkeypatch.setattr(rag_service_module, "embeddings_rag_deps_installed", lambda: True)
-    monkeypatch.setattr(rag_service_module, "get_shared_rag_service", lambda *a, **k: None)
+    monkeypatch.setattr(
+        rag_service_module, "embeddings_rag_deps_installed", lambda: True
+    )
+    monkeypatch.setattr(
+        rag_service_module, "get_shared_rag_service", lambda *a, **k: None
+    )
     app = SimpleNamespace(_rag_service=None)
     service = LibraryLocalRagSearchService(app)
 
@@ -738,12 +821,16 @@ async def test_rag_mode_factory_returning_none_yields_blocked_outcome(monkeypatc
 # fix (and non-UI callers of the service would see a raw exception).
 @pytest.mark.asyncio
 async def test_rag_mode_factory_raising_yields_blocked_outcome(monkeypatch):
-    monkeypatch.setattr(rag_service_module, "embeddings_rag_deps_installed", lambda: True)
+    monkeypatch.setattr(
+        rag_service_module, "embeddings_rag_deps_installed", lambda: True
+    )
 
     def _exploding_factory(*args, **kwargs):
         raise RuntimeError("embedding model load exploded")
 
-    monkeypatch.setattr(rag_service_module, "get_shared_rag_service", _exploding_factory)
+    monkeypatch.setattr(
+        rag_service_module, "get_shared_rag_service", _exploding_factory
+    )
     app = SimpleNamespace(_rag_service=None)
     service = LibraryLocalRagSearchService(app)
 
@@ -762,7 +849,9 @@ async def test_rag_mode_prefers_existing_app_rag_service(monkeypatch):
     def _fail_probe():
         raise AssertionError("deps probe must not run when a runtime already exists")
 
-    monkeypatch.setattr(rag_service_module, "embeddings_rag_deps_installed", _fail_probe)
+    monkeypatch.setattr(
+        rag_service_module, "embeddings_rag_deps_installed", _fail_probe
+    )
     monkeypatch.setattr(rag_service_module, "get_shared_rag_service", _fail_probe)
     injected = FakeRagService(results=[_SEMANTIC_RESULT])
     app = SimpleNamespace(_rag_service=injected)
@@ -786,7 +875,9 @@ async def test_concurrent_rag_queries_initialize_one_shared_service(monkeypatch)
     from tldw_chatbook.RAG_Search import ingestion_indexing
     from tldw_chatbook.RAG_Search import simplified as simplified_module
 
-    monkeypatch.setattr(rag_service_module, "embeddings_rag_deps_installed", lambda: True)
+    monkeypatch.setattr(
+        rag_service_module, "embeddings_rag_deps_installed", lambda: True
+    )
     constructions = []
     construction_lock = threading.Lock()
 
@@ -864,7 +955,9 @@ async def test_rag_mode_zero_results_with_populated_index_stays_generic():
     [
         FakeRagService(results=[]),
         FakeRagServiceWithStore(results=[], stats_error=RuntimeError("stats exploded")),
-        FakeRagServiceWithStore(results=[], stats={"count": 0, "error": "collection lost"}),
+        FakeRagServiceWithStore(
+            results=[], stats={"count": 0, "error": "collection lost"}
+        ),
     ],
     ids=["no-vector-store", "stats-raises", "stats-error-payload"],
 )
@@ -889,7 +982,11 @@ async def test_rag_mode_scope_filtered_to_zero_is_not_index_empty():
                 "id": "media-chunk",
                 "score": 0.8,
                 "document": "Media evidence.",
-                "metadata": {"title": "Media doc", "source_id": "media-1", "source_type": "media"},
+                "metadata": {
+                    "title": "Media doc",
+                    "source_id": "media-1",
+                    "source_type": "media",
+                },
             }
         ],
         stats={"count": 0},  # deliberately lying: it must never be consulted
@@ -912,7 +1009,9 @@ def test_conversation_row_secondary_line_pluralizes_message_count():
     one = _conversation_row({"id": "c-1", "title": "Sync", "message_count": 1})
     many = _conversation_row({"id": "c-2", "title": "Sync", "message_count": 8})
     missing = _conversation_row({"id": "c-3", "title": "Sync"})
-    malformed = _conversation_row({"id": "c-4", "title": "Sync", "message_count": "n/a"})
+    malformed = _conversation_row(
+        {"id": "c-4", "title": "Sync", "message_count": "n/a"}
+    )
 
     assert one["snippet"] == "Matched conversation · 1 message"
     assert many["snippet"] == "Matched conversation · 8 messages"
@@ -984,7 +1083,9 @@ def test_build_fts_match_query_output_is_safe_against_a_real_fts5_table(hostile)
         conn.execute("CREATE VIRTUAL TABLE probe USING fts5(content)")
         conn.execute("INSERT INTO probe(content) VALUES ('feedback loops everywhere')")
         match = build_fts_match_query(hostile)
-        conn.execute("SELECT content FROM probe WHERE probe MATCH ?", (match,)).fetchall()
+        conn.execute(
+            "SELECT content FROM probe WHERE probe MATCH ?", (match,)
+        ).fetchall()
     finally:
         conn.close()
 
@@ -1044,10 +1145,14 @@ def real_notes_app(tmp_path):
 # by the query "feedback loop" (and the singular note by the plural query).
 @pytest.mark.asyncio
 @pytest.mark.parametrize("query", ["feedback loop", "feedback loops"])
-async def test_notes_keyword_search_matches_plural_and_singular_variants(real_notes_app, query):
+async def test_notes_keyword_search_matches_plural_and_singular_variants(
+    real_notes_app, query
+):
     app, plural_id, singular_id = real_notes_app
 
-    result = await LibraryLocalRagSearchService(app).search(query, ("notes",), "search", top_k=5)
+    result = await LibraryLocalRagSearchService(app).search(
+        query, ("notes",), "search", top_k=5
+    )
 
     note_ids = {row["source_id"] for row in result["results"]}
     assert {plural_id, singular_id} <= note_ids
@@ -1078,7 +1183,9 @@ async def test_media_and_conversation_keyword_search_match_plural_singular_varia
 @pytest.fixture
 def real_prompts_app(tmp_path):
     """Real prompts seam (PromptScopeService -> LocalPromptService -> Prompts FTS DB)."""
-    prompts_db = PromptsDatabase(tmp_path / "library_prompts_fts.db", client_id="prompts-fts")
+    prompts_db = PromptsDatabase(
+        tmp_path / "library_prompts_fts.db", client_id="prompts-fts"
+    )
     prompt_id, _uuid, _message = prompts_db.add_prompt(
         name="Retro learnings",
         author="tester",
@@ -1129,7 +1236,9 @@ async def test_prompts_deselected_yields_zero_prompt_rows(real_prompts_app):
     )
 
     assert not isinstance(result, LibraryRagSearchOutcome)
-    assert all(row["provenance"]["source_type"] != "prompt" for row in result["results"])
+    assert all(
+        row["provenance"]["source_type"] != "prompt" for row in result["results"]
+    )
 
 
 # --- task-249 AC #2: real-runtime semantic results with citations -----------
@@ -1137,7 +1246,9 @@ async def test_prompts_deselected_yields_zero_prompt_rows(real_prompts_app):
 # the deterministic mock embedding backend, published as the process-wide
 # shared service, queried end-to-end through run_library_rag_search.
 
-from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed as _deps_installed
+from tldw_chatbook.Utils.optional_deps import (  # noqa: E402
+    embeddings_rag_deps_installed as _deps_installed,
+)
 
 _DISTINCTIVE_CONTENT = (
     "The zanzibar quokka manifesto describes how quokkas organise snorkeling "

@@ -10,11 +10,23 @@ from unittest.mock import Mock
 from textual.message import Message
 
 from .ProcessingDashboard import ProcessingJob, ProcessingState
-from .UnifiedProcessor import AudioConfig, DocumentConfig, MediaConfig, VideoConfig, WebConfig
+from .UnifiedProcessor import (
+    AudioConfig,
+    DocumentConfig,
+    MediaConfig,
+    VideoConfig,
+    WebConfig,
+)
 
 
 class ProcessingJobResult(Message):
-    def __init__(self, job_id: str, success: bool, results: dict[str, Any], error: str | None = None) -> None:
+    def __init__(
+        self,
+        job_id: str,
+        success: bool,
+        results: dict[str, Any],
+        error: str | None = None,
+    ) -> None:
         super().__init__()
         self.job_id = job_id
         self.success = success
@@ -40,7 +52,9 @@ class MediaProcessingService:
 
     def _auto_title(self, config: MediaConfig) -> str:
         config_type = self._detect_config_type(config).title()
-        count = len(getattr(config, "files", []) or []) + len(getattr(config, "urls", []) or [])
+        count = len(getattr(config, "files", []) or []) + len(
+            getattr(config, "urls", []) or []
+        )
         suffix = f" ({count} items)" if count else ""
         return f"{config_type} Processing{suffix}"
 
@@ -67,7 +81,12 @@ class MediaProcessingService:
         self._active_jobs = {
             job_id: job
             for job_id, job in self._active_jobs.items()
-            if job.state not in {ProcessingState.COMPLETED, ProcessingState.FAILED, ProcessingState.CANCELLED}
+            if job.state
+            not in {
+                ProcessingState.COMPLETED,
+                ProcessingState.FAILED,
+                ProcessingState.CANCELLED,
+            }
         }
 
     def _detect_config_type(self, config: MediaConfig) -> str:
@@ -81,13 +100,19 @@ class MediaProcessingService:
             return "web"
         return "media"
 
-    async def _call_video_processor(self, file_path: Path, _config: VideoConfig) -> dict[str, Any]:
+    async def _call_video_processor(
+        self, file_path: Path, _config: VideoConfig
+    ) -> dict[str, Any]:
         return self._simulated_result(file_path)
 
-    async def _call_audio_processor(self, file_path: Path, _config: AudioConfig) -> dict[str, Any]:
+    async def _call_audio_processor(
+        self, file_path: Path, _config: AudioConfig
+    ) -> dict[str, Any]:
         return self._simulated_result(file_path)
 
-    async def _call_document_processor(self, file_path: Path, _config: DocumentConfig) -> dict[str, Any]:
+    async def _call_document_processor(
+        self, file_path: Path, _config: DocumentConfig
+    ) -> dict[str, Any]:
         return self._simulated_result(file_path)
 
     @staticmethod
@@ -147,6 +172,8 @@ def get_processing_service(app_instance: Any | None = None) -> MediaProcessingSe
     global _processing_service
     if _processing_service is None:
         if app_instance is None:
-            raise ValueError("app_instance is required to initialize processing service")
+            raise ValueError(
+                "app_instance is required to initialize processing service"
+            )
         _processing_service = MediaProcessingService(app_instance)
     return _processing_service

@@ -43,9 +43,10 @@ class SchedulingServerClient:
         Raises:
             ServerUnavailableError: If no scheduling server is connected.
         """
-        if not self._is_available():
+        service = self.notifications_service
+        if service is None:
             raise ServerUnavailableError("server not available")
-        return await self.notifications_service.create_reminder(**payload)
+        return await service.create_reminder(**payload)
 
     async def update_reminder(self, task_id: str, **payload: Any) -> dict[str, Any]:
         """Update an existing reminder.
@@ -60,9 +61,10 @@ class SchedulingServerClient:
         Raises:
             ServerUnavailableError: If no scheduling server is connected.
         """
-        if not self._is_available():
+        service = self.notifications_service
+        if service is None:
             raise ServerUnavailableError("server not available")
-        return await self.notifications_service.update_reminder(task_id, **payload)
+        return await service.update_reminder(task_id, **payload)
 
     async def delete_reminder(self, task_id: str) -> dict[str, Any]:
         """Delete a reminder.
@@ -76,9 +78,10 @@ class SchedulingServerClient:
         Raises:
             ServerUnavailableError: If no scheduling server is connected.
         """
-        if not self._is_available():
+        service = self.notifications_service
+        if service is None:
             raise ServerUnavailableError("server not available")
-        return await self.notifications_service.delete_reminder(task_id)
+        return await service.delete_reminder(task_id)
 
     async def list_reminders(self) -> dict[str, Any]:
         """List all reminders.
@@ -89,9 +92,10 @@ class SchedulingServerClient:
         Raises:
             ServerUnavailableError: If no scheduling server is connected.
         """
-        if not self._is_available():
+        service = self.notifications_service
+        if service is None:
             raise ServerUnavailableError("server not available")
-        return await self.notifications_service.list_reminders()
+        return await service.list_reminders()
 
     async def get_reminder(self, task_id: str) -> dict[str, Any]:
         """Fetch a single reminder.
@@ -105,6 +109,7 @@ class SchedulingServerClient:
         Raises:
             ServerUnavailableError: If no scheduling server is connected.
         """
-        if not self._is_available():
+        service = self.notifications_service
+        if service is None:
             raise ServerUnavailableError("server not available")
-        return await self.notifications_service.get_reminder(task_id)
+        return await service.get_reminder(task_id)

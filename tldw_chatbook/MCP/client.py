@@ -51,7 +51,9 @@ def _prompt_from_payload(payload: Dict[str, Any]) -> SimpleNamespace:
     return SimpleNamespace(
         name=payload.get("name", ""),
         description=payload.get("description", ""),
-        arguments=[_prompt_argument_from_payload(arg) for arg in payload.get("arguments", [])],
+        arguments=[
+            _prompt_argument_from_payload(arg) for arg in payload.get("arguments", [])
+        ],
     )
 
 
@@ -142,16 +144,23 @@ class _StdioJSONRPCConnection:
     async def list_resources(self) -> SimpleNamespace:
         result = await self.request("resources/list", {})
         return SimpleNamespace(
-            resources=[_resource_from_payload(resource) for resource in result.get("resources", [])]
+            resources=[
+                _resource_from_payload(resource)
+                for resource in result.get("resources", [])
+            ]
         )
 
     async def list_prompts(self) -> SimpleNamespace:
         result = await self.request("prompts/list", {})
         return SimpleNamespace(
-            prompts=[_prompt_from_payload(prompt) for prompt in result.get("prompts", [])]
+            prompts=[
+                _prompt_from_payload(prompt) for prompt in result.get("prompts", [])
+            ]
         )
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> SimpleNamespace:
+    async def call_tool(
+        self, tool_name: str, arguments: Dict[str, Any]
+    ) -> SimpleNamespace:
         result = await self.request(
             "tools/call",
             {
@@ -169,7 +178,10 @@ class _StdioJSONRPCConnection:
             },
         )
         return SimpleNamespace(
-            contents=[_resource_content_from_payload(item) for item in result.get("contents", [])]
+            contents=[
+                _resource_content_from_payload(item)
+                for item in result.get("contents", [])
+            ]
         )
 
     async def get_prompt(
@@ -182,7 +194,10 @@ class _StdioJSONRPCConnection:
             params["arguments"] = arguments
         result = await self.request("prompts/get", params)
         return SimpleNamespace(
-            messages=[_prompt_message_from_payload(message) for message in result.get("messages", [])]
+            messages=[
+                _prompt_message_from_payload(message)
+                for message in result.get("messages", [])
+            ]
         )
 
     async def request(
@@ -217,14 +232,18 @@ class _StdioJSONRPCConnection:
             self._pending_requests.pop(request_id, None)
             if not future.done():
                 future.cancel()
-            raise TimeoutError(f"Timed out waiting for MCP response to '{method}'") from exc
+            raise TimeoutError(
+                f"Timed out waiting for MCP response to '{method}'"
+            ) from exc
         except Exception:
             self._pending_requests.pop(request_id, None)
             if not future.done():
                 future.cancel()
             raise
 
-    async def notify(self, method: str, params: Optional[Dict[str, Any]] = None) -> None:
+    async def notify(
+        self, method: str, params: Optional[Dict[str, Any]] = None
+    ) -> None:
         await self._send_message(
             {
                 "jsonrpc": "2.0",
@@ -259,17 +278,23 @@ class _StdioJSONRPCConnection:
             except ProcessLookupError:
                 pass
             except Exception:
-                logger.opt(exception=True).debug("Failed to terminate MCP subprocess cleanly")
+                logger.opt(exception=True).debug(
+                    "Failed to terminate MCP subprocess cleanly"
+                )
 
             try:
-                await asyncio.wait_for(self.process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS)
+                await asyncio.wait_for(
+                    self.process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS
+                )
             except asyncio.TimeoutError:
                 try:
                     self.process.kill()
                 except ProcessLookupError:
                     pass
                 except Exception:
-                    logger.opt(exception=True).debug("Failed to kill MCP subprocess cleanly")
+                    logger.opt(exception=True).debug(
+                        "Failed to kill MCP subprocess cleanly"
+                    )
                 try:
                     await self.process.wait()
                 except Exception:
@@ -314,7 +339,9 @@ class _StdioJSONRPCConnection:
     async def _read_loop(self) -> None:
         stdout = getattr(self.process, "stdout", None)
         if stdout is None:
-            self._fail_pending_requests(RuntimeError("MCP subprocess stdout is unavailable"))
+            self._fail_pending_requests(
+                RuntimeError("MCP subprocess stdout is unavailable")
+            )
             return
 
         try:
@@ -330,7 +357,10 @@ class _StdioJSONRPCConnection:
                 try:
                     payload = json.loads(decoded_line)
                 except json.JSONDecodeError:
-                    logger.warning("Ignoring invalid MCP JSON-RPC payload from server: {}", decoded_line)
+                    logger.warning(
+                        "Ignoring invalid MCP JSON-RPC payload from server: {}",
+                        decoded_line,
+                    )
                     continue
 
                 await self._handle_incoming_payload(payload)
@@ -342,7 +372,9 @@ class _StdioJSONRPCConnection:
 
         if not self._closed:
             self._closed = True
-            self._fail_pending_requests(RuntimeError("MCP server closed the stdio transport"))
+            self._fail_pending_requests(
+                RuntimeError("MCP server closed the stdio transport")
+            )
 
     async def _stderr_loop(self) -> None:
         stderr = getattr(self.process, "stderr", None)
@@ -369,7 +401,9 @@ class _StdioJSONRPCConnection:
             return
 
         if not isinstance(payload, dict):
-            logger.debug("Ignoring unexpected MCP payload type: {}", type(payload).__name__)
+            logger.debug(
+                "Ignoring unexpected MCP payload type: {}", type(payload).__name__
+            )
             return
 
         if "method" in payload and "id" in payload:
@@ -455,7 +489,7 @@ class MCPClient:
         server_id: str,
         command: str,
         args: Optional[List[str]] = None,
-        env: Optional[Dict[str, str]] = None
+        env: Optional[Dict[str, str]] = None,
     ) -> bool:
         """Connect to an MCP server via stdio.
 
@@ -560,13 +594,12 @@ class MCPClient:
             or self.servers[server_id]["resources"]
             or self.servers[server_id]["prompts"]
         ):
-            raise RuntimeError(f"Server {server_id} returned no discoverable capabilities")
+            raise RuntimeError(
+                f"Server {server_id} returned no discoverable capabilities"
+            )
 
     async def call_tool(
-        self,
-        server_id: str,
-        tool_name: str,
-        arguments: Dict[str, Any]
+        self, server_id: str, tool_name: str, arguments: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Call a tool on a connected server.
 
@@ -594,11 +627,7 @@ class MCPClient:
             logger.error("Error calling tool {} on {}: {}", tool_name, server_id, e)
             return {"error": str(e)}
 
-    async def read_resource(
-        self,
-        server_id: str,
-        resource_uri: str
-    ) -> Dict[str, Any]:
+    async def read_resource(self, server_id: str, resource_uri: str) -> Dict[str, Any]:
         """Read a resource from a connected server.
 
         Args:
@@ -618,18 +647,22 @@ class MCPClient:
             return {
                 "uri": resource_uri,
                 "content": result.contents[0].text if result.contents else "",
-                "mimeType": result.contents[0].mimeType if result.contents else "text/plain"
+                "mimeType": result.contents[0].mimeType
+                if result.contents
+                else "text/plain",
             }
 
         except Exception as e:
-            logger.error("Error reading resource {} from {}: {}", resource_uri, server_id, e)
+            logger.error(
+                "Error reading resource {} from {}: {}", resource_uri, server_id, e
+            )
             return {"error": str(e)}
 
     async def get_prompt(
         self,
         server_id: str,
         prompt_name: str,
-        arguments: Optional[Dict[str, Any]] = None
+        arguments: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, str]]:
         """Get a prompt from a connected server.
 
@@ -644,21 +677,32 @@ class MCPClient:
         try:
             session = self.sessions.get(server_id)
             if not session:
-                return [{"role": "user", "content": f"Error: Server {server_id} not connected"}]
+                return [
+                    {
+                        "role": "user",
+                        "content": f"Error: Server {server_id} not connected",
+                    }
+                ]
 
             result = await session.get_prompt(prompt_name, arguments or {})
 
             messages = []
             for msg in result.messages:
-                messages.append({
-                    "role": msg.role,
-                    "content": msg.content.text if hasattr(msg.content, "text") else str(msg.content)
-                })
+                messages.append(
+                    {
+                        "role": msg.role,
+                        "content": msg.content.text
+                        if hasattr(msg.content, "text")
+                        else str(msg.content),
+                    }
+                )
 
             return messages
 
         except Exception as e:
-            logger.error("Error getting prompt {} from {}: {}", prompt_name, server_id, e)
+            logger.error(
+                "Error getting prompt {} from {}: {}", prompt_name, server_id, e
+            )
             return [{"role": "user", "content": f"Error: {str(e)}"}]
 
     def list_connected_servers(self) -> List[Dict[str, Any]]:
@@ -669,14 +713,16 @@ class MCPClient:
         """
         servers = []
         for server_id, info in self.servers.items():
-            servers.append({
-                "id": server_id,
-                "command": info["command"],
-                "connected_at": info["connected_at"],
-                "tools_count": len(info["tools"]),
-                "resources_count": len(info["resources"]),
-                "prompts_count": len(info["prompts"])
-            })
+            servers.append(
+                {
+                    "id": server_id,
+                    "command": info["command"],
+                    "connected_at": info["connected_at"],
+                    "tools_count": len(info["tools"]),
+                    "resources_count": len(info["resources"]),
+                    "prompts_count": len(info["prompts"]),
+                }
+            )
         return servers
 
     def get_server_tools(self, server_id: str) -> List[Dict[str, Any]]:
@@ -693,11 +739,13 @@ class MCPClient:
 
         tools = []
         for tool in self.servers[server_id]["tools"]:
-            tools.append({
-                "name": tool.name,
-                "description": tool.description,
-                "inputSchema": tool.inputSchema
-            })
+            tools.append(
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "inputSchema": tool.inputSchema,
+                }
+            )
         return tools
 
     def get_server_resources(self, server_id: str) -> List[Dict[str, Any]]:
@@ -714,12 +762,14 @@ class MCPClient:
 
         resources = []
         for resource in self.servers[server_id]["resources"]:
-            resources.append({
-                "uri": resource.uri,
-                "name": resource.name,
-                "description": resource.description,
-                "mimeType": resource.mimeType
-            })
+            resources.append(
+                {
+                    "uri": resource.uri,
+                    "name": resource.name,
+                    "description": resource.description,
+                    "mimeType": resource.mimeType,
+                }
+            )
         return resources
 
     def get_server_prompts(self, server_id: str) -> List[Dict[str, Any]]:
@@ -736,18 +786,20 @@ class MCPClient:
 
         prompts = []
         for prompt in self.servers[server_id]["prompts"]:
-            prompts.append({
-                "name": prompt.name,
-                "description": prompt.description,
-                "arguments": [
-                    {
-                        "name": arg.name,
-                        "description": arg.description,
-                        "required": arg.required
-                    }
-                    for arg in (prompt.arguments or [])
-                ]
-            })
+            prompts.append(
+                {
+                    "name": prompt.name,
+                    "description": prompt.description,
+                    "arguments": [
+                        {
+                            "name": arg.name,
+                            "description": arg.description,
+                            "required": arg.required,
+                        }
+                        for arg in (prompt.arguments or [])
+                    ],
+                }
+            )
         return prompts
 
     async def describe_server(self, server_id: str) -> Dict[str, Any]:
@@ -779,7 +831,9 @@ class MCPClient:
         *,
         session: Optional[_StdioJSONRPCConnection] = None,
     ) -> None:
-        active_session = session if session is not None else self.sessions.get(server_id)
+        active_session = (
+            session if session is not None else self.sessions.get(server_id)
+        )
 
         if active_session is not None:
             try:

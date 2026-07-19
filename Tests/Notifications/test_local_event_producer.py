@@ -4,7 +4,9 @@ from tldw_chatbook.Notifications.local_event_producer import LocalEventProducer
 
 
 def test_local_event_producer_emits_source_scoped_offline_events_without_server_profile():
-    producer = LocalEventProducer(source_name="local-notifications", stream_instance_id="device-1")
+    producer = LocalEventProducer(
+        source_name="local-notifications", stream_instance_id="device-1"
+    )
 
     event = producer.emit(
         event_kind="notification.delivered",

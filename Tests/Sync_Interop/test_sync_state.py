@@ -75,7 +75,9 @@ def test_sync_profile_state_requires_server_profile_id() -> None:
         SyncProfileState(server_profile_id="")
 
 
-def test_remote_pull_cursor_storage_key_is_scoped_by_server_domain_and_collection() -> None:
+def test_remote_pull_cursor_storage_key_is_scoped_by_server_domain_and_collection() -> (
+    None
+):
     notes_cursor = RemotePullCursor(
         source_authority="server",
         server_profile_id="server-a",
@@ -101,12 +103,16 @@ def test_remote_pull_cursor_storage_key_is_scoped_by_server_domain_and_collectio
         cursor="remote-cursor-1",
     )
 
-    assert notes_cursor.storage_key() == "server:server-a:workspace-1:notes:collection-1"
+    assert (
+        notes_cursor.storage_key() == "server:server-a:workspace-1:notes:collection-1"
+    )
     assert notes_cursor.storage_key() != chat_cursor.storage_key()
     assert notes_cursor.storage_key() != other_server_cursor.storage_key()
 
 
-def test_remote_pull_cursor_storage_key_differs_by_workspace_and_source_authority() -> None:
+def test_remote_pull_cursor_storage_key_differs_by_workspace_and_source_authority() -> (
+    None
+):
     server_cursor = RemotePullCursor(
         source_authority="server",
         server_profile_id="server-a",
@@ -158,7 +164,9 @@ def test_local_outbox_entry_is_shape_only_without_dispatch_metadata() -> None:
     assert not hasattr(entry, "replay")
 
 
-def test_local_outbox_entry_payload_is_immutable_and_stable_after_input_mutation() -> None:
+def test_local_outbox_entry_payload_is_immutable_and_stable_after_input_mutation() -> (
+    None
+):
     payload = {"title": "Draft", "metadata": {"tags": ["sync"]}}
     entry = LocalOutboxEntry(
         entry_id="outbox-1",

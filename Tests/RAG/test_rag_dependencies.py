@@ -19,98 +19,119 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # Set up logging
 from loguru import logger
+
 logger.add(sys.stderr, level="INFO")
+
 
 def check_rag_dependencies() -> Dict[str, bool]:
     """Check all RAG-related dependencies."""
     results = {}
-    
+
     logger.info("=== Checking RAG Dependencies ===")
-    
+
     # Check core dependencies
     try:
-        import torch
-        results['torch'] = True
+        import torch  # noqa: F401
+
+        results["torch"] = True
         logger.success("✅ torch available")
     except ImportError:
-        results['torch'] = False
+        results["torch"] = False
         logger.warning("❌ torch not available")
-    
+
     try:
-        import transformers
-        results['transformers'] = True
+        import transformers  # noqa: F401
+
+        results["transformers"] = True
         logger.success("✅ transformers available")
     except ImportError:
-        results['transformers'] = False
+        results["transformers"] = False
         logger.warning("❌ transformers not available")
-    
+
     try:
-        import numpy
-        results['numpy'] = True
+        import numpy  # noqa: F401
+
+        results["numpy"] = True
         logger.success("✅ numpy available")
     except ImportError:
-        results['numpy'] = False
+        results["numpy"] = False
         logger.warning("❌ numpy not available")
-    
+
     try:
-        import chromadb
-        results['chromadb'] = True
+        import chromadb  # noqa: F401
+
+        results["chromadb"] = True
         logger.success("✅ chromadb available")
     except ImportError:
-        results['chromadb'] = False
+        results["chromadb"] = False
         logger.warning("❌ chromadb not available")
-    
+
     try:
-        import sentence_transformers
-        results['sentence_transformers'] = True
+        import sentence_transformers  # noqa: F401
+
+        results["sentence_transformers"] = True
         logger.success("✅ sentence_transformers available")
     except ImportError:
-        results['sentence_transformers'] = False
+        results["sentence_transformers"] = False
         logger.warning("❌ sentence_transformers not available")
-    
+
     # Check reranking dependencies
     try:
-        import flashrank
-        results['flashrank'] = True
+        import flashrank  # noqa: F401
+
+        results["flashrank"] = True
         logger.success("✅ flashrank available (for reranking)")
     except ImportError:
-        results['flashrank'] = False
+        results["flashrank"] = False
         logger.warning("❌ flashrank not available (reranking will be limited)")
-    
+
     try:
-        import cohere
-        results['cohere'] = True
+        import cohere  # noqa: F401
+
+        results["cohere"] = True
         logger.success("✅ cohere available (for advanced reranking)")
     except ImportError:
-        results['cohere'] = False
+        results["cohere"] = False
         logger.warning("❌ cohere not available (Cohere reranking disabled)")
-    
+
     # Check if all embeddings_rag dependencies are available
-    embeddings_deps = ['torch', 'transformers', 'numpy', 'chromadb', 'sentence_transformers']
-    results['embeddings_rag'] = all(results.get(dep, False) for dep in embeddings_deps)
-    
-    if results['embeddings_rag']:
-        logger.success("✅ All embeddings/RAG dependencies available - Full RAG enabled")
+    embeddings_deps = [
+        "torch",
+        "transformers",
+        "numpy",
+        "chromadb",
+        "sentence_transformers",
+    ]
+    results["embeddings_rag"] = all(results.get(dep, False) for dep in embeddings_deps)
+
+    if results["embeddings_rag"]:
+        logger.success(
+            "✅ All embeddings/RAG dependencies available - Full RAG enabled"
+        )
     else:
-        logger.warning("❌ Some embeddings/RAG dependencies missing - Only plain RAG available")
-    
+        logger.warning(
+            "❌ Some embeddings/RAG dependencies missing - Only plain RAG available"
+        )
+
     return results
+
 
 def check_databases() -> Dict[str, bool]:
     """Check database availability."""
     results = {}
-    
+
     logger.info("\n=== Checking Databases ===")
-    
+
     # Check Media DB
     media_db_path = Path.home() / ".local/share/tldw_cli/tldw_cli_media_v2.db"
     if media_db_path.exists():
-        results['media_db'] = True
+        results["media_db"] = True
         logger.success(f"✅ Media DB found at: {media_db_path}")
-        
+
         # Try to connect
         try:
             from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
             db = MediaDatabase(str(media_db_path), client_id="test")
             # Try a simple query
             count = db.get_media_count()
@@ -118,18 +139,21 @@ def check_databases() -> Dict[str, bool]:
         except Exception as e:
             logger.warning(f"   Warning: Could not query media DB: {e}")
     else:
-        results['media_db'] = False
+        results["media_db"] = False
         logger.warning(f"❌ Media DB not found at: {media_db_path}")
-    
+
     # Check ChaChaNotes DB
-    chachanotes_db_path = Path.home() / ".local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"
+    chachanotes_db_path = (
+        Path.home() / ".local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"
+    )
     if chachanotes_db_path.exists():
-        results['chachanotes_db'] = True
+        results["chachanotes_db"] = True
         logger.success(f"✅ ChaChaNotes DB found at: {chachanotes_db_path}")
-        
+
         # Try to connect
         try:
             from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
             db = CharactersRAGDB(str(chachanotes_db_path), client_id="test")
             # Try simple queries
             conv_count = len(db.get_all_conversations())
@@ -139,218 +163,242 @@ def check_databases() -> Dict[str, bool]:
         except Exception as e:
             logger.warning(f"   Warning: Could not query ChaChaNotes DB: {e}")
     else:
-        results['chachanotes_db'] = False
+        results["chachanotes_db"] = False
         logger.warning(f"❌ ChaChaNotes DB not found at: {chachanotes_db_path}")
-    
+
     return results
+
 
 def check_rag_services() -> Dict[str, bool]:
     """Check RAG service availability."""
     results = {}
-    
+
     logger.info("\n=== Checking RAG Services ===")
-    
+
     # Check if RAG event handlers are available
     try:
         from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
-            perform_plain_rag_search,
-            perform_full_rag_pipeline,
-            get_rag_context_for_chat
+            perform_plain_rag_search,  # noqa: F401
+            perform_full_rag_pipeline,  # noqa: F401
+            get_rag_context_for_chat,  # noqa: F401
         )
-        results['rag_events'] = True
+
+        results["rag_events"] = True
         logger.success("✅ RAG event handlers available")
     except ImportError as e:
-        results['rag_events'] = False
+        results["rag_events"] = False
         logger.warning(f"❌ RAG event handlers not available: {e}")
-    
+
     # Check if simplified RAG is available
     try:
         from tldw_chatbook.RAG_Search import (
-            RAGService,
+            RAGService,  # noqa: F401
             EmbeddingsService,
             ChunkingService,
-            create_rag_service
+            create_rag_service,
         )
-        results['simplified_rag'] = True
+
+        results["simplified_rag"] = True
         logger.success("✅ Simplified RAG service available")
-        
+
         # Check if we can create a RAG service
         try:
             from tldw_chatbook.RAG_Search import create_config_for_testing
+
             test_config = create_config_for_testing()
-            test_service = create_rag_service(test_config)
-            results['rag_service_creation'] = True
+            create_rag_service(test_config)
+            results["rag_service_creation"] = True
             logger.success("✅ RAG service creation successful")
         except Exception as e:
-            results['rag_service_creation'] = False
+            results["rag_service_creation"] = False
             logger.warning(f"⚠️  RAG service creation failed: {e}")
-            
+
     except ImportError as e:
-        results['simplified_rag'] = False
+        results["simplified_rag"] = False
         logger.warning(f"❌ Simplified RAG service not available: {e}")
-    
+
     # Check embeddings service
     try:
-        from tldw_chatbook.RAG_Search import EmbeddingsService
-        results['embeddings_service'] = True
+        from tldw_chatbook.RAG_Search import EmbeddingsService  # noqa: F401
+
+        results["embeddings_service"] = True
         logger.success("✅ Embeddings service available")
     except ImportError:
-        results['embeddings_service'] = False
+        results["embeddings_service"] = False
         logger.warning("❌ Embeddings service not available")
-    
+
     # Check chunking service
     try:
-        from tldw_chatbook.RAG_Search import ChunkingService
-        results['chunking_service'] = True
+        from tldw_chatbook.RAG_Search import ChunkingService  # noqa: F401
+
+        results["chunking_service"] = True
         logger.success("✅ Chunking service available")
     except ImportError:
-        results['chunking_service'] = False
+        results["chunking_service"] = False
         logger.warning("❌ Chunking service not available")
-    
+
     # Check vector store options
     try:
         from tldw_chatbook.RAG_Search.simplified import (
-            ChromaVectorStore,
-            InMemoryVectorStore,
-            create_vector_store
+            ChromaVectorStore,  # noqa: F401
+            InMemoryVectorStore,  # noqa: F401
+            create_vector_store,  # noqa: F401
         )
-        results['vector_stores'] = True
+
+        results["vector_stores"] = True
         logger.success("✅ Vector store implementations available")
     except ImportError:
-        results['vector_stores'] = False
+        results["vector_stores"] = False
         logger.warning("❌ Vector store implementations not available")
-    
+
     # Check citation support
     try:
         from tldw_chatbook.RAG_Search.simplified import (
-            Citation,
-            CitationType,
-            SearchResultWithCitations
+            Citation,  # noqa: F401
+            CitationType,  # noqa: F401
+            SearchResultWithCitations,  # noqa: F401
         )
-        results['citations'] = True
+
+        results["citations"] = True
         logger.success("✅ Citation support available")
     except ImportError:
-        results['citations'] = False
+        results["citations"] = False
         logger.warning("❌ Citation support not available")
-    
+
     return results
+
 
 def check_configuration() -> Dict[str, Any]:
     """Check configuration settings."""
     results = {}
-    
+
     logger.info("\n=== Checking Configuration ===")
-    
+
     # Check environment variables (legacy)
-    use_modular_rag = os.environ.get('USE_MODULAR_RAG', 'false').lower() in ('true', '1', 'yes')
-    results['USE_MODULAR_RAG'] = use_modular_rag
+    use_modular_rag = os.environ.get("USE_MODULAR_RAG", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    results["USE_MODULAR_RAG"] = use_modular_rag
     logger.info(f"USE_MODULAR_RAG environment variable (legacy): {use_modular_rag}")
-    
+
     # Check config file
     config_path = Path.home() / ".config/tldw_cli/config.toml"
     if config_path.exists():
-        results['config_exists'] = True
+        results["config_exists"] = True
         logger.success(f"✅ Config file found at: {config_path}")
-        
+
         # Try to load and check RAG settings
         try:
             import tomli
-            with open(config_path, 'rb') as f:
+
+            with open(config_path, "rb") as f:
                 config = tomli.load(f)
-            
-            rag_config = config.get('rag', {})
+
+            rag_config = config.get("rag", {})
             if rag_config:
                 logger.info("   RAG configuration found:")
-                logger.info(f"   - use_simplified_rag: {rag_config.get('use_simplified_rag', True)}")
-                logger.info(f"   - vector_store_type: {rag_config.get('vector_store_type', 'chroma')}")
+                logger.info(
+                    f"   - use_simplified_rag: {rag_config.get('use_simplified_rag', True)}"
+                )
+                logger.info(
+                    f"   - vector_store_type: {rag_config.get('vector_store_type', 'chroma')}"
+                )
                 logger.info(f"   - batch_size: {rag_config.get('batch_size', 32)}")
-                results['rag_config'] = True
+                results["rag_config"] = True
             else:
                 logger.info("   No RAG configuration section in config.toml")
-                results['rag_config'] = False
+                results["rag_config"] = False
         except Exception as e:
             logger.warning(f"   Could not parse config file: {e}")
-            results['rag_config'] = False
+            results["rag_config"] = False
     else:
-        results['config_exists'] = False
+        results["config_exists"] = False
         logger.warning(f"❌ Config file not found at: {config_path}")
-    
+
     return results
 
-def print_summary(deps: Dict[str, bool], dbs: Dict[str, bool], 
-                  services: Dict[str, bool], config: Dict[str, Any]) -> None:
+
+def print_summary(
+    deps: Dict[str, bool],
+    dbs: Dict[str, bool],
+    services: Dict[str, bool],
+    config: Dict[str, Any],
+) -> None:
     """Print a summary of the checks."""
     logger.info("\n=== SUMMARY ===")
-    
+
     # Determine RAG capabilities
     plain_rag_available = (
-        dbs.get('media_db', False) or 
-        dbs.get('chachanotes_db', False)
-    ) and services.get('rag_events', False)
-    
-    full_rag_available = plain_rag_available and deps.get('embeddings_rag', False)
-    
-    simplified_rag_available = services.get('simplified_rag', False)
-    vector_stores_available = services.get('vector_stores', False)
-    citations_available = services.get('citations', False)
-    
+        dbs.get("media_db", False) or dbs.get("chachanotes_db", False)
+    ) and services.get("rag_events", False)
+
+    full_rag_available = plain_rag_available and deps.get("embeddings_rag", False)
+
+    simplified_rag_available = services.get("simplified_rag", False)
+    vector_stores_available = services.get("vector_stores", False)
+    citations_available = services.get("citations", False)
+
     logger.info("\nRAG Capabilities:")
     if plain_rag_available:
         logger.success("✅ Plain RAG (BM25/FTS5): AVAILABLE")
     else:
         logger.error("❌ Plain RAG (BM25/FTS5): NOT AVAILABLE")
-    
+
     if full_rag_available:
         logger.success("✅ Full RAG (with embeddings): AVAILABLE")
     else:
         logger.warning("⚠️  Full RAG (with embeddings): NOT AVAILABLE")
-        if not deps.get('embeddings_rag', False):
+        if not deps.get("embeddings_rag", False):
             logger.info("   To enable: pip install tldw_chatbook[embeddings_rag]")
-    
+
     if simplified_rag_available:
         logger.success("✅ Simplified RAG (new architecture): AVAILABLE")
-        if services.get('rag_service_creation', False):
+        if services.get("rag_service_creation", False):
             logger.info("   Service creation: SUCCESSFUL")
         else:
             logger.warning("   Service creation: FAILED")
-        
+
         if vector_stores_available:
             logger.info("   Vector stores: ChromaDB, InMemory")
-        
+
         if citations_available:
             logger.info("   Citation support: AVAILABLE")
     else:
         logger.info("ℹ️  Simplified RAG: NOT AVAILABLE")
         logger.info("   This may indicate missing dependencies")
-    
+
     # Reranking capabilities
     logger.info("\nReranking Capabilities:")
-    if deps.get('flashrank', False):
+    if deps.get("flashrank", False):
         logger.success("✅ FlashRank reranking: AVAILABLE")
     else:
         logger.info("ℹ️  FlashRank reranking: NOT AVAILABLE (optional)")
         logger.info("   To enable: pip install flashrank")
-    
-    if deps.get('cohere', False):
+
+    if deps.get("cohere", False):
         logger.success("✅ Cohere reranking: AVAILABLE")
     else:
         logger.info("ℹ️  Cohere reranking: NOT AVAILABLE (optional)")
         logger.info("   To enable: pip install cohere")
 
+
 def main():
     """Run all checks."""
     logger.info("RAG Dependency and Configuration Check\n")
-    
+
     # Run checks
     deps = check_rag_dependencies()
     dbs = check_databases()
     services = check_rag_services()
     config = check_configuration()
-    
+
     # Print summary
     print_summary(deps, dbs, services, config)
-    
+
     logger.info("\nCheck complete!")
+
 
 if __name__ == "__main__":
     main()

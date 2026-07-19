@@ -12,7 +12,7 @@ from .Chunk_Lib import (
     improved_chunking_process,
     chunk_for_embedding,
     process_document_with_metadata,
-    DEFAULT_CHUNK_OPTIONS
+    DEFAULT_CHUNK_OPTIONS,
 )
 
 from .chunking_templates import (
@@ -20,20 +20,17 @@ from .chunking_templates import (
     ChunkingTemplateManager,
     ChunkingPipeline,
     ChunkingStage,
-    ChunkingOperation
+    ChunkingOperation,
 )
 
 from .language_chunkers import (
     LanguageChunkerFactory,
     ChineseChunker,
     JapaneseChunker,
-    DefaultChunker
+    DefaultChunker,
 )
 
-from .token_chunker import (
-    TokenBasedChunker,
-    create_token_chunker
-)
+from .token_chunker import TokenBasedChunker, create_token_chunker
 
 __all__ = [
     # Main chunking classes
@@ -42,27 +39,23 @@ __all__ = [
     "chunk_for_embedding",
     "process_document_with_metadata",
     "DEFAULT_CHUNK_OPTIONS",
-    
     # Template system
     "ChunkingTemplate",
-    "ChunkingTemplateManager", 
+    "ChunkingTemplateManager",
     "ChunkingPipeline",
     "ChunkingStage",
     "ChunkingOperation",
-    
     # Language support
     "LanguageChunkerFactory",
     "ChineseChunker",
     "JapaneseChunker",
     "DefaultChunker",
-    
     # Token support
     "TokenBasedChunker",
     "create_token_chunker",
-    
     # Exceptions
     "ChunkingError",
     "InvalidChunkingMethodError",
     "InvalidInputError",
-    "LanguageDetectionError"
+    "LanguageDetectionError",
 ]

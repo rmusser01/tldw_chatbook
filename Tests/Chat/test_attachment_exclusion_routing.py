@@ -23,7 +23,8 @@ from tldw_chatbook.Utils.file_handlers import file_handler_registry
 def png_only_config(monkeypatch):
     """[chat.images].supported_formats narrowed to [".png"]."""
     monkeypatch.setattr(
-        config_mod, "get_cli_setting",
+        config_mod,
+        "get_cli_setting",
         lambda section, k=None, default=None: (
             {"supported_formats": [".png"]}
             if (section, k) == ("chat", "images")
@@ -94,7 +95,8 @@ async def test_extra_configured_format_routes_not_rejects(tmp_path, monkeypatch)
     image handler when configured — the rejection only fires for KNOWN image
     formats the config excluded."""
     monkeypatch.setattr(
-        config_mod, "get_cli_setting",
+        config_mod,
+        "get_cli_setting",
         lambda section, k=None, default=None: (
             {"supported_formats": [".png", ".heic"]}
             if (section, k) == ("chat", "images")

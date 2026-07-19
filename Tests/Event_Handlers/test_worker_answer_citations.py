@@ -7,8 +7,13 @@ import pytest
 from textual.worker import WorkerState
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
-from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle, EvidenceReference
-from tldw_chatbook.Event_Handlers.worker_events import handle_api_call_worker_state_changed
+from tldw_chatbook.Chat.citation_evidence_models import (
+    EvidenceBundle,
+    EvidenceReference,
+)
+from tldw_chatbook.Event_Handlers.worker_events import (
+    handle_api_call_worker_state_changed,
+)
 
 
 @pytest.mark.asyncio

@@ -196,7 +196,7 @@ def collect_prunable_console_rail_keys(
         if sanitized
     }
     prunable: list[str] = []
-    for key in (stored_keys or ()):
+    for key in stored_keys or ():
         if not isinstance(key, str):
             continue
         parts = key.split(":")
@@ -340,11 +340,7 @@ def _has_setup_blocker_row(rows: tuple[Any, ...]) -> bool:
         if not any(term in category for term in _SETUP_BLOCKER_LABEL_TERMS):
             continue
 
-        readiness = " ".join(
-            part.lower()
-            for part in (status, value, text)
-            if part
-        )
+        readiness = " ".join(part.lower() for part in (status, value, text) if part)
         if _contains_any_term(readiness, _SETUP_BLOCKER_READINESS_TERMS):
             return True
 
@@ -360,16 +356,13 @@ def _has_row_readiness_match(rows: tuple[Any, ...], category_terms: set[str]) ->
     for row in rows:
         label, status, value, text = _row_text_parts(row)
         category = label.lower()
-        readiness = " ".join(
-            part.lower()
-            for part in (status, value, text)
-            if part
-        )
-        if not readiness or any(term in readiness for term in _NEGATIVE_READINESS_TERMS):
+        readiness = " ".join(part.lower() for part in (status, value, text) if part)
+        if not readiness or any(
+            term in readiness for term in _NEGATIVE_READINESS_TERMS
+        ):
             continue
-        if (
-            any(term in category for term in category_terms)
-            and _contains_any_term(readiness, _POSITIVE_READINESS_TERMS)
+        if any(term in category for term in category_terms) and _contains_any_term(
+            readiness, _POSITIVE_READINESS_TERMS
         ):
             return True
     return False

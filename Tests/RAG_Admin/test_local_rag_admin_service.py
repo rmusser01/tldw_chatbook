@@ -91,7 +91,12 @@ class FakeMediaService:
 
     def reprocess_media(self, media_id, **options):
         self.calls.append(("reprocess_media", media_id, options))
-        return {"status": "queued", "media_id": media_id, "job_id": "local-job-1", "options": options}
+        return {
+            "status": "queued",
+            "media_id": media_id,
+            "job_id": "local-job-1",
+            "options": options,
+        }
 
 
 def test_local_rag_admin_service_delegates_reprocess_to_local_media_service():
@@ -137,7 +142,10 @@ def test_local_rag_admin_service_applies_server_style_template_to_text():
         name="words-two",
         description="Two word chunks",
         template={
-            "chunking": {"method": "words", "config": {"max_size": 2, "overlap": 0, "language": "en"}},
+            "chunking": {
+                "method": "words",
+                "config": {"max_size": 2, "overlap": 0, "language": "en"},
+            },
         },
     )
 
@@ -185,7 +193,9 @@ def test_local_rag_admin_service_lists_and_deletes_via_injected_store():
     listed = service.list_collections()
     service.delete_collection("demo")
 
-    assert listed == [{"name": "demo", "metadata": {"provider": "local", "embedding_dimension": 2}}]
+    assert listed == [
+        {"name": "demo", "metadata": {"provider": "local", "embedding_dimension": 2}}
+    ]
     assert store.deleted == ["demo"]
 
 
@@ -258,7 +268,9 @@ def test_local_rag_admin_service_detail_requires_chroma_backed_store():
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not embeddings_rag_deps_installed(), reason="embeddings_rag deps not installed")
+@pytest.mark.skipif(
+    not embeddings_rag_deps_installed(), reason="embeddings_rag deps not installed"
+)
 def test_write_via_rag_service_is_visible_to_search_and_admin(tmp_path, monkeypatch):
     """task-248 unification proof: a document indexed through the RAG service
     is (a) returned by semantic search and (b) visible to the retrieval-admin
@@ -321,7 +333,9 @@ def test_write_via_rag_service_is_visible_to_search_and_admin(tmp_path, monkeypa
             exported = admin.export_collection(
                 cfg.vector_store.collection_name, include_embeddings=False
             )
-            assert any("zanzibar" in (item["document"] or "") for item in exported["items"])
+            assert any(
+                "zanzibar" in (item["document"] or "") for item in exported["items"]
+            )
 
             # A failing underlying delete (nonexistent collection -> the real
             # ChromaVectorStore returns False) must surface as a hard error.

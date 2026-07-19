@@ -90,7 +90,7 @@ def test_textual_serve_resize_patch_forces_full_terminal_repaint():
 
     patched = serve.patch_textual_serve_viewport_js(upstream)
 
-    assert "window.addEventListener(\"resize\",this._chatbookViewportResize)" in patched
+    assert 'window.addEventListener("resize",this._chatbookViewportResize)' in patched
     assert "window.onresize=this._chatbookViewportResize" not in patched
     assert "ResizeObserver" in patched
     assert "this.terminal.refresh(0,this.terminal.rows-1)" in patched
@@ -119,10 +119,13 @@ def test_textual_serve_resize_patch_repaints_after_connection_and_first_byte():
 
     patched = serve.patch_textual_serve_viewport_js(upstream)
 
-    assert 'document.querySelector("body").classList.add("-loaded"),this._chatbookViewportResize()' in patched
+    assert (
+        'document.querySelector("body").classList.add("-loaded"),this._chatbookViewportResize()'
+        in patched
+    )
     assert (
         't.length>10&&(document.querySelector("body").classList.add("-first-byte"),'
-        'this._chatbookViewportResize())'
+        "this._chatbookViewportResize())"
     ) in patched
 
 

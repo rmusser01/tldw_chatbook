@@ -79,11 +79,13 @@ async def test_search_notes_fts5_end_to_end_db_config_path(db, tmp_path):
 async def test_search_conversations_fts5_uses_live_instance(db):
     """The conversations search prefers the live instance too (no ctor)."""
     conv_id = db.add_conversation({"title": "Live seam conversation"})
-    db.add_message({
-        "conversation_id": conv_id,
-        "sender": "User",
-        "content": "glimmerfish sighting confirmed",
-    })
+    db.add_message(
+        {
+            "conversation_id": conv_id,
+            "sender": "User",
+            "content": "glimmerfish sighting confirmed",
+        }
+    )
 
     results = await search_conversations_fts5(_LiveDbApp(db), "glimmerfish")
 

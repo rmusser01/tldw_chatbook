@@ -122,4 +122,3 @@ async def test_ingest_drop_zone_browse_action_explains_file_selection():
                 "browse-overlay": "Choose files from disk for ingestion.",
             },
         )
-

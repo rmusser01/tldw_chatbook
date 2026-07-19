@@ -40,7 +40,9 @@ class WritingOutlineTree(Vertical):
         self.labels = []
         self.node_data = []
         project = self.structure.get("project")
-        project_id = self._record_id(project) or str(self.structure.get("project_id") or "")
+        project_id = self._record_id(project) or str(
+            self.structure.get("project_id") or ""
+        )
         if project is not None:
             self._append_node(source, "project", project, project_id=project_id)
 
@@ -258,7 +260,9 @@ class WritingOutlineTree(Vertical):
         chapter_id: str | None = None,
         title: str | None = None,
     ) -> dict[str, Any]:
-        resolved_title = title or self._record_title(record, fallback=f"Untitled {kind.title()}")
+        resolved_title = title or self._record_title(
+            record, fallback=f"Untitled {kind.title()}"
+        )
         return {
             "source": source,
             "kind": kind,

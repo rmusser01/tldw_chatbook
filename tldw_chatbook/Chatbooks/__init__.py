@@ -23,14 +23,14 @@ from .local_chatbook_service import LocalChatbookService
 from .server_chatbook_service import ServerChatbookService
 
 __all__ = [
-    'ChatbookCreator',
-    'ChatbookImporter',
-    'Chatbook',
-    'ChatbookManifest',
-    'ChatbookContent',
-    'LocalChatbookService',
-    'ServerChatbookService',
-    'ChatbookError',
-    'ChatbookErrorHandler',
-    'ChatbookErrorType'
+    "ChatbookCreator",
+    "ChatbookImporter",
+    "Chatbook",
+    "ChatbookManifest",
+    "ChatbookContent",
+    "LocalChatbookService",
+    "ServerChatbookService",
+    "ChatbookError",
+    "ChatbookErrorHandler",
+    "ChatbookErrorType",
 ]

@@ -65,7 +65,9 @@ def _saved_models_for_provider(
     for configured_provider, configured_models in providers_models.items():
         if provider_config_key(str(configured_provider)) != provider_key:
             continue
-        if not isinstance(configured_models, Sequence) or isinstance(configured_models, (str, bytes)):
+        if not isinstance(configured_models, Sequence) or isinstance(
+            configured_models, (str, bytes)
+        ):
             continue
         for configured_model in configured_models:
             model_id = str(configured_model or "").strip()
@@ -75,7 +77,10 @@ def _saved_models_for_provider(
 
 
 def _warning_for_model(source: str, capability_status: str) -> str:
-    if source in {"runtime_discovered", "persisted_discovered"} and capability_status == "unknown":
+    if (
+        source in {"runtime_discovered", "persisted_discovered"}
+        and capability_status == "unknown"
+    ):
         return MODEL_CAPABILITY_UNKNOWN_WARNING
     return ""
 
@@ -141,7 +146,9 @@ async def resolve_provider_model_options(
 ) -> list[ResolvedProviderModelOption]:
     """Return saved and runtime-discovered model selector options for a provider."""
     provider_key = provider_config_key(provider)
-    saved_models = _saved_models_for_provider(_providers_models(app_instance), provider_key)
+    saved_models = _saved_models_for_provider(
+        _providers_models(app_instance), provider_key
+    )
     options: list[ResolvedProviderModelOption] = []
     seen_model_ids: set[str] = set()
 
@@ -149,7 +156,9 @@ async def resolve_provider_model_options(
         options.append(_option_from_saved_model(model_id))
         seen_model_ids.add(model_id)
 
-    merged_entries = await _merged_model_entries_from_scope(app_instance, provider=provider_key)
+    merged_entries = await _merged_model_entries_from_scope(
+        app_instance, provider=provider_key
+    )
     for entry in merged_entries:
         option = _option_from_entry(entry)
         if option.model_id and option.model_id not in seen_model_ids:
@@ -210,9 +219,8 @@ def resolve_effective_provider_model(
         provider = configured_provider
         provider_source = "chat_defaults"
 
-    reactive_model = (
-        getattr(app_instance, "chat_api_model_value", None)
-        or getattr(app_instance, "chat_model_value", None)
+    reactive_model = getattr(app_instance, "chat_api_model_value", None) or getattr(
+        app_instance, "chat_model_value", None
     )
     configured_model = _chat_default(app_instance, "model")
 

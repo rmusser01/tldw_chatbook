@@ -21,6 +21,7 @@ MAX_LEN = 64
 # sanitize_component
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -59,6 +60,7 @@ def test_sanitize_component_collapses_runs_not_individual_chars():
 # llm_tool_name - basic assembly + prefix stripping
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     ("server_key", "tool_name", "expected"),
     [
@@ -95,6 +97,7 @@ def test_llm_tool_name_result_always_matches_allowed_charset_and_length():
 # ---------------------------------------------------------------------------
 # llm_tool_name - 64-char truncate-with-hash determinism
 # ---------------------------------------------------------------------------
+
 
 def test_llm_tool_name_truncates_and_appends_hash_when_over_64_chars():
     server_key = "local:" + ("server" * 20)
@@ -166,6 +169,7 @@ def test_llm_tool_name_at_65_chars_is_truncated():
 # ---------------------------------------------------------------------------
 # dedupe_names - stable collision suffixes
 # ---------------------------------------------------------------------------
+
 
 def test_dedupe_names_leaves_unique_names_untouched():
     names = ["mcp__a__x", "mcp__b__y", "mcp__c__z"]

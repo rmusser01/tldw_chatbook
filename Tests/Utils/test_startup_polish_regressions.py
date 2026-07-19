@@ -68,18 +68,66 @@ def test_game_of_life_splash_effect_renders_without_missing_escape_constant() ->
 @pytest.mark.parametrize(
     ("module_name", "class_name", "effect_kwargs"),
     [
-        ("tldw_chatbook.Utils.Splash_Screens.gaming.tetris_block", "TetrisBlockEffect", {}),
-        ("tldw_chatbook.Utils.Splash_Screens.gaming.maze_generator", "MazeGeneratorEffect", {}),
-        ("tldw_chatbook.Utils.Splash_Screens.classic.pixel_dissolve", "PixelDissolveEffect", {}),
-        ("tldw_chatbook.Utils.Splash_Screens.environmental.morphing_shape", "MorphingShapeEffect", {}),
-        ("tldw_chatbook.Utils.Splash_Screens.environmental.dna_helix", "DNAHelixEffect", {}),
-        ("tldw_chatbook.Utils.Splash_Screens.environmental.wave_ripple", "WaveRippleEffect", {}),
-        ("tldw_chatbook.Utils.Splash_Screens.environmental.fireworks", "FireworksEffect", {}),
-        ("tldw_chatbook.Utils.Splash_Screens.environmental.ascii_kaleidoscope", "ASCIIKaleidoscopeEffect", {}),
-        ("tldw_chatbook.Utils.Splash_Screens.environmental.particle_swarm", "ParticleSwarmEffect", {}),
-        ("tldw_chatbook.Utils.Splash_Screens.tech.mining", "MiningEffect", {"content": "tldw chatbook"}),
-        ("tldw_chatbook.Utils.Splash_Screens.tech.circuit_board", "CircuitBoardEffect", {}),
-        ("tldw_chatbook.Utils.Splash_Screens.tech.digital_rain", "DigitalRainEffect", {}),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.gaming.tetris_block",
+            "TetrisBlockEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.gaming.maze_generator",
+            "MazeGeneratorEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.classic.pixel_dissolve",
+            "PixelDissolveEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.environmental.morphing_shape",
+            "MorphingShapeEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.environmental.dna_helix",
+            "DNAHelixEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.environmental.wave_ripple",
+            "WaveRippleEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.environmental.fireworks",
+            "FireworksEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.environmental.ascii_kaleidoscope",
+            "ASCIIKaleidoscopeEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.environmental.particle_swarm",
+            "ParticleSwarmEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.tech.mining",
+            "MiningEffect",
+            {"content": "tldw chatbook"},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.tech.circuit_board",
+            "CircuitBoardEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.tech.digital_rain",
+            "DigitalRainEffect",
+            {},
+        ),
     ],
 )
 def test_sibling_splash_effects_render_without_missing_escape_constant(
@@ -107,7 +155,9 @@ def test_sibling_splash_effects_render_without_missing_escape_constant(
     assert isinstance(frame, str)
 
 
-def test_random_splash_selection_skips_missing_active_card_definitions(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_random_splash_selection_skips_missing_active_card_definitions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Default active cards can outpace implemented card definitions."""
     from tldw_chatbook.Widgets import splash_screen
 
@@ -135,12 +185,19 @@ def test_random_splash_selection_skips_missing_active_card_definitions(monkeypat
     assert choices == [["default"]]
 
 
-def test_nltk_download_false_is_not_logged_as_success(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_nltk_download_false_is_not_logged_as_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from tldw_chatbook.Chunking import Chunk_Lib
 
     messages: list[tuple[str, str]] = []
-    sink_id = logger.add(lambda message: messages.append((message.record["level"].name, message.record["message"])))
+    sink_id = logger.add(
+        lambda message: messages.append(
+            (message.record["level"].name, message.record["message"])
+        )
+    )
     try:
+
         def mock_find(_path):
             raise LookupError("missing")
 
@@ -162,21 +219,32 @@ def test_nltk_download_false_is_not_logged_as_success(monkeypatch: pytest.Monkey
         logger.remove(sink_id)
 
     assert not any("downloaded successfully" in message for _level, message in messages)
-    assert any(level in {"WARNING", "ERROR"} and "punkt" in message for level, message in messages)
+    assert any(
+        level in {"WARNING", "ERROR"} and "punkt" in message
+        for level, message in messages
+    )
 
 
-def test_missing_openai_tts_mapping_falls_back_without_error_logs(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_openai_tts_mapping_falls_back_without_error_logs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from importlib import resources as importlib_resources
     from tldw_chatbook import config
 
     messages: list[tuple[str, str]] = []
-    sink_id = logger.add(lambda message: messages.append((message.record["level"].name, message.record["message"])))
+    sink_id = logger.add(
+        lambda message: messages.append(
+            (message.record["level"].name, message.record["message"])
+        )
+    )
     original_open = builtins.open
     try:
         monkeypatch.setattr(
             importlib_resources,
             "files",
-            lambda _package: (_ for _ in ()).throw(FileNotFoundError("packaged mapping missing")),
+            lambda _package: (_ for _ in ()).throw(
+                FileNotFoundError("packaged mapping missing")
+            ),
         )
 
         def fake_open(path, *args, **kwargs):

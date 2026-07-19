@@ -29,7 +29,15 @@ DEFAULT_MAX_HISTORY_IMAGES = 10  # used when model capabilities omit max_images
 DEFAULT_RESIZE_MAX_DIMENSION = 2048  # matches ChatImageHandler's legacy literal
 
 DEFAULT_SUPPORTED_IMAGE_FORMATS: tuple[str, ...] = (
-    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif", ".svg",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".bmp",
+    ".tiff",
+    ".tif",
+    ".svg",
 )
 
 # Non-image picker rows; the image rows are derived at call time by
@@ -45,10 +53,12 @@ _NON_IMAGE_FILTER_SPECS: tuple[tuple[str, str], ...] = (
     ("Document Files", "*.pdf;*.doc;*.docx;*.rtf;*.odt"),
     ("E-book Files", "*.epub;*.mobi;*.azw;*.azw3;*.fb2"),
     ("Text Files", "*.txt;*.md;*.log;*.text;*.rst"),
-    ("Code Files", "*.py;*.js;*.ts;*.java;*.cpp;*.c;*.h;*.cs;*.rb;*.go;*.rs;*.swift;*.kt;*.php;*.r;*.m;*.lua;*.sh;*.bash;*.ps1;*.sql;*.html;*.css;*.xml"),
+    (
+        "Code Files",
+        "*.py;*.js;*.ts;*.java;*.cpp;*.c;*.h;*.cs;*.rb;*.go;*.rs;*.swift;*.kt;*.php;*.r;*.m;*.lua;*.sh;*.bash;*.ps1;*.sql;*.html;*.css;*.xml",
+    ),
     ("Data Files", "*.json;*.yaml;*.yml;*.csv;*.tsv"),
 )
-
 
 
 def _format_size(size: int) -> str:
@@ -157,9 +167,7 @@ def image_resize_max_dimension() -> int:
     Returns:
         The maximum width/height, in pixels, images are resized to.
     """
-    raw = _chat_images_setting(
-        "resize_max_dimension", DEFAULT_RESIZE_MAX_DIMENSION
-    )
+    raw = _chat_images_setting("resize_max_dimension", DEFAULT_RESIZE_MAX_DIMENSION)
     try:
         value = int(raw)
     except (TypeError, ValueError):

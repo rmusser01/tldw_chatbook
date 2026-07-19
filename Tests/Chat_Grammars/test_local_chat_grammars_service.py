@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from tldw_chatbook.Chat_Grammars_Interop.local_chat_grammars_service import LocalChatGrammarsService
+from tldw_chatbook.Chat_Grammars_Interop.local_chat_grammars_service import (
+    LocalChatGrammarsService,
+)
 
 
 @pytest.mark.asyncio
@@ -43,7 +45,12 @@ async def test_local_chat_grammars_service_persists_crud_and_archival(tmp_path):
 
     deleted = await reloaded.delete_grammar("local-grammar-1")
     assert deleted is True
-    assert await reloaded.list_grammars() == {"items": [], "total": 0, "limit": 100, "offset": 0}
+    assert await reloaded.list_grammars() == {
+        "items": [],
+        "total": 0,
+        "limit": 100,
+        "offset": 0,
+    }
     archived = await reloaded.get_grammar("local-grammar-1", include_archived=True)
     assert archived["is_archived"] is True
 

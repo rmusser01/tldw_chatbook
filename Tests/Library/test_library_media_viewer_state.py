@@ -105,7 +105,12 @@ def test_url_line_omitted_for_local_scheme():
 
 def test_url_line_present_for_https_scheme():
     """A real https:// URL still renders its metadata line as before."""
-    detail = {"media_id": "1", "title": "T", "type": "video", "url": "https://example.com/a"}
+    detail = {
+        "media_id": "1",
+        "title": "T",
+        "type": "video",
+        "url": "https://example.com/a",
+    }
 
     state = build_library_media_viewer_state(detail, now=NOW)
 
@@ -114,7 +119,12 @@ def test_url_line_present_for_https_scheme():
 
 def test_keywords_list_joined_with_comma_space():
     """Keywords list is joined with ', ' preserving order."""
-    detail = {"media_id": "1", "title": "T", "type": "video", "keywords": ["zeta", "alpha", "mid"]}
+    detail = {
+        "media_id": "1",
+        "title": "T",
+        "type": "video",
+        "keywords": ["zeta", "alpha", "mid"],
+    }
 
     state = build_library_media_viewer_state(detail, now=NOW)
 
@@ -256,21 +266,46 @@ def test_analysis_blank_when_latest_version_has_no_analysis_even_if_older_one_do
 
 def test_analysis_blank_when_versions_absent_or_not_a_list():
     """Missing/non-list versions field is tolerated -> blank analysis."""
-    assert build_library_media_viewer_state(
-        {"media_id": "1", "title": "T", "type": "article"}, now=NOW
-    ).analysis == ""
-    assert build_library_media_viewer_state(
-        {"media_id": "1", "title": "T", "type": "article", "versions": "not-a-list"}, now=NOW
-    ).analysis == ""
-    assert build_library_media_viewer_state(
-        {"media_id": "1", "title": "T", "type": "article", "versions": [{"analysis_content": None}, "not-a-mapping"]},
-        now=NOW,
-    ).analysis == ""
+    assert (
+        build_library_media_viewer_state(
+            {"media_id": "1", "title": "T", "type": "article"}, now=NOW
+        ).analysis
+        == ""
+    )
+    assert (
+        build_library_media_viewer_state(
+            {
+                "media_id": "1",
+                "title": "T",
+                "type": "article",
+                "versions": "not-a-list",
+            },
+            now=NOW,
+        ).analysis
+        == ""
+    )
+    assert (
+        build_library_media_viewer_state(
+            {
+                "media_id": "1",
+                "title": "T",
+                "type": "article",
+                "versions": [{"analysis_content": None}, "not-a-mapping"],
+            },
+            now=NOW,
+        ).analysis
+        == ""
+    )
 
 
 def test_read_later_true_when_detail_flag_set():
     """read_later reflects a truthy is_read_it_later flag on the detail."""
-    detail = {"media_id": "1", "title": "T", "type": "article", "is_read_it_later": True}
+    detail = {
+        "media_id": "1",
+        "title": "T",
+        "type": "article",
+        "is_read_it_later": True,
+    }
 
     state = build_library_media_viewer_state(detail, now=NOW)
 
@@ -285,12 +320,24 @@ def test_read_later_false_when_flag_absent_or_falsy():
     MediaReadItLaterState row is deleted entirely, so a re-fetched detail
     has no is_read_it_later key at all (not even False).
     """
-    assert build_library_media_viewer_state(
-        {"media_id": "1", "title": "T", "type": "article"}, now=NOW
-    ).read_later is False
-    assert build_library_media_viewer_state(
-        {"media_id": "1", "title": "T", "type": "article", "is_read_it_later": False}, now=NOW
-    ).read_later is False
+    assert (
+        build_library_media_viewer_state(
+            {"media_id": "1", "title": "T", "type": "article"}, now=NOW
+        ).read_later
+        is False
+    )
+    assert (
+        build_library_media_viewer_state(
+            {
+                "media_id": "1",
+                "title": "T",
+                "type": "article",
+                "is_read_it_later": False,
+            },
+            now=NOW,
+        ).read_later
+        is False
+    )
 
 
 def test_whitespace_only_content_and_analysis_treated_as_blank():
@@ -361,7 +408,14 @@ def test_non_mapping_detail_tolerated_like_none():
 def test_highlight_rows_include_quote_note_and_color():
     """A highlight with quote/note/color renders all three on its display text."""
     rows = build_library_media_highlight_rows(
-        [{"id": 5, "quote": "Important sentence", "note": "Check this", "color": "yellow"}]
+        [
+            {
+                "id": 5,
+                "quote": "Important sentence",
+                "note": "Check this",
+                "color": "yellow",
+            }
+        ]
     )
 
     assert rows == (

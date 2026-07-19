@@ -78,7 +78,10 @@ def test_recovery_bundle_wraps_dataset_key_without_plaintext_material() -> None:
     assert dataset_key.hex() not in serialized
     assert bundle.version == "sync_recovery_bundle_v1"
     assert bundle.recovery_hint == "personal laptop"
-    assert unwrap_recovery_bundle(bundle, recovery_secret="correct horse battery staple") == dataset_key
+    assert (
+        unwrap_recovery_bundle(bundle, recovery_secret="correct horse battery staple")
+        == dataset_key
+    )
 
 
 def test_wrong_recovery_secret_cannot_unwrap_bundle() -> None:
@@ -91,7 +94,9 @@ def test_wrong_recovery_secret_cannot_unwrap_bundle() -> None:
         unwrap_recovery_bundle(bundle, recovery_secret="wrong secret")
 
 
-def test_unwrap_recovery_bundle_preserves_unexpected_key_derivation_errors(monkeypatch) -> None:
+def test_unwrap_recovery_bundle_preserves_unexpected_key_derivation_errors(
+    monkeypatch,
+) -> None:
     bundle = wrap_dataset_key_for_recovery(
         generate_dataset_key(),
         recovery_secret="correct horse battery staple",

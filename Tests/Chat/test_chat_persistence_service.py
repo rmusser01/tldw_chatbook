@@ -29,7 +29,9 @@ def db_instance(db_path, client_id):
 
 @pytest.mark.integration
 class TestChatPersistenceService:
-    def test_persistence_service_never_uses_display_name_as_assistant_id(self, db_instance: CharactersRAGDB):
+    def test_persistence_service_never_uses_display_name_as_assistant_id(
+        self, db_instance: CharactersRAGDB
+    ):
         service = ChatPersistenceService(db_instance)
         character_id = db_instance.add_character_card({"name": "Alice"})
         conversation_id = service.create_conversation(
@@ -44,25 +46,33 @@ class TestChatPersistenceService:
         conversation = db_instance.get_conversation_by_id(conversation_id)
         assert conversation["assistant_id"] == "char.local.alice"
 
-    def test_update_message_content_preserves_topology_variant_and_feedback(self, db_instance: CharactersRAGDB):
+    def test_update_message_content_preserves_topology_variant_and_feedback(
+        self, db_instance: CharactersRAGDB
+    ):
         service = ChatPersistenceService(db_instance)
         char_id = db_instance.add_character_card({"name": "Preserver"})
 
-        conversation_id = service.create_conversation(character_id=char_id, conversation_title="Chat with Preserver")
+        conversation_id = service.create_conversation(
+            character_id=char_id, conversation_title="Chat with Preserver"
+        )
 
-        root_message_id = db_instance.add_message({
-            "id": "msg-root",
-            "conversation_id": conversation_id,
-            "sender": "user",
-            "content": "Original content",
-            "client_id": db_instance.client_id,
-        })
+        root_message_id = db_instance.add_message(
+            {
+                "id": "msg-root",
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "content": "Original content",
+                "client_id": db_instance.client_id,
+            }
+        )
         variant_message_id = db_instance.create_message_variant(
             original_message_id=root_message_id,
             variant_content="Variant content",
             is_selected=True,
         )
-        db_instance.update_message_feedback(variant_message_id, "1;liked", expected_version=1)
+        db_instance.update_message_feedback(
+            variant_message_id, "1;liked", expected_version=1
+        )
 
         variant_before = next(
             message
@@ -88,7 +98,10 @@ class TestChatPersistenceService:
         assert variant_after["parent_message_id"] == variant_before["parent_message_id"]
         assert variant_after["variant_of"] == variant_before["variant_of"]
         assert variant_after["variant_number"] == variant_before["variant_number"]
-        assert variant_after["is_selected_variant"] == variant_before["is_selected_variant"]
+        assert (
+            variant_after["is_selected_variant"]
+            == variant_before["is_selected_variant"]
+        )
         assert variant_after["total_variants"] == variant_before["total_variants"]
         assert variant_after["feedback"] == variant_before["feedback"]
 
@@ -98,17 +111,21 @@ class TestChatPersistenceService:
         """A metadata-only edit (image bytes unavailable, e.g. failed rehydration)
         must not NULL out an image that is already persisted for the message."""
         service = ChatPersistenceService(db_instance)
-        conversation_id = service.create_conversation(assistant_kind="persona", assistant_id="planner")
+        conversation_id = service.create_conversation(
+            assistant_kind="persona", assistant_id="planner"
+        )
 
-        message_id = db_instance.add_message({
-            "id": "msg-with-image",
-            "conversation_id": conversation_id,
-            "sender": "user",
-            "content": "original",
-            "image_data": b"\x89PNG-bytes",
-            "image_mime_type": "image/png",
-            "client_id": db_instance.client_id,
-        })
+        message_id = db_instance.add_message(
+            {
+                "id": "msg-with-image",
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "content": "original",
+                "image_data": b"\x89PNG-bytes",
+                "image_mime_type": "image/png",
+                "client_id": db_instance.client_id,
+            }
+        )
 
         # Simulate the Console store editing a message whose in-memory image
         # bytes were never rehydrated (e.g. after a failed screen-state
@@ -130,17 +147,21 @@ class TestChatPersistenceService:
     ):
         """Passing real image bytes must still update the persisted image."""
         service = ChatPersistenceService(db_instance)
-        conversation_id = service.create_conversation(assistant_kind="persona", assistant_id="planner")
+        conversation_id = service.create_conversation(
+            assistant_kind="persona", assistant_id="planner"
+        )
 
-        message_id = db_instance.add_message({
-            "id": "msg-with-image-2",
-            "conversation_id": conversation_id,
-            "sender": "user",
-            "content": "original",
-            "image_data": b"\x89PNG-old-bytes",
-            "image_mime_type": "image/png",
-            "client_id": db_instance.client_id,
-        })
+        message_id = db_instance.add_message(
+            {
+                "id": "msg-with-image-2",
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "content": "original",
+                "image_data": b"\x89PNG-old-bytes",
+                "image_mime_type": "image/png",
+                "client_id": db_instance.client_id,
+            }
+        )
 
         service.update_message_content(
             message_id=message_id,
@@ -154,9 +175,13 @@ class TestChatPersistenceService:
         assert message["image_data"] == b"\x89PNG-new-bytes"
         assert message["image_mime_type"] == "image/png"
 
-    def test_save_history_soft_deletes_messages_removed_from_resave(self, db_instance: CharactersRAGDB):
+    def test_save_history_soft_deletes_messages_removed_from_resave(
+        self, db_instance: CharactersRAGDB
+    ):
         service = ChatPersistenceService(db_instance)
-        conversation_id = service.create_conversation(assistant_kind="persona", assistant_id="planner")
+        conversation_id = service.create_conversation(
+            assistant_kind="persona", assistant_id="planner"
+        )
 
         service.save_history(
             conversation_id=conversation_id,
@@ -191,7 +216,10 @@ class TestChatPersistenceService:
         )
 
         active_messages = db_instance.get_messages_for_conversation(conversation_id)
-        assert [message["id"] for message in active_messages] == ["msg-user-1", "msg-assistant-1"]
+        assert [message["id"] for message in active_messages] == [
+            "msg-user-1",
+            "msg-assistant-1",
+        ]
 
         deleted_row = db_instance.execute_query(
             "SELECT deleted FROM messages WHERE id = ?",
@@ -199,38 +227,48 @@ class TestChatPersistenceService:
         ).fetchone()
         assert deleted_row["deleted"] == 1
 
-    def test_save_history_without_ids_skips_variant_rows_in_positional_fallback(self, db_instance: CharactersRAGDB):
+    def test_save_history_without_ids_skips_variant_rows_in_positional_fallback(
+        self, db_instance: CharactersRAGDB
+    ):
         service = ChatPersistenceService(db_instance)
-        conversation_id = service.create_conversation(assistant_kind="persona", assistant_id="planner")
+        conversation_id = service.create_conversation(
+            assistant_kind="persona", assistant_id="planner"
+        )
 
-        root_message_id = db_instance.add_message({
-            "id": "msg-user-1",
-            "conversation_id": conversation_id,
-            "sender": "user",
-            "content": "First",
-            "client_id": db_instance.client_id,
-        })
-        assistant_message_id = db_instance.add_message({
-            "id": "msg-assistant-1",
-            "conversation_id": conversation_id,
-            "sender": "assistant",
-            "content": "Reply",
-            "parent_message_id": root_message_id,
-            "client_id": db_instance.client_id,
-        })
+        root_message_id = db_instance.add_message(
+            {
+                "id": "msg-user-1",
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "content": "First",
+                "client_id": db_instance.client_id,
+            }
+        )
+        assistant_message_id = db_instance.add_message(
+            {
+                "id": "msg-assistant-1",
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "content": "Reply",
+                "parent_message_id": root_message_id,
+                "client_id": db_instance.client_id,
+            }
+        )
         variant_message_id = db_instance.create_message_variant(
             original_message_id=assistant_message_id,
             variant_content="Variant reply",
             is_selected=True,
         )
-        later_user_message_id = db_instance.add_message({
-            "id": "msg-user-2",
-            "conversation_id": conversation_id,
-            "sender": "user",
-            "content": "Later turn",
-            "parent_message_id": assistant_message_id,
-            "client_id": db_instance.client_id,
-        })
+        later_user_message_id = db_instance.add_message(
+            {
+                "id": "msg-user-2",
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "content": "Later turn",
+                "parent_message_id": assistant_message_id,
+                "client_id": db_instance.client_id,
+            }
+        )
 
         service.save_history(
             conversation_id=conversation_id,
@@ -256,9 +294,13 @@ class TestChatPersistenceService:
         assert messages[variant_message_id]["content"] == "Variant reply"
         assert messages[later_user_message_id]["content"] == "Later updated"
 
-    def test_save_history_tolerates_malformed_image_data_uris(self, db_instance: CharactersRAGDB):
+    def test_save_history_tolerates_malformed_image_data_uris(
+        self, db_instance: CharactersRAGDB
+    ):
         service = ChatPersistenceService(db_instance)
-        conversation_id = service.create_conversation(assistant_kind="persona", assistant_id="planner")
+        conversation_id = service.create_conversation(
+            assistant_kind="persona", assistant_id="planner"
+        )
 
         service.save_history(
             conversation_id=conversation_id,
@@ -269,7 +311,9 @@ class TestChatPersistenceService:
                         {"type": "text", "text": "Broken image"},
                         {
                             "type": "image_url",
-                            "image_url": {"url": "data:image/png;base64,not-valid-base64"},
+                            "image_url": {
+                                "url": "data:image/png;base64,not-valid-base64"
+                            },
                         },
                     ],
                 },
@@ -278,7 +322,10 @@ class TestChatPersistenceService:
 
         messages = db_instance.get_messages_for_conversation(conversation_id)
         assert len(messages) == 1
-        assert messages[0]["content"] == "Broken image\n<Error: Failed to decode image data from history>"
+        assert (
+            messages[0]["content"]
+            == "Broken image\n<Error: Failed to decode image data from history>"
+        )
         assert messages[0]["image_data"] is None
         assert messages[0]["image_mime_type"] is None
 
@@ -312,7 +359,9 @@ class TestChatPersistenceService:
         assert conversation["assistant_kind"] == assistant_kind
         assert conversation["assistant_id"] == assistant_id
 
-    def test_create_conversation_persists_system_prompt(self, db_instance: CharactersRAGDB):
+    def test_create_conversation_persists_system_prompt(
+        self, db_instance: CharactersRAGDB
+    ):
         service = ChatPersistenceService(db_instance)
 
         conversation_id = service.create_conversation(
@@ -325,7 +374,9 @@ class TestChatPersistenceService:
         conversation = db_instance.get_conversation_by_id(conversation_id)
         assert conversation["system_prompt"] == "Answer as a pirate."
 
-    def test_create_conversation_defaults_system_prompt_to_none(self, db_instance: CharactersRAGDB):
+    def test_create_conversation_defaults_system_prompt_to_none(
+        self, db_instance: CharactersRAGDB
+    ):
         service = ChatPersistenceService(db_instance)
 
         conversation_id = service.create_conversation(
@@ -407,7 +458,9 @@ class TestChatPersistenceService:
         )
 
         conversations = registry.list_workspace_conversations("ws-a")
-        assert [conversation.item_id for conversation in conversations] == [conversation_id]
+        assert [conversation.item_id for conversation in conversations] == [
+            conversation_id
+        ]
         assert conversations[0].title == "Workspace planning"
 
     def test_workspace_conversation_link_failure_soft_deletes_created_conversation(
@@ -470,27 +523,53 @@ class TestChatPersistenceService:
             )
 
     def test_fork_conversation_into_workspace_documents_public_contract(self):
-        docstring = inspect.getdoc(ChatPersistenceService.fork_conversation_into_workspace)
+        docstring = inspect.getdoc(
+            ChatPersistenceService.fork_conversation_into_workspace
+        )
 
         assert docstring is not None
         assert "Args:" in docstring
         assert "Returns:" in docstring
         assert "Raises:" in docstring
 
-    def test_create_message_splits_position_zero_and_rest(self, db_instance: CharactersRAGDB):
+    def test_create_message_splits_position_zero_and_rest(
+        self, db_instance: CharactersRAGDB
+    ):
         service = ChatPersistenceService(db_instance)
         conv_id = service.create_conversation(
-            assistant_kind="generic", assistant_id="console",
-            conversation_title="t", workspace_id=None, scope_type="global",
+            assistant_kind="generic",
+            assistant_id="console",
+            conversation_title="t",
+            workspace_id=None,
+            scope_type="global",
         )
         attachments = [
-            {"position": 0, "data": b"img-0", "mime_type": "image/png", "display_name": "a.png"},
-            {"position": 1, "data": b"img-1", "mime_type": "image/jpeg", "display_name": "b.jpg"},
-            {"position": 2, "data": b"img-2", "mime_type": "image/png", "display_name": "c.png"},
+            {
+                "position": 0,
+                "data": b"img-0",
+                "mime_type": "image/png",
+                "display_name": "a.png",
+            },
+            {
+                "position": 1,
+                "data": b"img-1",
+                "mime_type": "image/jpeg",
+                "display_name": "b.jpg",
+            },
+            {
+                "position": 2,
+                "data": b"img-2",
+                "mime_type": "image/png",
+                "display_name": "c.png",
+            },
         ]
         msg_id = service.create_message(
-            conversation_id=conv_id, sender="user", content="multi",
-            image_data=None, image_mime_type=None, attachments=attachments,
+            conversation_id=conv_id,
+            sender="user",
+            content="multi",
+            image_data=None,
+            image_mime_type=None,
+            attachments=attachments,
         )
         row = db_instance.get_message_by_id(msg_id)
         assert row["image_data"] == b"img-0"
@@ -501,28 +580,51 @@ class TestChatPersistenceService:
         # The service-level batch read is a passthrough to the DB method.
         assert service.get_attachments_for_messages([msg_id]) == {msg_id: extra}
 
-    def test_update_without_attachments_leaves_table_and_columns_alone(self, db_instance: CharactersRAGDB):
+    def test_update_without_attachments_leaves_table_and_columns_alone(
+        self, db_instance: CharactersRAGDB
+    ):
         service = ChatPersistenceService(db_instance)
         conv_id = service.create_conversation(
-            assistant_kind="generic", assistant_id="console",
-            conversation_title="t", workspace_id=None, scope_type="global",
+            assistant_kind="generic",
+            assistant_id="console",
+            conversation_title="t",
+            workspace_id=None,
+            scope_type="global",
         )
         msg_id = service.create_message(
-            conversation_id=conv_id, sender="user", content="multi",
-            image_data=None, image_mime_type=None,
+            conversation_id=conv_id,
+            sender="user",
+            content="multi",
+            image_data=None,
+            image_mime_type=None,
             attachments=[
-                {"position": 0, "data": b"img-0", "mime_type": "image/png", "display_name": "a.png"},
-                {"position": 1, "data": b"img-1", "mime_type": "image/png", "display_name": "b.png"},
+                {
+                    "position": 0,
+                    "data": b"img-0",
+                    "mime_type": "image/png",
+                    "display_name": "a.png",
+                },
+                {
+                    "position": 1,
+                    "data": b"img-1",
+                    "mime_type": "image/png",
+                    "display_name": "b.png",
+                },
             ],
         )
         service.update_message_content(
-            message_id=msg_id, content="edited",
-            image_data=None, image_mime_type=None,
+            message_id=msg_id,
+            content="edited",
+            image_data=None,
+            image_mime_type=None,
         )
         row = db_instance.get_message_by_id(msg_id)
         assert row["content"] == "edited"
         assert row["image_data"] == b"img-0"
-        assert db_instance.get_attachments_for_messages([msg_id])[msg_id][0]["data"] == b"img-1"
+        assert (
+            db_instance.get_attachments_for_messages([msg_id])[msg_id][0]["data"]
+            == b"img-1"
+        )
 
     def test_update_with_position_zero_only_rewrites_columns_and_clears_table(
         self, db_instance: CharactersRAGDB
@@ -532,22 +634,45 @@ class TestChatPersistenceService:
         stale rows are cleared (empty-list DELETE+INSERT)."""
         service = ChatPersistenceService(db_instance)
         conv_id = service.create_conversation(
-            assistant_kind="generic", assistant_id="console",
-            conversation_title="t", workspace_id=None, scope_type="global",
+            assistant_kind="generic",
+            assistant_id="console",
+            conversation_title="t",
+            workspace_id=None,
+            scope_type="global",
         )
         msg_id = service.create_message(
-            conversation_id=conv_id, sender="user", content="multi",
-            image_data=None, image_mime_type=None,
+            conversation_id=conv_id,
+            sender="user",
+            content="multi",
+            image_data=None,
+            image_mime_type=None,
             attachments=[
-                {"position": 0, "data": b"img-0", "mime_type": "image/png", "display_name": "a.png"},
-                {"position": 1, "data": b"img-1", "mime_type": "image/png", "display_name": "b.png"},
+                {
+                    "position": 0,
+                    "data": b"img-0",
+                    "mime_type": "image/png",
+                    "display_name": "a.png",
+                },
+                {
+                    "position": 1,
+                    "data": b"img-1",
+                    "mime_type": "image/png",
+                    "display_name": "b.png",
+                },
             ],
         )
         service.update_message_content(
-            message_id=msg_id, content="rewritten",
-            image_data=None, image_mime_type=None,
+            message_id=msg_id,
+            content="rewritten",
+            image_data=None,
+            image_mime_type=None,
             attachments=[
-                {"position": 0, "data": b"img-new", "mime_type": "image/jpeg", "display_name": "new.jpg"},
+                {
+                    "position": 0,
+                    "data": b"img-new",
+                    "mime_type": "image/jpeg",
+                    "display_name": "new.jpg",
+                },
             ],
         )
         row = db_instance.get_message_by_id(msg_id)
@@ -563,8 +688,11 @@ class TestChatPersistenceService:
         atomic unit: a failure writing the table must roll back the row."""
         service = ChatPersistenceService(db_instance)
         conv_id = service.create_conversation(
-            assistant_kind="generic", assistant_id="console",
-            conversation_title="t", workspace_id=None, scope_type="global",
+            assistant_kind="generic",
+            assistant_id="console",
+            conversation_title="t",
+            workspace_id=None,
+            scope_type="global",
         )
 
         def _boom(message_id, rows):
@@ -573,12 +701,25 @@ class TestChatPersistenceService:
         monkeypatch.setattr(db_instance, "set_message_attachments", _boom)
         with pytest.raises(RuntimeError, match="attachment write failed"):
             service.create_message(
-                conversation_id=conv_id, sender="user", content="multi",
-                image_data=None, image_mime_type=None,
+                conversation_id=conv_id,
+                sender="user",
+                content="multi",
+                image_data=None,
+                image_mime_type=None,
                 message_id="msg-atomic-create",
                 attachments=[
-                    {"position": 0, "data": b"img-0", "mime_type": "image/png", "display_name": "a.png"},
-                    {"position": 1, "data": b"img-1", "mime_type": "image/png", "display_name": "b.png"},
+                    {
+                        "position": 0,
+                        "data": b"img-0",
+                        "mime_type": "image/png",
+                        "display_name": "a.png",
+                    },
+                    {
+                        "position": 1,
+                        "data": b"img-1",
+                        "mime_type": "image/png",
+                        "display_name": "b.png",
+                    },
                 ],
             )
         # get_message_by_id returns None for a missing row (per its contract),
@@ -593,12 +734,18 @@ class TestChatPersistenceService:
         legacy image columns."""
         service = ChatPersistenceService(db_instance)
         conv_id = service.create_conversation(
-            assistant_kind="generic", assistant_id="console",
-            conversation_title="t", workspace_id=None, scope_type="global",
+            assistant_kind="generic",
+            assistant_id="console",
+            conversation_title="t",
+            workspace_id=None,
+            scope_type="global",
         )
         msg_id = service.create_message(
-            conversation_id=conv_id, sender="user", content="before",
-            image_data=b"img-old", image_mime_type="image/png",
+            conversation_id=conv_id,
+            sender="user",
+            content="before",
+            image_data=b"img-old",
+            image_mime_type="image/png",
         )
 
         def _boom(message_id, rows):
@@ -607,11 +754,23 @@ class TestChatPersistenceService:
         monkeypatch.setattr(db_instance, "set_message_attachments", _boom)
         with pytest.raises(RuntimeError, match="attachment write failed"):
             service.update_message_content(
-                message_id=msg_id, content="after",
-                image_data=None, image_mime_type=None,
+                message_id=msg_id,
+                content="after",
+                image_data=None,
+                image_mime_type=None,
                 attachments=[
-                    {"position": 0, "data": b"img-new", "mime_type": "image/jpeg", "display_name": "n.jpg"},
-                    {"position": 1, "data": b"img-1", "mime_type": "image/png", "display_name": "b.png"},
+                    {
+                        "position": 0,
+                        "data": b"img-new",
+                        "mime_type": "image/jpeg",
+                        "display_name": "n.jpg",
+                    },
+                    {
+                        "position": 1,
+                        "data": b"img-1",
+                        "mime_type": "image/png",
+                        "display_name": "b.png",
+                    },
                 ],
             )
         row = db_instance.get_message_by_id(msg_id)
@@ -630,15 +789,31 @@ class TestChatPersistenceService:
         would drift out of sync."""
         service = ChatPersistenceService(db_instance)
         conv_id = service.create_conversation(
-            assistant_kind="generic", assistant_id="console",
-            conversation_title="t", workspace_id=None, scope_type="global",
+            assistant_kind="generic",
+            assistant_id="console",
+            conversation_title="t",
+            workspace_id=None,
+            scope_type="global",
         )
         msg_id = service.create_message(
-            conversation_id=conv_id, sender="user", content="before",
-            image_data=None, image_mime_type=None,
+            conversation_id=conv_id,
+            sender="user",
+            content="before",
+            image_data=None,
+            image_mime_type=None,
             attachments=[
-                {"position": 0, "data": b"img-0", "mime_type": "image/png", "display_name": "a.png"},
-                {"position": 1, "data": b"img-1", "mime_type": "image/png", "display_name": "b.png"},
+                {
+                    "position": 0,
+                    "data": b"img-0",
+                    "mime_type": "image/png",
+                    "display_name": "a.png",
+                },
+                {
+                    "position": 1,
+                    "data": b"img-1",
+                    "mime_type": "image/png",
+                    "display_name": "b.png",
+                },
             ],
         )
 
@@ -649,15 +824,31 @@ class TestChatPersistenceService:
             set_attachments_calls.append((message_id, rows))
             return original_set_attachments(message_id, rows)
 
-        monkeypatch.setattr(db_instance, "set_message_attachments", _tracking_set_attachments)
-        monkeypatch.setattr(db_instance, "update_message", lambda *args, **kwargs: False)
+        monkeypatch.setattr(
+            db_instance, "set_message_attachments", _tracking_set_attachments
+        )
+        monkeypatch.setattr(
+            db_instance, "update_message", lambda *args, **kwargs: False
+        )
 
         result = service.update_message_content(
-            message_id=msg_id, content="after",
-            image_data=None, image_mime_type=None,
+            message_id=msg_id,
+            content="after",
+            image_data=None,
+            image_mime_type=None,
             attachments=[
-                {"position": 0, "data": b"img-new", "mime_type": "image/jpeg", "display_name": "n.jpg"},
-                {"position": 1, "data": b"img-1-new", "mime_type": "image/png", "display_name": "b2.png"},
+                {
+                    "position": 0,
+                    "data": b"img-new",
+                    "mime_type": "image/jpeg",
+                    "display_name": "n.jpg",
+                },
+                {
+                    "position": 1,
+                    "data": b"img-1-new",
+                    "mime_type": "image/png",
+                    "display_name": "b2.png",
+                },
             ],
         )
 
@@ -707,7 +898,10 @@ class TestChatPersistenceService:
         assert row["content"] == "hello"
         assert row["image_data"] is None
         assert row["image_mime_type"] is None
-        assert db_instance.get_attachments_for_messages([message.persisted_message_id]) == {}
+        assert (
+            db_instance.get_attachments_for_messages([message.persisted_message_id])
+            == {}
+        )
 
     def test_console_store_real_service_persists_single_attachment_message(
         self, db_instance: CharactersRAGDB
@@ -726,7 +920,10 @@ class TestChatPersistenceService:
             content="one file",
             attachments=(
                 MessageAttachment(
-                    data=b"img-0", mime_type="image/png", display_name="a.png", position=0
+                    data=b"img-0",
+                    mime_type="image/png",
+                    display_name="a.png",
+                    position=0,
                 ),
             ),
             persist=True,
@@ -736,7 +933,10 @@ class TestChatPersistenceService:
         row = db_instance.get_message_by_id(message.persisted_message_id)
         assert row["image_data"] == b"img-0"
         assert row["image_mime_type"] == "image/png"
-        assert db_instance.get_attachments_for_messages([message.persisted_message_id]) == {}
+        assert (
+            db_instance.get_attachments_for_messages([message.persisted_message_id])
+            == {}
+        )
 
     def test_console_store_real_service_persists_multi_attachment_message(
         self, db_instance: CharactersRAGDB
@@ -756,10 +956,16 @@ class TestChatPersistenceService:
             content="two files",
             attachments=(
                 MessageAttachment(
-                    data=b"img-0", mime_type="image/png", display_name="a.png", position=0
+                    data=b"img-0",
+                    mime_type="image/png",
+                    display_name="a.png",
+                    position=0,
                 ),
                 MessageAttachment(
-                    data=b"img-1", mime_type="image/jpeg", display_name="b.jpg", position=1
+                    data=b"img-1",
+                    mime_type="image/jpeg",
+                    display_name="b.jpg",
+                    position=1,
                 ),
             ),
             persist=True,
@@ -771,9 +977,9 @@ class TestChatPersistenceService:
         # overriding the store's explicit None scalars.
         assert row["image_data"] == b"img-0"
         assert row["image_mime_type"] == "image/png"
-        extra = db_instance.get_attachments_for_messages([message.persisted_message_id])[
-            message.persisted_message_id
-        ]
+        extra = db_instance.get_attachments_for_messages(
+            [message.persisted_message_id]
+        )[message.persisted_message_id]
         assert [entry["position"] for entry in extra] == [1]
         assert extra[0]["data"] == b"img-1"
         assert extra[0]["display_name"] == "b.jpg"

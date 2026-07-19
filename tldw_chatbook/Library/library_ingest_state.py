@@ -10,6 +10,7 @@ stdlib data source -- ``get_supported_extensions()`` from the heavy
 function-scoped, memoized import inside ``_supported_types_line``, so
 merely importing this module stays light; see that helper's docstring.
 """
+
 from __future__ import annotations
 
 import time

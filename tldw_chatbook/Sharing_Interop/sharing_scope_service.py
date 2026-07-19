@@ -59,7 +59,9 @@ class SharingScopeService:
 
     def _require_server_service(self, mode: SharingBackend) -> Any:
         if mode == SharingBackend.LOCAL:
-            raise ValueError("Sharing is a server-only capability; switch to server mode to manage shares.")
+            raise ValueError(
+                "Sharing is a server-only capability; switch to server mode to manage shares."
+            )
         if self.server_service is None:
             raise ValueError("Server sharing backend is unavailable.")
         return self.server_service
@@ -80,7 +82,9 @@ class SharingScopeService:
         return f"sharing.{resource}.{action}.server"
 
     @staticmethod
-    def _with_record_id(mode: SharingBackend, kind: str, payload: dict[str, Any], id_key: str) -> dict[str, Any]:
+    def _with_record_id(
+        mode: SharingBackend, kind: str, payload: dict[str, Any], id_key: str
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", mode.value)
         source_id = record.get(id_key)
@@ -99,7 +103,9 @@ class SharingScopeService:
         if isinstance(result, list):
             if normalize_kind:
                 return [
-                    self._with_record_id(mode, normalize_kind, item, id_key) if isinstance(item, dict) else item
+                    self._with_record_id(mode, normalize_kind, item, id_key)
+                    if isinstance(item, dict)
+                    else item
                     for item in result
                 ]
             return [self._normalize_item(mode, item) for item in result]
@@ -112,19 +118,27 @@ class SharingScopeService:
             return self._with_record_id(mode, normalize_kind, payload, id_key)
         if isinstance(payload.get("tokens"), list):
             payload["tokens"] = [
-                self._with_record_id(mode, "sharing_token", item, "id") if isinstance(item, dict) else item
+                self._with_record_id(mode, "sharing_token", item, "id")
+                if isinstance(item, dict)
+                else item
                 for item in payload["tokens"]
             ]
         if isinstance(payload.get("shares"), list):
             payload["shares"] = [
-                self._with_record_id(mode, "workspace_share", item, "id") if isinstance(item, dict) else item
+                self._with_record_id(mode, "workspace_share", item, "id")
+                if isinstance(item, dict)
+                else item
                 for item in payload["shares"]
             ]
         if isinstance(payload.get("items"), list):
-            payload["items"] = [self._normalize_item(mode, item) for item in payload["items"]]
+            payload["items"] = [
+                self._normalize_item(mode, item) for item in payload["items"]
+            ]
         if isinstance(payload.get("events"), list):
             payload["events"] = [
-                self._with_record_id(mode, "sharing_event", item, "id") if isinstance(item, dict) else item
+                self._with_record_id(mode, "sharing_event", item, "id")
+                if isinstance(item, dict)
+                else item
                 for item in payload["events"]
             ]
         return self._normalize_item(mode, payload)
@@ -181,7 +195,9 @@ class SharingScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy(self._action_id(resource, action))
-        result = await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
+        result = await self._maybe_await(
+            getattr(service, method_name)(*args, **(kwargs or {}))
+        )
         return self._normalize_response(
             normalized_mode,
             result,
@@ -189,7 +205,9 @@ class SharingScopeService:
             id_key=id_key,
         )
 
-    async def create_link(self, *, mode: SharingBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def create_link(
+        self, *, mode: SharingBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="links",
@@ -199,7 +217,9 @@ class SharingScopeService:
             kwargs=kwargs,
         )
 
-    async def list_links(self, *, mode: SharingBackend | str | None = None) -> dict[str, Any]:
+    async def list_links(
+        self, *, mode: SharingBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="links",
@@ -207,7 +227,9 @@ class SharingScopeService:
             method_name="list_links",
         )
 
-    async def revoke_link(self, token_id: int, *, mode: SharingBackend | str | None = None) -> dict[str, Any]:
+    async def revoke_link(
+        self, token_id: int, *, mode: SharingBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="links",
@@ -216,7 +238,9 @@ class SharingScopeService:
             args=(token_id,),
         )
 
-    async def inspect_public_link(self, token: str, *, mode: SharingBackend | str | None = None) -> dict[str, Any]:
+    async def inspect_public_link(
+        self, token: str, *, mode: SharingBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="links",
@@ -241,7 +265,9 @@ class SharingScopeService:
             kwargs={"password": password},
         )
 
-    async def import_public_link(self, token: str, *, mode: SharingBackend | str | None = None) -> dict[str, Any]:
+    async def import_public_link(
+        self, token: str, *, mode: SharingBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="links",
@@ -250,7 +276,9 @@ class SharingScopeService:
             args=(token,),
         )
 
-    async def observe_link_events(self, *, mode: SharingBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def observe_link_events(
+        self, *, mode: SharingBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="links",
@@ -259,7 +287,9 @@ class SharingScopeService:
             kwargs=kwargs,
         )
 
-    async def share_workspace(self, *, mode: SharingBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def share_workspace(
+        self, *, mode: SharingBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="permissions",
@@ -302,7 +332,9 @@ class SharingScopeService:
             kwargs=kwargs,
         )
 
-    async def revoke_share(self, share_id: int, *, mode: SharingBackend | str | None = None) -> dict[str, Any]:
+    async def revoke_share(
+        self, share_id: int, *, mode: SharingBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="permissions",
@@ -311,7 +343,9 @@ class SharingScopeService:
             args=(share_id,),
         )
 
-    async def list_shared_with_me(self, *, mode: SharingBackend | str | None = None) -> dict[str, Any]:
+    async def list_shared_with_me(
+        self, *, mode: SharingBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="links",
@@ -319,7 +353,9 @@ class SharingScopeService:
             method_name="list_shared_with_me",
         )
 
-    async def get_shared_workspace(self, share_id: int, *, mode: SharingBackend | str | None = None) -> dict[str, Any]:
+    async def get_shared_workspace(
+        self, share_id: int, *, mode: SharingBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="links",

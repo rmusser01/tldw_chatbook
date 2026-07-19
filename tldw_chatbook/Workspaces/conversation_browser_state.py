@@ -260,7 +260,9 @@ def build_console_conversation_browser_state(
     reference_now = now or datetime.now(timezone.utc)
     prepared_rows = tuple(_normalize_input_row(row, now=reference_now) for row in rows)
     filtered_rows = tuple(
-        row for row in prepared_rows if not query_active or _row_matches(row, normalized_query)
+        row
+        for row in prepared_rows
+        if not query_active or _row_matches(row, normalized_query)
     )
 
     starred_rows = _dedupe_rows(
@@ -362,7 +364,9 @@ def build_console_conversation_browser_state(
         status_copy=status_copy,
         error_copy=str(error_copy or ""),
         marks_available=bool(marks_available),
-        result_total_count=effective_total_count if query_active else result_total_count,
+        result_total_count=effective_total_count
+        if query_active
+        else result_total_count,
         result_limit=safe_result_limit,
     )
 
@@ -453,11 +457,15 @@ def _build_workspace_groups(
     group_row_limit: int,
     counts: Mapping[str, int] | None = None,
 ) -> tuple[ConsoleConversationBrowserGroup, ...]:
-    groups: list[tuple[str, str, str, tuple[ConsoleConversationBrowserInputRow, ...]]] = []
+    groups: list[
+        tuple[str, str, str, tuple[ConsoleConversationBrowserInputRow, ...]]
+    ] = []
     for group_id, group_rows in rows_by_group.items():
         deduped_rows = _sort_normal_rows(_dedupe_rows(group_rows))
         latest_sort = max((row.updated_sort for row in deduped_rows), default="")
-        groups.append((group_id, str(labels.get(group_id) or group_id), latest_sort, deduped_rows))
+        groups.append(
+            (group_id, str(labels.get(group_id) or group_id), latest_sort, deduped_rows)
+        )
 
     groups.sort(key=lambda group: _workspace_group_sort_key(group, active_workspace_id))
 
@@ -471,7 +479,9 @@ def _build_workspace_groups(
             default_collapsed=default_collapsed,
         )
         collapsed = preference_collapsed and not (query_active and bool(group_rows))
-        visible_rows, hidden_count = _visible_rows(group_rows, collapsed, group_row_limit, counts)
+        visible_rows, hidden_count = _visible_rows(
+            group_rows, collapsed, group_row_limit, counts
+        )
         browser_groups.append(
             ConsoleConversationBrowserGroup(
                 group_id=group_id,
@@ -497,7 +507,9 @@ def _visible_rows(
         return (), 0
     visible_input_rows = rows[:group_row_limit] if group_row_limit else ()
     hidden_count = max(0, len(rows) - len(visible_input_rows))
-    return tuple(_to_browser_row(row, counts) for row in visible_input_rows), hidden_count
+    return tuple(
+        _to_browser_row(row, counts) for row in visible_input_rows
+    ), hidden_count
 
 
 def _dedupe_rows(
@@ -550,11 +562,15 @@ def _workspace_group_sort_key(
     active_workspace_id: str | None,
 ) -> tuple[bool, "ReverseKey", str, str]:
     group_id, label, latest_sort, _rows = group
-    is_active = group_id == f"workspace:{active_workspace_id}" if active_workspace_id else False
+    is_active = (
+        group_id == f"workspace:{active_workspace_id}" if active_workspace_id else False
+    )
     return (not is_active, ReverseKey(latest_sort), label.casefold(), group_id)
 
 
-def _row_matches(row: ConsoleConversationBrowserInputRow, normalized_query: str) -> bool:
+def _row_matches(
+    row: ConsoleConversationBrowserInputRow, normalized_query: str
+) -> bool:
     haystack = " ".join(
         (
             row.title,
@@ -577,7 +593,10 @@ def _scope_copy(row: ConsoleConversationBrowserInputRow) -> str:
 
 
 def _belongs_to_chats(row: ConsoleConversationBrowserInputRow) -> bool:
-    return row.scope_type == "global" or row.workspace_id in (None, DEFAULT_WORKSPACE_ID)
+    return row.scope_type == "global" or row.workspace_id in (
+        None,
+        DEFAULT_WORKSPACE_ID,
+    )
 
 
 def _resolve_collapsed(

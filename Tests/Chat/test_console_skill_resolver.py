@@ -74,7 +74,9 @@ def test_format_list_lines_include_name_and_desc():
 def test_fallback_claims_matching_word_only():
     resolver = make_skill_fallback_resolver(lambda: _cands("summarize"))
     claimed = resolver("summ", "the doc")
-    assert claimed is not None and claimed.kind == KIND_FALLBACK and claimed.name == "summ"
+    assert (
+        claimed is not None and claimed.kind == KIND_FALLBACK and claimed.name == "summ"
+    )
     assert resolver("unknownword", "x") is None
 
 

@@ -9,7 +9,9 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
 from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
     LocalLLMProviderCatalogService,
 )
-from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import fingerprint_endpoint
+from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+    fingerprint_endpoint,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -52,7 +54,9 @@ def test_local_llm_provider_catalog_service_exposes_local_provider_and_model_cat
     assert metadata["models"][0]["id"] == "OpenAI/gpt-4o"
     assert models == ["OpenAI/gpt-4o", "OpenAI/gpt-4.1", "Ollama/llama3:latest"]
     assert model["name"] == "gpt-4o"
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "llm.catalog.health.observe.local",
         "llm.catalog.providers.list.local",
         "llm.catalog.providers.detail.local",
@@ -65,7 +69,10 @@ def test_local_llm_provider_catalog_service_exposes_local_provider_and_model_cat
 def test_local_llm_provider_catalog_service_filters_local_model_metadata_by_type():
     service = LocalLLMProviderCatalogService(provider_catalog_loader=_providers)
 
-    assert service.list_model_metadata(model_type="embedding") == {"models": [], "total": 0}
+    assert service.list_model_metadata(model_type="embedding") == {
+        "models": [],
+        "total": 0,
+    }
 
 
 def test_local_llm_provider_catalog_service_rejects_unknown_provider_or_model():
@@ -88,7 +95,9 @@ def test_local_llm_provider_catalog_service_stops_denied_policy_before_catalog_a
         authority_owner="local",
     )
     loader = Mock(return_value=_providers())
-    service = LocalLLMProviderCatalogService(provider_catalog_loader=loader, policy_enforcer=policy)
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=loader, policy_enforcer=policy
+    )
 
     with pytest.raises(PolicyDeniedError):
         service.list_providers()
@@ -144,7 +153,11 @@ async def test_local_llm_provider_catalog_service_discovers_configured_openai_co
     assert result.provider_list_key == "OpenAI"
     assert [model.model_id for model in discovered] == ["gpt-5"]
     assert [entry.model_id for entry in merged] == ["gpt-4o", "gpt-4.1", "gpt-5"]
-    assert [entry.source for entry in merged] == ["saved", "saved", "runtime_discovered"]
+    assert [entry.source for entry in merged] == [
+        "saved",
+        "saved",
+        "runtime_discovered",
+    ]
     assert discovery_calls == [
         {
             "provider": "OpenAI",
@@ -276,7 +289,9 @@ async def test_local_llm_provider_catalog_service_rejects_placeholder_key_and_us
 
 
 @pytest.mark.asyncio
-async def test_local_llm_provider_catalog_service_empty_environ_does_not_fall_back_to_process_env(monkeypatch):
+async def test_local_llm_provider_catalog_service_empty_environ_does_not_fall_back_to_process_env(
+    monkeypatch,
+):
     monkeypatch.setenv("OPENAI_API_KEY", "process-env-key")
     discovery_calls = []
 
@@ -364,7 +379,9 @@ async def test_local_llm_provider_catalog_service_filters_discovered_models_to_c
     }
 
     async def discover_models(**kwargs):
-        model_id = "first-runtime" if "first" in kwargs["endpoint"] else "second-runtime"
+        model_id = (
+            "first-runtime" if "first" in kwargs["endpoint"] else "second-runtime"
+        )
         endpoint_fingerprint = fingerprint_endpoint(kwargs["endpoint"])
         return ModelDiscoveryResult(
             provider=kwargs["provider"],
@@ -399,7 +416,11 @@ async def test_local_llm_provider_catalog_service_filters_discovered_models_to_c
     assert first_result.status == "success"
     assert second_result.status == "success"
     assert [model.model_id for model in discovered] == ["second-runtime"]
-    assert [entry.model_id for entry in merged] == ["gpt-4o", "gpt-4.1", "second-runtime"]
+    assert [entry.model_id for entry in merged] == [
+        "gpt-4o",
+        "gpt-4.1",
+        "second-runtime",
+    ]
 
 
 def test_local_discovered_model_cache_operations_enforce_runtime_policy():
@@ -417,7 +438,9 @@ def test_local_discovered_model_cache_operations_enforce_runtime_policy():
     service.merge_saved_and_discovered_models(provider="OpenAI")
     service.clear_discovered_models(provider="OpenAI")
 
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "llm.catalog.models.list.local",
         "llm.catalog.models.list.local",
         "llm.catalog.models.persist.local",

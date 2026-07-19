@@ -10,7 +10,6 @@ from textual.app import App
 
 from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
 from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.schedules_screen import SchedulesScreen
@@ -19,34 +18,44 @@ from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PHASE3_STATUS_CARD_EVIDENCE = (
-    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-console-live-work-status-card-seam.md"
+    REPO_ROOT
+    / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-console-live-work-status-card-seam.md"
 )
 PHASE3_HOME_WC_CONSOLE_EVIDENCE = (
-    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-home-wc-active-work-console-launch.md"
+    REPO_ROOT
+    / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-home-wc-active-work-console-launch.md"
 )
 PHASE3_CONSOLE_WC_ACTION_EVIDENCE = (
-    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-console-wc-action-routing.md"
+    REPO_ROOT
+    / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-console-wc-action-routing.md"
 )
 PHASE3_CONSOLE_SOURCE_READINESS_EVIDENCE = (
-    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-console-live-work-source-readiness.md"
+    REPO_ROOT
+    / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-console-live-work-source-readiness.md"
 )
 PHASE3_WC_DESTINATION_CONSOLE_EVIDENCE = (
-    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-wc-destination-console-launch.md"
+    REPO_ROOT
+    / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-wc-destination-console-launch.md"
 )
 PHASE3_SCHEDULES_CONSOLE_EVIDENCE = (
-    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-schedules-console-launch.md"
+    REPO_ROOT
+    / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-schedules-console-launch.md"
 )
 PHASE3_SCHEDULES_DIGEST_CONSOLE_EVIDENCE = (
-    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-schedules-digest-console-launch.md"
+    REPO_ROOT
+    / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-schedules-digest-console-launch.md"
 )
 PHASE3_RAG_CONSOLE_EVIDENCE = (
-    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-rag-search-console-launch.md"
+    REPO_ROOT
+    / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-rag-search-console-launch.md"
 )
 PHASE3_ARTIFACTS_CHATBOOK_CONSOLE_EVIDENCE = (
-    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-artifacts-chatbook-console-launch.md"
+    REPO_ROOT
+    / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-artifacts-chatbook-console-launch.md"
 )
 PHASE3_WORKFLOWS_CONSOLE_EVIDENCE = (
-    REPO_ROOT / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-workflows-console-launch.md"
+    REPO_ROOT
+    / "Docs/superpowers/qa/unified-shell/phase-3/2026-05-03-workflows-console-launch.md"
 )
 
 
@@ -68,7 +77,9 @@ def _load_console_live_work_status_card_state():
 
 def _load_console_live_work_source_readiness_state():
     try:
-        from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkSourceReadinessState
+        from tldw_chatbook.Chat.console_live_work import (
+            ConsoleLiveWorkSourceReadinessState,
+        )
     except ImportError:
         pytest.fail("Console live-work source readiness state is missing")
     return ConsoleLiveWorkSourceReadinessState
@@ -106,7 +117,9 @@ class StaticHomeActiveWorkAdapter:
         return HomeDashboardInput(active_work_items=self.items)
 
     def handle_control(self, action, *, target_id=None, target_route=None):
-        raise AssertionError(f"Unexpected direct control call: {action} {target_id} {target_route}")
+        raise AssertionError(
+            f"Unexpected direct control call: {action} {target_id} {target_route}"
+        )
 
 
 class ThreadRecordingHomeActiveWorkAdapter(StaticHomeActiveWorkAdapter):
@@ -221,7 +234,9 @@ async def _wait_for_destination_recovery_state(
             if (
                 button.disabled is True
                 and str(button.tooltip) == expected_tooltip
-                and all(fragment in last_recovery_text for fragment in expected_fragments)
+                and all(
+                    fragment in last_recovery_text for fragment in expected_fragments
+                )
             ):
                 return button, last_recovery_text
         await pilot.pause(0.02)
@@ -393,7 +408,9 @@ def test_open_console_for_live_work_routes_to_chat_route():
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     app = _build_test_app()
     seen = []
-    app.post_message = lambda message: seen.append(getattr(message, "screen_name", None))
+    app.post_message = lambda message: seen.append(
+        getattr(message, "screen_name", None)
+    )
 
     app.open_console_for_live_work(
         source="workflows",
@@ -461,7 +478,11 @@ def test_console_live_work_status_card_state_derives_stable_rows_from_launch():
         "console-live-work-payload-attempt": "attempt: 2",
         "console-live-work-payload-run-id": "run_id: run-1",
     }
-    payload_row = next(row for row in card_state.rows if row.widget_id == "console-live-work-payload-run-id")
+    payload_row = next(
+        row
+        for row in card_state.rows
+        if row.widget_id == "console-live-work-payload-run-id"
+    )
     assert "console-live-work-payload-row" in payload_row.classes
 
 
@@ -504,7 +525,9 @@ def test_console_live_work_status_card_state_keeps_unsupported_payloads_non_acti
 
 
 def test_console_live_work_source_readiness_marks_connected_sources_and_future_sources_unavailable():
-    ConsoleLiveWorkSourceReadinessState = _load_console_live_work_source_readiness_state()
+    ConsoleLiveWorkSourceReadinessState = (
+        _load_console_live_work_source_readiness_state()
+    )
 
     state = ConsoleLiveWorkSourceReadinessState.default()
 
@@ -514,36 +537,58 @@ def test_console_live_work_source_readiness_marks_connected_sources_and_future_s
     assert rows_by_id["console-live-work-source-wc"].text == (
         "Watchlists: Connected - Home run details."
     )
-    assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-wc"].classes
+    assert (
+        "console-live-work-source-connected"
+        in rows_by_id["console-live-work-source-wc"].classes
+    )
     assert rows_by_id["console-live-work-source-schedules"].text == (
         "Schedules: Connected - Open job context."
     )
-    assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-schedules"].classes
+    assert (
+        "console-live-work-source-connected"
+        in rows_by_id["console-live-work-source-schedules"].classes
+    )
     assert rows_by_id["console-live-work-source-rag"].text == (
         "RAG: Connected - Stage search evidence."
     )
-    assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-rag"].classes
+    assert (
+        "console-live-work-source-connected"
+        in rows_by_id["console-live-work-source-rag"].classes
+    )
     assert rows_by_id["console-live-work-source-workflows"].text == (
         "Workflows: Connected - Stage run context."
     )
-    assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-workflows"].classes
+    assert (
+        "console-live-work-source-connected"
+        in rows_by_id["console-live-work-source-workflows"].classes
+    )
     assert rows_by_id["console-live-work-source-artifacts"].text == (
         "Artifacts: Connected - Launch Chatbooks."
     )
-    assert "console-live-work-source-connected" in rows_by_id["console-live-work-source-artifacts"].classes
+    assert (
+        "console-live-work-source-connected"
+        in rows_by_id["console-live-work-source-artifacts"].classes
+    )
     assert rows_by_id["console-live-work-source-acp"].text == (
         "ACP: Blocked - Configure ACP runtime."
     )
-    assert "console-live-work-source-unavailable" in rows_by_id["console-live-work-source-acp"].classes
+    assert (
+        "console-live-work-source-unavailable"
+        in rows_by_id["console-live-work-source-acp"].classes
+    )
     for source_id in ("console-live-work-source-mcp",):
         assert "Not wired" in rows_by_id[source_id].text
         assert "console-live-work-source-unavailable" in rows_by_id[source_id].classes
 
 
 def test_console_live_work_source_readiness_reflects_acp_runtime_state():
-    ConsoleLiveWorkSourceReadinessState = _load_console_live_work_source_readiness_state()
+    ConsoleLiveWorkSourceReadinessState = (
+        _load_console_live_work_source_readiness_state()
+    )
 
-    blocked = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status("not_configured")
+    blocked = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
+        "not_configured"
+    )
     starting = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status("starting")
     running = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status("running")
     failed = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status("failed")
@@ -556,14 +601,20 @@ def test_console_live_work_source_readiness_reflects_acp_runtime_state():
     assert blocked_rows["console-live-work-source-acp"].text == (
         "ACP: Blocked - Configure ACP runtime."
     )
-    assert "console-live-work-source-unavailable" in blocked_rows["console-live-work-source-acp"].classes
+    assert (
+        "console-live-work-source-unavailable"
+        in blocked_rows["console-live-work-source-acp"].classes
+    )
     assert starting_rows["console-live-work-source-acp"].text == (
         "ACP: Starting - Waiting for runtime."
     )
     assert running_rows["console-live-work-source-acp"].text == (
         "ACP: Connected - Follow ACP session."
     )
-    assert "console-live-work-source-connected" in running_rows["console-live-work-source-acp"].classes
+    assert (
+        "console-live-work-source-connected"
+        in running_rows["console-live-work-source-acp"].classes
+    )
     assert failed_rows["console-live-work-source-acp"].text == (
         "ACP: Failed - Review ACP runtime."
     )
@@ -702,7 +753,9 @@ async def test_skeletal_destination_console_actions_are_disabled_with_recovery_c
         button = host.screen.query_one(f"#{button_id}")
         assert button.disabled is True
         assert "unavailable" in str(button.label).lower()
-        assert expected_copy in " ".join(str(widget.renderable) for widget in host.screen.query("Static"))
+        assert expected_copy in " ".join(
+            str(widget.renderable) for widget in host.screen.query("Static")
+        )
         await pilot.click(f"#{button_id}")
         await pilot.pause(0.1)
 
@@ -723,8 +776,13 @@ async def test_schedules_destination_keeps_console_follow_disabled_without_activ
 
         assert button.disabled is True
         assert str(button.label) == "Console recovery unavailable"
-        assert "Unavailable: Console follow for Schedules." in _screen_static_text(screen)
-        assert "Next: Start or select a schedule run before opening it in Console." in _screen_static_text(screen)
+        assert "Unavailable: Console follow for Schedules." in _screen_static_text(
+            screen
+        )
+        assert (
+            "Next: Start or select a schedule run before opening it in Console."
+            in _screen_static_text(screen)
+        )
 
     app.open_active_home_item_in_console.assert_not_called()
 
@@ -795,7 +853,10 @@ async def test_schedules_inspector_state_matches_active_run_status():
         screen = _active_console_screen(host)
         screen_text = _screen_static_text(screen)
 
-        assert "Console can follow active schedule run: Daily digest schedule (failed)." in screen_text
+        assert (
+            "Console can follow active schedule run: Daily digest schedule (failed)."
+            in screen_text
+        )
         assert "State: failed" in screen_text
         assert "State: ready" not in screen_text
         assert "Retry/backoff: retry available from Schedules" in screen_text
@@ -892,7 +953,10 @@ async def test_workflows_destination_keeps_console_launch_disabled_without_activ
         assert str(button.label) == "Console launch unavailable"
         screen_text = _screen_static_text(screen)
         assert "Unavailable: Console launch for Workflows." in screen_text
-        assert "Next: Start or select a workflow run before opening it in Console." in screen_text
+        assert (
+            "Next: Start or select a workflow run before opening it in Console."
+            in screen_text
+        )
         assert "State: blocked" in screen_text
         assert "Console: blocked" in screen_text
 
@@ -1038,7 +1102,9 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
 
 
 @pytest.mark.asyncio
-async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(monkeypatch):
+async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(
+    monkeypatch,
+):
     from tldw_chatbook.UI.Screens import watchlists_collections_screen
 
     app = _build_test_app()
@@ -1054,7 +1120,10 @@ async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(m
         button = screen.query_one("#watchlists-follow-in-console")
 
         assert button.disabled is True
-        assert "No active Watchlists run is available for Console follow." in _screen_static_text(screen)
+        assert (
+            "No active Watchlists run is available for Console follow."
+            in _screen_static_text(screen)
+        )
 
     # The call site is `logger.opt(exception=True).warning(...)` -- loguru's
     # traceback capture (the stdlib `exc_info=True` kwarg is a silent no-op
@@ -1063,9 +1132,7 @@ async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(m
     # (e.g. the snapshot-load debug), so assert on the chained warning mock
     # rather than pinning an exact `.opt()` call count.
     assert logger.opt.call_args_list
-    assert all(
-        c.kwargs.get("exception") is True for c in logger.opt.call_args_list
-    )
+    assert all(c.kwargs.get("exception") is True for c in logger.opt.call_args_list)
     opt_warning = logger.opt.return_value.warning
     opt_warning.assert_called_once()
     assert "Watchlists Console follow" in opt_warning.call_args.args[0]
@@ -1100,7 +1167,9 @@ async def test_watchlists_destination_retries_console_follow_after_initial_adapt
                 break
             await pilot.pause(0.02)
         else:
-            raise AssertionError(f"Console follow did not recover. Text: {_screen_static_text(screen)}")
+            raise AssertionError(
+                f"Console follow did not recover. Text: {_screen_static_text(screen)}"
+            )
 
         assert button.disabled is False
         await pilot.click("#watchlists-follow-in-console")
@@ -1202,8 +1271,13 @@ async def test_schedules_destination_keeps_console_launch_disabled_without_diges
 
         assert button.disabled is True
         assert str(button.label) == "Console recovery unavailable"
-        assert "Unavailable: Console follow for Schedules." in _screen_static_text(screen)
-        assert "Next: Start or select a schedule run before opening it in Console." in _screen_static_text(screen)
+        assert "Unavailable: Console follow for Schedules." in _screen_static_text(
+            screen
+        )
+        assert (
+            "Next: Start or select a schedule run before opening it in Console."
+            in _screen_static_text(screen)
+        )
         await pilot.click("#schedules-follow-in-console")
         await pilot.pause(0.1)
 
@@ -1271,7 +1345,10 @@ async def test_schedules_destination_routes_latest_digest_output_to_console():
         text = _screen_static_text(screen)
         assert "Console launch available" in text
         assert "Console recovery unavailable" not in text
-        assert "Console can launch latest reading digest output: Morning Digest Output." in text
+        assert (
+            "Console can launch latest reading digest output: Morning Digest Output."
+            in text
+        )
         assert "State: digest output available" in text
         assert "State: ready" not in text
 
@@ -1311,16 +1388,22 @@ async def test_artifacts_destination_keeps_console_launch_disabled_without_chatb
 
         assert button.disabled is True
         assert str(button.label) == "Open selected in Console"
-        assert "Unavailable: Console launch for Chatbook artifacts." in _screen_static_text(screen)
-        assert "Next: Create or import a Chatbook artifact before opening it in Console." in _screen_static_text(
-            screen
+        assert (
+            "Unavailable: Console launch for Chatbook artifacts."
+            in _screen_static_text(screen)
+        )
+        assert (
+            "Next: Create or import a Chatbook artifact before opening it in Console."
+            in _screen_static_text(screen)
         )
 
         await pilot.click("#artifacts-use-in-console")
 
     app.open_console_for_live_work.assert_not_called()
     app.open_chat_with_handoff.assert_not_called()
-    assert app.local_chatbook_service.calls == [{"q": None, "limit": 25, "offset": 0, "kwargs": {}}]
+    assert app.local_chatbook_service.calls == [
+        {"q": None, "limit": 25, "offset": 0, "kwargs": {}}
+    ]
 
 
 @pytest.mark.asyncio
@@ -1574,9 +1657,7 @@ async def test_artifacts_destination_sanitizes_chatbook_metadata_before_console_
     launch_kwargs = app.open_console_for_live_work.call_args.kwargs
     payload_strings = [launch_kwargs["title"]]
     payload_strings.extend(
-        str(value)
-        for value in launch_kwargs["payload"].values()
-        if value is not None
+        str(value) for value in launch_kwargs["payload"].values() if value is not None
     )
     combined = " ".join(payload_strings).lower()
     assert "\x00" not in combined
@@ -1619,7 +1700,9 @@ async def test_artifacts_destination_uses_numeric_id_tie_break_for_latest_chatbo
         await pilot.click("#artifacts-use-in-console")
 
     app.open_console_for_live_work.assert_called_once()
-    assert app.open_console_for_live_work.call_args.kwargs["payload"]["chatbook_id"] == 10
+    assert (
+        app.open_console_for_live_work.call_args.kwargs["payload"]["chatbook_id"] == 10
+    )
 
 
 @pytest.mark.asyncio
@@ -1657,7 +1740,10 @@ async def test_artifacts_destination_consumes_pending_chatbook_target_before_lat
         await pilot.click("#artifacts-use-in-console")
 
     app.open_console_for_live_work.assert_called_once()
-    assert app.open_console_for_live_work.call_args.kwargs["payload"]["target_id"] == "local:chatbook:77"
+    assert (
+        app.open_console_for_live_work.call_args.kwargs["payload"]["target_id"]
+        == "local:chatbook:77"
+    )
 
 
 @pytest.mark.asyncio
@@ -1676,7 +1762,10 @@ async def test_artifacts_destination_distinguishes_chatbook_service_failure_from
         assert button.disabled is True
         assert "Unavailable: Console launch for Chatbook artifacts." in text
         assert "Why: the local Chatbook service is unavailable." in text
-        assert "Next: Retry Artifacts after the local Chatbook service is available." in text
+        assert (
+            "Next: Retry Artifacts after the local Chatbook service is available."
+            in text
+        )
         assert "Why: no local Chatbook artifact exists." not in text
 
         await pilot.click("#artifacts-use-in-console")
@@ -1704,13 +1793,34 @@ async def test_console_renders_pending_launch_context():
 
         assert screen.query_one("#console-pending-launch-card")
         assert len(screen.query("#console-live-work-source-readiness")) == 0
-        assert screen.query_one("#console-live-work-source").renderable == "Source: workflows"
-        assert screen.query_one("#console-live-work-title").renderable == "Title: Daily digest"
-        assert screen.query_one("#console-live-work-status").renderable == "Status: running"
-        assert screen.query_one("#console-live-work-recovery").renderable == "Recovery: Workflow is starting."
-        assert screen.query_one("#console-live-work-action").renderable == "Action: Open workflow run"
-        assert screen.query_one("#console-live-work-payload-attempt").renderable == "attempt: 2"
-        assert screen.query_one("#console-live-work-payload-run-id").renderable == "run_id: run-1"
+        assert (
+            screen.query_one("#console-live-work-source").renderable
+            == "Source: workflows"
+        )
+        assert (
+            screen.query_one("#console-live-work-title").renderable
+            == "Title: Daily digest"
+        )
+        assert (
+            screen.query_one("#console-live-work-status").renderable
+            == "Status: running"
+        )
+        assert (
+            screen.query_one("#console-live-work-recovery").renderable
+            == "Recovery: Workflow is starting."
+        )
+        assert (
+            screen.query_one("#console-live-work-action").renderable
+            == "Action: Open workflow run"
+        )
+        assert (
+            screen.query_one("#console-live-work-payload-attempt").renderable
+            == "attempt: 2"
+        )
+        assert (
+            screen.query_one("#console-live-work-payload-run-id").renderable
+            == "run_id: run-1"
+        )
         text = _screen_static_text(screen)
         assert "Source: workflows" in text
         assert "Title: Daily digest" in text
@@ -1734,18 +1844,31 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
 
         assert len(screen.query("#console-pending-launch-card")) == 0
         assert screen.query_one("#console-live-work-source-readiness")
-        assert screen.query_one("#console-live-work-source-readiness-title").renderable == "Live work sources"
+        assert (
+            screen.query_one("#console-live-work-source-readiness-title").renderable
+            == "Live work sources"
+        )
         assert screen.query_one("#console-live-work-source-wc").renderable == (
             "Watchlists: Connected - Home run details."
         )
-        assert "Workflows: Connected" in str(screen.query_one("#console-live-work-source-workflows").renderable)
-        assert "Schedules: Connected" in str(screen.query_one("#console-live-work-source-schedules").renderable)
+        assert "Workflows: Connected" in str(
+            screen.query_one("#console-live-work-source-workflows").renderable
+        )
+        assert "Schedules: Connected" in str(
+            screen.query_one("#console-live-work-source-schedules").renderable
+        )
         assert screen.query_one("#console-live-work-source-acp").renderable == (
             "ACP: Blocked - Configure ACP runtime."
         )
-        assert "MCP: Not wired" in str(screen.query_one("#console-live-work-source-mcp").renderable)
-        assert "RAG: Connected" in str(screen.query_one("#console-live-work-source-rag").renderable)
-        assert "Artifacts: Connected" in str(screen.query_one("#console-live-work-source-artifacts").renderable)
+        assert "MCP: Not wired" in str(
+            screen.query_one("#console-live-work-source-mcp").renderable
+        )
+        assert "RAG: Connected" in str(
+            screen.query_one("#console-live-work-source-rag").renderable
+        )
+        assert "Artifacts: Connected" in str(
+            screen.query_one("#console-live-work-source-artifacts").renderable
+        )
 
 
 @pytest.mark.asyncio
@@ -1874,8 +1997,7 @@ async def test_stage_console_library_rag_launch_restage_replaces_single_card():
         assert recompose_calls == []
         assert len(screen.query("#console-pending-launch-card")) == 1
         assert (
-            screen.query_one("#console-live-work-status").renderable
-            == "Status: staged"
+            screen.query_one("#console-live-work-status").renderable == "Status: staged"
         )
 
 

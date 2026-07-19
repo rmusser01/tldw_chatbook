@@ -54,12 +54,16 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
 class LLMProviderCatalogScopeService:
     """Route local Chatbook and active-server LLM catalogs without merging settings."""
 
-    def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
+    def __init__(
+        self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None
+    ):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: LLMProviderCatalogBackend | str | None) -> LLMProviderCatalogBackend:
+    def _normalize_mode(
+        self, mode: LLMProviderCatalogBackend | str | None
+    ) -> LLMProviderCatalogBackend:
         if mode is None:
             return LLMProviderCatalogBackend.LOCAL
         if isinstance(mode, LLMProviderCatalogBackend):
@@ -72,10 +76,14 @@ class LLMProviderCatalogScopeService:
     def _service_for_mode(self, mode: LLMProviderCatalogBackend) -> Any:
         if mode == LLMProviderCatalogBackend.LOCAL:
             if self.local_service is None:
-                raise ValueError("Local LLM provider/model catalog backend is unavailable.")
+                raise ValueError(
+                    "Local LLM provider/model catalog backend is unavailable."
+                )
             return self.local_service
         if self.server_service is None:
-            raise ValueError("Server LLM provider/model catalog backend is unavailable.")
+            raise ValueError(
+                "Server LLM provider/model catalog backend is unavailable."
+            )
         return self.server_service
 
     @staticmethod
@@ -94,14 +102,18 @@ class LLMProviderCatalogScopeService:
         return f"llm.catalog.{resource}.{action}.{mode.value}"
 
     @staticmethod
-    def _normalize_record(mode: LLMProviderCatalogBackend, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_record(
+        mode: LLMProviderCatalogBackend, kind: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", mode.value)
         record.setdefault("record_id", f"{mode.value}:llm_catalog:{kind}")
         return record
 
     @staticmethod
-    def _normalize_provider(mode: LLMProviderCatalogBackend, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_provider(
+        mode: LLMProviderCatalogBackend, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         provider = dict(payload or {})
         provider.setdefault("backend", mode.value)
         name = provider.get("name") or provider.get("provider")
@@ -110,7 +122,9 @@ class LLMProviderCatalogScopeService:
         return provider
 
     @classmethod
-    def _normalize_providers(cls, mode: LLMProviderCatalogBackend, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_providers(
+        cls, mode: LLMProviderCatalogBackend, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", mode.value)
         record.setdefault("record_id", f"{mode.value}:llm_catalog:providers")
@@ -122,11 +136,17 @@ class LLMProviderCatalogScopeService:
         return record
 
     @staticmethod
-    def _normalize_model(mode: LLMProviderCatalogBackend, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_model(
+        mode: LLMProviderCatalogBackend, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         model = dict(payload or {})
         model.setdefault("backend", mode.value)
         model_id = model.get("id")
-        if model_id is None and model.get("provider") is not None and model.get("name") is not None:
+        if (
+            model_id is None
+            and model.get("provider") is not None
+            and model.get("name") is not None
+        ):
             model_id = f"{model['provider']}/{model['name']}"
         if model_id is None:
             model_id = model.get("name")
@@ -135,13 +155,16 @@ class LLMProviderCatalogScopeService:
         return model
 
     @classmethod
-    def _normalize_model_metadata(cls, mode: LLMProviderCatalogBackend, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_model_metadata(
+        cls, mode: LLMProviderCatalogBackend, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", mode.value)
         record.setdefault("record_id", f"{mode.value}:llm_catalog:models")
         if isinstance(record.get("models"), list):
             record["models"] = [
-                cls._normalize_model(mode, item) if isinstance(item, dict) else item for item in record["models"]
+                cls._normalize_model(mode, item) if isinstance(item, dict) else item
+                for item in record["models"]
             ]
         return record
 
@@ -165,7 +188,9 @@ class LLMProviderCatalogScopeService:
         record.setdefault("backend", mode.value)
         provider_name = provider or record.get("provider") or record.get("name")
         if provider_name is not None:
-            record.setdefault("record_id", f"{mode.value}:llm_provider_configuration:{provider_name}")
+            record.setdefault(
+                "record_id", f"{mode.value}:llm_provider_configuration:{provider_name}"
+            )
         return record
 
     @classmethod
@@ -179,7 +204,9 @@ class LLMProviderCatalogScopeService:
         record.setdefault("record_id", f"{mode.value}:llm_provider_configurations:list")
         if isinstance(record.get("items"), list):
             record["items"] = [
-                cls._normalize_provider_configuration(mode, item) if isinstance(item, dict) else item
+                cls._normalize_provider_configuration(mode, item)
+                if isinstance(item, dict)
+                else item
                 for item in record["items"]
             ]
         return record
@@ -229,9 +256,13 @@ class LLMProviderCatalogScopeService:
         self._enforce_policy(self._action_id("providers", "configure", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(service.delete_user_provider_key(provider))
-        return self._normalize_provider_configuration(normalized_mode, result, provider=provider)
+        return self._normalize_provider_configuration(
+            normalized_mode, result, provider=provider
+        )
 
-    async def get_health(self, *, mode: LLMProviderCatalogBackend | str | None = None) -> dict[str, Any]:
+    async def get_health(
+        self, *, mode: LLMProviderCatalogBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("health", "observe", normalized_mode))
         service = self._service_for_mode(normalized_mode)
@@ -247,7 +278,9 @@ class LLMProviderCatalogScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("providers", "list", normalized_mode))
         service = self._service_for_mode(normalized_mode)
-        result = await self._maybe_await(service.list_providers(include_deprecated=include_deprecated))
+        result = await self._maybe_await(
+            service.list_providers(include_deprecated=include_deprecated)
+        )
         return self._normalize_providers(normalized_mode, result)
 
     async def get_provider(
@@ -343,7 +376,9 @@ class LLMProviderCatalogScopeService:
         )
         if isinstance(result, ModelDiscoveryResult):
             return result
-        raise TypeError("Local model discovery service returned an unsupported result type.")
+        raise TypeError(
+            "Local model discovery service returned an unsupported result type."
+        )
 
     async def list_discovered_models(
         self,
@@ -359,7 +394,9 @@ class LLMProviderCatalogScopeService:
             return ()
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            service.list_discovered_models(provider=provider, staged_settings=staged_settings)
+            service.list_discovered_models(
+                provider=provider, staged_settings=staged_settings
+            )
         )
         return tuple(result)
 
@@ -418,11 +455,15 @@ class LLMProviderCatalogScopeService:
             )
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            service.persist_discovered_models_to_settings(provider=provider, model_ids=model_ids)
+            service.persist_discovered_models_to_settings(
+                provider=provider, model_ids=model_ids
+            )
         )
         if isinstance(result, PersistenceResult):
             return result
-        raise TypeError("Local model persistence service returned an unsupported result type.")
+        raise TypeError(
+            "Local model persistence service returned an unsupported result type."
+        )
 
     async def get_model_metadata(
         self,

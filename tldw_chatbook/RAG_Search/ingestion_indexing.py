@@ -44,7 +44,17 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+)
 
 from loguru import logger
 
@@ -68,6 +78,7 @@ _STOP = object()
 # Availability gate
 # =============================================================================
 
+
 def _indexing_enabled_in_config() -> bool:
     """Read the `[AppRAGSearchConfig.rag.indexing].enabled` kill switch (default True)."""
     try:
@@ -79,7 +90,9 @@ def _indexing_enabled_in_config() -> bool:
             return True
         return bool(indexing_section.get("enabled", True))
     except Exception as e:
-        logger.debug(f"Could not read rag.indexing.enabled from config, assuming enabled: {e}")
+        logger.debug(
+            f"Could not read rag.indexing.enabled from config, assuming enabled: {e}"
+        )
         return True
 
 
@@ -94,7 +107,9 @@ def semantic_indexing_available() -> bool:
         if not embeddings_rag_deps_installed():
             return False
     except Exception as e:
-        logger.debug(f"embeddings_rag probe failed, treating indexing as unavailable: {e}")
+        logger.debug(
+            f"embeddings_rag probe failed, treating indexing as unavailable: {e}"
+        )
         return False
     return _indexing_enabled_in_config()
 
@@ -143,6 +158,7 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
         if _shared_service is None:
             try:
                 from .simplified import create_rag_service
+
                 profile = profile_name or _configured_profile()
                 _shared_service = create_rag_service(profile_name=profile)
                 logger.info(f"Created shared RAG service (profile={profile})")
@@ -182,6 +198,7 @@ def reset_shared_rag_service() -> None:
 # Index entries and document builders
 # =============================================================================
 
+
 @dataclass(frozen=True)
 class IndexEntry:
     """A self-contained unit of indexing work.
@@ -195,6 +212,7 @@ class IndexEntry:
         document: Document dict for ``RAGService.index_batch_optimized``
             ({'id', 'content', 'title', 'metadata'}).
     """
+
     item_id: str
     item_type: str
     last_modified: datetime
@@ -215,9 +233,15 @@ def _coerce_timestamp(value: Any) -> datetime:
             text = text[:-1] + "+00:00"
         try:
             parsed = datetime.fromisoformat(text)
-            return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+            return (
+                parsed
+                if parsed.tzinfo is not None
+                else parsed.replace(tzinfo=timezone.utc)
+            )
         except ValueError:
-            logger.debug(f"Unparseable timestamp {value!r}; treating item as modified now")
+            logger.debug(
+                f"Unparseable timestamp {value!r}; treating item as modified now"
+            )
     return datetime.now(timezone.utc)
 
 
@@ -348,13 +372,17 @@ def conversation_index_entry(
 # Core indexing pipeline (shared by the worker and backfill)
 # =============================================================================
 
+
 def _default_indexing_db() -> Optional[Any]:
     """Create the default RAG indexing-state DB under the user data dir."""
     try:
         from ..DB.RAG_Indexing_DB import RAGIndexingDB
+
         return RAGIndexingDB(get_user_data_dir() / DEFAULT_INDEXING_DB_FILENAME)
     except Exception as e:
-        logger.warning(f"Could not open RAG indexing-state DB (indexing will not be incremental): {e}")
+        logger.warning(
+            f"Could not open RAG indexing-state DB (indexing will not be incremental): {e}"
+        )
         return None
 
 
@@ -386,7 +414,9 @@ async def index_entries(
     for entry in entries:
         if indexing_db is not None:
             try:
-                if not indexing_db.needs_reindexing(entry.item_id, entry.item_type, entry.last_modified):
+                if not indexing_db.needs_reindexing(
+                    entry.item_id, entry.item_type, entry.last_modified
+                ):
                     summary["skipped"] += 1
                     continue
             except Exception as e:
@@ -401,13 +431,17 @@ async def index_entries(
     # Best-effort removal of stale chunks: ChromaDB `add` keeps existing IDs,
     # so re-indexed documents would otherwise retain chunks from their
     # previous version.
-    delete_document = getattr(getattr(service, "vector_store", None), "delete_document", None)
+    delete_document = getattr(
+        getattr(service, "vector_store", None), "delete_document", None
+    )
     if callable(delete_document):
         for entry in to_index:
             try:
                 delete_document(entry.document["id"])
             except Exception as e:
-                logger.debug(f"Stale-chunk delete failed for {entry.document['id']}: {e}")
+                logger.debug(
+                    f"Stale-chunk delete failed for {entry.document['id']}: {e}"
+                )
 
     try:
         results = await service.index_batch_optimized(
@@ -421,7 +455,9 @@ async def index_entries(
         summary["errors"].append(message)
         return summary
 
-    results_by_doc = {result.doc_id: result for result in results or [] if result is not None}
+    results_by_doc = {
+        result.doc_id: result for result in results or [] if result is not None
+    }
     for entry in to_index:
         result = results_by_doc.get(entry.document["id"])
         if result is not None and result.success:
@@ -439,10 +475,12 @@ async def index_entries(
                         f"Could not record indexing state for {entry.item_type} {entry.item_id}: {e}"
                     )
         else:
-            error = (getattr(result, "error", None) or "no indexing result returned")
+            error = getattr(result, "error", None) or "no indexing result returned"
             summary["failed"] += 1
             summary["errors"].append(f"{entry.item_type} {entry.item_id}: {error}")
-            logger.error(f"RAG indexing failed for {entry.item_type} {entry.item_id}: {error}")
+            logger.error(
+                f"RAG indexing failed for {entry.item_type} {entry.item_id}: {error}"
+            )
 
     return summary
 
@@ -450,6 +488,7 @@ async def index_entries(
 # =============================================================================
 # Background worker
 # =============================================================================
+
 
 class IngestionIndexer:
     """Background indexing worker: a daemon thread draining a queue of IndexEntry.
@@ -521,7 +560,9 @@ class IngestionIndexer:
                 self._queue.put(entry)
             return True
         except Exception as e:
-            logger.error(f"Failed to enqueue {getattr(entry, 'item_type', '?')} for indexing: {e}")
+            logger.error(
+                f"Failed to enqueue {getattr(entry, 'item_type', '?')} for indexing: {e}"
+            )
             return False
 
     def wait_until_idle(self, timeout: float = 30.0) -> bool:
@@ -584,9 +625,12 @@ class IngestionIndexer:
             if self._indexing_db_path is not None:
                 try:
                     from ..DB.RAG_Indexing_DB import RAGIndexingDB
+
                     self._indexing_db = RAGIndexingDB(self._indexing_db_path)
                 except Exception as e:
-                    logger.warning(f"Could not open RAG indexing-state DB at {self._indexing_db_path}: {e}")
+                    logger.warning(
+                        f"Could not open RAG indexing-state DB at {self._indexing_db_path}: {e}"
+                    )
                     self._indexing_db = None
             else:
                 self._indexing_db = _default_indexing_db()
@@ -627,7 +671,9 @@ class IngestionIndexer:
                 except Exception as e:
                     # Last-resort guard: even loop/setup crashes must not kill the worker.
                     self._record_batch_failure(batch, f"indexing batch crashed: {e}")
-                    logger.opt(exception=True).error(f"RAG ingestion indexing batch crashed: {e}")
+                    logger.opt(exception=True).error(
+                        f"RAG ingestion indexing batch crashed: {e}"
+                    )
                 finally:
                     with self._state_lock:
                         self._pending -= len(batch)
@@ -664,7 +710,9 @@ class IngestionIndexer:
             )
 
     def _record_batch_failure(self, batch: Sequence[IndexEntry], message: str) -> None:
-        logger.error(f"{message} (items: {[f'{e.item_type}:{e.item_id}' for e in batch]})")
+        logger.error(
+            f"{message} (items: {[f'{e.item_type}:{e.item_id}' for e in batch]})"
+        )
         with self._state_lock:
             self._stats["failed"] += len(batch)
             self._stats["last_error"] = message
@@ -735,7 +783,9 @@ def _media_post_ingest_hook(db: Any, media_id: int, media_uuid: Optional[str]) -
         logger.warning(f"RAG post-ingest hook failed for media_id={media_id}: {e}")
 
 
-def install_media_ingest_hook(failure_notifier: Optional[Callable[[str], None]] = None) -> None:
+def install_media_ingest_hook(
+    failure_notifier: Optional[Callable[[str], None]] = None,
+) -> None:
     """Install the post-ingest indexing hook on the media DB seam (idempotent).
 
     Args:
@@ -771,6 +821,7 @@ def uninstall_media_ingest_hook() -> None:
 # =============================================================================
 # Bulk backfill (AC #3)
 # =============================================================================
+
 
 def _iter_media_entries(media_db: Any, page_size: int) -> Iterator[IndexEntry]:
     """Yield IndexEntry items for all active media, paginated."""
@@ -815,14 +866,19 @@ def _iter_conversation_entries(
     """Yield IndexEntry items for all active conversations (as transcripts), paginated."""
     offset = 0
     while True:
-        conversations = chachanotes_db.list_all_active_conversations(limit=page_size, offset=offset) or []
+        conversations = (
+            chachanotes_db.list_all_active_conversations(limit=page_size, offset=offset)
+            or []
+        )
         for conversation in conversations:
             try:
                 messages = chachanotes_db.get_messages_for_conversation(
                     conversation["id"], limit=messages_per_conversation
                 )
             except Exception as e:
-                logger.warning(f"Backfill: could not load messages for conversation {conversation.get('id')}: {e}")
+                logger.warning(
+                    f"Backfill: could not load messages for conversation {conversation.get('id')}: {e}"
+                )
                 continue
             entry = conversation_index_entry(conversation, messages)
             if entry is not None:
@@ -832,7 +888,9 @@ def _iter_conversation_entries(
         offset += page_size
 
 
-def _batched(iterable: Iterable[IndexEntry], batch_size: int) -> Iterator[List[IndexEntry]]:
+def _batched(
+    iterable: Iterable[IndexEntry], batch_size: int
+) -> Iterator[List[IndexEntry]]:
     batch: List[IndexEntry] = []
     for item in iterable:
         batch.append(item)
@@ -849,7 +907,11 @@ async def backfill_semantic_index(
     chachanotes_db: Optional[Any] = None,
     rag_service: Optional[Any] = None,
     indexing_db: Optional[Any] = None,
-    item_types: Sequence[str] = (ITEM_TYPE_MEDIA, ITEM_TYPE_NOTE, ITEM_TYPE_CONVERSATION),
+    item_types: Sequence[str] = (
+        ITEM_TYPE_MEDIA,
+        ITEM_TYPE_NOTE,
+        ITEM_TYPE_CONVERSATION,
+    ),
     page_size: int = 100,
     batch_size: int = 16,
     progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
@@ -887,7 +949,9 @@ async def backfill_semantic_index(
     }
 
     if not semantic_indexing_available():
-        logger.info("Backfill skipped: semantic indexing unavailable (missing deps or disabled)")
+        logger.info(
+            "Backfill skipped: semantic indexing unavailable (missing deps or disabled)"
+        )
         summary["status"] = "unavailable"
         return summary
 
@@ -906,7 +970,12 @@ async def backfill_semantic_index(
     if ITEM_TYPE_NOTE in item_types and chachanotes_db is not None:
         sources.append((ITEM_TYPE_NOTE, _iter_note_entries(chachanotes_db, page_size)))
     if ITEM_TYPE_CONVERSATION in item_types and chachanotes_db is not None:
-        sources.append((ITEM_TYPE_CONVERSATION, _iter_conversation_entries(chachanotes_db, page_size)))
+        sources.append(
+            (
+                ITEM_TYPE_CONVERSATION,
+                _iter_conversation_entries(chachanotes_db, page_size),
+            )
+        )
 
     for item_type, entry_iter in sources:
         type_summary = {"indexed": 0, "skipped": 0, "failed": 0}

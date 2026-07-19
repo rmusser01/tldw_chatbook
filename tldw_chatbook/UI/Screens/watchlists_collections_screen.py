@@ -58,7 +58,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def on_mount(self) -> None:
         super().on_mount()
         self._refresh_local_wc_snapshot()
-        self.set_timer(WC_SNAPSHOT_TIMEOUT_SECONDS, self._apply_snapshot_timeout_if_still_loading)
+        self.set_timer(
+            WC_SNAPSHOT_TIMEOUT_SECONDS, self._apply_snapshot_timeout_if_still_loading
+        )
 
     def _apply_snapshot_timeout_if_still_loading(self) -> None:
         if self._wc_loaded:
@@ -138,7 +140,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return "Untitled item"
 
     @staticmethod
-    def _response_records_and_count(result: Any) -> tuple[tuple[Mapping[str, Any], ...], int, bool]:
+    def _response_records_and_count(
+        result: Any,
+    ) -> tuple[tuple[Mapping[str, Any], ...], int, bool]:
         total = None
         if isinstance(result, Mapping):
             raw_items = result.get("items")
@@ -146,12 +150,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             total = result.get("total")
             if isinstance(pagination, Mapping):
                 total = pagination.get("total", pagination.get("total_items", total))
-        elif isinstance(result, Sequence) and not isinstance(result, (str, bytes, bytearray)):
+        elif isinstance(result, Sequence) and not isinstance(
+            result, (str, bytes, bytearray)
+        ):
             raw_items = result
         else:
             raw_items = ()
 
-        records = tuple(record for record in tuple(raw_items or ()) if isinstance(record, Mapping))
+        records = tuple(
+            record for record in tuple(raw_items or ()) if isinstance(record, Mapping)
+        )
         total_known = total is not None
         try:
             count = int(total) if total is not None else len(records)
@@ -204,7 +212,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             return (), (), 0, 0, True, True, WC_SERVICE_ERROR_COPY, None
 
-        watchlists, watchlist_count, watchlist_total_known = self._response_records_and_count(watchlist_result)
+        watchlists, watchlist_count, watchlist_total_known = (
+            self._response_records_and_count(watchlist_result)
+        )
         return (
             watchlists,
             (),
@@ -226,7 +236,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     def _snapshot_body(self) -> str:
         lines = ["Local Watchlists snapshot staged for Console:", ""]
-        lines.append(self._count_label("Watchlists", self._local_watchlist_count, self._watchlist_total_known))
+        lines.append(
+            self._count_label(
+                "Watchlists", self._local_watchlist_count, self._watchlist_total_known
+            )
+        )
         for index, record in enumerate(self._local_watchlist_records, start=1):
             lines.append(f"  {index}. {self._record_title(record)}")
         return "\n".join(lines).strip()
@@ -235,7 +249,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return {
             "watchlist_count": self._local_watchlist_count,
             "watchlist_sample_count": len(self._local_watchlist_records),
-            "watchlist_titles": [self._record_title(record) for record in self._local_watchlist_records],
+            "watchlist_titles": [
+                self._record_title(record) for record in self._local_watchlist_records
+            ],
             "backend": "local",
         }
 
@@ -299,15 +315,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 id="watchlists-collections-title",
                 classes="ds-destination-header",
             )
-            with DestinationModeStrip(id="watchlists-filter-strip", classes="destination-filter-strip"):
+            with DestinationModeStrip(
+                id="watchlists-filter-strip", classes="destination-filter-strip"
+            ):
                 yield Static(
                     "Filters: Running Failed Recent Alerts Sources Feeds",
                     id="watchlists-filter-label",
                     classes="destination-section",
                 )
-            with Horizontal(id="watchlists-workbench", classes="ds-panel destination-workbench"):
-                with Vertical(id="watchlists-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Column 1: Watchlist List", classes="destination-section watchlists-column-title")
+            with Horizontal(
+                id="watchlists-workbench", classes="ds-panel destination-workbench"
+            ):
+                with Vertical(
+                    id="watchlists-list-pane", classes="destination-workbench-pane"
+                ):
+                    yield Static(
+                        "Column 1: Watchlist List",
+                        classes="destination-section watchlists-column-title",
+                    )
                     yield Static(
                         "Monitored sources, feeds, queries, schedules, alerts, telemetry, retry/backoff."
                     )
@@ -315,8 +340,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         "Library owns reusable source sets, imports, saved searches, and reading workflows."
                     )
                 yield self._column_divider("watchlists-list-detail-divider")
-                with Vertical(id="watchlists-detail-pane", classes="destination-workbench-pane"):
-                    yield Static("Column 2: Detail / Items / Runs", classes="destination-section watchlists-column-title")
+                with Vertical(
+                    id="watchlists-detail-pane", classes="destination-workbench-pane"
+                ):
+                    yield Static(
+                        "Column 2: Detail / Items / Runs",
+                        classes="destination-section watchlists-column-title",
+                    )
                     if not self._wc_loaded:
                         yield Static(
                             "Loading local Watchlists snapshot...",
@@ -363,16 +393,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         )
                         for index, record in enumerate(self._local_watchlist_records):
                             yield Static(
-                                Text.from_markup(escape_markup(self._record_title(record))),
+                                Text.from_markup(
+                                    escape_markup(self._record_title(record))
+                                ),
                                 id=f"wc-watchlist-item-{index}",
                             )
                         attach_disabled = False
                         attach_tooltip = "Stage local Watchlists context in Console."
                 yield self._column_divider("watchlists-detail-inspector-divider")
-                with Vertical(id="watchlists-inspector-pane", classes="destination-workbench-pane ds-inspector"):
-                    yield Static("Column 3: Status Inspector", classes="destination-section watchlists-column-title")
+                with Vertical(
+                    id="watchlists-inspector-pane",
+                    classes="destination-workbench-pane ds-inspector",
+                ):
                     yield Static(
-                        "State: ready" if self._wc_loaded and not self._wc_lookup_error else "State: unavailable",
+                        "Column 3: Status Inspector",
+                        classes="destination-section watchlists-column-title",
+                    )
+                    yield Static(
+                        "State: ready"
+                        if self._wc_loaded and not self._wc_lookup_error
+                        else "State: unavailable",
                         id="watchlists-state-summary",
                     )
                     yield Static("Retry/backoff: none", id="watchlists-retry-summary")
@@ -393,8 +433,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         tooltip="Open the current watchlist/subscription surface.",
                     )
                     if latest_console_item is not None:
-                        title = str(getattr(latest_console_item, "title", None) or "Untitled")
-                        status = str(getattr(latest_console_item, "status", None) or "unknown")
+                        title = str(
+                            getattr(latest_console_item, "title", None) or "Untitled"
+                        )
+                        status = str(
+                            getattr(latest_console_item, "status", None) or "unknown"
+                        )
                         yield Static(
                             Text.from_markup(
                                 "Console can follow latest Watchlists run: "
@@ -403,7 +447,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                             id="watchlists-console-available",
                         )
                         yield Button(
-                            Text.from_markup(f"Follow {escape_markup(title)} in Console"),
+                            Text.from_markup(
+                                f"Follow {escape_markup(title)} in Console"
+                            ),
                             id="watchlists-follow-in-console",
                             tooltip="Open the latest active Watchlists run in Console.",
                         )
@@ -434,7 +480,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     severity="warning",
                 )
             return
-        open_chat_with_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
+        open_chat_with_handoff = getattr(
+            self.app_instance, "open_chat_with_handoff", None
+        )
         if not callable(open_chat_with_handoff):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
@@ -468,7 +516,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 severity="warning",
             )
             return
-        open_in_console = getattr(self.app_instance, "open_active_home_item_in_console", None)
+        open_in_console = getattr(
+            self.app_instance, "open_active_home_item_in_console", None
+        )
         if not callable(open_in_console):
             self.app_instance.notify(
                 "Console follow is unavailable for Watchlists in this runtime.",

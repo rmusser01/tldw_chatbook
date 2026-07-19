@@ -1,7 +1,11 @@
 import pytest
 
-from tldw_chatbook.Chat_Grammars_Interop.chat_grammars_scope_service import ChatGrammarsScopeService
-from tldw_chatbook.Chat_Grammars_Interop.local_chat_grammars_service import LocalChatGrammarsService
+from tldw_chatbook.Chat_Grammars_Interop.chat_grammars_scope_service import (
+    ChatGrammarsScopeService,
+)
+from tldw_chatbook.Chat_Grammars_Interop.local_chat_grammars_service import (
+    LocalChatGrammarsService,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -54,7 +58,9 @@ async def test_chat_grammars_scope_service_routes_server_crud_and_normalizes_rec
     scope = ChatGrammarsScopeService(server_service=server, policy_enforcer=policy)
 
     listed = await scope.list_grammars(mode="server", include_archived=True)
-    created = await scope.create_grammar(mode="server", name="JSON object", grammar_text="root ::= object")
+    created = await scope.create_grammar(
+        mode="server", name="JSON object", grammar_text="root ::= object"
+    )
     fetched = await scope.get_grammar("grammar-1", mode="server")
     updated = await scope.update_grammar("grammar-1", mode="server", name="Strict JSON")
     deleted = await scope.delete_grammar("grammar-1", mode="server", hard_delete=True)
@@ -81,15 +87,23 @@ async def test_chat_grammars_scope_service_routes_server_crud_and_normalizes_rec
 
 
 @pytest.mark.asyncio
-async def test_chat_grammars_scope_service_routes_local_crud_and_normalizes_records(tmp_path):
+async def test_chat_grammars_scope_service_routes_local_crud_and_normalizes_records(
+    tmp_path,
+):
     local = LocalChatGrammarsService(store_path=tmp_path / "grammars.json")
     policy = FakePolicyEnforcer()
-    scope = ChatGrammarsScopeService(local_service=local, server_service=None, policy_enforcer=policy)
+    scope = ChatGrammarsScopeService(
+        local_service=local, server_service=None, policy_enforcer=policy
+    )
 
-    created = await scope.create_grammar(mode="local", name="JSON object", grammar_text="root ::= object")
+    created = await scope.create_grammar(
+        mode="local", name="JSON object", grammar_text="root ::= object"
+    )
     listed = await scope.list_grammars(mode="local")
     fetched = await scope.get_grammar("local-grammar-1", mode="local")
-    updated = await scope.update_grammar("local-grammar-1", mode="local", version=1, name="Strict JSON")
+    updated = await scope.update_grammar(
+        "local-grammar-1", mode="local", version=1, name="Strict JSON"
+    )
     deleted = await scope.delete_grammar("local-grammar-1", mode="local")
 
     assert created["record_id"] == "local:chat_grammar:local-grammar-1"
@@ -109,7 +123,9 @@ async def test_chat_grammars_scope_service_routes_local_crud_and_normalizes_reco
 @pytest.mark.asyncio
 async def test_chat_grammars_scope_service_honestly_rejects_missing_local_service():
     server = FakeChatGrammarsService()
-    scope = ChatGrammarsScopeService(local_service=None, server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = ChatGrammarsScopeService(
+        local_service=None, server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
     with pytest.raises(ValueError, match="Local chat grammars backend is unavailable"):
         await scope.list_grammars(mode="local")
@@ -120,7 +136,10 @@ async def test_chat_grammars_scope_service_honestly_rejects_missing_local_servic
 @pytest.mark.asyncio
 async def test_chat_grammars_scope_service_blocks_denied_server_action_before_dispatch():
     server = FakeChatGrammarsService()
-    scope = ChatGrammarsScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer("server_auth_required"))
+    scope = ChatGrammarsScopeService(
+        server_service=server,
+        policy_enforcer=FakePolicyEnforcer("server_auth_required"),
+    )
 
     with pytest.raises(PolicyDeniedError) as exc:
         await scope.list_grammars(mode="server")

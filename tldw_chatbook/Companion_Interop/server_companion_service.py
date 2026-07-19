@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+
 if TYPE_CHECKING:
     from ..tldw_api import (
         CompanionActivityCreate,
@@ -69,7 +70,9 @@ class ServerCompanionService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -78,11 +81,14 @@ class ServerCompanionService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
                     user_message=getattr(decision, "user_message", None)
                     or "Server Companion action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @classmethod
@@ -187,15 +193,21 @@ class ServerCompanionService:
             record_id=f"server:companion_activity:{self._payload_id(payload)}",
         )
 
-    async def list_activity(self, *, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    async def list_activity(
+        self, *, limit: int = 50, offset: int = 0
+    ) -> dict[str, Any]:
         self._enforce("companion.activity.list.server")
-        response = await self._require_client().list_companion_activity(limit=limit, offset=offset)
+        response = await self._require_client().list_companion_activity(
+            limit=limit, offset=offset
+        )
         return self._normalize(response, record_id="server:companion_activity")
 
     async def get_activity(self, event_id: str) -> dict[str, Any]:
         self._enforce("companion.activity.detail.server")
         response = await self._require_client().get_companion_activity(event_id)
-        return self._normalize(response, record_id=f"server:companion_activity:{event_id}")
+        return self._normalize(
+            response, record_id=f"server:companion_activity:{event_id}"
+        )
 
     async def list_knowledge(self, *, status: str | None = "active") -> dict[str, Any]:
         self._enforce("companion.knowledge.list.server")
@@ -205,17 +217,25 @@ class ServerCompanionService:
     async def get_knowledge(self, card_id: str) -> dict[str, Any]:
         self._enforce("companion.knowledge.detail.server")
         response = await self._require_client().get_companion_knowledge(card_id)
-        return self._normalize(response, record_id=f"server:companion_knowledge:{card_id}")
+        return self._normalize(
+            response, record_id=f"server:companion_knowledge:{card_id}"
+        )
 
     async def get_reflection(self, reflection_id: str) -> dict[str, Any]:
         self._enforce("companion.reflections.detail.server")
         response = await self._require_client().get_companion_reflection(reflection_id)
-        return self._normalize(response, record_id=f"server:companion_reflection:{reflection_id}")
+        return self._normalize(
+            response, record_id=f"server:companion_reflection:{reflection_id}"
+        )
 
     async def get_conversation_prompts(self, *, query: str) -> dict[str, Any]:
         self._enforce("companion.conversation_prompts.list.server")
-        response = await self._require_client().get_companion_conversation_prompts(query=query)
-        return self._normalize(response, record_id="server:companion_conversation_prompts")
+        response = await self._require_client().get_companion_conversation_prompts(
+            query=query
+        )
+        return self._normalize(
+            response, record_id="server:companion_conversation_prompts"
+        )
 
     async def list_goals(self, *, status: str | None = None) -> dict[str, Any]:
         self._enforce("companion.goals.list.server")
@@ -245,10 +265,14 @@ class ServerCompanionService:
         self._enforce("companion.lifecycle.purge.server")
         request = self._purge_request(request_data)
         response = await self._require_client().purge_companion_data(request)
-        return self._normalize(response, record_id=f"server:companion_lifecycle:{request.scope}")
+        return self._normalize(
+            response, record_id=f"server:companion_lifecycle:{request.scope}"
+        )
 
     async def rebuild_data(self, request_data: Any) -> dict[str, Any]:
         self._enforce("companion.lifecycle.launch.server")
         request = self._rebuild_request(request_data)
         response = await self._require_client().rebuild_companion_data(request)
-        return self._normalize(response, record_id=f"server:companion_lifecycle:{request.scope}")
+        return self._normalize(
+            response, record_id=f"server:companion_lifecycle:{request.scope}"
+        )

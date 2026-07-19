@@ -63,7 +63,9 @@ def _chat_images_config(app_config: Mapping[str, Any]) -> Mapping[str, Any]:
     return images if isinstance(images, Mapping) else {}
 
 
-def resolve_default_mode(app_config: Mapping[str, Any]) -> Literal["pixels", "graphics"]:
+def resolve_default_mode(
+    app_config: Mapping[str, Any],
+) -> Literal["pixels", "graphics"]:
     """Resolve the session-default inline render mode from config + terminal.
 
     Resolution order (spec-defined; no prior consumer existed to mirror):

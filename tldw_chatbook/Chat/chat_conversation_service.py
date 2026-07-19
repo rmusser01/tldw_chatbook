@@ -17,14 +17,18 @@ def _clean_text(value: Any) -> str | None:
 
 def _normalize_state(value: Any) -> str | None:
     # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-    from tldw_chatbook.tldw_api.chat_conversation_schemas import ALLOWED_CONVERSATION_STATES
+    from tldw_chatbook.tldw_api.chat_conversation_schemas import (
+        ALLOWED_CONVERSATION_STATES,
+    )
 
     text = _clean_text(value)
     if text is None:
         return None
     normalized = text.lower()
     if normalized not in ALLOWED_CONVERSATION_STATES:
-        raise ValueError(f"Invalid state '{value}'. Allowed: {', '.join(ALLOWED_CONVERSATION_STATES)}")
+        raise ValueError(
+            f"Invalid state '{value}'. Allowed: {', '.join(ALLOWED_CONVERSATION_STATES)}"
+        )
     return normalized
 
 
@@ -136,7 +140,9 @@ def derive_conversation_title(
     return "New Chat"
 
 
-def normalize_message_row(message_row: Mapping[str, Any] | None) -> dict[str, Any] | None:
+def normalize_message_row(
+    message_row: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
     if not message_row:
         return None
 
@@ -191,12 +197,18 @@ def normalize_conversation_row(
         conversation_row.get("scope_type"),
         conversation_row.get("workspace_id"),
     )
-    normalized_keywords = _normalize_keywords(keywords if keywords is not None else conversation_row.get("keywords"))
+    normalized_keywords = _normalize_keywords(
+        keywords if keywords is not None else conversation_row.get("keywords")
+    )
     normalized_state = _normalize_state(conversation_row.get("state")) or "in-progress"
     assistant_kind = _normalize_assistant_kind(conversation_row.get("assistant_kind"))
     assistant_id = _clean_text(conversation_row.get("assistant_id"))
     character_id = conversation_row.get("character_id")
-    if assistant_kind == "character" and assistant_id is None and character_id is not None:
+    if (
+        assistant_kind == "character"
+        and assistant_id is None
+        and character_id is not None
+    ):
         assistant_id = str(character_id)
     normalized_title = derive_conversation_title(
         assistant_kind=conversation_row.get("assistant_kind"),
@@ -211,8 +223,12 @@ def normalize_conversation_row(
         "character_id": character_id,
         "assistant_kind": assistant_kind,
         "assistant_id": assistant_id,
-        "runtime_backend": _normalize_runtime_backend(conversation_row.get("runtime_backend")),
-        "discovery_owner": _normalize_discovery_owner(conversation_row.get("discovery_owner")),
+        "runtime_backend": _normalize_runtime_backend(
+            conversation_row.get("runtime_backend")
+        ),
+        "discovery_owner": _normalize_discovery_owner(
+            conversation_row.get("discovery_owner")
+        ),
         "discovery_entity_id": _clean_text(conversation_row.get("discovery_entity_id")),
         "persona_memory_mode": _clean_text(conversation_row.get("persona_memory_mode")),
         "title": normalized_title,
@@ -220,13 +236,17 @@ def normalize_conversation_row(
         "topic_label": _clean_text(conversation_row.get("topic_label")),
         "topic_label_source": _clean_text(conversation_row.get("topic_label_source")),
         "topic_last_tagged_at": conversation_row.get("topic_last_tagged_at"),
-        "topic_last_tagged_message_id": _clean_text(conversation_row.get("topic_last_tagged_message_id")),
+        "topic_last_tagged_message_id": _clean_text(
+            conversation_row.get("topic_last_tagged_message_id")
+        ),
         "bm25_norm": conversation_row.get("bm25_norm"),
         "last_modified": conversation_row.get("last_modified"),
         "created_at": conversation_row.get("created_at"),
         "deleted": conversation_row.get("deleted"),
         "message_count": int(
-            message_count if message_count is not None else conversation_row.get("message_count") or 0
+            message_count
+            if message_count is not None
+            else conversation_row.get("message_count") or 0
         ),
         "keywords": normalized_keywords,
         "cluster_id": _clean_text(conversation_row.get("cluster_id")),
@@ -240,7 +260,9 @@ def normalize_conversation_row(
 class ChatConversationService:
     def __init__(self, db: Any, *, rag_context_store_path: str | Path | None = None):
         self.db = db
-        self.rag_context_store_path = Path(rag_context_store_path) if rag_context_store_path else None
+        self.rag_context_store_path = (
+            Path(rag_context_store_path) if rag_context_store_path else None
+        )
         self._rag_context_store: dict[str, Any] | None = None
 
     @staticmethod
@@ -250,14 +272,21 @@ class ChatConversationService:
     def _load_rag_context_store(self) -> dict[str, Any]:
         if self._rag_context_store is not None:
             return self._rag_context_store
-        if self.rag_context_store_path is None or not self.rag_context_store_path.exists():
+        if (
+            self.rag_context_store_path is None
+            or not self.rag_context_store_path.exists()
+        ):
             self._rag_context_store = {"version": 1, "conversations": {}}
             return self._rag_context_store
         try:
-            payload = json.loads(self.rag_context_store_path.read_text(encoding="utf-8"))
+            payload = json.loads(
+                self.rag_context_store_path.read_text(encoding="utf-8")
+            )
         except (OSError, json.JSONDecodeError):
             payload = {}
-        conversations = payload.get("conversations") if isinstance(payload, Mapping) else None
+        conversations = (
+            payload.get("conversations") if isinstance(payload, Mapping) else None
+        )
         self._rag_context_store = {
             "version": 1,
             "conversations": conversations if isinstance(conversations, dict) else {},
@@ -273,7 +302,9 @@ class ChatConversationService:
             encoding="utf-8",
         )
 
-    def derive_conversation_title(self, conversation_row: Mapping[str, Any] | None) -> str:
+    def derive_conversation_title(
+        self, conversation_row: Mapping[str, Any] | None
+    ) -> str:
         if not conversation_row:
             return derive_conversation_title()
         return derive_conversation_title(
@@ -289,9 +320,13 @@ class ChatConversationService:
         keywords: Iterable[Any] | None = None,
         message_count: int | None = None,
     ) -> dict[str, Any] | None:
-        return normalize_conversation_row(conversation_row, keywords=keywords, message_count=message_count)
+        return normalize_conversation_row(
+            conversation_row, keywords=keywords, message_count=message_count
+        )
 
-    def normalize_message_row(self, message_row: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    def normalize_message_row(
+        self, message_row: Mapping[str, Any] | None
+    ) -> dict[str, Any] | None:
         return normalize_message_row(message_row)
 
     def create_conversation(
@@ -342,19 +377,29 @@ class ChatConversationService:
             raise ValueError("Unable to create chat conversation.")
         return str(conversation_id)
 
-    def delete_conversation(self, conversation_id: str, *, expected_version: int) -> bool:
+    def delete_conversation(
+        self, conversation_id: str, *, expected_version: int
+    ) -> bool:
         return bool(self.db.soft_delete_conversation(conversation_id, expected_version))
 
-    def restore_conversation(self, conversation_id: str, *, expected_version: int) -> bool:
+    def restore_conversation(
+        self, conversation_id: str, *, expected_version: int
+    ) -> bool:
         return bool(self.db.restore_conversation(conversation_id, expected_version))
 
-    def _fetch_keywords_for_conversations(self, conversation_ids: list[str]) -> dict[str, list[str]]:
+    def _fetch_keywords_for_conversations(
+        self, conversation_ids: list[str]
+    ) -> dict[str, list[str]]:
         if not conversation_ids:
             return {}
         if hasattr(self.db, "get_keywords_for_conversations"):
-            keyword_rows_by_conversation = self.db.get_keywords_for_conversations(conversation_ids)
+            keyword_rows_by_conversation = self.db.get_keywords_for_conversations(
+                conversation_ids
+            )
             return {
-                conversation_id: _normalize_keywords(keyword_rows_by_conversation.get(conversation_id, []))
+                conversation_id: _normalize_keywords(
+                    keyword_rows_by_conversation.get(conversation_id, [])
+                )
                 for conversation_id in conversation_ids
             }
         return {
@@ -366,7 +411,9 @@ class ChatConversationService:
         keyword_rows = self.db.get_keywords_for_conversation(conversation_id)
         return _normalize_keywords(keyword_rows)
 
-    def replace_conversation_keywords(self, conversation_id: str, keywords: Iterable[Any]) -> list[str]:
+    def replace_conversation_keywords(
+        self, conversation_id: str, keywords: Iterable[Any]
+    ) -> list[str]:
         normalized_keywords = _normalize_keywords(keywords)
         keyword_ids: list[int] = []
         for keyword_text in normalized_keywords:
@@ -427,7 +474,9 @@ class ChatConversationService:
                 message_count = counts.get(conversation_id, 0)
             else:
                 message_count = 0
-        return normalize_conversation_row(conversation_row, keywords=keywords, message_count=message_count)
+        return normalize_conversation_row(
+            conversation_row, keywords=keywords, message_count=message_count
+        )
 
     def update_conversation_metadata(
         self,
@@ -461,7 +510,9 @@ class ChatConversationService:
                 normalized_update[key] = _normalize_state(value)
             elif key == "scope_type":
                 cleaned_value = _clean_text(value)
-                normalized_update[key] = cleaned_value.lower() if cleaned_value is not None else None
+                normalized_update[key] = (
+                    cleaned_value.lower() if cleaned_value is not None else None
+                )
             elif key == "workspace_id":
                 normalized_update[key] = _clean_text(value)
             else:
@@ -483,15 +534,21 @@ class ChatConversationService:
             merged_workspace_id = normalized_update.get("workspace_id")
             if "workspace_id" not in normalized_update and current_row is not None:
                 merged_workspace_id = current_row.get("workspace_id")
-            normalized_update["scope_type"], normalized_update["workspace_id"] = _normalize_scope(
-                merged_scope_type,
-                merged_workspace_id,
+            normalized_update["scope_type"], normalized_update["workspace_id"] = (
+                _normalize_scope(
+                    merged_scope_type,
+                    merged_workspace_id,
+                )
             )
 
         if not normalized_update:
             return False
 
-        return bool(self.db.update_conversation(conversation_id, dict(normalized_update), expected_version))
+        return bool(
+            self.db.update_conversation(
+                conversation_id, dict(normalized_update), expected_version
+            )
+        )
 
     def list_conversations(
         self,
@@ -521,7 +578,9 @@ class ChatConversationService:
             normalized_scope: str = CONVERSATION_SCOPE_ALL
             normalized_workspace_id: str | None = None
         else:
-            normalized_scope, normalized_workspace_id = _normalize_scope(effective_scope, workspace_id)
+            normalized_scope, normalized_workspace_id = _normalize_scope(
+                effective_scope, workspace_id
+            )
         rows, total, _ = self.db.search_conversations_page(
             query,
             scope_type=normalized_scope,
@@ -551,7 +610,9 @@ class ChatConversationService:
             item = normalize_conversation_row(
                 row,
                 keywords=keyword_map.get(conversation_id, []),
-                message_count=message_counts.get(conversation_id, row.get("message_count", 0)),
+                message_count=message_counts.get(
+                    conversation_id, row.get("message_count", 0)
+                ),
             )
             if item is not None:
                 items.append(item)
@@ -648,7 +709,9 @@ class ChatConversationService:
             "last_modified": self._now(),
         }
         store = self._load_rag_context_store()
-        conversation_store = store.setdefault("conversations", {}).setdefault(str(conversation_id), {})
+        conversation_store = store.setdefault("conversations", {}).setdefault(
+            str(conversation_id), {}
+        )
         conversation_store[str(message_id)] = record
         self._save_rag_context_store()
         return dict(record)
@@ -671,7 +734,11 @@ class ChatConversationService:
             offset=offset,
             order_by_timestamp=order_by_timestamp,
         )
-        conversation_store = self._load_rag_context_store().get("conversations", {}).get(str(conversation_id), {})
+        conversation_store = (
+            self._load_rag_context_store()
+            .get("conversations", {})
+            .get(str(conversation_id), {})
+        )
         messages: list[dict[str, Any]] = []
         for row in rows:
             normalized = normalize_message_row(row)
@@ -685,7 +752,11 @@ class ChatConversationService:
         return messages
 
     def get_citations(self, conversation_id: str) -> dict[str, Any]:
-        conversation_store = self._load_rag_context_store().get("conversations", {}).get(str(conversation_id), {})
+        conversation_store = (
+            self._load_rag_context_store()
+            .get("conversations", {})
+            .get(str(conversation_id), {})
+        )
         citations: list[dict[str, Any]] = []
         for message_id, adjunct in conversation_store.items():
             for citation in adjunct.get("citations") or []:

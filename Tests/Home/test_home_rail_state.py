@@ -18,7 +18,9 @@ def test_home_rail_defaults():
 
 
 def test_coerce_reads_fields_and_defaults_missing():
-    coerced = coerce_home_rail_preferences({"details_open": "true", "recent_open": "off"})
+    coerced = coerce_home_rail_preferences(
+        {"details_open": "true", "recent_open": "off"}
+    )
     assert coerced.details_open is True
     assert coerced.recent_open is False
     assert coerced.attention_open is True

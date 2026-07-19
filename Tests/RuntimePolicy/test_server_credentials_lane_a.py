@@ -50,8 +50,7 @@ def test_keyring_clear_all_removes_indexed_entries():
     index_key = (DEFAULT_KEYRING_SERVICE_NAME, "__credential_refs__")
     indexed = json.loads(fake.values[index_key])
     assert [
-        [entry["server_profile_id"], entry["credential_type"]]
-        for entry in indexed
+        [entry["server_profile_id"], entry["credential_type"]] for entry in indexed
     ] == index_entries
     assert all(entry["version"] == 1 for entry in indexed)
     assert all(
@@ -70,7 +69,9 @@ def test_keyring_clear_all_removes_legacy_list_index_entries():
     fake = FakeKeyring()
     index_key = (DEFAULT_KEYRING_SERVICE_NAME, "__credential_refs__")
     fake.values[index_key] = json.dumps([["server-a", SERVER_CREDENTIAL_ACCESS_TOKEN]])
-    fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "server-a:access_token")] = "legacy-secret"
+    fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "server-a:access_token")] = (
+        "legacy-secret"
+    )
     store = KeyringServerCredentialStore(keyring_backend=fake)
 
     store.clear_all()
@@ -108,7 +109,9 @@ def test_keyring_scoped_principal_none_and_dash_do_not_collide():
 
 def test_keyring_non_legacy_scoped_lookup_does_not_read_legacy_secret():
     fake = FakeKeyring()
-    fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "server-a:access_token")] = "legacy-secret"
+    fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "server-a:access_token")] = (
+        "legacy-secret"
+    )
     store = KeyringServerCredentialStore(keyring_backend=fake)
     non_legacy_scope = ServerCredentialScope(
         server_profile_id="server-a",
@@ -188,7 +191,9 @@ def test_keyring_clear_server_removes_unindexed_legacy_entries_for_profile():
     fake.values[legacy_key] = "legacy-secret"
     store = KeyringServerCredentialStore(keyring_backend=fake)
 
-    assert store.get_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN) == "legacy-secret"
+    assert (
+        store.get_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN) == "legacy-secret"
+    )
 
     store.clear_server("server-a")
 

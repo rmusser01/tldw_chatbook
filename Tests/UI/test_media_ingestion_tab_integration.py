@@ -34,7 +34,9 @@ def mock_app_instance() -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_media_ingest_screen_exposes_current_window(mock_app_instance: MagicMock) -> None:
+async def test_media_ingest_screen_exposes_current_window(
+    mock_app_instance: MagicMock,
+) -> None:
     app = MediaIngestScreenHost(mock_app_instance)
 
     async with app.run_test() as pilot:

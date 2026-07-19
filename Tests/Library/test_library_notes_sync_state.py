@@ -18,6 +18,7 @@ from tldw_chatbook.Library.library_notes_sync_state import (
 
 # ----- next_sync_direction: cycling + wrap + unknown -----------------------
 
+
 def test_next_sync_direction_cycles_in_order():
     assert next_sync_direction("bidirectional") == "disk_to_db"
     assert next_sync_direction("disk_to_db") == "db_to_disk"
@@ -36,6 +37,7 @@ def test_next_sync_direction_unknown_value_returns_first():
 # "ask" is gone from the cycle entirely (A1): the engine keeps its own
 # ConflictResolution.ASK, but this panel never offers it -- a dead
 # affordance, since nothing in the Library ever prompts on a conflict.
+
 
 def test_next_sync_conflict_cycles_in_order():
     assert next_sync_conflict("newer_wins") == "disk_wins"
@@ -62,6 +64,7 @@ def test_next_sync_conflict_never_offers_ask():
 # B2: "DB" jargon is gone from the labels -- the config keys/enum values are
 # unchanged, only the human-facing wording says "Library" instead.
 
+
 def test_sync_direction_label_known_values():
     assert sync_direction_label("bidirectional") == "Bidirectional"
     assert sync_direction_label("disk_to_db") == "Disk → Library"
@@ -87,6 +90,7 @@ def test_sync_conflict_label_unknown_falls_back_to_raw():
 
 # ----- sync_status_line: all variants ---------------------------------------
 
+
 def test_sync_status_line_idle():
     assert sync_status_line("idle") == "idle"
 
@@ -106,11 +110,16 @@ def test_sync_status_line_done_shows_changes_and_conflicts():
 
 
 def test_sync_status_line_done_with_no_conflicts_omits_conflict_clause():
-    assert sync_status_line("done", processed=12, total=12, conflicts=0) == "done · 12 changes"
+    assert (
+        sync_status_line("done", processed=12, total=12, conflicts=0)
+        == "done · 12 changes"
+    )
 
 
 def test_sync_status_line_done_pluralizes_singular_change():
-    assert sync_status_line("done", processed=1, total=1, conflicts=0) == "done · 1 change"
+    assert (
+        sync_status_line("done", processed=1, total=1, conflicts=0) == "done · 1 change"
+    )
 
 
 def test_sync_status_line_done_pluralizes_singular_conflict():
@@ -124,11 +133,17 @@ def test_sync_status_line_done_zero_changes_says_no_changes():
     # "0 files (scanned)" -- the copy the PR bot flagged as misleading. The
     # done line counts CHANGES (created+updated notes/files), and the
     # zero case says so in words.
-    assert sync_status_line("done", processed=0, total=0, conflicts=0) == "done · no changes"
+    assert (
+        sync_status_line("done", processed=0, total=0, conflicts=0)
+        == "done · no changes"
+    )
 
 
 def test_sync_status_line_failed_shows_reason():
-    assert sync_status_line("failed", error="folder not found") == "failed · folder not found"
+    assert (
+        sync_status_line("failed", error="folder not found")
+        == "failed · folder not found"
+    )
 
 
 def test_sync_status_line_failed_with_no_reason():
@@ -140,6 +155,7 @@ def test_sync_status_line_unknown_status_falls_back_to_raw():
 
 
 # ----- append_activity: cap + ordering --------------------------------------
+
 
 def test_append_activity_prepends_most_recent_first():
     lines = append_activity((), "first entry")
@@ -169,6 +185,7 @@ def test_append_activity_empty_start():
 
 # ----- count_noun: pluralization helper -------------------------------------
 
+
 def test_count_noun_singular_has_no_trailing_s():
     assert count_noun(1, "file") == "1 file"
 
@@ -187,6 +204,7 @@ def test_count_noun_negative_is_plural():
 
 # ----- auto_sync_label: cadence + state -------------------------------------
 
+
 def test_auto_sync_label_enabled_shows_checkmark_and_cadence():
     assert auto_sync_label(True) == "auto-sync: every 5m ✓"
 
@@ -201,6 +219,7 @@ def test_auto_sync_label_cadence_matches_interval_constant():
 
 
 # ----- LibraryNotesSyncState.running: default + explicit ---------------------
+
 
 def test_library_notes_sync_state_running_defaults_false():
     state = LibraryNotesSyncState(

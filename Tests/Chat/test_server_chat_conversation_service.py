@@ -7,44 +7,92 @@ from typing import Any
 import pytest
 
 import tldw_chatbook.Chat.server_chat_conversation_service as chat_conversation_module
-from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
+from tldw_chatbook.Chat.server_chat_conversation_service import (
+    ServerChatConversationService,
+)
 from tldw_chatbook.runtime_policy import PolicyDecision, PolicyDeniedError
-from tldw_chatbook.tldw_api.chat_loop_schemas import ChatLoopActionResponse, ChatLoopEventsResponse, ChatLoopStartResponse
+from tldw_chatbook.tldw_api.chat_loop_schemas import (
+    ChatLoopActionResponse,
+    ChatLoopEventsResponse,
+    ChatLoopStartResponse,
+)
 
 
 @dataclass
 class FakeChatClient:
-    calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = field(default_factory=list)
+    calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = field(
+        default_factory=list
+    )
 
     async def list_chat_conversations(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(("list_chat_conversations", (), kwargs))
-        return {"items": [{"id": "conv-1"}], "pagination": {"total": 1, "limit": 50, "offset": 0, "has_more": False}}
+        return {
+            "items": [{"id": "conv-1"}],
+            "pagination": {"total": 1, "limit": 50, "offset": 0, "has_more": False},
+        }
 
-    async def get_chat_conversation(self, conversation_id: str, **kwargs: Any) -> dict[str, Any]:
+    async def get_chat_conversation(
+        self, conversation_id: str, **kwargs: Any
+    ) -> dict[str, Any]:
         self.calls.append(("get_chat_conversation", (conversation_id,), kwargs))
         return {"id": conversation_id, "version": 3}
 
-    async def update_chat_conversation(self, conversation_id: str, request_data: Any, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(("update_chat_conversation", (conversation_id, request_data), kwargs))
+    async def update_chat_conversation(
+        self, conversation_id: str, request_data: Any, **kwargs: Any
+    ) -> dict[str, Any]:
+        self.calls.append(
+            ("update_chat_conversation", (conversation_id, request_data), kwargs)
+        )
         return {"id": conversation_id, "version": 4}
 
-    async def get_chat_conversation_tree(self, conversation_id: str, **kwargs: Any) -> dict[str, Any]:
+    async def get_chat_conversation_tree(
+        self, conversation_id: str, **kwargs: Any
+    ) -> dict[str, Any]:
         self.calls.append(("get_chat_conversation_tree", (conversation_id,), kwargs))
-        return {"conversation": {"id": conversation_id}, "root_threads": [], "pagination": {}, "depth_cap": 4}
+        return {
+            "conversation": {"id": conversation_id},
+            "root_threads": [],
+            "pagination": {},
+            "depth_cap": 4,
+        }
 
-    async def get_chat_conversation_messages_with_context(self, conversation_id: str, **kwargs: Any) -> list[dict[str, Any]]:
-        self.calls.append(("get_chat_conversation_messages_with_context", (conversation_id,), kwargs))
-        return [{"id": "msg-1", "conversation_id": conversation_id, "rag_context": {"search_query": "alpha"}}]
+    async def get_chat_conversation_messages_with_context(
+        self, conversation_id: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        self.calls.append(
+            ("get_chat_conversation_messages_with_context", (conversation_id,), kwargs)
+        )
+        return [
+            {
+                "id": "msg-1",
+                "conversation_id": conversation_id,
+                "rag_context": {"search_query": "alpha"},
+            }
+        ]
 
-    async def get_chat_conversation_citations(self, conversation_id: str) -> dict[str, Any]:
+    async def get_chat_conversation_citations(
+        self, conversation_id: str
+    ) -> dict[str, Any]:
         self.calls.append(("get_chat_conversation_citations", (conversation_id,), {}))
-        return {"conversation_id": conversation_id, "citations": [{"id": "doc-1"}], "total_count": 1}
+        return {
+            "conversation_id": conversation_id,
+            "citations": [{"id": "doc-1"}],
+            "total_count": 1,
+        }
 
-    async def create_character_chat_session(self, request_data: Any, **kwargs: Any) -> dict[str, Any]:
+    async def create_character_chat_session(
+        self, request_data: Any, **kwargs: Any
+    ) -> dict[str, Any]:
         self.calls.append(("create_character_chat_session", (request_data,), kwargs))
-        return {"id": "chat-1", "title": request_data.title, "character_id": request_data.character_id}
+        return {
+            "id": "chat-1",
+            "title": request_data.title,
+            "character_id": request_data.character_id,
+        }
 
-    async def delete_character_chat_session(self, chat_id: str, **kwargs: Any) -> dict[str, Any]:
+    async def delete_character_chat_session(
+        self, chat_id: str, **kwargs: Any
+    ) -> dict[str, Any]:
         self.calls.append(("delete_character_chat_session", (chat_id,), kwargs))
         return {"success": True}
 
@@ -56,20 +104,40 @@ class FakeChatClient:
         self.calls.append(("save_chat_knowledge", (request_data,), {}))
         return {"note_id": 9, "conversation_id": "conv-1"}
 
-    async def create_chat_conversation_share_link(self, conversation_id: str, request_data: Any, **kwargs: Any) -> Any:
-        self.calls.append(("create_chat_conversation_share_link", (conversation_id, request_data), kwargs))
+    async def create_chat_conversation_share_link(
+        self, conversation_id: str, request_data: Any, **kwargs: Any
+    ) -> Any:
+        self.calls.append(
+            (
+                "create_chat_conversation_share_link",
+                (conversation_id, request_data),
+                kwargs,
+            )
+        )
         return {"share_id": "share-1"}
 
-    async def list_chat_conversation_share_links(self, conversation_id: str, **kwargs: Any) -> Any:
-        self.calls.append(("list_chat_conversation_share_links", (conversation_id,), kwargs))
+    async def list_chat_conversation_share_links(
+        self, conversation_id: str, **kwargs: Any
+    ) -> Any:
+        self.calls.append(
+            ("list_chat_conversation_share_links", (conversation_id,), kwargs)
+        )
         return {"conversation_id": conversation_id, "links": []}
 
-    async def revoke_chat_conversation_share_link(self, conversation_id: str, share_id: str, **kwargs: Any) -> Any:
-        self.calls.append(("revoke_chat_conversation_share_link", (conversation_id, share_id), kwargs))
+    async def revoke_chat_conversation_share_link(
+        self, conversation_id: str, share_id: str, **kwargs: Any
+    ) -> Any:
+        self.calls.append(
+            ("revoke_chat_conversation_share_link", (conversation_id, share_id), kwargs)
+        )
         return {"success": True, "share_id": share_id}
 
-    async def resolve_chat_conversation_share_token(self, share_token: str, *, limit: int = 200) -> Any:
-        self.calls.append(("resolve_chat_conversation_share_token", (share_token,), {"limit": limit}))
+    async def resolve_chat_conversation_share_token(
+        self, share_token: str, *, limit: int = 200
+    ) -> Any:
+        self.calls.append(
+            ("resolve_chat_conversation_share_token", (share_token,), {"limit": limit})
+        )
         return {"conversation_id": "conv-1", "messages": []}
 
     async def get_chat_analytics(self, **kwargs: Any) -> Any:
@@ -80,15 +148,23 @@ class FakeChatClient:
         self.calls.append(("start_chat_loop_run", (request_data,), {}))
         return ChatLoopStartResponse(run_id="run_123")
 
-    async def list_chat_loop_events(self, run_id: str, *, after_seq: int = 0) -> ChatLoopEventsResponse:
-        self.calls.append(("list_chat_loop_events", (run_id,), {"after_seq": after_seq}))
+    async def list_chat_loop_events(
+        self, run_id: str, *, after_seq: int = 0
+    ) -> ChatLoopEventsResponse:
+        self.calls.append(
+            ("list_chat_loop_events", (run_id,), {"after_seq": after_seq})
+        )
         return ChatLoopEventsResponse(run_id=run_id, events=[])
 
-    async def approve_chat_loop_call(self, run_id: str, request_data: Any) -> ChatLoopActionResponse:
+    async def approve_chat_loop_call(
+        self, run_id: str, request_data: Any
+    ) -> ChatLoopActionResponse:
         self.calls.append(("approve_chat_loop_call", (run_id, request_data), {}))
         return ChatLoopActionResponse(ok=True)
 
-    async def reject_chat_loop_call(self, run_id: str, request_data: Any) -> ChatLoopActionResponse:
+    async def reject_chat_loop_call(
+        self, run_id: str, request_data: Any
+    ) -> ChatLoopActionResponse:
         self.calls.append(("reject_chat_loop_call", (run_id, request_data), {}))
         return ChatLoopActionResponse(ok=True)
 
@@ -140,7 +216,9 @@ def test_server_chat_conversation_service_module_does_not_reference_legacy_confi
 
 
 @pytest.mark.asyncio
-async def test_server_chat_conversation_service_from_config_builds_and_reuses_client_lazily(monkeypatch):
+async def test_server_chat_conversation_service_from_config_builds_and_reuses_client_lazily(
+    monkeypatch,
+):
     sentinel_client = FakeChatClient()
     build_client_calls: list[dict[str, Any]] = []
 
@@ -153,7 +231,9 @@ async def test_server_chat_conversation_service_from_config_builds_and_reuses_cl
         build_client,
     )
 
-    service = ServerChatConversationService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+    service = ServerChatConversationService.from_config(
+        {"tldw_api": {"base_url": "https://example.com"}}
+    )
 
     assert isinstance(service, ServerChatConversationService)
     assert service.client is None
@@ -217,7 +297,9 @@ async def test_server_chat_conversation_service_denied_policy_does_not_build_pro
         authority_owner="server",
     )
     provider = ExplodingProvider()
-    service = ServerChatConversationService.from_server_context_provider(provider, policy_enforcer=policy)
+    service = ServerChatConversationService.from_server_context_provider(
+        provider, policy_enforcer=policy
+    )
 
     with pytest.raises(PolicyDeniedError):
         await service.list_conversations()
@@ -231,11 +313,33 @@ async def test_server_chat_conversation_service_enforces_policy_and_routes_clien
     policy = RecordingPolicy()
     service = ServerChatConversationService(client, policy_enforcer=policy)
 
-    await service.list_conversations(query="billing", scope_type="workspace", workspace_id="ws-1")
-    await service.get_conversation("conv-1", scope_type="workspace", workspace_id="ws-1")
-    await service.update_conversation("conv-1", {"version": 3, "state": "resolved"}, scope_type="workspace", workspace_id="ws-1")
-    await service.get_conversation_tree("conv-1", limit=10, offset=5, max_depth=3, scope_type="workspace", workspace_id="ws-1")
-    await service.get_messages_with_context("conv-1", limit=5, include_rag_context=False, scope_type="workspace", workspace_id="ws-1")
+    await service.list_conversations(
+        query="billing", scope_type="workspace", workspace_id="ws-1"
+    )
+    await service.get_conversation(
+        "conv-1", scope_type="workspace", workspace_id="ws-1"
+    )
+    await service.update_conversation(
+        "conv-1",
+        {"version": 3, "state": "resolved"},
+        scope_type="workspace",
+        workspace_id="ws-1",
+    )
+    await service.get_conversation_tree(
+        "conv-1",
+        limit=10,
+        offset=5,
+        max_depth=3,
+        scope_type="workspace",
+        workspace_id="ws-1",
+    )
+    await service.get_messages_with_context(
+        "conv-1",
+        limit=5,
+        include_rag_context=False,
+        scope_type="workspace",
+        workspace_id="ws-1",
+    )
     await service.get_citations("conv-1")
 
     assert policy.calls == [
@@ -262,12 +366,23 @@ async def test_server_chat_conversation_service_enforces_policy_and_routes_clien
     assert client.calls[3] == (
         "get_chat_conversation_tree",
         ("conv-1",),
-        {"limit": 10, "offset": 5, "max_depth": 3, "scope_type": "workspace", "workspace_id": "ws-1"},
+        {
+            "limit": 10,
+            "offset": 5,
+            "max_depth": 3,
+            "scope_type": "workspace",
+            "workspace_id": "ws-1",
+        },
     )
     assert client.calls[4] == (
         "get_chat_conversation_messages_with_context",
         ("conv-1",),
-        {"limit": 5, "include_rag_context": False, "scope_type": "workspace", "workspace_id": "ws-1"},
+        {
+            "limit": 5,
+            "include_rag_context": False,
+            "scope_type": "workspace",
+            "workspace_id": "ws-1",
+        },
     )
     assert client.calls[5] == (
         "get_chat_conversation_citations",
@@ -351,9 +466,7 @@ async def test_server_chat_conversation_create_payload_does_not_forward_local_ma
     )
 
     call = next(
-        call
-        for call in client.calls
-        if call[0] == "create_character_chat_session"
+        call for call in client.calls if call[0] == "create_character_chat_session"
     )
     request_data = call[1][0]
     payload = request_data.model_dump(exclude_none=True, mode="json")
@@ -380,11 +493,7 @@ async def test_server_chat_conversation_update_payload_does_not_forward_local_ma
         },
     )
 
-    call = next(
-        call
-        for call in client.calls
-        if call[0] == "update_chat_conversation"
-    )
+    call = next(call for call in client.calls if call[0] == "update_chat_conversation")
     request_data = call[1][1]
     payload = request_data.model_dump(exclude_none=True, mode="json")
 
@@ -445,12 +554,22 @@ async def test_server_chat_conversation_service_routes_chat_adjunct_controls_wit
     service = ServerChatConversationService(client, policy_enforcer=policy)
 
     await service.list_commands()
-    await service.save_knowledge(conversation_id="conv-1", snippet="Important", tags=["alpha"])
-    await service.create_share_link("conv-1", {"label": "Reviewer"}, scope_type="workspace", workspace_id="ws-1")
-    await service.list_share_links("conv-1", scope_type="workspace", workspace_id="ws-1")
-    await service.revoke_share_link("conv-1", "share-1", scope_type="workspace", workspace_id="ws-1")
+    await service.save_knowledge(
+        conversation_id="conv-1", snippet="Important", tags=["alpha"]
+    )
+    await service.create_share_link(
+        "conv-1", {"label": "Reviewer"}, scope_type="workspace", workspace_id="ws-1"
+    )
+    await service.list_share_links(
+        "conv-1", scope_type="workspace", workspace_id="ws-1"
+    )
+    await service.revoke_share_link(
+        "conv-1", "share-1", scope_type="workspace", workspace_id="ws-1"
+    )
     await service.resolve_share_token("token", limit=25)
-    await service.get_analytics(start_date="2026-04-01T00:00:00Z", end_date="2026-04-26T00:00:00Z")
+    await service.get_analytics(
+        start_date="2026-04-01T00:00:00Z", end_date="2026-04-26T00:00:00Z"
+    )
 
     assert policy.calls[-7:] == [
         "chat.commands.list.server",
@@ -480,7 +599,11 @@ async def test_server_chat_conversation_service_routes_chat_adjunct_controls_wit
         ("conv-1", "share-1"),
         {"scope_type": "workspace", "workspace_id": "ws-1"},
     )
-    assert client.calls[-2] == ("resolve_chat_conversation_share_token", ("token",), {"limit": 25})
+    assert client.calls[-2] == (
+        "resolve_chat_conversation_share_token",
+        ("token",),
+        {"limit": 25},
+    )
     assert client.calls[-1] == (
         "get_chat_analytics",
         (),

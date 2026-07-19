@@ -15,7 +15,6 @@ from textual.app import App, ComposeResult
 from textual.widgets import Input
 
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
-from tldw_chatbook.Third_Party.textual_fspicker.base_dialog import Dialog
 from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileOpen,
     EnhancedFileSave,

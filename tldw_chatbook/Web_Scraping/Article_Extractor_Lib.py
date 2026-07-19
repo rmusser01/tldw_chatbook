@@ -29,31 +29,30 @@ Dependencies:
 - pandas: Data manipulation
 - asyncio: Asynchronous operations
 """
+
 #
 # Import necessary libraries
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import hashlib
 import importlib.util
 import json
 import os
 import random
-import tempfile
 from typing import Any, Dict, List, Union, Optional, Tuple
+
 #
 # 3rd-Party Imports
 import asyncio
-from urllib.parse import (
-    urljoin,
-    urlparse
-)
+from urllib.parse import urljoin, urlparse
 from xml.dom import minidom
 import xml.etree.ElementTree as xET
+
 #
 # External Libraries
 # Handle optional web scraping dependencies
 try:
     from bs4 import BeautifulSoup
+
     BS4_AVAILABLE = True
 except ImportError:
     BS4_AVAILABLE = False
@@ -85,7 +84,7 @@ TimeoutError = Exception
 async_playwright = None
 sync_playwright = None
 
-import requests
+import requests  # noqa: E402
 
 TRAFILATURA_AVAILABLE = importlib.util.find_spec("trafilatura") is not None
 trafilatura = None
@@ -141,13 +140,18 @@ def _ensure_trafilatura() -> bool:
     trafilatura = _trafilatura
     return True
 
+
 try:
     from tqdm import tqdm
+
     TQDM_AVAILABLE = True
 except ImportError:
     TQDM_AVAILABLE = False
+
     def tqdm(iterable, *args, **kwargs):
         return iterable
+
+
 #
 # Import Local
 # `analyze` (LLM_Calls.Summarization_General_Lib) pulls in the summarization
@@ -155,22 +159,25 @@ except ImportError:
 # lazily inside scrape_and_summarize_multiple(), only when summarization is
 # actually requested, so a plain `import tldw_chatbook.app` doesn't eagerly
 # load it.
-from tldw_chatbook.Metrics.metrics_logger import log_histogram, log_counter
-from tldw_chatbook.Logging_Config import logging
-from tldw_chatbook.DB.Client_Media_DB_v2 import ingest_article_to_db_new
-from tldw_chatbook.Utils.input_validation import validate_url, sanitize_string
-from tldw_chatbook.Utils.path_validation import validate_path
-from tldw_chatbook.Utils.secure_temp_files import secure_temp_file, get_temp_manager
-from tldw_chatbook.Web_Scraping.exceptions import (
-    InvalidURLError, NetworkError, BrowserError, ContentExtractionError,
-    MaxRetriesExceededError, TimeoutError as ScrapingTimeoutError
+from tldw_chatbook.Metrics.metrics_logger import log_histogram, log_counter  # noqa: E402
+from tldw_chatbook.Logging_Config import logging  # noqa: E402
+from tldw_chatbook.DB.Client_Media_DB_v2 import ingest_article_to_db_new  # noqa: E402
+from tldw_chatbook.Utils.input_validation import validate_url  # noqa: E402
+from tldw_chatbook.Utils.secure_temp_files import secure_temp_file, get_temp_manager  # noqa: E402
+from tldw_chatbook.Web_Scraping.exceptions import (  # noqa: E402
+    InvalidURLError,
+    NetworkError,
+    BrowserError,
+    MaxRetriesExceededError,
+    TimeoutError as ScrapingTimeoutError,
 )
 
 #
 #######################################################################################################################
 # Function Definitions
 #
-load_and_log_configs = lambda: {}
+def load_and_log_configs():
+    return {}
 # FIXME - Add a config file option/check for the user agent
 web_scraping_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
@@ -184,7 +191,8 @@ MAX_CONCURRENT_SCRAPERS = 5  # Configurable limit
 scraping_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SCRAPERS)
 
 # Thread-local event loop storage for proper async/sync handling
-import threading
+import threading  # noqa: E402
+
 _thread_local = threading.local()
 
 
@@ -196,7 +204,7 @@ def get_or_create_event_loop():
         return loop, False  # Return loop and indicate we're already in async context
     except RuntimeError:
         # No running loop, check thread-local storage
-        if not hasattr(_thread_local, 'loop') or _thread_local.loop.is_closed():
+        if not hasattr(_thread_local, "loop") or _thread_local.loop.is_closed():
             _thread_local.loop = asyncio.new_event_loop()
             asyncio.set_event_loop(_thread_local.loop)
         return _thread_local.loop, True  # Return loop and indicate we created it
@@ -205,34 +213,36 @@ def get_or_create_event_loop():
 def run_async_function(async_func, *args, **kwargs):
     """
     Properly run an async function from sync context.
-    
+
     This avoids creating multiple event loops and handles the case where
     we're already in an async context.
     """
     loop, created = get_or_create_event_loop()
-    
+
     if created:
         # We're in sync context, run the coroutine
         return loop.run_until_complete(async_func(*args, **kwargs))
     else:
         # We're already in async context, this shouldn't happen
         # but if it does, create a task
-        raise RuntimeError("Cannot use run_async_function from within an async context. Use await directly.")
+        raise RuntimeError(
+            "Cannot use run_async_function from within an async context. Use await directly."
+        )
 
 
 async def scrape_urls_batch(urls: List[str], progress_callback=None) -> List[Dict]:
     """
     Scrape multiple URLs with controlled concurrency.
-    
+
     Args:
         urls: List of URLs to scrape
         progress_callback: Optional callback function for progress updates
-        
+
     Returns:
         List of article data dictionaries
     """
     results = []
-    
+
     async def scrape_with_progress(url: str, index: int) -> Dict:
         try:
             result = await scrape_article(url)
@@ -241,18 +251,14 @@ async def scrape_urls_batch(urls: List[str], progress_callback=None) -> List[Dic
             return result
         except Exception as e:
             logging.error(f"Error scraping {url}: {e}")
-            return {
-                'url': url,
-                'extraction_successful': False,
-                'error': str(e)
-            }
-    
+            return {"url": url, "extraction_successful": False, "error": str(e)}
+
     # Create tasks for all URLs
     tasks = [scrape_with_progress(url, i) for i, url in enumerate(urls)]
-    
+
     # Execute with controlled concurrency (semaphore is used inside scrape_article)
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     # Filter out exceptions and None values
     valid_results = []
     for result in results:
@@ -260,23 +266,25 @@ async def scrape_urls_batch(urls: List[str], progress_callback=None) -> List[Dic
             logging.error(f"Batch scraping error: {result}")
         elif result and isinstance(result, dict):
             valid_results.append(result)
-    
+
     return valid_results
+
 
 #################################################################
 #
 # Scraping-related functions:
 
+
 def get_page_title(url: str) -> str:
     """
     Extract the title from a web page.
-    
+
     Args:
         url (str): The URL of the page to extract title from
-        
+
     Returns:
         str: The page title, or "Untitled" if extraction fails
-        
+
     Example:
         >>> title = get_page_title("https://example.com")
         >>> print(title)
@@ -286,17 +294,23 @@ def get_page_title(url: str) -> str:
     if not validate_url(url):
         logging.error(f"Invalid URL provided to get_page_title: {url}")
         return "Untitled"
-    
+
     if not BS4_AVAILABLE:
-        logging.warning("BeautifulSoup not available. Install with: pip install tldw_chatbook[websearch]")
+        logging.warning(
+            "BeautifulSoup not available. Install with: pip install tldw_chatbook[websearch]"
+        )
         return "Untitled (BeautifulSoup not available)"
-    
+
     try:
         response = requests.get(url, timeout=10)  # Add timeout
         if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            title_tag = soup.find('title')
-            title = title_tag.string.strip() if title_tag and title_tag.string else "Untitled"
+            soup = BeautifulSoup(response.text, "html.parser")
+            title_tag = soup.find("title")
+            title = (
+                title_tag.string.strip()
+                if title_tag and title_tag.string
+                else "Untitled"
+            )
             log_counter("page_title_extracted", labels={"success": "true"})
             return title
         elif response.status_code == 401:
@@ -313,33 +327,41 @@ def get_page_title(url: str) -> str:
             return "Untitled"
     except requests.Timeout:
         logging.error(f"Timeout fetching page title from {url}")
-        log_counter("page_title_extracted", labels={"success": "false", "error": "timeout"})
+        log_counter(
+            "page_title_extracted", labels={"success": "false", "error": "timeout"}
+        )
         return "Untitled (Timeout)"
     except requests.ConnectionError:
         logging.error(f"Connection error fetching page title from {url}")
-        log_counter("page_title_extracted", labels={"success": "false", "error": "connection"})
+        log_counter(
+            "page_title_extracted", labels={"success": "false", "error": "connection"}
+        )
         return "Untitled (Connection Error)"
     except requests.RequestException as e:
         logging.error(f"Error fetching page title: {e}")
-        log_counter("page_title_extracted", labels={"success": "false", "error": "other"})
+        log_counter(
+            "page_title_extracted", labels={"success": "false", "error": "other"}
+        )
         return "Untitled"
 
 
-async def scrape_article(url: str, custom_cookies: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+async def scrape_article(
+    url: str, custom_cookies: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
     """
     Asynchronously scrape an article from a URL using Playwright.
-    
+
     This function handles the complete scraping process including:
     - Browser automation with optional stealth mode
     - Cookie injection for authenticated scraping
     - Content extraction with Trafilatura
     - Metadata preservation
-    
+
     Args:
         url (str): The URL to scrape
         custom_cookies (Optional[List[Dict[str, Any]]]): Browser cookies for authentication
             Each cookie dict should have: name, value, domain, path, etc.
-            
+
     Returns:
         Dict[str, Any]: Article data containing:
             - title: Article title
@@ -348,7 +370,7 @@ async def scrape_article(url: str, custom_cookies: Optional[List[Dict[str, Any]]
             - date: Publication date
             - url: Source URL
             - extraction_successful: Success status
-            
+
     Example:
         >>> article = await scrape_article("https://example.com/article")
         >>> if article['extraction_successful']:
@@ -358,170 +380,202 @@ async def scrape_article(url: str, custom_cookies: Optional[List[Dict[str, Any]]
     if not validate_url(url):
         logging.error(f"Invalid URL provided: {url}")
         return {
-            'title': 'Invalid URL',
-            'author': 'N/A',
-            'content': 'The provided URL is invalid or malformed.',
-            'date': datetime.now().isoformat(),
-            'url': url,
-            'extraction_successful': False
+            "title": "Invalid URL",
+            "author": "N/A",
+            "content": "The provided URL is invalid or malformed.",
+            "date": datetime.now().isoformat(),
+            "url": url,
+            "extraction_successful": False,
         }
-    
+
     logging.info(f"Scraping article from URL: {url}")
-    
+
     # Check required dependencies (find_spec probe first, avoids the real
     # import for the common "not installed" case; then actually import).
     if not PLAYWRIGHT_AVAILABLE or not _ensure_playwright():
-        logging.error("Playwright not available. Install with: pip install tldw_chatbook[websearch]")
+        logging.error(
+            "Playwright not available. Install with: pip install tldw_chatbook[websearch]"
+        )
         return {
-            'title': 'Error',
-            'author': 'Unknown',
-            'content': 'Playwright not available for web scraping',
-            'date': datetime.now().isoformat(),
-            'url': url,
-            'extraction_successful': False,
-            'error': 'Playwright not installed'
+            "title": "Error",
+            "author": "Unknown",
+            "content": "Playwright not available for web scraping",
+            "date": datetime.now().isoformat(),
+            "url": url,
+            "extraction_successful": False,
+            "error": "Playwright not installed",
         }
 
     if not TRAFILATURA_AVAILABLE or not _ensure_trafilatura():
-        logging.error("Trafilatura not available. Install with: pip install tldw_chatbook[websearch]")
+        logging.error(
+            "Trafilatura not available. Install with: pip install tldw_chatbook[websearch]"
+        )
         return {
-            'title': 'Error',
-            'author': 'Unknown',
-            'content': 'Trafilatura not available for content extraction',
-            'date': datetime.now().isoformat(),
-            'url': url,
-            'extraction_successful': False,
-            'error': 'Trafilatura not installed'
+            "title": "Error",
+            "author": "Unknown",
+            "content": "Trafilatura not available for content extraction",
+            "date": datetime.now().isoformat(),
+            "url": url,
+            "extraction_successful": False,
+            "error": "Trafilatura not installed",
         }
 
     async def fetch_html(url: str) -> str:
-            # Load and log the configuration
-            loaded_config = load_and_log_configs()
+        # Load and log the configuration
+        loaded_config = load_and_log_configs()
 
-            # load retry count from config
-            scrape_retry_count = loaded_config['web_scraper'].get('web_scraper_retry_count', 3)
-            retries = scrape_retry_count
-            # Load retry timeout value from config
-            web_scraper_retry_timeout = loaded_config['web_scraper'].get('web_scraper_retry_timeout', 60)
-            timeout_ms = web_scraper_retry_timeout
+        # load retry count from config
+        scrape_retry_count = loaded_config["web_scraper"].get(
+            "web_scraper_retry_count", 3
+        )
+        retries = scrape_retry_count
+        # Load retry timeout value from config
+        web_scraper_retry_timeout = loaded_config["web_scraper"].get(
+            "web_scraper_retry_timeout", 60
+        )
+        timeout_ms = web_scraper_retry_timeout
 
-            # Whether stealth mode is enabled
-            stealth_enabled = loaded_config['web_scraper'].get('web_scraper_stealth_playwright', False)
+        # Whether stealth mode is enabled
+        stealth_enabled = loaded_config["web_scraper"].get(
+            "web_scraper_stealth_playwright", False
+        )
 
-            for attempt in range(retries):  # Introduced a retry loop to attempt fetching HTML multiple times
-                browser = None
-                try:
-                    logging.info(f"Fetching HTML from {url} (Attempt {attempt + 1}/{retries})")
+        for attempt in range(
+            retries
+        ):  # Introduced a retry loop to attempt fetching HTML multiple times
+            browser = None
+            try:
+                logging.info(
+                    f"Fetching HTML from {url} (Attempt {attempt + 1}/{retries})"
+                )
 
-                    async with async_playwright() as p:
-                        browser = await p.chromium.launch(headless=True)
-                        context = await browser.new_context(
-                            user_agent=web_scraping_user_agent,
-                            # Simulating a normal browser window size for better compatibility
-                            viewport={"width": 1280, "height": 720},
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(headless=True)
+                    context = await browser.new_context(
+                        user_agent=web_scraping_user_agent,
+                        # Simulating a normal browser window size for better compatibility
+                        viewport={"width": 1280, "height": 720},
+                    )
+                    if custom_cookies:
+                        # Apply cookies if provided
+                        await context.add_cookies(custom_cookies)
+
+                    page = await context.new_page()
+
+                    # Check if stealth mode is enabled in the config
+                    if stealth_enabled:
+                        from playwright_stealth import stealth_async
+
+                        await stealth_async(page)
+
+                    # Navigate to the URL
+                    await page.goto(
+                        url, wait_until="domcontentloaded", timeout=timeout_ms
+                    )
+
+                    # If stealth is enabled, give the page extra time to finish loading/spawning content
+                    if stealth_enabled:
+                        await page.wait_for_timeout(5000)  # 5-second delay
+                    else:
+                        # Alternatively, wait for network to be idle
+                        await page.wait_for_load_state(
+                            "networkidle", timeout=timeout_ms
                         )
-                        if custom_cookies:
-                            # Apply cookies if provided
-                            await context.add_cookies(custom_cookies)
 
-                        page = await context.new_page()
+                    # Capture final HTML
+                    content = await page.content()
 
-                        # Check if stealth mode is enabled in the config
-                        if stealth_enabled:
-                            from playwright_stealth import stealth_async
-                            await stealth_async(page)
+                    logging.info(f"HTML fetched successfully from {url}")
+                    log_counter("html_fetched", labels={"url": url})
 
-                        # Navigate to the URL
-                        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                    # Return the scraped HTML
+                    return content
 
+            except TimeoutError as e:
+                logging.error(
+                    f"Timeout fetching HTML from {url} on attempt {attempt + 1}: {e}"
+                )
+                error_type = "timeout"
+                last_error = ScrapingTimeoutError(f"Page load timeout for {url}")
 
-                        # If stealth is enabled, give the page extra time to finish loading/spawning content
-                        if stealth_enabled:
-                            await page.wait_for_timeout(5000)  # 5-second delay
-                        else:
-                            # Alternatively, wait for network to be idle
-                            await page.wait_for_load_state("networkidle", timeout=timeout_ms)
+            except Exception as e:
+                # Categorize the error
+                if "net::" in str(e) or "Network" in str(e):
+                    error_type = "network"
+                    last_error = NetworkError(f"Network error accessing {url}: {e}")
+                elif "browser" in str(e).lower() or "chrome" in str(e).lower():
+                    error_type = "browser"
+                    last_error = BrowserError(f"Browser error accessing {url}: {e}")
+                else:
+                    error_type = "unknown"
+                    last_error = e
 
-                        # Capture final HTML
-                        content = await page.content()
+                logging.error(
+                    f"Error fetching HTML from {url} on attempt {attempt + 1}: {e}"
+                )
 
-                        logging.info(f"HTML fetched successfully from {url}")
-                        log_counter("html_fetched", labels={"url": url})
+                if attempt < retries - 1:
+                    logging.info(f"Retrying in {2 * (attempt + 1)} seconds...")
+                    await asyncio.sleep(2 * (attempt + 1))  # Exponential backoff
+                else:
+                    logging.error("Max retries reached, giving up on this URL.")
+                    log_counter(
+                        "html_fetch_error", labels={"url": url, "error": error_type}
+                    )
+                    raise MaxRetriesExceededError(url, retries, last_error)
 
-                        # Return the scraped HTML
-                        return content
+            finally:
+                # Ensure the browser is closed before returning
+                if browser is not None:
+                    await browser.close()
 
-                except TimeoutError as e:
-                    logging.error(f"Timeout fetching HTML from {url} on attempt {attempt + 1}: {e}")
-                    error_type = "timeout"
-                    last_error = ScrapingTimeoutError(f"Page load timeout for {url}")
-                    
-                except Exception as e:
-                    # Categorize the error
-                    if "net::" in str(e) or "Network" in str(e):
-                        error_type = "network"
-                        last_error = NetworkError(f"Network error accessing {url}: {e}")
-                    elif "browser" in str(e).lower() or "chrome" in str(e).lower():
-                        error_type = "browser"
-                        last_error = BrowserError(f"Browser error accessing {url}: {e}")
-                    else:
-                        error_type = "unknown"
-                        last_error = e
-                    
-                    logging.error(f"Error fetching HTML from {url} on attempt {attempt + 1}: {e}")
-
-                    if attempt < retries - 1:
-                        logging.info(f"Retrying in {2 * (attempt + 1)} seconds...")
-                        await asyncio.sleep(2 * (attempt + 1))  # Exponential backoff
-                    else:
-                        logging.error("Max retries reached, giving up on this URL.")
-                        log_counter("html_fetch_error", labels={"url": url, "error": error_type})
-                        raise MaxRetriesExceededError(url, retries, last_error)
-
-                finally:
-                    # Ensure the browser is closed before returning
-                    if browser is not None:
-                        await browser.close()
-
-            # If for some reason you exit the loop without returning (unlikely), return empty string
-            return ""
+        # If for some reason you exit the loop without returning (unlikely), return empty string
+        return ""
 
     def extract_article_data(html: str, url: str) -> dict:
         logging.info(f"Extracting article data from HTML for {url}")
         # FIXME - Add option for extracting comments/tables/images
-        downloaded = trafilatura.extract(html, include_comments=False, include_tables=False, include_images=False)
+        downloaded = trafilatura.extract(
+            html, include_comments=False, include_tables=False, include_images=False
+        )
         metadata = trafilatura.extract_metadata(html)
 
         result = {
-            'title': 'N/A',
-            'author': 'N/A',
-            'content': '',
-            'date': 'N/A',
-            'url': url,
-            'extraction_successful': False
+            "title": "N/A",
+            "author": "N/A",
+            "content": "",
+            "date": "N/A",
+            "url": url,
+            "extraction_successful": False,
         }
 
         if downloaded:
             logging.info(f"Content extracted successfully from {url}")
             log_counter("article_extracted", labels={"success": "true", "url": url})
             # Add metadata to content
-            result['content'] = ContentMetadataHandler.format_content_with_metadata(
+            result["content"] = ContentMetadataHandler.format_content_with_metadata(
                 url=url,
                 content=downloaded,
                 pipeline="Trafilatura",
                 additional_metadata={
-                    "extracted_date": metadata.date if metadata and metadata.date else 'N/A',
-                    "author": metadata.author if metadata and metadata.author else 'N/A'
-                }
+                    "extracted_date": metadata.date
+                    if metadata and metadata.date
+                    else "N/A",
+                    "author": metadata.author
+                    if metadata and metadata.author
+                    else "N/A",
+                },
             )
-            result['extraction_successful'] = True
+            result["extraction_successful"] = True
 
         if metadata:
-            result.update({
-                'title': metadata.title if metadata.title else 'N/A',
-                'author': metadata.author if metadata.author else 'N/A',
-                'date': metadata.date if metadata.date else 'N/A'
-            })
+            result.update(
+                {
+                    "title": metadata.title if metadata.title else "N/A",
+                    "author": metadata.author if metadata.author else "N/A",
+                    "date": metadata.date if metadata.date else "N/A",
+                }
+            )
         else:
             log_counter("article_extracted", labels={"success": "false", "url": url})
             logging.warning("Metadata extraction failed.")
@@ -534,47 +588,57 @@ async def scrape_article(url: str, custom_cookies: Optional[List[Dict[str, Any]]
     def convert_html_to_markdown(html: str) -> str:
         logging.info("Converting HTML to Markdown")
         if not BS4_AVAILABLE:
-            logging.warning("BeautifulSoup not available for HTML to Markdown conversion")
+            logging.warning(
+                "BeautifulSoup not available for HTML to Markdown conversion"
+            )
             # Return raw HTML as fallback
             return html
-        soup = BeautifulSoup(html, 'html.parser')
-        for para in soup.find_all('p'):
+        soup = BeautifulSoup(html, "html.parser")
+        for para in soup.find_all("p"):
             # Add a newline at the end of each paragraph for markdown separation
-            para.append('\n')
+            para.append("\n")
         # Use .get_text() with separator to keep paragraph separation
-        return soup.get_text(separator='\n\n')
+        return soup.get_text(separator="\n\n")
 
     # Use semaphore to limit concurrent browser instances
     async with scraping_semaphore:
         try:
             html = await fetch_html(url)
             article_data = extract_article_data(html, url)
-            if article_data['extraction_successful']:
-                article_data['content'] = convert_html_to_markdown(article_data['content'])
+            if article_data["extraction_successful"]:
+                article_data["content"] = convert_html_to_markdown(
+                    article_data["content"]
+                )
                 logging.info(f"Article content length: {len(article_data['content'])}")
-                log_histogram("article_content_length", len(article_data['content']), labels={"url": url})
+                log_histogram(
+                    "article_content_length",
+                    len(article_data["content"]),
+                    labels={"url": url},
+                )
             return article_data
         except MaxRetriesExceededError as e:
-            logging.error(f"Failed to scrape {url} after {e.attempts} attempts: {e.last_error}")
+            logging.error(
+                f"Failed to scrape {url} after {e.attempts} attempts: {e.last_error}"
+            )
             return {
-                'title': 'Scraping Failed',
-                'author': 'N/A',
-                'content': f'Failed to scrape article after {e.attempts} attempts. Last error: {e.last_error}',
-                'date': datetime.now().isoformat(),
-                'url': url,
-                'extraction_successful': False,
-                'error': str(e.last_error)
+                "title": "Scraping Failed",
+                "author": "N/A",
+                "content": f"Failed to scrape article after {e.attempts} attempts. Last error: {e.last_error}",
+                "date": datetime.now().isoformat(),
+                "url": url,
+                "extraction_successful": False,
+                "error": str(e.last_error),
             }
         except (InvalidURLError, NetworkError, BrowserError, ScrapingTimeoutError) as e:
             logging.error(f"Scraping error for {url}: {e}")
             return {
-                'title': 'Scraping Error',
-                'author': 'N/A',
-                'content': f'Error scraping article: {e}',
-                'date': datetime.now().isoformat(),
-                'url': url,
-                'extraction_successful': False,
-                'error': str(e)
+                "title": "Scraping Error",
+                "author": "N/A",
+                "content": f"Error scraping article: {e}",
+                "date": datetime.now().isoformat(),
+                "url": url,
+                "extraction_successful": False,
+                "error": str(e),
             }
 
 
@@ -589,14 +653,14 @@ async def scrape_and_summarize_multiple(
     system_message: Optional[str] = None,
     summarize_checkbox: bool = False,
     custom_cookies: Optional[List[Dict[str, Any]]] = None,
-    temperature: float = 0.7
+    temperature: float = 0.7,
 ) -> List[Dict[str, Any]]:
     """
     Scrape and optionally summarize multiple URLs concurrently.
-    
+
     This function processes multiple URLs in parallel, extracting content
     and optionally generating summaries using the specified LLM API.
-    
+
     Args:
         urls (str): Newline-separated string of URLs to process
         custom_prompt_arg (Optional[str]): Custom prompt for summarization
@@ -608,12 +672,12 @@ async def scrape_and_summarize_multiple(
         summarize_checkbox (bool): Whether to generate summaries
         custom_cookies (Optional[List[Dict[str, Any]]]): Cookies for authentication
         temperature (float): LLM temperature setting (0.0-1.0)
-        
+
     Returns:
         List[Dict[str, Any]]: List of processed articles with:
             - All fields from scrape_article()
             - summary: Generated summary (if enabled)
-            
+
     Example:
         =>>> results = await scrape_and_summarize_multiple(
         ...     urls="https://example.com/1\nhttps://example.com/2",
@@ -628,11 +692,13 @@ async def scrape_and_summarize_multiple(
             missing.append("playwright")
         if not TRAFILATURA_AVAILABLE:
             missing.append("trafilatura")
-        logging.error(f"Missing dependencies: {', '.join(missing)}. Install with: pip install tldw_chatbook[websearch]")
+        logging.error(
+            f"Missing dependencies: {', '.join(missing)}. Install with: pip install tldw_chatbook[websearch]"
+        )
         return []
-    
-    urls_list = [url.strip() for url in urls.split('\n') if url.strip()]
-    custom_titles = custom_article_titles.split('\n') if custom_article_titles else []
+
+    urls_list = [url.strip() for url in urls.split("\n") if url.strip()]
+    custom_titles = custom_article_titles.split("\n") if custom_article_titles else []
 
     results = []
     errors = []
@@ -646,25 +712,31 @@ async def scrape_and_summarize_multiple(
         try:
             # Scrape the article
             article = await scrape_article(url, custom_cookies=custom_cookies)
-            if article and article['extraction_successful']:
+            if article and article["extraction_successful"]:
                 log_counter("article_scraped", labels={"success": "true", "url": url})
                 if custom_title:
-                    article['title'] = custom_title
+                    article["title"] = custom_title
 
                 # If summarization is requested
                 if summarize_checkbox:
-                    content = article.get('content', '')
+                    content = article.get("content", "")
                     if content:
                         # Deferred: pulls in the summarization stack
                         # (nltk/scipy/sklearn/pandas), so only import it once
                         # we actually have content to summarize.
-                        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
+                        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                            analyze,
+                        )
 
                         # Prepare prompts
-                        system_message_final = system_message or \
-                                               "Act as a professional summarizer and summarize this article."
-                        article_custom_prompt = custom_prompt_arg or \
-                                                "Act as a professional summarizer and summarize this article."
+                        system_message_final = (
+                            system_message
+                            or "Act as a professional summarizer and summarize this article."
+                        )
+                        article_custom_prompt = (
+                            custom_prompt_arg
+                            or "Act as a professional summarizer and summarize this article."
+                        )
 
                         # Summarize the content using the summarize function
                         summary = analyze(
@@ -673,16 +745,18 @@ async def scrape_and_summarize_multiple(
                             api_name=api_name,
                             api_key=api_key,
                             temp=temperature,
-                            system_message=system_message_final
+                            system_message=system_message_final,
                         )
-                        article['summary'] = summary
-                        log_counter("article_summarized", labels={"success": "true", "url": url})
+                        article["summary"] = summary
+                        log_counter(
+                            "article_summarized", labels={"success": "true", "url": url}
+                        )
                         logging.info(f"Summary generated for URL {url}")
                     else:
-                        article['summary'] = "No content available to summarize."
+                        article["summary"] = "No content available to summarize."
                         logging.warning(f"No content to summarize for URL {url}")
                 else:
-                    article['summary'] = None
+                    article["summary"] = None
 
                 results.append(article)
             else:
@@ -718,7 +792,7 @@ def scrape_and_no_summarize_then_ingest(url, keywords, custom_article_title):
     if not validate_url(url):
         logging.error(f"Invalid URL provided: {url}")
         return "Invalid URL provided."
-    
+
     try:
         # Step 1: Scrape the article
         article_data = run_async_function(scrape_article, url)
@@ -728,16 +802,27 @@ def scrape_and_no_summarize_then_ingest(url, keywords, custom_article_title):
             return "Failed to scrape the article."
 
         # Use the custom title if provided, otherwise use the scraped title
-        title = custom_article_title.strip() if custom_article_title else article_data.get('title', 'Untitled')
-        author = article_data.get('author', 'Unknown')
-        content = article_data.get('content', '')
-        ingestion_date = datetime.now().strftime('%Y-%m-%d')
+        title = (
+            custom_article_title.strip()
+            if custom_article_title
+            else article_data.get("title", "Untitled")
+        )
+        author = article_data.get("author", "Unknown")
+        content = article_data.get("content", "")
+        ingestion_date = datetime.now().strftime("%Y-%m-%d")
 
-        print(f"Title: {title}, Author: {author}, Content Length: {len(content)}")  # Debugging statement
+        print(
+            f"Title: {title}, Author: {author}, Content Length: {len(content)}"
+        )  # Debugging statement
 
         # Step 2: Ingest the article into the database
-        ingestion_result = ingest_article_to_db_new(url, title, author, content, keywords, ingestion_date, None, None)
-        log_counter("article_ingested", labels={"success": str(ingestion_result).lower(), "url": url})
+        ingestion_result = ingest_article_to_db_new(
+            url, title, author, content, keywords, ingestion_date, None, None
+        )
+        log_counter(
+            "article_ingested",
+            labels={"success": str(ingestion_result).lower(), "url": url},
+        )
 
         # When displaying content, we might want to strip metadata
         display_content = ContentMetadataHandler.strip_metadata(content)
@@ -761,7 +846,7 @@ def scrape_from_filtered_sitemap(sitemap_file: str, filter_function) -> list:
         root = tree.getroot()
 
         articles = []
-        for url in root.findall('.//{http://www.sitemaps.org/schemas/sitemap/0.9}loc'):
+        for url in root.findall(".//{http://www.sitemaps.org/schemas/sitemap/0.9}loc"):
             if filter_function(url.text):
                 article_data = scrape_article(url.text)
                 if article_data:
@@ -784,14 +869,32 @@ def is_content_page(url: str) -> bool:
     # Add more specific checks here based on the website's structure
     # Exclude common non-content pages
     exclude_patterns = [
-        '/tag/', '/category/', '/author/', '/search/', '/page/',
-        'wp-content', 'wp-includes', 'wp-json', 'wp-admin',
-        'login', 'register', 'cart', 'checkout', 'account',
-        '.jpg', '.png', '.gif', '.pdf', '.zip'
+        "/tag/",
+        "/category/",
+        "/author/",
+        "/search/",
+        "/page/",
+        "wp-content",
+        "wp-includes",
+        "wp-json",
+        "wp-admin",
+        "login",
+        "register",
+        "cart",
+        "checkout",
+        "account",
+        ".jpg",
+        ".png",
+        ".gif",
+        ".pdf",
+        ".zip",
     ]
     return not any(pattern in url.lower() for pattern in exclude_patterns)
 
-def scrape_and_convert_with_filter(source: str, output_file: str, filter_function=is_content_page, level: int = None):
+
+def scrape_and_convert_with_filter(
+    source: str, output_file: str, filter_function=is_content_page, level: int = None
+):
     """
     Scrape articles from a sitemap or by URL level, apply filtering, and convert to a single markdown file.
 
@@ -803,19 +906,19 @@ def scrape_and_convert_with_filter(source: str, output_file: str, filter_functio
     if level is not None:
         # Scraping by URL level
         articles = scrape_by_url_level(source, level)
-        articles = [article for article in articles if filter_function(article['url'])]
-    elif source.startswith('http'):
+        articles = [article for article in articles if filter_function(article["url"])]
+    elif source.startswith("http"):
         # Scraping from online sitemap
         articles = scrape_from_sitemap(source)
-        articles = [article for article in articles if filter_function(article['url'])]
+        articles = [article for article in articles if filter_function(article["url"])]
     else:
         # Scraping from local sitemap file
         articles = scrape_from_filtered_sitemap(source, filter_function)
 
-    articles = [article for article in articles if filter_function(article['url'])]
+    articles = [article for article in articles if filter_function(article["url"])]
     markdown_content = convert_to_markdown(articles)
 
-    with open(output_file, 'w', encoding='utf-8') as f:
+    with open(output_file, "w", encoding="utf-8") as f:
         f.write(markdown_content)
 
     logging.info(f"Scraped and filtered content saved to {output_file}")
@@ -832,7 +935,7 @@ async def scrape_entire_site(base_url: str) -> List[Dict]:
     if not validate_url(base_url):
         logging.error(f"Invalid base URL provided: {base_url}")
         return []
-    
+
     # Step 1: Collect internal links from the site
     links = collect_internal_links(base_url)
     log_histogram("internal_links_collected", len(links), labels={"base_url": base_url})
@@ -844,6 +947,7 @@ async def scrape_entire_site(base_url: str) -> List[Dict]:
     # Step 3: Scrape each URL in the sitemap
     scraped_articles = []
     try:
+
         async def scrape_and_log(link):
             logging.info(f"Scraping {link} ...")
             article_data = await scrape_article(link)
@@ -858,10 +962,16 @@ async def scrape_entire_site(base_url: str) -> List[Dict]:
             return None
 
         # Use asyncio.gather to scrape multiple articles concurrently
-        scraped_articles = await asyncio.gather(*[scrape_and_log(link) for link in links])
+        scraped_articles = await asyncio.gather(
+            *[scrape_and_log(link) for link in links]
+        )
         # Remove any None values (failed scrapes)
-        scraped_articles = [article for article in scraped_articles if article is not None]
-        log_histogram("articles_scraped", len(scraped_articles), labels={"base_url": base_url})
+        scraped_articles = [
+            article for article in scraped_articles if article is not None
+        ]
+        log_histogram(
+            "articles_scraped", len(scraped_articles), labels={"base_url": base_url}
+        )
 
     finally:
         # Clean up the temporary sitemap file
@@ -875,7 +985,7 @@ def scrape_by_url_level(base_url: str, level: int) -> list:
     """Scrape articles from URLs up to a certain level under the base URL."""
 
     def get_url_level(url: str) -> int:
-        return len(urlparse(url).path.strip('/').split('/'))
+        return len(urlparse(url).path.strip("/").split("/"))
 
     links = collect_internal_links(base_url)
     filtered_links = [link for link in links if get_url_level(link) <= level]
@@ -890,11 +1000,17 @@ def scrape_from_sitemap(sitemap_url: str) -> list:
         response.raise_for_status()
         root = xET.fromstring(response.content)
 
-        return [article for url in root.findall('.//{http://www.sitemaps.org/schemas/sitemap/0.9}loc')
-                if (article := scrape_article(url.text))]
+        return [
+            article
+            for url in root.findall(
+                ".//{http://www.sitemaps.org/schemas/sitemap/0.9}loc"
+            )
+            if (article := scrape_article(url.text))
+        ]
     except requests.RequestException as e:
         logging.error(f"Error fetching sitemap: {e}")
         return []
+
 
 #
 # End of Scraping Functions
@@ -906,25 +1022,27 @@ def scrape_from_sitemap(sitemap_url: str) -> list:
 def collect_internal_links(base_url: str) -> set:
     """
     Crawl a website and collect all internal links.
-    
+
     This function performs a breadth-first crawl of a website,
     discovering all internal links within the same domain.
-    
+
     Args:
         base_url (str): The starting URL for crawling
-        
+
     Returns:
         set: Set of discovered internal URLs
-        
+
     Note:
         - Only follows links within the same domain
         - Handles relative URLs correctly
         - Avoids infinite loops with visited tracking
     """
     if not BS4_AVAILABLE:
-        logging.error("BeautifulSoup not available for link collection. Install with: pip install tldw_chatbook[websearch]")
+        logging.error(
+            "BeautifulSoup not available for link collection. Install with: pip install tldw_chatbook[websearch]"
+        )
         return set()
-        
+
     visited = set()
     to_visit = {base_url}
 
@@ -936,11 +1054,11 @@ def collect_internal_links(base_url: str) -> set:
         try:
             response = requests.get(current_url)
             response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
+            soup = BeautifulSoup(response.text, "html.parser")
 
             # Collect internal links
-            for link in soup.find_all('a', href=True):
-                full_url = urljoin(base_url, link['href'])
+            for link in soup.find_all("a", href=True):
+                full_url = urljoin(base_url, link["href"])
                 # Only process links within the same domain
                 if urlparse(full_url).netloc == urlparse(base_url).netloc:
                     if full_url not in visited:
@@ -978,15 +1096,17 @@ def generate_temp_sitemap_from_links(links: set) -> str:
         priority.text = "0.5"
 
     # Create the tree and get it as a string
-    xml_string = xET.tostring(urlset, 'utf-8')
+    xml_string = xET.tostring(urlset, "utf-8")
 
     # Pretty print the XML
     pretty_xml = minidom.parseString(xml_string).toprettyxml(indent="  ")
 
     # Create a secure temporary file
     temp_manager = get_temp_manager()
-    temp_file_path = temp_manager.create_temp_file(pretty_xml, suffix=".xml", prefix="sitemap_")
-    
+    temp_file_path = temp_manager.create_temp_file(
+        pretty_xml, suffix=".xml", prefix="sitemap_"
+    )
+
     logging.info(f"Temporary sitemap created at: {temp_file_path}")
     return temp_file_path
 
@@ -1008,11 +1128,16 @@ def generate_sitemap_for_url(url: str) -> List[Dict[str, str]]:
         root = tree.getroot()
 
         sitemap = []
-        for url_elem in root.findall(".//{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
+        for url_elem in root.findall(
+            ".//{http://www.sitemaps.org/schemas/sitemap/0.9}url"
+        ):
             loc = url_elem.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc").text
-            sitemap.append({"url": loc, "title": loc.split("/")[-1] or url})  # Use the last part of the URL as a title
+            sitemap.append(
+                {"url": loc, "title": loc.split("/")[-1] or url}
+            )  # Use the last part of the URL as a title
 
     return sitemap
+
 
 def create_filtered_sitemap(base_url: str, output_file: str, filter_function):
     """
@@ -1034,7 +1159,7 @@ def create_filtered_sitemap(base_url: str, output_file: str, filter_function):
         loc.text = link
 
     tree = xET.ElementTree(root)
-    tree.write(output_file, encoding='utf-8', xml_declaration=True)
+    tree.write(output_file, encoding="utf-8", xml_declaration=True)
     print(f"Filtered sitemap saved to {output_file}")
 
 
@@ -1043,6 +1168,7 @@ def create_filtered_sitemap(base_url: str, output_file: str, filter_function):
 #################################################################
 #
 # Utility Functions
+
 
 def convert_to_markdown(articles: list) -> str:
     """Convert a list of article data into a single markdown document."""
@@ -1055,19 +1181,23 @@ def convert_to_markdown(articles: list) -> str:
         markdown += "---\n\n"  # Separator between articles
     return markdown
 
+
 def compute_content_hash(content: str) -> str:
-    return hashlib.sha256(content.encode('utf-8')).hexdigest()
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
 
 def load_hashes(filename: str) -> Dict[str, str]:
     if os.path.exists(filename):
-        with open(filename, 'r') as f:
+        with open(filename, "r") as f:
             return json.load(f)
     else:
         return {}
 
+
 def save_hashes(hashes: Dict[str, str], filename: str):
-    with open(filename, 'w') as f:
+    with open(filename, "w") as f:
         json.dump(hashes, f)
+
 
 def has_page_changed(url: str, new_hash: str, stored_hashes: Dict[str, str]) -> bool:
     old_hash = stored_hashes.get(url)
@@ -1080,6 +1210,7 @@ def has_page_changed(url: str, new_hash: str, stored_hashes: Dict[str, str]) -> 
 #
 # Bookmark Parsing Functions
 
+
 def parse_chromium_bookmarks(json_data: dict) -> Dict[str, Union[str, List[str]]]:
     """
     Parse Chromium-based browser bookmarks from JSON data.
@@ -1091,9 +1222,9 @@ def parse_chromium_bookmarks(json_data: dict) -> Dict[str, Union[str, List[str]]
 
     def recurse_bookmarks(nodes):
         for node in nodes:
-            if node.get('type') == 'url':
-                name = node.get('name')
-                url = node.get('url')
+            if node.get("type") == "url":
+                name = node.get("name")
+                url = node.get("url")
                 if name and url:
                     if name in bookmarks:
                         if isinstance(bookmarks[name], list):
@@ -1102,16 +1233,16 @@ def parse_chromium_bookmarks(json_data: dict) -> Dict[str, Union[str, List[str]]
                             bookmarks[name] = [bookmarks[name], url]
                     else:
                         bookmarks[name] = url
-            elif node.get('type') == 'folder' and 'children' in node:
-                recurse_bookmarks(node['children'])
+            elif node.get("type") == "folder" and "children" in node:
+                recurse_bookmarks(node["children"])
 
     # Chromium bookmarks have a 'roots' key
-    if 'roots' in json_data:
-        for root in json_data['roots'].values():
-            if 'children' in root:
-                recurse_bookmarks(root['children'])
+    if "roots" in json_data:
+        for root in json_data["roots"].values():
+            if "children" in root:
+                recurse_bookmarks(root["children"])
     else:
-        recurse_bookmarks(json_data.get('children', []))
+        recurse_bookmarks(json_data.get("children", []))
 
     return bookmarks
 
@@ -1124,16 +1255,18 @@ def parse_firefox_bookmarks(html_content: str) -> Dict[str, Union[str, List[str]
     :return: A dictionary with bookmark names as keys and URLs as values or lists of URLs if duplicates exist
     """
     if not BS4_AVAILABLE:
-        logging.error("BeautifulSoup not available for parsing bookmarks. Install with: pip install tldw_chatbook[websearch]")
+        logging.error(
+            "BeautifulSoup not available for parsing bookmarks. Install with: pip install tldw_chatbook[websearch]"
+        )
         return {}
-        
+
     bookmarks = {}
-    soup = BeautifulSoup(html_content, 'html.parser')
+    soup = BeautifulSoup(html_content, "html.parser")
 
     # Firefox stores bookmarks within <a> tags inside <dt>
-    for a in soup.find_all('a'):
+    for a in soup.find_all("a"):
         name = a.get_text()
-        url = a.get('href')
+        url = a.get("href")
         if name and url:
             if name in bookmarks:
                 if isinstance(bookmarks[name], list):
@@ -1161,26 +1294,30 @@ def load_bookmarks(file_path: str) -> Dict[str, Union[str, List[str]]]:
     _, ext = os.path.splitext(file_path)
     ext = ext.lower()
 
-    if ext == '.json' or ext == '':
+    if ext == ".json" or ext == "":
         # Attempt to parse as JSON (Chrome/Edge)
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 json_data = json.load(f)
             return parse_chromium_bookmarks(json_data)
         except json.JSONDecodeError:
-            logging.error("Failed to parse JSON. Ensure the file is a valid Chromium bookmarks JSON file.")
+            logging.error(
+                "Failed to parse JSON. Ensure the file is a valid Chromium bookmarks JSON file."
+            )
             raise ValueError("Invalid JSON format for Chromium bookmarks.")
-    elif ext in ['.html', '.htm']:
+    elif ext in [".html", ".htm"]:
         # Parse as HTML (Firefox)
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 html_content = f.read()
             return parse_firefox_bookmarks(html_content)
         except Exception as e:
             logging.error(f"Failed to parse HTML bookmarks: {e}")
             raise ValueError(f"Failed to parse HTML bookmarks: {e}")
     else:
-        logging.error("Unsupported file format. Please provide a JSON (Chrome/Edge) or HTML (Firefox) bookmarks file.")
+        logging.error(
+            "Unsupported file format. Please provide a JSON (Chrome/Edge) or HTML (Firefox) bookmarks file."
+        )
         raise ValueError("Unsupported file format for bookmarks.")
 
 
@@ -1193,7 +1330,9 @@ def collect_bookmarks(file_path: str) -> Dict[str, Union[str, List[str]]]:
     """
     try:
         bookmarks = load_bookmarks(file_path)
-        logging.info(f"Successfully loaded {len(bookmarks)} bookmarks from '{file_path}'.")
+        logging.info(
+            f"Successfully loaded {len(bookmarks)} bookmarks from '{file_path}'."
+        )
         return bookmarks
     except (FileNotFoundError, ValueError) as e:
         logging.error(f"Error loading bookmarks: {e}")
@@ -1215,7 +1354,9 @@ def parse_csv_urls(file_path: str) -> Dict[str, Union[str, List[str]]]:
         unavailable or the file cannot be parsed.
     """
     if not PANDAS_AVAILABLE:
-        logging.error("Pandas not available for CSV parsing. Install with: pip install tldw_chatbook[websearch]")
+        logging.error(
+            "Pandas not available for CSV parsing. Install with: pip install tldw_chatbook[websearch]"
+        )
         return {}
 
     try:
@@ -1224,7 +1365,9 @@ def parse_csv_urls(file_path: str) -> Dict[str, Union[str, List[str]]]:
         # find_spec("pandas") can succeed on a broken/partial install where the
         # real import still fails; match the previous module-scope try/except by
         # returning {} rather than propagating ImportError.
-        logging.error("Pandas not importable for CSV parsing. Install with: pip install tldw_chatbook[websearch]")
+        logging.error(
+            "Pandas not importable for CSV parsing. Install with: pip install tldw_chatbook[websearch]"
+        )
         return {}
 
     try:
@@ -1232,17 +1375,17 @@ def parse_csv_urls(file_path: str) -> Dict[str, Union[str, List[str]]]:
         df = pd.read_csv(file_path)
 
         # Check if required columns exist
-        if 'url' not in df.columns:
+        if "url" not in df.columns:
             raise ValueError("CSV must contain a 'url' column")
 
         # Initialize result dictionary
         urls_dict = {}
 
         # Determine which column to use as key
-        key_column = next((col for col in ['title', 'name'] if col in df.columns), None)
+        key_column = next((col for col in ["title", "name"] if col in df.columns), None)
 
         for idx in range(len(df)):
-            url = df.iloc[idx]['url'].strip()
+            url = df.iloc[idx]["url"].strip()
 
             # Use title/name if available, otherwise use URL as key
             if key_column:
@@ -1262,7 +1405,11 @@ def parse_csv_urls(file_path: str) -> Dict[str, Union[str, List[str]]]:
         return urls_dict
 
     except Exception as e:
-        if PANDAS_AVAILABLE and hasattr(pd, 'errors') and isinstance(e, pd.errors.EmptyDataError):
+        if (
+            PANDAS_AVAILABLE
+            and hasattr(pd, "errors")
+            and isinstance(e, pd.errors.EmptyDataError)
+        ):
             logging.error("The CSV file is empty")
         else:
             logging.error(f"Error parsing CSV file: {str(e)}")
@@ -1272,24 +1419,24 @@ def parse_csv_urls(file_path: str) -> Dict[str, Union[str, List[str]]]:
 def collect_urls_from_file(file_path: str) -> Dict[str, Union[str, List[str]]]:
     """
     Load URLs from bookmark files or CSV.
-    
+
     Supports multiple file formats:
     - Chrome/Edge bookmarks (JSON)
     - Firefox bookmarks (HTML)
     - CSV files with 'url' column
-    
+
     Args:
         file_path (str): Path to the bookmarks or CSV file
-        
+
     Returns:
         Dict[str, Union[str, List[str]]]: Dictionary mapping names to URLs
             If duplicate names exist, value will be a list of URLs
-            
+
     Supported Formats:
         - .json: Chrome/Edge bookmarks
-        - .html/.htm: Firefox bookmarks  
+        - .html/.htm: Firefox bookmarks
         - .csv: Must have 'url' column, optionally 'title' or 'name'
-        
+
     Example:
         >>> bookmarks = collect_urls_from_file("/path/to/Bookmarks")
         >>> for name, url in bookmarks.items():
@@ -1303,10 +1450,11 @@ def collect_urls_from_file(file_path: str) -> Dict[str, Union[str, List[str]]]:
     _, ext = os.path.splitext(file_path)
     ext = ext.lower()
 
-    if ext == '.csv':
+    if ext == ".csv":
         return parse_csv_urls(file_path)
     else:
         return collect_bookmarks(file_path)
+
 
 # Usage:
 # from Article_Extractor_Lib import collect_bookmarks
@@ -1339,26 +1487,27 @@ def collect_urls_from_file(file_path: str) -> Dict[str, Union[str, List[str]]]:
 #
 # Article Scraping Metadata Functions
 
+
 class ContentMetadataHandler:
     """
     Handles metadata for scraped content.
-    
+
     This class provides utilities for:
     - Adding metadata headers to content
     - Extracting metadata from content
     - Content deduplication via hashing
     - Change detection between versions
-    
+
     Metadata includes:
     - Source URL
     - Ingestion date
     - Content hash
     - Scraping pipeline used
     - Custom metadata fields
-    
+
     The metadata is stored in a structured format at the beginning
     of the content, making it easy to track content provenance.
-    
+
     Example:
         >>> handler = ContentMetadataHandler()
         >>> content_with_meta = handler.format_content_with_metadata(
@@ -1373,10 +1522,10 @@ class ContentMetadataHandler:
 
     @staticmethod
     def format_content_with_metadata(
-            url: str,
-            content: str,
-            pipeline: str = "Trafilatura",
-            additional_metadata: Optional[Dict[str, Any]] = None
+        url: str,
+        content: str,
+        pipeline: str = "Trafilatura",
+        additional_metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Format content with metadata header.
@@ -1393,8 +1542,8 @@ class ContentMetadataHandler:
         metadata = {
             "url": url,
             "ingestion_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "content_hash": hashlib.sha256(content.encode('utf-8')).hexdigest(),
-            "scraping_pipeline": pipeline
+            "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            "scraping_pipeline": pipeline,
         }
 
         # Add any additional metadata
@@ -1422,13 +1571,16 @@ class ContentMetadataHandler:
         """
         try:
             metadata_start = content.index(ContentMetadataHandler.METADATA_START) + len(
-                ContentMetadataHandler.METADATA_START)
+                ContentMetadataHandler.METADATA_START
+            )
             metadata_end = content.index(ContentMetadataHandler.METADATA_END)
             metadata_json = content[metadata_start:metadata_end].strip()
             metadata = json.loads(metadata_json)
-            clean_content = content[metadata_end + len(ContentMetadataHandler.METADATA_END):].strip()
+            clean_content = content[
+                metadata_end + len(ContentMetadataHandler.METADATA_END) :
+            ].strip()
             return metadata, clean_content
-        except (ValueError, json.JSONDecodeError) as e:
+        except (ValueError, json.JSONDecodeError):
             return {}, content
 
     @staticmethod
@@ -1442,8 +1594,10 @@ class ContentMetadataHandler:
         Returns:
             bool: True if metadata is present
         """
-        return (ContentMetadataHandler.METADATA_START in content and
-                ContentMetadataHandler.METADATA_END in content)
+        return (
+            ContentMetadataHandler.METADATA_START in content
+            and ContentMetadataHandler.METADATA_END in content
+        )
 
     @staticmethod
     def strip_metadata(content: str) -> str:
@@ -1458,7 +1612,9 @@ class ContentMetadataHandler:
         """
         try:
             metadata_end = content.index(ContentMetadataHandler.METADATA_END)
-            return content[metadata_end + len(ContentMetadataHandler.METADATA_END):].strip()
+            return content[
+                metadata_end + len(ContentMetadataHandler.METADATA_END) :
+            ].strip()
         except ValueError:
             return content
 
@@ -1474,7 +1630,7 @@ class ContentMetadataHandler:
             SHA-256 hash of the clean content
         """
         clean_content = ContentMetadataHandler.strip_metadata(content)
-        return hashlib.sha256(clean_content.encode('utf-8')).hexdigest()
+        return hashlib.sha256(clean_content.encode("utf-8")).hexdigest()
 
     @staticmethod
     def content_changed(old_content: str, new_content: str) -> bool:
@@ -1497,33 +1653,38 @@ class ContentMetadataHandler:
 #
 # Scraping Functions
 
-def get_url_depth(url: str) -> int:
-    return len(urlparse(url).path.strip('/').split('/'))
 
-def sync_recursive_scrape(url_input, max_pages, max_depth, delay=1.0, custom_cookies=None):
+def get_url_depth(url: str) -> int:
+    return len(urlparse(url).path.strip("/").split("/"))
+
+
+def sync_recursive_scrape(
+    url_input, max_pages, max_depth, delay=1.0, custom_cookies=None
+):
     """
     Synchronous wrapper for recursive_scrape function.
-    
+
     Uses proper event loop handling to avoid conflicts.
     """
     return run_async_function(
         recursive_scrape,
-        url_input, 
-        max_pages, 
-        max_depth, 
-        delay=delay, 
-        custom_cookies=custom_cookies
+        url_input,
+        max_pages,
+        max_depth,
+        delay=delay,
+        custom_cookies=custom_cookies,
     )
 
+
 async def recursive_scrape(
-        base_url: str,
-        max_pages: int,
-        max_depth: int,
-        delay: float = 1.0,
-        resume_file: str = 'scrape_progress.json',
-        user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
-        custom_cookies: Optional[List[Dict[str, Any]]] = None,
-        progress_callback: Optional[callable] = None
+    base_url: str,
+    max_pages: int,
+    max_depth: int,
+    delay: float = 1.0,
+    resume_file: str = "scrape_progress.json",
+    user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+    custom_cookies: Optional[List[Dict[str, Any]]] = None,
+    progress_callback: Optional[callable] = None,
 ) -> List[Dict]:
     # Ensure playwright is imported before it's dereferenced below. Preserves
     # pre-existing behavior when unavailable: this function has never guarded
@@ -1539,13 +1700,16 @@ async def recursive_scrape(
 
     async def save_progress():
         temp_file = resume_file + ".tmp"
-        with open(temp_file, 'w') as f:
-            json.dump({
-                'visited': list(visited),
-                'to_visit': to_visit,
-                'scraped_articles': scraped_articles,
-                'pages_scraped': pages_scraped
-            }, f)
+        with open(temp_file, "w") as f:
+            json.dump(
+                {
+                    "visited": list(visited),
+                    "to_visit": to_visit,
+                    "scraped_articles": scraped_articles,
+                    "pages_scraped": pages_scraped,
+                },
+                f,
+            )
         os.replace(temp_file, resume_file)  # Atomic replace
 
     def is_valid_url(url: str) -> bool:
@@ -1553,12 +1717,12 @@ async def recursive_scrape(
 
     # Load progress if resume file exists
     if os.path.exists(resume_file):
-        with open(resume_file, 'r') as f:
+        with open(resume_file, "r") as f:
             progress_data = json.load(f)
-            visited = set(progress_data['visited'])
-            to_visit = progress_data['to_visit']
-            scraped_articles = progress_data['scraped_articles']
-            pages_scraped = progress_data['pages_scraped']
+            visited = set(progress_data["visited"])
+            to_visit = progress_data["to_visit"]
+            scraped_articles = progress_data["scraped_articles"]
+            pages_scraped = progress_data["pages_scraped"]
     else:
         visited = set()
         to_visit = [(base_url, 0)]  # (url, depth)
@@ -1585,14 +1749,16 @@ async def recursive_scrape(
 
                     # Update progress if callback provided
                     if progress_callback:
-                        progress_callback(f"Scraping page {pages_scraped + 1}/{max_pages}: {current_url}")
+                        progress_callback(
+                            f"Scraping page {pages_scraped + 1}/{max_pages}: {current_url}"
+                        )
 
                     try:
                         await asyncio.sleep(random.uniform(delay * 0.8, delay * 1.2))
 
                         article_data = await scrape_article_async(context, current_url)
 
-                        if article_data and article_data['extraction_successful']:
+                        if article_data and article_data["extraction_successful"]:
                             scraped_articles.append(article_data)
                             pages_scraped += 1
 
@@ -1602,12 +1768,17 @@ async def recursive_scrape(
                             await page.goto(current_url)
                             await page.wait_for_load_state("networkidle")
 
-                            links = await page.eval_on_selector_all('a[href]',
-                                                                    "(elements) => elements.map(el => el.href)")
+                            links = await page.eval_on_selector_all(
+                                "a[href]", "(elements) => elements.map(el => el.href)"
+                            )
                             for link in links:
                                 child_url = urljoin(base_url, link)
-                                if is_valid_url(child_url) and child_url.startswith(
-                                        base_url) and child_url not in visited and should_scrape_url(child_url):
+                                if (
+                                    is_valid_url(child_url)
+                                    and child_url.startswith(base_url)
+                                    and child_url not in visited
+                                    and should_scrape_url(child_url)
+                                ):
                                     to_visit.append((child_url, current_depth + 1))
 
                             await page.close()
@@ -1632,9 +1803,12 @@ async def recursive_scrape(
 
         # Final progress update
         if progress_callback:
-            progress_callback(f"Scraping completed. Total pages scraped: {pages_scraped}")
+            progress_callback(
+                f"Scraping completed. Total pages scraped: {pages_scraped}"
+            )
 
         return scraped_articles
+
 
 async def scrape_article_async(context, url: str) -> Dict[str, Any]:
     page = await context.new_page()
@@ -1646,36 +1820,36 @@ async def scrape_article_async(context, url: str) -> Dict[str, Any]:
         content = await page.content()
 
         return {
-            'url': url,
-            'title': title,
-            'content': content,
-            'extraction_successful': True
+            "url": url,
+            "title": title,
+            "content": content,
+            "extraction_successful": True,
         }
     except Exception as e:
         logging.error(f"Error scraping article {url}: {str(e)}")
-        return {
-            'url': url,
-            'extraction_successful': False,
-            'error': str(e)
-        }
+        return {"url": url, "extraction_successful": False, "error": str(e)}
     finally:
         await page.close()
 
-def scrape_article_sync(url: str, custom_cookies: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+
+def scrape_article_sync(
+    url: str, custom_cookies: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
     """
     Synchronous version of scrape_article using the async implementation.
-    
+
     This ensures consistency between sync and async versions and properly
     handles the event loop.
-    
+
     Args:
         url: The URL to scrape
         custom_cookies: Optional browser cookies for authentication
-        
+
     Returns:
         Article data dictionary with the same structure as async version
     """
     return run_async_function(scrape_article, url, custom_cookies=custom_cookies)
+
 
 def should_scrape_url(url: str) -> bool:
     parsed_url = urlparse(url)
@@ -1683,10 +1857,25 @@ def should_scrape_url(url: str) -> bool:
 
     # List of patterns to exclude
     exclude_patterns = [
-        '/tag/', '/category/', '/author/', '/search/', '/page/',
-        'wp-content', 'wp-includes', 'wp-json', 'wp-admin',
-        'login', 'register', 'cart', 'checkout', 'account',
-        '.jpg', '.png', '.gif', '.pdf', '.zip'
+        "/tag/",
+        "/category/",
+        "/author/",
+        "/search/",
+        "/page/",
+        "wp-content",
+        "wp-includes",
+        "wp-json",
+        "wp-admin",
+        "login",
+        "register",
+        "cart",
+        "checkout",
+        "account",
+        ".jpg",
+        ".png",
+        ".gif",
+        ".pdf",
+        ".zip",
     ]
 
     # Check if the URL contains any exclude patterns
@@ -1695,12 +1884,13 @@ def should_scrape_url(url: str) -> bool:
 
     # Add more sophisticated checks here
     # For example, you might want to only include URLs with certain patterns
-    include_patterns = ['/article/', '/post/', '/blog/']
+    include_patterns = ["/article/", "/post/", "/blog/"]
     if any(pattern in path for pattern in include_patterns):
         return True
 
     # By default, return True if no exclusion or inclusion rules matched
     return True
+
 
 async def scrape_with_retry(url: str, max_retries: int = 3, retry_delay: float = 5.0):
     for attempt in range(max_retries):
@@ -1708,7 +1898,9 @@ async def scrape_with_retry(url: str, max_retries: int = 3, retry_delay: float =
             return await scrape_article(url)
         except TimeoutError:
             if attempt < max_retries - 1:
-                logging.warning(f"Timeout error scraping {url}. Retrying in {retry_delay} seconds...")
+                logging.warning(
+                    f"Timeout error scraping {url}. Retrying in {retry_delay} seconds..."
+                )
                 await asyncio.sleep(retry_delay)
             else:
                 logging.error(f"Failed to scrape {url} after {max_retries} attempts.")
@@ -1716,6 +1908,7 @@ async def scrape_with_retry(url: str, max_retries: int = 3, retry_delay: float =
         except Exception as e:
             logging.error(f"Error scraping {url}: {str(e)}")
             return None
+
 
 def convert_json_to_markdown(json_str: str) -> str:
     """
@@ -1743,23 +1936,25 @@ def convert_json_to_markdown(json_str: str) -> str:
         markdown += f"- **Scrape Method:** {data['scrape_method']}\n"
         markdown += f"- **API Used:** {data['api_used']}\n"
         markdown += f"- **Keywords:** {data['keywords']}\n"
-        if data.get('url_level') is not None:
+        if data.get("url_level") is not None:
             markdown += f"- **URL Level:** {data['url_level']}\n"
-        if data.get('max_pages') is not None:
+        if data.get("max_pages") is not None:
             markdown += f"- **Maximum Pages:** {data['max_pages']}\n"
-        if data.get('max_depth') is not None:
+        if data.get("max_depth") is not None:
             markdown += f"- **Maximum Depth:** {data['max_depth']}\n"
-        markdown += f"- **Total Articles Scraped:** {data['total_articles_scraped']}\n\n"
+        markdown += (
+            f"- **Total Articles Scraped:** {data['total_articles_scraped']}\n\n"
+        )
 
         # Add URLs Scraped
         markdown += "## URLs Scraped\n\n"
-        for url in data['urls_scraped']:
+        for url in data["urls_scraped"]:
             markdown += f"- {url}\n"
         markdown += "\n"
 
         # Add the content
         markdown += "## Content\n\n"
-        markdown += data['content']
+        markdown += data["content"]
 
         return markdown
 
@@ -1769,6 +1964,7 @@ def convert_json_to_markdown(json_str: str) -> str:
         return f"# Error\n\nMissing key in JSON data: {str(e)}"
     except Exception as e:
         return f"# Error\n\nAn unexpected error occurred: {str(e)}"
+
 
 #
 # End of Scraping functions

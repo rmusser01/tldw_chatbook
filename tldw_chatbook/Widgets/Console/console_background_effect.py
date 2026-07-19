@@ -154,7 +154,11 @@ class ConsoleBackgroundEffect(Widget):
         cached = self._frame_cache
         if cached is not None:
             serial, cached_width, cached_height, lines = cached
-            if serial == self._frame_serial and cached_width == width and cached_height == height:
+            if (
+                serial == self._frame_serial
+                and cached_width == width
+                and cached_height == height
+            ):
                 return lines
         lines = self.frame_text(width, height).splitlines()
         self._frame_cache = (self._frame_serial, width, height, lines)
@@ -190,7 +194,9 @@ class ConsoleBackgroundEffect(Widget):
     def _target_particle_count(self, width: int, height: int) -> int:
         if not self.is_effect_active or width <= 0 or height <= 0:
             return 0
-        density = _INTENSITY_DENSITY.get(self.settings.intensity, _INTENSITY_DENSITY["low"])
+        density = _INTENSITY_DENSITY.get(
+            self.settings.intensity, _INTENSITY_DENSITY["low"]
+        )
         return max(1, min(width * height, int(width * height * density)))
 
     def _new_particle(self, width: int, height: int) -> _Particle:
@@ -262,7 +268,9 @@ class ConsoleTranscriptSurface(Container):
     ) -> None:
         super().__init__(**kwargs)
         self.settings = settings
-        self.transcript = transcript or ConsoleTranscript(id="console-native-transcript")
+        self.transcript = transcript or ConsoleTranscript(
+            id="console-native-transcript"
+        )
 
     def compose(self) -> ComposeResult:
         yield ConsoleBackgroundEffect(

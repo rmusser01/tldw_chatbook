@@ -71,7 +71,9 @@ class SyncProfileStatusDisplay:
     read_only_notice: str = "This view only reads sync state; it does not start sync."
 
     @classmethod
-    def from_summary(cls, summary: Mapping[str, Any] | None) -> "SyncProfileStatusDisplay":
+    def from_summary(
+        cls, summary: Mapping[str, Any] | None
+    ) -> "SyncProfileStatusDisplay":
         """Build display state from repository/service summary data.
 
         Args:
@@ -92,10 +94,14 @@ class SyncProfileStatusDisplay:
         pending_count = _count(outbox.get("pending"))
         dispatched_count = _count(outbox.get("dispatched"))
         conflict_count = _count(conflicts.get("count"))
-        server_profile_id = _safe_text(profile.get("server_profile_id"), "the configured server")
+        server_profile_id = _safe_text(
+            profile.get("server_profile_id"), "the configured server"
+        )
         dataset_id = _safe_text(profile.get("dataset_id"), "")
         device_id = _safe_text(profile.get("device_id"), "")
-        last_error = _safe_text(profile.get("last_error"), "unavailable", max_length=240)
+        last_error = _safe_text(
+            profile.get("last_error"), "unavailable", max_length=240
+        )
 
         return cls(
             status=status,
@@ -111,8 +117,12 @@ class SyncProfileStatusDisplay:
             pending_count=pending_count,
             dispatched_count=dispatched_count,
             conflict_count=conflict_count,
-            dataset_label=f"Dataset {dataset_id}" if dataset_id else "Dataset not assigned",
-            device_label=f"Device {device_id}" if device_id else "Device not registered",
+            dataset_label=f"Dataset {dataset_id}"
+            if dataset_id
+            else "Dataset not assigned",
+            device_label=f"Device {device_id}"
+            if device_id
+            else "Device not registered",
         )
 
 

@@ -59,9 +59,11 @@ def test_app_starts_responsiveness_monitor_with_heartbeat_timer(monkeypatch):
     monkeypatch.setattr(
         app_module,
         "get_cli_setting",
-        lambda section, key=None, default=None: True
-        if (section, key) == ("diagnostics", "ui_responsiveness_enabled")
-        else default,
+        lambda section, key=None, default=None: (
+            True
+            if (section, key) == ("diagnostics", "ui_responsiveness_enabled")
+            else default
+        ),
     )
 
     app_module.TldwCli._start_ui_responsiveness_monitor(app)
@@ -122,7 +124,9 @@ def test_app_stops_responsiveness_heartbeat_timer():
     assert app.ui_responsiveness_monitor.snapshot().active_timers == 0
 
 
-def test_app_does_not_schedule_heartbeat_when_responsiveness_monitor_is_disabled(monkeypatch):
+def test_app_does_not_schedule_heartbeat_when_responsiveness_monitor_is_disabled(
+    monkeypatch,
+):
     from tldw_chatbook import app as app_module
 
     app = app_module.TldwCli.__new__(app_module.TldwCli)
@@ -137,9 +141,11 @@ def test_app_does_not_schedule_heartbeat_when_responsiveness_monitor_is_disabled
     monkeypatch.setattr(
         app_module,
         "get_cli_setting",
-        lambda section, key=None, default=None: False
-        if (section, key) == ("diagnostics", "ui_responsiveness_enabled")
-        else default,
+        lambda section, key=None, default=None: (
+            False
+            if (section, key) == ("diagnostics", "ui_responsiveness_enabled")
+            else default
+        ),
     )
 
     app_module.TldwCli._start_ui_responsiveness_monitor(app)
@@ -266,7 +272,9 @@ async def test_console_sync_records_worker_lifecycle():
 
 
 async def test_console_session_surface_records_tab_mount_churn():
-    from tldw_chatbook.Widgets.Console.console_session_surface import ConsoleSessionSurface
+    from tldw_chatbook.Widgets.Console.console_session_surface import (
+        ConsoleSessionSurface,
+    )
 
     monitor = UIResponsivenessMonitor(enabled=True)
 

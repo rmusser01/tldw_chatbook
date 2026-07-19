@@ -2,6 +2,7 @@
 was fully dead (widget never composed, reactives never mutated). These guard
 against its presence / reintroduction and confirm the app still boots after
 its removal."""
+
 from pathlib import Path
 from typing import Iterator, List, Tuple
 
@@ -38,7 +39,10 @@ def source_texts() -> List[Tuple[str, str]]:
         below reads the tree a single time rather than once per identifier.
     """
     return [
-        (str(p.relative_to(_PKG.parent)), p.read_text(encoding="utf-8", errors="ignore"))
+        (
+            str(p.relative_to(_PKG.parent)),
+            p.read_text(encoding="utf-8", errors="ignore"),
+        )
         for p in _source_files()
     ]
 
@@ -73,6 +77,7 @@ def test_dead_unsaved_indicator_identifier_removed(
 async def test_app_boots_after_removal() -> None:
     """The app mounts and the modular stylesheet loads with the CSS rules gone."""
     from tldw_chatbook.app import TldwCli
+
     app = TldwCli()
     async with app.run_test() as pilot:
         await pilot.pause()

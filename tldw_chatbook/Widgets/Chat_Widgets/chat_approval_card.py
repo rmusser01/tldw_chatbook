@@ -95,7 +95,9 @@ def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
     """
     try:
         text = json.dumps(
-            redact_mapping(dict(arguments or {})), default=str, separators=(",", ":"),
+            redact_mapping(dict(arguments or {})),
+            default=str,
+            separators=(",", ":"),
         )
     except Exception:  # noqa: BLE001 -- a non-serializable arg must never crash rendering
         text = str(arguments or {})
@@ -175,7 +177,9 @@ class ChatApprovalCard(Container):
 
         self.query_one("#approval-summary", Static).update(summary)
         self.query_one("#approval-copy", Static).update(details)
-        self.query_one("#approval-details", Button).label = approval.get("details_label", "Review details")
+        self.query_one("#approval-details", Button).label = approval.get(
+            "details_label", "Review details"
+        )
         self.query_one("#approval-allow-once", Button).label = allow_label
 
     # -- batch-approval API (task-5) -----------------------------------------
@@ -221,7 +225,11 @@ class ChatApprovalCard(Container):
             selects.append(select)
             rows.append(
                 Horizontal(
-                    Static(_format_row_header(entry), markup=False, classes="approval-row-header"),
+                    Static(
+                        _format_row_header(entry),
+                        markup=False,
+                        classes="approval-row-header",
+                    ),
                     Static(
                         _summarize_arguments(entry.get("arguments")),
                         markup=False,

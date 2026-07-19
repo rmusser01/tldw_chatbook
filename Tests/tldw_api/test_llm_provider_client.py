@@ -39,7 +39,9 @@ def _provider() -> dict:
 
 
 @pytest.mark.asyncio
-async def test_llm_provider_discovery_routes_wire_health_catalog_metadata_and_models(monkeypatch):
+async def test_llm_provider_discovery_routes_wire_health_catalog_metadata_and_models(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[

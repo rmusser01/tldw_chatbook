@@ -54,7 +54,18 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "library",
         "Workspaces, source material, imports, notes, media, conversations, Study, flashcards, quizzes, and Search/RAG.",
         "Browse Workspaces, imports, notes, media, Study, flashcards, quizzes, search, and source material.",
-        ("notes", "media", "ingest", "search", "conversation", "study", "prompts", "skills", "writing", "research"),
+        (
+            "notes",
+            "media",
+            "ingest",
+            "search",
+            "conversation",
+            "study",
+            "prompts",
+            "skills",
+            "writing",
+            "research",
+        ),
         navigation_priority=30,
     ),
     ShellDestination(
@@ -183,7 +194,9 @@ for destination in SHELL_DESTINATION_ORDER:
     for legacy_route in destination.legacy_routes:
         canonical_route = _CANONICAL_ROUTE_OVERRIDES.get(
             legacy_route,
-            legacy_route if legacy_route in _ROUTABLE_LEGACY_ROUTES else destination.primary_route,
+            legacy_route
+            if legacy_route in _ROUTABLE_LEGACY_ROUTES
+            else destination.primary_route,
         )
         _ROUTE_MAP[legacy_route] = ResolvedShellRoute(
             destination.destination_id,

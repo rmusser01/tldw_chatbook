@@ -1,10 +1,11 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from textual.widgets import Input, RichLog, Button
 
-from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events import handle_start_llamacpp_server_button_pressed
-from tldw_chatbook.app import TldwCli  # Assuming TldwCli is the app class
+from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events import (
+    handle_start_llamacpp_server_button_pressed,
+)
 
 # Import comprehensive mock but create custom fixture for LLM management
 from Tests.fixtures.event_handler_mocks import create_comprehensive_app_mock
@@ -18,20 +19,22 @@ def mock_app():
     """Fixture to create a mock TldwCli app instance for LLM management tests."""
     # Get base mock app
     app = create_comprehensive_app_mock()
-    
+
     # Override specific widgets for LLM management tests
     widget_mocks = {
         "#llamacpp-exec-path": MagicMock(spec=Input, value="/path/to/server"),
         "#llamacpp-model-path": MagicMock(spec=Input, value="/path/to/model.gguf"),
         "#llamacpp-host": MagicMock(spec=Input, value="127.0.0.1"),
         "#llamacpp-port": MagicMock(spec=Input, value="8001"),
-        "#llamacpp-additional-args": MagicMock(spec=Input, value="--n-gpu-layers 33 --verbose"),
+        "#llamacpp-additional-args": MagicMock(
+            spec=Input, value="--n-gpu-layers 33 --verbose"
+        ),
         "#llamacpp-log-output": MagicMock(spec=RichLog),
     }
-    
+
     # Save the original query_one behavior
     original_query_one = app.query_one.side_effect
-    
+
     def llm_query_one_side_effect(selector, widget_type=None):
         # Check our custom widgets first
         if selector in widget_mocks:
@@ -39,13 +42,15 @@ def mock_app():
             # Type check if requested
             if widget_type and not isinstance(mock_widget, MagicMock):
                 if not isinstance(mock_widget, widget_type):
-                    raise Exception(f"Mock for {selector} is {type(mock_widget)} not {widget_type}")
+                    raise Exception(
+                        f"Mock for {selector} is {type(mock_widget)} not {widget_type}"
+                    )
             return mock_widget
         # Fall back to original behavior
         return original_query_one(selector, widget_type)
-    
+
     app.query_one.side_effect = llm_query_one_side_effect
-    
+
     # Yield the app and widget_mocks for tests to access
     yield app, widget_mocks
 
@@ -54,9 +59,11 @@ async def test_handle_start_llamacpp_server_button_pressed_basic_command(mock_ap
     mock_app, widget_mocks = mock_app
     """Test basic command construction with all fields provided."""
     # Mock Path to return True for is_file checks
-    with patch("tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events.Path") as mock_path:
+    with patch(
+        "tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events.Path"
+    ) as mock_path:
         mock_path.return_value.is_file.return_value = True
-        
+
         # Create a mock Button.Pressed event
         mock_event = MagicMock(spec=Button.Pressed)
         await handle_start_llamacpp_server_button_pressed(mock_app, mock_event)
@@ -67,19 +74,27 @@ async def test_handle_start_llamacpp_server_button_pressed_basic_command(mock_ap
         # The worker is called with a partial function as the first argument
         # Extract the partial function and check its args
         worker_partial = call_args.args[0]
-        assert hasattr(worker_partial, 'args'), "Worker callable is not a partial function"
+        assert hasattr(worker_partial, "args"), (
+            "Worker callable is not a partial function"
+        )
         # The partial function has the app as first arg and command as second arg
-        assert len(worker_partial.args) == 2, "Partial function doesn't have expected args"
+        assert len(worker_partial.args) == 2, (
+            "Partial function doesn't have expected args"
+        )
 
         actual_command = worker_partial.args[1]
 
         expected_command = [
             "/path/to/server",
-            "--model", "/path/to/model.gguf",
-            "--host", "127.0.0.1",
-            "--port", "8001",
-            "--n-gpu-layers", "33",
-            "--verbose"
+            "--model",
+            "/path/to/model.gguf",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8001",
+            "--n-gpu-layers",
+            "33",
+            "--verbose",
         ]
         assert actual_command == expected_command
         mock_app.notify.assert_called_with("Llama.cpp server starting…")
@@ -89,9 +104,11 @@ async def test_handle_start_llamacpp_server_no_additional_args(mock_app):
     mock_app, widget_mocks = mock_app
     """Test command construction when additional arguments are empty."""
     # Mock Path to return True for is_file checks
-    with patch("tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events.Path") as mock_path:
+    with patch(
+        "tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events.Path"
+    ) as mock_path:
         mock_path.return_value.is_file.return_value = True
-        
+
         # Override the additional args widget value
         widget_mocks["#llamacpp-additional-args"].value = ""
 
@@ -105,9 +122,12 @@ async def test_handle_start_llamacpp_server_no_additional_args(mock_app):
 
         expected_command = [
             "/path/to/server",
-            "--model", "/path/to/model.gguf",
-            "--host", "127.0.0.1",
-            "--port", "8001",
+            "--model",
+            "/path/to/model.gguf",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8001",
         ]
         assert actual_command == expected_command
         mock_app.notify.assert_called_with("Llama.cpp server starting…")
@@ -117,11 +137,15 @@ async def test_handle_start_llamacpp_server_additional_args_with_spaces(mock_app
     mock_app, widget_mocks = mock_app
     """Test command construction with additional arguments containing spaces (quoted)."""
     # Mock Path to return True for is_file checks
-    with patch("tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events.Path") as mock_path:
+    with patch(
+        "tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events.Path"
+    ) as mock_path:
         mock_path.return_value.is_file.return_value = True
-        
+
         # Override the additional args widget value
-        widget_mocks["#llamacpp-additional-args"].value = '--custom-path "/mnt/my models/llama" --another-arg value'
+        widget_mocks[
+            "#llamacpp-additional-args"
+        ].value = '--custom-path "/mnt/my models/llama" --another-arg value'
 
         mock_event = MagicMock(spec=Button.Pressed)
         await handle_start_llamacpp_server_button_pressed(mock_app, mock_event)
@@ -133,11 +157,16 @@ async def test_handle_start_llamacpp_server_additional_args_with_spaces(mock_app
 
         expected_command = [
             "/path/to/server",
-            "--model", "/path/to/model.gguf",
-            "--host", "127.0.0.1",
-            "--port", "8001",
-            "--custom-path", "/mnt/my models/llama",  # shlex.split handles the quotes
-            "--another-arg", "value"
+            "--model",
+            "/path/to/model.gguf",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8001",
+            "--custom-path",
+            "/mnt/my models/llama",  # shlex.split handles the quotes
+            "--another-arg",
+            "value",
         ]
         assert actual_command == expected_command
 
@@ -146,9 +175,11 @@ async def test_handle_start_llamacpp_server_default_host_port(mock_app):
     mock_app, widget_mocks = mock_app
     """Test that default host and port are used if inputs are empty."""
     # Mock Path to return True for is_file checks
-    with patch("tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events.Path") as mock_path:
+    with patch(
+        "tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events.Path"
+    ) as mock_path:
         mock_path.return_value.is_file.return_value = True
-        
+
         # Override host and port widget values
         widget_mocks["#llamacpp-host"].value = ""
         widget_mocks["#llamacpp-port"].value = ""
@@ -164,11 +195,15 @@ async def test_handle_start_llamacpp_server_default_host_port(mock_app):
         # Default host is 127.0.0.1, default port is 8001 (as per handler logic)
         expected_command = [
             "/path/to/server",
-            "--model", "/path/to/model.gguf",
-            "--host", "127.0.0.1",
-            "--port", "8001",
-            "--n-gpu-layers", "33",
-            "--verbose"
+            "--model",
+            "/path/to/model.gguf",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8001",
+            "--n-gpu-layers",
+            "33",
+            "--verbose",
         ]
         assert actual_command == expected_command
 
@@ -192,14 +227,20 @@ async def test_handle_start_llamacpp_server_invalid_exec_path(mock_app):
     # We need to make Path(exec_path).is_file() return False for this specific input
     # The fixture currently patches it globally to True.
     # We can re-patch it within this test for more specific behavior.
-    with patch("tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events.Path") as mock_path:
-        mock_path.return_value.is_file.side_effect = lambda: str(widget_mocks["#llamacpp-exec-path"].value) != "/invalid/path/server"
+    with patch(
+        "tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events.Path"
+    ) as mock_path:
+        mock_path.return_value.is_file.side_effect = lambda: (
+            str(widget_mocks["#llamacpp-exec-path"].value) != "/invalid/path/server"
+        )
         widget_mocks["#llamacpp-exec-path"].value = "/invalid/path/server"
 
         mock_event = MagicMock(spec=Button.Pressed)
         await handle_start_llamacpp_server_button_pressed(mock_app, mock_event)
 
-        mock_app.notify.assert_called_with("Executable not found at: /invalid/path/server", severity="error")
+        mock_app.notify.assert_called_with(
+            "Executable not found at: /invalid/path/server", severity="error"
+        )
         mock_app.run_worker.assert_not_called()
         # Check that is_file was called with the correct path
         # Path was constructed with the invalid path
@@ -210,9 +251,11 @@ async def test_handle_start_llamacpp_server_missing_model_path(mock_app):
     mock_app, widget_mocks = mock_app
     """Test validation: model path is missing."""
     # Mock Path to return True for exec path but model path is empty
-    with patch("tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events.Path") as mock_path:
+    with patch(
+        "tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events.Path"
+    ) as mock_path:
         mock_path.return_value.is_file.return_value = True
-        
+
         # Override model path widget value
         widget_mocks["#llamacpp-model-path"].value = ""
 
@@ -226,26 +269,33 @@ async def test_handle_start_llamacpp_server_missing_model_path(mock_app):
 async def test_handle_start_llamacpp_server_invalid_model_path(mock_app):
     mock_app, widget_mocks = mock_app
     """Test validation: model path is not a file."""
-    with patch("tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events.Path") as mock_path:
+    with patch(
+        "tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events.Path"
+    ) as mock_path:
         # Ensure exec path is valid for this test
         widget_mocks["#llamacpp-exec-path"].value = "/path/to/server"  # Valid mock path
-        
+
         def is_file_side_effect(path_str):
             return str(path_str) == "/path/to/server"
-        
-        mock_path.return_value.is_file.side_effect = lambda: is_file_side_effect(mock_path.call_args[0][0])
+
+        mock_path.return_value.is_file.side_effect = lambda: is_file_side_effect(
+            mock_path.call_args[0][0]
+        )
 
         widget_mocks["#llamacpp-model-path"].value = "/invalid/path/model.gguf"
 
         mock_event = MagicMock(spec=Button.Pressed)
         await handle_start_llamacpp_server_button_pressed(mock_app, mock_event)
 
-        mock_app.notify.assert_called_with("Model file not found at: /invalid/path/model.gguf", severity="error")
+        mock_app.notify.assert_called_with(
+            "Model file not found at: /invalid/path/model.gguf", severity="error"
+        )
         mock_app.run_worker.assert_not_called()
         # Path is called for exec_path first, then for model_path
         assert mock_path.call_count >= 2
         # Check that Path was called with the invalid model path
         mock_path.assert_any_call("/invalid/path/model.gguf")
+
 
 # To run these tests, you would typically use pytest:
 # pytest Tests/Event_Handlers/test_llm_management_events.py
@@ -327,8 +377,8 @@ async def test_handle_start_llamacpp_server_invalid_model_path(mock_app):
 
 # from tldw_chatbook.Event_Handlers.llm_nav_events import handle_llm_nav_button_pressed
 # from textual.containers import Container
-# 
-# 
+#
+#
 # async def test_mlx_lm_nav_button_shows_correct_view():
 #     """Test that pressing the MLX-LM nav button shows the correct view and hides others."""
 #     app = TldwCli()
@@ -342,20 +392,20 @@ async def test_handle_start_llamacpp_server_invalid_model_path(mock_app):
 #         "llm-view-local-models",
 #         "llm-view-download-models",
 #     ]
-# 
+#
 #     async with app.run_test() as pilot:
 #         # Initial state check (optional, but good for sanity)
 #         # Ensure all views are initially hidden or one is active as per app logic
 #         # For this test, we assume the handler will correctly set states regardless of initial.
-# 
+#
 #         # Simulate the MLX-LM nav button being pressed
 #         await handle_llm_nav_button_pressed(pilot.app, "llm-nav-mlx-lm")
-# 
+#
 #         # Check that the MLX-LM view is visible
 #         mlx_view = pilot.app.query_one(f"#{target_view_id}", Container)
 #         assert mlx_view.styles.display is not None
 #         assert mlx_view.styles.display.value == "block", f"{target_view_id} should be 'block'"
-# 
+#
 #         # Check that all other main LLM views are hidden
 #         for view_id in other_view_ids:
 #             other_view = pilot.app.query_one(f"#{view_id}", Container)

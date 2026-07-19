@@ -18,14 +18,14 @@ from .misc_tab_initializers import (
 )
 
 __all__ = [
-    'BaseTabInitializer',
-    'TabInitializerRegistry',
-    'ChatTabInitializer',
-    'CCPTabInitializer',
-    'MediaTabInitializer',
-    'SearchTabInitializer',
-    'IngestTabInitializer',
-    'ToolsSettingsTabInitializer',
-    'LLMTabInitializer',
-    'EvalsTabInitializer',
+    "BaseTabInitializer",
+    "TabInitializerRegistry",
+    "ChatTabInitializer",
+    "CCPTabInitializer",
+    "MediaTabInitializer",
+    "SearchTabInitializer",
+    "IngestTabInitializer",
+    "ToolsSettingsTabInitializer",
+    "LLMTabInitializer",
+    "EvalsTabInitializer",
 ]

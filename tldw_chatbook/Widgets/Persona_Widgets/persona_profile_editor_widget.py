@@ -89,7 +89,9 @@ class PersonaProfileEditorWidget(Container):
             # Kept for optimistic locking: the save path passes it back as
             # ``expected_version`` (None for new personas).
             self._version = data.get("version")
-            self.query_one("#personas-editor-name", Input).value = str(data.get("name", ""))
+            self.query_one("#personas-editor-name", Input).value = str(
+                data.get("name", "")
+            )
             self.query_one("#personas-editor-description", TextArea).text = str(
                 data.get("description", "")
             )
@@ -114,8 +116,12 @@ class PersonaProfileEditorWidget(Container):
         """
         data: Dict[str, Any] = {
             "name": self.query_one("#personas-editor-name", Input).value.strip(),
-            "description": self.query_one("#personas-editor-description", TextArea).text,
-            "system_prompt": self.query_one("#personas-editor-system-prompt", TextArea).text,
+            "description": self.query_one(
+                "#personas-editor-description", TextArea
+            ).text,
+            "system_prompt": self.query_one(
+                "#personas-editor-system-prompt", TextArea
+            ).text,
         }
         if self._persona_id is not None:
             data["id"] = self._persona_id

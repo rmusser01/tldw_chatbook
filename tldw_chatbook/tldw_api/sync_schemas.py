@@ -5,7 +5,14 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 class SyncEntity(str, Enum):
@@ -44,11 +51,19 @@ class SyncLogEntry(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="allow")
 
     change_id: int = Field(..., description="Server sync_log change identifier.")
-    entity: SyncEntity = Field(..., description="Entity type changed by this log entry.")
+    entity: SyncEntity = Field(
+        ..., description="Entity type changed by this log entry."
+    )
     entity_uuid: str = Field(..., description="UUID of the changed entity.")
-    operation: SyncOperation = Field(..., description="Operation applied to the entity.")
-    timestamp: str = Field(..., description="ISO-like timestamp attached to the change.")
-    server_timestamp: str | None = Field(None, description="Optional authoritative server timestamp.")
+    operation: SyncOperation = Field(
+        ..., description="Operation applied to the entity."
+    )
+    timestamp: str = Field(
+        ..., description="ISO-like timestamp attached to the change."
+    )
+    server_timestamp: str | None = Field(
+        None, description="Optional authoritative server timestamp."
+    )
     client_id: str = Field(..., description="Client that originated the change.")
     version: int = Field(..., description="Entity version after this change.")
     payload: str = Field(..., description="JSON string payload for the changed entity.")
@@ -60,9 +75,13 @@ class SyncSendLogEntry(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
     change_id: int = Field(..., description="Client-local sync_log change identifier.")
-    entity: SyncSendEntity = Field(..., description="Entity type accepted by /sync/send.")
+    entity: SyncSendEntity = Field(
+        ..., description="Entity type accepted by /sync/send."
+    )
     entity_uuid: str = Field(..., description="UUID of the changed entity.")
-    operation: SyncOperation = Field(..., description="Operation applied to the entity.")
+    operation: SyncOperation = Field(
+        ..., description="Operation applied to the entity."
+    )
     timestamp: str = Field(..., description="ISO-like client timestamp for the change.")
     client_id: str = Field(..., description="Client that originated the change.")
     version: int = Field(..., description="Entity version after this change.")
@@ -88,7 +107,9 @@ class ServerChangesResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     changes: list[SyncLogEntry] = Field(default_factory=list)
-    latest_change_id: int = Field(..., description="Highest server-side sync_log change_id.")
+    latest_change_id: int = Field(
+        ..., description="Highest server-side sync_log change_id."
+    )
 
 
 SyncTransportResponse = dict[str, Any]
@@ -96,16 +117,27 @@ SyncTransportResponse = dict[str, Any]
 
 SyncV2Domain = str
 SyncV2Operation = Literal[
-    "upsert", "delete", "link", "unlink", "resolve_conflict",
-    "append", "tombstone",
+    "upsert",
+    "delete",
+    "link",
+    "unlink",
+    "resolve_conflict",
+    "append",
+    "tombstone",
 ]
 SyncV2DatasetScope = Literal["personal", "workspace"]
 SyncV2EncryptionPolicy = Literal[
-    "client_private_v1", "server_trusted", "shared_workspace_v1",
-    "server_trusted_v1", "passphrase_wrapped_v1", "device_wrapped_v1",
+    "client_private_v1",
+    "server_trusted",
+    "shared_workspace_v1",
+    "server_trusted_v1",
+    "passphrase_wrapped_v1",
+    "device_wrapped_v1",
 ]
 SyncV2ConflictStatus = Literal["unresolved", "resolved", "dismissed"]
-SyncV2ConflictResolutionAction = Literal["accept_local", "accept_remote", "merge", "dismiss"]
+SyncV2ConflictResolutionAction = Literal[
+    "accept_local", "accept_remote", "merge", "dismiss"
+]
 
 SYNC_V2_DOMAINS: list[SyncV2Domain] = [
     "notes.note",
@@ -114,8 +146,13 @@ SYNC_V2_DOMAINS: list[SyncV2Domain] = [
     "attachment.ref",
 ]
 SYNC_V2_OPERATIONS: list[SyncV2Operation] = [
-    "upsert", "delete", "link", "unlink", "resolve_conflict",
-    "append", "tombstone",
+    "upsert",
+    "delete",
+    "link",
+    "unlink",
+    "resolve_conflict",
+    "append",
+    "tombstone",
 ]
 SYNC_V2_ENCRYPTION_POLICIES: list[SyncV2EncryptionPolicy] = [
     "client_private_v1",
@@ -220,7 +257,9 @@ class SyncV2CapabilitiesResponse(BaseModel):
             return normalized
         return value
 
-    @field_validator("protocol_version", "min_supported_protocol_version", mode="before")
+    @field_validator(
+        "protocol_version", "min_supported_protocol_version", mode="before"
+    )
     @classmethod
     def _coerce_protocol_version(cls, value: Any) -> str:
         if value in (None, 2, "2"):
@@ -293,7 +332,9 @@ class SyncV2ProfileResponse(BaseModel):
     device: SyncV2ProfileDeviceStatus | None = None
     dataset: SyncV2ProfileDatasetStatus | None = None
     server_cursor: int = Field(0, ge=0)
-    capabilities: SyncV2CapabilitiesResponse = Field(default_factory=SyncV2CapabilitiesResponse)
+    capabilities: SyncV2CapabilitiesResponse = Field(
+        default_factory=SyncV2CapabilitiesResponse
+    )
     domain_status: list[SyncV2ProfileDomainStatus] = Field(default_factory=list)
     warnings: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -311,7 +352,10 @@ class SyncV2ProfileBootstrapRequest(BaseModel):
     client_instance: dict[str, Any] = Field(default_factory=dict)
     requested_domains: list[str] = Field(
         default_factory=lambda: [
-            "notes.note", "chat.conversation", "chat.message", "attachment.ref",
+            "notes.note",
+            "chat.conversation",
+            "chat.message",
+            "attachment.ref",
         ]
     )
     model_config = ConfigDict(extra="ignore")
@@ -419,7 +463,13 @@ class SyncV2Envelope(BaseModel):
     encryption_metadata: dict[str, Any] = Field(default_factory=dict)
     status: str | None = None
 
-    @field_validator("routing_metadata", "payload_clear", "payload", "encryption_metadata", mode="before")
+    @field_validator(
+        "routing_metadata",
+        "payload_clear",
+        "payload",
+        "encryption_metadata",
+        mode="before",
+    )
     @classmethod
     def _default_object_maps(cls, value: Any) -> dict[str, Any]:
         return _normalize_object_map(value)
@@ -445,10 +495,7 @@ class SyncV2Envelope(BaseModel):
             self.payload_clear = dict(self.payload)
         # M1 fine-grained domains default to server_trusted_v1, but only when the
         # caller did not explicitly choose a policy (explicit client_private_v1 is honored).
-        if (
-            "." in self.domain
-            and "encryption_policy" not in self.model_fields_set
-        ):
+        if "." in self.domain and "encryption_policy" not in self.model_fields_set:
             self.encryption_policy = "server_trusted_v1"
         return self
 
@@ -456,7 +503,9 @@ class SyncV2Envelope(BaseModel):
     def _reject_clear_private_payload(self) -> "SyncV2Envelope":
         if self.encryption_policy != "client_private_v1":
             return self
-        disallowed_key_path = _find_disallowed_private_clear_payload_key(self.payload_clear)
+        disallowed_key_path = _find_disallowed_private_clear_payload_key(
+            self.payload_clear
+        )
         if disallowed_key_path:
             raise ValueError(
                 f"{disallowed_key_path} is not allowed in clear client_private_v1 sync envelopes"
@@ -477,20 +526,28 @@ class SyncV2PushRequest(BaseModel):
     def _validate_envelope_dataset_ids(self) -> "SyncV2PushRequest":
         for envelope in self.envelopes:
             if envelope.dataset_id != self.dataset_id:
-                raise ValueError("envelope dataset_id must match SyncV2PushRequest.dataset_id")
+                raise ValueError(
+                    "envelope dataset_id must match SyncV2PushRequest.dataset_id"
+                )
         return self
 
 
 class SyncV2PushAcceptedEnvelope(BaseModel):
     client_envelope_id: str
     envelope_id: str | None = None
-    server_sequence: int | None = Field(None, ge=0, validation_alias=AliasChoices("server_sequence", "server_cursor"))
+    server_sequence: int | None = Field(
+        None, ge=0, validation_alias=AliasChoices("server_sequence", "server_cursor")
+    )
     domain: SyncV2Domain | None = None
     entity_id: str | None = None
-    object_id: str | None = Field(None, validation_alias=AliasChoices("object_id", "entity_id"))
+    object_id: str | None = Field(
+        None, validation_alias=AliasChoices("object_id", "entity_id")
+    )
     object_revision: int | None = Field(None, ge=0)
     apply_status: str | None = None
-    server_cursor: int | None = Field(None, ge=0, validation_alias=AliasChoices("server_cursor", "server_sequence"))
+    server_cursor: int | None = Field(
+        None, ge=0, validation_alias=AliasChoices("server_cursor", "server_sequence")
+    )
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 

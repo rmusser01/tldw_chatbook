@@ -1,6 +1,9 @@
 import pytest
 
-from tldw_chatbook.Scheduling.services import SchedulingServerClient, ServerUnavailableError
+from tldw_chatbook.Scheduling.services import (
+    SchedulingServerClient,
+    ServerUnavailableError,
+)
 
 
 class FakeNotificationsService:
@@ -40,13 +43,19 @@ def client(service):
 
 @pytest.mark.asyncio
 async def test_create_reminder_delegates_to_notifications_service(client, service):
-    result = await client.create_reminder(title="Test", schedule_kind="one_time", run_at="2026-04-24T12:00:00Z")
+    result = await client.create_reminder(
+        title="Test", schedule_kind="one_time", run_at="2026-04-24T12:00:00Z"
+    )
 
     assert result == {"id": "task-1", "title": "Test"}
     assert service.calls == [
         (
             "create_reminder",
-            {"title": "Test", "schedule_kind": "one_time", "run_at": "2026-04-24T12:00:00Z"},
+            {
+                "title": "Test",
+                "schedule_kind": "one_time",
+                "run_at": "2026-04-24T12:00:00Z",
+            },
         )
     ]
 
@@ -94,7 +103,9 @@ async def test_get_reminder_delegates_to_notifications_service(client, service):
         ("get_reminder", ["task-1"], {}),
     ],
 )
-async def test_unavailable_client_raises_server_unavailable_error(method_name, args, kwargs):
+async def test_unavailable_client_raises_server_unavailable_error(
+    method_name, args, kwargs
+):
     client = SchedulingServerClient(notifications_service=None)
 
     method = getattr(client, method_name)

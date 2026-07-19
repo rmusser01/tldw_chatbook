@@ -66,7 +66,9 @@ async def test_successful_note_import_refreshes_mounted_library_screen(tmp_path)
     library_screen = Mock(spec=LibraryScreen)
     app = _make_mock_app(tmp_path, screen=library_screen)
 
-    await handle_ingest_notes_import_now_button_pressed(app, Button.Pressed(Mock(spec=Button)))
+    await handle_ingest_notes_import_now_button_pressed(
+        app, Button.Pressed(Mock(spec=Button))
+    )
 
     worker_callable = app._captured_worker["callable"]
     await worker_callable()
@@ -82,7 +84,9 @@ async def test_successful_note_import_does_not_touch_non_library_screen(tmp_path
     other_screen = Mock()
     app = _make_mock_app(tmp_path, screen=other_screen)
 
-    await handle_ingest_notes_import_now_button_pressed(app, Button.Pressed(Mock(spec=Button)))
+    await handle_ingest_notes_import_now_button_pressed(
+        app, Button.Pressed(Mock(spec=Button))
+    )
 
     worker_callable = app._captured_worker["callable"]
     # Must not raise even though `screen` has no _refresh_local_source_snapshot

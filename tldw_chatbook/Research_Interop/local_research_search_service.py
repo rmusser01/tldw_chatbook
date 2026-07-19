@@ -35,7 +35,10 @@ class LocalResearchSearchService:
         self,
         *,
         websearch_runner: Callable[[str, dict[str, Any]], Any] | None = None,
-        aggregate_runner: Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], Any] | None = None,
+        aggregate_runner: Callable[
+            [dict[str, Any], dict[str, Any], dict[str, Any]], Any
+        ]
+        | None = None,
         arxiv_runner: Callable[..., Any] | None = None,
         semantic_scholar_runner: Callable[..., Any] | None = None,
         policy_enforcer: Any | None = None,
@@ -43,7 +46,9 @@ class LocalResearchSearchService:
         self.websearch_runner = websearch_runner or self._default_websearch_runner
         self.aggregate_runner = aggregate_runner or self._default_aggregate_runner
         self.arxiv_runner = arxiv_runner or self._default_arxiv_runner
-        self.semantic_scholar_runner = semantic_scholar_runner or self._default_semantic_scholar_runner
+        self.semantic_scholar_runner = (
+            semantic_scholar_runner or self._default_semantic_scholar_runner
+        )
         self.policy_enforcer = policy_enforcer
 
     @staticmethod
@@ -60,7 +65,9 @@ class LocalResearchSearchService:
     ) -> Any:
         from ..Web_Scraping.WebSearch_APIs import analyze_and_aggregate
 
-        return await analyze_and_aggregate(web_search_results_dict, sub_query_dict, search_params)
+        return await analyze_and_aggregate(
+            web_search_results_dict, sub_query_dict, search_params
+        )
 
     @staticmethod
     def _default_arxiv_runner(
@@ -97,13 +104,17 @@ class LocalResearchSearchService:
         }
         root = ET.fromstring(payload)
         total_results = int(
-            root.findtext("opensearch:totalResults", default="0", namespaces=namespaces) or 0
+            root.findtext("opensearch:totalResults", default="0", namespaces=namespaces)
+            or 0
         )
         items: list[dict[str, Any]] = []
         for entry in root.findall("atom:entry", namespaces):
             pdf_url = None
             for link in entry.findall("atom:link", namespaces):
-                if link.attrib.get("title") == "pdf" or link.attrib.get("type") == "application/pdf":
+                if (
+                    link.attrib.get("title") == "pdf"
+                    or link.attrib.get("type") == "application/pdf"
+                ):
                     pdf_url = link.attrib.get("href")
                     break
             authors = [
@@ -114,10 +125,25 @@ class LocalResearchSearchService:
                 )
                 if str(name).strip()
             ]
-            entry_id = (entry.findtext("atom:id", default="", namespaces=namespaces) or "").strip()
-            title = " ".join((entry.findtext("atom:title", default="", namespaces=namespaces) or "").split())
-            published = (entry.findtext("atom:published", default="", namespaces=namespaces) or "").strip()
-            abstract = " ".join((entry.findtext("atom:summary", default="", namespaces=namespaces) or "").split())
+            entry_id = (
+                entry.findtext("atom:id", default="", namespaces=namespaces) or ""
+            ).strip()
+            title = " ".join(
+                (
+                    entry.findtext("atom:title", default="", namespaces=namespaces)
+                    or ""
+                ).split()
+            )
+            published = (
+                entry.findtext("atom:published", default="", namespaces=namespaces)
+                or ""
+            ).strip()
+            abstract = " ".join(
+                (
+                    entry.findtext("atom:summary", default="", namespaces=namespaces)
+                    or ""
+                ).split()
+            )
             items.append(
                 {
                     "id": entry_id or None,
@@ -141,7 +167,9 @@ class LocalResearchSearchService:
             "total_results": total_results,
             "page": page,
             "results_per_page": results_per_page,
-            "total_pages": math.ceil(total_results / results_per_page) if results_per_page else 0,
+            "total_pages": math.ceil(total_results / results_per_page)
+            if results_per_page
+            else 0,
         }
 
     @staticmethod
@@ -182,7 +210,9 @@ class LocalResearchSearchService:
             "venue": cls._coerce_csv(venue),
             "minCitationCount": min_citations,
         }
-        params.update({key: value for key, value in optional_params.items() if value is not None})
+        params.update(
+            {key: value for key, value in optional_params.items() if value is not None}
+        )
         url = f"https://api.semanticscholar.org/graph/v1/paper/search?{urllib.parse.urlencode(params)}"
         with urllib.request.urlopen(url, timeout=30) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -206,14 +236,18 @@ class LocalResearchSearchService:
             "limit": results_per_page,
             "next_offset": payload.get("next"),
             "page": page,
-            "total_pages": math.ceil(total_results / results_per_page) if results_per_page else 0,
+            "total_pages": math.ceil(total_results / results_per_page)
+            if results_per_page
+            else 0,
         }
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -222,11 +256,14 @@ class LocalResearchSearchService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
                     user_message=getattr(decision, "user_message", None)
                     or "Local research search action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "local",
-                    authority_owner=getattr(decision, "authority_owner", None) or "local",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "local",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "local",
                 )
 
     @staticmethod
@@ -272,7 +309,9 @@ class LocalResearchSearchService:
         normalized_engine = self._normalize_engine(engine)
         if normalized_engine not in LOCAL_SUPPORTED_WEBSEARCH_ENGINES:
             supported = ", ".join(sorted(LOCAL_SUPPORTED_WEBSEARCH_ENGINES))
-            raise ValueError(f"Unsupported local websearch engine: {engine}. Supported engines: {supported}")
+            raise ValueError(
+                f"Unsupported local websearch engine: {engine}. Supported engines: {supported}"
+            )
 
         request = WebSearchRequest(
             query=query,
@@ -283,14 +322,20 @@ class LocalResearchSearchService:
         )
         search_params = request.model_dump(exclude_none=True, mode="json")
         search_params.pop("query", None)
-        result = self._dump(await self._maybe_await(self.websearch_runner(query, search_params)))
+        result = self._dump(
+            await self._maybe_await(self.websearch_runner(query, search_params))
+        )
 
         if not aggregate:
             return result
 
         web_results = result.get("web_search_results_dict") or {}
         sub_queries = result.get("sub_query_dict") or {}
-        return self._dump(await self._maybe_await(self.aggregate_runner(web_results, sub_queries, search_params)))
+        return self._dump(
+            await self._maybe_await(
+                self.aggregate_runner(web_results, sub_queries, search_params)
+            )
+        )
 
     async def search_arxiv(
         self,

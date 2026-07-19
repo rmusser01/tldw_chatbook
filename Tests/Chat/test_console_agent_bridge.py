@@ -1,22 +1,37 @@
 """Console agent bridge: streaming, markers, spawn, supersede (fakes only)."""
+
 import asyncio
 import contextlib
 import json
 
-import pytest
 
 from tldw_chatbook.Chat.console_agent_bridge import (
-    CONSOLE_AGENT_OPERATING_PROMPT, ConsoleAgentBridge, compose_agent_system_prompt,
-    format_agent_step_marker, inject_resume_agent_markers, _compose_run_allowed_tools,
-    _compose_run_registry_and_allowed, _non_colliding_mcp_names,
+    CONSOLE_AGENT_OPERATING_PROMPT,
+    ConsoleAgentBridge,
+    compose_agent_system_prompt,
+    format_agent_step_marker,
+    inject_resume_agent_markers,
+    _compose_run_allowed_tools,
+    _compose_run_registry_and_allowed,
+    _non_colliding_mcp_names,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_models import (
-    LOAD_TOOLS_NAME, SPAWN_TOOL_NAME, STEP_ERROR, STEP_MODEL, STEP_SPAWN,
-    STEP_TOOL_RESULT, ToolCatalogEntry, ToolResult, ToolSchema,
+    LOAD_TOOLS_NAME,
+    SPAWN_TOOL_NAME,
+    STEP_ERROR,
+    STEP_MODEL,
+    STEP_SPAWN,
+    STEP_TOOL_RESULT,
+    ToolCatalogEntry,
+    ToolResult,
+    ToolSchema,
 )
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
@@ -35,14 +50,19 @@ class _FakeMCPProvider:
 
     def list_catalog(self):
         return [
-            ToolCatalogEntry(id=name, name=name, one_line_description=desc, source="mcp")
+            ToolCatalogEntry(
+                id=name, name=name, one_line_description=desc, source="mcp"
+            )
             for name, desc in self._entries
         ]
 
     def load_schema(self, tool_id):
         return ToolSchema(
-            id=tool_id, name=tool_id, description="",
-            parameters={"type": "object", "properties": {}})
+            id=tool_id,
+            name=tool_id,
+            description="",
+            parameters={"type": "object", "properties": {}},
+        )
 
     def invoke(self, tool_id, args):
         self.invoke_calls.append((tool_id, dict(args or {})))
@@ -60,7 +80,7 @@ class _FakeMCPProvider:
 
 
 def _fence(name, args):
-    return f'{FENCE_OPEN}\n{json.dumps({"name": name, "arguments": args})}\n```'
+    return f"{FENCE_OPEN}\n{json.dumps({'name': name, 'arguments': args})}\n```"
 
 
 class _ChunkGateway:
@@ -74,7 +94,9 @@ class _ChunkGateway:
     """
 
     def __init__(self, scripts):
-        self._scripts = list(scripts)   # each entry: list of str and/or ProviderToolCalls
+        self._scripts = list(
+            scripts
+        )  # each entry: list of str and/or ProviderToolCalls
         self.calls = 0
         self.tools_seen = []
 
@@ -94,9 +116,15 @@ class _NativeResolution:
 
 
 def _native_calls(name, args, call_id="c1"):
-    return ProviderToolCalls(tool_calls=(
-        {"id": call_id, "type": "function",
-         "function": {"name": name, "arguments": json.dumps(args)}},))
+    return ProviderToolCalls(
+        tool_calls=(
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {"name": name, "arguments": json.dumps(args)},
+            },
+        )
+    )
 
 
 def _bridge(tmp_path, scripts, native_tools_enabled=None):
@@ -105,19 +133,28 @@ def _bridge(tmp_path, scripts, native_tools_enabled=None):
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
     assistant = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
-        native_tools_enabled=native_tools_enabled)
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway(scripts),
+        native_tools_enabled=native_tools_enabled,
+    )
     return bridge, db, store, session, assistant.id
 
 
 def _run(bridge, store, session, assistant_id, **over):
     kwargs = dict(
-        conversation_id="conv-1", session_id=session.id, resolution=object(),
-        assistant_message_id=assistant_id, model="test-model",
-        session_system_prompt="", agent_messages=[{"role": "user", "content": "hi"}],
-        should_cancel=lambda: False)
+        conversation_id="conv-1",
+        session_id=session.id,
+        resolution=object(),
+        assistant_message_id=assistant_id,
+        model="test-model",
+        session_system_prompt="",
+        agent_messages=[{"role": "user", "content": "hi"}],
+        should_cancel=lambda: False,
+    )
     kwargs.update(over)
     return bridge.run_reply(**kwargs)
 
@@ -141,14 +178,17 @@ def test_no_tool_message_streams_final_answer_like_today(tmp_path):
 
 def test_tool_turn_renders_a_tool_marker_not_prose(tmp_path):
     scripts = [
-        [_fence("calculator", {"expression": "6*7"})],   # turn 1: leading fence
-        ["It is ", "42."],                                # turn 2: final answer
+        [_fence("calculator", {"expression": "6*7"})],  # turn 1: leading fence
+        ["It is ", "42."],  # turn 2: final answer
     ]
     bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
     outcome = _run(bridge, store, session, aid)
     assert outcome.status == "done"
-    tool_rows = [m for m in store.messages_for_session(session.id)
-                 if m.role is ConsoleMessageRole.TOOL]
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
     assert tool_rows, "a tool turn must drop a TOOL marker"
     assert "calculator" in tool_rows[0].content
     # The fenced tool JSON never streamed into the assistant answer.
@@ -163,8 +203,11 @@ def test_leaked_prose_before_disobedient_fence_is_reset_not_garbled(tmp_path):
     # That leaked prose must not survive to garble the real final answer
     # that streams onto the same assistant message afterward.
     scripts = [
-        ["Let me check that ", "for you.\n```tool_call\n",
-         '{"name": "calculator", "arguments": {"expression": "6*7"}}\n```'],
+        [
+            "Let me check that ",
+            "for you.\n```tool_call\n",
+            '{"name": "calculator", "arguments": {"expression": "6*7"}}\n```',
+        ],
         ["42."],
     ]
     bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
@@ -179,20 +222,23 @@ def test_leaked_prose_before_disobedient_fence_is_reset_not_garbled(tmp_path):
 
 
 def test_native_tool_call_round_trip_streams_final_answer(tmp_path):
-    bridge, db, store, session, aid = _bridge(tmp_path, [
-        [_native_calls("get_current_datetime", {})],
-        ["It is ", "now."]])
+    bridge, db, store, session, aid = _bridge(
+        tmp_path, [[_native_calls("get_current_datetime", {})], ["It is ", "now."]]
+    )
     outcome = _run(bridge, store, session, aid, resolution=_NativeResolution())
     assert outcome.status == "done"
     assert store.get_message(aid).content == "It is now."
     gateway = bridge._gateway
-    assert gateway.tools_seen[0] is not None          # tools= sent on turn 1
+    assert gateway.tools_seen[0] is not None  # tools= sent on turn 1
     names = [t["function"]["name"] for t in gateway.tools_seen[0]]
     assert "get_current_datetime" in names
     kinds = [step["kind"] for step in db.list_runs("conv-1")[0]["steps"]]
     assert "tool_call" in kinds and "tool_result" in kinds
-    tool_rows = [m for m in store.messages_for_session(session.id)
-                 if m.role is ConsoleMessageRole.TOOL]
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
     assert tool_rows, "a native tool turn must drop a TOOL marker too"
     assert "get_current_datetime" in tool_rows[0].content
 
@@ -200,9 +246,10 @@ def test_native_tool_call_round_trip_streams_final_answer(tmp_path):
 def test_native_leaked_prose_is_reset_before_final_answer(tmp_path):
     """Prose streamed before the ProviderToolCalls arrives must not survive
     (Finding-A parity with the fence path)."""
-    bridge, db, store, session, aid = _bridge(tmp_path, [
-        ["Let me check. ", _native_calls("get_current_datetime", {})],
-        ["Done."]])
+    bridge, db, store, session, aid = _bridge(
+        tmp_path,
+        [["Let me check. ", _native_calls("get_current_datetime", {})], ["Done."]],
+    )
     outcome = _run(bridge, store, session, aid, resolution=_NativeResolution())
     assert outcome.status == "done"
     assert store.get_message(aid).content == "Done."
@@ -212,10 +259,11 @@ def test_native_kill_switch_off_stays_on_fence_path(tmp_path):
     bridge, db, store, session, aid = _bridge(
         tmp_path,
         [[_fence("get_current_datetime", {})], ["Done."]],
-        native_tools_enabled=lambda: False)
+        native_tools_enabled=lambda: False,
+    )
     outcome = _run(bridge, store, session, aid, resolution=_NativeResolution())
     assert outcome.status == "done"
-    assert bridge._gateway.tools_seen[0] is None       # no tools= despite groq
+    assert bridge._gateway.tools_seen[0] is None  # no tools= despite groq
 
 
 def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
@@ -227,8 +275,8 @@ def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
     reuse it for every turn -- the tool-call turn and the final-answer turn
     here -- so at most one swap happens per run."""
     scripts = [
-        [_fence("calculator", {"expression": "6*7"})],   # turn 1: tool call
-        ["It is ", "42."],                                # turn 2: final answer
+        [_fence("calculator", {"expression": "6*7"})],  # turn 1: tool call
+        ["It is ", "42."],  # turn 2: final answer
     ]
     seen_loops = []
 
@@ -243,9 +291,11 @@ def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
     assistant = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=_LoopSpyGateway(scripts))
+        agent_runs_db=db, store=store, provider_gateway=_LoopSpyGateway(scripts)
+    )
     outcome = _run(bridge, store, session, assistant.id)
 
     assert outcome.status == "done"
@@ -263,15 +313,18 @@ def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
 def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     scripts = [
         [_fence("spawn_subagent", {"task": "compute 1+1"})],  # primary turn 1
-        ["2"],                                                 # sub-agent turn
-        ["Done: ", "2."],                                     # primary final
+        ["2"],  # sub-agent turn
+        ["Done: ", "2."],  # primary final
     ]
     bridge, db, store, session, aid = _bridge(tmp_path, scripts)
     outcome = _run(bridge, store, session, aid)
     assert outcome.status == "done"
     assert db.count_subagent_runs("conv-1") == 1
-    spawn_markers = [m for m in store.messages_for_session(session.id)
-                     if m.role is ConsoleMessageRole.TOOL and "sub-agent" in m.content.lower()]
+    spawn_markers = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL and "sub-agent" in m.content.lower()
+    ]
     assert spawn_markers
     snap = bridge.live_snapshot("conv-1")
     assert any(s.text for s in snap.subagents)
@@ -285,14 +338,17 @@ def test_tool_marker_with_brackets_renders_literally_not_escaped(tmp_path):
     # would need to consume but never runs.
     scripts = [
         [_fence("spawn_subagent", {"task": "fetch [docs]"})],  # primary turn 1
-        ["ok"],                                                 # sub-agent turn
-        ["Done."],                                             # primary final
+        ["ok"],  # sub-agent turn
+        ["Done."],  # primary final
     ]
     bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
     outcome = _run(bridge, store, session, aid)
     assert outcome.status == "done"
-    spawn_markers = [m for m in store.messages_for_session(session.id)
-                     if m.role is ConsoleMessageRole.TOOL and "sub-agent" in m.content.lower()]
+    spawn_markers = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL and "sub-agent" in m.content.lower()
+    ]
     assert spawn_markers
     assert "[docs]" in spawn_markers[0].content
     assert "\\[docs]" not in spawn_markers[0].content
@@ -300,12 +356,13 @@ def test_tool_marker_with_brackets_renders_literally_not_escaped(tmp_path):
 
 def test_supersede_marks_previous_primary_and_tree(tmp_path):
     bridge, db, store, session, aid = _bridge(tmp_path, [["one."], ["two."]])
-    _run(bridge, store, session, aid)                        # first run
+    _run(bridge, store, session, aid)  # first run
     first = db.list_runs("conv-1")[0]
     assert first["status"] == "done"
     # Second run supersedes the previous primary.
-    aid2 = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT,
-                                content="").id
+    aid2 = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    ).id
     _run(bridge, store, session, aid2, supersede_previous=True)
     prior = db.get_run(first["id"])
     assert prior["status"] == "superseded"
@@ -347,6 +404,7 @@ def test_stop_before_first_chunk_persists_cancelled_not_error(tmp_path):
     assert outcome.status == "cancelled"
     assert db.list_runs("conv-1")[0]["status"] == "cancelled"
     from tldw_chatbook.Agents.agent_models import STEP_ERROR
+
     assert not any(s.kind == STEP_ERROR for s in outcome.steps)
     # The message stays exactly as Stop left it -- no late content leaked in.
     stored = store.get_message(aid)
@@ -362,8 +420,7 @@ def test_stop_mid_final_answer_persists_cancelled_and_store_agrees(tmp_path):
     scripts = [["Par", "tial", " answer."]]
     bridge, db, store, session, aid = _bridge(tmp_path, scripts)
     flags = iter([False, True])
-    outcome = _run(bridge, store, session, aid,
-                   should_cancel=lambda: next(flags, True))
+    outcome = _run(bridge, store, session, aid, should_cancel=lambda: next(flags, True))
     assert outcome.status == "cancelled"
     assert db.list_runs("conv-1")[0]["status"] == "cancelled"
     assert store.get_message(aid).content == outcome.final_text
@@ -386,14 +443,27 @@ def test_historical_snapshot_idle_when_conversation_never_ran(tmp_path):
 def test_historical_snapshot_derives_status_steps_and_subagents_from_db(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
-    db.append_steps(primary_id, [
-        {"index": 0, "kind": "model", "summary": "The capital of France is Paris.",
-         "tool_name": "", "args": None, "result": "", "created_at": ""},
-    ])
+    db.append_steps(
+        primary_id,
+        [
+            {
+                "index": 0,
+                "kind": "model",
+                "summary": "The capital of France is Paris.",
+                "tool_name": "",
+                "args": None,
+                "result": "",
+                "created_at": "",
+            },
+        ],
+    )
     db.set_status(primary_id, "done", result="The capital of France is Paris.")
     sub_id = db.create_run(
-        conversation_id="conv-1", agent_kind="subagent",
-        task="research pricing", parent_run_id=primary_id)
+        conversation_id="conv-1",
+        agent_kind="subagent",
+        task="research pricing",
+        parent_run_id=primary_id,
+    )
     db.set_status(sub_id, "done", result="done researching")
 
     # Fresh bridge instance -- simulates an app restart: `_live` starts empty.
@@ -417,8 +487,11 @@ def test_historical_snapshot_ignores_subagents_of_other_runs(tmp_path):
     other_primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.set_status(other_primary_id, "superseded")
     db.create_run(
-        conversation_id="conv-1", agent_kind="subagent",
-        task="orphaned", parent_run_id=other_primary_id)
+        conversation_id="conv-1",
+        agent_kind="subagent",
+        task="orphaned",
+        parent_run_id=other_primary_id,
+    )
 
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     snap = bridge.historical_snapshot("conv-1")
@@ -426,7 +499,9 @@ def test_historical_snapshot_ignores_subagents_of_other_runs(tmp_path):
     assert snap.subagents == ()
 
 
-def test_historical_snapshot_caches_per_conversation_not_hit_every_call(tmp_path, monkeypatch):
+def test_historical_snapshot_caches_per_conversation_not_hit_every_call(
+    tmp_path, monkeypatch
+):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.set_status(primary_id, "done", result="ok")
@@ -444,7 +519,7 @@ def test_historical_snapshot_caches_per_conversation_not_hit_every_call(tmp_path
     first = bridge.historical_snapshot("conv-1")
     second = bridge.historical_snapshot("conv-1")
     assert first == second
-    assert len(calls) == 1   # the 0.2s rail poll must not re-hit the DB
+    assert len(calls) == 1  # the 0.2s rail poll must not re-hit the DB
 
     # A different conversation is a separate cache entry.
     bridge.historical_snapshot("conv-2")
@@ -456,33 +531,48 @@ def test_historical_snapshot_caches_per_conversation_not_hit_every_call(tmp_path
 
 
 def test_format_agent_step_marker_matches_each_live_marker_shape():
-    assert format_agent_step_marker(
-        STEP_SPAWN, summary="research pricing") == "⤷ spawned sub-agent: research pricing"
-    assert format_agent_step_marker(
-        STEP_TOOL_RESULT, tool_name="calculator", result="42") == "⚙ calculator → 42"
+    assert (
+        format_agent_step_marker(STEP_SPAWN, summary="research pricing")
+        == "⤷ spawned sub-agent: research pricing"
+    )
+    assert (
+        format_agent_step_marker(STEP_TOOL_RESULT, tool_name="calculator", result="42")
+        == "⚙ calculator → 42"
+    )
     assert format_agent_step_marker(STEP_ERROR, summary="boom") == "⚠ boom"
     # Quiet tool-catalog steps and plain model steps never produce a marker.
-    assert format_agent_step_marker(STEP_TOOL_RESULT, tool_name="find_tools", result="[]") is None
-    assert format_agent_step_marker(STEP_TOOL_RESULT, tool_name="load_tools", result="[]") is None
+    assert (
+        format_agent_step_marker(STEP_TOOL_RESULT, tool_name="find_tools", result="[]")
+        is None
+    )
+    assert (
+        format_agent_step_marker(STEP_TOOL_RESULT, tool_name="load_tools", result="[]")
+        is None
+    )
     assert format_agent_step_marker(STEP_MODEL, summary="The answer is 42.") is None
 
 
-def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(tmp_path):
+def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
+    tmp_path,
+):
     scripts = [
-        [_fence("calculator", {"expression": "6*7"})],   # turn 1: leading fence
-        ["It is ", "42."],                                # turn 2: final answer
+        [_fence("calculator", {"expression": "6*7"})],  # turn 1: leading fence
+        ["It is ", "42."],  # turn 2: final answer
     ]
     bridge, db, store, session, aid = _bridge(tmp_path, scripts)
     _run(bridge, store, session, aid)
     live_tool_contents = [
-        m.content for m in store.messages_for_session(session.id)
+        m.content
+        for m in store.messages_for_session(session.id)
         if m.role is ConsoleMessageRole.TOOL
     ]
     assert live_tool_contents  # sanity: the live run actually left a marker
 
     # A fresh bridge instance -- simulates an app restart -- must re-derive
     # byte-identical marker text purely from AgentRunsDB.
-    fresh_bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    fresh_bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=None, provider_gateway=None
+    )
     blocks = fresh_bridge.resume_marker_messages("conv-1")
     resumed_tool_contents = [m.content for block in blocks for m in block]
     assert resumed_tool_contents == live_tool_contents
@@ -491,16 +581,36 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
 def test_resume_marker_messages_orders_blocks_chronologically_oldest_first(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     first = db.create_run(conversation_id="conv-1", agent_kind="primary")
-    db.append_steps(first, [
-        {"index": 0, "kind": STEP_TOOL_RESULT, "tool_name": "calculator",
-         "result": "4", "summary": "", "args": None, "created_at": ""},
-    ])
+    db.append_steps(
+        first,
+        [
+            {
+                "index": 0,
+                "kind": STEP_TOOL_RESULT,
+                "tool_name": "calculator",
+                "result": "4",
+                "summary": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
     db.set_status(first, "done", result="4")
     second = db.create_run(conversation_id="conv-1", agent_kind="primary")
-    db.append_steps(second, [
-        {"index": 0, "kind": STEP_ERROR, "summary": "timed out",
-         "tool_name": "", "result": "", "args": None, "created_at": ""},
-    ])
+    db.append_steps(
+        second,
+        [
+            {
+                "index": 0,
+                "kind": STEP_ERROR,
+                "summary": "timed out",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
     db.set_status(second, "done", result="ok")
 
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
@@ -513,16 +623,36 @@ def test_resume_marker_messages_orders_blocks_chronologically_oldest_first(tmp_p
 def test_resume_marker_messages_skips_superseded_runs(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     superseded = db.create_run(conversation_id="conv-1", agent_kind="primary")
-    db.append_steps(superseded, [
-        {"index": 0, "kind": STEP_ERROR, "summary": "old attempt",
-         "tool_name": "", "result": "", "args": None, "created_at": ""},
-    ])
+    db.append_steps(
+        superseded,
+        [
+            {
+                "index": 0,
+                "kind": STEP_ERROR,
+                "summary": "old attempt",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
     db.set_status(superseded, "superseded")
     kept = db.create_run(conversation_id="conv-1", agent_kind="primary")
-    db.append_steps(kept, [
-        {"index": 0, "kind": STEP_ERROR, "summary": "final attempt",
-         "tool_name": "", "result": "", "args": None, "created_at": ""},
-    ])
+    db.append_steps(
+        kept,
+        [
+            {
+                "index": 0,
+                "kind": STEP_ERROR,
+                "summary": "final attempt",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
     db.set_status(kept, "done", result="ok")
 
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
@@ -532,15 +662,21 @@ def test_resume_marker_messages_skips_superseded_runs(tmp_path):
 
 
 def _tool_marker(text: str) -> ConsoleChatMessage:
-    return ConsoleChatMessage(role=ConsoleMessageRole.TOOL, content=text, status="complete")
+    return ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL, content=text, status="complete"
+    )
 
 
 def test_inject_resume_agent_markers_places_block_after_matching_assistant_message():
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
-        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+        ),
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="again"),
-        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"
+        ),
     ]
     blocks = [[_tool_marker("⚙ calculator → 42")], [_tool_marker("⚠ retry")]]
 
@@ -560,18 +696,27 @@ def test_inject_resume_agent_markers_places_block_after_matching_assistant_messa
 def test_inject_resume_agent_markers_appends_leftover_block_when_more_runs_than_replies():
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
-        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+        ),
     ]
     blocks = [[_tool_marker("⚙ calculator → 42")], [_tool_marker("⚠ orphan run")]]
 
     result = inject_resume_agent_markers(messages, blocks)
 
-    assert [m.content for m in result] == ["hi", "42.", "⚙ calculator → 42", "⚠ orphan run"]
+    assert [m.content for m in result] == [
+        "hi",
+        "42.",
+        "⚙ calculator → 42",
+        "⚠ orphan run",
+    ]
 
 
 def test_inject_resume_agent_markers_skips_empty_blocks():
     messages = [
-        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"
+        ),
     ]
     result = inject_resume_agent_markers(messages, [[], []])
     assert [m.content for m in result] == ["ok."]
@@ -580,7 +725,9 @@ def test_inject_resume_agent_markers_skips_empty_blocks():
 def test_inject_resume_agent_markers_is_idempotent_no_duplicates_on_second_call():
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
-        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+        ),
     ]
     blocks = [[_tool_marker("⚙ calculator → 42")]]
 
@@ -598,7 +745,9 @@ def test_inject_resume_agent_markers_leaves_live_session_with_markers_untouched(
     unchanged if this function is (defensively) called on it again."""
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
-        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+        ),
         _tool_marker("⚙ calculator → 42"),
     ]
     blocks = [[_tool_marker("⚙ calculator → 42")]]
@@ -629,20 +778,28 @@ def test_resume_injects_markers_matching_live_format_end_to_end(tmp_path):
     # derived fresh from the DB via a brand-new bridge instance.
     chachanotes_only = [
         ConsoleChatMessage(role=m.role, content=m.content, status="complete")
-        for m in live_messages if m.role is not ConsoleMessageRole.TOOL
+        for m in live_messages
+        if m.role is not ConsoleMessageRole.TOOL
     ]
-    fresh_bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    fresh_bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=None, provider_gateway=None
+    )
     resumed = inject_resume_agent_markers(
-        chachanotes_only, fresh_bridge.resume_marker_messages("conv-1"))
+        chachanotes_only, fresh_bridge.resume_marker_messages("conv-1")
+    )
 
-    resumed_tool_contents = [m.content for m in resumed if m.role is ConsoleMessageRole.TOOL]
+    resumed_tool_contents = [
+        m.content for m in resumed if m.role is ConsoleMessageRole.TOOL
+    ]
     assert resumed_tool_contents == live_tool_contents
     assistant_index = next(
-        i for i, m in enumerate(resumed) if m.role is ConsoleMessageRole.ASSISTANT)
+        i for i, m in enumerate(resumed) if m.role is ConsoleMessageRole.ASSISTANT
+    )
     assert resumed[assistant_index + 1].role is ConsoleMessageRole.TOOL
 
     resumed_again = inject_resume_agent_markers(
-        resumed, fresh_bridge.resume_marker_messages("conv-1"))
+        resumed, fresh_bridge.resume_marker_messages("conv-1")
+    )
     assert len(resumed_again) == len(resumed)
 
 
@@ -652,8 +809,7 @@ def test_resume_injects_markers_matching_live_format_end_to_end(tmp_path):
 class _FakeSkillsService:
     """Minimal async skills service: one trusted, model-invocable skill."""
 
-    def __init__(self, *, skill_name="code-review", allowed_tools=None,
-                 blocked=False):
+    def __init__(self, *, skill_name="code-review", allowed_tools=None, blocked=False):
         self.skill_name = skill_name
         self.allowed_tools = allowed_tools
         self.blocked = blocked
@@ -664,9 +820,13 @@ class _FakeSkillsService:
         self.get_context_calls += 1
         return {
             "available_skills": [
-                {"name": self.skill_name, "description": "Review a diff",
-                 "argument_hint": "[diff]", "trust_blocked": False,
-                 "disable_model_invocation": False},
+                {
+                    "name": self.skill_name,
+                    "description": "Review a diff",
+                    "argument_hint": "[diff]",
+                    "trust_blocked": False,
+                    "disable_model_invocation": False,
+                },
             ],
             "blocked_skills": [],
         }
@@ -675,8 +835,10 @@ class _FakeSkillsService:
         self.execute_calls.append(args)
         if self.blocked:
             raise SkillTrustBlockedError(
-                skill_name=name, reason_code="quarantined_modified",
-                trust_status="quarantined_modified")
+                skill_name=name,
+                reason_code="quarantined_modified",
+                trust_status="quarantined_modified",
+            )
         return {
             "skill_name": name,
             "rendered_prompt": f"Review this: {args}",
@@ -694,27 +856,34 @@ def test_skill_tool_call_routes_through_run_scoped_spawn(tmp_path):
     call in the transcript exactly like any other tool call."""
     scripts = [
         [_fence("code-review", {"args": "the diff"})],  # primary calls the skill
-        ["Looks fine to me."],                            # sub-agent turn
-        ["All done."],                                    # primary final
+        ["Looks fine to me."],  # sub-agent turn
+        ["All done."],  # primary final
     ]
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
     assistant = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     skills_service = _FakeSkillsService()
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
-        skills_service=skills_service)
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway(scripts),
+        skills_service=skills_service,
+    )
 
     outcome = _run(bridge, store, session, assistant.id, conversation_id="conv-skill")
 
     assert outcome.status == "done"
     assert skills_service.execute_calls == ["the diff"]
     assert db.count_subagent_runs("conv-skill") == 1
-    tool_rows = [m for m in store.messages_for_session(session.id)
-                 if m.role is ConsoleMessageRole.TOOL]
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
     assert any("code-review" in row.content for row in tool_rows)
 
 
@@ -731,11 +900,15 @@ def test_skill_trust_blocked_refuses_without_spawning(tmp_path):
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
     assistant = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     skills_service = _FakeSkillsService(blocked=True)
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
-        skills_service=skills_service)
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway(scripts),
+        skills_service=skills_service,
+    )
 
     outcome = _run(bridge, store, session, assistant.id, conversation_id="conv-blocked")
 
@@ -757,17 +930,32 @@ def test_compose_run_allowed_tools_includes_eligible_skill_names():
     spawn -- a trust-blocked or model-invocation-disabled skill is excluded."""
     context = {
         "available_skills": [
-            {"name": "code-review", "trust_blocked": False,
-             "disable_model_invocation": False},
-            {"name": "needs-review", "trust_blocked": True,
-             "disable_model_invocation": False},
-            {"name": "user-only", "trust_blocked": False,
-             "disable_model_invocation": True},
+            {
+                "name": "code-review",
+                "trust_blocked": False,
+                "disable_model_invocation": False,
+            },
+            {
+                "name": "needs-review",
+                "trust_blocked": True,
+                "disable_model_invocation": False,
+            },
+            {
+                "name": "user-only",
+                "trust_blocked": False,
+                "disable_model_invocation": True,
+            },
         ],
     }
-    allowed = _compose_run_allowed_tools(context, ("calculator", "get_current_datetime"))
+    allowed = _compose_run_allowed_tools(
+        context, ("calculator", "get_current_datetime")
+    )
     assert allowed == (
-        "calculator", "get_current_datetime", "code-review", SPAWN_TOOL_NAME)
+        "calculator",
+        "get_current_datetime",
+        "code-review",
+        SPAWN_TOOL_NAME,
+    )
 
 
 def test_compose_run_allowed_tools_empty_context_is_builtins_plus_spawn():
@@ -781,11 +969,16 @@ def test_compose_run_allowed_tools_builtin_shadows_same_named_skill():
     allow-list carries the name exactly once (from builtins), never twice."""
     context = {
         "available_skills": [
-            {"name": "calculator", "trust_blocked": False,
-             "disable_model_invocation": False},
+            {
+                "name": "calculator",
+                "trust_blocked": False,
+                "disable_model_invocation": False,
+            },
         ],
     }
-    allowed = _compose_run_allowed_tools(context, ("calculator", "get_current_datetime"))
+    allowed = _compose_run_allowed_tools(
+        context, ("calculator", "get_current_datetime")
+    )
     assert allowed == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
 
 
@@ -803,11 +996,16 @@ def test_compose_run_allowed_tools_runtime_tool_name_shadows_same_named_skill():
     exactly like a builtin-name collision does."""
     context = {
         "available_skills": [
-            {"name": "find_tools", "trust_blocked": False,
-             "disable_model_invocation": False},
+            {
+                "name": "find_tools",
+                "trust_blocked": False,
+                "disable_model_invocation": False,
+            },
         ],
     }
-    allowed = _compose_run_allowed_tools(context, ("calculator", "get_current_datetime"))
+    allowed = _compose_run_allowed_tools(
+        context, ("calculator", "get_current_datetime")
+    )
     assert allowed == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
 
 
@@ -817,12 +1015,17 @@ def test_compose_run_registry_excludes_skill_named_like_a_runtime_tool():
     (under either FIND_TOOLS_NAME or LOAD_TOOLS_NAME or SPAWN_TOOL_NAME)."""
     context = {
         "available_skills": [
-            {"name": LOAD_TOOLS_NAME, "description": "d", "argument_hint": "",
-             "trust_blocked": False, "disable_model_invocation": False},
+            {
+                "name": LOAD_TOOLS_NAME,
+                "description": "d",
+                "argument_hint": "",
+                "trust_blocked": False,
+                "disable_model_invocation": False,
+            },
         ],
     }
     registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(context)
-    assert LOAD_TOOLS_NAME not in allowed_tools[len(builtin_names):]
+    assert LOAD_TOOLS_NAME not in allowed_tools[len(builtin_names) :]
     catalog_entries = [(entry.name, entry.source) for entry in registry.list_catalog()]
     assert (LOAD_TOOLS_NAME, "skill") not in catalog_entries
 
@@ -833,7 +1036,8 @@ def test_compose_run_registry_excludes_skill_named_like_a_runtime_tool():
 def test_compose_run_registry_and_allowed_includes_mcp_entries_when_eligible():
     mcp_provider = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
     registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
-        {}, mcp_provider=mcp_provider)
+        {}, mcp_provider=mcp_provider
+    )
     assert "mcp__srv_a__search" in allowed_tools
     catalog_entries = [(e.name, e.source) for e in registry.list_catalog()]
     assert ("mcp__srv_a__search", "mcp") in catalog_entries
@@ -856,9 +1060,11 @@ def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_built
     exactly once (from the builtin), and invoking it never reaches the
     MCP fake."""
     mcp_provider = _FakeMCPProvider(
-        [("calculator", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")])
+        [("calculator", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
+    )
     registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
-        {}, mcp_provider=mcp_provider)
+        {}, mcp_provider=mcp_provider
+    )
     assert allowed_tools.count("calculator") == 1
     assert "mcp__srv_a__search" in allowed_tools
     result = registry.invoke_by_name("calculator", {"expression": "1+1"})
@@ -872,8 +1078,9 @@ def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_runti
     never become a distinct, MCP-routable catalog entry."""
     mcp_provider = _FakeMCPProvider([(LOAD_TOOLS_NAME, "shadowing MCP tool")])
     registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(
-        {}, mcp_provider=mcp_provider)
-    assert LOAD_TOOLS_NAME not in allowed_tools[len(builtin_names):]
+        {}, mcp_provider=mcp_provider
+    )
+    assert LOAD_TOOLS_NAME not in allowed_tools[len(builtin_names) :]
     catalog_entries = [(e.name, e.source) for e in registry.list_catalog()]
     assert (LOAD_TOOLS_NAME, "mcp") not in catalog_entries
 
@@ -882,15 +1089,21 @@ def test_compose_run_registry_and_allowed_excludes_mcp_name_colliding_with_skill
     """A skill (registered before MCP) also wins a same-named MCP tool."""
     context = {
         "available_skills": [
-            {"name": "code-review", "description": "Review a diff",
-             "argument_hint": "", "trust_blocked": False,
-             "disable_model_invocation": False},
+            {
+                "name": "code-review",
+                "description": "Review a diff",
+                "argument_hint": "",
+                "trust_blocked": False,
+                "disable_model_invocation": False,
+            },
         ],
     }
     mcp_provider = _FakeMCPProvider(
-        [("code-review", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")])
+        [("code-review", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
+    )
     registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
-        context, mcp_provider=mcp_provider)
+        context, mcp_provider=mcp_provider
+    )
     assert allowed_tools.count("code-review") == 1
     catalog_entries = [(e.name, e.source) for e in registry.list_catalog()]
     assert ("code-review", "skill") in catalog_entries
@@ -903,7 +1116,8 @@ def test_compose_run_registry_and_allowed_all_mcp_names_colliding_skips_registra
     all -- no dangling catalog entries the model could never reach."""
     mcp_provider = _FakeMCPProvider([("calculator", "shadowing MCP tool")])
     registry, allowed_tools, _builtin_names = _compose_run_registry_and_allowed(
-        {}, mcp_provider=mcp_provider)
+        {}, mcp_provider=mcp_provider
+    )
     assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
     catalog_entries = [(e.name, e.source) for e in registry.list_catalog()]
     assert ("calculator", "mcp") not in catalog_entries
@@ -930,8 +1144,11 @@ def test_run_reply_routes_fence_call_to_mcp_provider(tmp_path):
     assert outcome.status == "done"
     assert outcome.final_text == "The weather is nice."
     assert mcp_provider.invoke_calls == [("mcp__srv_a__search", {"query": "weather"})]
-    tool_rows = [m for m in store.messages_for_session(session.id)
-                 if m.role is ConsoleMessageRole.TOOL]
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
     assert any("mcp__srv_a__search" in row.content for row in tool_rows)
 
 
@@ -954,8 +1171,11 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
 
     assert outcome.status == "done"
     assert captured_batches and captured_batches[0][0].name == "calculator"
-    tool_rows = [m for m in store.messages_for_session(session.id)
-                 if m.role is ConsoleMessageRole.TOOL]
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
     assert any("blocked by test hook" in row.content for row in tool_rows)
 
 
@@ -971,8 +1191,8 @@ def test_run_reply_wires_mcp_provider_stamp_scope_around_a_spawned_child(tmp_pat
     composed MCP provider's `stamp_scope()` exactly once around that spawn."""
     scripts = [
         [_fence("spawn_subagent", {"task": "compute 1+1"})],  # primary turn 1
-        ["2"],                                                 # sub-agent turn
-        ["Done: ", "2."],                                     # primary final
+        ["2"],  # sub-agent turn
+        ["Done: ", "2."],  # primary final
     ]
     bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
     mcp_provider = _FakeMCPProvider([("mcp__srv_a__search", "Search the web")])
@@ -998,16 +1218,22 @@ def test_skill_named_like_a_runtime_tool_never_shadows_it_at_invocation(tmp_path
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
     assistant = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     skills_service = _FakeSkillsService(skill_name="find_tools")
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
-        skills_service=skills_service)
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway(scripts),
+        skills_service=skills_service,
+    )
 
-    outcome = _run(bridge, store, session, assistant.id, conversation_id="conv-runtime-collide")
+    outcome = _run(
+        bridge, store, session, assistant.id, conversation_id="conv-runtime-collide"
+    )
 
     assert outcome.status == "done"
-    assert skills_service.execute_calls == []          # the skill was never invoked
+    assert skills_service.execute_calls == []  # the skill was never invoked
     assert db.count_subagent_runs("conv-runtime-collide") == 0
 
 
@@ -1024,19 +1250,26 @@ def test_skill_named_like_a_builtin_never_shadows_it_at_invocation(tmp_path):
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
     assistant = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     skills_service = _FakeSkillsService(skill_name="calculator")
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
-        skills_service=skills_service)
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway(scripts),
+        skills_service=skills_service,
+    )
 
     outcome = _run(bridge, store, session, assistant.id, conversation_id="conv-collide")
 
     assert outcome.status == "done"
-    assert skills_service.execute_calls == []          # the skill was never invoked
+    assert skills_service.execute_calls == []  # the skill was never invoked
     assert db.count_subagent_runs("conv-collide") == 0  # no sub-agent spawned
-    tool_rows = [m for m in store.messages_for_session(session.id)
-                 if m.role is ConsoleMessageRole.TOOL]
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
     assert any("42" in row.content for row in tool_rows)
 
 
@@ -1058,8 +1291,13 @@ class _ManySkillsService:
         names = ["shout"] + [f"filler{i}" for i in range(8)]
         return {
             "available_skills": [
-                {"name": n, "description": f"{n} skill", "argument_hint": "[args]",
-                 "trust_blocked": False, "disable_model_invocation": False}
+                {
+                    "name": n,
+                    "description": f"{n} skill",
+                    "argument_hint": "[args]",
+                    "trust_blocked": False,
+                    "disable_model_invocation": False,
+                }
                 for n in names
             ],
             "blocked_skills": [],
@@ -1083,8 +1321,8 @@ def _discovery_heavy_shout_scripts():
         [_fence("find_tools", {"query": "shout"})],
         [_fence("load_tools", {"ids": ["skill:shout"]})],
         [_fence("shout", {"args": "hello"})],
-        ["HELLO"],              # sub-agent turn (never streamed to the store)
-        ["Shouted: HELLO"],     # primary final answer
+        ["HELLO"],  # sub-agent turn (never streamed to the store)
+        ["Shouted: HELLO"],  # primary final answer
     ]
 
 
@@ -1106,20 +1344,29 @@ def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path):
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
     assistant = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     skills_service = _ManySkillsService()
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
-        skills_service=skills_service)
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway(scripts),
+        skills_service=skills_service,
+    )
 
-    outcome = _run(bridge, store, session, assistant.id, conversation_id="conv-discover")
+    outcome = _run(
+        bridge, store, session, assistant.id, conversation_id="conv-discover"
+    )
 
     assert outcome.status == "done"
     assert outcome.final_text == "Shouted: HELLO"
     assert skills_service.execute_calls == [("shout", "hello")]
     assert db.count_subagent_runs("conv-discover") == 1
-    tool_rows = [m for m in store.messages_for_session(session.id)
-                 if m.role is ConsoleMessageRole.TOOL]
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
     assert any("shout" in row.content for row in tool_rows)
 
 

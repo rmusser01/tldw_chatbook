@@ -38,7 +38,11 @@ class ServicePolicyEnforcer:
         action_id: str,
         runtime_state_override: RuntimeSourceState | None = None,
     ) -> None:
-        state = runtime_state_override if isinstance(runtime_state_override, RuntimeSourceState) else self.current_state()
+        state = (
+            runtime_state_override
+            if isinstance(runtime_state_override, RuntimeSourceState)
+            else self.current_state()
+        )
         if state is None:
             raise PolicyDeniedError(
                 action_id=action_id,
@@ -64,10 +68,16 @@ class ServicePolicyEnforcer:
 
 def classify_backend_exception(error: Exception) -> str | None:
     # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-    from tldw_chatbook.tldw_api.exceptions import APIConnectionError, APIResponseError, AuthenticationError
+    from tldw_chatbook.tldw_api.exceptions import (
+        APIConnectionError,
+        APIResponseError,
+        AuthenticationError,
+    )
 
     if isinstance(error, AuthenticationError):
-        if _contains_session_invalid_signal([str(error), getattr(error, "response_data", None)]):
+        if _contains_session_invalid_signal(
+            [str(error), getattr(error, "response_data", None)]
+        ):
             return "server_session_invalid"
         return "server_auth_required"
 
@@ -87,7 +97,13 @@ def classify_backend_exception(error: Exception) -> str | None:
 
 
 def _contains_session_invalid_signal(values: Iterable[object]) -> bool:
-    needles = ("session invalid", "invalid session", "session expired", "token expired", "auth session invalid")
+    needles = (
+        "session invalid",
+        "invalid session",
+        "session expired",
+        "token expired",
+        "auth session invalid",
+    )
     for value in values:
         if isinstance(value, dict):
             if _contains_session_invalid_signal(value.values()):

@@ -10,14 +10,18 @@ from typing import Any
 from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_session_settings import (
     build_console_settings_readiness,
     build_default_console_session_settings,
 )
-from tldw_chatbook.config import get_cli_setting, load_settings, save_setting_to_cli_config
+from tldw_chatbook.config import (
+    get_cli_setting,
+    load_settings,
+    save_setting_to_cli_config,
+)
 from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_NOTE_ID, TAB_CHAT, TAB_LIBRARY
 from tldw_chatbook.Home.dashboard_state import (
     HOME_PRIMARY_ACTION_ID,
@@ -29,7 +33,6 @@ from tldw_chatbook.Home.dashboard_state import (
     HomeControl,
     HomeDashboard,
     HomeDashboardInput,
-    HomeTriageState,
     apply_home_content_snapshot,
     build_home_triage_state,
     choose_home_selected_item,
@@ -190,7 +193,9 @@ def _home_resume_fields(
         it is escaped once in ``build_home_resume_control``.
     """
     candidates = []
-    if isinstance(latest_conversation, Mapping) and latest_conversation.get("id") not in (None, ""):
+    if isinstance(latest_conversation, Mapping) and latest_conversation.get(
+        "id"
+    ) not in (None, ""):
         candidates.append((HOME_RESUME_KIND_CONVERSATION, latest_conversation))
     if isinstance(latest_note, Mapping) and latest_note.get("id") not in (None, ""):
         candidates.append((HOME_RESUME_KIND_NOTE, latest_note))
@@ -206,7 +211,9 @@ def _home_resume_fields(
 class HomeActionButton(Button):
     """Home button that emits press events even when app chrome hides layout."""
 
-    def __init__(self, *args, fallback_press: Callable[[], None] | None = None, **kwargs):
+    def __init__(
+        self, *args, fallback_press: Callable[[], None] | None = None, **kwargs
+    ):
         super().__init__(*args, **kwargs)
         self._fallback_press = fallback_press
 
@@ -249,7 +256,9 @@ class HomeScreen(BaseAppScreen):
     @work(exclusive=True, thread=True)
     def _refresh_home_chatbook_artifact_snapshot(self) -> None:
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
-        refresh_flashcards_due = getattr(adapter, "refresh_flashcards_due_snapshot", None)
+        refresh_flashcards_due = getattr(
+            adapter, "refresh_flashcards_due_snapshot", None
+        )
         if callable(refresh_flashcards_due):
             chachanotes_db = getattr(self.app_instance, "chachanotes_db", None)
             if getattr(chachanotes_db, "is_memory_db", False):
@@ -340,7 +349,9 @@ class HomeScreen(BaseAppScreen):
             self.app_instance, "chat_conversation_scope_service", None
         )
         media_service = getattr(self.app_instance, "media_reading_scope_service", None)
-        notes_user_id = getattr(self.app_instance, "notes_user_id", None) or "default_user"
+        notes_user_id = (
+            getattr(self.app_instance, "notes_user_id", None) or "default_user"
+        )
 
         note_count_result = await self._home_content_seam_call(
             getattr(notes_service, "count_notes", None),
@@ -414,7 +425,9 @@ class HomeScreen(BaseAppScreen):
                     # This thread has no event loop, and the awaitable must
                     # complete here so blocking async services stay off the
                     # UI loop (mirrors Library's _run_library_service_call).
-                    return asyncio.run(_await_home_seam_result(result))  # policy-exception: worker-thread loop
+                    return asyncio.run(
+                        _await_home_seam_result(result)
+                    )  # policy-exception: worker-thread loop
                 return result
 
             return await asyncio.to_thread(invoke_seam_in_worker)
@@ -435,7 +448,9 @@ class HomeScreen(BaseAppScreen):
         ``_provider_readiness_app_config``.
         """
         app_config = getattr(self.app_instance, "app_config", {}) or {}
-        config: Mapping[str, object] = app_config if isinstance(app_config, Mapping) else {}
+        config: Mapping[str, object] = (
+            app_config if isinstance(app_config, Mapping) else {}
+        )
         if all(section in config for section in _HOME_LIVE_CONFIG_MARKER_SECTIONS):
             try:
                 fresh = load_settings()
@@ -461,9 +476,11 @@ class HomeScreen(BaseAppScreen):
 
         providers = getattr(self.app_instance, "providers_models", {}) or {}
         has_recent_work = bool(getattr(self.app_instance, "_screen_states", {}))
-        dashboard_input = self.app_instance.home_active_work_adapter.build_dashboard_input(
-            providers_models=providers,
-            has_recent_work=has_recent_work,
+        dashboard_input = (
+            self.app_instance.home_active_work_adapter.build_dashboard_input(
+                providers_models=providers,
+                has_recent_work=has_recent_work,
+            )
         )
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         snapshot = getattr(manager, "snapshot", None)
@@ -541,7 +558,11 @@ class HomeScreen(BaseAppScreen):
                 currently selected row (see ``HomeCanvasState.
                 primary_control_id`` / ``_canvas_primary_control_id``).
         """
-        classes = "home-canvas-action console-action-primary" if primary else "home-canvas-action"
+        classes = (
+            "home-canvas-action console-action-primary"
+            if primary
+            else "home-canvas-action"
+        )
         if control_id == HOME_PRIMARY_ACTION_ID:
             return HomeActionButton(
                 label,
@@ -553,8 +574,8 @@ class HomeScreen(BaseAppScreen):
             label,
             id=control_id,
             classes=classes,
-            fallback_press=lambda control_id=control_id: (
-                self._activate_home_control(control_id)
+            fallback_press=lambda control_id=control_id: self._activate_home_control(
+                control_id
             ),
         )
 
@@ -724,11 +745,18 @@ class HomeScreen(BaseAppScreen):
         # the pressed control isn't there (defensive: count-only fallback
         # canvases with no selection have their controls in both sets).
         control = next(
-            (item for item in self._current_canvas_controls if item.control_id == button_id),
+            (
+                item
+                for item in self._current_canvas_controls
+                if item.control_id == button_id
+            ),
             None,
         )
         if control is None:
-            control = next((item for item in dashboard.controls if item.control_id == button_id), None)
+            control = next(
+                (item for item in dashboard.controls if item.control_id == button_id),
+                None,
+            )
         if control is None:
             return
 

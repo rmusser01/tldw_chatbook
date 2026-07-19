@@ -38,7 +38,9 @@ class ChatHandoffCard(Container):
             super().__init__()
             self.payload = payload
 
-    def __init__(self, payload: ChatHandoffPayload, clear_action_id: str | None = None, **kwargs):
+    def __init__(
+        self, payload: ChatHandoffPayload, clear_action_id: str | None = None, **kwargs
+    ):
         super().__init__(**kwargs)
         normalized_payload = ChatHandoffPayload.from_dict(payload)
         if normalized_payload is None:
@@ -78,7 +80,9 @@ class ChatHandoffCard(Container):
         if self.payload.body_truncated:
             parts.append("Content: preview truncated")
         if self.payload.unsupported_reports:
-            parts.append(f"Unsupported actions: {len(self.payload.unsupported_reports)}")
+            parts.append(
+                f"Unsupported actions: {len(self.payload.unsupported_reports)}"
+            )
             parts.extend(self._unsupported_report_labels())
         if metadata:
             parts.append(metadata)
@@ -127,7 +131,9 @@ class ChatHandoffCard(Container):
         for report in self.payload.unsupported_reports[:3]:
             user_message = None
             if isinstance(report, dict):
-                user_message = report.get("user_message") or report.get("unsupported_user_message")
+                user_message = report.get("user_message") or report.get(
+                    "unsupported_user_message"
+                )
             if user_message:
                 labels.append(str(user_message))
         return labels

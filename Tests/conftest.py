@@ -23,15 +23,15 @@ _BOOTSTRAP_CONFIG_PATH = _BOOTSTRAP_CONFIG_ROOT / "config" / "config.toml"
 _BOOTSTRAP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
 
-import pytest
-import pytest_asyncio
-from loguru import logger
-import asyncio
-from unittest.mock import MagicMock, AsyncMock
-import sqlite3
-import sys
-import gc
-import warnings
+import pytest  # noqa: E402
+import pytest_asyncio  # noqa: E402
+from loguru import logger  # noqa: E402
+import asyncio  # noqa: E402
+from unittest.mock import MagicMock, AsyncMock  # noqa: E402
+import sqlite3  # noqa: E402
+import sys  # noqa: E402
+import gc  # noqa: E402
+import warnings  # noqa: E402
 
 # Add project root to Python path for consistent imports
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -40,24 +40,27 @@ if str(PROJECT_ROOT) not in sys.path:
 
 # Protect against stdout/stderr being closed during testing
 # This can happen with certain test runners or when tests manipulate file descriptors
-if hasattr(sys.stdout, 'fileno'):
+if hasattr(sys.stdout, "fileno"):
     try:
         sys.stdout.fileno()
     except (ValueError, OSError):
         # stdout is closed or invalid, replace with a safe alternative
         import io
+
         sys.stdout = io.StringIO()
 
-if hasattr(sys.stderr, 'fileno'):
+if hasattr(sys.stderr, "fileno"):
     try:
         sys.stderr.fileno()
     except (ValueError, OSError):
         # stderr is closed or invalid, replace with a safe alternative
         import io
+
         sys.stderr = io.StringIO()
 
 
 # ========== Path and File System Fixtures ==========
+
 
 @pytest.fixture
 def isolated_temp_dir():
@@ -73,14 +76,17 @@ def isolated_temp_dir():
 @pytest.fixture
 def temp_file(isolated_temp_dir):
     """Create a temporary file within an isolated directory."""
+
     def _create_temp_file(name="test_file", suffix=".txt", content=""):
         file_path = isolated_temp_dir / f"{name}{suffix}"
         file_path.write_text(content)
         return file_path
+
     return _create_temp_file
 
 
 # ========== Database Fixtures ==========
+
 
 @pytest.fixture
 def in_memory_db():
@@ -98,6 +104,7 @@ def temp_db_path(isolated_temp_dir):
 
 
 # ========== Mock Fixtures ==========
+
 
 @pytest.fixture
 def mock_app_minimal():
@@ -124,6 +131,7 @@ def mock_async_app():
 
 # ========== Cleanup and Isolation Fixtures ==========
 
+
 @pytest.fixture(autouse=True)
 def restore_sys_path():
     """Automatically restore sys.path after each test."""
@@ -136,11 +144,12 @@ def restore_sys_path():
 def cleanup_loguru_handlers():
     """Automatically cleanup loguru handlers after each test to prevent file descriptor leaks."""
     from loguru import logger
+
     # Store the initial handler IDs
     initial_handlers = list(logger._core.handlers.keys())
-    
+
     yield
-    
+
     # Remove any handlers added during the test
     current_handlers = list(logger._core.handlers.keys())
     for handler_id in current_handlers:
@@ -156,10 +165,10 @@ def cleanup_loguru_handlers():
 def cleanup_file_descriptors():
     """Force garbage collection and close any leaked file descriptors after each test."""
     yield
-    
+
     # Force garbage collection to cleanup any unclosed files
     gc.collect()
-    
+
     # Suppress ResourceWarnings during test cleanup
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ResourceWarning)
@@ -168,40 +177,50 @@ def cleanup_file_descriptors():
 
 # ========== Async Cleanup Fixtures ==========
 
+
 @pytest.fixture
 def cleanup_async_tasks():
     """Cleanup any pending async tasks after async tests.
-    
+
     Note: This fixture should be explicitly used by async tests that need cleanup,
     not applied automatically to all tests.
     """
-    import asyncio
     import sys
-    
+
     yield
-    
+
     # Only cleanup if we're in an async context with a running loop
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         # No running loop, nothing to clean up
         return
-    
+
     # Get all tasks in the current loop
     if sys.version_info >= (3, 9):
         # Use current_task() to exclude the cleanup task itself
         current = asyncio.current_task(loop)
-        tasks = [task for task in asyncio.all_tasks(loop) 
-                if task != current and not task.done()]
+        tasks = [
+            task
+            for task in asyncio.all_tasks(loop)
+            if task != current and not task.done()
+        ]
     else:
         # Fallback for older Python versions
         try:
-            current = asyncio.current_task() if hasattr(asyncio, 'current_task') else asyncio.Task.current_task()
-            tasks = [task for task in asyncio.all_tasks(loop) 
-                    if task != current and not task.done()]
+            current = (
+                asyncio.current_task()
+                if hasattr(asyncio, "current_task")
+                else asyncio.Task.current_task()
+            )
+            tasks = [
+                task
+                for task in asyncio.all_tasks(loop)
+                if task != current and not task.done()
+            ]
         except RuntimeError:
             return
-    
+
     # Cancel and cleanup tasks, specifically looking for RichLogProcessor
     for task in tasks:
         # Special handling for RichLogProcessor tasks
@@ -213,7 +232,7 @@ def cleanup_async_tasks():
                 pass
         else:
             task.cancel()
-    
+
     # Don't wait for cancellation as it might cause issues
     # The event loop will handle cleanup when it shuts down
 
@@ -221,11 +240,10 @@ def cleanup_async_tasks():
 @pytest.fixture(scope="function")
 def event_loop():
     """Create an instance of the default event loop for each test case.
-    
+
     This fixture is recognized by pytest-asyncio and helps ensure
     each async test gets a fresh event loop.
     """
-    import asyncio
     loop = asyncio.new_event_loop()
     yield loop
     # Cleanup
@@ -236,24 +254,24 @@ def event_loop():
     except RuntimeError:
         pass
 
+
 def _cancel_all_tasks(loop):
     """Cancel all tasks in the given event loop."""
-    import asyncio
     import sys
-    
+
     # Get all tasks for this loop - API changed in Python 3.9
     if sys.version_info >= (3, 9):
         tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
     else:
         # For Python < 3.9
         tasks = [task for task in asyncio.Task.all_tasks(loop) if not task.done()]
-    
+
     if not tasks:
         return
-    
+
     for task in tasks:
         # Special handling for RichLogProcessor to ensure clean shutdown
-        if hasattr(task, 'get_name') and task.get_name() == "RichLogProcessor":
+        if hasattr(task, "get_name") and task.get_name() == "RichLogProcessor":
             task.cancel()
             try:
                 loop.run_until_complete(task)
@@ -261,7 +279,7 @@ def _cancel_all_tasks(loop):
                 pass
         else:
             task.cancel()
-    
+
     # Give tasks a chance to cleanup
     try:
         loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
@@ -281,14 +299,23 @@ def clean_environment():
 
 # ========== Test Markers ==========
 
+
 def pytest_configure(config):
     """Register custom test markers."""
-    config.addinivalue_line("markers", "unit: Unit tests that don't require external resources")
-    config.addinivalue_line("markers", "integration: Integration tests that may use files/network")
+    config.addinivalue_line(
+        "markers", "unit: Unit tests that don't require external resources"
+    )
+    config.addinivalue_line(
+        "markers", "integration: Integration tests that may use files/network"
+    )
     config.addinivalue_line("markers", "slow: Tests that take more than 1 second")
-    config.addinivalue_line("markers", "requires_cleanup: Tests that need special cleanup")
+    config.addinivalue_line(
+        "markers", "requires_cleanup: Tests that need special cleanup"
+    )
     config.addinivalue_line("markers", "asyncio: Async tests using asyncio")
-    config.addinivalue_line("markers", "optional_deps: Tests requiring optional dependencies")
+    config.addinivalue_line(
+        "markers", "optional_deps: Tests requiring optional dependencies"
+    )
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -305,18 +332,20 @@ def pytest_sessionfinish(session, exitstatus):
 
 # ========== Async Support ==========
 
+
 @pytest.fixture
 def anyio_backend():
     """Backend for anyio async tests."""
-    return 'asyncio'
+    return "asyncio"
 
 
 # ========== Test Environment Isolation ==========
 
+
 @pytest.fixture(autouse=True)
 def isolate_test_environment(monkeypatch, tmp_path):
     """Automatically isolate test environment to prevent production data access.
-    
+
     This fixture:
     - Sets TLDW_TEST_MODE environment variable
     - Redirects all data directories to a temporary location
@@ -324,11 +353,11 @@ def isolate_test_environment(monkeypatch, tmp_path):
     """
     # Set test mode
     monkeypatch.setenv("TLDW_TEST_MODE", "1")
-    
+
     # Create a unique test data directory
     test_data_dir = tmp_path / "test_data"
     test_data_dir.mkdir(exist_ok=True)
-    
+
     # Common paths that need isolation
     monkeypatch.setenv("XDG_DATA_HOME", str(test_data_dir))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(test_data_dir / "config"))
@@ -337,19 +366,21 @@ def isolate_test_environment(monkeypatch, tmp_path):
         "TLDW_CONFIG_PATH",
         str(test_data_dir / "config" / "config.toml"),
     )
-    
+
     # Patch common data directory paths if they're imported
     try:
         from tldw_chatbook import config
-        if hasattr(config, 'get_data_dir'):
-            monkeypatch.setattr(config, 'get_data_dir', lambda: test_data_dir)
+
+        if hasattr(config, "get_data_dir"):
+            monkeypatch.setattr(config, "get_data_dir", lambda: test_data_dir)
     except ImportError:
         pass
-    
+
     yield test_data_dir
 
 
 # ========== Test Data Fixtures ==========
+
 
 @pytest.fixture
 def sample_text_content():
@@ -372,44 +403,46 @@ def sample_json_data():
         "metadata": {
             "author": "Test Author",
             "date": "2025-01-01",
-            "tags": ["test", "sample"]
-        }
+            "tags": ["test", "sample"],
+        },
     }
 
 
 # ========== App Cleanup Fixtures ==========
 
+
 @pytest_asyncio.fixture
 async def app_with_cleanup():
     """Create a TldwCli app instance with proper cleanup.
-    
+
     This fixture ensures the RichLogHandler is properly stopped
     before the event loop closes, preventing the "Task was destroyed
     but it is pending!" error.
     """
     from tldw_chatbook.app import TldwCli
-    
+
     app = TldwCli()
-    
+
     yield app
-    
+
     # Ensure proper cleanup
     try:
         # Stop RichLogHandler if it exists
-        if hasattr(app, '_rich_log_handler') and app._rich_log_handler:
+        if hasattr(app, "_rich_log_handler") and app._rich_log_handler:
             await app._rich_log_handler.stop_processor()
             # Note: RichLogHandler still uses standard logging for Textual integration
             import logging
+
             logging.getLogger().removeHandler(app._rich_log_handler)
             app._rich_log_handler.close()
-            
+
         # Call shutdown methods
-        if hasattr(app, 'on_shutdown_request'):
+        if hasattr(app, "on_shutdown_request"):
             await app.on_shutdown_request()
-            
-        if hasattr(app, 'on_unmount'):
+
+        if hasattr(app, "on_unmount"):
             await app.on_unmount()
-            
+
     except Exception as e:
         # Log but don't fail the test
         logger.debug(f"Error during app cleanup: {e}")
@@ -417,41 +450,40 @@ async def app_with_cleanup():
 
 # ========== Performance and Timing Fixtures ==========
 
+
 @pytest.fixture
 def benchmark_timer():
     """Simple timer for performance testing."""
     import time
-    
+
     class Timer:
         def __init__(self):
             self.start_time = None
             self.elapsed = None
-        
+
         def __enter__(self):
             self.start_time = time.time()
             return self
-        
+
         def __exit__(self, *args):
             self.elapsed = time.time() - self.start_time
-    
+
     return Timer
 
 
 # ========== Pytest Configuration ==========
 
+
 def pytest_addoption(parser):
     """Add custom command line options."""
     parser.addoption(
-        "--run-slow",
-        action="store_true",
-        default=False,
-        help="Run slow tests"
+        "--run-slow", action="store_true", default=False, help="Run slow tests"
     )
     parser.addoption(
         "--run-optional",
         action="store_true",
         default=False,
-        help="Run tests requiring optional dependencies"
+        help="Run tests requiring optional dependencies",
     )
 
 
@@ -462,7 +494,7 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
-    
+
     if not config.getoption("--run-optional"):
         skip_optional = pytest.mark.skip(reason="Need --run-optional option to run")
         for item in items:

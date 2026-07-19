@@ -2,7 +2,7 @@ import sqlite3
 import pytest
 
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
-from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry, IngestJobState
+from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry
 
 
 def _db(tmp_path):
@@ -11,13 +11,15 @@ def _db(tmp_path):
 
 def test_upsert_and_all_jobs_roundtrip_ordered(tmp_path):
     reg = LibraryIngestJobRegistry()
-    j1 = reg.submit(source_path="/a.mp3", title="A", keywords=("k1", "k2"), detected_type="audio")
+    j1 = reg.submit(
+        source_path="/a.mp3", title="A", keywords=("k1", "k2"), detected_type="audio"
+    )
     j2 = reg.submit(source_path="/b.txt", title="B")
     db = _db(tmp_path)
     db.upsert_job(j1)
     db.upsert_job(j2)
     rows = db.all_jobs()
-    assert [r["job_id"] for r in rows] == [j1.job_id, j2.job_id]     # seq order
+    assert [r["job_id"] for r in rows] == [j1.job_id, j2.job_id]  # seq order
     assert rows[0]["source_path"] == "/a.mp3" and rows[0]["detected_type"] == "audio"
     assert rows[0]["keywords"] == '["k1", "k2"]'
     assert rows[0]["state"] == "queued" and rows[0]["retry_count"] == 0
@@ -30,7 +32,7 @@ def test_upsert_is_idempotent_update_in_place(tmp_path):
     db = _db(tmp_path)
     db.upsert_job(j)
     reg.mark_parsing(j.job_id, detected_type="audio")
-    db.upsert_job(reg.jobs()[0])          # same job_id, now PARSING
+    db.upsert_job(reg.jobs()[0])  # same job_id, now PARSING
     rows = db.all_jobs()
     assert len(rows) == 1 and rows[0]["state"] == "parsing"
     db.close()

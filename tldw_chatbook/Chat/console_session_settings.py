@@ -13,7 +13,6 @@ from tldw_chatbook.Chat.console_provider_support import (
     supported_console_provider_readiness_keys,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
-    URL_BASED_PROVIDER_KEYS,
     first_configured_endpoint,
     generic_endpoint_differs,
     normalize_generic_endpoint_for_compare,
@@ -101,7 +100,9 @@ CONSOLE_TOKEN_CHAR_RATIOS = {
     "huggingface": 0.3,
     "default": 0.25,
 }
-_REASONING_EFFORT_VALUES = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
+_REASONING_EFFORT_VALUES = frozenset(
+    {"none", "minimal", "low", "medium", "high", "xhigh"}
+)
 _REASONING_SUMMARY_VALUES = frozenset({"auto", "concise", "detailed", "none"})
 _VERBOSITY_VALUES = frozenset({"low", "medium", "high"})
 _THINKING_EFFORT_VALUES = frozenset({"off", "low", "medium", "high", "xhigh", "max"})
@@ -133,7 +134,9 @@ def normalize_llamacpp_base_url(api_url: str | None) -> str:
     }
     if path.lower() in normalized_endpoint_paths:
         path = ""
-    normalized = urlunparse((parsed.scheme, parsed.netloc, path, "", "", "")).rstrip("/")
+    normalized = urlunparse((parsed.scheme, parsed.netloc, path, "", "", "")).rstrip(
+        "/"
+    )
     return normalized or DEFAULT_LLAMACPP_BASE_URL
 
 
@@ -226,7 +229,9 @@ def _summary_row_value(row: str) -> str:
 CONSOLE_MODEL_SECTION_MODEL_MAX_CHARS = 24
 
 
-def _truncate_model_section_value(value: str, limit: int = CONSOLE_MODEL_SECTION_MODEL_MAX_CHARS) -> str:
+def _truncate_model_section_value(
+    value: str, limit: int = CONSOLE_MODEL_SECTION_MODEL_MAX_CHARS
+) -> str:
     """Truncate a rail model label so the provider/model line stays on one row.
 
     Long local model names (e.g. ``Qwen3.6-27B-UD-Q4_K_XL.gguf``) word-wrap in
@@ -305,7 +310,13 @@ def build_console_provider_options(
     providers_models: Mapping[str, Sequence[str]],
 ) -> list[ConsoleSettingsOption]:
     """Return sorted Console-sendable provider options plus configured providers."""
-    provider_keys = sorted({key for key in (provider_config_key(provider) for provider in providers_models) if key})
+    provider_keys = sorted(
+        {
+            key
+            for key in (provider_config_key(provider) for provider in providers_models)
+            if key
+        }
+    )
     supported_provider_keys = supported_console_provider_readiness_keys(
         CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
     )
@@ -364,7 +375,9 @@ def build_default_console_session_settings(
     chat_defaults = _chat_defaults_with_streaming_compat(
         _mapping_value(app_config, "chat_defaults")
     )
-    configured_provider = provider_config_key(_string_value(provider) or _string_setting(chat_defaults, "provider"))
+    configured_provider = provider_config_key(
+        _string_value(provider) or _string_setting(chat_defaults, "provider")
+    )
     provider_settings = _provider_settings(app_config, configured_provider)
     configured_model = _first_string(
         model,
@@ -386,13 +399,25 @@ def build_default_console_session_settings(
         top_k=_optional_int_setting_from_sources(default_sources, "top_k"),
         max_tokens=_optional_int_setting_from_sources(default_sources, "max_tokens"),
         seed=_optional_int_setting_from_sources(default_sources, "seed"),
-        presence_penalty=_optional_float_setting_from_sources(default_sources, "presence_penalty"),
-        frequency_penalty=_optional_float_setting_from_sources(default_sources, "frequency_penalty"),
-        reasoning_effort=_optional_string_setting_from_sources(default_sources, "reasoning_effort"),
-        reasoning_summary=_optional_string_setting_from_sources(default_sources, "reasoning_summary"),
+        presence_penalty=_optional_float_setting_from_sources(
+            default_sources, "presence_penalty"
+        ),
+        frequency_penalty=_optional_float_setting_from_sources(
+            default_sources, "frequency_penalty"
+        ),
+        reasoning_effort=_optional_string_setting_from_sources(
+            default_sources, "reasoning_effort"
+        ),
+        reasoning_summary=_optional_string_setting_from_sources(
+            default_sources, "reasoning_summary"
+        ),
         verbosity=_optional_string_setting_from_sources(default_sources, "verbosity"),
-        thinking_effort=_optional_string_setting_from_sources(default_sources, "thinking_effort"),
-        thinking_budget_tokens=_optional_int_setting_from_sources(default_sources, "thinking_budget_tokens"),
+        thinking_effort=_optional_string_setting_from_sources(
+            default_sources, "thinking_effort"
+        ),
+        thinking_budget_tokens=_optional_int_setting_from_sources(
+            default_sources, "thinking_budget_tokens"
+        ),
         streaming=_bool_setting_from_sources(default_sources, "streaming", True),
     )
 
@@ -409,38 +434,76 @@ def validate_console_session_settings(
 
     if not provider_key:
         errors.append("Provider is required.")
-    if provider_key not in NATIVE_CONSOLE_PROVIDER_KEYS and not _string_value(settings.model):
+    if provider_key not in NATIVE_CONSOLE_PROVIDER_KEYS and not _string_value(
+        settings.model
+    ):
         errors.append("Model is required.")
 
     base_url = _string_value(settings.base_url)
-    if base_url and _is_url_based_provider(provider_key, provider_settings) and not _valid_base_url(provider_key, base_url):
+    if (
+        base_url
+        and _is_url_based_provider(provider_key, provider_settings)
+        and not _valid_base_url(provider_key, base_url)
+    ):
         errors.append("Base URL must be a valid http(s) URL.")
 
     if not _float_in_range(settings.temperature, 0.0, 2.0):
         errors.append("Temperature must be between 0 and 2.")
     if not _float_in_range(settings.top_p, 0.0, 1.0):
         errors.append("Top P must be between 0 and 1.")
-    if not _is_blank_value(settings.min_p) and not _float_in_range(settings.min_p, 0.0, 1.0):
+    if not _is_blank_value(settings.min_p) and not _float_in_range(
+        settings.min_p, 0.0, 1.0
+    ):
         errors.append("Min P must be between 0 and 1.")
-    if not _is_blank_value(settings.top_k) and not _optional_int_at_least(settings.top_k, 0):
+    if not _is_blank_value(settings.top_k) and not _optional_int_at_least(
+        settings.top_k, 0
+    ):
         errors.append("Top K must be 0 or greater.")
-    if not _is_blank_value(settings.max_tokens) and not _optional_int_at_least(settings.max_tokens, 1):
+    if not _is_blank_value(settings.max_tokens) and not _optional_int_at_least(
+        settings.max_tokens, 1
+    ):
         errors.append("Max tokens must be 1 or greater.")
-    if not _is_blank_value(settings.seed) and not _optional_int_at_least(settings.seed, 0):
+    if not _is_blank_value(settings.seed) and not _optional_int_at_least(
+        settings.seed, 0
+    ):
         errors.append("Seed must be 0 or greater.")
-    if not _is_blank_value(settings.presence_penalty) and not _float_in_range(settings.presence_penalty, -2.0, 2.0):
+    if not _is_blank_value(settings.presence_penalty) and not _float_in_range(
+        settings.presence_penalty, -2.0, 2.0
+    ):
         errors.append("Presence penalty must be between -2 and 2.")
-    if not _is_blank_value(settings.frequency_penalty) and not _float_in_range(settings.frequency_penalty, -2.0, 2.0):
+    if not _is_blank_value(settings.frequency_penalty) and not _float_in_range(
+        settings.frequency_penalty, -2.0, 2.0
+    ):
         errors.append("Frequency penalty must be between -2 and 2.")
-    if not _is_blank_value(settings.reasoning_effort) and settings.reasoning_effort not in _REASONING_EFFORT_VALUES:
-        errors.append("Reasoning effort must be one of none, minimal, low, medium, high, or xhigh.")
-    if not _is_blank_value(settings.reasoning_summary) and settings.reasoning_summary not in _REASONING_SUMMARY_VALUES:
-        errors.append("Reasoning summary must be one of auto, concise, detailed, or none.")
-    if not _is_blank_value(settings.verbosity) and settings.verbosity not in _VERBOSITY_VALUES:
+    if (
+        not _is_blank_value(settings.reasoning_effort)
+        and settings.reasoning_effort not in _REASONING_EFFORT_VALUES
+    ):
+        errors.append(
+            "Reasoning effort must be one of none, minimal, low, medium, high, or xhigh."
+        )
+    if (
+        not _is_blank_value(settings.reasoning_summary)
+        and settings.reasoning_summary not in _REASONING_SUMMARY_VALUES
+    ):
+        errors.append(
+            "Reasoning summary must be one of auto, concise, detailed, or none."
+        )
+    if (
+        not _is_blank_value(settings.verbosity)
+        and settings.verbosity not in _VERBOSITY_VALUES
+    ):
         errors.append("Verbosity must be one of low, medium, or high.")
-    if not _is_blank_value(settings.thinking_effort) and settings.thinking_effort not in _THINKING_EFFORT_VALUES:
-        errors.append("Thinking effort must be one of off, low, medium, high, xhigh, or max.")
-    if not _is_blank_value(settings.thinking_budget_tokens) and not _optional_int_at_least(settings.thinking_budget_tokens, 1024):
+    if (
+        not _is_blank_value(settings.thinking_effort)
+        and settings.thinking_effort not in _THINKING_EFFORT_VALUES
+    ):
+        errors.append(
+            "Thinking effort must be one of off, low, medium, high, xhigh, or max."
+        )
+    if not _is_blank_value(
+        settings.thinking_budget_tokens
+    ) and not _optional_int_at_least(settings.thinking_budget_tokens, 1024):
         errors.append("Thinking budget tokens must be at least 1024.")
 
     return errors
@@ -464,7 +527,11 @@ def build_console_settings_readiness(
 
     base_url = _string_value(settings.base_url)
     provider_settings = _provider_settings(app_config, provider_key)
-    if base_url and _is_url_based_provider(provider_key, provider_settings) and not _valid_base_url(provider_key, base_url):
+    if (
+        base_url
+        and _is_url_based_provider(provider_key, provider_settings)
+        and not _valid_base_url(provider_key, base_url)
+    ):
         detail = (
             INVALID_LLAMACPP_BASE_URL_COPY
             if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS
@@ -535,7 +602,9 @@ def build_console_settings_readiness(
     )
 
 
-def _supported_readiness_keys(native_provider_keys: set[str] | None = None) -> frozenset[str]:
+def _supported_readiness_keys(
+    native_provider_keys: set[str] | None = None,
+) -> frozenset[str]:
     """Return readiness keys accepted by Console readiness.
 
     ``native_provider_keys`` is retained for older tests/callers that injected a
@@ -556,7 +625,9 @@ def _supported_readiness_keys(native_provider_keys: set[str] | None = None) -> f
     return supported_keys
 
 
-def _send_capable_readiness_keys(native_provider_keys: set[str] | None = None) -> frozenset[str]:
+def _send_capable_readiness_keys(
+    native_provider_keys: set[str] | None = None,
+) -> frozenset[str]:
     """Return readiness keys that currently have a wired Console send path."""
     send_capable_keys = supported_console_provider_readiness_keys(
         CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
@@ -614,7 +685,11 @@ def build_console_settings_summary_state(
 
     character_label = _string_value(settings.character_label)
     persona_label = _string_value(settings.persona_label) or "General"
-    identity_row = f"Character: {character_label}" if character_label else f"Persona: {persona_label}"
+    identity_row = (
+        f"Character: {character_label}"
+        if character_label
+        else f"Persona: {persona_label}"
+    )
 
     return ConsoleSettingsSummaryState(
         model_row=f"Model: {model_label}{readiness_suffix}",
@@ -711,7 +786,9 @@ def _chat_defaults_with_streaming_compat(
     return compatible_defaults
 
 
-def _provider_settings(app_config: Mapping[str, object], provider_key: str) -> Mapping[str, object]:
+def _provider_settings(
+    app_config: Mapping[str, object], provider_key: str
+) -> Mapping[str, object]:
     api_settings = _mapping_value(app_config, "api_settings")
     value = {}
     for configured_provider, configured_value in api_settings.items():
@@ -735,12 +812,19 @@ def _model_default_profile(
     return profile if isinstance(profile, Mapping) else {}
 
 
-def _has_provider_settings_key(app_config: Mapping[str, object], provider_key: str) -> bool:
+def _has_provider_settings_key(
+    app_config: Mapping[str, object], provider_key: str
+) -> bool:
     api_settings = _mapping_value(app_config, "api_settings")
-    return any(provider_config_key(configured_provider) == provider_key for configured_provider in api_settings)
+    return any(
+        provider_config_key(configured_provider) == provider_key
+        for configured_provider in api_settings
+    )
 
 
-def _default_base_url(provider_key: str, provider_settings: Mapping[str, object]) -> str | None:
+def _default_base_url(
+    provider_key: str, provider_settings: Mapping[str, object]
+) -> str | None:
     base_url = _first_string(
         provider_settings.get("api_base_url"),
         provider_settings.get("api_base"),
@@ -752,7 +836,9 @@ def _default_base_url(provider_key: str, provider_settings: Mapping[str, object]
     return base_url
 
 
-def _is_url_based_provider(provider_key: str, provider_settings: Mapping[str, object]) -> bool:
+def _is_url_based_provider(
+    provider_key: str, provider_settings: Mapping[str, object]
+) -> bool:
     return provider_uses_endpoint(provider_key, provider_settings)
 
 
@@ -770,8 +856,12 @@ def _endpoint_differs_for_provider(
             )
             default = normalize_generic_endpoint_for_compare(DEFAULT_LLAMACPP_BASE_URL)
             return bool(selected) and selected != default
-        selected = normalize_generic_endpoint_for_compare(normalize_llamacpp_base_url(base_url))
-        configured = normalize_generic_endpoint_for_compare(normalize_llamacpp_base_url(configured_endpoint))
+        selected = normalize_generic_endpoint_for_compare(
+            normalize_llamacpp_base_url(base_url)
+        )
+        configured = normalize_generic_endpoint_for_compare(
+            normalize_llamacpp_base_url(configured_endpoint)
+        )
         return selected != configured
     return generic_endpoint_differs(base_url, provider_settings)
 
@@ -978,7 +1068,9 @@ def _estimate_tokens_locally(
     provider: str,
 ) -> int:
     del model
-    ratio = CONSOLE_TOKEN_CHAR_RATIOS.get(provider, CONSOLE_TOKEN_CHAR_RATIOS["default"])
+    ratio = CONSOLE_TOKEN_CHAR_RATIOS.get(
+        provider, CONSOLE_TOKEN_CHAR_RATIOS["default"]
+    )
     total_chars = 0
     for message in messages:
         total_chars += len(str(message.get("role", "")))
@@ -996,11 +1088,15 @@ def _resolve_token_limit_locally(model: str, provider: str) -> int:
         for prefix, limit in CONSOLE_MODEL_TOKEN_LIMITS.items()
         if prefix != "default"
     )
-    for model_prefix, limit in sorted(model_limits, key=lambda item: len(item[0]), reverse=True):
+    for model_prefix, limit in sorted(
+        model_limits, key=lambda item: len(item[0]), reverse=True
+    ):
         if model.startswith(model_prefix):
             return limit
 
-    return CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS.get(provider, CONSOLE_MODEL_TOKEN_LIMITS["default"])
+    return CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS.get(
+        provider, CONSOLE_MODEL_TOKEN_LIMITS["default"]
+    )
 
 
 def _bool_setting(
@@ -1048,7 +1144,9 @@ def _format_context_summary_row(label: str) -> str:
     label_text = _string_value(label) or "unavailable"
     if label_text.lower() in {"unknown", "context: unknown"}:
         label_text = "Context: unavailable"
-    return label_text if label_text.startswith("Context: ") else f"Context: {label_text}"
+    return (
+        label_text if label_text.startswith("Context: ") else f"Context: {label_text}"
+    )
 
 
 def _format_endpoint_summary_row(settings: ConsoleSessionSettings) -> str:
@@ -1076,7 +1174,11 @@ def _format_credential_summary_row(readiness: ConsoleSettingsReadiness) -> str:
             return f"Credential: env {env_name}" if env_name else "Credential: env"
         if source_lower.startswith("config:"):
             config_name = source[len("config:") :].strip()
-            return f"Credential: config {config_name}" if config_name else "Credential: config"
+            return (
+                f"Credential: config {config_name}"
+                if config_name
+                else "Credential: config"
+            )
         return f"Credential: {source or 'ready'}"
     if "api key found" in detail_lower:
         return "Credential: ready"

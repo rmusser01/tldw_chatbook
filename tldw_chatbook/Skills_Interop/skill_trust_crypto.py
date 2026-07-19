@@ -99,7 +99,9 @@ def derive_skill_trust_keys(passphrase: str, *, salt: bytes) -> SkillTrustKeys:
         manifest_mac_key=_derive_subkey(root, b"tldw-chatbook-skill-trust-manifest-v1"),
         snapshot_key=_derive_subkey(root, b"tldw-chatbook-skill-trust-snapshot-v1"),
         audit_mac_key=_derive_subkey(root, b"tldw-chatbook-skill-trust-audit-v1"),
-        wrapped_root_key=_derive_subkey(root, b"tldw-chatbook-skill-trust-wrapped-root-v1"),
+        wrapped_root_key=_derive_subkey(
+            root, b"tldw-chatbook-skill-trust-wrapped-root-v1"
+        ),
     )
 
 

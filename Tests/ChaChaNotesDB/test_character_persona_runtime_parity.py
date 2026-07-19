@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from Tests.ChaChaNotesDB.legacy_conversation_schema import create_legacy_v13_conversations_db
+from Tests.ChaChaNotesDB.legacy_conversation_schema import (
+    create_legacy_v13_conversations_db,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -33,7 +35,9 @@ def db_instance(db_path, client_id):
             Path(str(current_db_path) + suffix).unlink(missing_ok=True)
 
 
-def test_character_conversation_stores_canonical_assistant_id(db_instance: CharactersRAGDB):
+def test_character_conversation_stores_canonical_assistant_id(
+    db_instance: CharactersRAGDB,
+):
     character_id = db_instance.add_character_card({"name": "Alice (Runtime Parity)"})
     conversation_id = db_instance.add_conversation(
         {
@@ -100,7 +104,9 @@ def test_legacy_v13_rows_default_runtime_and_discovery_metadata(db_path, client_
         db.close_connection()
 
 
-def test_update_conversation_supports_runtime_and_discovery_metadata(db_instance: CharactersRAGDB):
+def test_update_conversation_supports_runtime_and_discovery_metadata(
+    db_instance: CharactersRAGDB,
+):
     character_id = db_instance.add_character_card({"name": "Updater"})
     conversation_id = db_instance.add_conversation(
         {
@@ -134,7 +140,9 @@ def test_update_conversation_supports_runtime_and_discovery_metadata(db_instance
     assert updated["discovery_entity_id"] == "canonical.updater"
 
 
-def test_undelete_sync_payload_includes_full_conversation_shape_with_runtime_metadata(db_instance: CharactersRAGDB):
+def test_undelete_sync_payload_includes_full_conversation_shape_with_runtime_metadata(
+    db_instance: CharactersRAGDB,
+):
     character_id = db_instance.add_character_card({"name": "Undeleter"})
     conversation_id = db_instance.add_conversation(
         {
@@ -150,8 +158,15 @@ def test_undelete_sync_payload_includes_full_conversation_shape_with_runtime_met
     created = db_instance.get_conversation_by_id(conversation_id)
     assert created is not None
 
-    assert db_instance.soft_delete_conversation(conversation_id, expected_version=created["version"]) is True
-    deleted_row = db_instance.get_conversation_by_id(conversation_id, include_deleted=True)
+    assert (
+        db_instance.soft_delete_conversation(
+            conversation_id, expected_version=created["version"]
+        )
+        is True
+    )
+    deleted_row = db_instance.get_conversation_by_id(
+        conversation_id, include_deleted=True
+    )
     assert deleted_row is not None
     assert deleted_row["deleted"] == 1
 
@@ -169,7 +184,13 @@ def test_undelete_sync_payload_includes_full_conversation_shape_with_runtime_met
              WHERE id = ?
                AND version = ?
             """,
-            (now, next_version, db_instance.client_id, conversation_id, undelete_version),
+            (
+                now,
+                next_version,
+                db_instance.client_id,
+                conversation_id,
+                undelete_version,
+            ),
         )
 
     payload_row = db_instance.execute_query(

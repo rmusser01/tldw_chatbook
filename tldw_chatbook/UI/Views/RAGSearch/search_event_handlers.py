@@ -4,21 +4,14 @@ Event Handlers for RAG Search Window
 This module contains all the event handling logic separated from the main window
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 import asyncio
-from datetime import datetime
-import json
-import tempfile
-from pathlib import Path
 
 from textual import on, work
 from textual.containers import Container
-from textual.widgets import Button, Select, Checkbox, Input, ListView, ListItem, DataTable, Static
-from textual.css.query import NoMatches
-from rich.text import Text
+from textual.widgets import Button, Select, Checkbox, Input, Static
 from loguru import logger
 
-from .search_result import SearchResult
 from .constants import MAX_CONCURRENT_SEARCHES, DEFAULT_TOP_K, DEFAULT_TEMPERATURE
 
 # Import required dependencies conditionally
@@ -27,13 +20,18 @@ from ....Utils.optional_deps import DEPENDENCIES_AVAILABLE
 WEB_SEARCH_AVAILABLE = DEPENDENCIES_AVAILABLE.get('websearch', False)
 if WEB_SEARCH_AVAILABLE:
     try:
-        from ....Web_Scraping.WebSearch_APIs import search_web_bing, parse_bing_results
+        from ....Web_Scraping.WebSearch_APIs import (  # noqa: F401
+            search_web_bing,
+            parse_bing_results,
+        )
     except (ImportError, ModuleNotFoundError):
         WEB_SEARCH_AVAILABLE = False
 
 try:
-    from ....Event_Handlers.Chat_Events.chat_rag_events import (
-        perform_plain_rag_search, perform_full_rag_pipeline, perform_hybrid_rag_search
+    from ....Event_Handlers.Chat_Events.chat_rag_events import (  # noqa: F401
+        perform_plain_rag_search,
+        perform_full_rag_pipeline,
+        perform_hybrid_rag_search,
     )
     RAG_EVENTS_AVAILABLE = True
 except ImportError:
@@ -358,7 +356,7 @@ class SearchEventHandlersMixin(metaclass=type(Container)):
         
         if self.parent_retrieval_strategy == "full":
             preview_text.update(
-                f"[dim]Will retrieve full parent documents[/dim]"
+                "[dim]Will retrieve full parent documents[/dim]"
             )
         elif self.parent_retrieval_strategy == "sentence_window":
             preview_text.update(

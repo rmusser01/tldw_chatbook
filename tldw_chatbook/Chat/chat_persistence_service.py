@@ -30,9 +30,13 @@ class ChatPersistenceService:
         normalized_id = (assistant_id or "").strip() or None
 
         if normalized_kind == "persona":
-            return f"Chat with {normalized_id}" if normalized_id else "Chat with Persona"
+            return (
+                f"Chat with {normalized_id}" if normalized_id else "Chat with Persona"
+            )
         if normalized_kind == "character":
-            return f"Chat with {normalized_id}" if normalized_id else "Chat with Character"
+            return (
+                f"Chat with {normalized_id}" if normalized_id else "Chat with Character"
+            )
         return "New Chat"
 
     def create_conversation(
@@ -61,20 +65,24 @@ class ChatPersistenceService:
             assistant_id=assistant_id,
             explicit_title=conversation_title,
         )
-        conversation_id = self.db.add_conversation({
-            "character_id": character_id,
-            "assistant_kind": assistant_kind,
-            "assistant_id": assistant_id,
-            "persona_memory_mode": persona_memory_mode,
-            "runtime_backend": runtime_backend,
-            "discovery_owner": discovery_owner,
-            "discovery_entity_id": discovery_entity_id,
-            "scope_type": scope_type,
-            "workspace_id": safe_workspace_id if safe_workspace_id is not None else workspace_id,
-            "title": title,
-            "system_prompt": system_prompt,
-            "client_id": self.db.client_id,
-        })
+        conversation_id = self.db.add_conversation(
+            {
+                "character_id": character_id,
+                "assistant_kind": assistant_kind,
+                "assistant_id": assistant_id,
+                "persona_memory_mode": persona_memory_mode,
+                "runtime_backend": runtime_backend,
+                "discovery_owner": discovery_owner,
+                "discovery_entity_id": discovery_entity_id,
+                "scope_type": scope_type,
+                "workspace_id": safe_workspace_id
+                if safe_workspace_id is not None
+                else workspace_id,
+                "title": title,
+                "system_prompt": system_prompt,
+                "client_id": self.db.client_id,
+            }
+        )
         if safe_workspace_id is not None:
             try:
                 self._link_workspace_conversation(
@@ -140,7 +148,9 @@ class ChatPersistenceService:
         if not safe_workspace_id:
             raise ValueError("Workspace conversation requires a workspace_id")
         if self.workspace_registry is None:
-            raise ValueError("Workspace registry is required for workspace conversations")
+            raise ValueError(
+                "Workspace registry is required for workspace conversations"
+            )
         workspace = self.workspace_registry.get_workspace(safe_workspace_id)
         if workspace is None:
             raise ValueError(f"Unknown workspace: {safe_workspace_id}")
@@ -514,7 +524,8 @@ class ChatPersistenceService:
         )
         existing_by_id = {message["id"]: message for message in existing_messages}
         existing_by_position = [
-            message for message in existing_messages
+            message
+            for message in existing_messages
             if message.get("variant_of") is None
         ]
         consumed_existing_ids = set()
@@ -527,7 +538,9 @@ class ChatPersistenceService:
             if not sender or sender == "system":
                 continue
 
-            content, image_data, image_mime_type = self._extract_message_payload(message_obj)
+            content, image_data, image_mime_type = self._extract_message_payload(
+                message_obj
+            )
             if not content and not image_data:
                 continue
 
@@ -561,7 +574,8 @@ class ChatPersistenceService:
             else:
                 while (
                     fallback_index < len(existing_by_position)
-                    and existing_by_position[fallback_index]["id"] in consumed_existing_ids
+                    and existing_by_position[fallback_index]["id"]
+                    in consumed_existing_ids
                 ):
                     fallback_index += 1
 
@@ -613,7 +627,9 @@ class ChatPersistenceService:
         return saved_count
 
     @staticmethod
-    def _extract_message_payload(message_obj: Dict[str, Any]) -> Tuple[str, Optional[bytes], Optional[str]]:
+    def _extract_message_payload(
+        message_obj: Dict[str, Any],
+    ) -> Tuple[str, Optional[bytes], Optional[str]]:
         text_content_parts: List[str] = []
         image_data_bytes: Optional[bytes] = None
         image_mime_type_str: Optional[str] = None
@@ -632,18 +648,32 @@ class ChatPersistenceService:
                     if url_str.startswith("data:") and ";base64," in url_str:
                         try:
                             header, b64_data = url_str.split(";base64,", 1)
-                            image_mime_type_str = header.split("data:", 1)[1] if "data:" in header else None
+                            image_mime_type_str = (
+                                header.split("data:", 1)[1]
+                                if "data:" in header
+                                else None
+                            )
                             if image_mime_type_str:
                                 image_data_bytes = base64.b64decode(b64_data)
                             else:
-                                text_content_parts.append("<Error: Malformed image data URI in history>")
+                                text_content_parts.append(
+                                    "<Error: Malformed image data URI in history>"
+                                )
                         except Exception:
                             image_data_bytes = None
                             image_mime_type_str = None
-                            text_content_parts.append("<Error: Failed to decode image data from history>")
+                            text_content_parts.append(
+                                "<Error: Failed to decode image data from history>"
+                            )
                     elif url_str:
                         text_content_parts.append(f"<Image URL: {url_str}>")
         elif content_data is not None:
-            text_content_parts.append(f"<Unsupported content type: {type(content_data)}>")
+            text_content_parts.append(
+                f"<Unsupported content type: {type(content_data)}>"
+            )
 
-        return "\n".join(text_content_parts).strip(), image_data_bytes, image_mime_type_str
+        return (
+            "\n".join(text_content_parts).strip(),
+            image_data_bytes,
+            image_mime_type_str,
+        )

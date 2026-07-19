@@ -12,9 +12,16 @@ LIVE_CAPABILITIES = {
     "protocol_version": "sync-v2-m1",
     "min_supported_protocol_version": "sync-v2-m1",
     "domains": [
-        "notes.note", "chat.conversation", "chat.message", "attachment.ref",
-        "workspaces.workspace", "workspaces.source_ref", "source_cache.entry",
-        "media.item", "media.keyword", "media.keyword_link",
+        "notes.note",
+        "chat.conversation",
+        "chat.message",
+        "attachment.ref",
+        "workspaces.workspace",
+        "workspaces.source_ref",
+        "source_cache.entry",
+        "media.item",
+        "media.keyword",
+        "media.keyword_link",
     ],
     "operations": {
         "notes.note": ["upsert", "tombstone"],
@@ -95,7 +102,12 @@ LIVE_BOOTSTRAP_RESPONSE = {
         "scope": "personal",
         "default_personal": True,
         "client_family": "chatbook",
-        "domains": ["notes.note", "chat.conversation", "chat.message", "attachment.ref"],
+        "domains": [
+            "notes.note",
+            "chat.conversation",
+            "chat.message",
+            "attachment.ref",
+        ],
     },
     "server_cursor": 0,
     "capabilities": LIVE_CAPABILITIES,
@@ -129,5 +141,8 @@ def test_bootstrap_request_defaults_to_m1_domains_and_offline_mode():
     assert dumped["mode"] == "offline_sync"
     assert dumped["client_family"] == "chatbook"
     assert dumped["requested_domains"] == [
-        "notes.note", "chat.conversation", "chat.message", "attachment.ref",
+        "notes.note",
+        "chat.conversation",
+        "chat.message",
+        "attachment.ref",
     ]

@@ -32,7 +32,9 @@ def test_session_settings_keeps_gateway_runtime_dependencies_out() -> None:
         assert forbidden_dependency not in source
 
 
-def test_readiness_does_not_import_gateway_or_config_runtime_modules(monkeypatch) -> None:
+def test_readiness_does_not_import_gateway_or_config_runtime_modules(
+    monkeypatch,
+) -> None:
     real_import = builtins.__import__
     forbidden_modules = {
         "tldw_chatbook.Chat.Chat_Functions",
@@ -177,7 +179,9 @@ def test_public_helpers_accept_planned_positional_call_forms() -> None:
 
     settings = build_default_console_session_settings(config, "llama_cpp", None)
     provider_options = build_console_provider_options({"llama_cpp": ["m"]})
-    model_options = build_console_model_options("llama_cpp", {"llama_cpp": ["m"]}, "current")
+    model_options = build_console_model_options(
+        "llama_cpp", {"llama_cpp": ["m"]}, "current"
+    )
     estimate = build_console_context_estimate(
         [{"role": "user", "content": "hello"}],
         "openai",
@@ -229,7 +233,9 @@ def test_model_options_ignore_none_sentinel_values() -> None:
     assert [option.value for option in options] == ["gemma-model"]
 
 
-def test_model_options_preserve_current_model_even_when_registry_has_none_sentinel() -> None:
+def test_model_options_preserve_current_model_even_when_registry_has_none_sentinel() -> (
+    None
+):
     options = build_console_model_options(
         provider="llama_cpp",
         providers_models={"Llama_cpp": ["None"], "llama_cpp": ["gemma-model"]},
@@ -253,7 +259,9 @@ def test_provider_options_include_all_configured_providers() -> None:
     assert {"anthropic", "llama_cpp", "openai"}.issubset(option_values)
 
 
-def test_provider_options_include_console_sendable_handlers_missing_from_model_registry() -> None:
+def test_provider_options_include_console_sendable_handlers_missing_from_model_registry() -> (
+    None
+):
     options = build_console_provider_options({"openai": ["gpt-4.1"]})
     option_values = [option.value for option in options]
 
@@ -332,7 +340,9 @@ def test_readiness_reports_missing_key_for_supported_openai_instead_of_wip() -> 
 
 def test_readiness_reports_ready_for_keyless_supported_generic_provider() -> None:
     readiness = build_console_settings_readiness(
-        ConsoleSessionSettings(provider="ollama", model="llama3", base_url="http://127.0.0.1:11434"),
+        ConsoleSessionSettings(
+            provider="ollama", model="llama3", base_url="http://127.0.0.1:11434"
+        ),
         app_config={"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
         environ={},
     )
@@ -345,7 +355,9 @@ def test_readiness_reports_ready_for_keyless_supported_generic_provider() -> Non
 
 def test_readiness_allows_configured_url_with_trailing_slash() -> None:
     readiness = build_console_settings_readiness(
-        ConsoleSessionSettings(provider="ollama", model="llama3", base_url="http://127.0.0.1:11434/"),
+        ConsoleSessionSettings(
+            provider="ollama", model="llama3", base_url="http://127.0.0.1:11434/"
+        ),
         app_config={"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
         environ={},
     )
@@ -356,8 +368,12 @@ def test_readiness_allows_configured_url_with_trailing_slash() -> None:
 
 def test_readiness_allows_llamacpp_configured_v1_endpoint_normalized_to_root() -> None:
     readiness = build_console_settings_readiness(
-        ConsoleSessionSettings(provider="llama_cpp", model="llama3", base_url="http://127.0.0.1:9099"),
-        app_config={"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099/v1"}}},
+        ConsoleSessionSettings(
+            provider="llama_cpp", model="llama3", base_url="http://127.0.0.1:9099"
+        ),
+        app_config={
+            "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099/v1"}}
+        },
         environ={},
     )
 
@@ -367,8 +383,12 @@ def test_readiness_allows_llamacpp_configured_v1_endpoint_normalized_to_root() -
 
 def test_readiness_allows_llamacpp_api_base_url_endpoint_normalized_to_root() -> None:
     readiness = build_console_settings_readiness(
-        ConsoleSessionSettings(provider="llama_cpp", model="llama3", base_url="http://127.0.0.1:9292"),
-        app_config={"api_settings": {"llama_cpp": {"api_base_url": "http://127.0.0.1:9292/v1"}}},
+        ConsoleSessionSettings(
+            provider="llama_cpp", model="llama3", base_url="http://127.0.0.1:9292"
+        ),
+        app_config={
+            "api_settings": {"llama_cpp": {"api_base_url": "http://127.0.0.1:9292/v1"}}
+        },
         environ={},
     )
 
@@ -378,7 +398,9 @@ def test_readiness_allows_llamacpp_api_base_url_endpoint_normalized_to_root() ->
 
 def test_readiness_prefers_api_base_url_over_merged_llamacpp_api_url() -> None:
     readiness = build_console_settings_readiness(
-        ConsoleSessionSettings(provider="llama_cpp", model="llama3", base_url="http://127.0.0.1:9292"),
+        ConsoleSessionSettings(
+            provider="llama_cpp", model="llama3", base_url="http://127.0.0.1:9292"
+        ),
         app_config={
             "api_settings": {
                 "llama_cpp": {
@@ -469,7 +491,9 @@ def test_readiness_blocks_unsaved_generic_endpoint_with_safe_details() -> None:
     assert "Saved endpoint: http://127.0.0.1:11434" in readiness.detail
 
 
-def test_settings_summary_includes_runtime_endpoint_credential_and_streaming_rows() -> None:
+def test_settings_summary_includes_runtime_endpoint_credential_and_streaming_rows() -> (
+    None
+):
     readiness = build_console_settings_readiness(
         ConsoleSessionSettings(
             provider="ollama",
@@ -492,7 +516,9 @@ def test_settings_summary_includes_runtime_endpoint_credential_and_streaming_row
             base_url="http://127.0.0.1:11434",
             streaming=False,
         ),
-        ConsoleSettingsContextEstimate(used_tokens=None, token_limit=None, label="Context: unavailable"),
+        ConsoleSettingsContextEstimate(
+            used_tokens=None, token_limit=None, label="Context: unavailable"
+        ),
         readiness,
     )
 
@@ -501,9 +527,13 @@ def test_settings_summary_includes_runtime_endpoint_credential_and_streaming_row
     assert state.transport_row == "Streaming: off"
 
 
-def test_readiness_explicit_send_capable_injection_allows_supported_generic_provider() -> None:
+def test_readiness_explicit_send_capable_injection_allows_supported_generic_provider() -> (
+    None
+):
     readiness = build_console_settings_readiness(
-        ConsoleSessionSettings(provider="ollama", model="llama3", base_url="http://127.0.0.1:11434"),
+        ConsoleSessionSettings(
+            provider="ollama", model="llama3", base_url="http://127.0.0.1:11434"
+        ),
         app_config={"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
         environ={},
         native_provider_keys={"ollama"},
@@ -526,7 +556,9 @@ def test_readiness_explicit_send_capable_injection_preserves_direct_providers() 
 
 
 def test_invalid_url_precedes_wip_for_url_provider() -> None:
-    settings = ConsoleSessionSettings(provider="vllm", model="m", base_url="file:///tmp/x")
+    settings = ConsoleSessionSettings(
+        provider="vllm", model="m", base_url="file:///tmp/x"
+    )
 
     readiness = build_console_settings_readiness(settings, app_config={})
 
@@ -534,7 +566,9 @@ def test_invalid_url_precedes_wip_for_url_provider() -> None:
 
 
 def test_malformed_ipv6_url_returns_validation_and_readiness_errors() -> None:
-    settings = ConsoleSessionSettings(provider="vllm", model="m", base_url="http://[::1")
+    settings = ConsoleSessionSettings(
+        provider="vllm", model="m", base_url="http://[::1"
+    )
 
     readiness = build_console_settings_readiness(settings, app_config={})
     errors = validate_console_session_settings(settings, app_config={})
@@ -544,7 +578,9 @@ def test_malformed_ipv6_url_returns_validation_and_readiness_errors() -> None:
 
 
 def test_whitespace_host_url_returns_validation_and_readiness_errors() -> None:
-    settings = ConsoleSessionSettings(provider="vllm", model="m", base_url="http://exa mple.com")
+    settings = ConsoleSessionSettings(
+        provider="vllm", model="m", base_url="http://exa mple.com"
+    )
 
     readiness = build_console_settings_readiness(settings, app_config={})
     errors = validate_console_session_settings(settings, app_config={})
@@ -555,7 +591,9 @@ def test_whitespace_host_url_returns_validation_and_readiness_errors() -> None:
 
 def test_invalid_port_urls_return_validation_and_readiness_errors() -> None:
     for invalid_url in ("http://example.com:99999", "http://example.com:nope"):
-        settings = ConsoleSessionSettings(provider="vllm", model="m", base_url=invalid_url)
+        settings = ConsoleSessionSettings(
+            provider="vllm", model="m", base_url=invalid_url
+        )
 
         readiness = build_console_settings_readiness(settings, app_config={})
         errors = validate_console_session_settings(settings, app_config={})
@@ -570,9 +608,13 @@ def test_configured_url_provider_validates_invalid_base_url() -> None:
         model="future-model",
         base_url="file:///tmp/not-http",
     )
-    app_config = {"api_settings": {"future_provider": {"api_url": "http://127.0.0.1:9000"}}}
+    app_config = {
+        "api_settings": {"future_provider": {"api_url": "http://127.0.0.1:9000"}}
+    }
 
-    readiness = build_console_settings_readiness(settings, app_config=app_config, environ={})
+    readiness = build_console_settings_readiness(
+        settings, app_config=app_config, environ={}
+    )
     errors = validate_console_session_settings(settings, app_config=app_config)
 
     assert readiness.label == "Invalid URL"
@@ -615,7 +657,9 @@ def test_readiness_supported_provider_missing_key_is_not_wip() -> None:
 def test_readiness_configured_unknown_non_native_provider_is_unknown() -> None:
     readiness = build_console_settings_readiness(
         ConsoleSessionSettings(provider="future_provider", model="future-model"),
-        app_config={"api_settings": {"future_provider": {"api_url": "http://127.0.0.1:9000"}}},
+        app_config={
+            "api_settings": {"future_provider": {"api_url": "http://127.0.0.1:9000"}}
+        },
         environ={},
     )
 
@@ -645,7 +689,9 @@ def test_context_estimate_counts_messages_and_staged_sources() -> None:
 
 
 def test_context_estimate_uses_longest_matching_token_limit_prefix() -> None:
-    def token_counter(_messages: list[dict[str, str]], _model: str, _provider: str) -> int:
+    def token_counter(
+        _messages: list[dict[str, str]], _model: str, _provider: str
+    ) -> int:
         return 1
 
     gpt4_32k = build_console_context_estimate(
@@ -816,14 +862,18 @@ def test_context_estimate_counts_system_prompt_tokens():
 
 
 def test_rail_system_line_none_state_for_blank_or_missing_prompt():
-    from tldw_chatbook.Chat.console_session_settings import build_console_rail_system_line
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_rail_system_line,
+    )
 
     assert build_console_rail_system_line(None) == "System: none"
     assert build_console_rail_system_line("   ") == "System: none"
 
 
 def test_rail_system_line_shows_preview_for_set_prompt():
-    from tldw_chatbook.Chat.console_session_settings import build_console_rail_system_line
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_rail_system_line,
+    )
 
     assert build_console_rail_system_line("Be terse.") == "System: Be terse."
 

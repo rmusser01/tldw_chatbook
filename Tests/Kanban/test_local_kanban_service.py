@@ -32,7 +32,9 @@ def _table_names(conn: sqlite3.Connection) -> set[str]:
 def _index_names(conn: sqlite3.Connection) -> set[str]:
     return {
         row["name"]
-        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'").fetchall()
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index'"
+        ).fetchall()
         if row["name"]
     }
 
@@ -93,7 +95,13 @@ def test_local_kanban_service_constructs_without_server_client(tmp_path):
     assert status["schema_version"] == 1
     assert status["fts_available"] in {True, False}
     assert service._new_uuid()
-    assert pagination == {"limit": 10, "offset": 5, "total": 12, "has_more": False, "next_offset": None}
+    assert pagination == {
+        "limit": 10,
+        "offset": 5,
+        "total": 12,
+        "has_more": False,
+        "next_offset": None,
+    }
 
 
 def test_local_kanban_service_enforces_local_policy_action_ids(tmp_path):
@@ -107,8 +115,14 @@ def test_local_kanban_service_enforces_local_policy_action_ids(tmp_path):
 
 def test_local_kanban_operation_action_ids_are_explicit_and_local():
     assert set(LOCAL_KANBAN_OPERATION_ACTION_IDS) == set(KANBAN_OPERATION_SPECS)
-    assert all(action_id.endswith(".local") for action_id in LOCAL_KANBAN_OPERATION_ACTION_IDS.values())
-    assert LOCAL_KANBAN_OPERATION_ACTION_IDS["create_board"] == "kanban.boards.create.local"
+    assert all(
+        action_id.endswith(".local")
+        for action_id in LOCAL_KANBAN_OPERATION_ACTION_IDS.values()
+    )
+    assert (
+        LOCAL_KANBAN_OPERATION_ACTION_IDS["create_board"]
+        == "kanban.boards.create.local"
+    )
 
 
 def test_local_kanban_action_id_derivation_rejects_non_server_specs():
@@ -138,14 +152,27 @@ async def test_local_kanban_board_list_card_crud_persists_and_versions(tmp_path)
     db_path = tmp_path / "kanban.db"
     service = LocalKanbanService(db_path=db_path)
 
-    board = await service.create_board({"name": "Project", "client_id": "board-1", "description": "Plan"})
-    updated_board = await service.update_board(board["id"], {"name": "Project 2"}, expected_version=1)
-    kanban_list = await service.create_list(board["id"], {"name": "Todo", "client_id": "list-1"})
+    board = await service.create_board(
+        {"name": "Project", "client_id": "board-1", "description": "Plan"}
+    )
+    updated_board = await service.update_board(
+        board["id"], {"name": "Project 2"}, expected_version=1
+    )
+    kanban_list = await service.create_list(
+        board["id"], {"name": "Todo", "client_id": "list-1"}
+    )
     card = await service.create_card(
         kanban_list["id"],
-        {"title": "Task", "client_id": "card-1", "description": "First task", "priority": "high"},
+        {
+            "title": "Task",
+            "client_id": "card-1",
+            "description": "First task",
+            "priority": "high",
+        },
     )
-    updated_card = await service.update_card(card["id"], {"title": "Task 2"}, expected_version=1)
+    updated_card = await service.update_card(
+        card["id"], {"title": "Task 2"}, expected_version=1
+    )
 
     reloaded = LocalKanbanService(db_path=db_path)
     boards = await reloaded.list_boards()
@@ -165,7 +192,9 @@ async def test_local_kanban_board_list_card_crud_persists_and_versions(tmp_path)
     assert cards["cards"][0]["title"] == "Task 2"
     assert loaded_card["priority"] == "high"
 
-    with pytest.raises(ValueError, match=f"local_kanban_version_conflict:card:{card['id']}"):
+    with pytest.raises(
+        ValueError, match=f"local_kanban_version_conflict:card:{card['id']}"
+    ):
         await service.update_card(card["id"], {"title": "Stale"}, expected_version=1)
 
 
@@ -173,17 +202,31 @@ async def test_local_kanban_board_list_card_crud_persists_and_versions(tmp_path)
 async def test_local_kanban_reorders_moves_and_copies_cards(tmp_path):
     service = LocalKanbanService(db_path=tmp_path / "kanban.db")
     board = await service.create_board({"name": "Project", "client_id": "board-1"})
-    todo = await service.create_list(board["id"], {"name": "Todo", "client_id": "list-1"})
-    done = await service.create_list(board["id"], {"name": "Done", "client_id": "list-2"})
-    first = await service.create_card(todo["id"], {"title": "First", "client_id": "card-1"})
-    second = await service.create_card(todo["id"], {"title": "Second", "client_id": "card-2"})
+    todo = await service.create_list(
+        board["id"], {"name": "Todo", "client_id": "list-1"}
+    )
+    done = await service.create_list(
+        board["id"], {"name": "Done", "client_id": "list-2"}
+    )
+    first = await service.create_card(
+        todo["id"], {"title": "First", "client_id": "card-1"}
+    )
+    second = await service.create_card(
+        todo["id"], {"title": "Second", "client_id": "card-2"}
+    )
 
     await service.reorder_lists(board["id"], {"ids": [done["id"], todo["id"]]})
     await service.reorder_cards(todo["id"], {"ids": [second["id"], first["id"]]})
-    moved = await service.move_card(first["id"], {"target_list_id": done["id"], "position": 0})
+    moved = await service.move_card(
+        first["id"], {"target_list_id": done["id"], "position": 0}
+    )
     copied = await service.copy_card(
         second["id"],
-        {"target_list_id": done["id"], "new_client_id": "card-copy", "new_title": "Second Copy"},
+        {
+            "target_list_id": done["id"],
+            "new_client_id": "card-copy",
+            "new_title": "Second Copy",
+        },
     )
 
     lists = await service.list_lists(board["id"])
@@ -202,8 +245,12 @@ async def test_local_kanban_reorders_moves_and_copies_cards(tmp_path):
 async def test_local_kanban_archives_deletes_restores_and_lists_activities(tmp_path):
     service = LocalKanbanService(db_path=tmp_path / "kanban.db")
     board = await service.create_board({"name": "Project", "client_id": "board-1"})
-    kanban_list = await service.create_list(board["id"], {"name": "Todo", "client_id": "list-1"})
-    card = await service.create_card(kanban_list["id"], {"title": "Task", "client_id": "card-1"})
+    kanban_list = await service.create_list(
+        board["id"], {"name": "Todo", "client_id": "list-1"}
+    )
+    card = await service.create_card(
+        kanban_list["id"], {"title": "Task", "client_id": "card-1"}
+    )
 
     archived = await service.archive_card(card["id"])
     unarchived = await service.unarchive_card(card["id"])
@@ -235,15 +282,21 @@ async def test_local_kanban_archives_deletes_restores_and_lists_activities(tmp_p
         "delete",
         "restore",
     ]
-    assert any(activity["entity_type"] == "card" for activity in card_activities["activities"])
+    assert any(
+        activity["entity_type"] == "card" for activity in card_activities["activities"]
+    )
 
 
 @pytest.mark.asyncio
 async def test_local_kanban_labels_checklists_items_and_comments(tmp_path):
     service = LocalKanbanService(db_path=tmp_path / "kanban.db")
     board = await service.create_board({"name": "Project", "client_id": "board-1"})
-    kanban_list = await service.create_list(board["id"], {"name": "Todo", "client_id": "list-1"})
-    card = await service.create_card(kanban_list["id"], {"title": "Task", "client_id": "card-1"})
+    kanban_list = await service.create_list(
+        board["id"], {"name": "Todo", "client_id": "list-1"}
+    )
+    card = await service.create_card(
+        kanban_list["id"], {"title": "Task", "client_id": "card-1"}
+    )
 
     label = await service.create_label(board["id"], {"name": "Urgent", "color": "red"})
     await service.assign_label_to_card(card["id"], label["id"])
@@ -251,7 +304,9 @@ async def test_local_kanban_labels_checklists_items_and_comments(tmp_path):
     item = await service.create_checklist_item(checklist["id"], {"name": "Do it"})
     checked = await service.check_checklist_item(item["id"])
     comment = await service.create_comment(card["id"], {"content": "Looks good"})
-    updated_comment = await service.update_comment(comment["id"], {"content": "Ship it"})
+    updated_comment = await service.update_comment(
+        comment["id"], {"content": "Ship it"}
+    )
     deleted_comment = await service.delete_comment(comment["id"])
 
     labels = await service.list_labels(board["id"])
@@ -277,23 +332,39 @@ async def test_local_kanban_labels_checklists_items_and_comments(tmp_path):
 async def test_local_kanban_bulk_search_links_import_export(tmp_path):
     source = LocalKanbanService(db_path=tmp_path / "source.db")
     board = await source.create_board({"name": "Project", "client_id": "board-1"})
-    todo = await source.create_list(board["id"], {"name": "Todo", "client_id": "list-1"})
-    done = await source.create_list(board["id"], {"name": "Done", "client_id": "list-2"})
-    first = await source.create_card(todo["id"], {"title": "Alpha task", "client_id": "card-1"})
-    second = await source.create_card(todo["id"], {"title": "Beta task", "client_id": "card-2"})
+    todo = await source.create_list(
+        board["id"], {"name": "Todo", "client_id": "list-1"}
+    )
+    done = await source.create_list(
+        board["id"], {"name": "Done", "client_id": "list-2"}
+    )
+    first = await source.create_card(
+        todo["id"], {"title": "Alpha task", "client_id": "card-1"}
+    )
+    second = await source.create_card(
+        todo["id"], {"title": "Beta task", "client_id": "card-2"}
+    )
     label = await source.create_label(board["id"], {"name": "Focus", "color": "blue"})
 
-    moved = await source.bulk_move_cards({"card_ids": [first["id"], second["id"]], "target_list_id": done["id"]})
-    labeled = await source.bulk_label_cards({"card_ids": [first["id"], second["id"]], "add_label_ids": [label["id"]]})
+    moved = await source.bulk_move_cards(
+        {"card_ids": [first["id"], second["id"]], "target_list_id": done["id"]}
+    )
+    labeled = await source.bulk_label_cards(
+        {"card_ids": [first["id"], second["id"]], "add_label_ids": [label["id"]]}
+    )
     search = await source.search_cards({"query": "Alpha", "search_mode": "hybrid"})
-    link = await source.add_card_link(first["id"], {"linked_type": "note", "linked_id": "note-1"})
+    link = await source.add_card_link(
+        first["id"], {"linked_type": "note", "linked_id": "note-1"}
+    )
     links = await source.list_card_links(first["id"])
     counts = await source.get_card_link_counts(first["id"])
     linked_cards = await source.list_cards_by_linked_content("note", "note-1")
     export_payload = await source.export_board(board["id"], {"include_archived": True})
 
     target = LocalKanbanService(db_path=tmp_path / "target.db")
-    imported = await target.import_board({"data": export_payload, "board_name": "Imported Project"})
+    imported = await target.import_board(
+        {"data": export_payload, "board_name": "Imported Project"}
+    )
 
     assert moved["moved_count"] == 2
     assert labeled["updated_count"] == 2
@@ -312,6 +383,10 @@ async def test_local_kanban_bulk_search_links_import_export(tmp_path):
 def test_local_kanban_service_exposes_every_operation(tmp_path):
     service = LocalKanbanService(db_path=tmp_path / "kanban.db")
 
-    missing = [name for name in KANBAN_OPERATION_SPECS if not callable(getattr(service, name, None))]
+    missing = [
+        name
+        for name in KANBAN_OPERATION_SPECS
+        if not callable(getattr(service, name, None))
+    ]
 
     assert missing == []

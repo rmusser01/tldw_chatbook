@@ -101,7 +101,9 @@ class ConsoleWorkspaceContext:
     def allowed_sources(self) -> list[ConsoleStagedSource]:
         """Return staged sources available to the active workspace."""
         blocked = {source.source_id for source in self.blocked_sources}
-        return [source for source in self.staged_sources if source.source_id not in blocked]
+        return [
+            source for source in self.staged_sources if source.source_id not in blocked
+        ]
 
     @property
     def has_policy_blocks(self) -> bool:
@@ -141,7 +143,9 @@ class ConsoleProviderSelection:
     #: Not used for readiness resolution; carried through so the controller
     #: can build provider messages from a single selection snapshot.
     system_prompt: str | None = None
-    workspace_context: ConsoleWorkspaceContext = field(default_factory=ConsoleWorkspaceContext)
+    workspace_context: ConsoleWorkspaceContext = field(
+        default_factory=ConsoleWorkspaceContext
+    )
 
 
 @dataclass(frozen=True)
@@ -157,7 +161,9 @@ class ConsoleRunState:
         return cls(ConsoleRunStatus.BLOCKED, visible_copy)
 
     @classmethod
-    def retrying(cls, visible_copy: str = "Retrying failed response") -> "ConsoleRunState":
+    def retrying(
+        cls, visible_copy: str = "Retrying failed response"
+    ) -> "ConsoleRunState":
         """Build a retrying run state."""
         return cls(ConsoleRunStatus.RETRYING, visible_copy)
 

@@ -109,7 +109,9 @@ async def test_show_selection_enables_export_and_shows_authority():
         assert "Authority: Local" in str(
             pilot.app.query_one("#personas-selected-authority", Static).renderable
         )
-        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
+        assert (
+            pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
+        )
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
         assert pilot.app.query_one("#personas-export-json", Button).disabled is False
         assert pilot.app.query_one("#personas-export-png", Button).disabled is False
@@ -139,7 +141,9 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
         # availability is pushed by PersonasScreen from _console_action_allowed().
         assert pilot.app.query_one("#personas-export-json", Button).disabled is False
         assert pilot.app.query_one("#personas-delete", Button).disabled is False
-        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
+        assert (
+            pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
+        )
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
         assert "Console blocked: select an item" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
@@ -148,7 +152,9 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
         pane.set_console_actions_enabled(True)
         await pilot.pause()
 
-        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is False
+        assert (
+            pilot.app.query_one("#personas-attach-to-console", Button).disabled is False
+        )
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is False
         assert "Console ready" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
@@ -159,7 +165,9 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
 
         assert pilot.app.query_one("#personas-export-json", Button).disabled is False
         assert pilot.app.query_one("#personas-delete", Button).disabled is False
-        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
+        assert (
+            pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
+        )
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
         assert "Console blocked: prompts are not attachable" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
@@ -185,7 +193,9 @@ async def test_unsaved_disables_attach_and_export_with_reason():
         pane.set_unsaved(False)
         pane.set_console_actions_enabled(True)
         await pilot.pause()
-        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is False
+        assert (
+            pilot.app.query_one("#personas-attach-to-console", Button).disabled is False
+        )
 
 
 async def test_show_validation_errors_renders_messages_and_clears():
@@ -194,7 +204,9 @@ async def test_show_validation_errors_renders_messages_and_clears():
         pane = pilot.app.query_one(PersonasInspectorPane)
         pane.show_validation(("name: required", "first_message: required"))
         await pilot.pause()
-        summary = str(pilot.app.query_one("#personas-validation-summary", Static).renderable)
+        summary = str(
+            pilot.app.query_one("#personas-validation-summary", Static).renderable
+        )
         assert "name: required" in summary
         assert "first_message: required" in summary
         pane.show_validation(())
@@ -208,13 +220,17 @@ async def test_conversations_panel_rows_post_selection():
     received = []
 
     class CaptureApp(InspectorApp):
-        def on_conversation_row_selected(self, message: ConversationRowSelected) -> None:
+        def on_conversation_row_selected(
+            self, message: ConversationRowSelected
+        ) -> None:
             received.append(message.conversation_id)
 
     app = CaptureApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        await pane.show_conversations((("conv-1", "First case"), ("conv-2", "Cold trail")))
+        await pane.show_conversations(
+            (("conv-1", "First case"), ("conv-2", "Cold trail"))
+        )
         await pilot.pause()
         assert len(pilot.app.query(".personas-conversation-row")) == 2
         await pilot.click("#personas-conversation-row-conv-1")
@@ -226,7 +242,9 @@ async def test_conversation_click_after_rerender_posts_new_id():
     received = []
 
     class CaptureApp(InspectorApp):
-        def on_conversation_row_selected(self, message: ConversationRowSelected) -> None:
+        def on_conversation_row_selected(
+            self, message: ConversationRowSelected
+        ) -> None:
             received.append(message.conversation_id)
 
     app = CaptureApp()
@@ -245,14 +263,20 @@ async def test_conversation_list_arrow_enter():
     received = []
 
     class CaptureApp(InspectorApp):
-        def on_conversation_row_selected(self, message: ConversationRowSelected) -> None:
+        def on_conversation_row_selected(
+            self, message: ConversationRowSelected
+        ) -> None:
             received.append(message.conversation_id)
 
     app = CaptureApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
         await pane.show_conversations(
-            (("conv-1", "First case"), ("conv-2", "Cold trail"), ("conv-3", "Closed file"))
+            (
+                ("conv-1", "First case"),
+                ("conv-2", "Cold trail"),
+                ("conv-3", "Closed file"),
+            )
         )
         await pilot.pause()
         list_view = pilot.app.query_one("#personas-conversations-list", ListView)
@@ -285,7 +309,9 @@ async def test_clear_selection_resets_everything():
             str(pilot.app.query_one("#personas-selected-authority", Static).renderable)
             == "Authority: Local"
         )
-        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
+        assert (
+            pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
+        )
         assert len(pilot.app.query(".personas-conversation-row")) == 0
         assert "Validation: OK" in str(
             pilot.app.query_one("#personas-validation-summary", Static).renderable

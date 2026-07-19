@@ -71,7 +71,10 @@ async def test_media_search_end_to_end_renders_results_not_error(tmp_path):
         assert not any("Error loading" in text for text in labels), labels
         # The row the click handlers consume carries the DB record.
         assert list_view.children, "expected at least one result row"
-        assert getattr(list_view.children[0], "media_data", {}).get("title") == "Tides Explained"
+        assert (
+            getattr(list_view.children[0], "media_data", {}).get("title")
+            == "Tides Explained"
+        )
 
 
 @pytest.mark.asyncio

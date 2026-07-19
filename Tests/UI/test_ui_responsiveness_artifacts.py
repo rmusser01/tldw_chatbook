@@ -27,9 +27,9 @@ def test_responsiveness_artifact_writer_creates_required_files(tmp_path: Path):
 
     for filename in REQUIRED_RESPONSIVENESS_ARTIFACTS:
         assert (tmp_path / filename).exists(), filename
-    assert "route switches: 6" in (
-        tmp_path / "route_switch_soak_result.txt"
-    ).read_text(encoding="utf-8")
+    assert "route switches: 6" in (tmp_path / "route_switch_soak_result.txt").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_responsiveness_artifact_writer_rejects_traversal_output(

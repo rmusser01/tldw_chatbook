@@ -13,25 +13,24 @@ Interactive mindmap viewer with:
 - Integration with tldw_chatbook content
 """
 
-from typing import Optional, Dict, List, Any
-from textual import on, work
+from typing import Optional
+from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
-from textual.widgets import Static, Input, Button, Checkbox, Label
+from textual.containers import Container, Horizontal, ScrollableContainer
+from textual.widgets import Static, Input, Button, Label
 from textual.reactive import reactive
 from textual.message import Message
-from textual.worker import Worker, WorkerState
 from loguru import logger
 from anytree import Node
 
 from ...Tools.Mind_Map.mindmap_model import MindmapModel
 from ...Tools.Mind_Map.mindmap_renderer import ThemedMindmapRenderer
-from ...Tools.Mind_Map.mermaid_parser import ExtendedMermaidParser
 
 
 class MindmapNodeSelected(Message):
     """Message sent when a mindmap node is selected"""
+
     def __init__(self, node: Node) -> None:
         super().__init__()
         self.node = node
@@ -39,7 +38,7 @@ class MindmapNodeSelected(Message):
 
 class MindmapViewer(Container):
     """Interactive mindmap viewer widget"""
-    
+
     DEFAULT_CSS = """
     MindmapViewer {
         layout: vertical;
@@ -121,7 +120,7 @@ class MindmapViewer(Container):
         margin-left: 1;
     }
     """
-    
+
     BINDINGS = [
         # Standard navigation
         Binding("up", "move_up", "Move up"),
@@ -157,23 +156,23 @@ class MindmapViewer(Container):
         Binding("ctrl+a", "announce_position", "Announce position"),
         Binding("?", "show_help", "Show help"),
     ]
-    
+
     # Reactive properties
     view_mode = reactive("tree", recompose=False)
     search_active = reactive(False, recompose=False)
     selected_node_text = reactive("", recompose=False)
     total_nodes = reactive(0, recompose=False)
     visible_nodes = reactive(0, recompose=False)
-    
+
     def __init__(
         self,
         mermaid_code: Optional[str] = None,
         theme: str = "default",
         show_controls: bool = True,
-        **kwargs
+        **kwargs,
     ):
         """Initialize the mindmap viewer
-        
+
         Args:
             mermaid_code: Optional Mermaid mindmap code to load
             theme: Color theme to use
@@ -185,14 +184,14 @@ class MindmapViewer(Container):
         self.show_controls = show_controls
         self.search_index = 0
         self.announcement_enabled = True
-        
+
         # Load initial content if provided
         if mermaid_code:
             try:
                 self.model.load_from_mermaid(mermaid_code)
             except Exception as e:
                 logger.error(f"Failed to load initial mindmap: {e}")
-    
+
     def compose(self) -> ComposeResult:
         """Compose the mindmap viewer UI"""
         with Container(classes="mindmap-header"):
@@ -223,7 +222,7 @@ class MindmapViewer(Container):
                         classes="mindmap-button",
                         tooltip="Refresh the current mindmap view.",
                     )
-                
+
                 # View mode selector
                 with Horizontal(classes="view-mode-selector"):
                     yield Label("View: ")
@@ -246,13 +245,10 @@ class MindmapViewer(Container):
                         classes="view-mode-button",
                         tooltip="Show the mindmap as ASCII art.",
                     )
-            
+
             # Search bar (hidden by default)
             with Horizontal(id="search-container"):
-                yield Input(
-                    placeholder="Search nodes...",
-                    id="search-input"
-                )
+                yield Input(placeholder="Search nodes...", id="search-input")
                 yield Button(
                     "Next",
                     id="search-next",
@@ -272,32 +268,29 @@ class MindmapViewer(Container):
                     variant="error",
                     tooltip="Close search and clear current matches.",
                 )
-        
+
         # Main display area
-        yield ScrollableContainer(
-            Static(id="mindmap-content"),
-            id="mindmap-display"
-        )
-        
+        yield ScrollableContainer(Static(id="mindmap-content"), id="mindmap-display")
+
         # Status bar
         yield Static("No mindmap loaded", id="status-bar")
-        
+
         # Hidden ARIA live region for accessibility
         yield Static("", id="aria-live")
-    
+
     def on_mount(self) -> None:
         """Initialize the display when mounted"""
         self.refresh_display()
         self._update_status_bar()
-    
+
     def refresh_display(self) -> None:
         """Update the mindmap display"""
         content_widget = self.query_one("#mindmap-content", Static)
-        
+
         if not self.model.root:
             content_widget.update("No mindmap loaded")
             return
-        
+
         # Render based on current view mode
         if self.view_mode == "tree":
             rendered = self.renderer.render_tree_view()
@@ -307,40 +300,42 @@ class MindmapViewer(Container):
             rendered = self.renderer.render_ascii_art()
         else:
             rendered = self.renderer.render_tree_view()
-        
+
         content_widget.update(rendered)
-        
+
         # Update reactive properties
         stats = self.model.get_statistics()
-        self.total_nodes = stats['total_nodes']
-        self.visible_nodes = stats['visible_nodes']
+        self.total_nodes = stats["total_nodes"]
+        self.visible_nodes = stats["visible_nodes"]
         if self.model.selected_node:
-            self.selected_node_text = getattr(self.model.selected_node, 'text', self.model.selected_node.name)
-    
+            self.selected_node_text = getattr(
+                self.model.selected_node, "text", self.model.selected_node.name
+            )
+
     def _update_status_bar(self) -> None:
         """Update the status bar with current information"""
         if not self.model.root:
             status = "No mindmap loaded"
         else:
             status = f"Nodes: {self.visible_nodes}/{self.total_nodes}"
-            
+
             if self.model.selected_node:
                 status += f" | Selected: {self.selected_node_text[:30]}..."
-                
+
             if self.model.search_results:
                 status += f" | Search: {len(self.model.search_results)} matches"
-        
+
         self.query_one("#status-bar", Static).update(status)
-    
+
     def watch_view_mode(self, old_mode: str, new_mode: str) -> None:
         """React to view mode changes"""
         # Update button variants
         for mode in ["tree", "outline", "ascii"]:
             btn = self.query_one(f"#view-{mode}", Button)
             btn.variant = "primary" if mode == new_mode else "default"
-        
+
         self.refresh_display()
-    
+
     def watch_search_active(self, was_active: bool, is_active: bool) -> None:
         """React to search state changes"""
         search_container = self.query_one("#search-container")
@@ -350,7 +345,7 @@ class MindmapViewer(Container):
         else:
             search_container.remove_class("visible")
             self.focus()
-    
+
     # Action handlers
     def action_move_up(self) -> None:
         """Move selection up"""
@@ -359,7 +354,7 @@ class MindmapViewer(Container):
             self._update_status_bar()
             if self.announcement_enabled:
                 self.action_announce_position()
-    
+
     def action_move_down(self) -> None:
         """Move selection down"""
         if self.model.move_selection_down():
@@ -367,40 +362,40 @@ class MindmapViewer(Container):
             self._update_status_bar()
             if self.announcement_enabled:
                 self.action_announce_position()
-    
+
     def action_expand(self) -> None:
         """Expand current node"""
         if self.model.selected_node:
             self.model.expand_node(self.model.selected_node)
             self.refresh_display()
             self._update_status_bar()
-    
+
     def action_collapse(self) -> None:
         """Collapse current node"""
         if self.model.selected_node:
             self.model.collapse_node(self.model.selected_node)
             self.refresh_display()
             self._update_status_bar()
-    
+
     def action_toggle(self) -> None:
         """Toggle current node expansion"""
         if self.model.selected_node:
             self.model.toggle_node(self.model.selected_node)
             self.refresh_display()
             self._update_status_bar()
-    
+
     def action_select(self) -> None:
         """Select current node (emit message)"""
         if self.model.selected_node:
             self.post_message(MindmapNodeSelected(self.model.selected_node))
-    
+
     def action_jump_top(self) -> None:
         """Jump to root node"""
         if self.model.root:
             self.model.selected_node = self.model.root
             self.refresh_display()
             self._update_status_bar()
-    
+
     def action_jump_bottom(self) -> None:
         """Jump to last visible node"""
         visible = self.model.get_visible_nodes()
@@ -408,35 +403,35 @@ class MindmapViewer(Container):
             self.model.selected_node = visible[-1]
             self.refresh_display()
             self._update_status_bar()
-    
+
     def action_jump_parent(self) -> None:
         """Jump to parent node"""
         if self.model.jump_to_parent():
             self.refresh_display()
             self._update_status_bar()
-    
+
     def action_jump_first_child(self) -> None:
         """Jump to first child"""
         if self.model.jump_to_first_child():
             self.refresh_display()
             self._update_status_bar()
-    
+
     def action_expand_all(self) -> None:
         """Expand all nodes"""
         self.model.expand_all()
         self.refresh_display()
         self._update_status_bar()
-    
+
     def action_collapse_all(self) -> None:
         """Collapse all nodes"""
         self.model.collapse_all()
         self.refresh_display()
         self._update_status_bar()
-    
+
     def action_search(self) -> None:
         """Toggle search mode"""
         self.search_active = not self.search_active
-    
+
     def action_clear_search(self) -> None:
         """Clear search and results"""
         self.search_active = False
@@ -444,7 +439,7 @@ class MindmapViewer(Container):
         self.search_index = 0
         self.refresh_display()
         self._update_status_bar()
-    
+
     def action_next_match(self) -> None:
         """Jump to next search match"""
         if self.model.search_results:
@@ -452,7 +447,7 @@ class MindmapViewer(Container):
             self.model.selected_node = self.model.search_results[self.search_index]
             self.refresh_display()
             self._update_status_bar()
-    
+
     def action_prev_match(self) -> None:
         """Jump to previous search match"""
         if self.model.search_results:
@@ -460,55 +455,55 @@ class MindmapViewer(Container):
             self.model.selected_node = self.model.search_results[self.search_index]
             self.refresh_display()
             self._update_status_bar()
-    
+
     def action_view_tree(self) -> None:
         """Switch to tree view"""
         self.view_mode = "tree"
-    
+
     def action_view_outline(self) -> None:
         """Switch to outline view"""
         self.view_mode = "outline"
-    
+
     def action_view_ascii(self) -> None:
         """Switch to ASCII view"""
         self.view_mode = "ascii"
-    
+
     def action_announce_position(self) -> None:
         """Announce current position for accessibility"""
         if not self.model.selected_node:
             self.notify("No node selected")
             return
-        
+
         # Build path
         path = []
         node = self.model.selected_node
         while node:
-            path.append(getattr(node, 'text', node.name))
+            path.append(getattr(node, "text", node.name))
             node = node.parent
-        
+
         path.reverse()
         position = " → ".join(path)
-        
+
         # Add sibling info
         if self.model.selected_node.parent:
             siblings = self.model.selected_node.parent.children
             index = siblings.index(self.model.selected_node) + 1
             total = len(siblings)
             position += f" (item {index} of {total})"
-        
+
         self.notify(position)
         self._update_aria_live(position)
-    
+
     def _update_aria_live(self, message: str) -> None:
         """Update ARIA live region for screen readers"""
         self.query_one("#aria-live", Static).update(message)
-    
+
     # Event handlers
     @on(Button.Pressed)
     def handle_button_press(self, event: Button.Pressed) -> None:
         """Handle button presses"""
         button_id = event.button.id
-        
+
         if button_id == "collapse-all":
             self.action_collapse_all()
         elif button_id == "expand-all":
@@ -529,7 +524,7 @@ class MindmapViewer(Container):
             self.action_prev_match()
         elif button_id == "search-close":
             self.action_clear_search()
-    
+
     @on(Input.Submitted, "#search-input")
     def handle_search_submit(self, event: Input.Submitted) -> None:
         """Handle search input submission"""
@@ -544,20 +539,20 @@ class MindmapViewer(Container):
                 self.notify(f"Found {len(results)} matches")
             else:
                 self.notify("No matches found")
-    
+
     @on(Input.Changed, "#search-input")
     def handle_search_change(self, event: Input.Changed) -> None:
         """Handle real-time search as user types"""
         query = event.value.strip()
         if query:
-            results = self.model.search(query)
+            self.model.search(query)
             self.refresh_display()
             self._update_status_bar()
-    
+
     # Public methods
     def load_mermaid(self, mermaid_code: str) -> None:
         """Load a new mindmap from Mermaid code
-        
+
         Args:
             mermaid_code: Mermaid mindmap syntax
         """
@@ -569,18 +564,18 @@ class MindmapViewer(Container):
         except Exception as e:
             logger.error(f"Failed to load mindmap: {e}")
             self.notify(f"Error loading mindmap: {str(e)}", severity="error")
-    
+
     def get_selected_node(self) -> Optional[Node]:
         """Get the currently selected node
-        
+
         Returns:
             Selected node or None
         """
         return self.model.selected_node
-    
+
     def set_theme(self, theme_name: str) -> None:
         """Change the color theme
-        
+
         Args:
             theme_name: Name of the theme to apply
         """
