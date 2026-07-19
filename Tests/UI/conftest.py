@@ -33,6 +33,13 @@ from textual.app import App  # noqa: E402
 from textual.widget import Widget  # noqa: E402
 
 # Import test utilities
+from Tests.textual_test_utils import app_pilot, widget_pilot  # noqa: E402
+from Tests.textual_test_harness import (  # noqa: E402
+    IsolatedWidgetTestApp,
+    TestApp,
+    enhanced_app_pilot,
+    isolated_widget_pilot,
+)
 
 # Type variables
 W = TypeVar("W", bound=Widget)
