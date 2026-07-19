@@ -28,7 +28,9 @@ class LocalAudioServicesService:
         self.stt_provider_loader = stt_provider_loader or (lambda: {})
         self.voice_catalog_loader = voice_catalog_loader or (lambda: {})
         self.tts_audio_generator = tts_audio_generator
-        self.history_store_path = Path(history_store_path).expanduser() if history_store_path else None
+        self.history_store_path = (
+            Path(history_store_path).expanduser() if history_store_path else None
+        )
         self.policy_enforcer = policy_enforcer
         self._history_records: list[dict[str, Any]] = []
         self._next_history_id = 1
@@ -74,11 +76,17 @@ class LocalAudioServicesService:
             self._history_records = []
             self._next_history_id = 1
             return
-        records = payload.get("items", payload) if isinstance(payload, dict) else payload
+        records = (
+            payload.get("items", payload) if isinstance(payload, dict) else payload
+        )
         if not isinstance(records, list):
             return
-        self._history_records = [dict(item) for item in records if isinstance(item, dict)]
-        max_id = max((int(item.get("id", 0) or 0) for item in self._history_records), default=0)
+        self._history_records = [
+            dict(item) for item in records if isinstance(item, dict)
+        ]
+        max_id = max(
+            (int(item.get("id", 0) or 0) for item in self._history_records), default=0
+        )
         self._next_history_id = max_id + 1
 
     def _persist_history(self) -> None:
@@ -86,8 +94,12 @@ class LocalAudioServicesService:
             return
         self.history_store_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"items": self._history_records}
-        temp_path = self.history_store_path.with_suffix(self.history_store_path.suffix + ".tmp")
-        temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        temp_path = self.history_store_path.with_suffix(
+            self.history_store_path.suffix + ".tmp"
+        )
+        temp_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+        )
         temp_path.replace(self.history_store_path)
 
     @staticmethod
@@ -155,7 +167,9 @@ class LocalAudioServicesService:
 
     def _find_history_record(self, history_id: int) -> dict[str, Any]:
         for record in self._history_records:
-            if int(record.get("id", 0) or 0) == int(history_id) and not record.get("deleted"):
+            if int(record.get("id", 0) or 0) == int(history_id) and not record.get(
+                "deleted"
+            ):
                 return record
         raise ValueError(f"local_tts_history_not_found:{history_id}")
 
@@ -190,7 +204,9 @@ class LocalAudioServicesService:
             speed=speed or 1.0,
         )
         chunks: list[bytes] = []
-        async for chunk in service.generate_audio_stream(request, self._tts_internal_model_id(model)):
+        async for chunk in service.generate_audio_stream(
+            request, self._tts_internal_model_id(model)
+        ):
             chunks.append(bytes(chunk))
         return b"".join(chunks)
 
@@ -204,7 +220,9 @@ class LocalAudioServicesService:
             "provider_count": len(providers),
         }
 
-    def get_stt_health(self, *, model: str | None = None, warm: bool = False) -> dict[str, Any]:
+    def get_stt_health(
+        self, *, model: str | None = None, warm: bool = False
+    ) -> dict[str, Any]:
         del warm
         self._enforce("audio.health.observe.local")
         providers = self._safe_mapping(self.stt_provider_loader)
@@ -265,7 +283,9 @@ class LocalAudioServicesService:
         audio_bytes = bytes(audio)
         history_id = self._next_history_id
         self._next_history_id += 1
-        filename = str(payload.get("filename") or f"local_speech_{history_id}.{response_format}")
+        filename = str(
+            payload.get("filename") or f"local_speech_{history_id}.{response_format}"
+        )
         content_type = self._tts_content_type(response_format)
         record = {
             "id": history_id,
@@ -304,14 +324,20 @@ class LocalAudioServicesService:
         provider = kwargs.get("provider")
         model = kwargs.get("model")
         voice = kwargs.get("voice")
-        records = [record for record in self._history_records if not record.get("deleted")]
+        records = [
+            record for record in self._history_records if not record.get("deleted")
+        ]
         if provider:
-            records = [record for record in records if record.get("provider") == provider]
+            records = [
+                record for record in records if record.get("provider") == provider
+            ]
         if model:
             records = [record for record in records if record.get("model") == model]
         if voice:
             records = [record for record in records if record.get("voice") == voice]
-        records = sorted(records, key=lambda item: int(item.get("id", 0) or 0), reverse=True)
+        records = sorted(
+            records, key=lambda item: int(item.get("id", 0) or 0), reverse=True
+        )
         page = records[offset : offset + limit]
         return {
             "items": [self._history_summary(record) for record in page],
@@ -329,7 +355,9 @@ class LocalAudioServicesService:
         detail["content"] = base64.b64decode(content_base64) if content_base64 else b""
         return detail
 
-    async def update_tts_history_favorite(self, history_id: int, request_data: Any) -> dict[str, Any]:
+    async def update_tts_history_favorite(
+        self, history_id: int, request_data: Any
+    ) -> dict[str, Any]:
         self._enforce("audio.history.update.local")
         payload = self._dump_request(request_data)
         record = self._find_history_record(history_id)

@@ -93,21 +93,38 @@ class FakeCharacterPersonaClient:
         return {"id": 12, "version": 1, **payload}
 
     async def update_character(self, character_id, request_data, expected_version):
-        payload = request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json")
+        payload = request_data.model_dump(
+            exclude_unset=True, exclude_none=True, mode="json"
+        )
         self.update_character_calls.append(
-            {"character_id": character_id, "payload": payload, "expected_version": expected_version}
+            {
+                "character_id": character_id,
+                "payload": payload,
+                "expected_version": expected_version,
+            }
         )
         return {"id": character_id, "version": expected_version + 1, **payload}
 
     async def delete_character(self, character_id, expected_version):
-        self.delete_character_calls.append({"character_id": character_id, "expected_version": expected_version})
+        self.delete_character_calls.append(
+            {"character_id": character_id, "expected_version": expected_version}
+        )
         return {"status": "deleted", "character_id": character_id}
 
     async def restore_character(self, character_id, expected_version):
-        self.restore_character_calls.append({"character_id": character_id, "expected_version": expected_version})
-        return {"id": character_id, "name": "Ada", "version": expected_version + 1, "deleted": False}
+        self.restore_character_calls.append(
+            {"character_id": character_id, "expected_version": expected_version}
+        )
+        return {
+            "id": character_id,
+            "name": "Ada",
+            "version": expected_version + 1,
+            "deleted": False,
+        }
 
-    async def list_persona_profiles(self, active_only=False, include_deleted=False, limit=100, offset=0):
+    async def list_persona_profiles(
+        self, active_only=False, include_deleted=False, limit=100, offset=0
+    ):
         self.list_persona_profiles_calls.append(
             {
                 "active_only": active_only,
@@ -138,7 +155,9 @@ class FakeCharacterPersonaClient:
             "version": 1,
         }
 
-    async def update_persona_profile(self, persona_id, request_data, expected_version=None):
+    async def update_persona_profile(
+        self, persona_id, request_data, expected_version=None
+    ):
         payload = request_data.model_dump(exclude_none=True, mode="json")
         self.update_persona_profile_calls.append(
             {
@@ -169,7 +188,14 @@ class FakeCharacterPersonaClient:
 
     async def list_persona_archetypes(self):
         self.list_persona_archetypes_calls += 1
-        return [{"key": "researcher", "label": "Researcher", "tagline": "Investigates", "icon": "search"}]
+        return [
+            {
+                "key": "researcher",
+                "label": "Researcher",
+                "tagline": "Investigates",
+                "icon": "search",
+            }
+        ]
 
     async def get_persona_archetype(self, key):
         self.get_persona_archetype_calls.append(key)
@@ -177,7 +203,11 @@ class FakeCharacterPersonaClient:
 
     async def preview_persona_archetype(self, key):
         self.preview_persona_archetype_calls.append(key)
-        return {"archetype_key": key, "name": "Researcher", "setup": {"current_step": "archetype"}}
+        return {
+            "archetype_key": key,
+            "name": "Researcher",
+            "setup": {"current_step": "archetype"},
+        }
 
     async def list_persona_exemplars(
         self,
@@ -198,24 +228,38 @@ class FakeCharacterPersonaClient:
                 "offset": offset,
             }
         )
-        return [{"id": "ex-1", "persona_id": persona_id, "content": "Use concise answers."}]
+        return [
+            {"id": "ex-1", "persona_id": persona_id, "content": "Use concise answers."}
+        ]
 
     async def get_persona_exemplar(self, persona_id, exemplar_id):
-        self.get_persona_exemplar_calls.append({"persona_id": persona_id, "exemplar_id": exemplar_id})
-        return {"id": exemplar_id, "persona_id": persona_id, "content": "Use concise answers."}
+        self.get_persona_exemplar_calls.append(
+            {"persona_id": persona_id, "exemplar_id": exemplar_id}
+        )
+        return {
+            "id": exemplar_id,
+            "persona_id": persona_id,
+            "content": "Use concise answers.",
+        }
 
     async def create_persona_exemplar(self, persona_id, request_data):
         payload = request_data.model_dump(exclude_none=True, mode="json")
-        self.create_persona_exemplar_calls.append({"persona_id": persona_id, "payload": payload})
+        self.create_persona_exemplar_calls.append(
+            {"persona_id": persona_id, "payload": payload}
+        )
         return {"id": "ex-new", "persona_id": persona_id, **payload}
 
     async def import_persona_exemplars(self, persona_id, request_data):
         payload = request_data.model_dump(exclude_none=True, mode="json")
-        self.import_persona_exemplars_calls.append({"persona_id": persona_id, "payload": payload})
+        self.import_persona_exemplars_calls.append(
+            {"persona_id": persona_id, "payload": payload}
+        )
         return {"persona_id": persona_id, "created": 2}
 
     async def update_persona_exemplar(self, persona_id, exemplar_id, request_data):
-        payload = request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json")
+        payload = request_data.model_dump(
+            exclude_unset=True, exclude_none=True, mode="json"
+        )
         self.update_persona_exemplar_calls.append(
             {"persona_id": persona_id, "exemplar_id": exemplar_id, "payload": payload}
         )
@@ -229,38 +273,75 @@ class FakeCharacterPersonaClient:
         return {"id": exemplar_id, "persona_id": persona_id, "review": payload}
 
     async def delete_persona_exemplar(self, persona_id, exemplar_id):
-        self.delete_persona_exemplar_calls.append({"persona_id": persona_id, "exemplar_id": exemplar_id})
-        return {"status": "deleted", "persona_id": persona_id, "exemplar_id": exemplar_id}
+        self.delete_persona_exemplar_calls.append(
+            {"persona_id": persona_id, "exemplar_id": exemplar_id}
+        )
+        return {
+            "status": "deleted",
+            "persona_id": persona_id,
+            "exemplar_id": exemplar_id,
+        }
 
     async def get_character_exemplar(self, character_id, exemplar_id):
-        self.get_character_exemplar_calls.append({"character_id": character_id, "exemplar_id": exemplar_id})
+        self.get_character_exemplar_calls.append(
+            {"character_id": character_id, "exemplar_id": exemplar_id}
+        )
         return {"id": exemplar_id, "character_id": character_id, "text": "Use dry wit."}
 
     async def create_character_exemplar(self, character_id, request_data):
         payload = request_data.model_dump(exclude_none=True, mode="json")
-        self.create_character_exemplar_calls.append({"character_id": character_id, "payload": payload})
+        self.create_character_exemplar_calls.append(
+            {"character_id": character_id, "payload": payload}
+        )
         return {"id": "char-ex-new", "character_id": character_id, **payload}
 
     async def update_character_exemplar(self, character_id, exemplar_id, request_data):
-        payload = request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json")
+        payload = request_data.model_dump(
+            exclude_unset=True, exclude_none=True, mode="json"
+        )
         self.update_character_exemplar_calls.append(
-            {"character_id": character_id, "exemplar_id": exemplar_id, "payload": payload}
+            {
+                "character_id": character_id,
+                "exemplar_id": exemplar_id,
+                "payload": payload,
+            }
         )
         return {"id": exemplar_id, "character_id": character_id, **payload}
 
     async def delete_character_exemplar(self, character_id, exemplar_id):
-        self.delete_character_exemplar_calls.append({"character_id": character_id, "exemplar_id": exemplar_id})
-        return {"status": "deleted", "character_id": character_id, "exemplar_id": exemplar_id}
+        self.delete_character_exemplar_calls.append(
+            {"character_id": character_id, "exemplar_id": exemplar_id}
+        )
+        return {
+            "status": "deleted",
+            "character_id": character_id,
+            "exemplar_id": exemplar_id,
+        }
 
     async def search_character_exemplars(self, character_id, request_data):
         payload = request_data.model_dump(exclude_none=True, mode="json")
-        self.search_character_exemplars_calls.append({"character_id": character_id, "payload": payload})
-        return {"items": [{"id": "char-ex-1", "character_id": character_id, "text": payload["query"]}]}
+        self.search_character_exemplars_calls.append(
+            {"character_id": character_id, "payload": payload}
+        )
+        return {
+            "items": [
+                {
+                    "id": "char-ex-1",
+                    "character_id": character_id,
+                    "text": payload["query"],
+                }
+            ]
+        }
 
     async def select_character_exemplars_debug(self, character_id, request_data):
         payload = request_data.model_dump(exclude_none=True, mode="json")
-        self.select_character_exemplars_debug_calls.append({"character_id": character_id, "payload": payload})
-        return {"selected": [{"id": "char-ex-1", "character_id": character_id}], "coverage": {}}
+        self.select_character_exemplars_debug_calls.append(
+            {"character_id": character_id, "payload": payload}
+        )
+        return {
+            "selected": [{"id": "char-ex-1", "character_id": character_id}],
+            "coverage": {},
+        }
 
     async def list_greetings(self, chat_id):
         self.list_greetings_calls.append(chat_id)
@@ -308,7 +389,9 @@ class FakeCharacterPersonaClient:
         }
 
     async def update_preset(self, preset_id, request_data):
-        payload = request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json")
+        payload = request_data.model_dump(
+            exclude_unset=True, exclude_none=True, mode="json"
+        )
         self.update_preset_calls.append({"preset_id": preset_id, "payload": payload})
         return {
             "preset_id": preset_id,
@@ -323,17 +406,26 @@ class FakeCharacterPersonaClient:
         }
 
     async def create_character_chat_session(self, request_data, **kwargs):
-        self.create_character_chat_session_calls.append({"request_data": request_data, "kwargs": kwargs})
+        self.create_character_chat_session_calls.append(
+            {"request_data": request_data, "kwargs": kwargs}
+        )
         self.session_calls.append(("create", request_data, kwargs))
         return {"id": "chat-1", "title": "New Chat"}
 
     async def list_character_chat_sessions(self, **kwargs):
         self.list_character_chat_sessions_calls.append(kwargs)
         self.session_calls.append(("list", kwargs))
-        return {"chats": [{"id": "chat-1"}], "total": 1, "limit": kwargs.get("limit"), "offset": kwargs.get("offset")}
+        return {
+            "chats": [{"id": "chat-1"}],
+            "total": 1,
+            "limit": kwargs.get("limit"),
+            "offset": kwargs.get("offset"),
+        }
 
     async def get_character_chat_session(self, chat_id, **kwargs):
-        self.get_character_chat_session_calls.append({"chat_id": chat_id, "kwargs": kwargs})
+        self.get_character_chat_session_calls.append(
+            {"chat_id": chat_id, "kwargs": kwargs}
+        )
         self.session_calls.append(("detail", chat_id, kwargs))
         return {"id": chat_id, "title": "Existing Chat"}
 
@@ -345,22 +437,30 @@ class FakeCharacterPersonaClient:
         return {"id": chat_id, "title": "Updated Chat"}
 
     async def delete_character_chat_session(self, chat_id, **kwargs):
-        self.delete_character_chat_session_calls.append({"chat_id": chat_id, "kwargs": kwargs})
+        self.delete_character_chat_session_calls.append(
+            {"chat_id": chat_id, "kwargs": kwargs}
+        )
         self.session_calls.append(("delete", chat_id, kwargs))
         return {"status": "deleted", "chat_id": chat_id}
 
     async def restore_character_chat_session(self, chat_id, **kwargs):
-        self.restore_character_chat_session_calls.append({"chat_id": chat_id, "kwargs": kwargs})
+        self.restore_character_chat_session_calls.append(
+            {"chat_id": chat_id, "kwargs": kwargs}
+        )
         self.session_calls.append(("restore", chat_id, kwargs))
         return {"id": chat_id, "deleted": False}
 
     async def list_character_messages(self, chat_id, **kwargs):
-        self.list_character_messages_calls.append({"chat_id": chat_id, "kwargs": kwargs})
+        self.list_character_messages_calls.append(
+            {"chat_id": chat_id, "kwargs": kwargs}
+        )
         self.message_calls.append(("list", chat_id, kwargs))
         return {"messages": [{"id": "msg-1", "conversation_id": chat_id}], "total": 1}
 
     async def get_character_message(self, message_id, **kwargs):
-        self.get_character_message_calls.append({"message_id": message_id, "kwargs": kwargs})
+        self.get_character_message_calls.append(
+            {"message_id": message_id, "kwargs": kwargs}
+        )
         self.message_calls.append(("detail", message_id, kwargs))
         return {"id": message_id, "conversation_id": "chat-1", "content": "Hello"}
 
@@ -379,30 +479,59 @@ class FakeCharacterPersonaClient:
         return {"id": message_id, "conversation_id": "chat-1", "content": "Updated"}
 
     async def delete_character_message(self, message_id, **kwargs):
-        self.delete_character_message_calls.append({"message_id": message_id, "kwargs": kwargs})
+        self.delete_character_message_calls.append(
+            {"message_id": message_id, "kwargs": kwargs}
+        )
         self.message_calls.append(("delete", message_id, kwargs))
         return {"status": "deleted", "message_id": message_id}
 
     async def search_character_messages(self, chat_id, query, **kwargs):
-        self.search_character_messages_calls.append({"chat_id": chat_id, "query": query, "kwargs": kwargs})
+        self.search_character_messages_calls.append(
+            {"chat_id": chat_id, "query": query, "kwargs": kwargs}
+        )
         self.message_calls.append(("search", chat_id, query, kwargs))
         return {"messages": [{"id": "msg-1", "conversation_id": chat_id}], "total": 1}
 
     async def list_character_memories(self, character_id, **kwargs):
         self.memory_calls.append(("list", character_id, kwargs))
-        return {"memories": [{"id": "mem-1", "character_id": character_id, "content": "likes tea"}], "total": 1}
+        return {
+            "memories": [
+                {"id": "mem-1", "character_id": character_id, "content": "likes tea"}
+            ],
+            "total": 1,
+        }
 
     async def create_character_memory(self, character_id, request_data, **kwargs):
         self.memory_calls.append(("create", character_id, request_data, kwargs))
-        return {"id": "mem-1", "character_id": character_id, "content": request_data.get("content")}
+        return {
+            "id": "mem-1",
+            "character_id": character_id,
+            "content": request_data.get("content"),
+        }
 
-    async def update_character_memory(self, character_id, memory_id, request_data, **kwargs):
-        self.memory_calls.append(("update", character_id, memory_id, request_data, kwargs))
-        return {"id": memory_id, "character_id": character_id, "content": request_data.get("content")}
+    async def update_character_memory(
+        self, character_id, memory_id, request_data, **kwargs
+    ):
+        self.memory_calls.append(
+            ("update", character_id, memory_id, request_data, kwargs)
+        )
+        return {
+            "id": memory_id,
+            "character_id": character_id,
+            "content": request_data.get("content"),
+        }
 
-    async def archive_character_memory(self, character_id, memory_id, request_data, **kwargs):
-        self.memory_calls.append(("archive", character_id, memory_id, request_data, kwargs))
-        return {"id": memory_id, "character_id": character_id, "archived": request_data.get("archived", True)}
+    async def archive_character_memory(
+        self, character_id, memory_id, request_data, **kwargs
+    ):
+        self.memory_calls.append(
+            ("archive", character_id, memory_id, request_data, kwargs)
+        )
+        return {
+            "id": memory_id,
+            "character_id": character_id,
+            "archived": request_data.get("archived", True),
+        }
 
     async def delete_character_memory(self, character_id, memory_id, **kwargs):
         self.memory_calls.append(("delete", character_id, memory_id, kwargs))
@@ -417,8 +546,13 @@ class FakeCharacterPersonaClient:
         return {"conversation_id": chat_id, "settings": {}}
 
     async def update_chat_settings(self, chat_id, request_data, **kwargs):
-        self.update_chat_settings_calls.append({"chat_id": chat_id, "request_data": request_data, "kwargs": kwargs})
-        return {"conversation_id": chat_id, "settings": getattr(request_data, "settings", {})}
+        self.update_chat_settings_calls.append(
+            {"chat_id": chat_id, "request_data": request_data, "kwargs": kwargs}
+        )
+        return {
+            "conversation_id": chat_id,
+            "settings": getattr(request_data, "settings", {}),
+        }
 
     async def export_chat_history(self, chat_id, **kwargs):
         self.export_chat_history_calls.append({"chat_id": chat_id, "kwargs": kwargs})
@@ -429,7 +563,9 @@ class FakeCharacterPersonaClient:
         return {"chat_id": chat_id, "text": "note"}
 
     async def export_lorebook_diagnostics(self, chat_id, **kwargs):
-        self.export_lorebook_diagnostics_calls.append({"chat_id": chat_id, "kwargs": kwargs})
+        self.export_lorebook_diagnostics_calls.append(
+            {"chat_id": chat_id, "kwargs": kwargs}
+        )
         return {"chat_id": chat_id, "turns": []}
 
 
@@ -460,14 +596,22 @@ class FakeLocalCharacterBackend:
         return {"id": 22, "version": 1, **payload}
 
     def update_character(self, character_id, request_data, expected_version):
-        payload = request_data.model_dump(exclude_unset=True, exclude_none=True, mode="json")
+        payload = request_data.model_dump(
+            exclude_unset=True, exclude_none=True, mode="json"
+        )
         self.update_character_calls.append(
-            {"character_id": character_id, "payload": payload, "expected_version": expected_version}
+            {
+                "character_id": character_id,
+                "payload": payload,
+                "expected_version": expected_version,
+            }
         )
         return {"id": character_id, "version": expected_version + 1, **payload}
 
     def delete_character(self, character_id, expected_version):
-        self.delete_character_calls.append({"character_id": character_id, "expected_version": expected_version})
+        self.delete_character_calls.append(
+            {"character_id": character_id, "expected_version": expected_version}
+        )
         return {"status": "deleted", "character_id": character_id}
 
 
@@ -489,7 +633,9 @@ class FakeLocalCharacterSessionBackend(FakeLocalCharacterBackend):
         return {"id": chat_id, "backend": "local"}
 
     def update_character_chat_session(self, chat_id, request_data, **kwargs):
-        self.calls.append(("update_character_chat_session", chat_id, request_data, kwargs))
+        self.calls.append(
+            ("update_character_chat_session", chat_id, request_data, kwargs)
+        )
         return {"id": chat_id, "title": "Updated Local Chat"}
 
     def delete_character_chat_session(self, chat_id, **kwargs):
@@ -524,7 +670,11 @@ class FakeLocalPersonaProfileBackend(FakeLocalCharacterBackend):
 
     def update_persona_profile(self, persona_id, request_data, **kwargs):
         self.calls.append(("update_persona_profile", persona_id, request_data, kwargs))
-        return {"id": persona_id, "name": "Updated", "version": kwargs.get("expected_version", 1) + 1}
+        return {
+            "id": persona_id,
+            "name": "Updated",
+            "version": kwargs.get("expected_version", 1) + 1,
+        }
 
     def delete_persona_profile(self, persona_id, **kwargs):
         self.calls.append(("delete_persona_profile", persona_id, kwargs))
@@ -538,7 +688,9 @@ class FakeLocalPersonaProfileBackend(FakeLocalCharacterBackend):
 class FakeLocalPersonaExemplarBackend(FakeLocalPersonaProfileBackend):
     def list_persona_exemplars(self, persona_id, **kwargs):
         self.calls.append(("list_persona_exemplars", persona_id, kwargs))
-        return [{"id": "local-ex-1", "persona_id": persona_id, "content": "Be concise."}]
+        return [
+            {"id": "local-ex-1", "persona_id": persona_id, "content": "Be concise."}
+        ]
 
     def get_persona_exemplar(self, persona_id, exemplar_id):
         self.calls.append(("get_persona_exemplar", persona_id, exemplar_id))
@@ -546,23 +698,35 @@ class FakeLocalPersonaExemplarBackend(FakeLocalPersonaProfileBackend):
 
     def create_persona_exemplar(self, persona_id, request_data):
         self.calls.append(("create_persona_exemplar", persona_id, request_data))
-        return {"id": "local-ex-created", "persona_id": persona_id, "content": "Created"}
+        return {
+            "id": "local-ex-created",
+            "persona_id": persona_id,
+            "content": "Created",
+        }
 
     def import_persona_exemplars(self, persona_id, request_data):
         self.calls.append(("import_persona_exemplars", persona_id, request_data))
         return {"persona_id": persona_id, "created": 2}
 
     def update_persona_exemplar(self, persona_id, exemplar_id, request_data):
-        self.calls.append(("update_persona_exemplar", persona_id, exemplar_id, request_data))
+        self.calls.append(
+            ("update_persona_exemplar", persona_id, exemplar_id, request_data)
+        )
         return {"id": exemplar_id, "persona_id": persona_id, "content": "Updated"}
 
     def review_persona_exemplar(self, persona_id, exemplar_id, request_data):
-        self.calls.append(("review_persona_exemplar", persona_id, exemplar_id, request_data))
+        self.calls.append(
+            ("review_persona_exemplar", persona_id, exemplar_id, request_data)
+        )
         return {"id": exemplar_id, "persona_id": persona_id, "reviewed": True}
 
     def delete_persona_exemplar(self, persona_id, exemplar_id):
         self.calls.append(("delete_persona_exemplar", persona_id, exemplar_id))
-        return {"status": "deleted", "persona_id": persona_id, "exemplar_id": exemplar_id}
+        return {
+            "status": "deleted",
+            "persona_id": persona_id,
+            "exemplar_id": exemplar_id,
+        }
 
 
 class FakeLocalArchetypeBackend(FakeLocalCharacterBackend):
@@ -572,7 +736,14 @@ class FakeLocalArchetypeBackend(FakeLocalCharacterBackend):
 
     def list_persona_archetypes(self):
         self.calls.append(("list_persona_archetypes",))
-        return [{"key": "local-guide", "label": "Local Guide", "tagline": "Offline", "icon": "book"}]
+        return [
+            {
+                "key": "local-guide",
+                "label": "Local Guide",
+                "tagline": "Offline",
+                "icon": "book",
+            }
+        ]
 
     def get_persona_archetype(self, key):
         self.calls.append(("get_persona_archetype", key))
@@ -580,13 +751,20 @@ class FakeLocalArchetypeBackend(FakeLocalCharacterBackend):
 
     def preview_persona_archetype(self, key):
         self.calls.append(("preview_persona_archetype", key))
-        return {"archetype_key": key, "name": "Local Guide", "setup": {"current_step": "archetype"}}
+        return {
+            "archetype_key": key,
+            "name": "Local Guide",
+            "setup": {"current_step": "archetype"},
+        }
 
 
 class FakeLocalCharacterExemplarBackend(FakeLocalPersonaExemplarBackend):
     def search_character_exemplars(self, character_id, request_data):
         self.calls.append(("search_character_exemplars", character_id, request_data))
-        return {"items": [{"id": "local-char-ex-1", "character_id": character_id}], "total": 1}
+        return {
+            "items": [{"id": "local-char-ex-1", "character_id": character_id}],
+            "total": 1,
+        }
 
     def get_character_exemplar(self, character_id, exemplar_id):
         self.calls.append(("get_character_exemplar", character_id, exemplar_id))
@@ -594,25 +772,43 @@ class FakeLocalCharacterExemplarBackend(FakeLocalPersonaExemplarBackend):
 
     def create_character_exemplar(self, character_id, request_data):
         self.calls.append(("create_character_exemplar", character_id, request_data))
-        return {"id": "local-char-ex-created", "character_id": character_id, "text": "Created"}
+        return {
+            "id": "local-char-ex-created",
+            "character_id": character_id,
+            "text": "Created",
+        }
 
     def update_character_exemplar(self, character_id, exemplar_id, request_data):
-        self.calls.append(("update_character_exemplar", character_id, exemplar_id, request_data))
+        self.calls.append(
+            ("update_character_exemplar", character_id, exemplar_id, request_data)
+        )
         return {"id": exemplar_id, "character_id": character_id, "text": "Updated"}
 
     def select_character_exemplars_debug(self, character_id, request_data):
-        self.calls.append(("select_character_exemplars_debug", character_id, request_data))
-        return {"selected": [{"id": "local-char-ex-1", "character_id": character_id}], "coverage": {}}
+        self.calls.append(
+            ("select_character_exemplars_debug", character_id, request_data)
+        )
+        return {
+            "selected": [{"id": "local-char-ex-1", "character_id": character_id}],
+            "coverage": {},
+        }
 
     def delete_character_exemplar(self, character_id, exemplar_id):
         self.calls.append(("delete_character_exemplar", character_id, exemplar_id))
-        return {"status": "deleted", "character_id": character_id, "exemplar_id": exemplar_id}
+        return {
+            "status": "deleted",
+            "character_id": character_id,
+            "exemplar_id": exemplar_id,
+        }
 
 
 class FakeLocalChatExecutionBackend(FakeLocalCharacterExemplarBackend):
     def list_chat_greetings(self, chat_id):
         self.calls.append(("list_chat_greetings", chat_id))
-        return {"chat_id": chat_id, "greetings": [{"index": 0, "text": "Hi.", "preview": "Hi."}]}
+        return {
+            "chat_id": chat_id,
+            "greetings": [{"index": 0, "text": "Hi.", "preview": "Hi."}],
+        }
 
     def select_chat_greeting(self, chat_id, index):
         self.calls.append(("select_chat_greeting", chat_id, index))
@@ -737,7 +933,9 @@ async def test_character_persona_scope_service_denies_server_persona_listing_in_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", [None, "local"])
-async def test_scope_service_routes_to_local_backend_when_mode_is_local_or_omitted(mode):
+async def test_scope_service_routes_to_local_backend_when_mode_is_local_or_omitted(
+    mode,
+):
     local_service = FakeLocalCharacterBackend()
     server_service = Mock()
     scope_service = CharacterPersonaScopeService(
@@ -799,14 +997,24 @@ async def test_scope_service_routes_character_and_persona_parameters():
 async def test_scope_service_routes_persona_archetypes_to_selected_backend():
     local_service = FakeLocalArchetypeBackend()
     server_service = FakeCharacterPersonaClient()
-    scope_service = CharacterPersonaScopeService(local_service=local_service, server_service=server_service)
+    scope_service = CharacterPersonaScopeService(
+        local_service=local_service, server_service=server_service
+    )
 
     server_summaries = await scope_service.list_persona_archetypes(mode="server")
-    server_template = await scope_service.get_persona_archetype("researcher", mode="server")
-    server_preview = await scope_service.preview_persona_archetype("researcher", mode="server")
+    server_template = await scope_service.get_persona_archetype(
+        "researcher", mode="server"
+    )
+    server_preview = await scope_service.preview_persona_archetype(
+        "researcher", mode="server"
+    )
     local_summaries = await scope_service.list_persona_archetypes(mode="local")
-    local_template = await scope_service.get_persona_archetype("local-guide", mode="local")
-    local_preview = await scope_service.preview_persona_archetype("local-guide", mode="local")
+    local_template = await scope_service.get_persona_archetype(
+        "local-guide", mode="local"
+    )
+    local_preview = await scope_service.preview_persona_archetype(
+        "local-guide", mode="local"
+    )
 
     assert server_summaries[0]["key"] == "researcher"
     assert server_template["key"] == "researcher"
@@ -828,7 +1036,9 @@ async def test_scope_service_routes_persona_archetypes_to_selected_backend():
 async def test_scope_service_routes_character_crud_to_selected_backend():
     local_service = FakeLocalCharacterBackend()
     server_service = FakeCharacterPersonaClient()
-    scope_service = CharacterPersonaScopeService(local_service=local_service, server_service=server_service)
+    scope_service = CharacterPersonaScopeService(
+        local_service=local_service, server_service=server_service
+    )
 
     local_search = await scope_service.search_characters("ada", mode="local", limit=4)
     local_detail = await scope_service.get_character(2, mode="local")
@@ -842,7 +1052,9 @@ async def test_scope_service_routes_character_crud_to_selected_backend():
         expected_version=4,
         mode="local",
     )
-    local_deleted = await scope_service.delete_character(2, expected_version=5, mode="local")
+    local_deleted = await scope_service.delete_character(
+        2, expected_version=5, mode="local"
+    )
     server_search = await scope_service.search_characters("ada", mode="server", limit=3)
     server_detail = await scope_service.get_character(1, mode="server")
     server_created = await scope_service.create_character(
@@ -855,8 +1067,12 @@ async def test_scope_service_routes_character_crud_to_selected_backend():
         expected_version=3,
         mode="server",
     )
-    server_deleted = await scope_service.delete_character(1, expected_version=4, mode="server")
-    server_restored = await scope_service.restore_character(1, expected_version=5, mode="server")
+    server_deleted = await scope_service.delete_character(
+        1, expected_version=4, mode="server"
+    )
+    server_restored = await scope_service.restore_character(
+        1, expected_version=5, mode="server"
+    )
 
     assert local_search[0]["id"] == 2
     assert local_detail["id"] == 2
@@ -881,9 +1097,15 @@ async def test_scope_service_routes_persona_profile_crud_to_server_backend():
 
     detail = await scope_service.get_character(12, mode="server")
     created = await scope_service.create_character({"name": "Ada"}, mode="server")
-    updated = await scope_service.update_character(12, {"name": "Ada v2"}, expected_version=3, mode="server")
-    deleted = await scope_service.delete_character(12, expected_version=4, mode="server")
-    restored = await scope_service.restore_character(12, expected_version=5, mode="server")
+    updated = await scope_service.update_character(
+        12, {"name": "Ada v2"}, expected_version=3, mode="server"
+    )
+    deleted = await scope_service.delete_character(
+        12, expected_version=4, mode="server"
+    )
+    restored = await scope_service.restore_character(
+        12, expected_version=5, mode="server"
+    )
 
     assert detail["id"] == 12
     assert created["id"] == 42
@@ -919,7 +1141,9 @@ async def test_scope_service_routes_persona_profile_crud_to_server_backend():
     profiles = await scope_service.list_persona_profiles(mode="server")
     persona = await scope_service.get_persona_profile("persona-1", mode="server")
     created = await scope_service.create_persona_profile(
-        Mock(model_dump=lambda mode="json": {"name": "Guide", "mode": "session_scoped"}),
+        Mock(
+            model_dump=lambda mode="json": {"name": "Guide", "mode": "session_scoped"}
+        ),
         mode="server",
     )
     updated = await scope_service.update_persona_profile(
@@ -928,8 +1152,12 @@ async def test_scope_service_routes_persona_profile_crud_to_server_backend():
         expected_version=7,
         mode="server",
     )
-    deleted = await scope_service.delete_persona_profile("persona-1", expected_version=8, mode="server")
-    restored = await scope_service.restore_persona_profile("persona-1", expected_version=9, mode="server")
+    deleted = await scope_service.delete_persona_profile(
+        "persona-1", expected_version=8, mode="server"
+    )
+    restored = await scope_service.restore_persona_profile(
+        "persona-1", expected_version=9, mode="server"
+    )
 
     assert profiles[0]["id"] == "persona-1"
     assert persona["id"] == "persona-1"
@@ -952,7 +1180,9 @@ async def test_scope_service_routes_persona_profile_crud_to_local_backend():
     create_data = Mock()
     update_data = Mock()
 
-    listed = await scope_service.list_persona_profiles(mode="local", active_only=True, limit=5, offset=2)
+    listed = await scope_service.list_persona_profiles(
+        mode="local", active_only=True, limit=5, offset=2
+    )
     detail = await scope_service.get_persona_profile("local-persona-1", mode="local")
     created = await scope_service.create_persona_profile(create_data, mode="local")
     updated = await scope_service.update_persona_profile(
@@ -961,8 +1191,12 @@ async def test_scope_service_routes_persona_profile_crud_to_local_backend():
         expected_version=1,
         mode="local",
     )
-    deleted = await scope_service.delete_persona_profile("local-persona-1", expected_version=2, mode="local")
-    restored = await scope_service.restore_persona_profile("local-persona-1", expected_version=3, mode="local")
+    deleted = await scope_service.delete_persona_profile(
+        "local-persona-1", expected_version=2, mode="local"
+    )
+    restored = await scope_service.restore_persona_profile(
+        "local-persona-1", expected_version=3, mode="local"
+    )
 
     assert listed[0]["id"] == "local-persona-1"
     assert detail["id"] == "local-persona-1"
@@ -971,10 +1205,18 @@ async def test_scope_service_routes_persona_profile_crud_to_local_backend():
     assert deleted == {"status": "deleted", "persona_id": "local-persona-1"}
     assert restored["version"] == 4
     assert local_service.calls == [
-        ("list_persona_profiles", {"active_only": True, "include_deleted": False, "limit": 5, "offset": 2}),
+        (
+            "list_persona_profiles",
+            {"active_only": True, "include_deleted": False, "limit": 5, "offset": 2},
+        ),
         ("get_persona_profile", "local-persona-1"),
         ("create_persona_profile", create_data),
-        ("update_persona_profile", "local-persona-1", update_data, {"expected_version": 1}),
+        (
+            "update_persona_profile",
+            "local-persona-1",
+            update_data,
+            {"expected_version": 1},
+        ),
         ("delete_persona_profile", "local-persona-1", {"expected_version": 2}),
         ("restore_persona_profile", "local-persona-1", 3),
     ]
@@ -1004,7 +1246,9 @@ async def test_scope_service_routes_persona_exemplar_crud_to_server_backend():
         limit=5,
         offset=2,
     )
-    exemplar = await scope_service.get_persona_exemplar("persona-1", "ex-1", mode="server")
+    exemplar = await scope_service.get_persona_exemplar(
+        "persona-1", "ex-1", mode="server"
+    )
     created = await scope_service.create_persona_exemplar(
         "persona-1",
         Mock(model_dump=lambda **_: {"content": "hello"}),
@@ -1027,7 +1271,9 @@ async def test_scope_service_routes_persona_exemplar_crud_to_server_backend():
         Mock(model_dump=lambda **_: {"action": "approve"}),
         mode="server",
     )
-    deleted = await scope_service.delete_persona_exemplar("persona-1", "ex-1", mode="server")
+    deleted = await scope_service.delete_persona_exemplar(
+        "persona-1", "ex-1", mode="server"
+    )
 
     assert exemplars[0]["id"] == "ex-1"
     assert exemplar["id"] == "ex-1"
@@ -1035,7 +1281,11 @@ async def test_scope_service_routes_persona_exemplar_crud_to_server_backend():
     assert imported["created"] == 2
     assert updated["content"] == "updated"
     assert reviewed["review"] == {"action": "approve"}
-    assert deleted == {"status": "deleted", "persona_id": "persona-1", "exemplar_id": "ex-1"}
+    assert deleted == {
+        "status": "deleted",
+        "persona_id": "persona-1",
+        "exemplar_id": "ex-1",
+    }
 
 
 @pytest.mark.asyncio
@@ -1058,9 +1308,15 @@ async def test_scope_service_routes_persona_exemplar_crud_to_local_backend():
         limit=5,
         offset=2,
     )
-    exemplar = await scope_service.get_persona_exemplar("local-persona-1", "local-ex-1", mode="local")
-    created = await scope_service.create_persona_exemplar("local-persona-1", create_data, mode="local")
-    imported = await scope_service.import_persona_exemplars("local-persona-1", import_data, mode="local")
+    exemplar = await scope_service.get_persona_exemplar(
+        "local-persona-1", "local-ex-1", mode="local"
+    )
+    created = await scope_service.create_persona_exemplar(
+        "local-persona-1", create_data, mode="local"
+    )
+    imported = await scope_service.import_persona_exemplars(
+        "local-persona-1", import_data, mode="local"
+    )
     updated = await scope_service.update_persona_exemplar(
         "local-persona-1",
         "local-ex-1",
@@ -1073,7 +1329,9 @@ async def test_scope_service_routes_persona_exemplar_crud_to_local_backend():
         review_data,
         mode="local",
     )
-    deleted = await scope_service.delete_persona_exemplar("local-persona-1", "local-ex-1", mode="local")
+    deleted = await scope_service.delete_persona_exemplar(
+        "local-persona-1", "local-ex-1", mode="local"
+    )
 
     assert exemplars[0]["id"] == "local-ex-1"
     assert exemplar["id"] == "local-ex-1"
@@ -1081,7 +1339,11 @@ async def test_scope_service_routes_persona_exemplar_crud_to_local_backend():
     assert imported["created"] == 2
     assert updated["content"] == "Updated"
     assert reviewed["reviewed"] is True
-    assert deleted == {"status": "deleted", "persona_id": "local-persona-1", "exemplar_id": "local-ex-1"}
+    assert deleted == {
+        "status": "deleted",
+        "persona_id": "local-persona-1",
+        "exemplar_id": "local-ex-1",
+    }
     assert local_service.calls == [
         (
             "list_persona_exemplars",
@@ -1115,7 +1377,9 @@ async def test_scope_service_routes_character_exemplar_crud_to_server_backend():
         Mock(model_dump=lambda **_: {"query": "dry wit"}),
         mode="server",
     )
-    exemplar = await scope_service.get_character_exemplar(12, "char-ex-1", mode="server")
+    exemplar = await scope_service.get_character_exemplar(
+        12, "char-ex-1", mode="server"
+    )
     created = await scope_service.create_character_exemplar(
         12,
         Mock(model_dump=lambda **_: {"text": "hello"}),
@@ -1132,14 +1396,20 @@ async def test_scope_service_routes_character_exemplar_crud_to_server_backend():
         Mock(model_dump=lambda **_: {"user_turn": "why?"}),
         mode="server",
     )
-    deleted = await scope_service.delete_character_exemplar(12, "char-ex-1", mode="server")
+    deleted = await scope_service.delete_character_exemplar(
+        12, "char-ex-1", mode="server"
+    )
 
     assert search["items"][0]["id"] == "char-ex-1"
     assert exemplar["id"] == "char-ex-1"
     assert created["id"] == "char-ex-new"
     assert updated["text"] == "updated"
     assert debug["selected"][0]["id"] == "char-ex-1"
-    assert deleted == {"status": "deleted", "character_id": 12, "exemplar_id": "char-ex-1"}
+    assert deleted == {
+        "status": "deleted",
+        "character_id": 12,
+        "exemplar_id": "char-ex-1",
+    }
 
 
 @pytest.mark.asyncio
@@ -1154,19 +1424,35 @@ async def test_scope_service_routes_character_exemplar_crud_to_local_backend():
     update_data = Mock()
     debug_data = Mock()
 
-    search = await scope_service.search_character_exemplars(12, search_data, mode="local")
-    exemplar = await scope_service.get_character_exemplar(12, "local-char-ex-1", mode="local")
-    created = await scope_service.create_character_exemplar(12, create_data, mode="local")
-    updated = await scope_service.update_character_exemplar(12, "local-char-ex-1", update_data, mode="local")
-    debug = await scope_service.select_character_exemplars_debug(12, debug_data, mode="local")
-    deleted = await scope_service.delete_character_exemplar(12, "local-char-ex-1", mode="local")
+    search = await scope_service.search_character_exemplars(
+        12, search_data, mode="local"
+    )
+    exemplar = await scope_service.get_character_exemplar(
+        12, "local-char-ex-1", mode="local"
+    )
+    created = await scope_service.create_character_exemplar(
+        12, create_data, mode="local"
+    )
+    updated = await scope_service.update_character_exemplar(
+        12, "local-char-ex-1", update_data, mode="local"
+    )
+    debug = await scope_service.select_character_exemplars_debug(
+        12, debug_data, mode="local"
+    )
+    deleted = await scope_service.delete_character_exemplar(
+        12, "local-char-ex-1", mode="local"
+    )
 
     assert search["total"] == 1
     assert exemplar["id"] == "local-char-ex-1"
     assert created["id"] == "local-char-ex-created"
     assert updated["text"] == "Updated"
     assert debug["selected"][0]["id"] == "local-char-ex-1"
-    assert deleted == {"status": "deleted", "character_id": 12, "exemplar_id": "local-char-ex-1"}
+    assert deleted == {
+        "status": "deleted",
+        "character_id": 12,
+        "exemplar_id": "local-char-ex-1",
+    }
     assert local_service.calls == [
         ("search_character_exemplars", 12, search_data),
         ("get_character_exemplar", 12, "local-char-ex-1"),
@@ -1192,11 +1478,19 @@ async def test_scope_service_routes_chat_execution_support_to_local_backend():
     selected = await scope_service.select_chat_greeting("chat-local", 0, mode="local")
     presets = await scope_service.list_chat_presets(mode="local")
     created_preset = await scope_service.create_chat_preset(create_data, mode="local")
-    updated_preset = await scope_service.update_chat_preset("local-preset", update_data, mode="local")
-    deleted_preset = await scope_service.delete_chat_preset("local-preset", mode="local")
+    updated_preset = await scope_service.update_chat_preset(
+        "local-preset", update_data, mode="local"
+    )
+    deleted_preset = await scope_service.delete_chat_preset(
+        "local-preset", mode="local"
+    )
     settings = await scope_service.get_chat_settings("chat-local", mode="local")
-    updated_settings = await scope_service.update_chat_settings("chat-local", settings_data, mode="local")
-    diagnostics = await scope_service.export_lorebook_diagnostics("chat-local", mode="local", order="desc")
+    updated_settings = await scope_service.update_chat_settings(
+        "chat-local", settings_data, mode="local"
+    )
+    diagnostics = await scope_service.export_lorebook_diagnostics(
+        "chat-local", mode="local", order="desc"
+    )
 
     assert greetings["chat_id"] == "chat-local"
     assert selected["selected_index"] == 0
@@ -1230,8 +1524,12 @@ async def test_scope_service_routes_chat_execution_support_to_server_backend():
         policy_enforcer=policy,
     )
 
-    greetings = await scope_service.list_chat_greetings("chat.server.alice", mode="server")
-    selected = await scope_service.select_chat_greeting("chat.server.alice", 0, mode="server")
+    greetings = await scope_service.list_chat_greetings(
+        "chat.server.alice", mode="server"
+    )
+    selected = await scope_service.select_chat_greeting(
+        "chat.server.alice", 0, mode="server"
+    )
     presets = await scope_service.list_chat_presets(mode="server")
     created = await scope_service.create_chat_preset(
         Mock(
@@ -1246,7 +1544,11 @@ async def test_scope_service_routes_chat_execution_support_to_server_backend():
     )
     updated = await scope_service.update_chat_preset(
         "custom-alpha",
-        Mock(model_dump=lambda exclude_unset=True, exclude_none=True, mode="json": {"name": "Custom Beta"}),
+        Mock(
+            model_dump=lambda exclude_unset=True, exclude_none=True, mode="json": {
+                "name": "Custom Beta"
+            }
+        ),
         mode="server",
     )
     deleted = await scope_service.delete_chat_preset("custom-alpha", mode="server")
@@ -1290,22 +1592,44 @@ async def test_scope_service_routes_server_ccp_sessions_messages_and_memory_with
         expected_version=4,
         mode="server",
     )
-    await scope_service.delete_character_chat_session("chat-1", expected_version=5, mode="server")
-    await scope_service.restore_character_chat_session("chat-1", expected_version=6, mode="server")
+    await scope_service.delete_character_chat_session(
+        "chat-1", expected_version=5, mode="server"
+    )
+    await scope_service.restore_character_chat_session(
+        "chat-1", expected_version=6, mode="server"
+    )
     await scope_service.get_character_chat_settings("chat-1", mode="server")
-    await scope_service.update_character_chat_settings("chat-1", {"settings": {"presetScope": "chat"}}, mode="server")
-    await scope_service.create_character_chat_message("chat-1", {"role": "user", "content": "Hello"}, mode="server")
+    await scope_service.update_character_chat_settings(
+        "chat-1", {"settings": {"presetScope": "chat"}}, mode="server"
+    )
+    await scope_service.create_character_chat_message(
+        "chat-1", {"role": "user", "content": "Hello"}, mode="server"
+    )
     await scope_service.list_character_chat_messages("chat-1", mode="server")
     await scope_service.get_character_chat_message("msg-1", mode="server")
-    await scope_service.update_character_chat_message("msg-1", {"content": "Updated"}, expected_version=7, mode="server")
-    await scope_service.delete_character_chat_message("msg-1", expected_version=8, mode="server")
+    await scope_service.update_character_chat_message(
+        "msg-1", {"content": "Updated"}, expected_version=7, mode="server"
+    )
+    await scope_service.delete_character_chat_message(
+        "msg-1", expected_version=8, mode="server"
+    )
     await scope_service.search_character_chat_messages("chat-1", "hello", mode="server")
-    await scope_service.list_character_memories("12", mode="server", include_archived=True)
-    await scope_service.create_character_memory("12", {"content": "likes tea"}, mode="server")
-    await scope_service.update_character_memory("12", "mem-1", {"content": "likes coffee"}, mode="server")
-    await scope_service.archive_character_memory("12", "mem-1", {"archived": True}, mode="server")
+    await scope_service.list_character_memories(
+        "12", mode="server", include_archived=True
+    )
+    await scope_service.create_character_memory(
+        "12", {"content": "likes tea"}, mode="server"
+    )
+    await scope_service.update_character_memory(
+        "12", "mem-1", {"content": "likes coffee"}, mode="server"
+    )
+    await scope_service.archive_character_memory(
+        "12", "mem-1", {"archived": True}, mode="server"
+    )
     await scope_service.delete_character_memory("12", "mem-1", mode="server")
-    await scope_service.extract_character_memories("12", {"chat_id": "chat-1"}, mode="server")
+    await scope_service.extract_character_memories(
+        "12", {"chat_id": "chat-1"}, mode="server"
+    )
 
     assert policy.actions == [
         "character.sessions.create.server",
@@ -1344,8 +1668,12 @@ async def test_scope_service_routes_local_ccp_sessions_messages_and_memory_with_
         policy_enforcer=policy,
     )
 
-    await scope_service.create_character_chat_session({"character_id": 12, "title": "Ada"}, mode="local")
-    await scope_service.create_character_chat_message("chat-1", {"role": "user", "content": "Hi"}, mode="local")
+    await scope_service.create_character_chat_session(
+        {"character_id": 12, "title": "Ada"}, mode="local"
+    )
+    await scope_service.create_character_chat_message(
+        "chat-1", {"role": "user", "content": "Hi"}, mode="local"
+    )
     await scope_service.list_character_memories("12", mode="local")
 
     assert policy.actions == [
@@ -1358,7 +1686,9 @@ async def test_scope_service_routes_local_ccp_sessions_messages_and_memory_with_
     assert local_service.memory_calls[0][0] == "list"
 
 
-def test_local_character_persona_service_persists_sessions_messages_settings_and_memory(tmp_path):
+def test_local_character_persona_service_persists_sessions_messages_settings_and_memory(
+    tmp_path,
+):
     db = CharactersRAGDB(tmp_path / "ccp.sqlite", "test_client")
     character_id = db.add_character_card(
         {
@@ -1391,7 +1721,9 @@ def test_local_character_persona_service_persists_sessions_messages_settings_and
         {"content": "Updated"},
         expected_version=message["version"],
     )
-    memory = service.create_character_memory(str(character_id), {"content": "likes tea"})
+    memory = service.create_character_memory(
+        str(character_id), {"content": "likes tea"}
+    )
     listed_memories = service.list_character_memories(str(character_id))
     archived_memory = service.archive_character_memory(
         str(character_id),
@@ -1417,8 +1749,12 @@ def test_local_character_persona_service_persists_sessions_messages_settings_and
         session["id"],
         {"role": "user", "content": "Remember that I keep a travel notebook."},
     )
-    extracted = service.extract_character_memories(str(character_id), {"chat_id": session["id"], "message_limit": 5})
-    duplicate_extract = service.extract_character_memories(str(character_id), {"chat_id": session["id"], "message_limit": 5})
+    extracted = service.extract_character_memories(
+        str(character_id), {"chat_id": session["id"], "message_limit": 5}
+    )
+    duplicate_extract = service.extract_character_memories(
+        str(character_id), {"chat_id": session["id"], "message_limit": 5}
+    )
 
     assert extracted["extracted"] == 1
     assert extracted["skipped_duplicates"] == 0
@@ -1427,10 +1763,14 @@ def test_local_character_persona_service_persists_sessions_messages_settings_and
     assert duplicate_extract["extracted"] == 0
     assert duplicate_extract["skipped_duplicates"] == 1
 
-    assert service.delete_character_memory(str(character_id), memory["id"]) == {"deleted": True}
+    assert service.delete_character_memory(str(character_id), memory["id"]) == {
+        "deleted": True
+    }
 
 
-def test_local_character_persona_service_persists_character_catalog_crud_and_restore(tmp_path):
+def test_local_character_persona_service_persists_character_catalog_crud_and_restore(
+    tmp_path,
+):
     db = CharactersRAGDB(tmp_path / "ccp-character-catalog.sqlite", "test_client")
     service = LocalCharacterPersonaService(db)
 
@@ -1441,12 +1781,16 @@ def test_local_character_persona_service_persists_character_catalog_crud_and_res
         {"name": "Local Ada v2", "tags": ["offline"]},
         expected_version=created["version"],
     )
-    deleted = service.delete_character(created["id"], expected_version=updated["version"])
+    deleted = service.delete_character(
+        created["id"], expected_version=updated["version"]
+    )
 
     with pytest.raises(ValueError, match="Local character '.*' not found"):
         service.get_character(created["id"])
 
-    restored = service.restore_character(created["id"], expected_version=updated["version"] + 1)
+    restored = service.restore_character(
+        created["id"], expected_version=updated["version"] + 1
+    )
 
     assert created["name"] == "Local Ada"
     assert fetched["id"] == created["id"]
@@ -1478,7 +1822,9 @@ async def test_scope_service_routes_local_world_book_crud_with_policy(tmp_path):
         },
         mode="local",
     )
-    listed = await scope_service.list_character_world_books(mode="local", include_disabled=True)
+    listed = await scope_service.list_character_world_books(
+        mode="local", include_disabled=True
+    )
     fetched = await scope_service.get_character_world_book(created["id"], mode="local")
     updated = await scope_service.update_character_world_book(
         created["id"],
@@ -1518,7 +1864,9 @@ async def test_scope_service_routes_local_world_book_entries_with_policy(tmp_pat
         server_service=FakeCharacterPersonaClient(),
         policy_enforcer=policy,
     )
-    world_book = await scope_service.create_character_world_book({"name": "Entry Lore"}, mode="local")
+    world_book = await scope_service.create_character_world_book(
+        {"name": "Entry Lore"}, mode="local"
+    )
     policy.actions.clear()
 
     entry = await scope_service.create_character_world_book_entry(
@@ -1526,14 +1874,20 @@ async def test_scope_service_routes_local_world_book_entries_with_policy(tmp_pat
         {"keys": ["gate"], "content": "The old gate is sealed."},
         mode="local",
     )
-    listed = await scope_service.list_character_world_book_entries(world_book["id"], mode="local")
-    fetched = await scope_service.get_character_world_book_entry(entry["id"], mode="local")
+    listed = await scope_service.list_character_world_book_entries(
+        world_book["id"], mode="local"
+    )
+    fetched = await scope_service.get_character_world_book_entry(
+        entry["id"], mode="local"
+    )
     updated = await scope_service.update_character_world_book_entry(
         entry["id"],
         {"content": "The old gate is open."},
         mode="local",
     )
-    deleted = await scope_service.delete_character_world_book_entry(entry["id"], mode="local")
+    deleted = await scope_service.delete_character_world_book_entry(
+        entry["id"], mode="local"
+    )
 
     assert listed["entries"][0]["id"] == entry["id"]
     assert fetched["content"] == "The old gate is sealed."
@@ -1549,13 +1903,21 @@ async def test_scope_service_routes_local_world_book_entries_with_policy(tmp_pat
     db.close_connection()
 
 
-def test_local_character_persona_service_persists_world_book_entries_links_and_import_export(tmp_path):
+def test_local_character_persona_service_persists_world_book_entries_links_and_import_export(
+    tmp_path,
+):
     db = CharactersRAGDB(tmp_path / "ccp-world-book-links.sqlite", "test_client")
-    character_id = db.add_character_card({"name": "Lorekeeper", "first_message": "Ask."})
+    character_id = db.add_character_card(
+        {"name": "Lorekeeper", "first_message": "Ask."}
+    )
     service = LocalCharacterPersonaService(db)
-    session = service.create_character_chat_session({"character_id": character_id, "title": "Lore Chat"})
+    session = service.create_character_chat_session(
+        {"character_id": character_id, "title": "Lore Chat"}
+    )
 
-    world_book = service.create_character_world_book({"name": "City Lore", "description": "Places"})
+    world_book = service.create_character_world_book(
+        {"name": "City Lore", "description": "Places"}
+    )
     entry = service.create_character_world_book_entry(
         world_book["id"],
         {
@@ -1571,12 +1933,18 @@ def test_local_character_persona_service_persists_world_book_entries_links_and_i
         entry["id"],
         {"content": "The city is built in seven rings.", "enabled": False},
     )
-    service.attach_character_world_book_to_session(session["id"], world_book["id"], {"priority": 7})
+    service.attach_character_world_book_to_session(
+        session["id"], world_book["id"], {"priority": 7}
+    )
     linked = service.list_session_world_books(session["id"], include_disabled=True)
     exported = service.export_character_world_book(world_book["id"])
-    imported = service.import_character_world_book(exported, name_override="City Lore Copy")
+    imported = service.import_character_world_book(
+        exported, name_override="City Lore Copy"
+    )
     service.detach_character_world_book_from_session(session["id"], world_book["id"])
-    after_detach = service.list_session_world_books(session["id"], include_disabled=True)
+    after_detach = service.list_session_world_books(
+        session["id"], include_disabled=True
+    )
     deleted_entry = service.delete_character_world_book_entry(entry["id"])
 
     assert listed_entries["entries"][0]["keys"] == ["city", "district"]
@@ -1616,7 +1984,9 @@ async def test_scope_service_routes_character_chat_session_admin_to_server_backe
         scope_type="workspace",
         workspace_id="ws-1",
     )
-    detail = await scope_service.get_character_chat_session("chat-1", mode="server", include_settings=True)
+    detail = await scope_service.get_character_chat_session(
+        "chat-1", mode="server", include_settings=True
+    )
     updated = await scope_service.update_character_chat_session(
         "chat-1",
         update_data,
@@ -1629,12 +1999,20 @@ async def test_scope_service_routes_character_chat_session_admin_to_server_backe
         expected_version=5,
         hard_delete=True,
     )
-    restored = await scope_service.restore_character_chat_session("chat-1", mode="server", expected_version=6)
+    restored = await scope_service.restore_character_chat_session(
+        "chat-1", mode="server", expected_version=6
+    )
     settings = await scope_service.get_chat_settings("chat-1", mode="server")
-    updated_settings = await scope_service.update_chat_settings("chat-1", settings_data, mode="server")
-    exported = await scope_service.export_chat_history("chat-1", mode="server", format="markdown")
+    updated_settings = await scope_service.update_chat_settings(
+        "chat-1", settings_data, mode="server"
+    )
+    exported = await scope_service.export_chat_history(
+        "chat-1", mode="server", format="markdown"
+    )
     author_note = await scope_service.get_author_note_info("chat-1", mode="server")
-    diagnostics = await scope_service.export_lorebook_diagnostics("chat-1", mode="server", order="desc")
+    diagnostics = await scope_service.export_lorebook_diagnostics(
+        "chat-1", mode="server", order="desc"
+    )
 
     assert created["id"] == "chat-1"
     assert listed["total"] == 1
@@ -1647,10 +2025,26 @@ async def test_scope_service_routes_character_chat_session_admin_to_server_backe
     assert exported["format"] == "markdown"
     assert author_note["text"] == "note"
     assert diagnostics["turns"] == []
-    assert server_service.create_character_chat_session_calls[0]["kwargs"]["seed_first_message"] is True
-    assert server_service.list_character_chat_sessions_calls[0]["scope_type"] == "workspace"
-    assert server_service.update_character_chat_session_calls[0]["kwargs"]["expected_version"] == 4
-    assert server_service.delete_character_chat_session_calls[0]["kwargs"]["hard_delete"] is True
+    assert (
+        server_service.create_character_chat_session_calls[0]["kwargs"][
+            "seed_first_message"
+        ]
+        is True
+    )
+    assert (
+        server_service.list_character_chat_sessions_calls[0]["scope_type"]
+        == "workspace"
+    )
+    assert (
+        server_service.update_character_chat_session_calls[0]["kwargs"][
+            "expected_version"
+        ]
+        == 4
+    )
+    assert (
+        server_service.delete_character_chat_session_calls[0]["kwargs"]["hard_delete"]
+        is True
+    )
 
 
 @pytest.mark.asyncio
@@ -1672,7 +2066,9 @@ async def test_scope_service_routes_character_message_admin_to_server_backend():
         scope_type="workspace",
         workspace_id="ws-1",
     )
-    detail = await scope_service.get_character_message("msg-1", mode="server", include_metadata=True)
+    detail = await scope_service.get_character_message(
+        "msg-1", mode="server", include_metadata=True
+    )
     created = await scope_service.create_character_message(
         "chat-1",
         request_data,
@@ -1686,8 +2082,12 @@ async def test_scope_service_routes_character_message_admin_to_server_backend():
         mode="server",
         expected_version=2,
     )
-    deleted = await scope_service.delete_character_message("msg-1", mode="server", expected_version=3)
-    results = await scope_service.search_character_messages("chat-1", "hello", mode="server", limit=10)
+    deleted = await scope_service.delete_character_message(
+        "msg-1", mode="server", expected_version=3
+    )
+    results = await scope_service.search_character_messages(
+        "chat-1", "hello", mode="server", limit=10
+    )
 
     assert listed["total"] == 1
     assert detail["id"] == "msg-1"
@@ -1705,9 +2105,18 @@ async def test_scope_service_routes_character_message_admin_to_server_backend():
             "workspace_id": "ws-1",
         },
     }
-    assert server_service.create_character_message_calls[0]["kwargs"]["scope_type"] == "workspace"
-    assert server_service.update_character_message_calls[0]["kwargs"]["expected_version"] == 2
-    assert server_service.delete_character_message_calls[0]["kwargs"]["expected_version"] == 3
+    assert (
+        server_service.create_character_message_calls[0]["kwargs"]["scope_type"]
+        == "workspace"
+    )
+    assert (
+        server_service.update_character_message_calls[0]["kwargs"]["expected_version"]
+        == 2
+    )
+    assert (
+        server_service.delete_character_message_calls[0]["kwargs"]["expected_version"]
+        == 3
+    )
     assert server_service.search_character_messages_calls[0]["query"] == "hello"
 
 
@@ -1723,18 +2132,30 @@ async def test_scope_service_routes_character_chat_session_admin_to_local_backen
     request_data = Mock()
     update_data = Mock()
 
-    created = await scope_service.create_character_chat_session(request_data, mode="local")
-    listed = await scope_service.list_character_chat_sessions(mode="local", character_id=12)
-    detail = await scope_service.get_character_chat_session("local-chat-1", mode="local")
+    created = await scope_service.create_character_chat_session(
+        request_data, mode="local"
+    )
+    listed = await scope_service.list_character_chat_sessions(
+        mode="local", character_id=12
+    )
+    detail = await scope_service.get_character_chat_session(
+        "local-chat-1", mode="local"
+    )
     updated = await scope_service.update_character_chat_session(
         "local-chat-1",
         update_data,
         mode="local",
         expected_version=2,
     )
-    deleted = await scope_service.delete_character_chat_session("local-chat-1", mode="local", expected_version=3)
-    restored = await scope_service.restore_character_chat_session("local-chat-1", mode="local", expected_version=4)
-    exported = await scope_service.export_chat_history("local-chat-1", mode="local", format="markdown")
+    deleted = await scope_service.delete_character_chat_session(
+        "local-chat-1", mode="local", expected_version=3
+    )
+    restored = await scope_service.restore_character_chat_session(
+        "local-chat-1", mode="local", expected_version=4
+    )
+    exported = await scope_service.export_chat_history(
+        "local-chat-1", mode="local", format="markdown"
+    )
 
     assert created["id"] == "local-chat-1"
     assert listed["total"] == 1
@@ -1747,7 +2168,12 @@ async def test_scope_service_routes_character_chat_session_admin_to_local_backen
         ("create_character_chat_session", request_data, {}),
         ("list_character_chat_sessions", {"character_id": 12}),
         ("get_character_chat_session", "local-chat-1", {}),
-        ("update_character_chat_session", "local-chat-1", update_data, {"expected_version": 2}),
+        (
+            "update_character_chat_session",
+            "local-chat-1",
+            update_data,
+            {"expected_version": 2},
+        ),
         ("delete_character_chat_session", "local-chat-1", {"expected_version": 3}),
         ("restore_character_chat_session", "local-chat-1", {"expected_version": 4}),
         ("export_chat_history", "local-chat-1", {"format": "markdown"}),
@@ -1774,10 +2200,14 @@ async def test_scope_service_raises_when_local_backend_lacks_persona_method():
         server_service=Mock(),
     )
 
-    with pytest.raises(ValueError, match="Local persona profiles are not available yet"):
+    with pytest.raises(
+        ValueError, match="Local persona profiles are not available yet"
+    ):
         await scope_service.list_persona_profiles(mode="local")
 
-    with pytest.raises(ValueError, match="Local persona profiles are not available yet"):
+    with pytest.raises(
+        ValueError, match="Local persona profiles are not available yet"
+    ):
         await scope_service.get_persona_profile("persona-1", mode="local")
 
 
@@ -1997,7 +2427,9 @@ async def test_scope_service_requires_local_backend_for_local_calls():
         server_service=Mock(),
     )
 
-    with pytest.raises(ValueError, match="Local character/persona backend is unavailable"):
+    with pytest.raises(
+        ValueError, match="Local character/persona backend is unavailable"
+    ):
         await scope_service.list_characters(mode="local")
 
 
@@ -2035,7 +2467,9 @@ async def test_server_character_persona_service_direct_client_takes_precedence_o
 async def test_server_character_persona_service_denied_policy_does_not_build_provider_client():
     provider = ExplodingProvider()
     policy = FakePolicyEnforcer.deny("server_unreachable")
-    service = ServerCharacterPersonaService.from_server_context_provider(provider, policy_enforcer=policy)
+    service = ServerCharacterPersonaService.from_server_context_provider(
+        provider, policy_enforcer=policy
+    )
 
     with pytest.raises(PolicyDeniedError) as exc:
         await service.list_characters(limit=13, offset=4)
@@ -2080,7 +2514,12 @@ async def test_server_character_persona_service_delegates_persona_archetypes_to_
     preview = await service.preview_persona_archetype("researcher")
 
     assert summaries == [
-        {"key": "researcher", "label": "Researcher", "tagline": "Investigates", "icon": "search"}
+        {
+            "key": "researcher",
+            "label": "Researcher",
+            "tagline": "Investigates",
+            "icon": "search",
+        }
     ]
     assert template["key"] == "researcher"
     assert preview["archetype_key"] == "researcher"
@@ -2096,8 +2535,12 @@ async def test_server_character_persona_service_delegates_character_crud_to_clie
 
     searched = await service.search_characters("ada", limit=4)
     detail = await service.get_character(1)
-    created = await service.create_character(Mock(model_dump=lambda **_: {"name": "Ada"}))
-    updated = await service.update_character(1, Mock(model_dump=lambda **_: {"name": "Ada v2"}), expected_version=3)
+    created = await service.create_character(
+        Mock(model_dump=lambda **_: {"name": "Ada"})
+    )
+    updated = await service.update_character(
+        1, Mock(model_dump=lambda **_: {"name": "Ada v2"}), expected_version=3
+    )
     deleted = await service.delete_character(1, expected_version=4)
     restored = await service.restore_character(1, expected_version=5)
 
@@ -2131,7 +2574,11 @@ async def test_server_character_persona_service_delegates_chat_execution_support
     )
     updated = await service.update_chat_preset(
         "custom-alpha",
-        Mock(model_dump=lambda exclude_unset=True, exclude_none=True, mode="json": {"name": "Custom Beta"}),
+        Mock(
+            model_dump=lambda exclude_unset=True, exclude_none=True, mode="json": {
+                "name": "Custom Beta"
+            }
+        ),
     )
     deleted = await service.delete_chat_preset("custom-alpha")
 
@@ -2148,7 +2595,9 @@ async def test_server_character_persona_service_delegates_persona_exemplars_to_c
     client = FakeCharacterPersonaClient()
     service = ServerCharacterPersonaService(client=client)
 
-    exemplars = await service.list_persona_exemplars("persona-1", include_disabled=True, limit=5, offset=2)
+    exemplars = await service.list_persona_exemplars(
+        "persona-1", include_disabled=True, limit=5, offset=2
+    )
     exemplar = await service.get_persona_exemplar("persona-1", "ex-1")
     created = await service.create_persona_exemplar(
         "persona-1",
@@ -2176,7 +2625,11 @@ async def test_server_character_persona_service_delegates_persona_exemplars_to_c
     assert imported["created"] == 2
     assert updated["content"] == "updated"
     assert reviewed["review"] == {"action": "approve"}
-    assert deleted == {"status": "deleted", "persona_id": "persona-1", "exemplar_id": "ex-1"}
+    assert deleted == {
+        "status": "deleted",
+        "persona_id": "persona-1",
+        "exemplar_id": "ex-1",
+    }
     assert client.list_persona_exemplars_calls[0]["include_disabled"] is True
 
 
@@ -2210,7 +2663,11 @@ async def test_server_character_persona_service_delegates_character_exemplars_to
     assert created["id"] == "char-ex-new"
     assert updated["text"] == "updated"
     assert debug["selected"][0]["id"] == "char-ex-1"
-    assert deleted == {"status": "deleted", "character_id": 12, "exemplar_id": "char-ex-1"}
+    assert deleted == {
+        "status": "deleted",
+        "character_id": 12,
+        "exemplar_id": "char-ex-1",
+    }
     assert client.search_character_exemplars_calls[0]["payload"] == {"query": "dry wit"}
 
 
@@ -2222,18 +2679,36 @@ async def test_server_character_persona_service_delegates_character_chat_session
     update_data = Mock()
     settings_data = Mock(settings={"authorNote": "Stay concise."})
 
-    created = await service.create_character_chat_session(request_data, seed_first_message=True)
-    listed = await service.list_character_chat_sessions(character_id=12, include_settings=True)
+    created = await service.create_character_chat_session(
+        request_data, seed_first_message=True
+    )
+    listed = await service.list_character_chat_sessions(
+        character_id=12, include_settings=True
+    )
     detail = await service.get_character_chat_session("chat-1", include_settings=True)
-    updated = await service.update_character_chat_session("chat-1", update_data, expected_version=4)
-    deleted = await service.delete_character_chat_session("chat-1", expected_version=5, hard_delete=True)
-    restored = await service.restore_character_chat_session("chat-1", expected_version=6)
+    updated = await service.update_character_chat_session(
+        "chat-1", update_data, expected_version=4
+    )
+    deleted = await service.delete_character_chat_session(
+        "chat-1", expected_version=5, hard_delete=True
+    )
+    restored = await service.restore_character_chat_session(
+        "chat-1", expected_version=6
+    )
     messages = await service.list_character_messages("chat-1", include_metadata=True)
     message = await service.get_character_message("msg-1", include_metadata=True)
-    created_message = await service.create_character_message("chat-1", Mock(), scope_type="workspace")
-    updated_message = await service.update_character_message("msg-1", Mock(), expected_version=2)
-    deleted_message = await service.delete_character_message("msg-1", expected_version=3)
-    search_results = await service.search_character_messages("chat-1", "hello", limit=10)
+    created_message = await service.create_character_message(
+        "chat-1", Mock(), scope_type="workspace"
+    )
+    updated_message = await service.update_character_message(
+        "msg-1", Mock(), expected_version=2
+    )
+    deleted_message = await service.delete_character_message(
+        "msg-1", expected_version=3
+    )
+    search_results = await service.search_character_messages(
+        "chat-1", "hello", limit=10
+    )
     settings = await service.get_chat_settings("chat-1")
     updated_settings = await service.update_chat_settings("chat-1", settings_data)
     exported = await service.export_chat_history("chat-1", format="markdown")
@@ -2257,11 +2732,20 @@ async def test_server_character_persona_service_delegates_character_chat_session
     assert exported["format"] == "markdown"
     assert author_note["text"] == "note"
     assert diagnostics["turns"] == []
-    assert client.create_character_chat_session_calls[0]["kwargs"]["seed_first_message"] is True
+    assert (
+        client.create_character_chat_session_calls[0]["kwargs"]["seed_first_message"]
+        is True
+    )
     assert client.list_character_chat_sessions_calls[0]["character_id"] == 12
-    assert client.update_character_chat_session_calls[0]["kwargs"]["expected_version"] == 4
-    assert client.delete_character_chat_session_calls[0]["kwargs"]["hard_delete"] is True
-    assert client.create_character_message_calls[0]["kwargs"]["scope_type"] == "workspace"
+    assert (
+        client.update_character_chat_session_calls[0]["kwargs"]["expected_version"] == 4
+    )
+    assert (
+        client.delete_character_chat_session_calls[0]["kwargs"]["hard_delete"] is True
+    )
+    assert (
+        client.create_character_message_calls[0]["kwargs"]["scope_type"] == "workspace"
+    )
     assert client.update_character_message_calls[0]["kwargs"]["expected_version"] == 2
 
 
@@ -2275,7 +2759,9 @@ async def test_server_character_persona_service_enforces_policy_actions():
     await service.search_characters("ada")
     await service.get_character(1)
     await service.create_character(Mock(model_dump=lambda **_: {"name": "Ada"}))
-    await service.update_character(1, Mock(model_dump=lambda **_: {"name": "Ada v2"}), expected_version=3)
+    await service.update_character(
+        1, Mock(model_dump=lambda **_: {"name": "Ada v2"}), expected_version=3
+    )
     await service.delete_character(1, expected_version=4)
     await service.restore_character(1, expected_version=5)
     await service.list_persona_archetypes()
@@ -2284,36 +2770,62 @@ async def test_server_character_persona_service_enforces_policy_actions():
     await service.list_persona_profiles(active_only=True)
     await service.get_persona_profile("persona-1")
     await service.create_persona_profile(Mock(model_dump=lambda **_: {"name": "Guide"}))
-    await service.update_persona_profile("persona-1", Mock(model_dump=lambda **_: {"name": "Guide v2"}))
+    await service.update_persona_profile(
+        "persona-1", Mock(model_dump=lambda **_: {"name": "Guide v2"})
+    )
     await service.delete_persona_profile("persona-1", expected_version=8)
     await service.restore_persona_profile("persona-1", expected_version=9)
     await service.list_persona_exemplars("persona-1")
     await service.get_persona_exemplar("persona-1", "ex-1")
-    await service.create_persona_exemplar("persona-1", Mock(model_dump=lambda **_: {"content": "hello"}))
-    await service.import_persona_exemplars("persona-1", Mock(model_dump=lambda **_: {"transcript": "hello"}))
-    await service.update_persona_exemplar("persona-1", "ex-1", Mock(model_dump=lambda **_: {"content": "updated"}))
-    await service.review_persona_exemplar("persona-1", "ex-1", Mock(model_dump=lambda **_: {"action": "approve"}))
+    await service.create_persona_exemplar(
+        "persona-1", Mock(model_dump=lambda **_: {"content": "hello"})
+    )
+    await service.import_persona_exemplars(
+        "persona-1", Mock(model_dump=lambda **_: {"transcript": "hello"})
+    )
+    await service.update_persona_exemplar(
+        "persona-1", "ex-1", Mock(model_dump=lambda **_: {"content": "updated"})
+    )
+    await service.review_persona_exemplar(
+        "persona-1", "ex-1", Mock(model_dump=lambda **_: {"action": "approve"})
+    )
     await service.delete_persona_exemplar("persona-1", "ex-1")
-    await service.search_character_exemplars(12, Mock(model_dump=lambda **_: {"query": "dry wit"}))
+    await service.search_character_exemplars(
+        12, Mock(model_dump=lambda **_: {"query": "dry wit"})
+    )
     await service.get_character_exemplar(12, "char-ex-1")
-    await service.create_character_exemplar(12, Mock(model_dump=lambda **_: {"text": "hello"}))
-    await service.update_character_exemplar(12, "char-ex-1", Mock(model_dump=lambda **_: {"text": "updated"}))
-    await service.select_character_exemplars_debug(12, Mock(model_dump=lambda **_: {"user_turn": "why?"}))
+    await service.create_character_exemplar(
+        12, Mock(model_dump=lambda **_: {"text": "hello"})
+    )
+    await service.update_character_exemplar(
+        12, "char-ex-1", Mock(model_dump=lambda **_: {"text": "updated"})
+    )
+    await service.select_character_exemplars_debug(
+        12, Mock(model_dump=lambda **_: {"user_turn": "why?"})
+    )
     await service.delete_character_exemplar(12, "char-ex-1")
     await service.list_chat_greetings("chat.server.alice")
     await service.select_chat_greeting("chat.server.alice", 0)
     await service.list_chat_presets()
     await service.create_chat_preset(
-        Mock(model_dump=lambda **_: {"preset_id": "custom-alpha", "name": "Custom Alpha"})
+        Mock(
+            model_dump=lambda **_: {"preset_id": "custom-alpha", "name": "Custom Alpha"}
+        )
     )
-    await service.update_chat_preset("custom-alpha", Mock(model_dump=lambda **_: {"name": "Custom Beta"}))
+    await service.update_chat_preset(
+        "custom-alpha", Mock(model_dump=lambda **_: {"name": "Custom Beta"})
+    )
     await service.delete_chat_preset("custom-alpha")
     await service.create_character_chat_session(Mock())
     await service.list_character_chat_sessions()
     await service.get_character_chat_session("chat.server.alice")
-    await service.update_character_chat_session("chat.server.alice", Mock(), expected_version=3)
+    await service.update_character_chat_session(
+        "chat.server.alice", Mock(), expected_version=3
+    )
     await service.delete_character_chat_session("chat.server.alice", expected_version=4)
-    await service.restore_character_chat_session("chat.server.alice", expected_version=5)
+    await service.restore_character_chat_session(
+        "chat.server.alice", expected_version=5
+    )
     await service.list_character_messages("chat.server.alice")
     await service.get_character_message("msg.server.1")
     await service.create_character_message("chat.server.alice", Mock())
@@ -2326,7 +2838,9 @@ async def test_server_character_persona_service_enforces_policy_actions():
     await service.get_author_note_info("chat.server.alice")
     await service.export_lorebook_diagnostics("chat.server.alice")
 
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "character.persona.list.server",
         "character.persona.list.server",
         "character.persona.detail.server",
@@ -2406,7 +2920,9 @@ async def test_server_character_persona_service_hard_stops_denied_ui_policy_deci
 
 
 @pytest.mark.asyncio
-async def test_server_character_persona_service_from_config_builds_and_reuses_client_lazily(monkeypatch):
+async def test_server_character_persona_service_from_config_builds_and_reuses_client_lazily(
+    monkeypatch,
+):
     sentinel_client = FakeCharacterPersonaClient()
     build_client_calls = []
 
@@ -2419,7 +2935,9 @@ async def test_server_character_persona_service_from_config_builds_and_reuses_cl
         build_client,
     )
 
-    service = ServerCharacterPersonaService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+    service = ServerCharacterPersonaService.from_config(
+        {"tldw_api": {"base_url": "https://example.com"}}
+    )
 
     assert isinstance(service, ServerCharacterPersonaService)
     assert service.client is None
@@ -2438,7 +2956,9 @@ async def test_server_character_persona_service_from_config_builds_and_reuses_cl
 
 
 @pytest.mark.asyncio
-async def test_server_character_persona_service_from_config_denied_policy_does_not_build_lazy_client(monkeypatch):
+async def test_server_character_persona_service_from_config_denied_policy_does_not_build_lazy_client(
+    monkeypatch,
+):
     build_client = Mock(side_effect=AssertionError("lazy client should not be built"))
     policy = FakePolicyEnforcer.deny("server_unreachable")
 
@@ -2488,7 +3008,9 @@ def test_app_wires_character_persona_services(monkeypatch):
             policy_enforcer=policy_enforcer,
         )
 
-    monkeypatch.setattr(app_module, "CharacterPersonaScopeService", scope_service_factory)
+    monkeypatch.setattr(
+        app_module, "CharacterPersonaScopeService", scope_service_factory
+    )
 
     fake_app = Mock()
     fake_app.chachanotes_db = object()
@@ -2498,7 +3020,9 @@ def test_app_wires_character_persona_services(monkeypatch):
     app_module.TldwCli._wire_character_persona_services(fake_app)
 
     assert fake_app.server_character_persona_service is server_service
-    assert isinstance(captured["local_service"], app_module.LocalCharacterPersonaService)
+    assert isinstance(
+        captured["local_service"], app_module.LocalCharacterPersonaService
+    )
     assert captured["local_service"].db is fake_app.chachanotes_db
     assert fake_app.local_character_persona_service is captured["local_service"]
     assert captured["server_service"] is server_service

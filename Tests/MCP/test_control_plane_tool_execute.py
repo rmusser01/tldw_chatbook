@@ -8,7 +8,9 @@ import pytest
 from tldw_chatbook.MCP.execution_log import MCPExecutionLog
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
 from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
-from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+from tldw_chatbook.MCP.unified_control_plane_service import (
+    UnifiedMCPControlPlaneService,
+)
 import tldw_chatbook.MCP.unified_control_plane_service as control_plane_module
 
 
@@ -19,7 +21,9 @@ class FakeToolClient:
         self.sessions: dict[str, dict] = {}
         self.connect_calls: list[str] = []
         self.call_tool_calls: list[tuple[str, str, dict]] = []
-        self.call_tool_response: dict = {"result": {"content": [{"type": "text", "text": "ok"}]}}
+        self.call_tool_response: dict = {
+            "result": {"content": [{"type": "text", "text": "ok"}]}
+        }
         self.call_tool_error: str | None = None
         self.call_tool_delay: float = 0.0
 
@@ -29,7 +33,12 @@ class FakeToolClient:
         return True
 
     async def describe_server(self, server_id):
-        return {"server_id": server_id, "tools": [{"name": "t"}], "resources": [], "prompts": []}
+        return {
+            "server_id": server_id,
+            "tools": [{"name": "t"}],
+            "resources": [],
+            "prompts": [],
+        }
 
     async def disconnect_from_server(self, server_id):
         self.sessions.pop(server_id, None)
@@ -55,7 +64,9 @@ class FakeLocalService:
     def __init__(self, store: LocalMCPStore, client: FakeToolClient) -> None:
         self.store = store
         self.client = client
-        self._real = LocalMCPControlService(store=store, client=client, manifest_provider=lambda: {})
+        self._real = LocalMCPControlService(
+            store=store, client=client, manifest_provider=lambda: {}
+        )
         self.execute_tool_calls: list[tuple[str, dict]] = []
         self.builtin_result: dict = {"source": "local", "result": "builtin-ok"}
         self.builtin_error: Exception | None = None
@@ -70,9 +81,17 @@ class FakeLocalService:
         return self.builtin_result
 
 
-def _service(tmp_path: Path) -> tuple[UnifiedMCPControlPlaneService, FakeLocalService, FakeToolClient, LocalMCPStore]:
+def _service(
+    tmp_path: Path,
+) -> tuple[
+    UnifiedMCPControlPlaneService, FakeLocalService, FakeToolClient, LocalMCPStore
+]:
     store = LocalMCPStore(tmp_path / "store.json")
-    store.save_profile(LocalExternalMCPProfile(profile_id="docs", command="python", args=("-m", "demo")))
+    store.save_profile(
+        LocalExternalMCPProfile(
+            profile_id="docs", command="python", args=("-m", "demo")
+        )
+    )
     client = FakeToolClient()
     fake = FakeLocalService(store, client)
     service = UnifiedMCPControlPlaneService(
@@ -120,7 +139,9 @@ async def test_hub_tool_local_error_response_raises_and_records_failure(tmp_path
 async def test_hub_tool_builtin_routes_to_execute_tool(tmp_path):
     service, fake, client, store = _service(tmp_path)
 
-    result = await service.test_hub_tool("builtin:tldw_chatbook", "calculator", {"x": 1})
+    result = await service.test_hub_tool(
+        "builtin:tldw_chatbook", "calculator", {"x": 1}
+    )
 
     assert fake.execute_tool_calls == [("calculator", {"x": 1})]
     assert result == fake.builtin_result
@@ -170,7 +191,9 @@ async def test_hub_tool_log_write_failure_does_not_mask_result(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_hub_tool_execution_log_property_raise_does_not_mask_result(tmp_path, monkeypatch):
+async def test_hub_tool_execution_log_property_raise_does_not_mask_result(
+    tmp_path, monkeypatch
+):
     """N1: `_record_tool_execution()` used to read `self.execution_log`
     OUTSIDE its own try/except -- if the property itself raised (e.g. a
     `Path(store.path)` oddity), that would escape `_record_tool_execution()`
@@ -204,7 +227,10 @@ async def test_hub_tool_result_excerpt_is_redacted_before_disk(tmp_path):
 
     result = await service.test_hub_tool("local:docs", "search", {"q": "x"})
 
-    assert result == {"api_key": "sk-secret123", "data": "ok"}  # returned raw, unredacted
+    assert result == {
+        "api_key": "sk-secret123",
+        "data": "ok",
+    }  # returned raw, unredacted
     records = _log_records(store)
     assert records and records[0]["ok"] is True
     excerpt = records[0]["result_excerpt"] or ""
@@ -214,7 +240,9 @@ async def test_hub_tool_result_excerpt_is_redacted_before_disk(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_hub_tool_string_false_setting_disables_argument_capture(tmp_path, monkeypatch):
+async def test_hub_tool_string_false_setting_disables_argument_capture(
+    tmp_path, monkeypatch
+):
     """A mis-typed `log_tool_arguments = "false"` config string is truthy;
     without bool coercion at the call site it would silently keep argument
     capture ON against the user's stated intent (Qodo PR #639 finding)."""

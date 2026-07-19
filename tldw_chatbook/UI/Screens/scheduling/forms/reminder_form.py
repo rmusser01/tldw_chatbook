@@ -99,8 +99,7 @@ class ReminderForm(ModalScreen):
     def _schedule_options() -> list[tuple[str, str]]:
         """Return labelled options for the schedule kind selector."""
         return [
-            (kind.value.replace("_", " ").title(), kind.value)
-            for kind in ScheduleKind
+            (kind.value.replace("_", " ").title(), kind.value) for kind in ScheduleKind
         ]
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

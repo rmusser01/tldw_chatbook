@@ -60,7 +60,9 @@ class WritingScreen(BaseAppScreen):
         except Exception:
             window = self.writing_window
         if window is None:
-            logger.debug("Deferring WritingScreen restore_state until window is composed")
+            logger.debug(
+                "Deferring WritingScreen restore_state until window is composed"
+            )
             self._pending_restore_state = dict(state or {})
             return
         window.restore_state(state)

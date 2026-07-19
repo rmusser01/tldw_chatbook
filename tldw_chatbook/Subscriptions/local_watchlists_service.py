@@ -47,11 +47,21 @@ class LocalWatchlistsService:
     def _db(self) -> SubscriptionsDB:
         return self.db_factory()
 
-    async def list_sources(self, *, limit: int = 100, offset: int = 0, q: str | None = None) -> list[dict[str, Any]]:
+    async def list_sources(
+        self, *, limit: int = 100, offset: int = 0, q: str | None = None
+    ) -> list[dict[str, Any]]:
         normalized_limit = int(limit)
         normalized_offset = int(offset)
-        fetch_limit = normalized_limit if not q else max(normalized_limit + normalized_offset, 1000)
-        rows = self._db().get_all_subscriptions(include_inactive=True, limit=fetch_limit, offset=0 if q else normalized_offset)
+        fetch_limit = (
+            normalized_limit
+            if not q
+            else max(normalized_limit + normalized_offset, 1000)
+        )
+        rows = self._db().get_all_subscriptions(
+            include_inactive=True,
+            limit=fetch_limit,
+            offset=0 if q else normalized_offset,
+        )
         items = [normalize_local_subscription_row(row) for row in rows]
         if not q:
             return items
@@ -89,7 +99,9 @@ class LocalWatchlistsService:
         )
         return normalize_local_subscription_row(db.get_subscription(source_id))
 
-    async def update_source(self, source_id: Any, payload: Mapping[str, Any]) -> dict[str, Any]:
+    async def update_source(
+        self, source_id: Any, payload: Mapping[str, Any]
+    ) -> dict[str, Any]:
         db = self._db()
         changes: dict[str, Any] = {}
         if "name" in payload:
@@ -125,7 +137,9 @@ class LocalWatchlistsService:
             "source_id": int(source_id),
         }
 
-    async def launch_run(self, *, source_id: Any = None, job_id: Any = None) -> dict[str, Any]:
+    async def launch_run(
+        self, *, source_id: Any = None, job_id: Any = None
+    ) -> dict[str, Any]:
         resolved_source_id = int(source_id if source_id is not None else job_id)
         db = self._db()
         if db.get_subscription(resolved_source_id) is None:
@@ -226,7 +240,10 @@ class LocalWatchlistsService:
             """,
             values,
         )
-        return [normalize_watchlist_run("local", self._run_row_to_dict(row)) for row in cursor.fetchall()]
+        return [
+            normalize_watchlist_run("local", self._run_row_to_dict(row))
+            for row in cursor.fetchall()
+        ]
 
     def list_home_run_snapshot(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """Return recent local watchlist runs from a synchronous Home-safe path."""
@@ -249,7 +266,9 @@ class LocalWatchlistsService:
         db = self._db()
         self._ensure_run_schema(db)
         cursor = db.conn.cursor()
-        cursor.execute("SELECT * FROM local_watchlist_runs WHERE id = ?", (int(run_id),))
+        cursor.execute(
+            "SELECT * FROM local_watchlist_runs WHERE id = ?", (int(run_id),)
+        )
         row = cursor.fetchone()
         if row is None:
             raise KeyError(f"Watchlist run not found: {run_id}")
@@ -331,13 +350,17 @@ class LocalWatchlistsService:
         updated["triggered_alerts"] = triggered_alerts
         return updated
 
-    async def list_alert_rules(self, *, job_id: Any = None, source_id: Any = None) -> list[dict[str, Any]]:
+    async def list_alert_rules(
+        self, *, job_id: Any = None, source_id: Any = None
+    ) -> list[dict[str, Any]]:
         db = self._db()
         self._ensure_alert_rule_schema(db)
         resolved_job_id = job_id if job_id is not None else source_id
         cursor = db.conn.cursor()
         if resolved_job_id is None:
-            cursor.execute("SELECT * FROM local_watchlist_alert_rules ORDER BY created_at DESC")
+            cursor.execute(
+                "SELECT * FROM local_watchlist_alert_rules ORDER BY created_at DESC"
+            )
         else:
             cursor.execute(
                 """
@@ -347,17 +370,24 @@ class LocalWatchlistsService:
                 """,
                 (int(resolved_job_id),),
             )
-        return [normalize_watchlist_alert_rule("local", self._alert_rule_row_to_dict(row)) for row in cursor.fetchall()]
+        return [
+            normalize_watchlist_alert_rule("local", self._alert_rule_row_to_dict(row))
+            for row in cursor.fetchall()
+        ]
 
     async def get_alert_rule(self, rule_id: Any) -> dict[str, Any]:
         db = self._db()
         self._ensure_alert_rule_schema(db)
         cursor = db.conn.cursor()
-        cursor.execute("SELECT * FROM local_watchlist_alert_rules WHERE id = ?", (int(rule_id),))
+        cursor.execute(
+            "SELECT * FROM local_watchlist_alert_rules WHERE id = ?", (int(rule_id),)
+        )
         row = cursor.fetchone()
         if row is None:
             raise KeyError(f"Watchlist alert rule not found: {rule_id}")
-        return normalize_watchlist_alert_rule("local", self._alert_rule_row_to_dict(row))
+        return normalize_watchlist_alert_rule(
+            "local", self._alert_rule_row_to_dict(row)
+        )
 
     async def create_alert_rule(
         self,
@@ -371,7 +401,10 @@ class LocalWatchlistsService:
     ) -> dict[str, Any]:
         normalized_condition_type = self._validate_condition_type(condition_type)
         resolved_job_id = job_id if job_id is not None else source_id
-        if resolved_job_id is not None and self._db().get_subscription(int(resolved_job_id)) is None:
+        if (
+            resolved_job_id is not None
+            and self._db().get_subscription(int(resolved_job_id)) is None
+        ):
             raise KeyError(f"Subscription not found: {resolved_job_id}")
         db = self._db()
         self._ensure_alert_rule_schema(db)
@@ -409,9 +442,13 @@ class LocalWatchlistsService:
         if "enabled" in fields:
             updates["enabled"] = 1 if bool(fields["enabled"]) else 0
         if "condition_type" in fields:
-            updates["condition_type"] = self._validate_condition_type(fields["condition_type"])
+            updates["condition_type"] = self._validate_condition_type(
+                fields["condition_type"]
+            )
         if "condition_value" in fields:
-            updates["condition_value_json"] = self._serialize_condition_value(fields["condition_value"])
+            updates["condition_value_json"] = self._serialize_condition_value(
+                fields["condition_value"]
+            )
         if "severity" in fields:
             updates["severity"] = fields["severity"]
         if "job_id" in fields:
@@ -445,7 +482,9 @@ class LocalWatchlistsService:
         self._ensure_alert_rule_schema(db)
         with db.transaction() as conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM local_watchlist_alert_rules WHERE id = ?", (int(rule_id),))
+            cursor.execute(
+                "DELETE FROM local_watchlist_alert_rules WHERE id = ?", (int(rule_id),)
+            )
             deleted = cursor.rowcount > 0
         if not deleted:
             raise KeyError(f"Watchlist alert rule not found: {rule_id}")
@@ -462,7 +501,16 @@ class LocalWatchlistsService:
         normalized = str(source_type or "rss").strip()
         if normalized == "site":
             return "url"
-        if normalized in {"rss", "atom", "json_feed", "url", "url_list", "podcast", "sitemap", "api"}:
+        if normalized in {
+            "rss",
+            "atom",
+            "json_feed",
+            "url",
+            "url_list",
+            "podcast",
+            "sitemap",
+            "api",
+        }:
             return normalized
         raise ValueError(f"Unsupported local watchlist source type: {normalized}")
 
@@ -470,7 +518,9 @@ class LocalWatchlistsService:
     def _first_configured_url(cls, payload: Mapping[str, Any]) -> str | None:
         extraction_rules = cls._parse_json_value(payload.get("extraction_rules"))
         urls = cls._coerce_url_list(
-            extraction_rules.get("urls") if isinstance(extraction_rules, Mapping) else None
+            extraction_rules.get("urls")
+            if isinstance(extraction_rules, Mapping)
+            else None
         )
         if urls:
             return urls[0]
@@ -536,7 +586,9 @@ class LocalWatchlistsService:
         if isinstance(result, list):
             return {"items": result}
         if not isinstance(result, Mapping):
-            raise ValueError("Local watchlist run executor must return a mapping or list of items.")
+            raise ValueError(
+                "Local watchlist run executor must return a mapping or list of items."
+            )
         return dict(result)
 
     async def _default_run_executor(
@@ -582,14 +634,18 @@ class LocalWatchlistsService:
         elif source_type == "api":
             items = await self._items_for_api_source(subscription_config)
         else:
-            raise ValueError(f"Unsupported local watchlist source type for execution: {source_type}")
+            raise ValueError(
+                f"Unsupported local watchlist source type for execution: {source_type}"
+            )
         return {
             "items": items,
             "log_text": f"Local watchlist execution completed with {len(items)} item(s).",
         }
 
     @classmethod
-    def _subscription_execution_config(cls, subscription: Mapping[str, Any]) -> dict[str, Any]:
+    def _subscription_execution_config(
+        cls, subscription: Mapping[str, Any]
+    ) -> dict[str, Any]:
         config = dict(subscription)
         for field in (
             "extraction_rules",
@@ -654,7 +710,10 @@ class LocalWatchlistsService:
     def _apply_max_urls(urls: list[str], subscription: Mapping[str, Any]) -> list[str]:
         processing_options = subscription.get("processing_options")
         max_urls = None
-        if isinstance(processing_options, Mapping) and processing_options.get("max_urls") is not None:
+        if (
+            isinstance(processing_options, Mapping)
+            and processing_options.get("max_urls") is not None
+        ):
             try:
                 max_urls = max(int(processing_options["max_urls"]), 0)
             except (TypeError, ValueError):
@@ -662,7 +721,9 @@ class LocalWatchlistsService:
         return urls[:max_urls] if max_urls is not None else urls
 
     @classmethod
-    async def _items_for_api_source(cls, subscription: Mapping[str, Any]) -> list[dict[str, Any]]:
+    async def _items_for_api_source(
+        cls, subscription: Mapping[str, Any]
+    ) -> list[dict[str, Any]]:
         import httpx
 
         source = str(subscription.get("source") or "").strip()
@@ -675,10 +736,14 @@ class LocalWatchlistsService:
         }
         custom_headers = subscription.get("custom_headers")
         if isinstance(custom_headers, Mapping):
-            headers.update({str(key): str(value) for key, value in custom_headers.items()})
+            headers.update(
+                {str(key): str(value) for key, value in custom_headers.items()}
+            )
 
         extraction_rules = subscription.get("extraction_rules")
-        request_options = extraction_rules if isinstance(extraction_rules, Mapping) else {}
+        request_options = (
+            extraction_rules if isinstance(extraction_rules, Mapping) else {}
+        )
         request_kwargs: dict[str, Any] = {"headers": headers}
         params = request_options.get("params") or request_options.get("query")
         if isinstance(params, Mapping) and params:
@@ -689,7 +754,9 @@ class LocalWatchlistsService:
             response.raise_for_status()
 
         payload = response.json()
-        items_payload = cls._api_items_payload(payload, request_options.get("items_path"))
+        items_payload = cls._api_items_payload(
+            payload, request_options.get("items_path")
+        )
         if not isinstance(items_payload, list):
             items_payload = [items_payload] if items_payload is not None else []
         items_payload = cls._apply_max_items(items_payload, subscription)
@@ -741,19 +808,34 @@ class LocalWatchlistsService:
         field_map: Mapping[str, Any],
         source_url: str,
     ) -> dict[str, Any]:
-        title = cls._api_item_field(item, field_map, "title", ("title", "name", "headline"))
-        url = cls._api_item_field(item, field_map, "url", ("url", "link", "html_url", "permalink")) or source_url
-        content = cls._api_item_field(item, field_map, "content", ("content", "summary", "description", "body"))
+        title = cls._api_item_field(
+            item, field_map, "title", ("title", "name", "headline")
+        )
+        url = (
+            cls._api_item_field(
+                item, field_map, "url", ("url", "link", "html_url", "permalink")
+            )
+            or source_url
+        )
+        content = cls._api_item_field(
+            item, field_map, "content", ("content", "summary", "description", "body")
+        )
         published_date = cls._api_item_field(
             item,
             field_map,
             "published_date",
             ("published_date", "published", "date", "created_at", "updated_at"),
         )
-        author = cls._api_item_field(item, field_map, "author", ("author", "by", "user"))
-        content_hash = cls._api_item_field(item, field_map, "content_hash", ("content_hash", "hash", "id"))
+        author = cls._api_item_field(
+            item, field_map, "author", ("author", "by", "user")
+        )
+        content_hash = cls._api_item_field(
+            item, field_map, "content_hash", ("content_hash", "hash", "id")
+        )
         if not content_hash:
-            content_hash = hashlib.sha256(f"{title or ''}{content or ''}".encode("utf-8")).hexdigest()
+            content_hash = hashlib.sha256(
+                f"{title or ''}{content or ''}".encode("utf-8")
+            ).hexdigest()
 
         normalized = {
             "url": str(url),
@@ -786,11 +868,15 @@ class LocalWatchlistsService:
         return None
 
     @staticmethod
-    def _apply_max_items(items: list[Any], subscription: Mapping[str, Any]) -> list[Any]:
+    def _apply_max_items(
+        items: list[Any], subscription: Mapping[str, Any]
+    ) -> list[Any]:
         processing_options = subscription.get("processing_options")
         max_items = None
         if isinstance(processing_options, Mapping):
-            configured = processing_options.get("max_items", processing_options.get("max_urls"))
+            configured = processing_options.get(
+                "max_items", processing_options.get("max_urls")
+            )
             if configured is not None:
                 try:
                     max_items = max(int(configured), 0)
@@ -953,7 +1039,9 @@ class LocalWatchlistsService:
         ).fetchall()
         triggered: list[dict[str, Any]] = []
         for row in rules:
-            rule = normalize_watchlist_alert_rule("local", self._alert_rule_row_to_dict(row))
+            rule = normalize_watchlist_alert_rule(
+                "local", self._alert_rule_row_to_dict(row)
+            )
             message = self._alert_message_for_rule(rule, stats=stats, status=status)
             if message is None:
                 continue
@@ -978,7 +1066,9 @@ class LocalWatchlistsService:
             )
         return triggered
 
-    def _dispatch_alert_notification(self, alert: Mapping[str, Any]) -> dict[str, Any] | None:
+    def _dispatch_alert_notification(
+        self, alert: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
         dispatcher = self.notification_dispatcher
         if dispatcher is None:
             return None
@@ -1012,21 +1102,27 @@ class LocalWatchlistsService:
                 return f"Run produced 0 items (found {items_found})"
             return None
         if condition_type == "error_rate_above":
-            threshold = self._coerce_float(condition_value.get("threshold"), default=0.5)
+            threshold = self._coerce_float(
+                condition_value.get("threshold"), default=0.5
+            )
             if threshold is None:
                 return None
             if error_rate > threshold:
                 return f"Error rate {error_rate:.0%} exceeds {threshold:.0%} threshold"
             return None
         if condition_type == "items_below":
-            threshold = self._coerce_optional_int(condition_value.get("threshold"), default=1)
+            threshold = self._coerce_optional_int(
+                condition_value.get("threshold"), default=1
+            )
             if threshold is None:
                 return None
             if items_ingested < threshold:
                 return f"Only {items_ingested} items ingested (threshold: {threshold})"
             return None
         if condition_type == "items_above":
-            threshold = self._coerce_optional_int(condition_value.get("threshold"), default=1000)
+            threshold = self._coerce_optional_int(
+                condition_value.get("threshold"), default=1000
+            )
             if threshold is None:
                 return None
             if items_ingested > threshold:

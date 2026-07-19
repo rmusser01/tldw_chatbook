@@ -31,7 +31,9 @@ import pytest
 from loguru import logger as _real_logger
 from textual.css.query import QueryError
 
-from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
+from tldw_chatbook.Chat.chat_conversation_scope_service import (
+    ChatConversationScopeService,
+)
 from tldw_chatbook.Event_Handlers import conv_char_events, media_events
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -275,15 +277,17 @@ class _CountingCcpDb:
 
 
 def _ccp_app(db: Any) -> _SelectorApp:
-    app = _selector_app(**{
-        "#conv-char-search-input": _FakeInput(""),
-        "#conv-char-keyword-search-input": _FakeInput(""),
-        "#conv-char-tags-search-input": _FakeInput(""),
-        "#conv-char-search-include-character-checkbox": _FakeCheckbox(True),
-        "#conv-char-search-all-characters-checkbox": _FakeCheckbox(True),
-        "#conv-char-character-select": _FakeSelect(None),
-        "#conv-char-search-results-list": _FakeListView(),
-    })
+    app = _selector_app(
+        **{
+            "#conv-char-search-input": _FakeInput(""),
+            "#conv-char-keyword-search-input": _FakeInput(""),
+            "#conv-char-tags-search-input": _FakeInput(""),
+            "#conv-char-search-include-character-checkbox": _FakeCheckbox(True),
+            "#conv-char-search-all-characters-checkbox": _FakeCheckbox(True),
+            "#conv-char-character-select": _FakeSelect(None),
+            "#conv-char-search-results-list": _FakeListView(),
+        }
+    )
     app.notes_service = SimpleNamespace(_get_db=lambda user_id: db)
     app.notes_user_id = "default_user"
     app.loguru_logger = _real_logger
@@ -355,9 +359,11 @@ class _CountingMediaDb:
 
 
 def _media_app(db: Any, *, type_slug: str = "all-media") -> _SelectorApp:
-    app = _selector_app(**{
-        f"#media-list-view-{type_slug}": _FakeListView(),
-    })
+    app = _selector_app(
+        **{
+            f"#media-list-view-{type_slug}": _FakeListView(),
+        }
+    )
     app.media_db = db
     app.media_current_page = 1
     app.loguru_logger = _real_logger

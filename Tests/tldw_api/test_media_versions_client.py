@@ -42,7 +42,9 @@ async def test_media_versions_client_routes_core_version_operations(monkeypatch)
     )
     monkeypatch.setattr(client, "_request", mocked)
 
-    versions = await client.list_media_versions(7, include_content=True, limit=25, page=2)
+    versions = await client.list_media_versions(
+        7, include_content=True, limit=25, page=2
+    )
     version = await client.get_media_version(7, 2, include_content=False)
     created = await client.create_media_version(
         7,
@@ -54,10 +56,14 @@ async def test_media_versions_client_routes_core_version_operations(monkeypatch)
         ),
     )
     deleted = await client.delete_media_version(7, 2)
-    rolled_back = await client.rollback_media_version(7, MediaVersionRollbackRequest(version_number=1))
+    rolled_back = await client.rollback_media_version(
+        7, MediaVersionRollbackRequest(version_number=1)
+    )
     patched = await client.patch_media_metadata(
         7,
-        MediaMetadataPatchRequest(safe_metadata={"topic": "paper"}, merge=False, new_version=True),
+        MediaMetadataPatchRequest(
+            safe_metadata={"topic": "paper"}, merge=False, new_version=True
+        ),
     )
     version_patched = await client.put_media_version_metadata(
         7,
@@ -90,12 +96,24 @@ async def test_media_versions_client_routes_core_version_operations(monkeypatch)
         "analysis_content": "Analysis",
         "safe_metadata": {"reviewed": True},
     }
-    assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/media/7/versions/2")
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/media/7/versions/rollback")
+    assert mocked.await_args_list[3].args[:2] == (
+        "DELETE",
+        "/api/v1/media/7/versions/2",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/media/7/versions/rollback",
+    )
     assert mocked.await_args_list[4].kwargs["json_data"] == {"version_number": 1}
     assert mocked.await_args_list[5].args[:2] == ("PATCH", "/api/v1/media/7/metadata")
-    assert mocked.await_args_list[6].args[:2] == ("PUT", "/api/v1/media/7/versions/2/metadata")
-    assert mocked.await_args_list[7].args[:2] == ("POST", "/api/v1/media/7/versions/advanced")
+    assert mocked.await_args_list[6].args[:2] == (
+        "PUT",
+        "/api/v1/media/7/versions/2/metadata",
+    )
+    assert mocked.await_args_list[7].args[:2] == (
+        "POST",
+        "/api/v1/media/7/versions/advanced",
+    )
     assert mocked.await_args_list[7].kwargs["json_data"] == {
         "content": "Body v3",
         "prompt": "Refresh",

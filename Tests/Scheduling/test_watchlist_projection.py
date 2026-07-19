@@ -1,6 +1,5 @@
 """Tests for the watchlist projection service."""
 
-
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Scheduling.models import ScheduledTask, TaskStatus
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
@@ -143,7 +142,9 @@ def test_watchlist_projection_source_fallback(tmp_path):
 
 def test_watchlist_projection_schedule_summary_boundaries():
     """Schedule summaries use the largest whole unit for the check frequency."""
-    from tldw_chatbook.Scheduling.services.watchlist_projection import _build_schedule_summary
+    from tldw_chatbook.Scheduling.services.watchlist_projection import (
+        _build_schedule_summary,
+    )
 
     assert _build_schedule_summary(30) == "Every 30s"
     assert _build_schedule_summary(90) == "Every 1m"

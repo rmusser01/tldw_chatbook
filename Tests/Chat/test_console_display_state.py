@@ -46,9 +46,19 @@ def test_console_control_state_preserves_falsy_labels_and_general_assistant_fall
 
 def test_console_control_state_counter_activity_flags():
     idle = ConsoleControlState.from_values()
-    assert (idle.sources_active, idle.tools_active, idle.approvals_active) == (False, False, False)
-    busy = ConsoleControlState.from_values(staged_source_count=2, tool_count=1, approval_count=3)
-    assert (busy.sources_active, busy.tools_active, busy.approvals_active) == (True, True, True)
+    assert (idle.sources_active, idle.tools_active, idle.approvals_active) == (
+        False,
+        False,
+        False,
+    )
+    busy = ConsoleControlState.from_values(
+        staged_source_count=2, tool_count=1, approval_count=3
+    )
+    assert (busy.sources_active, busy.tools_active, busy.approvals_active) == (
+        True,
+        True,
+        True,
+    )
 
 
 def test_console_staged_context_state_preserves_live_work_payload_provenance():
@@ -133,7 +143,8 @@ def test_console_inspector_state_shows_mcp_not_connected_row_even_with_tools_rea
     unreachable in production; pinning it at (5, 1) -- a REAL reachable
     state -- instead of the old (0, 2) case."""
     state = ConsoleInspectorState.from_values(
-        mcp_tool_count=5, mcp_not_connected_count=1,
+        mcp_tool_count=5,
+        mcp_not_connected_count=1,
     )
     rows_by_label = {row.label: row for row in state.rows}
     assert rows_by_label["MCP"].value == "1 server enabled, not connected"
@@ -142,7 +153,8 @@ def test_console_inspector_state_shows_mcp_not_connected_row_even_with_tools_rea
 
 def test_console_inspector_state_shows_mcp_not_connected_row_plural():
     state = ConsoleInspectorState.from_values(
-        mcp_tool_count=5, mcp_not_connected_count=2,
+        mcp_tool_count=5,
+        mcp_not_connected_count=2,
     )
     rows_by_label = {row.label: row for row in state.rows}
     assert rows_by_label["MCP"].value == "2 servers enabled, not connected"
@@ -151,7 +163,8 @@ def test_console_inspector_state_shows_mcp_not_connected_row_plural():
 
 def test_console_inspector_state_omits_mcp_row_when_zero_tools_and_zero_not_connected():
     state = ConsoleInspectorState.from_values(
-        mcp_tool_count=0, mcp_not_connected_count=0,
+        mcp_tool_count=0,
+        mcp_not_connected_count=0,
     )
     assert "MCP" not in {row.label for row in state.rows}
 

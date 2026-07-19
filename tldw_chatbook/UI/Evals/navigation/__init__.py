@@ -7,6 +7,6 @@ from .breadcrumbs import BreadcrumbTrail
 __all__ = [
     "EvalNavigationScreen",
     "NavigateToEvalScreen",
-    "EvalNavigationBar", 
+    "EvalNavigationBar",
     "BreadcrumbTrail",
 ]

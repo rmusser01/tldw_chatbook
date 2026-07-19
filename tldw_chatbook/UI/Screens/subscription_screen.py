@@ -31,7 +31,9 @@ class SubscriptionScreen(BaseAppScreen):
     def compose_content(self) -> ComposeResult:
         """Compose the subscription management window."""
         logger.info("Composing Subscription screen")
-        self.subscription_window = SubscriptionWindow(self.app_instance, classes="window")
+        self.subscription_window = SubscriptionWindow(
+            self.app_instance, classes="window"
+        )
         yield self.subscription_window
 
     def _get_subscription_window(self) -> Optional[SubscriptionWindow]:
@@ -51,13 +53,16 @@ class SubscriptionScreen(BaseAppScreen):
             return
 
         try:
-            subscriptions = subscription_window.db.get_all_subscriptions(include_inactive=False)
+            subscriptions = subscription_window.db.get_all_subscriptions(
+                include_inactive=False
+            )
             self.subscriptions = list(subscriptions)
             self.active_subscription = next(
                 (
                     subscription
                     for subscription in self.subscriptions
-                    if subscription.get("id") == subscription_window.selected_subscription
+                    if subscription.get("id")
+                    == subscription_window.selected_subscription
                 ),
                 None,
             )
@@ -132,13 +137,21 @@ class SubscriptionScreen(BaseAppScreen):
         """Toggle a subscription's active state in the local screen state."""
         if 0 <= subscription_id < len(self.subscriptions):
             subscriptions = list(self.subscriptions)
-            subscriptions[subscription_id]["is_active"] = not subscriptions[subscription_id].get(
+            subscriptions[subscription_id]["is_active"] = not subscriptions[
+                subscription_id
+            ].get(
                 "is_active",
                 True,
             )
             self.subscriptions = subscriptions
-            state = "activated" if subscriptions[subscription_id]["is_active"] else "deactivated"
-            logger.info(f"Subscription {subscriptions[subscription_id].get('name', 'Unknown')} {state}")
+            state = (
+                "activated"
+                if subscriptions[subscription_id]["is_active"]
+                else "deactivated"
+            )
+            logger.info(
+                f"Subscription {subscriptions[subscription_id].get('name', 'Unknown')} {state}"
+            )
 
     async def check_for_updates(self) -> None:
         """Record a manual update check in the screen state."""

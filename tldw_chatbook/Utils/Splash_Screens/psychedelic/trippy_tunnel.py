@@ -9,10 +9,11 @@ from ..base_effect import BaseEffect, register_effect
 @register_effect("trippy_tunnel")
 class TrippyTunnelEffect(BaseEffect):
     """A perspective tunnel effect with shifting, vibrant colors."""
+
     def __init__(self, parent_widget: Any, **kwargs):
         super().__init__(parent_widget, **kwargs)
-        self.width = kwargs.get('width', 80)
-        self.height = kwargs.get('height', 24)
+        self.width = kwargs.get("width", 80)
+        self.height = kwargs.get("height", 24)
         self.center_x = self.width / 2
         self.center_y = self.height / 2
         self.time = 0
@@ -20,7 +21,7 @@ class TrippyTunnelEffect(BaseEffect):
 
     def update(self) -> Optional[str]:
         self.time += 0.1
-        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        grid = [[" " for _ in range(self.width)] for _ in range(self.height)]
         styles = [[None for _ in range(self.width)] for _ in range(self.height)]
 
         for y in range(self.height):
@@ -32,7 +33,9 @@ class TrippyTunnelEffect(BaseEffect):
 
                 if dist > 0:
                     radius = 50 / (dist + 1)
-                    v = math.sin(radius - self.time * 2) + math.sin(angle * 3 + self.time)
+                    v = math.sin(radius - self.time * 2) + math.sin(
+                        angle * 3 + self.time
+                    )
                     if v > 0.5:
                         char_index = min(len(self.chars) - 1, int((v - 0.5) * 5))
                         grid[y][x] = self.chars[char_index]

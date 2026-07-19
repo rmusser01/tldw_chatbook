@@ -12,9 +12,14 @@ from tldw_chatbook.Home.active_work_adapter import (
     LocalNotificationHomeActiveWorkAdapter,
     UnavailableHomeActiveWorkAdapter,
 )
-from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, summarize_home_dashboard
+from tldw_chatbook.Home.dashboard_state import (
+    HomeActiveWorkItem,
+    summarize_home_dashboard,
+)
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
-from tldw_chatbook.Notifications.notifications_scope_service import ServerEventScopeRequiredError
+from tldw_chatbook.Notifications.notifications_scope_service import (
+    ServerEventScopeRequiredError,
+)
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 
@@ -161,7 +166,9 @@ def test_local_notification_adapter_counts_unread_local_notifications():
     assert dashboard_input.notification_count == 2
     assert dashboard_input.pending_approval_count == 0
     assert dashboard_input.active_run_count == 0
-    assert service.calls == [{"limit": 100, "include_dismissed": False, "category": None}]
+    assert service.calls == [
+        {"limit": 100, "include_dismissed": False, "category": None}
+    ]
 
 
 def test_local_notification_adapter_maps_local_watchlist_runs_to_active_work():
@@ -368,7 +375,10 @@ def test_local_notification_adapter_opens_local_watchlist_run_in_console():
     assert result.console_launch.source == "Watchlists"
     assert result.console_launch.title == "Daily security feed"
     assert result.console_launch.status == "failed"
-    assert result.console_launch.recovery == "Review the Watchlists run details or retry from Watchlists."
+    assert (
+        result.console_launch.recovery
+        == "Review the Watchlists run details or retry from Watchlists."
+    )
     assert result.console_launch.action_label == "Open Watchlists run"
     assert result.console_launch.payload == {
         "run_id": 5,
@@ -707,7 +717,9 @@ def test_local_notification_adapter_sanitizes_console_saved_chatbook_payload_tex
     assert "<script" not in str(payload.get("provider", "")).lower()
     assert "<script" not in str(payload["content_preview"]).lower()
     assert "<script" not in str(payload.get("citation_status", "")).lower()
-    assert "javascript:" not in str(payload.get("citation_cited_evidence_ids", "")).lower()
+    assert (
+        "javascript:" not in str(payload.get("citation_cited_evidence_ids", "")).lower()
+    )
     assert "onclick=" not in str(payload.get("evidence_bundle_id", "")).lower()
     assert "<script" not in str(payload.get("evidence_query", "")).lower()
 
@@ -872,7 +884,9 @@ def test_local_notification_adapter_distinguishes_server_events_from_local_notif
     class FakeServerEventService:
         def list_observed_server_feed(self, *, limit=20, mark_presented=False):
             return {
-                "items": [{"record_id": "server:notification:8", "title": "Server event"}],
+                "items": [
+                    {"record_id": "server:notification:8", "title": "Server event"}
+                ],
                 "total": 1,
                 "backend": "server",
                 "source": "event_state_repository",
@@ -924,7 +938,10 @@ def test_local_notification_adapter_surfaces_server_event_replay_gap_requery_sta
     system_status = summarize_home_dashboard(dashboard_input).sections[3].lines
 
     assert dashboard_input.server_event_state == "requery_required"
-    assert dashboard_input.server_event_recovery == "Requery server events from the active server."
+    assert (
+        dashboard_input.server_event_recovery
+        == "Requery server events from the active server."
+    )
     assert "Server events: Replay gap - requery server events" in system_status
 
 
@@ -944,7 +961,9 @@ def test_local_notification_adapter_surfaces_server_event_reconnect_state():
     system_status = summarize_home_dashboard(dashboard_input).sections[3].lines
 
     assert dashboard_input.server_event_state == "reconnect_required"
-    assert dashboard_input.server_event_recovery == "Reconnect or select an active server."
+    assert (
+        dashboard_input.server_event_recovery == "Reconnect or select an active server."
+    )
     assert "Server events: Reconnect required" in system_status
 
 
@@ -1046,12 +1065,18 @@ def test_local_watchlist_items_carry_updated_at():
                 },
             ]
 
-    adapter = LocalNotificationHomeActiveWorkAdapter(watchlist_service=FakeWatchlistsService())
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        watchlist_service=FakeWatchlistsService()
+    )
     dashboard_input = adapter.build_dashboard_input(
         providers_models={"OpenAI": ["gpt-4.1"]},
         has_recent_work=False,
     )
-    item = next(i for i in dashboard_input.active_work_items if i.item_id == "local:watchlist_run:9")
+    item = next(
+        i
+        for i in dashboard_input.active_work_items
+        if i.item_id == "local:watchlist_run:9"
+    )
     assert item.updated_at == "2026-07-04T10:00:00+00:00"
 
 
@@ -1078,7 +1103,9 @@ def test_terminal_watchlist_runs_become_recent_items_recent_first_capped():
             )
             return runs
 
-    adapter = LocalNotificationHomeActiveWorkAdapter(watchlist_service=FakeWatchlistsService())
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        watchlist_service=FakeWatchlistsService()
+    )
     dashboard_input = adapter.build_dashboard_input(
         providers_models={"OpenAI": ["gpt-4.1"]},
         has_recent_work=False,
@@ -1117,7 +1144,9 @@ def test_flashcards_due_provider_raising_degrades_to_zero():
     def _broken_provider():
         raise RuntimeError("flashcards backend unavailable")
 
-    adapter = LocalNotificationHomeActiveWorkAdapter(flashcards_due_provider=_broken_provider)
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        flashcards_due_provider=_broken_provider
+    )
 
     adapter.refresh_flashcards_due_snapshot()
     dashboard_input = adapter.build_dashboard_input(
@@ -1129,7 +1158,9 @@ def test_flashcards_due_provider_raising_degrades_to_zero():
 
 
 def test_flashcards_due_provider_returning_none_degrades_to_zero():
-    adapter = LocalNotificationHomeActiveWorkAdapter(flashcards_due_provider=lambda: None)
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        flashcards_due_provider=lambda: None
+    )
 
     adapter.refresh_flashcards_due_snapshot()
     dashboard_input = adapter.build_dashboard_input(
@@ -1157,7 +1188,9 @@ def test_flashcards_due_provider_returning_noncoercible_object_degrades_to_zero(
     Home refresh worker thread. The old implementation caught exceptions
     from calling the provider but coerced ``int(count)`` outside the try.
     """
-    adapter = LocalNotificationHomeActiveWorkAdapter(flashcards_due_provider=lambda: object())
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        flashcards_due_provider=lambda: object()
+    )
 
     adapter.refresh_flashcards_due_snapshot()
     dashboard_input = adapter.build_dashboard_input(
@@ -1351,7 +1384,8 @@ def test_local_notification_adapter_status_detail_matches_queue_short_reason():
     )
 
     item = next(
-        i for i in dashboard_input.active_work_items
+        i
+        for i in dashboard_input.active_work_items
         if i.item_id == "local:ingest:ingest-job-5"
     )
     assert item.status_detail == "Unsupported file type: .xyz."
@@ -1380,7 +1414,8 @@ def test_local_notification_adapter_status_detail_is_not_markup_escaped():
     )
 
     item = next(
-        i for i in dashboard_input.active_work_items
+        i
+        for i in dashboard_input.active_work_items
         if i.item_id == "local:ingest:ingest-job-6"
     )
     assert "\\" not in item.status_detail
@@ -1410,7 +1445,8 @@ def test_local_notification_adapter_status_detail_appends_retry_suffix():
     )
 
     item = next(
-        i for i in dashboard_input.active_work_items
+        i
+        for i in dashboard_input.active_work_items
         if i.item_id == "local:ingest:ingest-job-7"
     )
     assert item.status_detail == "bad codec · retry 2"

@@ -8,7 +8,9 @@ import pytest
 from tldw_chatbook.MCP.execution_log import MCPExecutionLog
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
 from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
-from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+from tldw_chatbook.MCP.unified_control_plane_service import (
+    UnifiedMCPControlPlaneService,
+)
 import tldw_chatbook.MCP.unified_control_plane_service as control_plane_module
 
 
@@ -19,7 +21,9 @@ class FakeToolClient:
         self.sessions: dict[str, dict] = {}
         self.connect_calls: list[str] = []
         self.call_tool_calls: list[tuple[str, str, dict]] = []
-        self.call_tool_response: dict = {"result": {"content": [{"type": "text", "text": "ok"}]}}
+        self.call_tool_response: dict = {
+            "result": {"content": [{"type": "text", "text": "ok"}]}
+        }
         self.call_tool_error: str | None = None
         self.call_tool_delay: float = 0.0
 
@@ -29,7 +33,12 @@ class FakeToolClient:
         return True
 
     async def describe_server(self, server_id):
-        return {"server_id": server_id, "tools": [{"name": "t"}], "resources": [], "prompts": []}
+        return {
+            "server_id": server_id,
+            "tools": [{"name": "t"}],
+            "resources": [],
+            "prompts": [],
+        }
 
     async def disconnect_from_server(self, server_id):
         self.sessions.pop(server_id, None)
@@ -53,7 +62,9 @@ class FakeLocalService:
     def __init__(self, store: LocalMCPStore, client: FakeToolClient) -> None:
         self.store = store
         self.client = client
-        self._real = LocalMCPControlService(store=store, client=client, manifest_provider=lambda: {})
+        self._real = LocalMCPControlService(
+            store=store, client=client, manifest_provider=lambda: {}
+        )
         self.execute_tool_calls: list[tuple[str, dict]] = []
         self.builtin_result: dict = {"source": "local", "result": "builtin-ok"}
         self.builtin_error: Exception | None = None
@@ -68,9 +79,17 @@ class FakeLocalService:
         return self.builtin_result
 
 
-def _service(tmp_path: Path) -> tuple[UnifiedMCPControlPlaneService, FakeLocalService, FakeToolClient, LocalMCPStore]:
+def _service(
+    tmp_path: Path,
+) -> tuple[
+    UnifiedMCPControlPlaneService, FakeLocalService, FakeToolClient, LocalMCPStore
+]:
     store = LocalMCPStore(tmp_path / "store.json")
-    store.save_profile(LocalExternalMCPProfile(profile_id="docs", command="python", args=("-m", "demo")))
+    store.save_profile(
+        LocalExternalMCPProfile(
+            profile_id="docs", command="python", args=("-m", "demo")
+        )
+    )
     client = FakeToolClient()
     fake = FakeLocalService(store, client)
     service = UnifiedMCPControlPlaneService(
@@ -92,7 +111,11 @@ async def test_execute_hub_tool_records_given_initiator_and_decision(tmp_path):
     service, fake, client, store = _service(tmp_path)
 
     result = await service.execute_hub_tool(
-        "local:docs", "search", {"q": "hi"}, initiator="agent", decision="approved",
+        "local:docs",
+        "search",
+        {"q": "hi"},
+        initiator="agent",
+        decision="approved",
     )
 
     assert result == client.call_tool_response
@@ -120,7 +143,11 @@ async def test_execute_hub_tool_records_initiator_decision_on_failure(tmp_path):
 
     with pytest.raises(RuntimeError, match="boom"):
         await service.execute_hub_tool(
-            "local:docs", "search", {}, initiator="agent", decision="approved",
+            "local:docs",
+            "search",
+            {},
+            initiator="agent",
+            decision="approved",
         )
 
     records = _log_records(store)
@@ -130,7 +157,9 @@ async def test_execute_hub_tool_records_initiator_decision_on_failure(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_execute_hub_tool_unknown_prefix_raises_value_error_mentioning_phase_4(tmp_path):
+async def test_execute_hub_tool_unknown_prefix_raises_value_error_mentioning_phase_4(
+    tmp_path,
+):
     service, fake, client, store = _service(tmp_path)
 
     with pytest.raises(ValueError, match="Phase 4"):
@@ -138,7 +167,9 @@ async def test_execute_hub_tool_unknown_prefix_raises_value_error_mentioning_pha
 
 
 @pytest.mark.asyncio
-async def test_execute_hub_tool_uses_tool_call_timeout_by_default(tmp_path, monkeypatch):
+async def test_execute_hub_tool_uses_tool_call_timeout_by_default(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(
         control_plane_module,
         "get_cli_setting",
@@ -158,7 +189,9 @@ async def test_execute_hub_tool_uses_tool_call_timeout_by_default(tmp_path, monk
 
 
 @pytest.mark.asyncio
-async def test_execute_hub_tool_explicit_timeout_seconds_overrides_config(tmp_path, monkeypatch):
+async def test_execute_hub_tool_explicit_timeout_seconds_overrides_config(
+    tmp_path, monkeypatch
+):
     # Even with a generous tool_call_timeout_seconds config, an explicit
     # timeout_seconds= override wins.
     monkeypatch.setattr(
@@ -172,14 +205,18 @@ async def test_execute_hub_tool_explicit_timeout_seconds_overrides_config(tmp_pa
     client.call_tool_delay = 1.0
 
     with pytest.raises(RuntimeError, match="Timed out"):
-        await service.execute_hub_tool("local:docs", "slow_tool", {}, timeout_seconds=0.05)
+        await service.execute_hub_tool(
+            "local:docs", "slow_tool", {}, timeout_seconds=0.05
+        )
 
 
 # ---- test_hub_tool: thin delegate, old behavior preserved ---------------
 
 
 @pytest.mark.asyncio
-async def test_hub_tool_delegates_to_execute_hub_tool_with_test_semantics(tmp_path, monkeypatch):
+async def test_hub_tool_delegates_to_execute_hub_tool_with_test_semantics(
+    tmp_path, monkeypatch
+):
     service, fake, client, store = _service(tmp_path)
 
     captured: dict = {}
@@ -199,7 +236,9 @@ async def test_hub_tool_delegates_to_execute_hub_tool_with_test_semantics(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_hub_tool_still_uses_lifecycle_timeout_not_tool_call_timeout(tmp_path, monkeypatch):
+async def test_hub_tool_still_uses_lifecycle_timeout_not_tool_call_timeout(
+    tmp_path, monkeypatch
+):
     # test_hub_tool's timeout knob stays hub_lifecycle_timeout_seconds
     # (pinned by test_control_plane_tool_execute.py); a generous
     # tool_call_timeout_seconds must not rescue a slow call here.
@@ -207,7 +246,8 @@ async def test_hub_tool_still_uses_lifecycle_timeout_not_tool_call_timeout(tmp_p
         control_plane_module,
         "get_cli_setting",
         lambda section, key, default=None: (
-            0.05 if key == "hub_lifecycle_timeout_seconds"
+            0.05
+            if key == "hub_lifecycle_timeout_seconds"
             else (30.0 if key == "tool_call_timeout_seconds" else default)
         ),
     )
@@ -315,7 +355,11 @@ def test_record_tool_decision_writes_denied_record(tmp_path):
     service, fake, client, store = _service(tmp_path)
 
     service.record_tool_decision(
-        "local:docs", "search", decision="denied", initiator="agent", error="user denied the call",
+        "local:docs",
+        "search",
+        decision="denied",
+        initiator="agent",
+        error="user denied the call",
     )
 
     records = _log_records(store)
@@ -349,10 +393,14 @@ def test_record_tool_decision_survives_log_failure(tmp_path, monkeypatch):
     service, fake, client, store = _service(tmp_path)
 
     # Must not raise.
-    service.record_tool_decision("local:docs", "search", decision="denied", error="nope")
+    service.record_tool_decision(
+        "local:docs", "search", decision="denied", error="nope"
+    )
 
 
-def test_record_tool_decision_survives_execution_log_property_raise(tmp_path, monkeypatch):
+def test_record_tool_decision_survives_execution_log_property_raise(
+    tmp_path, monkeypatch
+):
     def _raise(self):
         raise RuntimeError("execution_log unavailable")
 

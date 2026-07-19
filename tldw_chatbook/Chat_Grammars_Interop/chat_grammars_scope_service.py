@@ -29,7 +29,9 @@ class ChatGrammarsScopeService:
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: ChatGrammarsBackend | str | None) -> ChatGrammarsBackend:
+    def _normalize_mode(
+        self, mode: ChatGrammarsBackend | str | None
+    ) -> ChatGrammarsBackend:
         if mode is None:
             return ChatGrammarsBackend.SERVER
         if isinstance(mode, ChatGrammarsBackend):
@@ -64,7 +66,9 @@ class ChatGrammarsScopeService:
         return f"chat.grammars.{action}.{mode.value}"
 
     @staticmethod
-    def _with_record_id(mode: ChatGrammarsBackend, item: dict[str, Any]) -> dict[str, Any]:
+    def _with_record_id(
+        mode: ChatGrammarsBackend, item: dict[str, Any]
+    ) -> dict[str, Any]:
         record = dict(item or {})
         record.setdefault("backend", mode.value)
         source_id = record.get("id")
@@ -74,7 +78,10 @@ class ChatGrammarsScopeService:
 
     def _normalize_response(self, mode: ChatGrammarsBackend, result: Any) -> Any:
         if isinstance(result, list):
-            return [self._with_record_id(mode, item) if isinstance(item, dict) else item for item in result]
+            return [
+                self._with_record_id(mode, item) if isinstance(item, dict) else item
+                for item in result
+            ]
         if not isinstance(result, dict):
             return result
         payload = dict(result)
@@ -109,14 +116,24 @@ class ChatGrammarsScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
         self._enforce_policy(self._action_id(action, normalized_mode))
-        result = await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
+        result = await self._maybe_await(
+            getattr(service, method_name)(*args, **(kwargs or {}))
+        )
         return self._normalize_response(normalized_mode, result)
 
-    async def create_grammar(self, *, mode: ChatGrammarsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
-        return await self._call(mode=mode, action="create", method_name="create_grammar", kwargs=kwargs)
+    async def create_grammar(
+        self, *, mode: ChatGrammarsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        return await self._call(
+            mode=mode, action="create", method_name="create_grammar", kwargs=kwargs
+        )
 
-    async def list_grammars(self, *, mode: ChatGrammarsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
-        return await self._call(mode=mode, action="list", method_name="list_grammars", kwargs=kwargs)
+    async def list_grammars(
+        self, *, mode: ChatGrammarsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        return await self._call(
+            mode=mode, action="list", method_name="list_grammars", kwargs=kwargs
+        )
 
     async def get_grammar(
         self,
@@ -125,7 +142,13 @@ class ChatGrammarsScopeService:
         mode: ChatGrammarsBackend | str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        return await self._call(mode=mode, action="detail", method_name="get_grammar", args=(grammar_id,), kwargs=kwargs)
+        return await self._call(
+            mode=mode,
+            action="detail",
+            method_name="get_grammar",
+            args=(grammar_id,),
+            kwargs=kwargs,
+        )
 
     async def update_grammar(
         self,

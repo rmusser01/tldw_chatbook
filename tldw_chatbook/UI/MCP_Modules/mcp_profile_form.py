@@ -65,41 +65,70 @@ class MCPProfileForm(Vertical):
         yield Static(title, classes="destination-section", markup=False)
         profile = self._profile or {}
         yield Static("Profile id", classes="form-label")
-        id_input = Input(value=str(profile.get("profile_id") or ""), id="mcp-form-id",
-                         placeholder="docs-server")
+        id_input = Input(
+            value=str(profile.get("profile_id") or ""),
+            id="mcp-form-id",
+            placeholder="docs-server",
+        )
         id_input.disabled = self.is_edit
         yield id_input
         yield Static("Command", classes="form-label")
-        yield Input(value=str(profile.get("command") or ""), id="mcp-form-command",
-                    placeholder="npx")
+        yield Input(
+            value=str(profile.get("command") or ""),
+            id="mcp-form-command",
+            placeholder="npx",
+        )
         yield Static("Args — one per line", classes="form-label")
-        yield TextArea("\n".join(str(a) for a in profile.get("args") or []),
-                       id="mcp-form-args")
+        yield TextArea(
+            "\n".join(str(a) for a in profile.get("args") or []), id="mcp-form-args"
+        )
         # A2: mcp-status-warning colors the secret-lint warning text (the
         # color rule itself has existed since T13 -- nothing applied the
         # class to this Static until now).
         yield Static(
-            "", id="mcp-form-args-warning", classes="ds-field-row mcp-status-warning",
+            "",
+            id="mcp-form-args-warning",
+            classes="ds-field-row mcp-status-warning",
             markup=False,
         )
         yield Static("Env — one KEY=value per line", classes="form-label")
         yield Static(
             "Secrets are never stored — reference them as KEY=$ENV_VAR and export "
             "the variable before connecting.",
-            classes="ds-field-row", markup=False,
+            classes="ds-field-row",
+            markup=False,
         )
-        env_lines = [f"{k}={v}" for k, v in (profile.get("env_placeholders") or {}).items()]
-        env_lines += [f"{k}={v}" for k, v in (profile.get("env_literals") or {}).items()]
+        env_lines = [
+            f"{k}={v}" for k, v in (profile.get("env_placeholders") or {}).items()
+        ]
+        env_lines += [
+            f"{k}={v}" for k, v in (profile.get("env_literals") or {}).items()
+        ]
         yield TextArea("\n".join(env_lines), id="mcp-form-env")
         # A2: mcp-status-error colors the validation/save-failure text (the
         # color rule itself has existed since T13 -- nothing applied the
         # class to this Static until now).
-        yield Static("", id="mcp-form-error", classes="ds-field-row mcp-status-error", markup=False)
+        yield Static(
+            "",
+            id="mcp-form-error",
+            classes="ds-field-row mcp-status-error",
+            markup=False,
+        )
         with Horizontal(classes="ds-toolbar"):
-            yield Button("Save", id="mcp-form-save", classes="console-action-primary",
-                         compact=True, tooltip="Validate and save this profile.")
-            yield Button("Cancel", id="mcp-form-cancel", classes="console-action-secondary",
-                         compact=True, tooltip="Discard changes.")
+            yield Button(
+                "Save",
+                id="mcp-form-save",
+                classes="console-action-primary",
+                compact=True,
+                tooltip="Validate and save this profile.",
+            )
+            yield Button(
+                "Cancel",
+                id="mcp-form-cancel",
+                classes="console-action-secondary",
+                compact=True,
+                tooltip="Discard changes.",
+            )
 
     def on_mount(self) -> None:
         # A4: `self.watch(...)` (not the `on_input_changed` message handler)
@@ -117,10 +146,18 @@ class MCPProfileForm(Vertical):
         # `press()` runs, matching real typing (which always has pump turns
         # between keystrokes and the eventual click) with no observable
         # difference.
-        self.watch(self.query_one("#mcp-form-id", Input), "value",
-                   self._on_required_field_changed, init=False)
-        self.watch(self.query_one("#mcp-form-command", Input), "value",
-                   self._on_required_field_changed, init=False)
+        self.watch(
+            self.query_one("#mcp-form-id", Input),
+            "value",
+            self._on_required_field_changed,
+            init=False,
+        )
+        self.watch(
+            self.query_one("#mcp-form-command", Input),
+            "value",
+            self._on_required_field_changed,
+            init=False,
+        )
         self._refresh_save_enabled()
 
     def _on_required_field_changed(self, old_value: str, new_value: str) -> None:
@@ -180,8 +217,11 @@ class MCPProfileForm(Vertical):
                 placeholders[key] = value
             else:
                 literals[key] = value
-        args = [line.strip() for line in
-                self.query_one("#mcp-form-args", TextArea).text.splitlines() if line.strip()]
+        args = [
+            line.strip()
+            for line in self.query_one("#mcp-form-args", TextArea).text.splitlines()
+            if line.strip()
+        ]
         return {
             "profile_id": self.query_one("#mcp-form-id", Input).value.strip(),
             "command": self.query_one("#mcp-form-command", Input).value.strip(),
@@ -302,35 +342,59 @@ class MCPImportPanel(Vertical):
         self._candidates: list[ImportCandidate] = []
 
     def compose(self) -> ComposeResult:
-        yield Static("Import from mcpServers JSON", classes="destination-section", markup=False)
         yield Static(
-            "Paste a Claude-Desktop-style {\"mcpServers\": ...} config, or load one from a "
+            "Import from mcpServers JSON", classes="destination-section", markup=False
+        )
+        yield Static(
+            'Paste a Claude-Desktop-style {"mcpServers": ...} config, or load one from a '
             "file. Secret-shaped values are never imported as literals -- they become "
             "placeholders you export before connecting.",
-            classes="ds-field-row", markup=False,
+            classes="ds-field-row",
+            markup=False,
         )
         yield TextArea("", id="mcp-import-text")
         with Horizontal(classes="ds-toolbar"):
-            yield Button("From file…", id="mcp-import-file", classes="console-action-secondary",
-                         compact=True, tooltip="Load mcpServers JSON from a file.")
-            yield Button("Preview", id="mcp-import-preview", classes="console-action-secondary",
-                         compact=True, tooltip="Parse the text and preview the servers it would import.")
+            yield Button(
+                "From file…",
+                id="mcp-import-file",
+                classes="console-action-secondary",
+                compact=True,
+                tooltip="Load mcpServers JSON from a file.",
+            )
+            yield Button(
+                "Preview",
+                id="mcp-import-preview",
+                classes="console-action-secondary",
+                compact=True,
+                tooltip="Parse the text and preview the servers it would import.",
+            )
         # A2: mcp-status-error colors the invalid-JSON preview error text
         # (the color rule itself has existed since T13 -- nothing applied
         # the class to this Static until now), mirroring #mcp-form-error.
         yield Static(
-            "", id="mcp-import-error", classes="ds-field-row mcp-status-error", markup=False,
+            "",
+            id="mcp-import-error",
+            classes="ds-field-row mcp-status-error",
+            markup=False,
         )
         yield Vertical(id="mcp-import-list")
         with Horizontal(classes="ds-toolbar"):
             apply_button = Button(
-                "Import 0 servers", id="mcp-import-apply", classes="console-action-primary",
-                compact=True, tooltip="Save every previewed candidate as a local profile.",
+                "Import 0 servers",
+                id="mcp-import-apply",
+                classes="console-action-primary",
+                compact=True,
+                tooltip="Save every previewed candidate as a local profile.",
             )
             apply_button.disabled = True
             yield apply_button
-            yield Button("Cancel", id="mcp-import-cancel", classes="console-action-secondary",
-                         compact=True, tooltip="Discard and close.")
+            yield Button(
+                "Cancel",
+                id="mcp-import-cancel",
+                classes="console-action-secondary",
+                compact=True,
+                tooltip="Discard and close.",
+            )
 
     def set_file_text(self, text: str) -> None:
         """Populate the paste area from a file the workbench just read."""
@@ -362,7 +426,9 @@ class MCPImportPanel(Vertical):
         for candidate in self._candidates:
             lines = [f"{candidate.profile_id} — {candidate.command}"]
             lines.extend(f"  {warning}" for warning in candidate.warnings)
-            widgets.append(Static("\n".join(lines), classes="ds-field-row", markup=False))
+            widgets.append(
+                Static("\n".join(lines), classes="ds-field-row", markup=False)
+            )
         if widgets:
             await container.mount_all(widgets)
 

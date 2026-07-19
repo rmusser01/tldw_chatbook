@@ -18,7 +18,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     CharactersRAGDBError,
     InputError,
-    ConflictError
+    ConflictError,
 )
 
 
@@ -29,6 +29,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
 
 
 # --- Fixtures ---
+
 
 @pytest.fixture
 def client_id():
@@ -80,6 +81,7 @@ def mem_db_instance(client_id):
     yield db
     db.close_connection()
 
+
 @pytest.fixture
 def sample_card(db_instance: CharactersRAGDB) -> dict:
     """A fixture that adds a sample card to the DB and returns its data."""
@@ -88,13 +90,14 @@ def sample_card(db_instance: CharactersRAGDB) -> dict:
     # Return the full record from the DB, which includes ID, version, etc.
     return db_instance.get_character_card_by_id(card_id)
 
+
 # You can create similar fixtures for conversations, messages, etc.
 @pytest.fixture
 def sample_conv(db_instance: CharactersRAGDB, sample_card: dict) -> dict:
     """Adds a sample conversation linked to the sample_card."""
     conv_data = {
-        "character_id": sample_card['id'],
-        "title": "Conversation From Fixture"
+        "character_id": sample_card["id"],
+        "title": "Conversation From Fixture",
     }
     conv_id = db_instance.add_conversation(conv_data)
     return db_instance.get_conversation_by_id(conv_id)
@@ -103,7 +106,11 @@ def sample_conv(db_instance: CharactersRAGDB, sample_card: dict) -> dict:
 # --- Helper Functions ---
 def get_current_utc_timestamp_iso():
     """Returns the current UTC time in ISO 8601 format, as used by the DB."""
-    return datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _create_sample_card_data(name_suffix="", client_id_override=None):
@@ -118,11 +125,12 @@ def _create_sample_card_data(name_suffix="", client_id_override=None):
         "alternate_greetings": json.dumps(["Hi", "Hey"]),
         "tags": json.dumps(["test", "sample"]),
         "extensions": json.dumps({"custom_field": "value"}),
-        "client_id": client_id_override
+        "client_id": client_id_override,
     }
 
 
 # --- Test Cases ---
+
 
 class TestDBInitialization:
     def test_db_creation_and_schema_version(self, db_path, client_id):
@@ -134,10 +142,12 @@ class TestDBInitialization:
 
         # Check schema version
         conn = db.get_connection()
-        version_row = conn.execute("SELECT version FROM db_schema_version WHERE schema_name = ?",
-                                   (db._SCHEMA_NAME,)).fetchone()
+        version_row = conn.execute(
+            "SELECT version FROM db_schema_version WHERE schema_name = ?",
+            (db._SCHEMA_NAME,),
+        ).fetchone()
         assert version_row is not None
-        assert version_row['version'] == db._CURRENT_SCHEMA_VERSION
+        assert version_row["version"] == db._CURRENT_SCHEMA_VERSION
         db.close_connection()
 
     def test_in_memory_db_initialization(self, client_id):
@@ -145,10 +155,12 @@ class TestDBInitialization:
         assert db.is_memory_db
         assert db.client_id == client_id
         conn = db.get_connection()
-        version_row = conn.execute("SELECT version FROM db_schema_version WHERE schema_name = ?",
-                                   (db._SCHEMA_NAME,)).fetchone()
+        version_row = conn.execute(
+            "SELECT version FROM db_schema_version WHERE schema_name = ?",
+            (db._SCHEMA_NAME,),
+        ).fetchone()
         assert version_row is not None
-        assert version_row['version'] == db._CURRENT_SCHEMA_VERSION
+        assert version_row["version"] == db._CURRENT_SCHEMA_VERSION
         db.close_connection()
 
     def test_initialization_with_missing_client_id(self, db_path):
@@ -172,8 +184,10 @@ class TestDBInitialization:
         db = CharactersRAGDB(db_path, client_id)
         conn = db.get_connection()
         newer_version = CharactersRAGDB._CURRENT_SCHEMA_VERSION + 1
-        conn.execute("UPDATE db_schema_version SET version = ? WHERE schema_name = ?",
-                     (newer_version, CharactersRAGDB._SCHEMA_NAME))
+        conn.execute(
+            "UPDATE db_schema_version SET version = ? WHERE schema_name = ?",
+            (newer_version, CharactersRAGDB._SCHEMA_NAME),
+        )
         conn.commit()
         db.close_connection()
 
@@ -181,11 +195,16 @@ class TestDBInitialization:
         with pytest.raises(CharactersRAGDBError, match=expected_message_part):
             CharactersRAGDB(db_path, client_id)
 
-    def test_fresh_db_creates_conversations_system_prompt_column(self, db_path, client_id):
+    def test_fresh_db_creates_conversations_system_prompt_column(
+        self, db_path, client_id
+    ):
         db = CharactersRAGDB(db_path, client_id)
         conn = db.get_connection()
 
-        columns = {row["name"] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+        }
         assert "system_prompt" in columns
 
         version_row = conn.execute(
@@ -195,7 +214,9 @@ class TestDBInitialization:
         assert version_row["version"] == db._CURRENT_SCHEMA_VERSION
         db.close_connection()
 
-    def test_conversations_migrate_from_v17_to_v18_adds_system_prompt_column(self, db_path, client_id):
+    def test_conversations_migrate_from_v17_to_v18_adds_system_prompt_column(
+        self, db_path, client_id
+    ):
         db = CharactersRAGDB(db_path, client_id)
         conn = db.get_connection()
 
@@ -224,13 +245,22 @@ class TestDBInitialization:
         ).fetchone()
         assert version_row["version"] == migrated._CURRENT_SCHEMA_VERSION
 
-        columns = {row["name"] for row in migrated_conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        columns = {
+            row["name"]
+            for row in migrated_conn.execute(
+                "PRAGMA table_info(conversations)"
+            ).fetchall()
+        }
         assert "system_prompt" in columns
 
         # The redefined sync trigger must fire (and include the new column)
         # on a system_prompt-only update.
-        char_id = migrated.add_character_card(_create_sample_card_data("MigrationCheck"))
-        conv_id = migrated.add_conversation({"character_id": char_id, "title": "Migration check"})
+        char_id = migrated.add_character_card(
+            _create_sample_card_data("MigrationCheck")
+        )
+        conv_id = migrated.add_conversation(
+            {"character_id": char_id, "title": "Migration check"}
+        )
         before_log_count = migrated_conn.execute(
             "SELECT COUNT(*) AS n FROM sync_log WHERE entity = 'conversations' AND entity_id = ?",
             (conv_id,),
@@ -246,7 +276,10 @@ class TestDBInitialization:
             (conv_id,),
         ).fetchone()["n"]
         assert after_log_count == before_log_count + 1
-        assert migrated.get_conversation_by_id(conv_id)["system_prompt"] == "Migrated prompt."
+        assert (
+            migrated.get_conversation_by_id(conv_id)["system_prompt"]
+            == "Migrated prompt."
+        )
         migrated.close_connection()
 
 
@@ -262,21 +295,30 @@ class TestCharacterCards:
         assert retrieved["description"] == card_data["description"]
         assert retrieved["image"] == card_data["image"]
         assert isinstance(retrieved["alternate_greetings"], list)
-        assert retrieved["alternate_greetings"] == json.loads(card_data["alternate_greetings"])
+        assert retrieved["alternate_greetings"] == json.loads(
+            card_data["alternate_greetings"]
+        )
         assert retrieved["client_id"] == db_instance.client_id
         assert retrieved["version"] == 1
         assert not retrieved["deleted"]
 
-    def test_add_character_card_with_missing_name_raises_error(self, db_instance: CharactersRAGDB):
+    def test_add_character_card_with_missing_name_raises_error(
+        self, db_instance: CharactersRAGDB
+    ):
         card_data = _create_sample_card_data("MissingName")
         del card_data["name"]
         with pytest.raises(InputError, match="Required field 'name' is missing"):
             db_instance.add_character_card(card_data)
 
-    def test_add_character_card_with_duplicate_name_raises_error(self, db_instance: CharactersRAGDB):
+    def test_add_character_card_with_duplicate_name_raises_error(
+        self, db_instance: CharactersRAGDB
+    ):
         card_data = _create_sample_card_data("Duplicate")
         db_instance.add_character_card(card_data)
-        with pytest.raises(ConflictError, match=f"Character card with name '{card_data['name']}' already exists"):
+        with pytest.raises(
+            ConflictError,
+            match=f"Character card with name '{card_data['name']}' already exists",
+        ):
             db_instance.add_character_card(card_data)
 
     def test_get_character_card_by_id_not_found(self, db_instance: CharactersRAGDB):
@@ -293,7 +335,7 @@ class TestCharacterCards:
         # A new DB instance should contain exactly one default card.
         initial_cards = db_instance.list_character_cards()
         assert len(initial_cards) == 1
-        assert initial_cards[0]['name'] == 'Default Assistant'
+        assert initial_cards[0]["name"] == "Default Assistant"
 
         card_data1 = _create_sample_card_data("List1")
         card_data2 = _create_sample_card_data("List2")
@@ -305,55 +347,76 @@ class TestCharacterCards:
         assert len(cards) == 3
 
         # You can still sort and check your added cards if you filter out the default one.
-        added_card_names = {c['name'] for c in cards if c['name'] != 'Default Assistant'}
-        assert added_card_names == {card_data1['name'], card_data2['name']}
+        added_card_names = {
+            c["name"] for c in cards if c["name"] != "Default Assistant"
+        }
+        assert added_card_names == {card_data1["name"], card_data2["name"]}
 
-    def test_update_character_card(self, db_instance: CharactersRAGDB, sample_card: dict):
+    def test_update_character_card(
+        self, db_instance: CharactersRAGDB, sample_card: dict
+    ):
         update_payload = {"description": "Updated Description"}
         updated = db_instance.update_character_card(
-            sample_card['id'],
-            update_payload,
-            expected_version=sample_card['version']
+            sample_card["id"], update_payload, expected_version=sample_card["version"]
         )
         assert updated is True
 
-        retrieved = db_instance.get_character_card_by_id(sample_card['id'])
+        retrieved = db_instance.get_character_card_by_id(sample_card["id"])
         assert retrieved["description"] == "Updated Description"
-        assert retrieved["version"] == sample_card['version'] + 1
+        assert retrieved["version"] == sample_card["version"] + 1
 
-    def test_update_character_card_with_version_conflict_raises_error(self, db_instance: CharactersRAGDB):
-        card_id = db_instance.add_character_card(_create_sample_card_data("VersionConflict"))
+    def test_update_character_card_with_version_conflict_raises_error(
+        self, db_instance: CharactersRAGDB
+    ):
+        card_id = db_instance.add_character_card(
+            _create_sample_card_data("VersionConflict")
+        )
 
         # Simulate another client's update, bumping DB version to 2
-        db_instance.update_character_card(card_id, {"description": "First update"}, expected_version=1)
+        db_instance.update_character_card(
+            card_id, {"description": "First update"}, expected_version=1
+        )
 
         # Client tries to update with old expected_version=1
         update_payload = {"description": "Conflict Update"}
         expected_error_regex = r"version mismatch \(db has 2, client expected 1\)"
         with pytest.raises(ConflictError, match=expected_error_regex):
-            db_instance.update_character_card(card_id, update_payload, expected_version=1)
+            db_instance.update_character_card(
+                card_id, update_payload, expected_version=1
+            )
 
-    def test_update_character_card_not_found_raises_error(self, db_instance: CharactersRAGDB):
+    def test_update_character_card_not_found_raises_error(
+        self, db_instance: CharactersRAGDB
+    ):
         with pytest.raises(ConflictError, match="Record not found in character_cards"):
-            db_instance.update_character_card(999, {"description": "Not Found"}, expected_version=1)
+            db_instance.update_character_card(
+                999, {"description": "Not Found"}, expected_version=1
+            )
 
-    def test_soft_delete_character_card(self, db_instance: CharactersRAGDB, sample_card: dict):
+    def test_soft_delete_character_card(
+        self, db_instance: CharactersRAGDB, sample_card: dict
+    ):
         deleted = db_instance.soft_delete_character_card(
-            sample_card['id'],
-            expected_version=sample_card['version']
+            sample_card["id"], expected_version=sample_card["version"]
         )
         assert deleted is True
-        assert db_instance.get_character_card_by_id(sample_card['id']) is None
+        assert db_instance.get_character_card_by_id(sample_card["id"]) is None
 
     def test_soft_delete_is_idempotent(self, db_instance: CharactersRAGDB):
-        card_id = db_instance.add_character_card(_create_sample_card_data("IdempotentDelete"))
+        card_id = db_instance.add_character_card(
+            _create_sample_card_data("IdempotentDelete")
+        )
         db_instance.soft_delete_character_card(card_id, expected_version=1)
 
         # Calling delete again on an already deleted record should succeed
-        assert db_instance.soft_delete_character_card(card_id, expected_version=1) is True
+        assert (
+            db_instance.soft_delete_character_card(card_id, expected_version=1) is True
+        )
         # Verify version didn't change again
         conn = db_instance.get_connection()
-        raw_record = conn.execute("SELECT version FROM character_cards WHERE id = ?", (card_id,)).fetchone()
+        raw_record = conn.execute(
+            "SELECT version FROM character_cards WHERE id = ?", (card_id,)
+        ).fetchone()
         assert raw_record["version"] == 2
 
     def test_search_character_cards(self, db_instance: CharactersRAGDB):
@@ -374,7 +437,9 @@ class TestCharacterCards:
 
         # Test search after soft-deleting one of the results
         card2 = db_instance.get_character_card_by_id(card2_id)
-        db_instance.soft_delete_character_card(card2["id"], expected_version=card2["version"])
+        db_instance.soft_delete_character_card(
+            card2["id"], expected_version=card2["version"]
+        )
 
         results_after_delete = db_instance.search_character_cards("ZYX")
         assert len(results_after_delete) == 1
@@ -386,13 +451,16 @@ class TestCharacterCards:
             ("name", InputError, "Required field 'name' is missing"),
             # Assuming you add a required 'creator' field later
             # ("creator", InputError, "Required field 'creator' is missing"),
-        ]
+        ],
     )
-    def test_add_card_missing_required_fields(self, db_instance, field_to_remove, expected_error, error_match):
+    def test_add_card_missing_required_fields(
+        self, db_instance, field_to_remove, expected_error, error_match
+    ):
         card_data = _create_sample_card_data("MissingFields")
         del card_data[field_to_remove]
         with pytest.raises(expected_error, match=error_match):
             db_instance.add_character_card(card_data)
+
 
 class TestConversationsAndMessages:
     @pytest.fixture
@@ -401,7 +469,11 @@ class TestConversationsAndMessages:
         return card_id
 
     def test_add_conversation(self, db_instance: CharactersRAGDB, char_id):
-        conv_data = {"id": str(uuid.uuid4()), "character_id": char_id, "title": "Test Conversation"}
+        conv_data = {
+            "id": str(uuid.uuid4()),
+            "character_id": char_id,
+            "title": "Test Conversation",
+        }
         conv_id = db_instance.add_conversation(conv_data)
         assert conv_id == conv_data["id"]
 
@@ -411,26 +483,50 @@ class TestConversationsAndMessages:
         assert retrieved["version"] == 1
         assert retrieved["client_id"] == db_instance.client_id
 
-    def test_add_message_and_get_for_conversation(self, db_instance: CharactersRAGDB, char_id):
-        conv_id = db_instance.add_conversation({"character_id": char_id, "title": "MsgConv"})
+    def test_add_message_and_get_for_conversation(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        conv_id = db_instance.add_conversation(
+            {"character_id": char_id, "title": "MsgConv"}
+        )
         msg1_id = db_instance.add_message(
-            {"conversation_id": conv_id, "sender": "user", "content": "First", "timestamp": "2023-01-01T10:00:00Z"})
+            {
+                "conversation_id": conv_id,
+                "sender": "user",
+                "content": "First",
+                "timestamp": "2023-01-01T10:00:00Z",
+            }
+        )
         msg2_id = db_instance.add_message(
-            {"conversation_id": conv_id, "sender": "ai", "content": "Second", "timestamp": "2023-01-01T10:01:00Z"})
+            {
+                "conversation_id": conv_id,
+                "sender": "ai",
+                "content": "Second",
+                "timestamp": "2023-01-01T10:01:00Z",
+            }
+        )
 
-        messages_asc = db_instance.get_messages_for_conversation(conv_id, order_by_timestamp="ASC")
+        messages_asc = db_instance.get_messages_for_conversation(
+            conv_id, order_by_timestamp="ASC"
+        )
         assert len(messages_asc) == 2
         assert messages_asc[0]["id"] == msg1_id
         assert messages_asc[1]["id"] == msg2_id
 
-        messages_desc = db_instance.get_messages_for_conversation(conv_id, order_by_timestamp="DESC")
+        messages_desc = db_instance.get_messages_for_conversation(
+            conv_id, order_by_timestamp="DESC"
+        )
         assert len(messages_desc) == 2
         assert messages_desc[0]["id"] == msg2_id
         assert messages_desc[1]["id"] == msg1_id
 
-    def test_update_conversation_and_fts(self, db_instance: CharactersRAGDB, char_id: int):
+    def test_update_conversation_and_fts(
+        self, db_instance: CharactersRAGDB, char_id: int
+    ):
         initial_title = "AlphaTitleOne"
-        conv_id = db_instance.add_conversation({"character_id": char_id, "title": initial_title})
+        conv_id = db_instance.add_conversation(
+            {"character_id": char_id, "title": initial_title}
+        )
         original_conv = db_instance.get_conversation_by_id(conv_id)
 
         # Verify FTS state before update
@@ -438,24 +534,36 @@ class TestConversationsAndMessages:
 
         # Perform update
         updated_title = "BetaTitleTwo"
-        db_instance.update_conversation(conv_id, {"title": updated_title}, expected_version=original_conv['version'])
+        db_instance.update_conversation(
+            conv_id, {"title": updated_title}, expected_version=original_conv["version"]
+        )
 
         # Verify FTS state after update
         assert len(db_instance.search_conversations_by_title(updated_title)) == 1
-        assert len(db_instance.search_conversations_by_title(initial_title)) == 0, "FTS should not find the old title"
+        assert len(db_instance.search_conversations_by_title(initial_title)) == 0, (
+            "FTS should not find the old title"
+        )
 
-    def test_add_conversation_defaults_system_prompt_to_none(self, db_instance: CharactersRAGDB, char_id):
-        conv_id = db_instance.add_conversation({"character_id": char_id, "title": "NoSystemPrompt"})
+    def test_add_conversation_defaults_system_prompt_to_none(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        conv_id = db_instance.add_conversation(
+            {"character_id": char_id, "title": "NoSystemPrompt"}
+        )
 
         retrieved = db_instance.get_conversation_by_id(conv_id)
         assert retrieved["system_prompt"] is None
 
-    def test_add_conversation_persists_system_prompt(self, db_instance: CharactersRAGDB, char_id):
-        conv_id = db_instance.add_conversation({
-            "character_id": char_id,
-            "title": "WithSystemPrompt",
-            "system_prompt": "  Be concise.  ",
-        })
+    def test_add_conversation_persists_system_prompt(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        conv_id = db_instance.add_conversation(
+            {
+                "character_id": char_id,
+                "title": "WithSystemPrompt",
+                "system_prompt": "  Be concise.  ",
+            }
+        )
 
         retrieved = db_instance.get_conversation_by_id(conv_id)
         assert retrieved["system_prompt"] == "Be concise."
@@ -463,7 +571,9 @@ class TestConversationsAndMessages:
     def test_update_conversation_sets_system_prompt_and_bumps_version(
         self, db_instance: CharactersRAGDB, char_id
     ):
-        conv_id = db_instance.add_conversation({"character_id": char_id, "title": "UpdateSystemPrompt"})
+        conv_id = db_instance.add_conversation(
+            {"character_id": char_id, "title": "UpdateSystemPrompt"}
+        )
         original = db_instance.get_conversation_by_id(conv_id)
 
         result = db_instance.update_conversation(
@@ -480,11 +590,13 @@ class TestConversationsAndMessages:
     def test_update_conversation_clears_system_prompt_with_none(
         self, db_instance: CharactersRAGDB, char_id
     ):
-        conv_id = db_instance.add_conversation({
-            "character_id": char_id,
-            "title": "ClearSystemPrompt",
-            "system_prompt": "Initial prompt.",
-        })
+        conv_id = db_instance.add_conversation(
+            {
+                "character_id": char_id,
+                "title": "ClearSystemPrompt",
+                "system_prompt": "Initial prompt.",
+            }
+        )
         original = db_instance.get_conversation_by_id(conv_id)
 
         db_instance.update_conversation(
@@ -499,11 +611,13 @@ class TestConversationsAndMessages:
     def test_update_conversation_preserves_system_prompt_when_untouched(
         self, db_instance: CharactersRAGDB, char_id
     ):
-        conv_id = db_instance.add_conversation({
-            "character_id": char_id,
-            "title": "PreserveSystemPrompt",
-            "system_prompt": "Keep me around.",
-        })
+        conv_id = db_instance.add_conversation(
+            {
+                "character_id": char_id,
+                "title": "PreserveSystemPrompt",
+                "system_prompt": "Keep me around.",
+            }
+        )
         original = db_instance.get_conversation_by_id(conv_id)
 
         db_instance.update_conversation(
@@ -516,29 +630,45 @@ class TestConversationsAndMessages:
         assert updated["title"] == "PreserveSystemPromptRenamed"
         assert updated["system_prompt"] == "Keep me around."
 
-    def test_soft_delete_conversation_and_fts(self, db_instance: CharactersRAGDB, char_id):
+    def test_soft_delete_conversation_and_fts(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
         conv_title_for_delete_test = "DeleteConvForFTS"
-        conv_id = db_instance.add_conversation({"character_id": char_id, "title": conv_title_for_delete_test})
+        conv_id = db_instance.add_conversation(
+            {"character_id": char_id, "title": conv_title_for_delete_test}
+        )
         original_conv = db_instance.get_conversation_by_id(conv_id)
 
-        assert len(db_instance.search_conversations_by_title(conv_title_for_delete_test)) == 1
+        assert (
+            len(db_instance.search_conversations_by_title(conv_title_for_delete_test))
+            == 1
+        )
 
-        db_instance.soft_delete_conversation(conv_id, expected_version=original_conv['version'])
+        db_instance.soft_delete_conversation(
+            conv_id, expected_version=original_conv["version"]
+        )
 
         assert db_instance.get_conversation_by_id(conv_id) is None
-        assert len(db_instance.search_conversations_by_title(
-            conv_title_for_delete_test)) == 0, "FTS should not find soft-deleted conversation"
+        assert (
+            len(db_instance.search_conversations_by_title(conv_title_for_delete_test))
+            == 0
+        ), "FTS should not find soft-deleted conversation"
 
     def test_search_messages_by_content(self, db_instance: CharactersRAGDB, char_id):
-        conv_id = db_instance.add_conversation({"character_id": char_id, "title": "MessageSearchConv"})
-        msg1_data = {"id": str(uuid.uuid4()), "conversation_id": conv_id, "sender": "user",
-                     "content": "UniqueMessageContentAlpha"}
+        conv_id = db_instance.add_conversation(
+            {"character_id": char_id, "title": "MessageSearchConv"}
+        )
+        msg1_data = {
+            "id": str(uuid.uuid4()),
+            "conversation_id": conv_id,
+            "sender": "user",
+            "content": "UniqueMessageContentAlpha",
+        }
         db_instance.add_message(msg1_data)
 
         results = db_instance.search_messages_by_content("UniqueMessageContentAlpha")
         assert len(results) == 1
         assert results[0]["id"] == msg1_data["id"]
-
 
     # @pytest.mark.parametrize(
     #     "msg_data, raises_error",
@@ -578,40 +708,58 @@ class TestGetAllConversationIds:
     page cap.
     """
 
-    def test_returns_all_non_deleted_conversation_ids(self, db_instance: CharactersRAGDB):
+    def test_returns_all_non_deleted_conversation_ids(
+        self, db_instance: CharactersRAGDB
+    ):
         conv_id_1 = db_instance.add_conversation({"title": "Conv 1"})
         conv_id_2 = db_instance.add_conversation({"title": "Conv 2"})
         conv_to_delete = db_instance.add_conversation({"title": "Conv to delete"})
         deleted_record = db_instance.get_conversation_by_id(conv_to_delete)
-        db_instance.soft_delete_conversation(conv_to_delete, expected_version=deleted_record["version"])
+        db_instance.soft_delete_conversation(
+            conv_to_delete, expected_version=deleted_record["version"]
+        )
 
         ids = db_instance.get_all_conversation_ids()
 
         assert set(ids) == {conv_id_1, conv_id_2}
 
-    def test_includes_workspace_scoped_conversations(self, db_instance: CharactersRAGDB):
+    def test_includes_workspace_scoped_conversations(
+        self, db_instance: CharactersRAGDB
+    ):
         """Console chats persisted inside a workspace session are workspace-scoped
         and must be exportable, matching the Library's all-scope listing (task-179)."""
         global_id = db_instance.add_conversation({"title": "Global conv"})
         workspace_id = db_instance.add_conversation(
-            {"title": "Workspace conv", "scope_type": "workspace", "workspace_id": "ws-1"}
+            {
+                "title": "Workspace conv",
+                "scope_type": "workspace",
+                "workspace_id": "ws-1",
+            }
         )
 
         ids = db_instance.get_all_conversation_ids()
 
         assert set(ids) == {global_id, workspace_id}
 
-    def test_excludes_conversations_from_a_different_client_id(self, db_instance: CharactersRAGDB):
+    def test_excludes_conversations_from_a_different_client_id(
+        self, db_instance: CharactersRAGDB
+    ):
         own_id = db_instance.add_conversation({"title": "Own conv"})
-        db_instance.add_conversation({"title": "Other client conv", "client_id": "some-other-client"})
+        db_instance.add_conversation(
+            {"title": "Other client conv", "client_id": "some-other-client"}
+        )
 
         ids = db_instance.get_all_conversation_ids()
 
         assert ids == [own_id]
 
-    def test_returns_every_row_beyond_a_50_row_page_cap(self, db_instance: CharactersRAGDB):
+    def test_returns_every_row_beyond_a_50_row_page_cap(
+        self, db_instance: CharactersRAGDB
+    ):
         """The Library conversations snapshot caps at 50 rows -- this DB method must not."""
-        seeded_ids = [db_instance.add_conversation({"title": f"Conv {i}"}) for i in range(55)]
+        seeded_ids = [
+            db_instance.add_conversation({"title": f"Conv {i}"}) for i in range(55)
+        ]
 
         ids = db_instance.get_all_conversation_ids()
 
@@ -628,19 +776,22 @@ class TestNotesAndKeywords:
         assert isinstance(note_id, str)
 
         original_note = db_instance.get_note_by_id(note_id)
-        updated = db_instance.update_note(note_id, {"title": "Updated Title"},
-                                          expected_version=original_note['version'])
+        updated = db_instance.update_note(
+            note_id,
+            {"title": "Updated Title"},
+            expected_version=original_note["version"],
+        )
         assert updated is True
 
         retrieved = db_instance.get_note_by_id(note_id)
         assert retrieved["title"] == "Updated Title"
-        assert retrieved["version"] == original_note['version'] + 1
+        assert retrieved["version"] == original_note["version"] + 1
 
     def test_add_keyword_and_undelete(self, db_instance: CharactersRAGDB):
         keyword_id = db_instance.add_keyword("TestKeyword")
         kw_v1 = db_instance.get_keyword_by_id(keyword_id)
 
-        db_instance.soft_delete_keyword(keyword_id, expected_version=kw_v1['version'])
+        db_instance.soft_delete_keyword(keyword_id, expected_version=kw_v1["version"])
         assert db_instance.get_keyword_by_id(keyword_id) is None
 
         # Adding same keyword again should undelete it
@@ -651,9 +802,13 @@ class TestNotesAndKeywords:
         assert not retrieved["deleted"]
         assert retrieved["version"] == 3  # 1(add) -> 2(delete) -> 3(undelete/update)
 
-    def test_link_and_unlink_conversation_to_keyword(self, db_instance: CharactersRAGDB):
+    def test_link_and_unlink_conversation_to_keyword(
+        self, db_instance: CharactersRAGDB
+    ):
         char_id = db_instance.add_character_card(_create_sample_card_data("LinkChar"))
-        conv_id = db_instance.add_conversation({"character_id": char_id, "title": "LinkConv"})
+        conv_id = db_instance.add_conversation(
+            {"character_id": char_id, "title": "LinkConv"}
+        )
         kw_id = db_instance.add_keyword("Linkable")
 
         assert db_instance.link_conversation_to_keyword(conv_id, kw_id) is True
@@ -686,15 +841,21 @@ class TestGetAllNoteIds:
         note_id_2 = db_instance.add_note("Note 2", "Content 2")
         note_to_delete = db_instance.add_note("Note to delete", "Content 3")
         deleted_record = db_instance.get_note_by_id(note_to_delete)
-        db_instance.soft_delete_note(note_to_delete, expected_version=deleted_record["version"])
+        db_instance.soft_delete_note(
+            note_to_delete, expected_version=deleted_record["version"]
+        )
 
         ids = db_instance.get_all_note_ids()
 
         assert set(ids) == {note_id_1, note_id_2}
 
-    def test_returns_every_row_beyond_a_100_row_page_cap(self, db_instance: CharactersRAGDB):
+    def test_returns_every_row_beyond_a_100_row_page_cap(
+        self, db_instance: CharactersRAGDB
+    ):
         """The Library notes snapshot caps at 100 rows -- this DB method must not."""
-        seeded_ids = [db_instance.add_note(f"Note {i}", f"Content {i}") for i in range(105)]
+        seeded_ids = [
+            db_instance.add_note(f"Note {i}", f"Content {i}") for i in range(105)
+        ]
 
         ids = db_instance.get_all_note_ids()
 
@@ -706,54 +867,94 @@ class TestGetAllNoteIds:
 
 
 class TestSyncLog:
-    def test_sync_log_entry_on_add_and_update_character(self, db_instance: CharactersRAGDB):
+    def test_sync_log_entry_on_add_and_update_character(
+        self, db_instance: CharactersRAGDB
+    ):
         initial_log_max_id = db_instance.get_latest_sync_log_change_id()
         card_data = _create_sample_card_data("SyncLogChar")
         card_id = db_instance.add_character_card(card_data)
 
-        log_entries = db_instance.get_sync_log_entries(since_change_id=initial_log_max_id)
-        create_entry = next((e for e in log_entries if e["entity"] == "character_cards" and e["operation"] == "create"),
-                            None)
+        log_entries = db_instance.get_sync_log_entries(
+            since_change_id=initial_log_max_id
+        )
+        create_entry = next(
+            (
+                e
+                for e in log_entries
+                if e["entity"] == "character_cards" and e["operation"] == "create"
+            ),
+            None,
+        )
         assert create_entry is not None
         assert create_entry["entity_id"] == str(card_id)
         assert create_entry["payload"]["name"] == card_data["name"]
 
         # Test update
         latest_change_id_after_add = db_instance.get_latest_sync_log_change_id()
-        db_instance.update_character_card(card_id, {"description": "Updated for Sync"}, expected_version=1)
+        db_instance.update_character_card(
+            card_id, {"description": "Updated for Sync"}, expected_version=1
+        )
 
-        update_log_entries = db_instance.get_sync_log_entries(since_change_id=latest_change_id_after_add)
+        update_log_entries = db_instance.get_sync_log_entries(
+            since_change_id=latest_change_id_after_add
+        )
         update_entry = next(
-            (e for e in update_log_entries if e["entity"] == "character_cards" and e["operation"] == "update"), None)
+            (
+                e
+                for e in update_log_entries
+                if e["entity"] == "character_cards" and e["operation"] == "update"
+            ),
+            None,
+        )
         assert update_entry is not None
         assert update_entry["payload"]["description"] == "Updated for Sync"
         assert update_entry["payload"]["version"] == 2
 
     def test_sync_log_on_soft_delete_character(self, db_instance: CharactersRAGDB):
-        card_id = db_instance.add_character_card(_create_sample_card_data("SyncDeleteChar"))
+        card_id = db_instance.add_character_card(
+            _create_sample_card_data("SyncDeleteChar")
+        )
         latest_change_id = db_instance.get_latest_sync_log_change_id()
 
         db_instance.soft_delete_character_card(card_id, expected_version=1)
 
         new_entries = db_instance.get_sync_log_entries(since_change_id=latest_change_id)
-        delete_entry = next((e for e in new_entries if e["entity"] == "character_cards" and e["operation"] == "delete"),
-                            None)
+        delete_entry = next(
+            (
+                e
+                for e in new_entries
+                if e["entity"] == "character_cards" and e["operation"] == "delete"
+            ),
+            None,
+        )
         assert delete_entry is not None
         assert delete_entry["entity_id"] == str(card_id)
         assert delete_entry["payload"]["deleted"] == 1  # Stored as integer
         assert delete_entry["payload"]["version"] == 2
 
     def test_sync_log_for_link_tables(self, db_instance: CharactersRAGDB):
-        char_id = db_instance.add_character_card(_create_sample_card_data("SyncLinkChar"))
-        conv_id = db_instance.add_conversation({"character_id": char_id, "title": "SyncLinkConv"})
+        char_id = db_instance.add_character_card(
+            _create_sample_card_data("SyncLinkChar")
+        )
+        conv_id = db_instance.add_conversation(
+            {"character_id": char_id, "title": "SyncLinkConv"}
+        )
         kw_id = db_instance.add_keyword("SyncLinkable")
         latest_change_id = db_instance.get_latest_sync_log_change_id()
 
         db_instance.link_conversation_to_keyword(conv_id, kw_id)
 
-        link_entries = db_instance.get_sync_log_entries(since_change_id=latest_change_id)
+        link_entries = db_instance.get_sync_log_entries(
+            since_change_id=latest_change_id
+        )
         link_entry = next(
-            (e for e in link_entries if e["entity"] == "conversation_keywords" and e["operation"] == "create"), None)
+            (
+                e
+                for e in link_entries
+                if e["entity"] == "conversation_keywords" and e["operation"] == "create"
+            ),
+            None,
+        )
         assert link_entry is not None
         assert link_entry["payload"]["conversation_id"] == conv_id
         assert link_entry["payload"]["keyword_id"] == kw_id
@@ -761,9 +962,17 @@ class TestSyncLog:
         # Test unlink
         latest_change_id_after_link = db_instance.get_latest_sync_log_change_id()
         db_instance.unlink_conversation_from_keyword(conv_id, kw_id)
-        unlink_entries = db_instance.get_sync_log_entries(since_change_id=latest_change_id_after_link)
+        unlink_entries = db_instance.get_sync_log_entries(
+            since_change_id=latest_change_id_after_link
+        )
         unlink_entry = next(
-            (e for e in unlink_entries if e["entity"] == "conversation_keywords" and e["operation"] == "delete"), None)
+            (
+                e
+                for e in unlink_entries
+                if e["entity"] == "conversation_keywords" and e["operation"] == "delete"
+            ),
+            None,
+        )
         assert unlink_entry is not None
         assert unlink_entry["entity_id"] == f"{conv_id}_{kw_id}"
 
@@ -771,10 +980,14 @@ class TestSyncLog:
 class TestTransactions:
     def test_transaction_commit(self, db_instance: CharactersRAGDB):
         with db_instance.transaction() as conn:
-            conn.execute("INSERT INTO character_cards (name, client_id) VALUES (?, ?)",
-                         ("Trans1", db_instance.client_id))
-            conn.execute("INSERT INTO character_cards (name, client_id) VALUES (?, ?)",
-                         ("Trans2", db_instance.client_id))
+            conn.execute(
+                "INSERT INTO character_cards (name, client_id) VALUES (?, ?)",
+                ("Trans1", db_instance.client_id),
+            )
+            conn.execute(
+                "INSERT INTO character_cards (name, client_id) VALUES (?, ?)",
+                ("Trans2", db_instance.client_id),
+            )
 
         assert db_instance.get_character_card_by_name("Trans1") is not None
         assert db_instance.get_character_card_by_name("Trans2") is not None
@@ -783,11 +996,15 @@ class TestTransactions:
         initial_count = len(db_instance.list_character_cards())
         with pytest.raises(sqlite3.IntegrityError):
             with db_instance.transaction() as conn:
-                conn.execute("INSERT INTO character_cards (name, client_id) VALUES (?, ?)",
-                             ("TransRollback", db_instance.client_id))
+                conn.execute(
+                    "INSERT INTO character_cards (name, client_id) VALUES (?, ?)",
+                    ("TransRollback", db_instance.client_id),
+                )
                 # This will fail due to duplicate name, causing a rollback
-                conn.execute("INSERT INTO character_cards (name, client_id) VALUES (?, ?)",
-                             ("TransRollback", db_instance.client_id))
+                conn.execute(
+                    "INSERT INTO character_cards (name, client_id) VALUES (?, ?)",
+                    ("TransRollback", db_instance.client_id),
+                )
 
         assert len(db_instance.list_character_cards()) == initial_count
         assert db_instance.get_character_card_by_name("TransRollback") is None
@@ -819,8 +1036,18 @@ class TestMessageAttachmentsTable:
     def test_set_and_batch_get_attachments(self, db_instance):
         _conv, msg_id = _make_conversation_with_message(db_instance)
         rows = [
-            {"position": 1, "data": b"img-1", "mime_type": "image/png", "display_name": "a.png"},
-            {"position": 2, "data": b"img-2", "mime_type": "image/jpeg", "display_name": "b.jpg"},
+            {
+                "position": 1,
+                "data": b"img-1",
+                "mime_type": "image/png",
+                "display_name": "a.png",
+            },
+            {
+                "position": 2,
+                "data": b"img-2",
+                "mime_type": "image/jpeg",
+                "display_name": "b.jpg",
+            },
         ]
         db_instance.set_message_attachments(msg_id, rows)
 
@@ -833,7 +1060,14 @@ class TestMessageAttachmentsTable:
         # Replace semantics: a second set replaces, not appends.
         db_instance.set_message_attachments(
             msg_id,
-            [{"position": 1, "data": b"img-3", "mime_type": "image/png", "display_name": "c.png"}],
+            [
+                {
+                    "position": 1,
+                    "data": b"img-3",
+                    "mime_type": "image/png",
+                    "display_name": "c.png",
+                }
+            ],
         )
         fetched = db_instance.get_attachments_for_messages([msg_id])
         assert [r["display_name"] for r in fetched[msg_id]] == ["c.png"]
@@ -847,19 +1081,34 @@ class TestMessageAttachmentsTable:
         with _pytest.raises((ValueError, _sqlite3.IntegrityError, Exception)):
             db_instance.set_message_attachments(
                 msg_id,
-                [{"position": 0, "data": b"x", "mime_type": "image/png", "display_name": "z.png"}],
+                [
+                    {
+                        "position": 0,
+                        "data": b"x",
+                        "mime_type": "image/png",
+                        "display_name": "z.png",
+                    }
+                ],
             )
 
     def test_hard_delete_cascades_attachments(self, db_instance):
         _conv, msg_id = _make_conversation_with_message(db_instance)
         db_instance.set_message_attachments(
             msg_id,
-            [{"position": 1, "data": b"img", "mime_type": "image/png", "display_name": "a.png"}],
+            [
+                {
+                    "position": 1,
+                    "data": b"img",
+                    "mime_type": "image/png",
+                    "display_name": "a.png",
+                }
+            ],
         )
         with db_instance.transaction() as cursor:
             cursor.execute("DELETE FROM messages WHERE id = ?", (msg_id,))
             cursor.execute(
-                "SELECT COUNT(*) FROM message_attachments WHERE message_id = ?", (msg_id,)
+                "SELECT COUNT(*) FROM message_attachments WHERE message_id = ?",
+                (msg_id,),
             )
             assert cursor.fetchone()[0] == 0
 

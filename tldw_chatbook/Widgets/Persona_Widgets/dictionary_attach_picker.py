@@ -42,8 +42,16 @@ class DictionaryAttachPicker(ModalScreen[str | None]):
             yield Input(placeholder="Search conversations…", id="dict-attach-search")
             yield ListView(id="dict-attach-list")
             with Vertical(id="dict-attach-actions"):
-                yield Button("Attach", id="dict-attach-confirm", classes="console-action-secondary")
-                yield Button("Cancel", id="dict-attach-cancel", classes="console-action-secondary")
+                yield Button(
+                    "Attach",
+                    id="dict-attach-confirm",
+                    classes="console-action-secondary",
+                )
+                yield Button(
+                    "Cancel",
+                    id="dict-attach-cancel",
+                    classes="console-action-secondary",
+                )
 
     def on_mount(self) -> None:
         self._populate(self._conversations)
@@ -65,7 +73,15 @@ class DictionaryAttachPicker(ModalScreen[str | None]):
     def _filter(self, event: Input.Changed) -> None:
         event.stop()
         needle = event.value.strip().lower()
-        rows = [c for c in self._conversations if needle in str(c.get("title") or "").lower()] if needle else self._conversations
+        rows = (
+            [
+                c
+                for c in self._conversations
+                if needle in str(c.get("title") or "").lower()
+            ]
+            if needle
+            else self._conversations
+        )
         self._populate(rows)
 
     def _selected_id(self) -> str | None:

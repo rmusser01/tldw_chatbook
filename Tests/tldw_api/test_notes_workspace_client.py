@@ -33,7 +33,9 @@ from tldw_chatbook.tldw_api.notes_workspace_schemas import (
 )
 
 
-def _assert_request_call(call_args, expected_method, expected_endpoint, expected_kwargs):
+def _assert_request_call(
+    call_args, expected_method, expected_endpoint, expected_kwargs
+):
     args, kwargs = call_args
     assert args[:2] == (expected_method, expected_endpoint)
     for key, value in expected_kwargs.items():
@@ -77,10 +79,24 @@ class TestNotesWorkspaceClient:
             (
                 "search_server_notes",
                 (),
-                {"query": "alpha", "tokens": ["beta", "gamma"], "limit": 5, "offset": 2, "include_keywords": True},
+                {
+                    "query": "alpha",
+                    "tokens": ["beta", "gamma"],
+                    "limit": 5,
+                    "offset": 2,
+                    "include_keywords": True,
+                },
                 "GET",
                 "/api/v1/notes/search",
-                {"params": {"query": "alpha", "tokens": ["beta", "gamma"], "limit": 5, "offset": 2, "include_keywords": "true"}},
+                {
+                    "params": {
+                        "query": "alpha",
+                        "tokens": ["beta", "gamma"],
+                        "limit": 5,
+                        "offset": 2,
+                        "include_keywords": "true",
+                    }
+                },
             ),
             (
                 "get_server_note",
@@ -92,7 +108,11 @@ class TestNotesWorkspaceClient:
             ),
             (
                 "create_server_note",
-                (NoteCreateRequest(title=None, content="Body", keywords="alpha, beta"),),
+                (
+                    NoteCreateRequest(
+                        title=None, content="Body", keywords="alpha, beta"
+                    ),
+                ),
                 {},
                 "POST",
                 "/api/v1/notes/",
@@ -100,7 +120,11 @@ class TestNotesWorkspaceClient:
             ),
             (
                 "update_server_note",
-                ("note-2", NoteUpdateRequest(title="Updated", keywords=["alpha", "beta"]), 7),
+                (
+                    "note-2",
+                    NoteUpdateRequest(title="Updated", keywords=["alpha", "beta"]),
+                    7,
+                ),
                 {},
                 "PUT",
                 "/api/v1/notes/note-2",
@@ -135,9 +159,13 @@ class TestNotesWorkspaceClient:
 
         await getattr(client, method_name)(*call_args, **call_kwargs)
 
-        _assert_request_call(mocked.await_args, expected_method, expected_endpoint, expected_kwargs)
+        _assert_request_call(
+            mocked.await_args, expected_method, expected_endpoint, expected_kwargs
+        )
 
-    async def test_notes_namespace_gateway_routes_server_only_surfaces(self, monkeypatch):
+    async def test_notes_namespace_gateway_routes_server_only_surfaces(
+        self, monkeypatch
+    ):
         client = TLDWAPIClient("http://localhost:8000")
         mocked = AsyncMock(
             side_effect=[
@@ -149,8 +177,12 @@ class TestNotesWorkspaceClient:
         )
         monkeypatch.setattr(client, "_request", mocked)
 
-        keywords = await client.call_server_notes_endpoint("GET", "keywords/", params={"limit": 25})
-        created = await client.call_server_notes_endpoint("POST", "keywords/", payload={"keyword": "ml"})
+        keywords = await client.call_server_notes_endpoint(
+            "GET", "keywords/", params={"limit": 25}
+        )
+        created = await client.call_server_notes_endpoint(
+            "POST", "keywords/", payload={"keyword": "ml"}
+        )
         renamed = await client.call_server_notes_endpoint(
             "PATCH",
             "keywords/4",
@@ -167,9 +199,15 @@ class TestNotesWorkspaceClient:
         assert mocked.await_args_list[0].kwargs["params"] == {"limit": 25}
         assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/notes/keywords/")
         assert mocked.await_args_list[1].kwargs["json_data"] == {"keyword": "ml"}
-        assert mocked.await_args_list[2].args[:2] == ("PATCH", "/api/v1/notes/keywords/4")
+        assert mocked.await_args_list[2].args[:2] == (
+            "PATCH",
+            "/api/v1/notes/keywords/4",
+        )
         assert mocked.await_args_list[2].kwargs["headers"] == {"expected-version": "2"}
-        assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/notes/keywords/4")
+        assert mocked.await_args_list[3].args[:2] == (
+            "DELETE",
+            "/api/v1/notes/keywords/4",
+        )
         assert mocked.await_args_list[3].kwargs["headers"] == {"expected-version": "3"}
         assert keywords["items"][0]["keyword"] == "ai"
         assert created["keyword"] == "ml"
@@ -259,10 +297,22 @@ class TestNotesWorkspaceClient:
         [
             (
                 "get_notes_graph",
-                (NoteGraphRequest(center_note_id="note:123", edge_types=["manual", "backlink"], max_nodes=50),),
+                (
+                    NoteGraphRequest(
+                        center_note_id="note:123",
+                        edge_types=["manual", "backlink"],
+                        max_nodes=50,
+                    ),
+                ),
                 "GET",
                 "/api/v1/notes/graph",
-                {"params": {"center_note_id": "note:123", "edge_types": "manual,backlink", "max_nodes": 50}},
+                {
+                    "params": {
+                        "center_note_id": "note:123",
+                        "edge_types": "manual,backlink",
+                        "max_nodes": 50,
+                    }
+                },
             ),
             (
                 "get_note_neighbors",
@@ -317,7 +367,9 @@ class TestNotesWorkspaceClient:
 
         await getattr(client, method_name)(*call_args)
 
-        _assert_request_call(mocked.await_args, expected_method, expected_endpoint, expected_kwargs)
+        _assert_request_call(
+            mocked.await_args, expected_method, expected_endpoint, expected_kwargs
+        )
 
     @pytest.mark.parametrize(
         "method_name, call_args, call_kwargs, expected_method, expected_endpoint, expected_kwargs",
@@ -340,11 +392,24 @@ class TestNotesWorkspaceClient:
             ),
             (
                 "create_workspace",
-                ("ws-1", WorkspaceCreateRequest(name="Workspace", archived=True, study_materials_policy="workspace")),
+                (
+                    "ws-1",
+                    WorkspaceCreateRequest(
+                        name="Workspace",
+                        archived=True,
+                        study_materials_policy="workspace",
+                    ),
+                ),
                 {},
                 "PUT",
                 "/api/v1/workspaces/ws-1",
-                {"json_data": {"name": "Workspace", "archived": True, "study_materials_policy": "workspace"}},
+                {
+                    "json_data": {
+                        "name": "Workspace",
+                        "archived": True,
+                        "study_materials_policy": "workspace",
+                    }
+                },
             ),
             (
                 "update_workspace",
@@ -380,7 +445,9 @@ class TestNotesWorkspaceClient:
 
         await getattr(client, method_name)(*call_args, **call_kwargs)
 
-        _assert_request_call(mocked.await_args, expected_method, expected_endpoint, expected_kwargs)
+        _assert_request_call(
+            mocked.await_args, expected_method, expected_endpoint, expected_kwargs
+        )
 
     @pytest.mark.parametrize(
         "method_name, call_args, call_kwargs, expected_method, expected_endpoint, expected_kwargs",
@@ -395,19 +462,42 @@ class TestNotesWorkspaceClient:
             ),
             (
                 "create_workspace_note",
-                ("ws-1", WorkspaceNoteCreateRequest(title="Draft", content="Body", keywords=["alpha", "beta"])),
+                (
+                    "ws-1",
+                    WorkspaceNoteCreateRequest(
+                        title="Draft", content="Body", keywords=["alpha", "beta"]
+                    ),
+                ),
                 {},
                 "POST",
                 "/api/v1/workspaces/ws-1/notes",
-                {"json_data": {"title": "Draft", "content": "Body", "keywords": ["alpha", "beta"]}},
+                {
+                    "json_data": {
+                        "title": "Draft",
+                        "content": "Body",
+                        "keywords": ["alpha", "beta"],
+                    }
+                },
             ),
             (
                 "update_workspace_note",
-                ("ws-1", 4, WorkspaceNoteUpdateRequest(title="Updated", keywords_json='["alpha"]', version=2)),
+                (
+                    "ws-1",
+                    4,
+                    WorkspaceNoteUpdateRequest(
+                        title="Updated", keywords_json='["alpha"]', version=2
+                    ),
+                ),
                 {},
                 "PUT",
                 "/api/v1/workspaces/ws-1/notes/4",
-                {"json_data": {"title": "Updated", "keywords_json": '["alpha"]', "version": 2}},
+                {
+                    "json_data": {
+                        "title": "Updated",
+                        "keywords_json": '["alpha"]',
+                        "version": 2,
+                    }
+                },
             ),
             (
                 "delete_workspace_note",
@@ -435,7 +525,9 @@ class TestNotesWorkspaceClient:
 
         await getattr(client, method_name)(*call_args, **call_kwargs)
 
-        _assert_request_call(mocked.await_args, expected_method, expected_endpoint, expected_kwargs)
+        _assert_request_call(
+            mocked.await_args, expected_method, expected_endpoint, expected_kwargs
+        )
 
     @pytest.mark.parametrize(
         "method_name, call_args, call_kwargs, expected_method, expected_endpoint, expected_kwargs",
@@ -450,7 +542,12 @@ class TestNotesWorkspaceClient:
             ),
             (
                 "create_workspace_source",
-                ("ws-1", WorkspaceSourceCreateRequest(id="src-1", media_id=9, title="Paper", source_type="pdf")),
+                (
+                    "ws-1",
+                    WorkspaceSourceCreateRequest(
+                        id="src-1", media_id=9, title="Paper", source_type="pdf"
+                    ),
+                ),
                 {},
                 "POST",
                 "/api/v1/workspaces/ws-1/sources",
@@ -468,7 +565,13 @@ class TestNotesWorkspaceClient:
             ),
             (
                 "update_workspace_source",
-                ("ws-1", "src-1", WorkspaceSourceUpdateRequest(title="Reordered", position=1, version=3)),
+                (
+                    "ws-1",
+                    "src-1",
+                    WorkspaceSourceUpdateRequest(
+                        title="Reordered", position=1, version=3
+                    ),
+                ),
                 {},
                 "PUT",
                 "/api/v1/workspaces/ws-1/sources/src-1",
@@ -500,7 +603,9 @@ class TestNotesWorkspaceClient:
 
         await getattr(client, method_name)(*call_args, **call_kwargs)
 
-        _assert_request_call(mocked.await_args, expected_method, expected_endpoint, expected_kwargs)
+        _assert_request_call(
+            mocked.await_args, expected_method, expected_endpoint, expected_kwargs
+        )
 
     @pytest.mark.parametrize(
         "method_name, call_args, call_kwargs, expected_method, expected_endpoint, expected_kwargs",
@@ -515,7 +620,12 @@ class TestNotesWorkspaceClient:
             ),
             (
                 "create_workspace_artifact",
-                ("ws-1", WorkspaceArtifactCreateRequest(id="art-1", artifact_type="summary", title="Summary")),
+                (
+                    "ws-1",
+                    WorkspaceArtifactCreateRequest(
+                        id="art-1", artifact_type="summary", title="Summary"
+                    ),
+                ),
                 {},
                 "POST",
                 "/api/v1/workspaces/ws-1/artifacts",
@@ -531,11 +641,23 @@ class TestNotesWorkspaceClient:
             ),
             (
                 "update_workspace_artifact",
-                ("ws-1", "art-1", WorkspaceArtifactUpdateRequest(title="Summary v2", total_tokens=10, version=2)),
+                (
+                    "ws-1",
+                    "art-1",
+                    WorkspaceArtifactUpdateRequest(
+                        title="Summary v2", total_tokens=10, version=2
+                    ),
+                ),
                 {},
                 "PUT",
                 "/api/v1/workspaces/ws-1/artifacts/art-1",
-                {"json_data": {"title": "Summary v2", "total_tokens": 10, "version": 2}},
+                {
+                    "json_data": {
+                        "title": "Summary v2",
+                        "total_tokens": 10,
+                        "version": 2,
+                    }
+                },
             ),
             (
                 "delete_workspace_artifact",
@@ -563,7 +685,9 @@ class TestNotesWorkspaceClient:
 
         await getattr(client, method_name)(*call_args, **call_kwargs)
 
-        _assert_request_call(mocked.await_args, expected_method, expected_endpoint, expected_kwargs)
+        _assert_request_call(
+            mocked.await_args, expected_method, expected_endpoint, expected_kwargs
+        )
 
     @pytest.mark.parametrize(
         "method_name, call_args, call_kwargs, expected_method, expected_endpoint, expected_kwargs",
@@ -574,7 +698,13 @@ class TestNotesWorkspaceClient:
                 {"page": 2, "results_per_page": 25, "include_keywords": True},
                 "GET",
                 "/api/v1/media/",
-                {"params": {"page": 2, "results_per_page": 25, "include_keywords": "true"}},
+                {
+                    "params": {
+                        "page": 2,
+                        "results_per_page": 25,
+                        "include_keywords": "true",
+                    }
+                },
             ),
             (
                 "search_media_items",
@@ -583,7 +713,9 @@ class TestNotesWorkspaceClient:
                 "POST",
                 "/api/v1/media/search",
                 {
-                    "json_data": MediaSearchRequest(query="paper").model_dump(exclude_none=True, mode="json"),
+                    "json_data": MediaSearchRequest(query="paper").model_dump(
+                        exclude_none=True, mode="json"
+                    ),
                     "params": {"page": 3, "results_per_page": 20},
                 },
             ),
@@ -605,13 +737,17 @@ class TestNotesWorkspaceClient:
 
         await getattr(client, method_name)(*call_args, **call_kwargs)
 
-        _assert_request_call(mocked.await_args, expected_method, expected_endpoint, expected_kwargs)
+        _assert_request_call(
+            mocked.await_args, expected_method, expected_endpoint, expected_kwargs
+        )
 
     async def test_request_returns_empty_dict_for_204_no_content(self, monkeypatch):
         client = TLDWAPIClient("http://localhost:8000")
         request = httpx.Request("DELETE", "http://localhost:8000/api/v1/notes/note-1")
         response = httpx.Response(204, request=request)
-        monkeypatch.setattr(client, "_get_client", AsyncMock(return_value=_FakeHTTPClient(response)))
+        monkeypatch.setattr(
+            client, "_get_client", AsyncMock(return_value=_FakeHTTPClient(response))
+        )
 
         result = await client._request("DELETE", "/api/v1/notes/note-1")
 
@@ -621,7 +757,9 @@ class TestNotesWorkspaceClient:
         client = TLDWAPIClient("http://localhost:8000")
         request = httpx.Request("GET", "http://localhost:8000/api/v1/notes")
         response = httpx.Response(200, request=request, content=b"")
-        monkeypatch.setattr(client, "_get_client", AsyncMock(return_value=_FakeHTTPClient(response)))
+        monkeypatch.setattr(
+            client, "_get_client", AsyncMock(return_value=_FakeHTTPClient(response))
+        )
 
         with pytest.raises(APIResponseError) as exc_info:
             await client._request("GET", "/api/v1/notes")
@@ -630,9 +768,15 @@ class TestNotesWorkspaceClient:
 
     async def test_note_list_response_validates_wrapper_payload(self):
         payload = {
-            "notes": [{"id": "note-1", "title": "Alpha", "content": "Body", "version": 1}],
-            "items": [{"id": "note-1", "title": "Alpha", "content": "Body", "version": 1}],
-            "results": [{"id": "note-1", "title": "Alpha", "content": "Body", "version": 1}],
+            "notes": [
+                {"id": "note-1", "title": "Alpha", "content": "Body", "version": 1}
+            ],
+            "items": [
+                {"id": "note-1", "title": "Alpha", "content": "Body", "version": 1}
+            ],
+            "results": [
+                {"id": "note-1", "title": "Alpha", "content": "Body", "version": 1}
+            ],
             "count": 1,
             "limit": 25,
             "offset": 0,
@@ -649,7 +793,12 @@ class TestNotesWorkspaceClient:
         payload = {
             "items": [
                 {"id": 9, "title": "Paper", "url": "/api/v1/media/9", "type": "pdf"},
-                {"id": 10, "title": "Video", "url": "/api/v1/media/10", "type": "video"},
+                {
+                    "id": 10,
+                    "title": "Video",
+                    "url": "/api/v1/media/10",
+                    "type": "video",
+                },
             ],
             "pagination": {
                 "page": 1,
@@ -696,7 +845,9 @@ class TestNotesWorkspaceClient:
 
     async def test_note_graph_response_validates_server_payload(self):
         payload = {
-            "nodes": [{"id": "note:123", "type": "note", "label": "Alpha", "degree": 1}],
+            "nodes": [
+                {"id": "note:123", "type": "note", "label": "Alpha", "degree": 1}
+            ],
             "edges": [
                 {
                     "id": "e:1",

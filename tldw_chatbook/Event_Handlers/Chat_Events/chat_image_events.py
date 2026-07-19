@@ -35,19 +35,19 @@ class ChatImageHandler:
     """Handle image operations for chat."""
 
     MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
-    SUPPORTED_FORMATS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
+    SUPPORTED_FORMATS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
     @staticmethod
     async def process_image_file(file_path: str) -> Tuple[bytes, str]:
         """
         Process an image file for chat attachment.
-        
+
         Args:
             file_path: Path to the image file
-            
+
         Returns:
             Tuple of (image_data, mime_type)
-            
+
         Raises:
             FileNotFoundError: If file doesn't exist
             ValueError: If file format unsupported or too large
@@ -83,13 +83,13 @@ class ChatImageHandler:
         image_data = path.read_bytes()
         extension = path.suffix.lower()
 
-        if extension == '.svg':
+        if extension == ".svg":
             # No usable fallback for un-rasterized SVG bytes — errors reject.
             final_bytes, final_mime = await ChatImageHandler.prepare_image_payload(
                 image_data, extension
             )
         else:
-            mime_type = mimetypes.guess_type(str(path))[0] or 'image/png'
+            mime_type = mimetypes.guess_type(str(path))[0] or "image/png"
             try:
                 final_bytes, final_mime = await ChatImageHandler.prepare_image_payload(
                     image_data, extension
@@ -155,7 +155,9 @@ class ChatImageHandler:
         return {"output_height": target}
 
     @staticmethod
-    async def prepare_image_payload(image_data: bytes, extension: str) -> Tuple[bytes, str]:
+    async def prepare_image_payload(
+        image_data: bytes, extension: str
+    ) -> Tuple[bytes, str]:
         """Normalize image bytes for provider payloads.
 
         SVG rasterizes to PNG first (bounded — see _svg_raster_kwargs);
@@ -180,7 +182,7 @@ class ChatImageHandler:
             svg_rendering_available,
         )
 
-        if extension == '.svg':
+        if extension == ".svg":
             if not svg_rendering_available():
                 raise ValueError(
                     "SVG attachments require the optional cairosvg dependency "
@@ -213,27 +215,31 @@ class ChatImageHandler:
             pil_image.thumbnail(
                 (max_dimension, max_dimension), PILImage.Resampling.LANCZOS
             )
-        if actual_format == 'JPEG':
-            save_format, save_kwargs = 'JPEG', {'optimize': True, 'quality': 85}
-        elif actual_format == 'WEBP':
-            save_format, save_kwargs = 'WEBP', {'quality': 85}
+        if actual_format == "JPEG":
+            save_format, save_kwargs = "JPEG", {"optimize": True, "quality": 85}
+        elif actual_format == "WEBP":
+            save_format, save_kwargs = "WEBP", {"quality": 85}
         else:
             # PNG stays PNG; GIF and every non-payload-safe format transcode
             # to PNG (the legacy else-branch, now with a truthful mime).
-            save_format, save_kwargs = 'PNG', {'optimize': True}
-        if save_format == 'PNG' and pil_image.mode not in (
-            '1', 'L', 'LA', 'I', 'P', 'RGB', 'RGBA'
+            save_format, save_kwargs = "PNG", {"optimize": True}
+        if save_format == "PNG" and pil_image.mode not in (
+            "1",
+            "L",
+            "LA",
+            "I",
+            "P",
+            "RGB",
+            "RGBA",
         ):
-            pil_image = pil_image.convert('RGB')  # e.g. CMYK — PNG can't encode it
+            pil_image = pil_image.convert("RGB")  # e.g. CMYK — PNG can't encode it
         buffer = BytesIO()
         pil_image.save(buffer, format=save_format, **save_kwargs)
         return buffer.getvalue(), PAYLOAD_FORMAT_MIME[save_format]
 
     @staticmethod
     async def _process_image_data(
-        image_data: bytes,
-        extension: str,
-        mime_type: str
+        image_data: bytes, extension: str, mime_type: str
     ) -> bytes:
         """Legacy adapter: bytes-only view of prepare_image_payload.
 
@@ -249,10 +255,10 @@ class ChatImageHandler:
     def validate_image_data(image_data: bytes) -> bool:
         """
         Validate that the bytes represent a valid image.
-        
+
         Args:
             image_data: Image bytes to validate
-            
+
         Returns:
             True if valid image, False otherwise
         """
@@ -262,33 +268,31 @@ class ChatImageHandler:
             return True
         except Exception:
             return False
-    
+
     @staticmethod
     def get_image_info(image_data: bytes) -> dict:
         """
         Get information about an image.
-        
+
         Args:
             image_data: Image bytes
-            
+
         Returns:
             Dictionary with image information
         """
         try:
             pil_image = PILImage.open(BytesIO(image_data))
             return {
-                'width': pil_image.width,
-                'height': pil_image.height,
-                'format': pil_image.format,
-                'mode': pil_image.mode,
-                'size_kb': len(image_data) / 1024
+                "width": pil_image.width,
+                "height": pil_image.height,
+                "format": pil_image.format,
+                "mode": pil_image.mode,
+                "size_kb": len(image_data) / 1024,
             }
         except Exception as e:
             logging.error(f"Error getting image info: {e}")
-            return {
-                'error': str(e),
-                'size_kb': len(image_data) / 1024
-            }
+            return {"error": str(e), "size_kb": len(image_data) / 1024}
+
 
 #
 #

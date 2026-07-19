@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Optional, Dict, Union, Callable
 import psutil
+
 #
 # Third-party Imports
 #
@@ -33,17 +34,23 @@ def is_metrics_logging_enabled() -> bool:
 
     global _metrics_enabled_cache
     if "PYTEST_CURRENT_TEST" in os.environ:
-        return os.environ.get("TLDW_METRICS_LOGGING", "").lower() in _METRICS_LOGGING_TRUTHY
+        return (
+            os.environ.get("TLDW_METRICS_LOGGING", "").lower()
+            in _METRICS_LOGGING_TRUTHY
+        )
     if _metrics_enabled_cache is None:
-        _metrics_enabled_cache = os.environ.get("TLDW_METRICS_LOGGING", "").lower() in _METRICS_LOGGING_TRUTHY
+        _metrics_enabled_cache = (
+            os.environ.get("TLDW_METRICS_LOGGING", "").lower()
+            in _METRICS_LOGGING_TRUTHY
+        )
     return _metrics_enabled_cache
 
 
 def _log_metric(
-        metric_name: str,
-        metric_type: str,
-        value: Any,
-        labels: Optional[LabelDict] = None,
+    metric_name: str,
+    metric_type: str,
+    value: Any,
+    labels: Optional[LabelDict] = None,
 ):
     """
     Private helper to log a structured metric using idiomatic loguru binding.
@@ -64,10 +71,10 @@ def _log_metric(
 
 
 def timeit(
-        metric_name: Optional[str] = None,
-        labels: Optional[LabelDict] = None,
-        log_summary: bool = True,
-        log_call_count: bool = False,
+    metric_name: Optional[str] = None,
+    labels: Optional[LabelDict] = None,
+    log_summary: bool = True,
+    log_call_count: bool = False,
 ):
     """
     A robust decorator that times a function, logging a histogram and status.
@@ -141,13 +148,17 @@ class MetricsLogger:
             final_labels.update(labels)
         return final_labels
 
-    def log_counter(self, name: str, value: int = 1, labels: Optional[LabelDict] = None):
+    def log_counter(
+        self, name: str, value: int = 1, labels: Optional[LabelDict] = None
+    ):
         _log_metric(name, "counter", value, self._get_labels(labels))
 
     def log_gauge(self, name: str, value: float, labels: Optional[LabelDict] = None):
         _log_metric(name, "gauge", value, self._get_labels(labels))
 
-    def log_histogram(self, name: str, value: float, labels: Optional[LabelDict] = None):
+    def log_histogram(
+        self, name: str, value: float, labels: Optional[LabelDict] = None
+    ):
         _log_metric(name, "histogram", value, self._get_labels(labels))
 
     def log_resource_usage(self, labels: Optional[LabelDict] = None):
@@ -155,13 +166,17 @@ class MetricsLogger:
             self._resource_process = psutil.Process()
         process = self._resource_process
         combined_labels = self._get_labels(labels)
-        self.log_gauge("process_memory_mb", process.memory_info().rss / (1024 ** 2), combined_labels)
+        self.log_gauge(
+            "process_memory_mb", process.memory_info().rss / (1024**2), combined_labels
+        )
         # Non-blocking: interval=None compares against the last recorded
         # sample instead of sleeping the calling thread to measure a fresh
         # window (see task-248 / performance audit finding A3). The first
         # call after construction returns 0.0 (no prior sample) -- the
         # cached process handle above means later calls are accurate.
-        self.log_gauge("process_cpu_percent", process.cpu_percent(interval=None), combined_labels)
+        self.log_gauge(
+            "process_cpu_percent", process.cpu_percent(interval=None), combined_labels
+        )
 
 
 # For convenience, a default instance for simple, one-off logging

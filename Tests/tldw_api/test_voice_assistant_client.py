@@ -135,7 +135,9 @@ async def test_voice_assistant_client_wraps_rest_routes(monkeypatch):
     )
     created = await client.create_voice_command(definition)
     detail = await client.get_voice_command("cmd-1", persona_id="persona-1")
-    updated = await client.update_voice_command("cmd-1", definition, persona_id="persona-1")
+    updated = await client.update_voice_command(
+        "cmd-1", definition, persona_id="persona-1"
+    )
     toggled = await client.toggle_voice_command(
         "cmd-1",
         VoiceCommandToggleRequest(enabled=False),

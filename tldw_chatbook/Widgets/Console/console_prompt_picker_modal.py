@@ -71,7 +71,9 @@ SEARCH_DEBOUNCE_SECONDS = 0.2
 
 EMPTY_STORE_COPY = "No saved prompts yet — create them in Library ▸ Prompts."
 NO_SYSTEM_PART_SUFFIX = " (no system part)"
-NO_SYSTEM_PART_REASON = "This prompt has no system part to apply as the session system prompt."
+NO_SYSTEM_PART_REASON = (
+    "This prompt has no system part to apply as the session system prompt."
+)
 
 _MODE_TITLES = {
     MODE_INSERT: "Insert prompt",
@@ -239,10 +241,13 @@ class ConsolePromptPickerModal(ModalScreen[Optional[Mapping[str, object]]]):
         await container.remove_children()
         self._hide_reason()
         if not self._results:
-            await container.mount(Static(EMPTY_STORE_COPY, id=EMPTY_STATIC_ID, markup=False))
+            await container.mount(
+                Static(EMPTY_STORE_COPY, id=EMPTY_STATIC_ID, markup=False)
+            )
             return
         await container.mount_all(
-            self._build_row_button(index, record) for index, record in enumerate(self._results)
+            self._build_row_button(index, record)
+            for index, record in enumerate(self._results)
         )
         self._sync_highlight()
         # Rows may have just been (re)mounted; the filter Input must keep

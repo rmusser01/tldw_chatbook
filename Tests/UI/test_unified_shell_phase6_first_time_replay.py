@@ -22,7 +22,9 @@ PHASE_6_README = Path("Docs/superpowers/qa/unified-shell/phase-6/README.md")
 PHASE_6_FIRST_TIME_EVIDENCE = Path(
     "Docs/superpowers/qa/unified-shell/phase-6/2026-05-05-phase-6-1-first-time-user-replay.md"
 )
-PHASE_6_PARENT_TASK = Path("backlog/tasks/task-7 - Phase-6-Audit-Replay-And-Closeout.md")
+PHASE_6_PARENT_TASK = Path(
+    "backlog/tasks/task-7 - Phase-6-Audit-Replay-And-Closeout.md"
+)
 PHASE_6_FIRST_TIME_TASK = Path(
     "backlog/tasks/task-7.1 - Phase-6.1-Replay-first-time-user-walkthrough.md"
 )
@@ -117,7 +119,9 @@ def _test_cli_setting(section: str, key: str, default=None):
 
 
 @pytest.mark.asyncio
-async def test_first_time_shell_replay_exposes_home_console_and_orientation_paths() -> None:
+async def test_first_time_shell_replay_exposes_home_console_and_orientation_paths() -> (
+    None
+):
     """Verify first-time launch exposes the shell's primary orientation paths."""
     app = _build_test_app()
     app.app_config["_first_run"] = True
@@ -129,14 +133,20 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
                 pilot,
                 # Nav strip + docked hint mount a tick after the screen swap;
                 # wait for the full chrome before asserting/clicking.
-                lambda: app.current_tab == "home"
-                and app.screen.__class__.__name__ == "HomeScreen"
-                and len(app.screen.query(".nav-button")) == len(EXPECTED_NAV)
-                and len(app.screen.query("#nav-overflow-hint")) == 1,
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and len(app.screen.query(".nav-button")) == len(EXPECTED_NAV)
+                    and len(app.screen.query("#nav-overflow-hint")) == 1
+                ),
             )
 
-            nav_buttons = list(app.screen.query(MainNavigationBar).first().query(Button))
-            assert [(button.id, str(button.label).strip()) for button in nav_buttons] == EXPECTED_NAV
+            nav_buttons = list(
+                app.screen.query(MainNavigationBar).first().query(Button)
+            )
+            assert [
+                (button.id, str(button.label).strip()) for button in nav_buttons
+            ] == EXPECTED_NAV
 
             home_text = _screen_text(app)
             assert "Console needs a working model before live AI tasks." in home_text
@@ -173,7 +183,8 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
                 await _wait_until(
                     pilot,
                     lambda current_tab=current_tab, screen_name=screen_name: (
-                        app.current_tab == current_tab and app.screen.__class__.__name__ == screen_name
+                        app.current_tab == current_tab
+                        and app.screen.__class__.__name__ == screen_name
                     ),
                 )
                 screen_text = _screen_text(app)

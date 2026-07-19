@@ -40,7 +40,10 @@ class SchedulerLoop:
         self.running = True
         await asyncio.to_thread(self.queue.load)
         while self.running:
-            if self._tick_count > 0 and self._tick_count % self.queue_reload_interval_ticks == 0:
+            if (
+                self._tick_count > 0
+                and self._tick_count % self.queue_reload_interval_ticks == 0
+            ):
                 await asyncio.to_thread(self.queue.load)
             self._tick_count += 1
             await self.tick()

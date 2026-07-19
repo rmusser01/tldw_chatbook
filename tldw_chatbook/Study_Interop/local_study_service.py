@@ -124,7 +124,10 @@ class LocalStudyService:
             message=f"Local study deck created: {deck.get('name') or name}",
             source_entity_id=str(deck.get("id") or deck_id),
             source_entity_kind="study_deck",
-            payload={"action": "deck_created", "deck_id": str(deck.get("id") or deck_id)},
+            payload={
+                "action": "deck_created",
+                "deck_id": str(deck.get("id") or deck_id),
+            },
         )
         return deck
 
@@ -155,7 +158,9 @@ class LocalStudyService:
             "expected_version": expected_version,
         }
         update_deck = self._require_db().update_deck
-        accepts_metadata = "metadata" in inspect.signature(update_deck).parameters or any(
+        accepts_metadata = "metadata" in inspect.signature(
+            update_deck
+        ).parameters or any(
             parameter.kind == inspect.Parameter.VAR_KEYWORD
             for parameter in inspect.signature(update_deck).parameters.values()
         )
@@ -173,7 +178,9 @@ class LocalStudyService:
         offset: int = 0,
     ) -> Any:
         normalized_q = str(q or "").strip() or None
-        return self._require_db().list_flashcards(deck_id=deck_id, q=normalized_q, limit=limit, offset=offset)
+        return self._require_db().list_flashcards(
+            deck_id=deck_id, q=normalized_q, limit=limit, offset=offset
+        )
 
     def get_flashcard(self, card_id: str) -> Any:
         return self._require_db().get_flashcard(card_id)
@@ -277,12 +284,16 @@ class LocalStudyService:
             )
         return {"items": created, "count": len(created), "total": len(created)}
 
-    def update_flashcards_bulk(self, updates: list[Mapping[str, Any]]) -> dict[str, Any]:
+    def update_flashcards_bulk(
+        self, updates: list[Mapping[str, Any]]
+    ) -> dict[str, Any]:
         results: list[dict[str, Any]] = []
         for update in updates:
             card_id = update.get("uuid") or update.get("id") or update.get("card_id")
             if not card_id:
-                results.append({"uuid": None, "status": "error", "error": "missing_card_id"})
+                results.append(
+                    {"uuid": None, "status": "error", "error": "missing_card_id"}
+                )
                 continue
             card_id = str(card_id)
             card = self.update_flashcard(
@@ -294,7 +305,9 @@ class LocalStudyService:
                 notes=update.get("notes"),
                 extra=update.get("extra"),
                 expected_version=update.get("expected_version"),
-                card_type=update.get("card_type") or update.get("type") or update.get("model_type"),
+                card_type=update.get("card_type")
+                or update.get("type")
+                or update.get("model_type"),
             )
             status = "updated" if card else "not_found"
             results.append({"uuid": card_id, "status": status, "flashcard": card})
@@ -322,7 +335,9 @@ class LocalStudyService:
         *,
         expected_version: Optional[int] = None,
     ) -> Any:
-        self._require_db().reset_flashcard_scheduling(card_id, expected_version=expected_version)
+        self._require_db().reset_flashcard_scheduling(
+            card_id, expected_version=expected_version
+        )
         return self._require_db().get_flashcard(card_id)
 
     def set_flashcard_tags(self, card_id: str, *, tags: list[str]) -> Any:
@@ -339,7 +354,10 @@ class LocalStudyService:
         get_tags = getattr(db, "get_flashcard_tags", None)
         if not callable(get_tags):
             card = db.get_flashcard(card_id)
-            return {"uuid": card_id, "tags": self._normalize_tags((card or {}).get("tags"))}
+            return {
+                "uuid": card_id,
+                "tags": self._normalize_tags((card or {}).get("tags")),
+            }
         payload = get_tags(card_id)
         if isinstance(payload, Mapping):
             items = list(payload.get("items") or [])
@@ -387,7 +405,10 @@ class LocalStudyService:
         if not deck_ref_text:
             raise ValueError("Flashcard import row is missing a deck.")
         for deck in list(self.list_decks(limit=1000, offset=0) or []):
-            if str(deck.get("id")) == deck_ref_text or str(deck.get("name") or "").strip() == deck_ref_text:
+            if (
+                str(deck.get("id")) == deck_ref_text
+                or str(deck.get("name") or "").strip() == deck_ref_text
+            ):
                 return str(deck.get("id"))
         created = self.create_deck(name=deck_ref_text)
         return str(created.get("id"))
@@ -414,7 +435,9 @@ class LocalStudyService:
         skipped_blocks = 0
 
         if max_lines is not None and len(lines) > max_lines:
-            errors.append({"line": max_lines + 1, "error": "Content exceeds max_lines."})
+            errors.append(
+                {"line": max_lines + 1, "error": "Content exceeds max_lines."}
+            )
             lines = lines[:max_lines]
 
         block: list[tuple[int, str]] = []
@@ -433,15 +456,23 @@ class LocalStudyService:
                 elif lowered.startswith(("a:", "answer:")):
                     back = stripped.split(":", 1)[1].strip()
                 if max_line_length is not None and len(line_text) > max_line_length:
-                    errors.append({"line": line_number, "error": "Line exceeds max_line_length."})
+                    errors.append(
+                        {"line": line_number, "error": "Line exceeds max_line_length."}
+                    )
                     skipped_blocks += 1
                     return
             if not front or not back:
-                errors.append({"line": block[0][0], "error": "Block must contain Q:/A: labels."})
+                errors.append(
+                    {"line": block[0][0], "error": "Block must contain Q:/A: labels."}
+                )
                 skipped_blocks += 1
                 return
-            if max_field_length is not None and (len(front) > max_field_length or len(back) > max_field_length):
-                errors.append({"line": block[0][0], "error": "Field exceeds max_field_length."})
+            if max_field_length is not None and (
+                len(front) > max_field_length or len(back) > max_field_length
+            ):
+                errors.append(
+                    {"line": block[0][0], "error": "Field exceeds max_field_length."}
+                )
                 skipped_blocks += 1
                 return
             drafts.append(
@@ -488,19 +519,31 @@ class LocalStudyService:
         errors: list[dict[str, Any]] = []
 
         if max_lines is not None and len(data_rows) > max_lines:
-            errors.append({"line": max_lines + (2 if has_header else 1), "error": "Content exceeds max_lines."})
+            errors.append(
+                {
+                    "line": max_lines + (2 if has_header else 1),
+                    "error": "Content exceeds max_lines.",
+                }
+            )
             data_rows = data_rows[:max_lines]
 
         for index, row in enumerate(data_rows, start=2 if has_header else 1):
             if not row or not any(str(column).strip() for column in row):
                 continue
-            if max_line_length is not None and len(delimiter.join(row)) > max_line_length:
+            if (
+                max_line_length is not None
+                and len(delimiter.join(row)) > max_line_length
+            ):
                 errors.append({"line": index, "error": "Line exceeds max_line_length."})
                 continue
             try:
                 if has_header:
                     mapped = self._header_map(header, row)
-                    deck_ref = mapped.get("deck_id") or mapped.get("deck") or mapped.get("deck_name")
+                    deck_ref = (
+                        mapped.get("deck_id")
+                        or mapped.get("deck")
+                        or mapped.get("deck_name")
+                    )
                     front = mapped.get("front") or mapped.get("question")
                     back = mapped.get("back") or mapped.get("answer")
                     tags = self._split_tags(mapped.get("tags"))
@@ -508,17 +551,32 @@ class LocalStudyService:
                     extra = mapped.get("extra") or None
                 else:
                     if len(row) < 3:
-                        raise ValueError("Row must contain deck, front, and back fields.")
-                    deck_ref, front, back = row[0].strip(), row[1].strip(), row[2].strip()
+                        raise ValueError(
+                            "Row must contain deck, front, and back fields."
+                        )
+                    deck_ref, front, back = (
+                        row[0].strip(),
+                        row[1].strip(),
+                        row[2].strip(),
+                    )
                     tags = self._split_tags(row[3] if len(row) > 3 else None)
                     notes = row[4].strip() if len(row) > 4 and row[4].strip() else None
                     extra = row[5].strip() if len(row) > 5 and row[5].strip() else None
                 if not front or not back:
                     raise ValueError("Row must contain front and back fields.")
-                if max_field_length is not None and (len(front) > max_field_length or len(back) > max_field_length):
+                if max_field_length is not None and (
+                    len(front) > max_field_length or len(back) > max_field_length
+                ):
                     raise ValueError("Field exceeds max_field_length.")
                 deck_id = self._resolve_or_create_deck_id(deck_ref)
-                card = self.create_flashcard(deck_id=deck_id, front=front, back=back, tags=tags, notes=notes, extra=extra)
+                card = self.create_flashcard(
+                    deck_id=deck_id,
+                    front=front,
+                    back=back,
+                    tags=tags,
+                    notes=notes,
+                    extra=extra,
+                )
                 card_id = str(card.get("uuid") or card.get("id"))
                 items.append({"uuid": card_id, "deck_id": deck_id})
             except Exception as exc:
@@ -531,7 +589,12 @@ class LocalStudyService:
             source_entity_id=None,
             source_entity_kind="flashcard_import",
             severity="warning" if errors else "info",
-            payload={"action": "flashcards_imported", "format": "tsv", "imported": len(items), "errors": len(errors)},
+            payload={
+                "action": "flashcards_imported",
+                "format": "tsv",
+                "imported": len(items),
+                "errors": len(errors),
+            },
         )
         return result
 
@@ -544,7 +607,9 @@ class LocalStudyService:
         else:
             records = None
         if not isinstance(records, list):
-            raise ValueError("JSON flashcard import must be a list or an object with cards/items.")
+            raise ValueError(
+                "JSON flashcard import must be a list or an object with cards/items."
+            )
         if not all(isinstance(record, Mapping) for record in records):
             raise ValueError("JSON flashcard import items must be objects.")
         return list(records)
@@ -575,13 +640,21 @@ class LocalStudyService:
         errors: list[dict[str, Any]] = []
 
         if max_items is not None and len(records) > max_items:
-            errors.append({"index": max_items + 1, "error": "Content exceeds max_items."})
+            errors.append(
+                {"index": max_items + 1, "error": "Content exceeds max_items."}
+            )
             records = records[:max_items]
 
         for index, record in enumerate(records, start=1):
             try:
-                deck_ref = record.get("deck_id") or record.get("deck") or record.get("deck_name")
-                front = self._optional_text(record.get("front") or record.get("question"))
+                deck_ref = (
+                    record.get("deck_id")
+                    or record.get("deck")
+                    or record.get("deck_name")
+                )
+                front = self._optional_text(
+                    record.get("front") or record.get("question")
+                )
                 back = self._optional_text(record.get("back") or record.get("answer"))
                 tags = self._split_tags(record.get("tags"))
                 notes = self._optional_text(record.get("notes"))
@@ -593,7 +666,9 @@ class LocalStudyService:
                     fields.append(notes)
                 if extra:
                     fields.append(extra)
-                if max_field_length is not None and any(len(field) > max_field_length for field in fields):
+                if max_field_length is not None and any(
+                    len(field) > max_field_length for field in fields
+                ):
                     raise ValueError("Field exceeds max_field_length.")
                 deck_id = self._resolve_or_create_deck_id(deck_ref)
                 card = self.create_flashcard(
@@ -616,7 +691,12 @@ class LocalStudyService:
             source_entity_id=None,
             source_entity_kind="flashcard_import",
             severity="warning" if errors else "info",
-            payload={"action": "flashcards_imported", "format": "json", "imported": len(items), "errors": len(errors)},
+            payload={
+                "action": "flashcards_imported",
+                "format": "json",
+                "imported": len(items),
+                "errors": len(errors),
+            },
         )
         return result
 
@@ -636,10 +716,22 @@ class LocalStudyService:
     ) -> bytes:
         if workspace_id or include_workspace_items:
             raise ValueError("Workspace Study is unavailable in local mode")
-        records = list(self.list_flashcards(deck_id=str(deck_id) if deck_id is not None else None, q=q, limit=100000, offset=0) or [])
+        records = list(
+            self.list_flashcards(
+                deck_id=str(deck_id) if deck_id is not None else None,
+                q=q,
+                limit=100000,
+                offset=0,
+            )
+            or []
+        )
         if tag:
             tag_key = str(tag).strip()
-            records = [record for record in records if tag_key in self._split_tags(record.get("tags"))]
+            records = [
+                record
+                for record in records
+                if tag_key in self._split_tags(record.get("tags"))
+            ]
 
         deck_names: dict[str, str] = {}
         output = io.StringIO()
@@ -707,12 +799,20 @@ class LocalStudyService:
             message=f"Created local flashcard template: {template.get('name') or name}",
             source_entity_id=str(template.get("id") or ""),
             source_entity_kind="flashcard_template",
-            payload={"action": "flashcard_template_created", "template_id": str(template.get("id") or "")},
+            payload={
+                "action": "flashcard_template_created",
+                "template_id": str(template.get("id") or ""),
+            },
         )
         return template
 
-    def list_flashcard_templates(self, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
-        return dict(self._require_db().list_flashcard_templates(limit=limit, offset=offset) or {})
+    def list_flashcard_templates(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
+        return dict(
+            self._require_db().list_flashcard_templates(limit=limit, offset=offset)
+            or {}
+        )
 
     def get_flashcard_template(self, template_id: str) -> dict[str, Any] | None:
         return self._require_db().get_flashcard_template(str(template_id))
@@ -742,7 +842,9 @@ class LocalStudyService:
             expected_version=expected_version,
         )
 
-    def delete_flashcard_template(self, template_id: str, *, expected_version: int) -> bool:
+    def delete_flashcard_template(
+        self, template_id: str, *, expected_version: int
+    ) -> bool:
         deleted = bool(
             self._require_db().delete_flashcard_template(
                 str(template_id),
@@ -755,7 +857,10 @@ class LocalStudyService:
                 message="Deleted local flashcard template.",
                 source_entity_id=str(template_id),
                 source_entity_kind="flashcard_template",
-                payload={"action": "flashcard_template_deleted", "template_id": str(template_id)},
+                payload={
+                    "action": "flashcard_template_deleted",
+                    "template_id": str(template_id),
+                },
             )
         return deleted
 
@@ -773,7 +878,10 @@ class LocalStudyService:
             message=f"Stored local flashcard asset: {asset.get('original_filename') or path.name}",
             source_entity_id=str(asset.get("asset_uuid") or ""),
             source_entity_kind="flashcard_asset",
-            payload={"action": "flashcard_asset_uploaded", "asset_uuid": str(asset.get("asset_uuid") or "")},
+            payload={
+                "action": "flashcard_asset_uploaded",
+                "asset_uuid": str(asset.get("asset_uuid") or ""),
+            },
         )
         return asset
 
@@ -810,7 +918,9 @@ class LocalStudyService:
             )
         )
 
-    def get_next_review_candidate(self, *, deck_id: Optional[str] = None) -> dict[str, Any]:
+    def get_next_review_candidate(
+        self, *, deck_id: Optional[str] = None
+    ) -> dict[str, Any]:
         cards = self._require_db().get_due_flashcards(deck_id=deck_id, limit=1)
         if not cards:
             return {"card": None, "selection_reason": "none"}
@@ -849,7 +959,9 @@ class LocalStudyService:
     def get_study_suggestion_snapshot(self, snapshot_id: int) -> None:
         self._unsupported_study_suggestions()
 
-    def refresh_study_suggestion_snapshot(self, snapshot_id: int, **kwargs: Any) -> None:
+    def refresh_study_suggestion_snapshot(
+        self, snapshot_id: int, **kwargs: Any
+    ) -> None:
         self._unsupported_study_suggestions()
 
     def trigger_study_suggestion_action(self, snapshot_id: int, **kwargs: Any) -> None:

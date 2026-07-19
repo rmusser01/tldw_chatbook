@@ -26,7 +26,7 @@ CHATBOOK_TEMPLATE_USE_ENABLED_TOOLTIP = "Create a Chatbook from the selected tem
 
 class ChatbookTemplate:
     """Represents a chatbook template."""
-    
+
     def __init__(
         self,
         id: str,
@@ -35,7 +35,7 @@ class ChatbookTemplate:
         icon: str,
         content_types: List[str],
         tags: List[str],
-        use_cases: List[str]
+        use_cases: List[str],
     ):
         self.id = id
         self.name = name
@@ -59,8 +59,8 @@ CHATBOOK_TEMPLATES = [
             "Academic research papers",
             "Market research projects",
             "Technical investigations",
-            "Literature reviews"
-        ]
+            "Literature reviews",
+        ],
     ),
     ChatbookTemplate(
         id="creative_writing",
@@ -73,8 +73,8 @@ CHATBOOK_TEMPLATES = [
             "Novel writing",
             "Short story collections",
             "Screenplay development",
-            "World-building projects"
-        ]
+            "World-building projects",
+        ],
     ),
     ChatbookTemplate(
         id="learning_journey",
@@ -87,8 +87,8 @@ CHATBOOK_TEMPLATES = [
             "Online course notes",
             "Self-study projects",
             "Skill development",
-            "Tutorial collections"
-        ]
+            "Tutorial collections",
+        ],
     ),
     ChatbookTemplate(
         id="project_documentation",
@@ -101,8 +101,8 @@ CHATBOOK_TEMPLATES = [
             "Software documentation",
             "Project retrospectives",
             "Decision logs",
-            "Technical specifications"
-        ]
+            "Technical specifications",
+        ],
     ),
     ChatbookTemplate(
         id="personal_assistant",
@@ -115,8 +115,8 @@ CHATBOOK_TEMPLATES = [
             "AI workflow templates",
             "Custom assistant personas",
             "Prompt libraries",
-            "Productivity systems"
-        ]
+            "Productivity systems",
+        ],
     ),
     ChatbookTemplate(
         id="knowledge_base",
@@ -129,20 +129,17 @@ CHATBOOK_TEMPLATES = [
             "Team knowledge sharing",
             "Personal wikis",
             "Reference collections",
-            "Archive backups"
-        ]
-    )
+            "Archive backups",
+        ],
+    ),
 ]
 
 
 class ChatbookTemplatesWindow(ModalScreen):
     """Window for browsing chatbook templates."""
-    
-    BINDINGS = [
-        ("escape", "close", "Close"),
-        ("enter", "select", "Select Template")
-    ]
-    
+
+    BINDINGS = [("escape", "close", "Close"), ("enter", "select", "Select Template")]
+
     DEFAULT_CSS = """
     ChatbookTemplatesWindow {
         align: center middle;
@@ -271,32 +268,37 @@ class ChatbookTemplatesWindow(ModalScreen):
         min-width: 20;
     }
     """
-    
+
     selected_template = reactive(None)
-    
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+
+    def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.templates = CHATBOOK_TEMPLATES
-        
+
     def compose(self) -> ComposeResult:
         """Compose the templates UI."""
         with Container():
             # Header
             with Container(classes="window-header"):
                 yield Static("📚 Chatbook Templates", classes="window-title")
-                yield Static("Choose a template to get started quickly", classes="window-subtitle")
-            
+                yield Static(
+                    "Choose a template to get started quickly",
+                    classes="window-subtitle",
+                )
+
             # Templates grid
             with VerticalScroll(classes="templates-container"):
                 grid = Grid(classes="template-grid", id="template-grid")
                 yield grid
-            
+
             # Details panel
             with Container(classes="details-panel"):
-                yield Static("Template Details", id="details-title", classes="details-title")
+                yield Static(
+                    "Template Details", id="details-title", classes="details-title"
+                )
                 yield Container(id="details-content")
-            
+
             # Action buttons
             with Container(classes="action-buttons"):
                 yield Button(
@@ -307,45 +309,49 @@ class ChatbookTemplatesWindow(ModalScreen):
                     tooltip=CHATBOOK_TEMPLATE_USE_DISABLED_TOOLTIP,
                 )
                 yield Button("Cancel", id="cancel", variant="default")
-    
+
     async def on_mount(self) -> None:
         """Initialize when mounted."""
         # Create template cards
         grid = self.query_one("#template-grid", Grid)
-        
+
         for template in self.templates:
             card = Container(classes="template-card", id=f"template-{template.id}")
-            
+
             # Mount the card to grid first
             await grid.mount(card)
-            
+
             # Then mount children to the card
             await card.mount(Static(template.icon, classes="template-icon"))
             await card.mount(Static(template.name, classes="template-name"))
-            await card.mount(Static(template.description, classes="template-description"))
-            await card.mount(Static(f"Tags: {', '.join(template.tags[:3])}", classes="template-tags"))
-        
+            await card.mount(
+                Static(template.description, classes="template-description")
+            )
+            await card.mount(
+                Static(f"Tags: {', '.join(template.tags[:3])}", classes="template-tags")
+            )
+
         # Initialize details
         self._update_details(None)
-    
+
     async def on_click(self, event) -> None:
         """Handle clicks on template cards."""
         # Find clicked template card
         for node in event.target.ancestors:
-            if hasattr(node, 'id') and node.id and node.id.startswith("template-"):
+            if hasattr(node, "id") and node.id and node.id.startswith("template-"):
                 template_id = node.id.replace("template-", "")
                 await self._select_template(template_id)
                 break
-    
+
     async def _select_template(self, template_id: str) -> None:
         """Select a template."""
         # Find template
         template = next((t for t in self.templates if t.id == template_id), None)
         if not template:
             return
-        
+
         self.selected_template = template
-        
+
         # Update visual selection
         grid = self.query_one("#template-grid", Grid)
         for card in grid.children:
@@ -354,42 +360,46 @@ class ChatbookTemplatesWindow(ModalScreen):
                     card.add_class("selected")
                 else:
                     card.remove_class("selected")
-        
+
         # Update details
         self._update_details(template)
-        
+
         # Enable use button
         use_button = self.query_one("#use-template", Button)
         use_button.disabled = False
         use_button.tooltip = CHATBOOK_TEMPLATE_USE_ENABLED_TOOLTIP
-    
+
     def _update_details(self, template: Optional[ChatbookTemplate]) -> None:
         """Update the details panel."""
         content = self.query_one("#details-content", Container)
         content.remove_children()
-        
+
         if not template:
-            content.mount(Static("Select a template to view details", classes="details-section"))
+            content.mount(
+                Static("Select a template to view details", classes="details-section")
+            )
             return
-        
+
         # Content types
         types_section = Container(classes="details-section")
         content.mount(types_section)
         types_section.mount(Static("Includes: ", classes="details-label"))
         types_text = ", ".join(t.title() for t in template.content_types)
         types_section.mount(Static(types_text))
-        
+
         # Use cases
         if template.use_cases:
             use_cases_section = Container(classes="details-section")
             content.mount(use_cases_section)
-            use_cases_section.mount(Static("Common use cases:", classes="details-label"))
-            
+            use_cases_section.mount(
+                Static("Common use cases:", classes="details-label")
+            )
+
             use_list = Container(classes="use-case-list")
             use_cases_section.mount(use_list)
             for use_case in template.use_cases:
                 use_list.mount(Static(f"• {use_case}"))
-    
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "use-template" and self.selected_template:
@@ -397,11 +407,11 @@ class ChatbookTemplatesWindow(ModalScreen):
             self.dismiss(self.selected_template)
         elif event.button.id == "cancel":
             self.dismiss(None)
-    
+
     def action_close(self) -> None:
         """Close action."""
         self.dismiss(None)
-    
+
     def action_select(self) -> None:
         """Select action."""
         if self.selected_template:

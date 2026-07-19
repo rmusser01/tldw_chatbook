@@ -8,7 +8,9 @@ import re
 from typing import Any, Mapping, Sequence
 
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
-from tldw_chatbook.Sync_Interop.sync_profile_status_state import SyncProfileStatusDisplay
+from tldw_chatbook.Sync_Interop.sync_profile_status_state import (
+    SyncProfileStatusDisplay,
+)
 
 
 LIBRARY_COLLECTIONS_EMPTY_COPY = (
@@ -69,8 +71,7 @@ def _as_sequence(value: Any) -> Sequence[Any]:
 
 def _reason_codes_label(value: Any) -> str:
     reasons = tuple(
-        _safe_display_text(reason, "", max_length=80)
-        for reason in _as_sequence(value)
+        _safe_display_text(reason, "", max_length=80) for reason in _as_sequence(value)
     )
     visible = tuple(reason for reason in reasons if reason)
     return ", ".join(visible) if visible else "not available"
@@ -149,13 +150,17 @@ def _sync_status_detail(record: Any, sync_status: str) -> str:
         )
     if sync_status == "dry-run-unsupported":
         reasons = _reason_codes_label(readiness.get("reason_codes"))
-        return f"Read-only mirror check unavailable: {reasons}. No writes will be queued."
+        return (
+            f"Read-only mirror check unavailable: {reasons}. No writes will be queued."
+        )
     if sync_status == "dry-run-ready":
         mapped_count = _coerce_count(mirror_report.get("mapped_count"))
         suffix = "record" if mapped_count == 1 else "records"
         return f"Read-only mirror check: {mapped_count} mapped {suffix}. No writes will be queued."
     if sync_status == "sync-unavailable":
-        return "Sync dry-run is unavailable for this Collection. No writes will be queued."
+        return (
+            "Sync dry-run is unavailable for this Collection. No writes will be queued."
+        )
     return "This Collection is local-only. No sync writes will be queued."
 
 
@@ -184,10 +189,7 @@ def _sync_promotion_detail(record: Any) -> str:
         promotion_state.get("rollback_label"),
         promotion_state.get("primary_recovery"),
     )
-    visible = tuple(
-        _safe_display_text(label, "", max_length=180)
-        for label in labels
-    )
+    visible = tuple(_safe_display_text(label, "", max_length=180) for label in labels)
     return " | ".join(label for label in visible if label)
 
 
@@ -269,8 +271,12 @@ class LibraryCollectionSummary:
         return _updated_at_label(self.updated_at)
 
     @classmethod
-    def from_record(cls, record: Any, *, selected: bool = False) -> "LibraryCollectionSummary":
-        collection_id = _safe_display_text(_value(record, "collection_id"), "", max_length=200)
+    def from_record(
+        cls, record: Any, *, selected: bool = False
+    ) -> "LibraryCollectionSummary":
+        collection_id = _safe_display_text(
+            _value(record, "collection_id"), "", max_length=200
+        )
         name = _safe_display_text(
             _value(record, "name"),
             "Untitled Collection",
@@ -294,7 +300,8 @@ class LibraryCollectionSummary:
                 max_length=64,
             ),
             sync_status=sync_status,
-            sync_status_detail=sync_promotion_detail or _sync_status_detail(record, sync_status),
+            sync_status_detail=sync_promotion_detail
+            or _sync_status_detail(record, sync_status),
             sync_status_label_override=sync_promotion_label,
             created_at=_collapse(_value(record, "created_at")),
             updated_at=_collapse(_value(record, "updated_at")),
@@ -333,7 +340,9 @@ class LibraryCollectionDetail:
         return _updated_at_label(self.updated_at)
 
     @classmethod
-    def from_summary(cls, summary: LibraryCollectionSummary) -> "LibraryCollectionDetail":
+    def from_summary(
+        cls, summary: LibraryCollectionSummary
+    ) -> "LibraryCollectionDetail":
         return cls(
             collection_id=summary.collection_id,
             name=summary.name,
@@ -392,7 +401,9 @@ class LibraryCollectionsPanelState:
             (record for record in records if record.collection_id == selected_id),
             None,
         )
-        selected_id = selected_record.collection_id if selected_record is not None else ""
+        selected_id = (
+            selected_record.collection_id if selected_record is not None else ""
+        )
         selected_detail = (
             LibraryCollectionDetail.from_summary(selected_record)
             if selected_record is not None
@@ -513,7 +524,9 @@ def _rename_action(
             widget_id="library-rename-collection",
             disabled_reason=reason,
         )
-    if _name_exists(name, collections, excluding_collection_id=selected_collection.collection_id):
+    if _name_exists(
+        name, collections, excluding_collection_id=selected_collection.collection_id
+    ):
         return LibraryCollectionActionState(
             label="Rename Collection",
             enabled=False,

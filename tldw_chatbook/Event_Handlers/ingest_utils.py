@@ -15,15 +15,22 @@ PROMPT_FILE_FILTERS = Filters(
     ("JSON", lambda p: p.suffix.lower() == ".json"),
     ("YAML", lambda p: p.suffix.lower() in (".yaml", ".yml")),
     ("Text", lambda p: p.suffix.lower() == ".txt"),
-    ("All Supported", lambda p: p.suffix.lower() in (".md", ".json", ".yaml", ".yml", ".txt")),
+    (
+        "All Supported",
+        lambda p: p.suffix.lower() in (".md", ".json", ".yaml", ".yml", ".txt"),
+    ),
     ("All Files", lambda _: True),
 )
 
 # --- Character Ingest Constants ---
 MAX_CHARACTER_PREVIEWS = 5  # Show fewer character previews as they can be larger
 CHARACTER_FILE_FILTERS = Filters(
-    ("Character Cards (JSON, YAML, PNG, WebP, MD)",
-     lambda p: p.suffix.lower() in (".json", ".yaml", ".yml", ".png", ".webp", ".md")),
+    (
+        "Character Cards (JSON, YAML, PNG, WebP, MD)",
+        lambda p: (
+            p.suffix.lower() in (".json", ".yaml", ".yml", ".png", ".webp", ".md")
+        ),
+    ),
     ("JSON (*.json)", lambda p: p.suffix.lower() == ".json"),
     ("YAML (*.yaml, *.yml)", lambda p: p.suffix.lower() in (".yaml", ".yml")),
     ("PNG (*.png)", lambda p: p.suffix.lower() == ".png"),
@@ -35,7 +42,13 @@ CHARACTER_FILE_FILTERS = Filters(
 # --- Notes Ingest Constants ---
 MAX_NOTE_PREVIEWS = 10
 NOTE_FILE_FILTERS = Filters(
-    ("All Supported", lambda p: p.suffix.lower() in (".json", ".yaml", ".yml", ".txt", ".md", ".markdown", ".rst", ".csv")),
+    (
+        "All Supported",
+        lambda p: (
+            p.suffix.lower()
+            in (".json", ".yaml", ".yml", ".txt", ".md", ".markdown", ".rst", ".csv")
+        ),
+    ),
     ("JSON (*.json)", lambda p: p.suffix.lower() == ".json"),
     ("YAML (*.yaml, *.yml)", lambda p: p.suffix.lower() in (".yaml", ".yml")),
     ("Markdown (*.md)", lambda p: p.suffix.lower() in (".md", ".markdown")),
@@ -43,6 +56,7 @@ NOTE_FILE_FILTERS = Filters(
     ("CSV (*.csv)", lambda p: p.suffix.lower() == ".csv"),
     ("All Files", lambda _: True),
 )
+
 
 def _truncate_text(text: Optional[str], max_len: int) -> str:
     """
@@ -52,5 +66,5 @@ def _truncate_text(text: Optional[str], max_len: int) -> str:
     if not text:  # Handles None or empty string
         return "N/A"
     if len(text) > max_len:
-        return text[:max_len - 3] + "..."
+        return text[: max_len - 3] + "..."
     return text

@@ -28,7 +28,9 @@ from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-AGENTIC_TERMINAL = REPO_ROOT / "tldw_chatbook" / "css" / "components" / "_agentic_terminal.tcss"
+AGENTIC_TERMINAL = (
+    REPO_ROOT / "tldw_chatbook" / "css" / "components" / "_agentic_terminal.tcss"
+)
 BUNDLED_STYLESHEET = REPO_ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
 
 
@@ -319,7 +321,9 @@ async def test_typing_still_filters_after_a_blocked_row_click() -> None:
         assert app.dismissed_with == "not-called"
 
         filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
-        assert filter_input.has_focus, "filter Input must regain focus after a blocked-row refusal"
+        assert filter_input.has_focus, (
+            "filter Input must regain focus after a blocked-row refusal"
+        )
 
         await pilot.press("x")
         await pilot.pause()

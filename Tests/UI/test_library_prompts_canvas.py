@@ -41,8 +41,12 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_CREATE_PROMPT,
 )
-from tldw_chatbook.Prompt_Management.prompt_markdown_export import render_prompt_markdown
-from tldw_chatbook.Prompt_Management.Prompts_Interop import parse_markdown_prompts_from_content
+from tldw_chatbook.Prompt_Management.prompt_markdown_export import (
+    render_prompt_markdown,
+)
+from tldw_chatbook.Prompt_Management.Prompts_Interop import (
+    parse_markdown_prompts_from_content,
+)
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService as ScopeLocalPromptService,
     PromptScopeService,
@@ -52,7 +56,9 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-from tldw_chatbook.Widgets.Library.library_prompts_canvas import LibraryPromptsListCanvas
+from tldw_chatbook.Widgets.Library.library_prompts_canvas import (
+    LibraryPromptsListCanvas,
+)
 
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
@@ -89,7 +95,9 @@ def _three_row_state(*, sort: str = "newest") -> PromptsListState:
     return PromptsListState(
         rows=(
             PromptListRow(prompt_id=1, name="Summarize", secondary="Alice · 3m"),
-            PromptListRow(prompt_id=2, name="[draft] Q3 plan [wip]", secondary="Bob · 1h"),
+            PromptListRow(
+                prompt_id=2, name="[draft] Q3 plan [wip]", secondary="Bob · 1h"
+            ),
             PromptListRow(prompt_id=3, name="Translate", secondary="2d"),
         ),
         count=3,
@@ -301,10 +309,18 @@ def test_build_library_prompts_state_reads_local_source_records():
             "prompts": (
                 2,
                 (
-                    {"id": 1, "name": "Summarize", "author": "Alice",
-                     "last_modified": "2026-07-01T00:00:00+00:00"},
-                    {"id": 2, "name": "Translate", "author": "Bob",
-                     "last_modified": "2026-07-02T00:00:00+00:00"},
+                    {
+                        "id": 1,
+                        "name": "Summarize",
+                        "author": "Alice",
+                        "last_modified": "2026-07-01T00:00:00+00:00",
+                    },
+                    {
+                        "id": 2,
+                        "name": "Translate",
+                        "author": "Bob",
+                        "last_modified": "2026-07-02T00:00:00+00:00",
+                    },
                 ),
             )
         },
@@ -426,10 +442,18 @@ async def test_library_shell_prompts_row_press_renders_list_canvas():
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
     app.prompt_scope_service = _FakePromptScopeServiceWithList(
         [
-            {"id": 5, "name": "Summarize", "author": "Alice",
-             "last_modified": "2026-07-01T00:00:00+00:00"},
-            {"id": 6, "name": "Translate", "author": "Bob",
-             "last_modified": "2026-07-02T00:00:00+00:00"},
+            {
+                "id": 5,
+                "name": "Summarize",
+                "author": "Alice",
+                "last_modified": "2026-07-01T00:00:00+00:00",
+            },
+            {
+                "id": 6,
+                "name": "Translate",
+                "author": "Bob",
+                "last_modified": "2026-07-02T00:00:00+00:00",
+            },
         ]
     )
     host = LibraryHarness(app)
@@ -461,8 +485,13 @@ async def test_library_shell_prompts_row_secondary_line_shows_details_not_author
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
     app.prompt_scope_service = _FakePromptScopeServiceWithList(
         [
-            {"id": 5, "name": "Summarize", "author": "Alice", "details": "Summarizes text",
-             "last_modified": "2026-07-01T00:00:00+00:00"},
+            {
+                "id": 5,
+                "name": "Summarize",
+                "author": "Alice",
+                "details": "Summarizes text",
+                "last_modified": "2026-07-01T00:00:00+00:00",
+            },
         ]
     )
     host = LibraryHarness(app)
@@ -562,7 +591,11 @@ def test_library_prompt_editor_field_css_blocks_match_notes_editor_parity():
         assert "#library-prompt-keywords {" in text
         input_block = _css_block(text, "#library-prompt-keywords {")
         note_input_block = _css_block(text, "#library-note-keywords {")
-        for pinned in ("height: 3;", "border: tall $ds-grid-line;", "background: $ds-surface-raised;"):
+        for pinned in (
+            "height: 3;",
+            "border: tall $ds-grid-line;",
+            "background: $ds-surface-raised;",
+        ):
             assert pinned in input_block
             assert pinned in note_input_block
 
@@ -657,7 +690,9 @@ def test_library_prompts_import_row_css_blocks_match_filter_status_parity():
 
 def _real_prompt_scope_service(tmp_path):
     db = PromptsDatabase(tmp_path / "prompts.db", client_id="test-client")
-    service = PromptScopeService(local_service=ScopeLocalPromptService(db), server_service=None)
+    service = PromptScopeService(
+        local_service=ScopeLocalPromptService(db), server_service=None
+    )
     return db, service
 
 
@@ -743,14 +778,27 @@ async def test_library_prompt_row_opens_editor_with_six_fields_populated(tmp_pat
         assert screen._library_prompts_view == "editor"
         assert screen.query_one("#library-prompt-name", Input).value == "Summarize"
         assert screen.query_one("#library-prompt-author", Input).value == "Alice"
-        assert screen.query_one("#library-prompt-details", Input).value == "A summarizer"
-        assert screen.query_one("#library-prompt-system", TextArea).text == "You are concise."
-        assert screen.query_one("#library-prompt-user", TextArea).text == "Summarize: {text}"
-        assert screen.query_one("#library-prompt-keywords", Input).value == "summary, writing"
+        assert (
+            screen.query_one("#library-prompt-details", Input).value == "A summarizer"
+        )
+        assert (
+            screen.query_one("#library-prompt-system", TextArea).text
+            == "You are concise."
+        )
+        assert (
+            screen.query_one("#library-prompt-user", TextArea).text
+            == "Summarize: {text}"
+        )
+        assert (
+            screen.query_one("#library-prompt-keywords", Input).value
+            == "summary, writing"
+        )
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_row_opens_editor_with_modified_meta_not_new_prompt(tmp_path):
+async def test_library_prompt_row_opens_editor_with_modified_meta_not_new_prompt(
+    tmp_path,
+):
     """Critical regression: ``handle_library_prompt_row`` ->
     ``_refresh_library_prompt_detail`` fetches through the REAL production
     seam (``PromptScopeService.get_prompt`` -> ``normalize_prompt_record``),
@@ -789,7 +837,9 @@ async def test_library_prompt_row_opens_editor_with_modified_meta_not_new_prompt
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_row_opens_editor_under_real_runtime_policy_enforcer(tmp_path):
+async def test_library_prompt_row_opens_editor_under_real_runtime_policy_enforcer(
+    tmp_path,
+):
     """Regression test for the Phase-1 gate defect (live-blocking): clicking
     a Library prompt row raised
     ``PolicyDeniedError: Unknown runtime-policy action_id: prompts.detail.local``
@@ -835,7 +885,9 @@ async def test_library_prompt_row_opens_editor_under_real_runtime_policy_enforce
 async def test_library_prompt_save_name_already_in_use_shows_status_copy(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
     db.add_prompt(name="Alpha", author="A", details="d", user_prompt="x")
-    beta_id, _uuid, _msg = db.add_prompt(name="Beta", author="B", details="d", user_prompt="y")
+    beta_id, _uuid, _msg = db.add_prompt(
+        name="Beta", author="B", details="d", user_prompt="y"
+    )
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
     app.prompt_scope_service = service
@@ -852,7 +904,10 @@ async def test_library_prompt_save_name_already_in_use_shows_status_copy(tmp_pat
         await pilot.pause()
 
         status_text = await _wait_for_prompt_status(screen, pilot)
-        assert status_text == "Name already in use — pick another or open the existing prompt."
+        assert (
+            status_text
+            == "Name already in use — pick another or open the existing prompt."
+        )
 
 
 @pytest.mark.asyncio
@@ -860,7 +915,9 @@ async def test_library_prompt_save_onto_soft_deleted_name_shows_status_copy(tmp_
     db, service = _real_prompt_scope_service(tmp_path)
     db.add_prompt(name="Gamma", author="A", details="d", user_prompt="x")
     db.soft_delete_prompt("Gamma")
-    delta_id, _uuid, _msg = db.add_prompt(name="Delta", author="B", details="d", user_prompt="y")
+    delta_id, _uuid, _msg = db.add_prompt(
+        name="Delta", author="B", details="d", user_prompt="y"
+    )
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
     app.prompt_scope_service = service
@@ -877,7 +934,10 @@ async def test_library_prompt_save_onto_soft_deleted_name_shows_status_copy(tmp_
         await pilot.pause()
 
         status_text = await _wait_for_prompt_status(screen, pilot)
-        assert status_text == "A deleted prompt holds this name — restore it or choose another."
+        assert (
+            status_text
+            == "A deleted prompt holds this name — restore it or choose another."
+        )
 
 
 @pytest.mark.asyncio
@@ -998,7 +1058,9 @@ async def test_library_prompt_save_write_time_conflict_shows_conflict_bar(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_library_shell_create_prompt_write_time_conflict_recovers_on_reload(tmp_path):
+async def test_library_shell_create_prompt_write_time_conflict_recovers_on_reload(
+    tmp_path,
+):
     """Task 8b Fix wave 1: the CREATE flow (``_selected_prompt_id`` is
     ``None``) must recover from a genuine write-time ``ConflictError`` the
     same way the update flow does above -- NOT silently no-op both
@@ -1084,7 +1146,9 @@ async def test_library_shell_create_prompt_write_time_conflict_recovers_on_reloa
 
 
 @pytest.mark.asyncio
-async def test_library_shell_create_prompt_write_time_conflict_overwrite_retries_create(tmp_path):
+async def test_library_shell_create_prompt_write_time_conflict_overwrite_retries_create(
+    tmp_path,
+):
     """Task 8b Fix wave 1: Overwrite on a CREATE-flow conflict retries the
     create with the kept text (rather than the update path's "re-save
     against a fresh version", which a not-yet-persisted record has none
@@ -1152,7 +1216,9 @@ async def test_library_shell_create_prompt_write_time_conflict_overwrite_retries
 @pytest.mark.asyncio
 async def test_library_prompt_flush_pending_work_vetoes_dirty_editor(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
-    prompt_id, _uuid, _msg = db.add_prompt(name="Zeta", author="A", details="d", user_prompt="x")
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Zeta", author="A", details="d", user_prompt="x"
+    )
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
     app.prompt_scope_service = service
@@ -1176,7 +1242,9 @@ async def test_library_prompt_flush_pending_work_vetoes_dirty_editor(tmp_path):
 @pytest.mark.asyncio
 async def test_library_prompt_delete_returns_to_list_and_decrements_count(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
-    eta_id, _uuid, _msg = db.add_prompt(name="Eta", author="A", details="d", user_prompt="x")
+    eta_id, _uuid, _msg = db.add_prompt(
+        name="Eta", author="A", details="d", user_prompt="x"
+    )
     db.add_prompt(name="Theta", author="B", details="d", user_prompt="y")
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
@@ -1361,7 +1429,9 @@ async def test_library_prompts_import_cancel_closes_row(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_library_prompts_import_from_file_creates_prompt_and_reports_outcome(tmp_path):
+async def test_library_prompts_import_from_file_creates_prompt_and_reports_outcome(
+    tmp_path,
+):
     db, service = _real_prompt_scope_service(tmp_path)
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
@@ -1453,17 +1523,33 @@ async def test_library_prompts_import_from_folder_aggregates_two_files(tmp_path)
     import_dir.mkdir()
     (import_dir / "one.md").write_text(
         render_prompt_markdown(
-            {"name": "Folder One", "author": "A", "details": "", "system_prompt": "s1", "user_prompt": "u1", "keywords": []}
+            {
+                "name": "Folder One",
+                "author": "A",
+                "details": "",
+                "system_prompt": "s1",
+                "user_prompt": "u1",
+                "keywords": [],
+            }
         ),
         encoding="utf-8",
     )
     (import_dir / "two.md").write_text(
         render_prompt_markdown(
-            {"name": "Folder Two", "author": "B", "details": "", "system_prompt": "s2", "user_prompt": "u2", "keywords": []}
+            {
+                "name": "Folder Two",
+                "author": "B",
+                "details": "",
+                "system_prompt": "s2",
+                "user_prompt": "u2",
+                "keywords": [],
+            }
         ),
         encoding="utf-8",
     )
-    (import_dir / "ignored.dat").write_text("not a supported extension", encoding="utf-8")
+    (import_dir / "ignored.dat").write_text(
+        "not a supported extension", encoding="utf-8"
+    )
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
@@ -1490,14 +1576,18 @@ async def test_library_prompts_import_invalid_path_shows_quiet_status(tmp_path):
         await _wait_for_library_shell(screen, pilot)
         await _open_prompts_list(screen, pilot)
 
-        status_text = await _run_import(screen, pilot, str(tmp_path / "does_not_exist.md"))
+        status_text = await _run_import(
+            screen, pilot, str(tmp_path / "does_not_exist.md")
+        )
 
         assert status_text == "Could not find that file or folder."
         assert db.list_prompts()[3] == 0  # total_items
 
 
 @pytest.mark.asyncio
-async def test_library_prompts_import_counts_per_prompt_save_failures_as_failed(tmp_path):
+async def test_library_prompts_import_counts_per_prompt_save_failures_as_failed(
+    tmp_path,
+):
     """A per-prompt save failure (a non-duplicate-name exception from the
     scope service's ``save_prompt``) must be tracked as its own ``failed``
     bucket -- previously it fell into neither ``imported`` nor ``skipped``
@@ -1522,13 +1612,27 @@ async def test_library_prompts_import_counts_per_prompt_save_failures_as_failed(
     import_dir.mkdir()
     (import_dir / "ok.md").write_text(
         render_prompt_markdown(
-            {"name": "Fine", "author": "A", "details": "", "system_prompt": "s1", "user_prompt": "u1", "keywords": []}
+            {
+                "name": "Fine",
+                "author": "A",
+                "details": "",
+                "system_prompt": "s1",
+                "user_prompt": "u1",
+                "keywords": [],
+            }
         ),
         encoding="utf-8",
     )
     (import_dir / "boom.md").write_text(
         render_prompt_markdown(
-            {"name": "Boom", "author": "B", "details": "", "system_prompt": "s2", "user_prompt": "u2", "keywords": []}
+            {
+                "name": "Boom",
+                "author": "B",
+                "details": "",
+                "system_prompt": "s2",
+                "user_prompt": "u2",
+                "keywords": [],
+            }
         ),
         encoding="utf-8",
     )
@@ -1563,7 +1667,14 @@ async def test_library_prompts_import_outcome_omits_failed_segment_when_zero(tmp
     import_file = tmp_path / "clean.md"
     import_file.write_text(
         render_prompt_markdown(
-            {"name": "Clean Import", "author": "A", "details": "", "system_prompt": "s", "user_prompt": "u", "keywords": []}
+            {
+                "name": "Clean Import",
+                "author": "A",
+                "details": "",
+                "system_prompt": "s",
+                "user_prompt": "u",
+                "keywords": [],
+            }
         ),
         encoding="utf-8",
     )
@@ -1622,7 +1733,11 @@ async def test_library_prompt_export_pushes_file_save_dialog(tmp_path):
     ``test_library_shell_note_export_markdown_pushes_file_save_dialog``."""
     db, service = _real_prompt_scope_service(tmp_path)
     prompt_id, _uuid, _msg = db.add_prompt(
-        name="Export Me", author="Author", details="d", system_prompt="s", user_prompt="u"
+        name="Export Me",
+        author="Author",
+        details="d",
+        system_prompt="s",
+        user_prompt="u",
     )
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
@@ -1650,13 +1765,19 @@ async def test_library_prompt_export_pushes_file_save_dialog(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_write_export_file_writes_roundtrippable_markdown(tmp_path):
+async def test_library_prompt_write_export_file_writes_roundtrippable_markdown(
+    tmp_path,
+):
     """The export write-path (bypassing the dialog UI, exercised separately
     above) writes content that round-trips through the real parser --
     mirrors ``test_library_shell_note_write_export_file_writes_expected_content``."""
     db, service = _real_prompt_scope_service(tmp_path)
     prompt_id, _uuid, _msg = db.add_prompt(
-        name="Export Me", author="Author", details="d", system_prompt="s", user_prompt="u",
+        name="Export Me",
+        author="Author",
+        details="d",
+        system_prompt="s",
+        user_prompt="u",
         keywords=["k1", "k2"],
     )
     app = _build_test_app()
@@ -1672,15 +1793,32 @@ async def test_library_prompt_write_export_file_writes_roundtrippable_markdown(t
 
         destination = tmp_path / "export.md"
         screen._write_library_prompt_export_file(
-            destination, "Export Me", "Author", "d", "s", "u", "k1, k2", prompt_id,
+            destination,
+            "Export Me",
+            "Author",
+            "d",
+            "s",
+            "u",
+            "k1, k2",
+            prompt_id,
         )
 
         written = destination.read_text(encoding="utf-8")
         parsed = parse_markdown_prompts_from_content(written)
         assert len(parsed) == 1
         p = parsed[0]
-        assert (p["name"], p["author"], p["details"], p["system_prompt"], p["user_prompt"]) == (
-            "Export Me", "Author", "d", "s", "u",
+        assert (
+            p["name"],
+            p["author"],
+            p["details"],
+            p["system_prompt"],
+            p["user_prompt"],
+        ) == (
+            "Export Me",
+            "Author",
+            "d",
+            "s",
+            "u",
         )
         assert p["keywords"] == ["k1", "k2"]
         app.notify.assert_called_once()
@@ -1688,11 +1826,15 @@ async def test_library_prompt_write_export_file_writes_roundtrippable_markdown(t
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_write_export_file_rejects_invalid_path(tmp_path, monkeypatch):
+async def test_library_prompt_write_export_file_rejects_invalid_path(
+    tmp_path, monkeypatch
+):
     """A ``FileSave``-returned path that fails ``validate_path_simple`` must
     be rejected with a quiet warning notice -- no write, no crash."""
     db, service = _real_prompt_scope_service(tmp_path)
-    prompt_id, _uuid, _msg = db.add_prompt(name="Export Me", author="A", details="d", user_prompt="u")
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Export Me", author="A", details="d", user_prompt="u"
+    )
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
     app.prompt_scope_service = service
@@ -1711,7 +1853,14 @@ async def test_library_prompt_write_export_file_rejects_invalid_path(tmp_path, m
 
         destination = tmp_path / "export.md"
         screen._write_library_prompt_export_file(
-            destination, "Export Me", "A", "d", "", "u", "", prompt_id,
+            destination,
+            "Export Me",
+            "A",
+            "d",
+            "",
+            "u",
+            "",
+            prompt_id,
         )
 
         assert not destination.exists()
@@ -1722,11 +1871,15 @@ async def test_library_prompt_write_export_file_rejects_invalid_path(tmp_path, m
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_write_export_file_cancelled_dialog_notifies_quietly(tmp_path):
+async def test_library_prompt_write_export_file_cancelled_dialog_notifies_quietly(
+    tmp_path,
+):
     """A cancelled ``FileSave`` dialog (``selected_path=None``) is a silent
     no-op plus a quiet notice -- no write, no crash."""
     db, service = _real_prompt_scope_service(tmp_path)
-    prompt_id, _uuid, _msg = db.add_prompt(name="Export Me", author="A", details="d", user_prompt="u")
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Export Me", author="A", details="d", user_prompt="u"
+    )
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
     app.prompt_scope_service = service
@@ -1739,7 +1892,14 @@ async def test_library_prompt_write_export_file_cancelled_dialog_notifies_quietl
         await _open_prompt_editor(screen, pilot, prompt_id)
 
         screen._write_library_prompt_export_file(
-            None, "Export Me", "A", "d", "", "u", "", prompt_id,
+            None,
+            "Export Me",
+            "A",
+            "d",
+            "",
+            "u",
+            "",
+            prompt_id,
         )
 
         app.notify.assert_called_once()
@@ -1757,8 +1917,16 @@ async def test_prompts_canvas_editor_description_label_replaces_details():
     """U4: the rendered field label reads "Description", not "Details" --
     the DB/record field name (``#library-prompt-details``) is untouched."""
     editor_state = PromptEditorState(
-        prompt_id=1, name="X", author="A", details="d", system_prompt="s", user_prompt="u",
-        keywords_csv="", version=1, created="", modified="2026-07-07T11:00:00+00:00",
+        prompt_id=1,
+        name="X",
+        author="A",
+        details="d",
+        system_prompt="s",
+        user_prompt="u",
+        keywords_csv="",
+        version=1,
+        created="",
+        modified="2026-07-07T11:00:00+00:00",
     )
     app = _CanvasHost(None, mode="editor", editor_state=editor_state)
     async with app.run_test() as pilot:
@@ -1776,8 +1944,16 @@ async def test_prompts_canvas_editor_field_order_author_last_beside_keywords():
     """U2: compose order is Name, Description, System prompt, User prompt,
     Keywords, Author -- Author moves from 2nd/3rd position to last."""
     editor_state = PromptEditorState(
-        prompt_id=1, name="X", author="A", details="d", system_prompt="s", user_prompt="u",
-        keywords_csv="kw1, kw2", version=1, created="", modified="2026-07-07T11:00:00+00:00",
+        prompt_id=1,
+        name="X",
+        author="A",
+        details="d",
+        system_prompt="s",
+        user_prompt="u",
+        keywords_csv="kw1, kw2",
+        version=1,
+        created="",
+        modified="2026-07-07T11:00:00+00:00",
     )
     app = _CanvasHost(None, mode="editor", editor_state=editor_state)
     async with app.run_test() as pilot:
@@ -1803,8 +1979,16 @@ async def test_prompts_canvas_editor_renders_system_and_user_field_hints():
     """U7: a one-line dim hint renders under each of the System prompt/User
     prompt labels, explaining the two-part prompt model to a new user."""
     editor_state = PromptEditorState(
-        prompt_id=1, name="X", author="A", details="d", system_prompt="s", user_prompt="u",
-        keywords_csv="", version=1, created="", modified="2026-07-07T11:00:00+00:00",
+        prompt_id=1,
+        name="X",
+        author="A",
+        details="d",
+        system_prompt="s",
+        user_prompt="u",
+        keywords_csv="",
+        version=1,
+        created="",
+        modified="2026-07-07T11:00:00+00:00",
     )
     app = _CanvasHost(None, mode="editor", editor_state=editor_state)
     async with app.run_test() as pilot:
@@ -1822,8 +2006,16 @@ async def test_prompts_canvas_editor_copy_and_duplicate_relabeled():
     (clone as new prompt) sit adjacent with near-identical labels today --
     relabel to disambiguate. Ids are unchanged."""
     editor_state = PromptEditorState(
-        prompt_id=1, name="X", author="A", details="d", system_prompt="s", user_prompt="u",
-        keywords_csv="", version=1, created="", modified="2026-07-07T11:00:00+00:00",
+        prompt_id=1,
+        name="X",
+        author="A",
+        details="d",
+        system_prompt="s",
+        user_prompt="u",
+        keywords_csv="",
+        version=1,
+        created="",
+        modified="2026-07-07T11:00:00+00:00",
     )
     app = _CanvasHost(None, mode="editor", editor_state=editor_state)
     async with app.run_test() as pilot:
@@ -1917,7 +2109,9 @@ async def test_library_shell_create_prompt_save_creates_and_increments_count(tmp
 
 
 @pytest.mark.asyncio
-async def test_library_shell_create_prompt_save_existing_name_shows_name_in_use(tmp_path):
+async def test_library_shell_create_prompt_save_existing_name_shows_name_in_use(
+    tmp_path,
+):
     """D1: the three save outcomes apply to create too -- an existing name
     shows the same name-in-use status the update path uses."""
     db, service = _real_prompt_scope_service(tmp_path)
@@ -1942,7 +2136,10 @@ async def test_library_shell_create_prompt_save_existing_name_shows_name_in_use(
         await pilot.pause()
 
         status_text = await _wait_for_prompt_status(screen, pilot)
-        assert status_text == "Name already in use — pick another or open the existing prompt."
+        assert (
+            status_text
+            == "Name already in use — pick another or open the existing prompt."
+        )
         assert screen._selected_prompt_id is None
         _prompts, _tp, _cp, total = db.list_prompts()
         assert total == 1
@@ -1953,7 +2150,9 @@ async def test_library_prompt_duplicate_button_between_copy_and_delete(tmp_path)
     """U3: the Duplicate action sits between Copy and Delete in the editor's
     action row."""
     db, service = _real_prompt_scope_service(tmp_path)
-    prompt_id, _uuid, _msg = db.add_prompt(name="X", author="A", details="d", user_prompt="y")
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="X", author="A", details="d", user_prompt="y"
+    )
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
     app.prompt_scope_service = service
@@ -1966,19 +2165,27 @@ async def test_library_prompt_duplicate_button_between_copy_and_delete(tmp_path)
 
         toolbar = screen.query_one("#library-prompt-copy", Button).parent
         ids = [child.id for child in toolbar.children]
-        assert ids.index("library-prompt-copy") < ids.index("library-prompt-duplicate") < ids.index(
-            "library-prompt-delete"
+        assert (
+            ids.index("library-prompt-copy")
+            < ids.index("library-prompt-duplicate")
+            < ids.index("library-prompt-delete")
         )
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_duplicate_prefills_blank_editor_and_saves_distinct_prompt(tmp_path):
+async def test_library_prompt_duplicate_prefills_blank_editor_and_saves_distinct_prompt(
+    tmp_path,
+):
     """U3: Duplicate opens the editor on a NEW blank-id record pre-filled
     from the current prompt's fields, name "<name> (copy)", dirty/unsaved.
     Reuses the D1 create path on Save -- a distinct prompt is created."""
     db, service = _real_prompt_scope_service(tmp_path)
     prompt_id, _uuid, _msg = db.add_prompt(
-        name="Original", author="Alice", details="d", system_prompt="sys", user_prompt="usr",
+        name="Original",
+        author="Alice",
+        details="d",
+        system_prompt="sys",
+        user_prompt="usr",
         keywords=["a", "b"],
     )
     app = _build_test_app()
@@ -1996,7 +2203,9 @@ async def test_library_prompt_duplicate_prefills_blank_editor_and_saves_distinct
 
         assert screen._selected_prompt_id is None
         assert screen._library_prompt_dirty is True
-        assert screen.query_one("#library-prompt-name", Input).value == "Original (copy)"
+        assert (
+            screen.query_one("#library-prompt-name", Input).value == "Original (copy)"
+        )
         assert screen.query_one("#library-prompt-system", TextArea).text == "sys"
         assert screen.query_one("#library-prompt-user", TextArea).text == "usr"
         assert screen.query_one("#library-prompt-author", Input).value == "Alice"
@@ -2026,8 +2235,12 @@ async def test_library_prompt_open_existing_button_shows_only_in_name_in_use_sta
     """D3: the "Open existing" button appears ONLY in the name-in-use
     state, and pressing it loads the colliding prompt into the editor."""
     db, service = _real_prompt_scope_service(tmp_path)
-    alpha_id, _uuid, _msg = db.add_prompt(name="Alpha", author="A", details="d-alpha", user_prompt="x")
-    beta_id, _uuid, _msg = db.add_prompt(name="Beta", author="B", details="d-beta", user_prompt="y")
+    alpha_id, _uuid, _msg = db.add_prompt(
+        name="Alpha", author="A", details="d-alpha", user_prompt="x"
+    )
+    beta_id, _uuid, _msg = db.add_prompt(
+        name="Beta", author="B", details="d-beta", user_prompt="y"
+    )
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
     app.prompt_scope_service = service
@@ -2046,7 +2259,10 @@ async def test_library_prompt_open_existing_button_shows_only_in_name_in_use_sta
         await pilot.pause()
 
         status_text = await _wait_for_prompt_status(screen, pilot)
-        assert status_text == "Name already in use — pick another or open the existing prompt."
+        assert (
+            status_text
+            == "Name already in use — pick another or open the existing prompt."
+        )
 
         for _ in range(150):
             if len(screen.query("#library-prompt-open-existing")) > 0:
@@ -2081,8 +2297,12 @@ async def test_library_prompt_open_existing_resolves_offending_name_not_drifted_
     name that actually collided ("Alpha"), not whatever text is currently
     sitting in the (drifted, never re-saved) Name field."""
     db, service = _real_prompt_scope_service(tmp_path)
-    alpha_id, _uuid, _msg = db.add_prompt(name="Alpha", author="A", details="d-alpha", user_prompt="x")
-    beta_id, _uuid, _msg = db.add_prompt(name="Beta", author="B", details="d-beta", user_prompt="y")
+    alpha_id, _uuid, _msg = db.add_prompt(
+        name="Alpha", author="A", details="d-alpha", user_prompt="x"
+    )
+    beta_id, _uuid, _msg = db.add_prompt(
+        name="Beta", author="B", details="d-beta", user_prompt="y"
+    )
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
     app.prompt_scope_service = service
@@ -2156,7 +2376,9 @@ async def test_library_prompts_import_browse_button_fills_path_input(tmp_path):
         await pilot.pause()
 
         assert push_calls and isinstance(push_calls[0], FileOpen)
-        assert screen.query_one("#library-prompts-import-path", Input).value == str(picked_file)
+        assert screen.query_one("#library-prompts-import-path", Input).value == str(
+            picked_file
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2168,7 +2390,9 @@ async def test_library_prompts_import_browse_button_fills_path_input(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_insert_console_stages_live_user_prompt_and_navigates(tmp_path):
+async def test_library_prompt_insert_console_stages_live_user_prompt_and_navigates(
+    tmp_path,
+):
     db, service = _real_prompt_scope_service(tmp_path)
     prompt_id, _uuid, _msg = db.add_prompt(
         name="Summarize",
@@ -2258,7 +2482,9 @@ async def test_library_prompt_insert_console_refuses_while_dirty(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_insert_console_notifies_when_user_prompt_is_empty(tmp_path):
+async def test_library_prompt_insert_console_notifies_when_user_prompt_is_empty(
+    tmp_path,
+):
     db, service = _real_prompt_scope_service(tmp_path)
     prompt_id, _uuid, _msg = db.add_prompt(
         name="System Only",

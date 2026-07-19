@@ -29,12 +29,16 @@ PANE_BORDER_RULES = (
     ),
 )
 
-GRID_BORDER_PATTERN = re.compile(r"border\s*:\s*solid\s+\$ds-grid-line\s*;", re.IGNORECASE)
+GRID_BORDER_PATTERN = re.compile(
+    r"border\s*:\s*solid\s+\$ds-grid-line\s*;", re.IGNORECASE
+)
 
 
 def _combined_rule_block(css: str, selectors: tuple[str, ...]) -> str:
     selector_pattern = r"\s*,\s*".join(re.escape(selector) for selector in selectors)
-    match = re.search(rf"{selector_pattern}\s*\{{(?P<body>.*?)\}}", css, flags=re.DOTALL)
+    match = re.search(
+        rf"{selector_pattern}\s*\{{(?P<body>.*?)\}}", css, flags=re.DOTALL
+    )
     assert match is not None, f"Missing combined pane rule for {selectors!r}"
     return match.group("body")
 

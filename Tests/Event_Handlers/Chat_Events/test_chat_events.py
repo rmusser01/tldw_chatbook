@@ -7,9 +7,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Mock Textual UI elements before they are imported by the module under test
-from textual.widgets import (
-    Button, Input, TextArea, ListItem, Markdown
-)
+from textual.widgets import Button, Input, TextArea, ListItem, Markdown
 from textual.containers import VerticalScroll
 from textual.css.query import QueryError
 
@@ -28,7 +26,10 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
 )
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Utils.Emoji_Handling import (
-    EMOJI_SAVE_EDIT, FALLBACK_SAVE_EDIT, EMOJI_EDIT, FALLBACK_EDIT
+    EMOJI_SAVE_EDIT,
+    FALLBACK_SAVE_EDIT,
+    EMOJI_EDIT,
+    FALLBACK_EDIT,
 )
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
@@ -51,19 +52,19 @@ async def test_general_history_excludes_ccp_owned_sessions():
     ]
 
     visible_ids = [
-        row["id"]
-        for row in conversations
-        if is_general_history_conversation(row)
+        row["id"] for row in conversations if is_general_history_conversation(row)
     ]
 
     assert visible_ids == ["conv-general", "conv-implicit"]
 
 
 # Mock external dependencies used in chat_events.py
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl')
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessageEnhanced')
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage')
-async def test_handle_chat_send_button_pressed_basic(mock_chat_message_class, mock_chat_message_enhanced_class, mock_ccl, mock_app):
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl")
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessageEnhanced")
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage")
+async def test_handle_chat_send_button_pressed_basic(
+    mock_chat_message_class, mock_chat_message_enhanced_class, mock_ccl, mock_app
+):
     """Test a basic message send operation."""
 
     # Mock ChatMessage instances to track mount calls
@@ -102,17 +103,19 @@ async def test_handle_chat_send_button_pressed_basic(mock_chat_message_class, mo
     # chat_wrapper is AsyncMock, so we need to check it was called (not await it in test)
     mock_app.chat_wrapper.assert_called_once()
     wrapper_kwargs = mock_app.chat_wrapper.call_args.kwargs
-    assert wrapper_kwargs['message'] == "User message"
-    assert wrapper_kwargs['api_endpoint'] == "OpenAI"
-    assert wrapper_kwargs['api_key'] == "fake-key"
-    assert wrapper_kwargs['system_message'] == "UI system prompt"
-    assert wrapper_kwargs['streaming'] is True  # From config
+    assert wrapper_kwargs["message"] == "User message"
+    assert wrapper_kwargs["api_endpoint"] == "OpenAI"
+    assert wrapper_kwargs["api_key"] == "fake-key"
+    assert wrapper_kwargs["system_message"] == "UI system prompt"
+    assert wrapper_kwargs["streaming"] is True  # From config
 
 
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl')
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessageEnhanced')
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage')
-async def test_handle_chat_send_with_active_character(mock_chat_message_class, mock_chat_message_enhanced_class, mock_ccl, mock_app):
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl")
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessageEnhanced")
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage")
+async def test_handle_chat_send_with_active_character(
+    mock_chat_message_class, mock_chat_message_enhanced_class, mock_ccl, mock_app
+):
     """Test that an active character's system prompt overrides the UI."""
 
     # Mock ChatMessage instances
@@ -121,8 +124,8 @@ async def test_handle_chat_send_with_active_character(mock_chat_message_class, m
     mock_chat_message_class.side_effect = [mock_user_msg, mock_ai_msg]
     mock_chat_message_enhanced_class.side_effect = [mock_user_msg, mock_ai_msg]
     mock_app.current_chat_active_character_data = {
-        'name': 'TestChar',
-        'system_prompt': 'You are TestChar.'
+        "name": "TestChar",
+        "system_prompt": "You are TestChar.",
     }
 
     with patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}):
@@ -132,12 +135,12 @@ async def test_handle_chat_send_with_active_character(mock_chat_message_class, m
     worker_lambda()
 
     wrapper_kwargs = mock_app.chat_wrapper.call_args.kwargs
-    assert wrapper_kwargs['system_message'] == "You are TestChar."
+    assert wrapper_kwargs["system_message"] == "You are TestChar."
 
 
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl')
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessageEnhanced')
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage')
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl")
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessageEnhanced")
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage")
 async def test_handle_chat_send_applies_staged_search_rag_context_to_provider_message(
     mock_chat_message_class, mock_chat_message_enhanced_class, mock_ccl, mock_app
 ):
@@ -179,7 +182,7 @@ async def test_handle_new_conversation_button_pressed(mock_app):
     # Set some state to ensure it's cleared
     mock_app.current_chat_conversation_id = "conv_123"
     mock_app.current_chat_is_ephemeral = False
-    mock_app.current_chat_active_character_data = {'name': 'char'}
+    mock_app.current_chat_active_character_data = {"name": "char"}
 
     await handle_chat_new_conversation_button_pressed(mock_app, MagicMock())
 
@@ -194,10 +197,14 @@ async def test_handle_new_conversation_button_pressed(mock_app):
     assert mock_app.query_one("#chat-system-prompt").text == "Default system prompt."
 
 
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl')
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.display_conversation_in_chat_tab_ui',
-       new_callable=AsyncMock)
-async def test_handle_save_current_chat_button_pressed(mock_display_conv, mock_ccl, mock_app):
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl")
+@patch(
+    "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.display_conversation_in_chat_tab_ui",
+    new_callable=AsyncMock,
+)
+async def test_handle_save_current_chat_button_pressed(
+    mock_display_conv, mock_ccl, mock_app
+):
     """Test saving an ephemeral chat."""
     mock_app.current_chat_is_ephemeral = True
     mock_app.current_chat_conversation_id = None
@@ -209,7 +216,7 @@ async def test_handle_save_current_chat_button_pressed(mock_display_conv, mock_c
     mock_msg1.generation_complete = True
     mock_msg1.image_data = None
     mock_msg1.image_mime_type = None
-    
+
     mock_msg2 = MagicMock(spec=ChatMessage)
     mock_msg2.role = "AI"
     mock_msg2.message_text = "Hi"
@@ -218,7 +225,7 @@ async def test_handle_save_current_chat_button_pressed(mock_display_conv, mock_c
     mock_msg2.image_mime_type = None
     # Create a mock chat log widget
     mock_chat_log = MagicMock(spec=VerticalScroll)
-    
+
     # Mock the query method to handle both ChatMessage and ChatMessageEnhanced queries
     def mock_query(widget_type):
         if widget_type == ChatMessage:
@@ -226,20 +233,20 @@ async def test_handle_save_current_chat_button_pressed(mock_display_conv, mock_c
         elif widget_type == ChatMessageEnhanced:
             return []  # No enhanced messages in this test
         return []
-    
+
     mock_chat_log.query = MagicMock(side_effect=mock_query)
-    
+
     # Mock the children attribute for sorting
     mock_chat_log.children = [mock_msg1, mock_msg2]
-    
+
     # Mock the title input widget
     mock_title_input = MagicMock(spec=Input)
     mock_title_input.value = ""
-    
+
     # Mock the keywords textarea widget
     mock_keywords_textarea = MagicMock(spec=TextArea)
     mock_keywords_textarea.text = ""
-    
+
     # Update query_one to return appropriate widgets
     def mock_query_one(selector, widget_type=None):
         if selector == "#chat-log":
@@ -249,9 +256,9 @@ async def test_handle_save_current_chat_button_pressed(mock_display_conv, mock_c
         elif selector == "#chat-conversation-keywords-input":
             return mock_keywords_textarea
         raise QueryError(f"No widget found for selector: {selector}")
-    
+
     mock_app.query_one.side_effect = mock_query_one
-    
+
     # Set DEFAULT_CHARACTER_ID on the mock
     mock_ccl.DEFAULT_CHARACTER_ID = "default_char_id"
 
@@ -261,22 +268,26 @@ async def test_handle_save_current_chat_button_pressed(mock_display_conv, mock_c
 
     mock_ccl.create_conversation.assert_called_once()
     create_kwargs = mock_ccl.create_conversation.call_args.kwargs
-    assert create_kwargs['title'].startswith("Chat: Hello...")
-    assert len(create_kwargs['initial_messages']) == 2
-    assert create_kwargs['initial_messages'][0]['content'] == "Hello"
+    assert create_kwargs["title"].startswith("Chat: Hello...")
+    assert len(create_kwargs["initial_messages"]) == 2
+    assert create_kwargs["initial_messages"][0]["content"] == "Hello"
 
     assert mock_app.current_chat_conversation_id == "new_conv_id"
     assert mock_app.current_chat_is_ephemeral is False
-    mock_app.notify.assert_called_with("Chat saved successfully!", severity="information")
+    mock_app.notify.assert_called_with(
+        "Chat saved successfully!", severity="information"
+    )
     mock_display_conv.assert_called_once_with(mock_app, "new_conv_id")
 
 
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.TextArea')
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl')
-async def test_handle_chat_action_button_pressed_edit_and_save(mock_ccl, mock_textarea_class, mock_app):
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.TextArea")
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl")
+async def test_handle_chat_action_button_pressed_edit_and_save(
+    mock_ccl, mock_textarea_class, mock_app
+):
     """Test the edit->save workflow for a chat message."""
     mock_button = MagicMock(spec=Button, classes=["edit-button"])
-    
+
     # Create a proper mock action widget using MagicMock, not AsyncMock
     mock_action_widget = MagicMock(spec=ChatMessage)
     mock_action_widget.message_text = "Original text"
@@ -285,7 +296,7 @@ async def test_handle_chat_action_button_pressed_edit_and_save(mock_ccl, mock_te
     mock_action_widget._editing = False  # Start in non-editing mode
     mock_action_widget.mount = AsyncMock()  # mount is async
     mock_action_widget.remove = AsyncMock()  # remove is async
-    
+
     # Create mock for the markdown text widget
     mock_markdown_widget = MagicMock(spec=Markdown)
     mock_markdown_widget.update = AsyncMock()  # update is async in this codebase
@@ -298,26 +309,30 @@ async def test_handle_chat_action_button_pressed_edit_and_save(mock_ccl, mock_te
     mock_editor.styles = MagicMock()
     mock_editor.focus = MagicMock()  # focus is sync
     mock_textarea_class.return_value = mock_editor
-    
+
     await handle_chat_action_button_pressed(mock_app, mock_button, mock_action_widget)
 
-    mock_action_widget.mount.assert_called_once_with(mock_editor, before=mock_markdown_widget)
+    mock_action_widget.mount.assert_called_once_with(
+        mock_editor, before=mock_markdown_widget
+    )
     # After first edit click, widget should be in editing mode
     mock_action_widget._editing = True
     # Check for save emoji or fallback text
-    assert EMOJI_SAVE_EDIT in mock_button.label or FALLBACK_SAVE_EDIT in mock_button.label
+    assert (
+        EMOJI_SAVE_EDIT in mock_button.label or FALLBACK_SAVE_EDIT in mock_button.label
+    )
 
     # --- 2. Second press: Save edit ---
     mock_action_widget._editing = True  # Simulate being in editing mode
     # Change what query_one returns for the edit area
     mock_editor.text = "New edited text"
     mock_editor.remove = AsyncMock()  # remove is async
-    
+
     def query_one_side_effect(selector, widget_type=None):
         if selector == "#edit-area":
             return mock_editor
         return mock_markdown_widget
-    
+
     mock_action_widget.query_one.side_effect = query_one_side_effect
     mock_ccl.edit_message_content.return_value = True
 
@@ -338,13 +353,17 @@ async def test_handle_chat_action_button_pressed_edit_and_save(mock_ccl, mock_te
     assert EMOJI_EDIT in mock_button.label or FALLBACK_EDIT in mock_button.label
 
 
-async def test_handle_chat_action_button_pressed_schedules_chatbook_artifact_worker(mock_app):
+async def test_handle_chat_action_button_pressed_schedules_chatbook_artifact_worker(
+    mock_app,
+):
     """Assistant artifact save schedules disk work off the UI handler path."""
     mock_app.local_chatbook_service = MagicMock()
     mock_app.local_chatbook_service.create_chatbook = AsyncMock(
         return_value={"id": "artifact-1", "name": "Important answer"}
     )
-    mock_app.call_from_thread = MagicMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
+    mock_app.call_from_thread = MagicMock(
+        side_effect=lambda func, *args, **kwargs: func(*args, **kwargs)
+    )
     mock_app.current_chat_conversation_id = "conv-123"
     mock_app.current_provider = "OpenAI"
     mock_app.current_model = "gpt-4.1"
@@ -362,7 +381,9 @@ async def test_handle_chat_action_button_pressed_schedules_chatbook_artifact_wor
     mock_app.run_worker.assert_called_once()
     worker_callable = mock_app.run_worker.call_args.args[0]
     assert mock_app.run_worker.call_args.kwargs["thread"] is True
-    assert mock_app.run_worker.call_args.kwargs["name"] == "console-chatbook-artifact-save"
+    assert (
+        mock_app.run_worker.call_args.kwargs["name"] == "console-chatbook-artifact-save"
+    )
     await asyncio.to_thread(worker_callable)
 
     mock_app.local_chatbook_service.create_chatbook.assert_awaited_once()
@@ -389,7 +410,9 @@ async def test_handle_chat_action_button_pressed_schedules_chatbook_artifact_wor
     )
 
 
-async def test_handle_chat_action_button_pressed_reports_missing_chatbook_service(mock_app):
+async def test_handle_chat_action_button_pressed_reports_missing_chatbook_service(
+    mock_app,
+):
     """Save-to-artifact failure is recoverable and preserves the message."""
     mock_app.local_chatbook_service = None
     mock_button = MagicMock(spec=Button, classes=["artifact-button"])
@@ -410,11 +433,17 @@ async def test_handle_chat_action_button_pressed_reports_missing_chatbook_servic
     )
 
 
-async def test_handle_chat_action_button_pressed_reports_chatbook_create_failure(mock_app):
+async def test_handle_chat_action_button_pressed_reports_chatbook_create_failure(
+    mock_app,
+):
     """Create failures notify the user without deleting the source response."""
     mock_app.local_chatbook_service = MagicMock()
-    mock_app.local_chatbook_service.create_chatbook = AsyncMock(side_effect=RuntimeError("disk full"))
-    mock_app.call_from_thread = MagicMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
+    mock_app.local_chatbook_service.create_chatbook = AsyncMock(
+        side_effect=RuntimeError("disk full")
+    )
+    mock_app.call_from_thread = MagicMock(
+        side_effect=lambda func, *args, **kwargs: func(*args, **kwargs)
+    )
     mock_button = MagicMock(spec=Button, classes=["artifact-button"])
     mock_action_widget = MagicMock(spec=ChatMessage)
     mock_action_widget.has_class.return_value = True
@@ -464,7 +493,9 @@ async def test_handle_chat_action_button_pressed_rejects_system_artifact_save(mo
 async def test_handle_chat_action_button_pressed_does_not_log_message_content(mock_app):
     """Artifact action logs must not include untrusted chat content snippets."""
     mock_app.local_chatbook_service = MagicMock()
-    mock_app.local_chatbook_service.create_chatbook = AsyncMock(return_value={"id": "artifact-1"})
+    mock_app.local_chatbook_service.create_chatbook = AsyncMock(
+        return_value={"id": "artifact-1"}
+    )
     mock_button = MagicMock(spec=Button, classes=["artifact-button"])
     mock_action_widget = MagicMock(spec=ChatMessage)
     mock_action_widget.has_class.return_value = True
@@ -472,13 +503,19 @@ async def test_handle_chat_action_button_pressed_does_not_log_message_content(mo
     mock_action_widget.role = "Assistant"
     mock_action_widget.message_id_internal = "msg-secret"
 
-    with patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.logging.info") as mock_log_info:
-        await handle_chat_action_button_pressed(mock_app, mock_button, mock_action_widget)
+    with patch(
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.logging.info"
+    ) as mock_log_info:
+        await handle_chat_action_button_pressed(
+            mock_app, mock_button, mock_action_widget
+        )
 
     assert "sk-test-secret" not in repr(mock_log_info.call_args_list)
 
 
-async def test_console_chatbook_artifact_metadata_preserves_falsey_simple_values(mock_app):
+async def test_console_chatbook_artifact_metadata_preserves_falsey_simple_values(
+    mock_app,
+):
     """Valid numeric/boolean provenance should not be dropped by truthiness checks."""
     mock_app.current_chat_conversation_id = 0
     mock_app.current_provider = False
@@ -546,27 +583,36 @@ async def test_console_chatbook_artifact_metadata_preserves_citation_payloads(mo
     assert metadata["citation_validation"]["cited_evidence_ids"] == ["S1"]
     assert metadata["citation_validation"]["citations"][0]["source_id"] == "note-1"
     assert metadata["evidence_bundle"]["bundle_id"] == "library-rag:incident"
-    assert metadata["evidence_bundle"]["references"][0]["snippet"] == "Expired credential caused the incident."
+    assert (
+        metadata["evidence_bundle"]["references"][0]["snippet"]
+        == "Expired credential caused the incident."
+    )
 
 
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.load_character_and_image')
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.load_character_and_image")
 async def test_handle_chat_load_character_with_greeting(mock_load_char, mock_app):
     """Test that loading a character into an empty, ephemeral chat posts a greeting."""
     mock_app.current_chat_is_ephemeral = True
     mock_app.query_one("#chat-log").query.return_value = []  # Empty chat log
 
     char_data = {
-        'id': 'char_abc', 'name': 'Greeter', 'first_message': 'Hello, adventurer!'
+        "id": "char_abc",
+        "name": "Greeter",
+        "first_message": "Hello, adventurer!",
     }
     mock_load_char.return_value = (char_data, None, None)
 
     # Mock the list item from the character search list
     mock_list_item = MagicMock(spec=ListItem)
-    mock_list_item.character_id = 'char_abc'
-    mock_app.query_one("#chat-character-search-results-list").highlighted_child = mock_list_item
+    mock_list_item.character_id = "char_abc"
+    mock_app.query_one(
+        "#chat-character-search-results-list"
+    ).highlighted_child = mock_list_item
 
     # Use MagicMock instead of AsyncMock for ChatMessage since it's not async
-    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage') as mock_chat_msg_class:
+    with patch(
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage"
+    ) as mock_chat_msg_class:
         # Create a proper mock instance
         mock_greeting_msg = MagicMock(spec=ChatMessage)
         mock_chat_msg_class.return_value = mock_greeting_msg
@@ -577,8 +623,6 @@ async def test_handle_chat_load_character_with_greeting(mock_load_char, mock_app
 
         # Assert greeting message was created and mounted
         mock_chat_msg_class.assert_called_with(
-            message='Hello, adventurer!',
-            role='Greeter',
-            generation_complete=True
+            message="Hello, adventurer!", role="Greeter", generation_complete=True
         )
         mock_app.query_one("#chat-log").mount.assert_called_once_with(mock_greeting_msg)

@@ -24,7 +24,9 @@ class QuickTestHost(App[None]):
 
 @pytest.fixture
 def orchestrator_patch():
-    with patch("tldw_chatbook.UI.Evals.screens.quick_test.EvaluationOrchestrator") as mock_cls:
+    with patch(
+        "tldw_chatbook.UI.Evals.screens.quick_test.EvaluationOrchestrator"
+    ) as mock_cls:
         orchestrator = MagicMock()
         orchestrator.db.list_tasks.return_value = [
             {"id": "task-1", "name": "Summarization"},
@@ -82,7 +84,9 @@ async def test_quick_test_screen_selection_updates_state(orchestrator_patch) -> 
 
 
 @pytest.mark.asyncio
-async def test_quick_test_screen_validates_missing_configuration(orchestrator_patch) -> None:
+async def test_quick_test_screen_validates_missing_configuration(
+    orchestrator_patch,
+) -> None:
     app_instance = SimpleNamespace(notify=MagicMock())
     app = QuickTestHost(app_instance)
 
@@ -96,7 +100,9 @@ async def test_quick_test_screen_validates_missing_configuration(orchestrator_pa
         screen.selected_task_id = "task-1"
         app_instance.notify.reset_mock()
         screen.action_run_evaluation()
-        app_instance.notify.assert_called_with("Please select a model", severity="error")
+        app_instance.notify.assert_called_with(
+            "Please select a model", severity="error"
+        )
 
 
 @pytest.mark.asyncio

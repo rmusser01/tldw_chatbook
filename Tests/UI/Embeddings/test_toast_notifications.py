@@ -27,7 +27,9 @@ class TestToastNotification(EmbeddingsTestBase):
 
     @pytest.mark.asyncio
     async def test_toast_creation(self):
-        toast = ToastNotification("Test success message", severity="success", duration=5.0)
+        toast = ToastNotification(
+            "Test success message", severity="success", duration=5.0
+        )
 
         assert toast.message == "Test success message"
         assert toast.severity == "success"
@@ -144,7 +146,9 @@ class TestToastManager(EmbeddingsTestBase):
             manager.dismiss_all()
             await pilot.pause()
 
-            assert all("toast-slide-out" in toast.classes for toast in manager.active_toasts)
+            assert all(
+                "toast-slide-out" in toast.classes for toast in manager.active_toasts
+            )
 
     def test_manager_handles_dismiss_message(self):
         manager = ToastManager()

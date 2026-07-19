@@ -158,7 +158,9 @@ class ConsoleEvidenceDisplayState:
     reference_rows: tuple[ConsoleDisplayRow, ...] = ()
 
 
-def evidence_bundle_from_launch(launch: ConsoleLiveWorkLaunch | None) -> EvidenceBundle | None:
+def evidence_bundle_from_launch(
+    launch: ConsoleLiveWorkLaunch | None,
+) -> EvidenceBundle | None:
     """Parse a staged live-work evidence bundle without exposing raw payload text."""
     if launch is None:
         return None
@@ -463,7 +465,9 @@ class ConsoleInspectorState:
                     status=_clean(evidence_status, "ready"),
                 )
             )
-        rows.append(ConsoleDisplayRow("Artifacts", _clean(artifact_status, "unavailable")))
+        rows.append(
+            ConsoleDisplayRow("Artifacts", _clean(artifact_status, "unavailable"))
+        )
         actions = [
             ConsoleInspectorAction(
                 widget_id=CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,

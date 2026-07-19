@@ -83,7 +83,9 @@ def _validation_matrix_rows(evidence: str) -> dict[str, list[str]]:
 
 def _assert_no_local_path_prefixes(text: str) -> None:
     leaked_prefixes = [prefix for prefix in LOCAL_PATH_PREFIXES if prefix in text]
-    assert not leaked_prefixes, f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    assert not leaked_prefixes, (
+        f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    )
 
 
 def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> None:
@@ -117,8 +119,8 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
         "Advanced optional capability groups",
         "python3 -m venv .venv",
         "pip install -e .",
-        "pip install -e \".[dev]\"",
-        "pip install \"tldw_chatbook[embeddings_rag]\"",
+        'pip install -e ".[dev]"',
+        'pip install "tldw_chatbook[embeddings_rag]"',
         "tldw-cli",
         "tldw-serve",
         "Configuration File",
@@ -164,5 +166,3 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
         "transaction",
     ):
         assert required_media_signal in media_db
-
-

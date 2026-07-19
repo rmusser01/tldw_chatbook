@@ -64,8 +64,9 @@ async def _open_console(app, pilot: "Pilot") -> None:
         await app.handle_screen_navigation(NavigateToScreen("chat"))
     await _wait_until(
         pilot,
-        lambda: app.current_tab == "chat"
-        and app.screen.__class__.__name__ == "ChatScreen",
+        lambda: (
+            app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen"
+        ),
         context="Console screen",
     )
     await _wait_for_selector(app.screen, pilot, "#console-shell")

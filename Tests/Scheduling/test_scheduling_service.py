@@ -54,7 +54,9 @@ async def test_create_reminder_server_happy_path(db):
         "run_at": "2026-07-20T14:00:00+00:00",
     }
 
-    svc = SchedulingService(db=db, server_client=server_client, runtime_source="server:1")
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
     task = await svc.create_reminder(_reminder_payload("Server Task"))
 
     assert task.title == "Server Task"
@@ -72,7 +74,9 @@ async def test_create_reminder_server_falls_back_local_on_unavailable(db):
     server_client = AsyncMock()
     server_client.create_reminder.side_effect = ServerUnavailableError("offline")
 
-    svc = SchedulingService(db=db, server_client=server_client, runtime_source="server:1")
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
     task = await svc.create_reminder(_reminder_payload("Fallback"))
 
     assert task.title == "Fallback"
@@ -90,7 +94,9 @@ async def test_create_reminder_server_falls_back_on_generic_error(db):
     server_client = AsyncMock()
     server_client.create_reminder.side_effect = RuntimeError("boom")
 
-    svc = SchedulingService(db=db, server_client=server_client, runtime_source="server:1")
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
     task = await svc.create_reminder(_reminder_payload("Fallback"))
 
     assert task.title == "Fallback"
@@ -299,7 +305,9 @@ async def test_delete_reminder_server_with_server_id_happy_path(db):
 
 
 @pytest.mark.asyncio
-async def test_delete_reminder_server_without_server_id_clears_pending_and_deletes_local(db):
+async def test_delete_reminder_server_without_server_id_clears_pending_and_deletes_local(
+    db,
+):
     server_client = AsyncMock()
     server_client.delete_reminder.return_value = {"deleted": True}
 

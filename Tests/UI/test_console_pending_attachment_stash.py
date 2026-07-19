@@ -10,7 +10,6 @@ restore time. The stash is process-memory only: it never serializes, and it
 dies with the app (restart drops pendings, which is the accepted trade).
 """
 
-
 import pytest
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -87,7 +86,8 @@ async def test_pending_attachments_survive_screen_recreation():
         store = console._ensure_console_chat_store()
         pendings = store.pending_attachments(session_id)
         assert [p.display_name for p in pendings] == [
-            "photo.png", "clipboard-grab.png",
+            "photo.png",
+            "clipboard-grab.png",
         ]
         # Bytes preserved verbatim — including the path-less clipboard grab.
         assert pendings[0].data == disk_pending.data

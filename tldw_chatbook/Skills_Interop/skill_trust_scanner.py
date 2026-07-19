@@ -70,7 +70,9 @@ def scan_skill_directory(skill_name: str, skill_dir: Path) -> SkillDirectorySnap
         fingerprints.append(
             SkillFileFingerprint(
                 relative_path=relative_path,
-                file_type="skill" if relative_path == _SKILL_FILENAME else "supporting_text",
+                file_type="skill"
+                if relative_path == _SKILL_FILENAME
+                else "supporting_text",
                 byte_length=len(raw),
                 sha256=sha256_hex(raw),
             )

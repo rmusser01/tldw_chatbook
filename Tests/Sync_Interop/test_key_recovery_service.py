@@ -5,7 +5,10 @@ import json
 
 import pytest
 
-from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key, unwrap_recovery_bundle
+from tldw_chatbook.Sync_Interop.crypto import (
+    generate_dataset_key,
+    unwrap_recovery_bundle,
+)
 from tldw_chatbook.Sync_Interop.key_recovery_service import SyncKeyRecoveryService
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 
@@ -70,7 +73,9 @@ def _repo_with_profile(
     return repo
 
 
-async def test_key_recovery_service_wraps_dataset_key_and_stores_sanitized_metadata(tmp_path):
+async def test_key_recovery_service_wraps_dataset_key_and_stores_sanitized_metadata(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     repo = _repo_with_profile(tmp_path)
     server = FakeRecoveryServer()
@@ -114,15 +119,18 @@ async def test_key_recovery_service_wraps_dataset_key_and_stores_sanitized_metad
     assert "wrapped_key_blob" not in result
     assert "kdf_metadata" not in result
 
-    assert unwrap_recovery_bundle(
-        {
-            "wrapped_key_blob": call["wrapped_key_blob"],
-            "kdf_metadata": call["kdf_metadata"],
-            "recovery_hint": call["recovery_hint"],
-            "key_purpose": call["key_purpose"],
-        },
-        recovery_secret="correct horse battery staple",
-    ) == dataset_key
+    assert (
+        unwrap_recovery_bundle(
+            {
+                "wrapped_key_blob": call["wrapped_key_blob"],
+                "kdf_metadata": call["kdf_metadata"],
+                "recovery_hint": call["recovery_hint"],
+                "key_purpose": call["key_purpose"],
+            },
+            recovery_secret="correct horse battery staple",
+        )
+        == dataset_key
+    )
 
     profile = repo.get_sync_v2_profile_state(
         server_profile_id="server-a",
@@ -171,11 +179,15 @@ async def test_key_recovery_service_accepts_canonical_local_first_sync_mode(tmp_
     assert profile["profile_mode"] == "local_first_sync"
 
 
-async def test_key_recovery_service_requires_local_first_profile_device_dataset_and_key(tmp_path):
+async def test_key_recovery_service_requires_local_first_profile_device_dataset_and_key(
+    tmp_path,
+):
     server = FakeRecoveryServer()
     service = SyncKeyRecoveryService(
         server_service=server,
-        state_repository=_repo_with_profile(tmp_path / "server-front", profile_mode="server_frontend"),
+        state_repository=_repo_with_profile(
+            tmp_path / "server-front", profile_mode="server_frontend"
+        ),
         dataset_keys={"dataset-1": generate_dataset_key()},
     )
 

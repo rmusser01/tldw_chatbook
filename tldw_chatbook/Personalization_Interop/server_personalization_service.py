@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+
 if TYPE_CHECKING:
     from ..tldw_api import (
         PersonalizationMemoryCreate,
@@ -63,13 +64,17 @@ class ServerPersonalizationService:
             return self.client
         if self.client_provider is not None:
             return self.client_provider.build_client()
-        raise ValueError("TLDW API client is required for server Personalization operations.")
+        raise ValueError(
+            "TLDW API client is required for server Personalization operations."
+        )
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -78,11 +83,14 @@ class ServerPersonalizationService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
                     user_message=getattr(decision, "user_message", None)
                     or "Server Personalization action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @classmethod
@@ -107,7 +115,9 @@ class ServerPersonalizationService:
         return PersonalizationOptInRequest(**dict(request_data or {}))
 
     @staticmethod
-    def _preferences_update_request(request_data: Any) -> PersonalizationPreferencesUpdate:
+    def _preferences_update_request(
+        request_data: Any,
+    ) -> PersonalizationPreferencesUpdate:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import PersonalizationPreferencesUpdate
 
@@ -134,7 +144,9 @@ class ServerPersonalizationService:
         return PersonalizationMemoryUpdate(**dict(request_data or {}))
 
     @staticmethod
-    def _memory_validate_request(request_data: Any) -> PersonalizationMemoryValidateRequest:
+    def _memory_validate_request(
+        request_data: Any,
+    ) -> PersonalizationMemoryValidateRequest:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import PersonalizationMemoryValidateRequest
 
@@ -181,7 +193,9 @@ class ServerPersonalizationService:
     async def purge_data(self) -> dict[str, Any]:
         self._enforce("personalization.lifecycle.purge.server")
         response = await self._require_client().purge_personalization_data()
-        return self._normalize(response, record_id="server:personalization_lifecycle:purge")
+        return self._normalize(
+            response, record_id="server:personalization_lifecycle:purge"
+        )
 
     async def list_memories(
         self,
@@ -205,12 +219,16 @@ class ServerPersonalizationService:
     async def export_memories(self) -> dict[str, Any]:
         self._enforce("personalization.memories.export.server")
         response = await self._require_client().export_personalization_memories()
-        return self._normalize(response, record_id="server:personalization_memories:export")
+        return self._normalize(
+            response, record_id="server:personalization_memories:export"
+        )
 
     async def get_memory(self, memory_id: str) -> dict[str, Any]:
         self._enforce("personalization.memories.detail.server")
         response = await self._require_client().get_personalization_memory(memory_id)
-        return self._normalize(response, record_id=f"server:personalization_memory:{memory_id}")
+        return self._normalize(
+            response, record_id=f"server:personalization_memory:{memory_id}"
+        )
 
     async def create_memory(self, request_data: Any) -> dict[str, Any]:
         self._enforce("personalization.memories.create.server")
@@ -227,28 +245,40 @@ class ServerPersonalizationService:
             memory_id,
             self._memory_update_request(request_data),
         )
-        return self._normalize(response, record_id=f"server:personalization_memory:{memory_id}")
+        return self._normalize(
+            response, record_id=f"server:personalization_memory:{memory_id}"
+        )
 
     async def delete_memory(self, memory_id: str) -> dict[str, Any]:
         self._enforce("personalization.memories.delete.server")
         response = await self._require_client().delete_personalization_memory(memory_id)
-        return self._normalize(response, record_id=f"server:personalization_memory:{memory_id}")
+        return self._normalize(
+            response, record_id=f"server:personalization_memory:{memory_id}"
+        )
 
     async def validate_memories(self, request_data: Any) -> dict[str, Any]:
         self._enforce("personalization.memories.validate.server")
         response = await self._require_client().validate_personalization_memories(
             self._memory_validate_request(request_data)
         )
-        return self._normalize(response, record_id="server:personalization_memories:validate")
+        return self._normalize(
+            response, record_id="server:personalization_memories:validate"
+        )
 
     async def import_memories(self, request_data: Any) -> dict[str, Any]:
         self._enforce("personalization.memories.import.server")
         response = await self._require_client().import_personalization_memories(
             self._memory_import_request(request_data)
         )
-        return self._normalize(response, record_id="server:personalization_memories:import")
+        return self._normalize(
+            response, record_id="server:personalization_memories:import"
+        )
 
     async def list_explanations(self, *, limit: int = 10) -> dict[str, Any]:
         self._enforce("personalization.explanations.list.server")
-        response = await self._require_client().list_personalization_explanations(limit=limit)
-        return self._normalize(response, record_id="server:personalization_explanations")
+        response = await self._require_client().list_personalization_explanations(
+            limit=limit
+        )
+        return self._normalize(
+            response, record_id="server:personalization_explanations"
+        )

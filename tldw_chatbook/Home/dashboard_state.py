@@ -10,12 +10,19 @@ from datetime import datetime, timezone
 
 from rich.markup import escape as escape_markup
 
-from tldw_chatbook.Constants import TAB_LLM, TAB_SETTINGS, TAB_STUDY, get_tab_display_label
+from tldw_chatbook.Constants import (
+    TAB_LLM,
+    TAB_SETTINGS,
+    TAB_STUDY,
+    get_tab_display_label,
+)
 from tldw_chatbook.UI.Navigation.shell_destinations import (
     get_shell_destination,
     resolve_shell_route,
 )
-from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
+)
 
 
 # C1: human-readable labels for the Home canvas "Opens: <label>" line.
@@ -391,7 +398,9 @@ def choose_next_best_action(
             "chat",
             "Console is ready for a task.",
         )
-    return HomeAction("start_console", "Start in Console", "chat", "Console is ready for a task.")
+    return HomeAction(
+        "start_console", "Start in Console", "chat", "Console is ready for a task."
+    )
 
 
 def choose_home_selected_item(state: HomeDashboardInput) -> HomeActiveWorkItem | None:
@@ -449,7 +458,8 @@ def build_home_controls(
     paused_item = _first_item_for_status(state, _PAUSED_STATUSES)
     failed_item = _first_item_for_status(state, _FAILED_STATUSES)
     selected_item_is_failed = (
-        selected_item is not None and _normalized_status(selected_item) in _FAILED_STATUSES
+        selected_item is not None
+        and _normalized_status(selected_item) in _FAILED_STATUSES
     )
     if selected_item_is_failed:
         # The selected row's own failure -- not just "the first failed item
@@ -457,7 +467,8 @@ def build_home_controls(
         # should reflect when a real item is selected.
         failed_item = selected_item
     selected_item_is_running = (
-        selected_item is not None and _normalized_status(selected_item) in _RUNNING_STATUSES
+        selected_item is not None
+        and _normalized_status(selected_item) in _RUNNING_STATUSES
     )
     if selected_item_is_running:
         # Same as the failed-item override above: when a running item is
@@ -471,7 +482,9 @@ def build_home_controls(
     # *selected* item, mirroring selected_item_is_failed above: with no
     # selection (summarize_home_dashboard, the triage builder's count-only
     # fallback) Pause keeps its unconditional-when-running behavior.
-    selected_item_is_ingest_job = selected_item_is_running and _is_local_ingest_item(selected_item)
+    selected_item_is_ingest_job = selected_item_is_running and _is_local_ingest_item(
+        selected_item
+    )
     chatbook_item = _first_chatbook_artifact_item(state)
     # When a real item is selected, its details/console controls target THAT
     # item -- mirroring the selected_item overrides for Retry/Pause above (PR
@@ -482,7 +495,9 @@ def build_home_controls(
     # canvas showed the second. The no-selection callers (summarize_home_
     # dashboard, the triage builder's count-only fallback) pass
     # ``selected_item=None`` and keep today's first-in-priority behavior.
-    detail_item = selected_item if selected_item is not None else choose_home_selected_item(state)
+    detail_item = (
+        selected_item if selected_item is not None else choose_home_selected_item(state)
+    )
 
     if _pending_approval_count(state):
         controls.extend(
@@ -504,7 +519,8 @@ def build_home_controls(
             )
         )
     if (
-        _running_run_count(state) or (not state.active_work_items and state.active_run_count)
+        _running_run_count(state)
+        or (not state.active_work_items and state.active_run_count)
     ) and not selected_item_is_ingest_job:
         controls.append(
             HomeControl(
@@ -530,7 +546,9 @@ def build_home_controls(
     # the triage builder's own count-only fallback) keep today's
     # unconditional-when-failed behavior unchanged.
     retry_withheld = selected_item_is_failed and not selected_item.retry_available
-    if (_failed_run_count(state) or _failed_schedule_count(state)) and not retry_withheld:
+    if (
+        _failed_run_count(state) or _failed_schedule_count(state)
+    ) and not retry_withheld:
         failed_route = failed_item.detail_route if failed_item else "schedules"
         controls.append(
             HomeControl(
@@ -558,11 +576,20 @@ def build_home_controls(
                 detail_item.item_id if detail_item else None,
             )
         )
-        if not state.active_work_items or any(item.console_available for item in state.active_work_items):
+        if not state.active_work_items or any(
+            item.console_available for item in state.active_work_items
+        ):
             console_item = (
                 detail_item
                 if detail_item is not None and detail_item.console_available
-                else next((item for item in state.active_work_items if item.console_available), detail_item)
+                else next(
+                    (
+                        item
+                        for item in state.active_work_items
+                        if item.console_available
+                    ),
+                    detail_item,
+                )
             )
             controls.append(
                 HomeControl(
@@ -799,14 +826,23 @@ def _normalized_status(item: HomeActiveWorkItem) -> str:
 
 
 def _count_items_for_status(state: HomeDashboardInput, statuses: frozenset[str]) -> int:
-    return sum(1 for item in state.active_work_items if _normalized_status(item) in statuses)
+    return sum(
+        1 for item in state.active_work_items if _normalized_status(item) in statuses
+    )
 
 
 def _first_item_for_status(
     state: HomeDashboardInput,
     statuses: frozenset[str],
 ) -> HomeActiveWorkItem | None:
-    return next((item for item in state.active_work_items if _normalized_status(item) in statuses), None)
+    return next(
+        (
+            item
+            for item in state.active_work_items
+            if _normalized_status(item) in statuses
+        ),
+        None,
+    )
 
 
 def _is_local_ingest_item(item: HomeActiveWorkItem) -> bool:
@@ -822,7 +858,9 @@ def _is_local_ingest_item(item: HomeActiveWorkItem) -> bool:
     return item.item_id.startswith(LOCAL_INGEST_ITEM_ID_PREFIX)
 
 
-def _first_chatbook_artifact_item(state: HomeDashboardInput) -> HomeActiveWorkItem | None:
+def _first_chatbook_artifact_item(
+    state: HomeDashboardInput,
+) -> HomeActiveWorkItem | None:
     return next(
         (
             item
@@ -834,7 +872,9 @@ def _first_chatbook_artifact_item(state: HomeDashboardInput) -> HomeActiveWorkIt
 
 
 def _pending_approval_count(state: HomeDashboardInput) -> int:
-    return state.pending_approval_count or _count_items_for_status(state, _APPROVAL_STATUSES)
+    return state.pending_approval_count or _count_items_for_status(
+        state, _APPROVAL_STATUSES
+    )
 
 
 def _running_run_count(state: HomeDashboardInput) -> int:
@@ -893,9 +933,13 @@ def _system_status_lines(state: HomeDashboardInput) -> tuple[str, ...]:
 
 
 def _server_event_status_line(state: HomeDashboardInput) -> str:
-    event_state = str(state.server_event_state or SERVER_EVENT_STATE_UNAVAILABLE).strip().lower()
+    event_state = (
+        str(state.server_event_state or SERVER_EVENT_STATE_UNAVAILABLE).strip().lower()
+    )
     if event_state == SERVER_EVENT_STATE_AVAILABLE:
-        return f"Server events: {state.server_event_count} observed via server event feed"
+        return (
+            f"Server events: {state.server_event_count} observed via server event feed"
+        )
     if event_state == SERVER_EVENT_STATE_EMPTY:
         return "Server events: No observed server events"
     if event_state == SERVER_EVENT_STATE_REQUERY_REQUIRED:
@@ -924,7 +968,10 @@ def _runtime_explanation_line(state: HomeDashboardInput) -> str:
         return "Authentication is required before server-backed work."
     if auth_state == SERVER_AUTH_SESSION_INVALID:
         return "Authentication expired. Reconnect before server-backed work."
-    if reachability == SERVER_REACHABILITY_REACHABLE and auth_state == SERVER_AUTH_AUTHENTICATED:
+    if (
+        reachability == SERVER_REACHABILITY_REACHABLE
+        and auth_state == SERVER_AUTH_AUTHENTICATED
+    ):
         return "Server mode is ready for authenticated work."
     return "Checking server readiness."
 
@@ -934,7 +981,11 @@ def _server_status_label(state: HomeDashboardInput) -> str:
     reachability = str(state.server_reachability or UNKNOWN_RUN_STATUS).strip().lower()
     auth_state = str(state.server_auth_state or UNKNOWN_RUN_STATUS).strip().lower()
     if source != RUNTIME_SOURCE_SERVER:
-        return "Configured; local mode" if state.server_configured else "Not configured (local mode)"
+        return (
+            "Configured; local mode"
+            if state.server_configured
+            else "Not configured (local mode)"
+        )
     if not state.server_configured or not state.active_server_id:
         return "Missing active server"
     if reachability == SERVER_REACHABILITY_UNREACHABLE:
@@ -943,7 +994,10 @@ def _server_status_label(state: HomeDashboardInput) -> str:
         return "Auth required"
     if auth_state == SERVER_AUTH_SESSION_INVALID:
         return "Auth expired"
-    if reachability == SERVER_REACHABILITY_REACHABLE and auth_state == SERVER_AUTH_AUTHENTICATED:
+    if (
+        reachability == SERVER_REACHABILITY_REACHABLE
+        and auth_state == SERVER_AUTH_AUTHENTICATED
+    ):
         return "Ready"
     return "Checking"
 
@@ -1076,7 +1130,11 @@ def _canvas_primary_control_id(
         candidate = "home-approve"
     else:
         candidate = "home-open-details"
-    return candidate if any(control.control_id == candidate for control in controls) else ""
+    return (
+        candidate
+        if any(control.control_id == candidate for control in controls)
+        else ""
+    )
 
 
 def build_home_triage_state(

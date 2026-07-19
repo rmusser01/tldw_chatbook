@@ -2,6 +2,7 @@
 
 No Textual, app, DB, or I/O imports.
 """
+
 from __future__ import annotations
 
 import json
@@ -11,10 +12,25 @@ from typing import Callable
 from loguru import logger
 
 from .agent_models import (
-    FIND_TOOLS_NAME, LOAD_TOOLS_NAME, LOOP_DETECTION_N, RUN_CANCELLED,
-    RUN_DONE, RUN_STUCK, SPAWN_TOOL_NAME, STEP_ERROR, STEP_MODEL,
-    STEP_SPAWN, STEP_TOOL_CALL, STEP_TOOL_RESULT, AgentConfig, AgentStep,
-    ModelTurn, RunOutcome, ToolCall, ToolResult, ToolSchema,
+    FIND_TOOLS_NAME,
+    LOAD_TOOLS_NAME,
+    LOOP_DETECTION_N,
+    RUN_CANCELLED,
+    RUN_DONE,
+    RUN_STUCK,
+    SPAWN_TOOL_NAME,
+    STEP_ERROR,
+    STEP_MODEL,
+    STEP_SPAWN,
+    STEP_TOOL_CALL,
+    STEP_TOOL_RESULT,
+    AgentConfig,
+    AgentStep,
+    ModelTurn,
+    RunOutcome,
+    ToolCall,
+    ToolResult,
+    ToolSchema,
 )
 
 FENCE_OPEN = "```tool_call"
@@ -40,7 +56,7 @@ def parse_fenced_tool_call(text: str) -> ToolCall | None:
     stripped = text.lstrip()
     if not stripped.startswith(FENCE_OPEN):
         return None
-    after = stripped[len(FENCE_OPEN):]
+    after = stripped[len(FENCE_OPEN) :]
     newline = after.find("\n")
     if newline == -1:
         return None
@@ -51,7 +67,7 @@ def parse_fenced_tool_call(text: str) -> ToolCall | None:
     tag_line_rest = after[:newline]
     if tag_line_rest.strip():
         return None
-    body_and_rest = after[newline + 1:]
+    body_and_rest = after[newline + 1 :]
     close = body_and_rest.find(_FENCE_CLOSE)
     if close == -1:
         return None
@@ -120,7 +136,7 @@ def stream_prefix_verdict(prefix: str) -> str:
         # grow into a look-alike tag like ```tool_calls or
         # ```tool_call_schema. Only a clean line boundary (whitespace then
         # newline) after FENCE_OPEN confirms a real tool-call fence.
-        after = stripped[len(FENCE_OPEN):]
+        after = stripped[len(FENCE_OPEN) :]
         if not after:
             return STREAM_UNDECIDED
         i = 0
@@ -153,9 +169,16 @@ def render_tool_protocol(schemas: list[ToolSchema]) -> str:
         return ""
     blocks = []
     for schema in schemas:
-        blocks.append(json.dumps(
-            {"name": schema.name, "description": schema.description,
-             "parameters": schema.parameters}, indent=2))
+        blocks.append(
+            json.dumps(
+                {
+                    "name": schema.name,
+                    "description": schema.description,
+                    "parameters": schema.parameters,
+                },
+                indent=2,
+            )
+        )
     tool_list = "\n".join(blocks)
     return (
         "You can call tools. Available tools:\n"
@@ -207,12 +230,10 @@ class LoopDeps:
 def _catalog_lines(entries: list) -> str:
     if not entries:
         return "No matching tools."
-    return "\n".join(
-        f"{e.id} — {e.name}: {e.one_line_description}" for e in entries)
+    return "\n".join(f"{e.id} — {e.name}: {e.one_line_description}" for e in entries)
 
 
-def _append_tool_result(messages: list[dict], call: ToolCall,
-                        content: str) -> None:
+def _append_tool_result(messages: list[dict], call: ToolCall, content: str) -> None:
     """Append one tool result to history using the call's role/id shaping.
 
     Single source of truth for both the normal post-invoke path and the
@@ -225,17 +246,21 @@ def _append_tool_result(messages: list[dict], call: ToolCall,
     appended as a user-role message.
     """
     if call.call_id:
-        messages.append({
-            "role": "tool", "tool_call_id": call.call_id,
-            "content": content})
+        messages.append(
+            {"role": "tool", "tool_call_id": call.call_id, "content": content}
+        )
     else:
-        messages.append({
-            "role": "user",
-            "content": f"Tool result for {call.name}: {content}"})
+        messages.append(
+            {"role": "user", "content": f"Tool result for {call.name}: {content}"}
+        )
 
 
-def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
-                   active_schemas: list, deps: LoopDeps) -> RunOutcome:
+def run_agent_loop(
+    config: AgentConfig,
+    initial_messages: list[dict],
+    active_schemas: list,
+    deps: LoopDeps,
+) -> RunOutcome:
     """Drive think → (tool) → observe until done / stuck / cancelled.
 
     Message convention (transport-independent): fence-protocol turns append
@@ -287,8 +312,7 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
 
     while True:
         if deps.should_cancel():
-            return RunOutcome(RUN_CANCELLED, steps,
-                              subagents_spawned=spawned)
+            return RunOutcome(RUN_CANCELLED, steps, subagents_spawned=spawned)
         if len(steps) >= budget.max_steps:
             add(STEP_ERROR, summary="step budget exhausted")
             return RunOutcome(RUN_STUCK, steps, subagents_spawned=spawned)
@@ -314,14 +338,19 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
                 # this, a cancellation that lands mid-final-answer would be
                 # silently downgraded to a normal completed run.
                 if deps.should_cancel():
-                    return RunOutcome(RUN_CANCELLED, steps,
-                                      final_text=turn.text,
-                                      subagents_spawned=spawned)
-                return RunOutcome(RUN_DONE, steps, final_text=turn.text,
-                                  subagents_spawned=spawned)
+                    return RunOutcome(
+                        RUN_CANCELLED,
+                        steps,
+                        final_text=turn.text,
+                        subagents_spawned=spawned,
+                    )
+                return RunOutcome(
+                    RUN_DONE, steps, final_text=turn.text, subagents_spawned=spawned
+                )
             calls = [fenced]
-        messages.append(turn.assistant_message
-                        or {"role": "assistant", "content": turn.text})
+        messages.append(
+            turn.assistant_message or {"role": "assistant", "content": turn.text}
+        )
 
         # P5 Task 4: optional pre-dispatch batch review, called ONCE with
         # the full batch about to be dispatched below (whichever produced
@@ -342,22 +371,23 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
                 logger.opt(exception=True).warning(
                     f"review_tool_calls hook raised for batch "
                     f"{[c.name for c in calls]}; treating all {len(calls)} "
-                    f"calls as proceed")
+                    f"calls as proceed"
+                )
                 verdicts = {}
 
         for call in calls:
             if deps.should_cancel():
-                return RunOutcome(RUN_CANCELLED, steps,
-                                  subagents_spawned=spawned)
+                return RunOutcome(RUN_CANCELLED, steps, subagents_spawned=spawned)
             key = (call.name, json.dumps(call.args, sort_keys=True))
             repeat_count = repeat_count + 1 if key == last_key else 1
             last_key = key
             if repeat_count >= LOOP_DETECTION_N:
-                add(STEP_ERROR,
+                add(
+                    STEP_ERROR,
                     summary=f"loop detected: {call.name} repeated "
-                            f"{repeat_count}x with identical args")
-                return RunOutcome(RUN_STUCK, steps,
-                                  subagents_spawned=spawned)
+                    f"{repeat_count}x with identical args",
+                )
+                return RunOutcome(RUN_STUCK, steps, subagents_spawned=spawned)
 
             # P5 Task 4: a non-"proceed" verdict (an absent name defaults to
             # "proceed" — the hook only reports what it wants to stop)
@@ -376,32 +406,35 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
                         # Q6: refuse before dispatch — no budget consumption,
                         # no STEP_SPAWN, deps.spawn never called.
                         result = ToolResult(
-                            ok=False,
-                            error=f"Tool not permitted: {SPAWN_TOOL_NAME}")
+                            ok=False, error=f"Tool not permitted: {SPAWN_TOOL_NAME}"
+                        )
                     else:
                         task = str(call.args.get("task", "")).strip()
                         if not task:
                             # G4: an empty task is refused with no budget
                             # consumption and no STEP_SPAWN.
                             result = ToolResult(
-                                ok=False,
-                                error="Task description cannot be empty")
+                                ok=False, error="Task description cannot be empty"
+                            )
                         elif spawned >= budget.max_subagents:
                             result = ToolResult(
-                                ok=False, error="sub-agent budget exhausted")
+                                ok=False, error="sub-agent budget exhausted"
+                            )
                         else:
-                            add(STEP_SPAWN, summary=task[:200],
-                                tool_name=SPAWN_TOOL_NAME, args=dict(call.args))
+                            add(
+                                STEP_SPAWN,
+                                summary=task[:200],
+                                tool_name=SPAWN_TOOL_NAME,
+                                args=dict(call.args),
+                            )
                             result = deps.spawn(task)
                             spawned += 1
                 elif call.name == FIND_TOOLS_NAME:
-                    add(STEP_TOOL_CALL, tool_name=call.name,
-                        args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     entries = deps.find_tools(str(call.args.get("query", "")))
                     result = ToolResult(ok=True, content=_catalog_lines(entries))
                 elif call.name == LOAD_TOOLS_NAME:
-                    add(STEP_TOOL_CALL, tool_name=call.name,
-                        args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     # G1/Q9: `ids` may legitimately arrive as a bare string
                     # (one id) or as None/other junk from an unreliable local
                     # model — never crash, and never char-split a string.
@@ -417,7 +450,8 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
                         # G5: every id was invalid (or none were valid) — this
                         # is a different failure than "valid but no room".
                         result = ToolResult(
-                            ok=False, error="No valid tools found to load")
+                            ok=False, error="No valid tools found to load"
+                        )
                     else:
                         # F1-b (plan-a-final-review addendum): a provider may
                         # legitimately hand back a schema whose name is
@@ -429,7 +463,9 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
                         # this is the loop's own last line of defense for its
                         # list-vs-set cap-boundary integrity.
                         active_names = {a.name for a in active}
-                        already_active = [s.name for s in loaded if s.name in active_names]
+                        already_active = [
+                            s.name for s in loaded if s.name in active_names
+                        ]
                         # PR #655 review: also dedupe by name WITHIN this batch
                         # (a caller may hand back the same schema twice — e.g.
                         # bare name + catalog id aliases) so `active` can never
@@ -454,25 +490,25 @@ def run_agent_loop(config: AgentConfig, initial_messages: list[dict],
                             # not read identically.
                             result = ToolResult(
                                 ok=True,
-                                content="already loaded: " + ", ".join(already_active))
+                                content="already loaded: " + ", ".join(already_active),
+                            )
                         else:
                             room = budget.max_active_tools - len(active)
-                            accepted = new_loaded[:max(room, 0)]
+                            accepted = new_loaded[: max(room, 0)]
                             active.extend(accepted)
                             if accepted:
                                 result = ToolResult(
                                     ok=True,
-                                    content="loaded: " + ", ".join(
-                                        s.name for s in accepted))
+                                    content="loaded: "
+                                    + ", ".join(s.name for s in accepted),
+                                )
                             else:
                                 result = ToolResult(ok=True, content="no room")
                 else:
-                    add(STEP_TOOL_CALL, tool_name=call.name,
-                        args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.invoke_tool(call)
 
                 content = result.content if result.ok else f"ERROR: {result.error}"
 
-            add(STEP_TOOL_RESULT, tool_name=call.name,
-                result=content[:2000])
+            add(STEP_TOOL_RESULT, tool_name=call.name, result=content[:2000])
             _append_tool_result(messages, call, content)

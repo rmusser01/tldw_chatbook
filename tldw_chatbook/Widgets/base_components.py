@@ -29,6 +29,7 @@ logger = logger.bind(module="base_components")
 @dataclass
 class ButtonConfig:
     """Configuration for a button in ActionButtonRow."""
+
     label: str
     id: str
     variant: str = "default"
@@ -39,6 +40,7 @@ class ButtonConfig:
 @dataclass
 class FormField:
     """Configuration for a form field."""
+
     name: str
     label: str
     field_type: str = "text"  # text, number, select, password
@@ -52,13 +54,13 @@ class FormField:
 class SectionContainer(Container):
     """
     A styled container for UI sections with optional collapsibility.
-    
+
     Features:
     - Consistent styling with title
     - Optional collapsible behavior
     - Customizable through CSS classes
     """
-    
+
     DEFAULT_CSS = """
     SectionContainer {
         background: $panel;
@@ -101,9 +103,9 @@ class SectionContainer(Container):
         display: none;
     }
     """
-    
+
     _collapsed = reactive(False)
-    
+
     def __init__(
         self,
         title: str,
@@ -112,11 +114,11 @@ class SectionContainer(Container):
         initially_collapsed: bool = False,
         classes: str = "",
         id: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize a SectionContainer.
-        
+
         Args:
             title: The section title
             *children: Child widgets to include in the section
@@ -131,7 +133,7 @@ class SectionContainer(Container):
         self._children = children
         self.collapsible = collapsible
         self._collapsed = initially_collapsed
-    
+
     def compose(self) -> ComposeResult:
         """Build the section structure."""
         with Container(classes="section-header"):
@@ -140,16 +142,18 @@ class SectionContainer(Container):
                 yield Button(
                     "▼" if not self._collapsed else "▶",
                     classes="collapse-button",
-                    id=f"{self.id}-collapse-btn" if self.id else None
+                    id=f"{self.id}-collapse-btn" if self.id else None,
                 )
-        
+
         content_classes = "section-content"
         if self._collapsed:
             content_classes += " collapsed"
-        
-        with Container(classes=content_classes, id=f"{self.id}-content" if self.id else None):
+
+        with Container(
+            classes=content_classes, id=f"{self.id}-content" if self.id else None
+        ):
             yield from self._children
-    
+
     def watch__collapsed(self, collapsed: bool) -> None:
         """Update UI when collapsed state changes."""
         try:
@@ -157,7 +161,7 @@ class SectionContainer(Container):
             if self.collapsible:
                 btn = self.query_one(".collapse-button", Button)
                 btn.label = "▶" if collapsed else "▼"
-            
+
             # Toggle content visibility
             content = self.query_one(".section-content")
             if collapsed:
@@ -166,7 +170,7 @@ class SectionContainer(Container):
                 content.remove_class("collapsed")
         except Exception as e:
             logger.warning(f"Error updating collapsed state: {e}")
-    
+
     @on(Button.Pressed, ".collapse-button")
     def toggle_collapse(self) -> None:
         """Toggle the collapsed state."""
@@ -176,13 +180,13 @@ class SectionContainer(Container):
 class ActionButtonRow(Horizontal):
     """
     A horizontal row of action buttons with consistent styling.
-    
+
     Features:
     - Automatic spacing between buttons
     - Support for different button variants
     - Disabled state handling
     """
-    
+
     DEFAULT_CSS = """
     ActionButtonRow {
         height: auto;
@@ -199,17 +203,17 @@ class ActionButtonRow(Horizontal):
         margin-right: 0;
     }
     """
-    
+
     def __init__(
         self,
         buttons: List[ButtonConfig],
         classes: str = "",
         id: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize an ActionButtonRow.
-        
+
         Args:
             buttons: List of button configurations
             classes: Additional CSS classes
@@ -218,7 +222,7 @@ class ActionButtonRow(Horizontal):
         """
         super().__init__(classes=f"action-button-row {classes}", id=id, **kwargs)
         self.buttons = buttons
-    
+
     def compose(self) -> ComposeResult:
         """Build the button row."""
         for config in self.buttons:
@@ -228,20 +232,20 @@ class ActionButtonRow(Horizontal):
                 variant=config.variant,
                 disabled=config.disabled,
                 tooltip=config.tooltip,
-                classes="action-button"
+                classes="action-button",
             )
 
 
 class StatusDisplay(Static):
     """
     Displays status messages with contextual styling.
-    
+
     Features:
     - Different styles for info, success, warning, error
     - Automatic styling based on status type
     - Optional auto-hide after timeout
     """
-    
+
     DEFAULT_CSS = """
     StatusDisplay {
         padding: 0 1;
@@ -277,21 +281,21 @@ class StatusDisplay(Static):
         color: $text;
     }
     """
-    
+
     status_text = reactive("")
     status_type = reactive("info")
-    
+
     def __init__(
         self,
         initial_text: str = "",
         initial_type: str = "info",
         auto_hide_seconds: Optional[float] = None,
         id: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize a StatusDisplay.
-        
+
         Args:
             initial_text: Initial status text
             initial_type: Initial status type (info, success, warning, error)
@@ -304,10 +308,10 @@ class StatusDisplay(Static):
         self.status_type = initial_type
         self.auto_hide_seconds = auto_hide_seconds
         self._hide_timer = None
-        
+
         if initial_text:
             self.add_class("visible")
-    
+
     def watch_status_text(self, text: str) -> None:
         """Update display when text changes."""
         self.update(text)
@@ -317,48 +321,45 @@ class StatusDisplay(Static):
                 self._start_hide_timer()
         else:
             self.remove_class("visible")
-    
+
     def watch_status_type(self, status_type: str) -> None:
         """Update styling when type changes."""
         self.remove_class("info", "success", "warning", "error")
         self.add_class(status_type)
-    
+
     def set_status(self, text: str, status_type: str = "info") -> None:
         """
         Set status message and type.
-        
+
         Args:
             text: Status message text
             status_type: Type of status (info, success, warning, error)
         """
         self.status_type = status_type
         self.status_text = text
-    
+
     def clear(self) -> None:
         """Clear the status message."""
         self.status_text = ""
-    
+
     def _start_hide_timer(self) -> None:
         """Start auto-hide timer."""
         if self._hide_timer:
             self._hide_timer.cancel()
-        
-        self._hide_timer = self.set_timer(
-            self.auto_hide_seconds,
-            lambda: self.clear()
-        )
+
+        self._hide_timer = self.set_timer(self.auto_hide_seconds, lambda: self.clear())
 
 
 class ConfigurationForm(Container):
     """
     A form container for configuration inputs.
-    
+
     Features:
     - Automatic field layout
     - Built-in validation
     - Consistent styling
     """
-    
+
     DEFAULT_CSS = """
     ConfigurationForm {
         layout: vertical;
@@ -400,18 +401,18 @@ class ConfigurationForm(Container):
         padding: 0 1;
     }
     """
-    
+
     def __init__(
         self,
         fields: List[FormField],
         submit_button: Optional[ButtonConfig] = None,
         classes: str = "",
         id: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize a ConfigurationForm.
-        
+
         Args:
             fields: List of form field configurations
             submit_button: Optional submit button configuration
@@ -424,7 +425,7 @@ class ConfigurationForm(Container):
         self.submit_button = submit_button
         self._field_widgets: Dict[str, Any] = {}
         self._error_widgets: Dict[str, Static] = {}
-    
+
     def compose(self) -> ComposeResult:
         """Build the form structure."""
         for field in self.fields:
@@ -437,14 +438,14 @@ class ConfigurationForm(Container):
                 else:
                     label_text = field.label
                 yield Label(label_text, classes=label_classes)
-                
+
                 # Input widget
                 if field.field_type == "select" and field.options:
                     widget = Select(
                         field.options,
                         value=field.default_value,
                         id=f"{self.id}-{field.name}" if self.id else field.name,
-                        classes="form-input"
+                        classes="form-input",
                     )
                 else:
                     widget = Input(
@@ -452,14 +453,16 @@ class ConfigurationForm(Container):
                         placeholder=field.placeholder,
                         id=f"{self.id}-{field.name}" if self.id else field.name,
                         classes="form-input",
-                        type=field.field_type
+                        type=field.field_type,
                     )
                 yield widget
-                
+
                 # Error display
-                error_widget = Static("", classes="form-error", id=f"{field.name}-error")
+                error_widget = Static(
+                    "", classes="form-error", id=f"{field.name}-error"
+                )
                 yield error_widget
-        
+
         # Submit button
         if self.submit_button:
             yield Button(
@@ -467,9 +470,9 @@ class ConfigurationForm(Container):
                 id=self.submit_button.id,
                 variant=self.submit_button.variant,
                 disabled=self.submit_button.disabled,
-                classes="form-submit"
+                classes="form-submit",
             )
-    
+
     def on_mount(self) -> None:
         """Cache references to form widgets."""
         for field in self.fields:
@@ -479,11 +482,11 @@ class ConfigurationForm(Container):
                 self._error_widgets[field.name] = self.query_one(f"#{field.name}-error")
             except Exception as e:
                 logger.warning(f"Could not find widget for field {field.name}: {e}")
-    
+
     def get_values(self) -> Dict[str, Any]:
         """
         Get all form values.
-        
+
         Returns:
             Dictionary of field names to values
         """
@@ -496,11 +499,11 @@ class ConfigurationForm(Container):
                 else:
                     values[field.name] = widget.value
         return values
-    
+
     def set_values(self, values: Dict[str, Any]) -> None:
         """
         Set form values.
-        
+
         Args:
             values: Dictionary of field names to values
         """
@@ -511,31 +514,31 @@ class ConfigurationForm(Container):
                     widget.value = value
                 else:
                     widget.value = str(value)
-    
+
     def validate(self) -> bool:
         """
         Validate all form fields.
-        
+
         Returns:
             True if all fields are valid
         """
         all_valid = True
-        
+
         for field in self.fields:
             widget = self._field_widgets.get(field.name)
             error_widget = self._error_widgets.get(field.name)
-            
+
             if not widget or not error_widget:
                 continue
-            
-            value = widget.value if hasattr(widget, 'value') else ""
-            
+
+            value = widget.value if hasattr(widget, "value") else ""
+
             # Required field check
             if field.required and not value:
                 error_widget.update("This field is required")
                 all_valid = False
                 continue
-            
+
             # Custom validator
             if field.validator and value:
                 try:
@@ -547,12 +550,12 @@ class ConfigurationForm(Container):
                     error_widget.update(f"Validation error: {e}")
                     all_valid = False
                     continue
-            
+
             # Clear error if valid
             error_widget.update("")
-        
+
         return all_valid
-    
+
     def clear_errors(self) -> None:
         """Clear all error messages."""
         for error_widget in self._error_widgets.values():
@@ -562,13 +565,13 @@ class ConfigurationForm(Container):
 class NavigationButton(Button):
     """
     A styled navigation button with active state support.
-    
+
     Features:
     - Visual indication of active state
     - Consistent navigation styling
     - Optional icon support
     """
-    
+
     DEFAULT_CSS = """
     /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
     $ds-focus-bg: $surface;
@@ -605,19 +608,15 @@ class NavigationButton(Button):
         outline: none;
     }
     """
-    
+
     is_active = reactive(False)
-    
+
     def __init__(
-        self,
-        label: str,
-        icon: Optional[str] = None,
-        active: bool = False,
-        **kwargs
+        self, label: str, icon: Optional[str] = None, active: bool = False, **kwargs
     ):
         """
         Initialize a NavigationButton.
-        
+
         Args:
             label: Button label
             icon: Optional icon character
@@ -627,18 +626,18 @@ class NavigationButton(Button):
         full_label = f"{icon} {label}" if icon else label
         super().__init__(full_label, **kwargs)
         self.is_active = active
-    
+
     def watch_is_active(self, active: bool) -> None:
         """Update styling when active state changes."""
         if active:
             self.add_class("active")
         else:
             self.remove_class("active")
-    
+
     def activate(self) -> None:
         """Set this button as active."""
         self.is_active = True
-    
+
     def deactivate(self) -> None:
         """Set this button as inactive."""
         self.is_active = False
@@ -646,42 +645,36 @@ class NavigationButton(Button):
 
 # Utility functions for common patterns
 
+
 def create_button_row(
-    *buttons: Tuple[str, str, str],
-    row_id: Optional[str] = None
+    *buttons: Tuple[str, str, str], row_id: Optional[str] = None
 ) -> ActionButtonRow:
     """
     Convenience function to create a button row.
-    
+
     Args:
         *buttons: Tuples of (label, id, variant)
         row_id: Optional ID for the row
-    
+
     Returns:
         Configured ActionButtonRow
     """
-    configs = [
-        ButtonConfig(label, id, variant)
-        for label, id, variant in buttons
-    ]
+    configs = [ButtonConfig(label, id, variant) for label, id, variant in buttons]
     return ActionButtonRow(configs, id=row_id)
 
 
 def create_form_field(
-    name: str,
-    label: str,
-    field_type: str = "text",
-    **kwargs
+    name: str, label: str, field_type: str = "text", **kwargs
 ) -> FormField:
     """
     Convenience function to create a form field.
-    
+
     Args:
         name: Field name
         label: Field label
         field_type: Type of field
         **kwargs: Additional field configuration
-    
+
     Returns:
         Configured FormField
     """
@@ -690,13 +683,13 @@ def create_form_field(
 
 # Export all components
 __all__ = [
-    'SectionContainer',
-    'ActionButtonRow',
-    'StatusDisplay',
-    'ConfigurationForm',
-    'NavigationButton',
-    'ButtonConfig',
-    'FormField',
-    'create_button_row',
-    'create_form_field',
+    "SectionContainer",
+    "ActionButtonRow",
+    "StatusDisplay",
+    "ConfigurationForm",
+    "NavigationButton",
+    "ButtonConfig",
+    "FormField",
+    "create_button_row",
+    "create_form_field",
 ]

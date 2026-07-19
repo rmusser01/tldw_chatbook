@@ -22,7 +22,10 @@ class FakeServerPersonalizationService:
 
     async def purge_data(self):
         self.calls.append(("purge_data",))
-        return {"backend": "server", "record_id": "server:personalization_lifecycle:purge"}
+        return {
+            "backend": "server",
+            "record_id": "server:personalization_lifecycle:purge",
+        }
 
     async def list_memories(self, **kwargs):
         self.calls.append(("list_memories", kwargs))
@@ -30,31 +33,52 @@ class FakeServerPersonalizationService:
 
     async def export_memories(self):
         self.calls.append(("export_memories",))
-        return {"backend": "server", "record_id": "server:personalization_memories:export"}
+        return {
+            "backend": "server",
+            "record_id": "server:personalization_memories:export",
+        }
 
     async def get_memory(self, memory_id):
         self.calls.append(("get_memory", memory_id))
-        return {"backend": "server", "record_id": f"server:personalization_memory:{memory_id}"}
+        return {
+            "backend": "server",
+            "record_id": f"server:personalization_memory:{memory_id}",
+        }
 
     async def create_memory(self, request_data):
         self.calls.append(("create_memory", request_data))
-        return {"backend": "server", "record_id": "server:personalization_memory:mem-created"}
+        return {
+            "backend": "server",
+            "record_id": "server:personalization_memory:mem-created",
+        }
 
     async def update_memory(self, memory_id, request_data):
         self.calls.append(("update_memory", memory_id, request_data))
-        return {"backend": "server", "record_id": f"server:personalization_memory:{memory_id}"}
+        return {
+            "backend": "server",
+            "record_id": f"server:personalization_memory:{memory_id}",
+        }
 
     async def delete_memory(self, memory_id):
         self.calls.append(("delete_memory", memory_id))
-        return {"backend": "server", "record_id": f"server:personalization_memory:{memory_id}"}
+        return {
+            "backend": "server",
+            "record_id": f"server:personalization_memory:{memory_id}",
+        }
 
     async def validate_memories(self, request_data):
         self.calls.append(("validate_memories", request_data))
-        return {"backend": "server", "record_id": "server:personalization_memories:validate"}
+        return {
+            "backend": "server",
+            "record_id": "server:personalization_memories:validate",
+        }
 
     async def import_memories(self, request_data):
         self.calls.append(("import_memories", request_data))
-        return {"backend": "server", "record_id": "server:personalization_memories:import"}
+        return {
+            "backend": "server",
+            "record_id": "server:personalization_memories:import",
+        }
 
     async def list_explanations(self, **kwargs):
         self.calls.append(("list_explanations", kwargs))
@@ -133,9 +157,13 @@ async def test_personalization_scope_service_routes_server_surface():
 @pytest.mark.asyncio
 async def test_personalization_scope_service_honestly_rejects_local_mode():
     server = FakeServerPersonalizationService()
-    scope = PersonalizationScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = PersonalizationScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
-    with pytest.raises(ValueError, match="Personalization profile operations are server-only"):
+    with pytest.raises(
+        ValueError, match="Personalization profile operations are server-only"
+    ):
         await scope.get_profile(mode="local")
 
     assert server.calls == []
@@ -157,7 +185,9 @@ async def test_personalization_scope_service_blocks_denied_server_action_before_
 
 
 def test_personalization_scope_service_reports_known_unsupported_capabilities():
-    scope = PersonalizationScopeService(server_service=FakeServerPersonalizationService())
+    scope = PersonalizationScopeService(
+        server_service=FakeServerPersonalizationService()
+    )
 
     local_report = scope.list_unsupported_capabilities(mode="local")
     server_report = scope.list_unsupported_capabilities(mode="server")

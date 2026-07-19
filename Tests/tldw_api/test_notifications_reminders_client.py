@@ -71,15 +71,36 @@ async def test_notifications_client_routes_feed_control_and_preferences(monkeypa
         "include_archived": True,
         "only_snoozed": False,
     }
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/notifications/unread-count")
-    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/notifications/mark-read")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/notifications/unread-count",
+    )
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/notifications/mark-read",
+    )
     assert mocked.await_args_list[2].kwargs["json_data"] == {"ids": [7, 8]}
-    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/notifications/7/dismiss")
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/notifications/7/snooze")
+    assert mocked.await_args_list[3].args[:2] == (
+        "POST",
+        "/api/v1/notifications/7/dismiss",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/notifications/7/snooze",
+    )
     assert mocked.await_args_list[4].kwargs["json_data"] == {"minutes": 30}
-    assert mocked.await_args_list[5].args[:2] == ("DELETE", "/api/v1/notifications/7/snooze")
-    assert mocked.await_args_list[6].args[:2] == ("GET", "/api/v1/notifications/preferences")
-    assert mocked.await_args_list[7].args[:2] == ("PATCH", "/api/v1/notifications/preferences")
+    assert mocked.await_args_list[5].args[:2] == (
+        "DELETE",
+        "/api/v1/notifications/7/snooze",
+    )
+    assert mocked.await_args_list[6].args[:2] == (
+        "GET",
+        "/api/v1/notifications/preferences",
+    )
+    assert mocked.await_args_list[7].args[:2] == (
+        "PATCH",
+        "/api/v1/notifications/preferences",
+    )
     assert mocked.await_args_list[7].kwargs["json_data"] == {"reminder_enabled": False}
 
     assert listed.items[0].id == 7
@@ -126,7 +147,9 @@ async def test_reminder_tasks_client_routes_crud(monkeypatch):
     )
     listed = await client.list_reminder_tasks()
     fetched = await client.get_reminder_task("task-1")
-    updated = await client.update_reminder_task("task-1", ReminderTaskUpdateRequest(title="Updated"))
+    updated = await client.update_reminder_task(
+        "task-1", ReminderTaskUpdateRequest(title="Updated")
+    )
     deleted = await client.delete_reminder_task("task-1")
 
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/tasks")

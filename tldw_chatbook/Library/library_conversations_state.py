@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
-from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
+)
 
 LIBRARY_CONVERSATIONS_EMPTY_COPY = (
     "No conversations yet. Chat in Console and it appears here."
@@ -173,7 +175,9 @@ def build_library_conversations_state(
     resolved_selected_id = str(selected_id or "")
     displayed_ids = {entry.conversation_id for entry in limited_entries}
     if resolved_selected_id not in displayed_ids:
-        resolved_selected_id = limited_entries[0].conversation_id if limited_entries else ""
+        resolved_selected_id = (
+            limited_entries[0].conversation_id if limited_entries else ""
+        )
 
     rows = tuple(
         LibraryConversationRow(
@@ -206,7 +210,11 @@ def build_library_conversations_state(
         empty_copy = LIBRARY_CONVERSATIONS_EMPTY_COPY
 
     selected_entry = next(
-        (entry for entry in limited_entries if entry.conversation_id == resolved_selected_id),
+        (
+            entry
+            for entry in limited_entries
+            if entry.conversation_id == resolved_selected_id
+        ),
         None,
     )
     if selected_entry is None:

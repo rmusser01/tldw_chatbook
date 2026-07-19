@@ -1,4 +1,7 @@
-from tldw_chatbook.Notifications import ClientNotificationsDB, ClientNotificationsService
+from tldw_chatbook.Notifications import (
+    ClientNotificationsDB,
+    ClientNotificationsService,
+)
 
 
 class FakePolicyEnforcer:

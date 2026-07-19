@@ -6,8 +6,12 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
 )
 
 
-def test_safe_endpoint_display_redacts_schemeless_credentials_and_query_tokens() -> None:
-    display = safe_endpoint_display("user:secret@127.0.0.1:9999/v1?token=unit-test-token")
+def test_safe_endpoint_display_redacts_schemeless_credentials_and_query_tokens() -> (
+    None
+):
+    display = safe_endpoint_display(
+        "user:secret@127.0.0.1:9999/v1?token=unit-test-token"
+    )
 
     assert display == "127.0.0.1:9999/v1"
     assert "user" not in display
@@ -17,7 +21,9 @@ def test_safe_endpoint_display_redacts_schemeless_credentials_and_query_tokens()
 
 
 def test_safe_endpoint_display_strips_query_secret_from_url() -> None:
-    display = safe_endpoint_display("https://api.example.test/v1?api_key=unit-test-token")
+    display = safe_endpoint_display(
+        "https://api.example.test/v1?api_key=unit-test-token"
+    )
 
     assert display == "https://api.example.test/v1"
     assert "api_key" not in display
@@ -31,7 +37,9 @@ def test_safe_endpoint_display_does_not_return_malformed_secret_input() -> None:
     assert "unit-test-token" not in display
 
 
-def test_normalize_generic_endpoint_for_compare_handles_schemeless_credentials() -> None:
+def test_normalize_generic_endpoint_for_compare_handles_schemeless_credentials() -> (
+    None
+):
     normalized = normalize_generic_endpoint_for_compare(
         "user:secret@127.0.0.1:9999/v1?token=unit-test-token"
     )

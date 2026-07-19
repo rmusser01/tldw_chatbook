@@ -5,15 +5,23 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Input, TextArea, Select, Checkbox, RadioButton, Label
+from textual.widgets import (
+    Button,
+    Input,
+    TextArea,
+    Select,
+    Checkbox,
+    RadioButton,
+    Label,
+)
 from textual.containers import Container
 
 
 class FocusTestApp(App):
     """Test app with various focusable widgets."""
-    
+
     CSS_PATH = "../../tldw_chatbook/css/tldw_cli_modular.tcss"
-    
+
     def compose(self) -> ComposeResult:
         """Create test UI with all focusable widget types."""
         with Container(id="test-container"):
@@ -26,7 +34,12 @@ class FocusTestApp(App):
             yield RadioButton("Test Radio", id="test-radio")
 
 
-CSS_PATH = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+CSS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "tldw_chatbook"
+    / "css"
+    / "tldw_cli_modular.tcss"
+)
 
 
 def css_block(text: str, selector: str) -> str:
@@ -50,15 +63,15 @@ async def test_button_has_visible_non_obscuring_focus():
         # Focus the button
         button = app.query_one("#test-button", Button)
         button.focus()
-        
+
         # Get computed styles
-        
+
         # Verify outline is not 'none'
         # Note: Textual doesn't expose outline directly, but we can verify
         # the widget has focus and the CSS is loaded
         assert button.has_focus
         assert app.CSS_PATH  # Verify CSS is loaded
-        
+
         assert CSS_PATH.exists()
 
         with CSS_PATH.open("r", encoding="utf-8") as f:
@@ -78,7 +91,7 @@ async def test_input_has_visible_non_obscuring_focus():
         input_widget = app.query_one("#test-input", Input)
         input_widget.focus()
         await pilot.pause()
-        
+
         # Verify focus
         assert input_widget.has_focus
 
@@ -92,7 +105,7 @@ async def test_textarea_has_visible_non_obscuring_focus():
         textarea = app.query_one("#test-textarea", TextArea)
         textarea.focus()
         await pilot.pause()
-        
+
         # Verify focus
         assert textarea.has_focus
 
@@ -103,11 +116,11 @@ async def test_no_global_outline_suppression_in_css():
     # Check the main CSS file
     with CSS_PATH.open("r", encoding="utf-8") as f:
         css_content = f.read()
-        
+
         # These anti-patterns should NOT be present
         assert "outline: none !important" not in css_content
         assert "outline:none!important" not in css_content
-        
+
         assert "*:focus" in css_content
         global_focus = css_block(css_content, "*:focus")
         assert "outline: solid" in global_focus
@@ -146,31 +159,35 @@ async def test_keyboard_navigation_visible():
     async with app.run_test() as pilot:
         # Tab through widgets
         await pilot.press("tab")  # Focus first widget
-        
+
         # Find which widget has focus
         focused_widget = None
-        for widget in app.query("Button, Input, TextArea, Select, Checkbox, RadioButton"):
+        for widget in app.query(
+            "Button, Input, TextArea, Select, Checkbox, RadioButton"
+        ):
             if widget.has_focus:
                 focused_widget = widget
                 break
-        
+
         assert focused_widget is not None, "No widget has focus after pressing Tab"
-        
+
         # Tab to next widget
         await pilot.press("tab")
-        
+
         # Verify focus moved
         new_focused = None
-        for widget in app.query("Button, Input, TextArea, Select, Checkbox, RadioButton"):
+        for widget in app.query(
+            "Button, Input, TextArea, Select, Checkbox, RadioButton"
+        ):
             if widget.has_focus:
                 new_focused = widget
                 break
-        
+
         assert new_focused is not None
         assert new_focused != focused_widget, "Focus didn't move to next widget"
 
 
-@pytest.mark.asyncio 
+@pytest.mark.asyncio
 async def test_focus_within_containers():
     """Test that containers show focus-within styles."""
     app = FocusTestApp()
@@ -178,10 +195,10 @@ async def test_focus_within_containers():
         # Focus a widget inside the container
         button = app.query_one("#test-button", Button)
         button.focus()
-        
+
         # Get the container
         container = app.query_one("#test-container", Container)
-        
+
         # The container should be the parent of the focused element
         assert button.parent == container
         assert button.has_focus

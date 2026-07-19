@@ -23,7 +23,9 @@ from tldw_chatbook.UI.SearchRAGWindow import (
     SearchResult,
     SavedSearchesPanel,
 )
-from tldw_chatbook.UI.Views.RAGSearch import search_rag_window as search_rag_window_module
+from tldw_chatbook.UI.Views.RAGSearch import (
+    search_rag_window as search_rag_window_module,
+)
 
 
 def _text(widget: Static) -> str:
@@ -108,7 +110,9 @@ class TestSearchRAGWindow:
     ) -> None:
         """Collection loading should be safe to run off the Textual UI thread."""
         window = SearchRAGWindow(mock_app_instance, id="test-search-window")
-        window.query_one = MagicMock(side_effect=AssertionError("UI touched during load"))
+        window.query_one = MagicMock(
+            side_effect=AssertionError("UI touched during load")
+        )
 
         with patch(
             "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_available_profiles",
@@ -142,14 +146,18 @@ class TestSearchRAGWindow:
             "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_available_profiles",
             return_value=[],
         ):
-            async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            async with await widget_pilot(
+                SearchRAGWindow, app_instance=mock_app_instance
+            ) as pilot:
                 window = pilot.app.test_widget
 
                 await window._apply_available_collections(["default"])
                 await pilot.pause()
 
                 assert window.available_collections == ["default"]
-                assert len(window.query_one("#collections-list", ListView).children) == 1
+                assert (
+                    len(window.query_one("#collections-list", ListView).children) == 1
+                )
                 assert window.query_one("#collection-select", Select) is not None
 
     @pytest.mark.asyncio
@@ -160,7 +168,9 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """The mounted window should expose the current search-first layout."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
 
             assert window.query_one("#search-query-input", Input)
@@ -183,7 +193,9 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """First-run Search should explain modes, collection scope, and Chat handoff."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
 
             empty_state = window.query_one("#search-empty-state", Static)
@@ -203,7 +215,9 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """The primary Search action should be visible without opening advanced controls."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
 
             search_input = window.query_one("#search-query-input", Input)
@@ -212,7 +226,10 @@ class TestSearchRAGWindow:
             assert search_input.display is True
             assert search_button.display is True
             assert search_button.disabled is False
-            assert search_button.region.y + search_button.region.height <= pilot.app.size.height
+            assert (
+                search_button.region.y + search_button.region.height
+                <= pilot.app.size.height
+            )
 
             await pilot.click("#search-button")
 
@@ -229,7 +246,9 @@ class TestSearchRAGWindow:
             {"embeddings_rag": False},
             clear=False,
         ):
-            async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            async with await widget_pilot(
+                SearchRAGWindow, app_instance=mock_app_instance
+            ) as pilot:
                 window = pilot.app.test_widget
 
                 search_input = window.query_one("#search-query-input", Input)
@@ -256,12 +275,16 @@ class TestSearchRAGWindow:
         web_search_available: bool,
     ) -> None:
         """Search config should mirror the live control values and reactive state."""
-        with patch.object(search_rag_window_module, "WEB_SEARCH_AVAILABLE", web_search_available):
+        with patch.object(
+            search_rag_window_module, "WEB_SEARCH_AVAILABLE", web_search_available
+        ):
             with patch(
                 "tldw_chatbook.UI.Views.RAGSearch.search_event_handlers.WEB_SEARCH_AVAILABLE",
                 web_search_available,
             ):
-                async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+                async with await widget_pilot(
+                    SearchRAGWindow, app_instance=mock_app_instance
+                ) as pilot:
                     window = pilot.app.test_widget
 
                     window.query_one("#search-mode-select", Select).value = "hybrid"
@@ -303,7 +326,9 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """The focus shortcut should move focus to the search box."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
             search_input = window.query_one("#search-query-input", Input)
 
@@ -320,7 +345,9 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """Result rendering should paginate using the current 10-item page size."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
 
             window.search_results = [
@@ -353,12 +380,18 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """Zero-result searches should leave a recovery path instead of a blank pane."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
 
             window.search_results = []
             window.total_results = 0
-            window.last_search_config = {"query": "missing topic", "mode": "hybrid", "collection": "all"}
+            window.last_search_config = {
+                "query": "missing topic",
+                "mode": "hybrid",
+                "collection": "all",
+            }
 
             await window._display_results()
             await pilot.pause()
@@ -380,7 +413,9 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """Recording a search should persist history instead of silently logging an error."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
             window.last_search_time = 0.42
 
@@ -411,7 +446,9 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """Loading a saved search should repopulate the search controls for reuse."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
             saved_panel = window.query_one("#saved-searches-panel", SavedSearchesPanel)
             saved_panel.save_search(
@@ -464,7 +501,9 @@ class TestSemanticHonestStates:
         assert sources == {"media": True, "conversations": False, "notes": True}
         # Missing filters default to searching everything
         assert window._sources_from_config({}) == {
-            "media": True, "conversations": True, "notes": True,
+            "media": True,
+            "conversations": True,
+            "notes": True,
         }
 
     @pytest.mark.asyncio
@@ -484,7 +523,9 @@ class TestSemanticHonestStates:
         window = SearchRAGWindow(mock_app_instance, id="test-search-window")
         captured = {}
 
-        async def fake_hybrid(app, query, sources, top_k=10, diagnostics=None, **kwargs):
+        async def fake_hybrid(
+            app, query, sources, top_k=10, diagnostics=None, **kwargs
+        ):
             captured["app"] = app
             captured["query"] = query
             captured["sources"] = sources
@@ -493,19 +534,33 @@ class TestSemanticHonestStates:
                 diagnostics[SEMANTIC_DIAGNOSTICS_KEY] = {
                     "status": SEMANTIC_STATUS_UNAVAILABLE,
                     "reason": SEMANTIC_REASON_DEPS_MISSING,
-                    "message": SEMANTIC_UNAVAILABLE_MESSAGES[SEMANTIC_REASON_DEPS_MISSING],
+                    "message": SEMANTIC_UNAVAILABLE_MESSAGES[
+                        SEMANTIC_REASON_DEPS_MISSING
+                    ],
                 }
-            return ([{"id": "1", "title": "Doc", "content": "x", "source": "media"}], "ctx")
+            return (
+                [{"id": "1", "title": "Doc", "content": "x", "source": "media"}],
+                "ctx",
+            )
 
-        with patch.object(search_rag_window_module, "perform_hybrid_rag_search", fake_hybrid):
+        with patch.object(
+            search_rag_window_module, "perform_hybrid_rag_search", fake_hybrid
+        ):
             results = await window._perform_hybrid_search(
                 "query",
-                {"top_k": 7, "filters": {"media": True, "conversations": False, "notes": False}},
+                {
+                    "top_k": 7,
+                    "filters": {"media": True, "conversations": False, "notes": False},
+                },
             )
 
         assert captured["app"] is mock_app_instance
         assert captured["query"] == "query"
-        assert captured["sources"] == {"media": True, "conversations": False, "notes": False}
+        assert captured["sources"] == {
+            "media": True,
+            "conversations": False,
+            "notes": False,
+        }
         assert captured["top_k"] == 7
         assert [r["id"] for r in results] == ["1"]
         semantic_state = window.last_search_diagnostics[SEMANTIC_DIAGNOSTICS_KEY]
@@ -520,9 +575,14 @@ class TestSemanticHonestStates:
         window = SearchRAGWindow(mock_app_instance, id="test-search-window")
 
         async def fake_full(app, query, sources, top_k=10, diagnostics=None, **kwargs):
-            return ([{"id": "v1", "title": "Vec", "content": "y", "source": "media"}], "ctx")
+            return (
+                [{"id": "v1", "title": "Vec", "content": "y", "source": "media"}],
+                "ctx",
+            )
 
-        with patch.object(search_rag_window_module, "perform_full_rag_pipeline", fake_full):
+        with patch.object(
+            search_rag_window_module, "perform_full_rag_pipeline", fake_full
+        ):
             results = await window._perform_contextual_search("query", {"top_k": 3})
 
         assert [r["id"] for r in results] == ["v1"]
@@ -594,7 +654,9 @@ class TestSearchHistoryDropdown:
         db.record_search("java programming", "plain", [], 80)
         db.record_search("python tutorials", "hybrid", [], 95)
 
-        async with await widget_pilot(SearchHistoryDropdown, search_history_db=db) as pilot:
+        async with await widget_pilot(
+            SearchHistoryDropdown, search_history_db=db
+        ) as pilot:
             dropdown = pilot.app.test_widget
 
             await dropdown.show_history("python")
@@ -661,11 +723,17 @@ class TestSavedSearchesPanel:
                 delete_button = panel.query_one("#delete-saved-search", Button)
 
                 assert load_button.disabled is True
-                assert "Select a saved search before loading it" in str(load_button.tooltip)
+                assert "Select a saved search before loading it" in str(
+                    load_button.tooltip
+                )
                 assert delete_button.disabled is True
-                assert "Select a saved search before deleting it" in str(delete_button.tooltip)
+                assert "Select a saved search before deleting it" in str(
+                    delete_button.tooltip
+                )
 
-                panel.save_search("Agent UX Search", {"query": "agent UX", "mode": "plain"})
+                panel.save_search(
+                    "Agent UX Search", {"query": "agent UX", "mode": "plain"}
+                )
                 await pilot.pause()
 
                 saved_list = panel.query_one("#saved-searches-list", ListView)
@@ -685,7 +753,9 @@ class TestSavedSearchesPanel:
                 assert "Agent UX Search" not in panel.saved_searches
                 assert panel.selected_search_name is None
                 assert load_button.disabled is True
-                assert "Select a saved search before loading it" in str(load_button.tooltip)
+                assert "Select a saved search before loading it" in str(
+                    load_button.tooltip
+                )
 
 
 @pytest.mark.ui
@@ -693,7 +763,9 @@ class TestSearchResult:
     """Search result card rendering."""
 
     @pytest.mark.asyncio
-    async def test_result_item_displays_title_preview_and_score(self, widget_pilot) -> None:
+    async def test_result_item_displays_title_preview_and_score(
+        self, widget_pilot
+    ) -> None:
         """A result card should render current title, preview, and score affordances."""
         result_data = {
             "title": "Test Title",
@@ -703,7 +775,9 @@ class TestSearchResult:
             "metadata": {"author": "Ada", "topic": "UX"},
         }
 
-        async with await widget_pilot(SearchResult, result=result_data, index=0) as pilot:
+        async with await widget_pilot(
+            SearchResult, result=result_data, index=0
+        ) as pilot:
             result_widget = pilot.app.test_widget
 
             title = result_widget.query_one(".result-title-enhanced", Static)

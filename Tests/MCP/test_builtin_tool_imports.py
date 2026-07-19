@@ -26,6 +26,7 @@ does -- see the fix commit for the full list), so these modules genuinely
 import and `list_characters` genuinely executes now, not just the literal
 `ChaChaNotes_DB` symbol QA's live capture happened to surface first.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -55,7 +56,9 @@ def test_mcp_tools_resources_prompts_server_modules_import_without_importerror()
 
 
 def _real_dbs(tmp_path: Path) -> tuple[CharactersRAGDB, MediaDatabase]:
-    chachanotes_db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    chachanotes_db = CharactersRAGDB(
+        str(tmp_path / "chachanotes.sqlite"), "test_client"
+    )
     media_db = MediaDatabase(str(tmp_path / "media.sqlite"), "test_client")
     return chachanotes_db, media_db
 
@@ -88,12 +91,16 @@ def test_list_available_characters_executes_to_a_real_result_against_real_db(tmp
     assert isinstance(result, list)
     assert result, "expected at least the default seeded character card"
     for entry in result:
-        assert "error" not in entry, f"tool-level error, not the crash under test: {entry}"
+        assert "error" not in entry, (
+            f"tool-level error, not the crash under test: {entry}"
+        )
         assert "id" in entry and "name" in entry
 
 
 @pytest.mark.asyncio
-async def test_local_runtime_delegate_list_characters_executes_without_importerror(tmp_path, monkeypatch):
+async def test_local_runtime_delegate_list_characters_executes_without_importerror(
+    tmp_path, monkeypatch
+):
     """End-to-end regression test through the ACTUAL path the Hub's Test
     Tool runner uses (`LocalMCPControlService.execute_tool()` ->
     `LocalMCPRuntimeDelegate.execute_tool()` -> `_tool_list_characters()` ->
@@ -105,7 +112,9 @@ async def test_local_runtime_delegate_list_characters_executes_without_importerr
     import tldw_chatbook.MCP.local_runtime_delegate as delegate_module
 
     chachanotes_db, media_db = _real_dbs(tmp_path)
-    monkeypatch.setattr(delegate_module, "get_chachanotes_db_lazy", lambda: chachanotes_db)
+    monkeypatch.setattr(
+        delegate_module, "get_chachanotes_db_lazy", lambda: chachanotes_db
+    )
     monkeypatch.setattr(delegate_module, "get_media_db_lazy", lambda: media_db)
 
     delegate = delegate_module.LocalMCPRuntimeDelegate()
@@ -129,17 +138,21 @@ def test_get_conversation_history_executes_against_real_db(tmp_path):
     tools = MCPTools(chachanotes_db, media_db)
 
     conversation_id = chachanotes_db.add_conversation({"title": "Test Conversation"})
-    chachanotes_db.add_message({
-        "conversation_id": conversation_id,
-        "sender": "user",
-        "content": "Hello there",
-        "role": "user",
-    })
+    chachanotes_db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "Hello there",
+            "role": "user",
+        }
+    )
 
     result = asyncio.run(tools.get_conversation_history(conversation_id))
 
     assert "get_conversation_messages" not in str(result)
-    assert "error" not in result, f"tool-level error, not the crash under test: {result}"
+    assert "error" not in result, (
+        f"tool-level error, not the crash under test: {result}"
+    )
     assert result["title"] == "Test Conversation"
     assert len(result["messages"]) == 1
     assert result["messages"][0]["content"] == "Hello there"

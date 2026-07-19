@@ -184,16 +184,12 @@ MORPH_ART_END_ASCII = r"""
 """
 
 # A few options for fill characters, card config can pick one
-LOADING_BAR_FILL_CHARS = {
-    "default": "#",
-    "block": "█",
-    "dots": ".",
-    "arrow": ">"
-}
+LOADING_BAR_FILL_CHARS = {"default": "#", "block": "█", "dots": ".", "arrow": ">"}
 
 
 #
 # Functions:
+
 
 def print_tldw_ascii():
     """Legacy function for backwards compatibility."""
@@ -201,13 +197,14 @@ def print_tldw_ascii():
     time.sleep(2)
     return
 
+
 def get_ascii_art(name: str = "default") -> str:
     """Get ASCII art by name for use in splash screens.
-    
+
     Args:
         name: Name of the ASCII art variant to retrieve.
               Options: "default", "compact", "minimal"
-    
+
     Returns:
         The requested ASCII art as a string.
     """
@@ -221,12 +218,12 @@ def get_ascii_art(name: str = "default") -> str:
         "blueprint": BLUEPRINT_ASCII,
         "arcade_high_score": ARCADE_HIGH_SCORE_ASCII,
         "loading_bar_frame": LOADING_BAR_FRAME_ASCII,
-        "app_logo_clear": TLDW_ASCII_COMPACT, # Using compact version as the clear logo
+        "app_logo_clear": TLDW_ASCII_COMPACT,  # Using compact version as the clear logo
         "morph_art_start": MORPH_ART_START_ASCII,
         "morph_art_end": MORPH_ART_END_ASCII,
-        "spotlight_background": TLDW_ASCII_ART, # Using the main logo as background
-        "pixel_art_target": TLDW_ASCII_COMPACT, # Target for pixel/zoom effect
-        "dwarf_fortress": DWARF_FORTRESS_ASCII
+        "spotlight_background": TLDW_ASCII_ART,  # Using the main logo as background
+        "pixel_art_target": TLDW_ASCII_COMPACT,  # Target for pixel/zoom effect
+        "dwarf_fortress": DWARF_FORTRESS_ASCII,
     }
     # Note: For OldFilmEffect, frames will be passed directly in card config
     # or specific frame names can be added here if desired.
@@ -244,27 +241,24 @@ def get_ascii_art(name: str = "default") -> str:
 """
     return ascii_arts.get(name, TLDW_ASCII_ART)
 
+
 def get_splash_card_config(name: str) -> Dict[str, Any]:
     """Get a splash card configuration using ASCII art from this module.
-    
+
     Args:
         name: Name of the ASCII art variant to use.
-    
+
     Returns:
         Dictionary configuration for use with the splash screen system.
     """
     ascii_art = get_ascii_art(name)
-    
+
     return {
         "type": "static",
         "content": ascii_art,
         "style": "bold cyan on rgb(0,0,0)",
-        "effect": None
+        "effect": None,
     }
-
-
-
-
 
 
 #

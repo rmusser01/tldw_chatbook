@@ -12,8 +12,10 @@ from tldw_chatbook.Library.library_export_scope import ExportScope
 def test_cancel_apply_ignores_stale_run():
     calls = []
     fake = SimpleNamespace(
-        _library_export_run_id=9, _library_export_running=True,
-        _library_export_status="Packaging archive…  1/5", _library_export_error="x",
+        _library_export_run_id=9,
+        _library_export_running=True,
+        _library_export_status="Packaging archive…  1/5",
+        _library_export_error="x",
         _update_library_export_canvas_after_run=lambda: calls.append("update"),
     )
     LibraryScreen._apply_library_export_cancelled(fake, 4)  # 4 != 9
@@ -24,8 +26,10 @@ def test_cancel_apply_ignores_stale_run():
 def test_cancel_apply_current_run_sets_cancelled_status():
     calls = []
     fake = SimpleNamespace(
-        _library_export_run_id=9, _library_export_running=True,
-        _library_export_status="Packaging archive…  1/5", _library_export_error="x",
+        _library_export_run_id=9,
+        _library_export_running=True,
+        _library_export_status="Packaging archive…  1/5",
+        _library_export_error="x",
         _update_library_export_canvas_after_run=lambda: calls.append("update"),
     )
     LibraryScreen._apply_library_export_cancelled(fake, 9)
@@ -38,7 +42,8 @@ def test_cancel_apply_current_run_sets_cancelled_status():
 def test_cancel_handler_sets_event():
     fake = SimpleNamespace(
         _library_export_cancel_event=threading.Event(),
-        _library_export_running=True, _library_export_status="",
+        _library_export_running=True,
+        _library_export_status="",
         _refresh_library_export_status_line=lambda: None,
     )
     LibraryScreen.handle_library_export_cancel(fake, None)
@@ -52,9 +57,14 @@ async def test_cancel_button_visible_only_while_running():
 
     def _state(running):
         return build_library_export_form_state(
-            scope=ExportScope(kind="everything"), counts={"total": 3}, name="n",
-            description="", media_quality="thumbnail", destination="/tmp/x.zip",
-            running=running, status_line="Exporting…" if running else "",
+            scope=ExportScope(kind="everything"),
+            counts={"total": 3},
+            name="n",
+            description="",
+            media_quality="thumbnail",
+            destination="/tmp/x.zip",
+            running=running,
+            status_line="Exporting…" if running else "",
         )
 
     class Host(App):

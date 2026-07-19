@@ -15,7 +15,9 @@ from Tests.UI.test_console_native_chat_flow import (
     _wait_for_text,
 )
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
@@ -335,10 +337,13 @@ def test_composer_display_canonical_index_mapping_snaps_over_tokens():
     assert composer._canonical_index_at_display(token_display_end - 1) == 2 + len(
         PASTE_CHUNK
     )
-    assert composer._canonical_index_at_display(token_display_end) == 2 + len(PASTE_CHUNK)
-    assert composer._canonical_index_at_display(token_display_end + 1) == 2 + len(
+    assert composer._canonical_index_at_display(token_display_end) == 2 + len(
         PASTE_CHUNK
-    ) + 1
+    )
+    assert (
+        composer._canonical_index_at_display(token_display_end + 1)
+        == 2 + len(PASTE_CHUNK) + 1
+    )
 
     # The reverse mapping renders the caret at the token's display edges.
     composer.move_cursor_home()

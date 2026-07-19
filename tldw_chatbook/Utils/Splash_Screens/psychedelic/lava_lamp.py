@@ -29,7 +29,7 @@ class LavaLampEffect(BaseEffect):
         width: int = 80,
         height: int = 24,
         num_blobs: int = 5,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(parent_widget, **kwargs)
         self.title = title
@@ -42,27 +42,40 @@ class LavaLampEffect(BaseEffect):
         self.colors = ["magenta", "cyan", "yellow", "green", "red"]
 
         for i in range(self.num_blobs):
-            self.blobs.append(self.Blob(
-                x=random.uniform(self.display_width * 0.2, self.display_width * 0.8),
-                y=random.uniform(0, self.display_height),
-                vx=random.uniform(-0.5, 0.5),
-                vy=random.uniform(-0.3, 0.3),
-                radius=random.uniform(4, 8),
-                color=self.colors[i % len(self.colors)]
-            ))
+            self.blobs.append(
+                self.Blob(
+                    x=random.uniform(
+                        self.display_width * 0.2, self.display_width * 0.8
+                    ),
+                    y=random.uniform(0, self.display_height),
+                    vx=random.uniform(-0.5, 0.5),
+                    vy=random.uniform(-0.3, 0.3),
+                    radius=random.uniform(4, 8),
+                    color=self.colors[i % len(self.colors)],
+                )
+            )
 
     def update(self) -> Optional[str]:
-        grid = [[' ' for _ in range(self.display_width)] for _ in range(self.display_height)]
-        styles = [[None for _ in range(self.display_width)] for _ in range(self.display_height)]
+        grid = [
+            [" " for _ in range(self.display_width)] for _ in range(self.display_height)
+        ]
+        styles = [
+            [None for _ in range(self.display_width)]
+            for _ in range(self.display_height)
+        ]
 
         for blob in self.blobs:
             blob.x += blob.vx
             blob.y += blob.vy
             blob.vx += random.uniform(-0.1, 0.1)
-            blob.vy += random.uniform(-0.05, 0.05) - (blob.y - self.display_height/2) * 0.001
+            blob.vy += (
+                random.uniform(-0.05, 0.05) - (blob.y - self.display_height / 2) * 0.001
+            )
 
-            if blob.x < blob.radius or blob.x > self.display_width - blob.radius: blob.vx *= -1
-            if blob.y < blob.radius or blob.y > self.display_height - blob.radius: blob.vy *= -1
+            if blob.x < blob.radius or blob.x > self.display_width - blob.radius:
+                blob.vx *= -1
+            if blob.y < blob.radius or blob.y > self.display_height - blob.radius:
+                blob.vy *= -1
 
             blob.vx = max(-1, min(1, blob.vx))
             blob.vy = max(-0.5, min(0.5, blob.vy))
@@ -71,7 +84,7 @@ class LavaLampEffect(BaseEffect):
             for x in range(self.display_width):
                 energy = 0.0
                 for blob in self.blobs:
-                    dist_sq = (x - blob.x)**2 + ((y - blob.y)*2)**2
+                    dist_sq = (x - blob.x) ** 2 + ((y - blob.y) * 2) ** 2
                     energy += blob.radius**2 / (dist_sq + 1e-6)
 
                 if energy > 0.5:
@@ -82,17 +95,19 @@ class LavaLampEffect(BaseEffect):
                     r, g, b = 0, 0, 0
                     total_influence = 0
                     for blob in self.blobs:
-                        dist_sq = (x - blob.x)**2 + ((y - blob.y)*2)**2
+                        dist_sq = (x - blob.x) ** 2 + ((y - blob.y) * 2) ** 2
                         influence = 1 / (dist_sq + 1)
                         # This is a simplification; rich colors are named, not RGB.
                         # I'll just pick the color of the most influential blob.
                         if influence > total_influence:
                             total_influence = influence
                             c = Color.parse(blob.color).get_truecolor()
-                            r,g,b = c[0], c[1], c[2]
+                            r, g, b = c[0], c[1], c[2]
 
                     styles[y][x] = f"rgb({r},{g},{b})"
 
-        self._add_centered_text(grid, styles, self.title, 4, 'bold white on black')
-        self._add_centered_text(grid, styles, self.subtitle, self.display_height - 4, 'bold white on black')
+        self._add_centered_text(grid, styles, self.title, 4, "bold white on black")
+        self._add_centered_text(
+            grid, styles, self.subtitle, self.display_height - 4, "bold white on black"
+        )
         return self._grid_to_string(grid, styles)

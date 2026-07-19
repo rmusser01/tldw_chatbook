@@ -87,9 +87,7 @@ async def test_pull_skips_server_item_missing_id(tmp_path):
 async def test_pull_defaults_title_when_missing(tmp_path):
     db = ScheduledTasksDB(tmp_path / "db.db")
     server_client = AsyncMock()
-    server_client.list_reminders.return_value = {
-        "items": [{"id": "srv-1"}]
-    }
+    server_client.list_reminders.return_value = {"items": [{"id": "srv-1"}]}
     engine = SyncEngine(db, server_client, owner_id="server:1")
     await engine.pull()
 
@@ -224,7 +222,10 @@ async def test_sync_pushes_local_reminder(tmp_path):
         local_id=local_id,
         primitive="reminder_task",
         owner_id="local",
-        payload={"action": "create", "fields": {"title": "Local", "schedule_kind": "one_time"}},
+        payload={
+            "action": "create",
+            "fields": {"title": "Local", "schedule_kind": "one_time"},
+        },
     )
 
     server_client = AsyncMock()
@@ -337,7 +338,11 @@ async def test_sync_pushes_update_mutation(tmp_path):
     await engine.sync_now()
 
     server_client.update_reminder.assert_awaited_once_with(
-        "srv-1", idempotency_key=server_client.update_reminder.call_args.kwargs["idempotency_key"], title="Updated"
+        "srv-1",
+        idempotency_key=server_client.update_reminder.call_args.kwargs[
+            "idempotency_key"
+        ],
+        title="Updated",
     )
 
     local_row = db.get_reminder_task(local_id)
@@ -373,7 +378,9 @@ async def test_sync_pushes_delete_mutation(tmp_path):
 
     server_client.delete_reminder.assert_awaited_once_with("srv-1")
     assert db.get_reminder_task(local_id) is None
-    assert db.get_sync_mapping_by_local_id(local_id, "reminder_task", "server:1") is None
+    assert (
+        db.get_sync_mapping_by_local_id(local_id, "reminder_task", "server:1") is None
+    )
 
     pending = db.get_pending_mutations("server:1", primitive="reminder_task")
     assert len(pending) == 0
@@ -504,7 +511,10 @@ async def test_push_records_sync_error_on_server_unavailable(tmp_path):
         local_id=local_id,
         primitive="reminder_task",
         owner_id="local",
-        payload={"action": "create", "fields": {"title": "Local", "schedule_kind": "one_time"}},
+        payload={
+            "action": "create",
+            "fields": {"title": "Local", "schedule_kind": "one_time"},
+        },
     )
 
     server_client = AsyncMock()
@@ -533,7 +543,10 @@ async def test_push_records_sync_error_on_generic_exception(tmp_path):
         local_id=local_id,
         primitive="reminder_task",
         owner_id="local",
-        payload={"action": "create", "fields": {"title": "Local", "schedule_kind": "one_time"}},
+        payload={
+            "action": "create",
+            "fields": {"title": "Local", "schedule_kind": "one_time"},
+        },
     )
 
     server_client = AsyncMock()
@@ -638,7 +651,10 @@ async def test_idempotency_key_stable_across_push_retries(tmp_path):
         local_id=local_id,
         primitive="reminder_task",
         owner_id="local",
-        payload={"action": "create", "fields": {"title": "Local", "schedule_kind": "one_time"}},
+        payload={
+            "action": "create",
+            "fields": {"title": "Local", "schedule_kind": "one_time"},
+        },
     )
 
     failing_client = AsyncMock()

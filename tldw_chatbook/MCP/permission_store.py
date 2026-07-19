@@ -49,6 +49,7 @@ definition-hash comparison, cycle-safety) is Task 2 and lives in this same
 module as pure functions layered on top of ``MCPPermissionStore`` — nothing
 here should need to change to accommodate them.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -89,7 +90,9 @@ def _fresh_payload() -> dict[str, Any]:
 
 def _validate_state(state: str) -> None:
     if state not in STORE_STATES:
-        raise ValueError(f"Invalid permission state {state!r}; expected one of {STORE_STATES}")
+        raise ValueError(
+            f"Invalid permission state {state!r}; expected one of {STORE_STATES}"
+        )
 
 
 def _entry_is_empty(entry: dict[str, Any]) -> bool:
@@ -186,7 +189,10 @@ class MCPPermissionStore:
             self._backup_corrupt_file()
             return _fresh_payload()
 
-        if not isinstance(payload, dict) or payload.get("schema_version") != SCHEMA_VERSION:
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != SCHEMA_VERSION
+        ):
             logger.warning(
                 f"MCP permission store at '{self.path}' has an unrecognized shape or "
                 f"schema_version (expected {SCHEMA_VERSION}); backing it up and resetting to defaults."
@@ -217,7 +223,9 @@ class MCPPermissionStore:
         try:
             self.path.replace(backup_path)
         except OSError as exc:
-            logger.warning(f"Failed to back up corrupt MCP permission store at '{self.path}': {exc}")
+            logger.warning(
+                f"Failed to back up corrupt MCP permission store at '{self.path}': {exc}"
+            )
 
     # -- profile helpers -----------------------------------------------------
 
@@ -505,7 +513,9 @@ class EffectiveToolState:
         return self.state.capitalize() if self.state else "Ask"
 
 
-def resolve_effective_state(payload: dict[str, Any], tool: HubTool) -> EffectiveToolState:
+def resolve_effective_state(
+    payload: dict[str, Any], tool: HubTool
+) -> EffectiveToolState:
     """Resolve ``tool``'s effective permission state from ``payload``.
 
     Precedence: an explicit tool-level entry (``tool_override``) beats the
@@ -589,7 +599,11 @@ def resolve_effective_state(payload: dict[str, Any], tool: HubTool) -> Effective
                 state = DEFAULT_GLOBAL
 
     risk_floored = False
-    if origin != "tool_override" and state == "allow" and set(tool.tags) & HIGH_RISK_TAGS:
+    if (
+        origin != "tool_override"
+        and state == "allow"
+        and set(tool.tags) & HIGH_RISK_TAGS
+    ):
         state = "ask"
         risk_floored = True
 

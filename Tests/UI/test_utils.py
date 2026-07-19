@@ -8,17 +8,17 @@ from textual.pilot import Pilot
 async def safe_click(pilot: Pilot, widget_or_selector, max_attempts: int = 3) -> bool:
     """
     Safely click a widget, scrolling to it if needed.
-    
+
     Args:
         pilot: The test pilot
         widget_or_selector: Widget instance or CSS selector
         max_attempts: Maximum scroll attempts
-        
+
     Returns:
         True if click was successful, False otherwise
     """
     app = pilot.app
-    
+
     for attempt in range(max_attempts):
         try:
             await pilot.click(widget_or_selector)
@@ -31,7 +31,7 @@ async def safe_click(pilot: Pilot, widget_or_selector, max_attempts: int = 3) ->
                         widget = app.query_one(widget_or_selector)
                     else:
                         widget = widget_or_selector
-                    
+
                     # Find scrollable container
                     scroll_container = app.query_one(".evals-scroll-container")
                     if scroll_container:
@@ -47,5 +47,5 @@ async def safe_click(pilot: Pilot, widget_or_selector, max_attempts: int = 3) ->
             else:
                 # Some other error
                 return False
-    
+
     return False

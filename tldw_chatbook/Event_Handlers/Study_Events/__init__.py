@@ -5,5 +5,5 @@ from .study_events import (
     StudyCardCreatedEvent,
     StudyCardReviewedEvent,
     StudyTopicSelectedEvent,
-    StudyEventHandler
+    StudyEventHandler,
 )

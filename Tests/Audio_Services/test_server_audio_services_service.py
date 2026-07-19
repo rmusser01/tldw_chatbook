@@ -2,7 +2,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from tldw_chatbook.Audio_Services_Interop.server_audio_services_service import ServerAudioServicesService
+from tldw_chatbook.Audio_Services_Interop.server_audio_services_service import (
+    ServerAudioServicesService,
+)
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.tldw_api import (
     AudioTokenizerDecodeRequest,
@@ -32,7 +34,10 @@ class FakeAudioClient:
 
     async def list_tts_providers(self):
         self.calls.append(("list_tts_providers",))
-        return {"providers": {"kokoro": {"available": True}}, "voices": {"kokoro": [{"id": "af_heart"}]}}
+        return {
+            "providers": {"kokoro": {"available": True}},
+            "voices": {"kokoro": [{"id": "af_heart"}]},
+        }
 
     async def list_tts_voices(self, **kwargs):
         self.calls.append(("list_tts_voices", kwargs))
@@ -40,11 +45,24 @@ class FakeAudioClient:
 
     async def get_audio_streaming_status(self):
         self.calls.append(("get_audio_streaming_status",))
-        return {"status": "available", "available_models": ["parakeet-mlx"], "websocket_endpoint": "/api/v1/audio/stream/transcribe", "supported_features": {}}
+        return {
+            "status": "available",
+            "available_models": ["parakeet-mlx"],
+            "websocket_endpoint": "/api/v1/audio/stream/transcribe",
+            "supported_features": {},
+        }
 
     async def get_audio_streaming_limits(self):
         self.calls.append(("get_audio_streaming_limits",))
-        return {"user_id": "user-1", "tier": "free", "limits": {}, "used_today_minutes": 0.0, "remaining_minutes": None, "active_streams": 0, "can_start_stream": True}
+        return {
+            "user_id": "user-1",
+            "tier": "free",
+            "limits": {},
+            "used_today_minutes": 0.0,
+            "remaining_minutes": None,
+            "active_streams": 0,
+            "can_start_stream": True,
+        }
 
     async def test_audio_streaming(self):
         self.calls.append(("test_audio_streaming",))
@@ -52,11 +70,19 @@ class FakeAudioClient:
 
     async def create_speech_chat(self, request_data):
         self.calls.append(("create_speech_chat", request_data))
-        return {"session_id": "speech-session-1", "assistant_text": "Hi", "user_transcript": "Hello", "output_audio": "bXAz", "output_audio_mime_type": "audio/mpeg"}
+        return {
+            "session_id": "speech-session-1",
+            "assistant_text": "Hi",
+            "user_transcript": "Hello",
+            "output_audio": "bXAz",
+            "output_audio_mime_type": "audio/mpeg",
+        }
 
     async def create_audio_speech(self, request_data):
         self.calls.append(("create_audio_speech", request_data))
-        return ReadingExportResponse(content=b"mp3", content_type="audio/mpeg", filename="speech.mp3")
+        return ReadingExportResponse(
+            content=b"mp3", content_type="audio/mpeg", filename="speech.mp3"
+        )
 
     async def create_audio_speech_job(self, request_data):
         self.calls.append(("create_audio_speech_job", request_data))
@@ -79,11 +105,24 @@ class FakeAudioClient:
 
     async def submit_audio_job(self, request_data):
         self.calls.append(("submit_audio_job", request_data))
-        return {"id": 7, "domain": "audio", "queue": "default", "job_type": "audio_download", "status": "queued"}
+        return {
+            "id": 7,
+            "domain": "audio",
+            "queue": "default",
+            "job_type": "audio_download",
+            "status": "queued",
+        }
 
     async def get_audio_job(self, job_id):
         self.calls.append(("get_audio_job", job_id))
-        return {"id": job_id, "job_type": "audio_download", "status": "queued", "priority": 5, "retry_count": 0, "max_retries": 3}
+        return {
+            "id": job_id,
+            "job_type": "audio_download",
+            "status": "queued",
+            "priority": 5,
+            "retry_count": 0,
+            "max_retries": 3,
+        }
 
     async def stream_audio_job_progress(self, job_id, **kwargs):
         self.calls.append(("stream_audio_job_progress", job_id, kwargs))
@@ -92,11 +131,22 @@ class FakeAudioClient:
 
     async def list_tts_history(self, **kwargs):
         self.calls.append(("list_tts_history", kwargs))
-        return {"items": [{"id": 3, "created_at": "2026-04-25T12:00:00Z", "has_text": True}], "limit": 50, "offset": 0}
+        return {
+            "items": [
+                {"id": 3, "created_at": "2026-04-25T12:00:00Z", "has_text": True}
+            ],
+            "limit": 50,
+            "offset": 0,
+        }
 
     async def get_tts_history_entry(self, history_id):
         self.calls.append(("get_tts_history_entry", history_id))
-        return {"id": history_id, "created_at": "2026-04-25T12:00:00Z", "has_text": True, "text": "Hello"}
+        return {
+            "id": history_id,
+            "created_at": "2026-04-25T12:00:00Z",
+            "has_text": True,
+            "text": "Hello",
+        }
 
     async def create_audio_transcription(self, file_path, request_data=None):
         self.calls.append(("create_audio_transcription", file_path, request_data))
@@ -108,7 +158,13 @@ class FakeAudioClient:
 
     async def encode_audio_tokenizer(self, request_data):
         self.calls.append(("encode_audio_tokenizer", request_data))
-        return {"tokens": [1, 2, 3], "token_format": "list", "sample_rate": 24000, "tokenizer_model": "qwen3", "duration_seconds": 1.0}
+        return {
+            "tokens": [1, 2, 3],
+            "token_format": "list",
+            "sample_rate": 24000,
+            "tokenizer_model": "qwen3",
+            "duration_seconds": 1.0,
+        }
 
     async def decode_audio_tokenizer(self, request_data):
         self.calls.append(("decode_audio_tokenizer", request_data))
@@ -116,11 +172,19 @@ class FakeAudioClient:
 
     async def upload_custom_voice(self, file_path, **kwargs):
         self.calls.append(("upload_custom_voice", file_path, kwargs))
-        return {"voice_id": "voice-1", "name": kwargs["name"], "provider": kwargs.get("provider")}
+        return {
+            "voice_id": "voice-1",
+            "name": kwargs["name"],
+            "provider": kwargs.get("provider"),
+        }
 
     async def encode_custom_voice_reference(self, request_data):
         self.calls.append(("encode_custom_voice_reference", request_data))
-        return {"voice_id": request_data.voice_id, "provider": request_data.provider, "cached": False}
+        return {
+            "voice_id": request_data.voice_id,
+            "provider": request_data.provider,
+            "cached": False,
+        }
 
     async def list_custom_voices(self):
         self.calls.append(("list_custom_voices",))
@@ -132,7 +196,11 @@ class FakeAudioClient:
 
     async def preview_custom_voice(self, voice_id, **kwargs):
         self.calls.append(("preview_custom_voice", voice_id, kwargs))
-        return ReadingExportResponse(content=b"mp3", content_type="audio/mpeg", filename=f"preview_{voice_id}.mp3")
+        return ReadingExportResponse(
+            content=b"mp3",
+            content_type="audio/mpeg",
+            filename=f"preview_{voice_id}.mp3",
+        )
 
     async def delete_custom_voice(self, voice_id):
         self.calls.append(("delete_custom_voice", voice_id))
@@ -159,20 +227,40 @@ async def test_server_audio_services_service_routes_core_audio_with_policy():
             llm_config=SpeechChatLLMConfig(model="gpt-test"),
         )
     )
-    speech = await service.create_audio_speech(OpenAISpeechRequest(model="kokoro", input="Hello"))
-    speech_job = await service.create_audio_speech_job(OpenAISpeechRequest(model="kokoro", input="Long text"))
+    speech = await service.create_audio_speech(
+        OpenAISpeechRequest(model="kokoro", input="Hello")
+    )
+    speech_job = await service.create_audio_speech_job(
+        OpenAISpeechRequest(model="kokoro", input="Long text")
+    )
     speech_artifacts = await service.list_audio_speech_job_artifacts(42)
-    submitted = await service.submit_audio_job(SubmitAudioJobRequest(url="https://example.com/audio.mp3"))
+    submitted = await service.submit_audio_job(
+        SubmitAudioJobRequest(url="https://example.com/audio.mp3")
+    )
     job = await service.get_audio_job(7)
-    progress = [event async for event in service.stream_audio_job_progress(7, after_id=10)]
+    progress = [
+        event async for event in service.stream_audio_job_progress(7, after_id=10)
+    ]
     history = await service.list_tts_history(provider="kokoro")
     detail = await service.get_tts_history_entry(3)
-    transcription = await service.create_audio_transcription("sample.wav", AudioTranscriptionRequest(model="whisper-1"))
-    translation = await service.create_audio_translation("sample.wav", AudioTranslationRequest(model="whisper-1"))
-    encoded = await service.encode_audio_tokenizer(AudioTokenizerEncodeRequest(audio_base64="UklGRg=="))
-    decoded = await service.decode_audio_tokenizer(AudioTokenizerDecodeRequest(tokens=[1, 2, 3]))
-    uploaded = await service.upload_custom_voice("voice.wav", name="Narrator", provider="vibevoice")
-    voice_encoded = await service.encode_custom_voice_reference(VoiceEncodeRequest(voice_id="voice-1"))
+    transcription = await service.create_audio_transcription(
+        "sample.wav", AudioTranscriptionRequest(model="whisper-1")
+    )
+    translation = await service.create_audio_translation(
+        "sample.wav", AudioTranslationRequest(model="whisper-1")
+    )
+    encoded = await service.encode_audio_tokenizer(
+        AudioTokenizerEncodeRequest(audio_base64="UklGRg==")
+    )
+    decoded = await service.decode_audio_tokenizer(
+        AudioTokenizerDecodeRequest(tokens=[1, 2, 3])
+    )
+    uploaded = await service.upload_custom_voice(
+        "voice.wav", name="Narrator", provider="vibevoice"
+    )
+    voice_encoded = await service.encode_custom_voice_reference(
+        VoiceEncodeRequest(voice_id="voice-1")
+    )
     custom_voices = await service.list_custom_voices()
     custom_voice = await service.get_custom_voice("voice-1")
     preview = await service.preview_custom_voice("voice-1", text="Preview")
@@ -204,7 +292,9 @@ async def test_server_audio_services_service_routes_core_audio_with_policy():
     assert custom_voice["voice_id"] == "voice-1"
     assert preview["filename"] == "preview_voice-1.mp3"
     assert deleted["voice_id"] == "voice-1"
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "audio.health.observe.server",
         "audio.health.observe.server",
         "audio.providers.list.server",

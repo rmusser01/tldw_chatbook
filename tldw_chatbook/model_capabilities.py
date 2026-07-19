@@ -27,21 +27,30 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL_PATTERNS = {
     "OpenAI": [
         {"pattern": r"^gpt-4.*vision", "vision": True},
-        {"pattern": r"^gpt-4[o0](?:-mini)?", "vision": True},  # gpt-4o, gpt-40, gpt-4o-mini
+        {
+            "pattern": r"^gpt-4[o0](?:-mini)?",
+            "vision": True,
+        },  # gpt-4o, gpt-40, gpt-4o-mini
         {"pattern": r"^gpt-4.*turbo", "vision": True},
         {"pattern": r"^gpt-4\.1", "vision": True},  # gpt-4.1 series
-        {"pattern": r"^o[34](?:-mini)?", "vision": True},  # o3, o4, o3-mini, o4-mini series
-        {"pattern": r"^dall-e", "vision": True, "image_generation": True}
+        {
+            "pattern": r"^o[34](?:-mini)?",
+            "vision": True,
+        },  # o3, o4, o3-mini, o4-mini series
+        {"pattern": r"^dall-e", "vision": True, "image_generation": True},
     ],
     "Anthropic": [
         {"pattern": r"^claude-3", "vision": True},  # All Claude 3 models have vision
         {"pattern": r"^claude.*opus-4", "vision": True},  # Claude Opus 4 series
-        {"pattern": r"^claude.*sonnet-4", "vision": True}  # Claude Sonnet 4 series
+        {"pattern": r"^claude.*sonnet-4", "vision": True},  # Claude Sonnet 4 series
     ],
     "Google": [
         {"pattern": r"gemini.*vision", "vision": True},
-        {"pattern": r"gemini-[0-9.]+-(pro|flash)", "vision": True},  # Modern Gemini models
-        {"pattern": r"gemini-2\.", "vision": True}  # Gemini 2.x series
+        {
+            "pattern": r"gemini-[0-9.]+-(pro|flash)",
+            "vision": True,
+        },  # Modern Gemini models
+        {"pattern": r"gemini-2\.", "vision": True},  # Gemini 2.x series
     ],
     "OpenRouter": [
         # OpenRouter uses provider/model format
@@ -51,19 +60,25 @@ DEFAULT_MODEL_PATTERNS = {
         {"pattern": r"openai/o[34](?:-mini)?", "vision": True},
         {"pattern": r"anthropic/claude-3", "vision": True},
         {"pattern": r"google/gemini.*vision", "vision": True},
-        {"pattern": r"google/gemini-[0-9.]+-(pro|flash)", "vision": True}
+        {"pattern": r"google/gemini-[0-9.]+-(pro|flash)", "vision": True},
     ],
     "Moonshot": [
         # Moonshot vision models
-        {"pattern": r"moonshot-v1-.*-vision-preview", "vision": True},  # Matches all vision preview models
+        {
+            "pattern": r"moonshot-v1-.*-vision-preview",
+            "vision": True,
+        },  # Matches all vision preview models
         {"pattern": r"moonshot-v1-8k-vision-preview", "vision": True},
         {"pattern": r"moonshot-v1-32k-vision-preview", "vision": True},
-        {"pattern": r"moonshot-v1-128k-vision-preview", "vision": True}
+        {"pattern": r"moonshot-v1-128k-vision-preview", "vision": True},
     ],
     "ZAI": [
         # Z.AI models - currently no vision support
-        {"pattern": r"^glm-", "vision": False}  # All GLM models currently don't support vision
-    ]
+        {
+            "pattern": r"^glm-",
+            "vision": False,
+        }  # All GLM models currently don't support vision
+    ],
 }
 
 # Known models with direct capabilities (for common models)
@@ -80,32 +95,28 @@ DEFAULT_MODEL_CAPABILITIES = {
     "o3-mini-2025-01-31": {"vision": True, "max_images": 10},
     "gpt-4.1-mini-2025-04-14": {"vision": True, "max_images": 10},
     "gpt-4.1-nano-2025-04-14": {"vision": True, "max_images": 10},
-
     # Anthropic
     "claude-3-opus-20240229": {"vision": True, "max_images": 5},
     "claude-3-sonnet-20240229": {"vision": True, "max_images": 5},
     "claude-3-haiku-20240307": {"vision": True, "max_images": 5},
     "claude-3-5-sonnet-20240620": {"vision": True, "max_images": 5},
     "claude-3-5-sonnet-20241022": {"vision": True, "max_images": 5},
-
     # Google
     "gemini-pro-vision": {"vision": True, "max_images": 1},
     "gemini-1.5-pro": {"vision": True, "max_images": 10},
     "gemini-1.5-flash": {"vision": True, "max_images": 10},
     "gemini-2.0-flash": {"vision": True, "max_images": 10},
-    
     # Moonshot
     "moonshot-v1-8k-vision-preview": {"vision": True, "max_images": 1},
     "moonshot-v1-32k-vision-preview": {"vision": True, "max_images": 1},
     "moonshot-v1-128k-vision-preview": {"vision": True, "max_images": 1},
-    
     # Z.AI Models
     "glm-4.5": {"vision": False, "max_tokens": 8192},
     "glm-4.5-air": {"vision": False, "max_tokens": 8192},
     "glm-4.5-x": {"vision": False, "max_tokens": 8192},
     "glm-4.5-airx": {"vision": False, "max_tokens": 8192},
     "glm-4.5-flash": {"vision": False, "max_tokens": 16384},
-    "glm-4-32b-0414-128k": {"vision": False, "max_tokens": 128000}
+    "glm-4-32b-0414-128k": {"vision": False, "max_tokens": 128000},
 }
 
 
@@ -136,6 +147,7 @@ class ModelCapabilities:
             # Load from config file
             # Get model_capabilities from config - it's a top-level section
             from tldw_chatbook.config import load_cli_config_and_ensure_existence
+
             full_config = load_cli_config_and_ensure_existence()
             config = full_config.get("model_capabilities", {})
 
@@ -146,10 +158,9 @@ class ModelCapabilities:
         self.pattern_configs = config.get("patterns", DEFAULT_MODEL_PATTERNS.copy())
 
         # Default settings
-        self.defaults = config.get("defaults", {
-            "unknown_models_vision": False,
-            "log_unknown_models": True
-        })
+        self.defaults = config.get(
+            "defaults", {"unknown_models_vision": False, "log_unknown_models": True}
+        )
 
         # Compile patterns for efficiency
         self._compiled_patterns = self._compile_patterns()
@@ -158,7 +169,8 @@ class ModelCapabilities:
         self._capability_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
         logger.debug(
-            f"ModelCapabilities initialized with {len(self.direct_mappings)} direct mappings and patterns for {len(self.pattern_configs)} providers")
+            f"ModelCapabilities initialized with {len(self.direct_mappings)} direct mappings and patterns for {len(self.pattern_configs)} providers"
+        )
 
     def _compile_patterns(self) -> Dict[str, List[Tuple[Pattern, Dict[str, Any]]]]:
         """Compile regex patterns for each provider."""
@@ -171,14 +183,20 @@ class ModelCapabilities:
                     try:
                         pattern = re.compile(pattern_config["pattern"], re.IGNORECASE)
                         # Extract capabilities from pattern config
-                        capabilities = {k: v for k, v in pattern_config.items() if k != "pattern"}
+                        capabilities = {
+                            k: v for k, v in pattern_config.items() if k != "pattern"
+                        }
                         compiled_list.append((pattern, capabilities))
                     except re.error as e:
-                        logger.error(f"Invalid regex pattern for {provider}: {pattern_config['pattern']} - {e}")
+                        logger.error(
+                            f"Invalid regex pattern for {provider}: {pattern_config['pattern']} - {e}"
+                        )
 
             if compiled_list:
                 compiled[provider] = compiled_list
-                logger.debug(f"Compiled {len(compiled_list)} patterns for provider {provider}")
+                logger.debug(
+                    f"Compiled {len(compiled_list)} patterns for provider {provider}"
+                )
 
         return compiled
 
@@ -226,16 +244,18 @@ class ModelCapabilities:
             for pattern, pattern_capabilities in self._compiled_patterns[provider]:
                 if pattern.match(model):
                     capabilities = pattern_capabilities.copy()
-                    logger.debug(f"Pattern matched for {provider}/{model}: {capabilities}")
+                    logger.debug(
+                        f"Pattern matched for {provider}/{model}: {capabilities}"
+                    )
                     break
 
         # 3. If no match found, use defaults
         if not capabilities:
             if self.defaults.get("log_unknown_models", True):
-                logger.info(f"No capability information found for {provider}/{model}, using defaults")
-            capabilities = {
-                "vision": self.defaults.get("unknown_models_vision", False)
-            }
+                logger.info(
+                    f"No capability information found for {provider}/{model}, using defaults"
+                )
+            capabilities = {"vision": self.defaults.get("unknown_models_vision", False)}
 
         # Cache the result
         self._capability_cache[cache_key] = capabilities
@@ -325,6 +345,7 @@ def reload_capabilities():
     global _global_capabilities
     _global_capabilities = None
     logger.info("Model capabilities reloaded from configuration")
+
 
 #
 # End of model_capabilities.py

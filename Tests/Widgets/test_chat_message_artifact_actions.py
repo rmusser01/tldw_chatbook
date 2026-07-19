@@ -28,7 +28,9 @@ async def test_ai_messages_expose_save_artifact_action(widget_pilot, widget_clas
 
 
 @pytest.mark.parametrize("widget_class", [ChatMessage, ChatMessageEnhanced])
-async def test_user_messages_do_not_expose_save_artifact_action(widget_pilot, widget_class):
+async def test_user_messages_do_not_expose_save_artifact_action(
+    widget_pilot, widget_class
+):
     async with await widget_pilot(
         widget_class,
         message="User prompt",
@@ -41,7 +43,9 @@ async def test_user_messages_do_not_expose_save_artifact_action(widget_pilot, wi
 
 
 @pytest.mark.parametrize("widget_class", [ChatMessage, ChatMessageEnhanced])
-async def test_system_messages_do_not_expose_save_artifact_action(widget_pilot, widget_class):
+async def test_system_messages_do_not_expose_save_artifact_action(
+    widget_pilot, widget_class
+):
     async with await widget_pilot(
         widget_class,
         message="System status",

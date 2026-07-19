@@ -8,7 +8,10 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, Label, Select, Static, TextArea
 
-from tldw_chatbook.MCP.unified_control_models import ServerAccessContext, UnifiedMCPContext
+from tldw_chatbook.MCP.unified_control_models import (
+    ServerAccessContext,
+    UnifiedMCPContext,
+)
 from tldw_chatbook.runtime_policy.engine import PolicyEngine
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -216,7 +219,9 @@ class UnifiedMCPPanel(Container):
         initial_scope_ref_value = Select.BLANK
         if initial_scope_ref not in (None, ""):
             initial_scope_ref_value = str(initial_scope_ref)
-            initial_scope_ref_options = [(f"Scope {initial_scope_ref_value}", initial_scope_ref_value)]
+            initial_scope_ref_options = [
+                (f"Scope {initial_scope_ref_value}", initial_scope_ref_value)
+            ]
 
         if self.layout_mode == LAYOUT_MODE_COMPACT_WORKBENCH:
             yield from self._compose_compact_workbench(
@@ -272,13 +277,21 @@ class UnifiedMCPPanel(Container):
                         with Container(classes="unified-mcp-field"):
                             yield Label("Section", classes="form-label")
                             yield Select(
-                                [("Overview", "overview"), ("Inventory", "inventory"), ("External Servers", "external_servers")],
+                                [
+                                    ("Overview", "overview"),
+                                    ("Inventory", "inventory"),
+                                    ("External Servers", "external_servers"),
+                                ],
                                 id="unified-mcp-section",
                                 allow_blank=False,
                                 value=initial_section,
                             )
                 yield Static("", id="unified-mcp-status", classes="unified-mcp-status")
-                yield Static("Unified MCP is loading...", id="unified-mcp-content", classes="unified-mcp-content")
+                yield Static(
+                    "Unified MCP is loading...",
+                    id="unified-mcp-content",
+                    classes="unified-mcp-content",
+                )
                 with Vertical(classes="unified-mcp-actions"):
                     yield Label("Action", classes="form-label")
                     yield Static(
@@ -291,7 +304,11 @@ class UnifiedMCPPanel(Container):
                         id="unified-mcp-action",
                         value=Select.BLANK,
                     )
-                    yield Static("Payload (JSON)", id="unified-mcp-action-payload-label", classes="form-label")
+                    yield Static(
+                        "Payload (JSON)",
+                        id="unified-mcp-action-payload-label",
+                        classes="form-label",
+                    )
                     yield TextArea("{}", id="unified-mcp-action-payload")
                     yield Static(
                         "Choose a runnable action to edit its payload.",
@@ -305,7 +322,9 @@ class UnifiedMCPPanel(Container):
                             variant="primary",
                             tooltip="Run the selected Unified MCP action with the JSON payload above.",
                         )
-                    yield Static("", id="unified-mcp-action-result", classes="help-text")
+                    yield Static(
+                        "", id="unified-mcp-action-result", classes="help-text"
+                    )
 
     def _compose_compact_workbench(
         self,
@@ -318,8 +337,13 @@ class UnifiedMCPPanel(Container):
         initial_scope_ref_value: object,
     ) -> ComposeResult:
         with Horizontal(id="mcp-workbench", classes="destination-workbench"):
-            with Vertical(id="mcp-server-tree-pane", classes="mcp-workbench-pane destination-workbench-pane"):
-                yield Static("Servers + Scope", classes="mcp-pane-title destination-section")
+            with Vertical(
+                id="mcp-server-tree-pane",
+                classes="mcp-workbench-pane destination-workbench-pane",
+            ):
+                yield Static(
+                    "Servers + Scope", classes="mcp-pane-title destination-section"
+                )
                 yield Label("Source", classes="form-label")
                 yield Select(
                     [("Local", "local"), ("Server", "server")],
@@ -329,7 +353,11 @@ class UnifiedMCPPanel(Container):
                 )
                 yield Label("Section", classes="form-label")
                 yield Select(
-                    [("Overview", "overview"), ("Inventory", "inventory"), ("External Servers", "external_servers")],
+                    [
+                        ("Overview", "overview"),
+                        ("Inventory", "inventory"),
+                        ("External Servers", "external_servers"),
+                    ],
                     id="unified-mcp-section",
                     allow_blank=False,
                     value=initial_section,
@@ -353,18 +381,40 @@ class UnifiedMCPPanel(Container):
                     id="unified-mcp-scope-ref",
                     value=initial_scope_ref_value,
                 )
-            left_divider = Static("|", id="mcp-column-divider-left", classes="mcp-column-divider mcp-column-resize-handle")
+            left_divider = Static(
+                "|",
+                id="mcp-column-divider-left",
+                classes="mcp-column-divider mcp-column-resize-handle",
+            )
             left_divider.tooltip = "Resize columns"
             yield left_divider
-            with Vertical(id="mcp-detail-pane", classes="mcp-workbench-pane destination-workbench-pane"):
-                yield Static("Server Detail", classes="mcp-pane-title destination-section")
+            with Vertical(
+                id="mcp-detail-pane",
+                classes="mcp-workbench-pane destination-workbench-pane",
+            ):
+                yield Static(
+                    "Server Detail", classes="mcp-pane-title destination-section"
+                )
                 yield Static("", id="unified-mcp-status", classes="unified-mcp-status")
-                yield Static("Unified MCP is loading...", id="unified-mcp-content", classes="unified-mcp-content")
-            right_divider = Static("|", id="mcp-column-divider-right", classes="mcp-column-divider mcp-column-resize-handle")
+                yield Static(
+                    "Unified MCP is loading...",
+                    id="unified-mcp-content",
+                    classes="unified-mcp-content",
+                )
+            right_divider = Static(
+                "|",
+                id="mcp-column-divider-right",
+                classes="mcp-column-divider mcp-column-resize-handle",
+            )
             right_divider.tooltip = "Resize columns"
             yield right_divider
-            with Vertical(id="mcp-readiness-pane", classes="mcp-workbench-pane destination-workbench-pane ds-inspector"):
-                yield Static("Readiness + Actions", classes="mcp-pane-title destination-section")
+            with Vertical(
+                id="mcp-readiness-pane",
+                classes="mcp-workbench-pane destination-workbench-pane ds-inspector",
+            ):
+                yield Static(
+                    "Readiness + Actions", classes="mcp-pane-title destination-section"
+                )
                 with Vertical(classes="unified-mcp-actions"):
                     yield Label("Action", classes="form-label")
                     yield Static(
@@ -377,7 +427,11 @@ class UnifiedMCPPanel(Container):
                         id="unified-mcp-action",
                         value=Select.BLANK,
                     )
-                    yield Static("Payload (JSON)", id="unified-mcp-action-payload-label", classes="form-label")
+                    yield Static(
+                        "Payload (JSON)",
+                        id="unified-mcp-action-payload-label",
+                        classes="form-label",
+                    )
                     yield TextArea("{}", id="unified-mcp-action-payload")
                     yield Static(
                         "Choose a runnable action to edit its payload.",
@@ -391,7 +445,9 @@ class UnifiedMCPPanel(Container):
                             variant="primary",
                             tooltip="Run the selected Unified MCP action with the JSON payload above.",
                         )
-                    yield Static("", id="unified-mcp-action-result", classes="help-text")
+                    yield Static(
+                        "", id="unified-mcp-action-result", classes="help-text"
+                    )
 
     async def on_mount(self) -> None:
         await self.load_context()
@@ -404,13 +460,17 @@ class UnifiedMCPPanel(Container):
             self.context = UnifiedMCPContext(selected_section="overview")
             self._has_loaded_context = True
             await self._sync_controls()
-            self._update_status("Unified MCP service is unavailable in this app session.")
+            self._update_status(
+                "Unified MCP service is unavailable in this app session."
+            )
             self._update_content("Unified MCP is unavailable.")
             return self.context
 
         self.context = await service.load_context()
         if self.context.selected_section is None:
-            self.context = self.context.__class__(**{**self.context.to_dict(), "selected_section": "overview"})
+            self.context = self.context.__class__(
+                **{**self.context.to_dict(), "selected_section": "overview"}
+            )
         self._has_loaded_context = True
         await self._sync_controls()
         await self._load_active_section()
@@ -434,7 +494,9 @@ class UnifiedMCPPanel(Container):
         await self._load_active_section()
         return self.context
 
-    async def select_scope(self, scope: str, scope_ref: str | None = None) -> UnifiedMCPContext:
+    async def select_scope(
+        self, scope: str, scope_ref: str | None = None
+    ) -> UnifiedMCPContext:
         service = self._service()
         if service is None:
             return self.context
@@ -480,7 +542,9 @@ class UnifiedMCPPanel(Container):
     async def restore_view_state(self, state: dict[str, Any] | None) -> None:
         if not state:
             return
-        selected_source = str(state.get("selected_source") or self.context.selected_source or "local")
+        selected_source = str(
+            state.get("selected_source") or self.context.selected_source or "local"
+        )
         selected_server_id = state.get("selected_active_server_id")
         selected_scope = state.get("selected_scope")
         selected_scope_ref = state.get("selected_scope_ref")
@@ -490,7 +554,12 @@ class UnifiedMCPPanel(Container):
         if selected_source == "server" and selected_server_id not in (None, ""):
             await self.select_server_target(str(selected_server_id))
         if selected_source == "server" and selected_scope not in (None, ""):
-            await self.select_scope(str(selected_scope), str(selected_scope_ref) if selected_scope_ref not in (None, "") else None)
+            await self.select_scope(
+                str(selected_scope),
+                str(selected_scope_ref)
+                if selected_scope_ref not in (None, "")
+                else None,
+            )
         await self.select_section(str(selected_section))
 
     async def _apply_pending_view_state(self) -> None:
@@ -529,8 +598,12 @@ class UnifiedMCPPanel(Container):
                 source_select.value = self.context.selected_source or "local"
 
                 server_targets = self._server_target_options()
-                server_select.set_options(server_targets or [("No configured servers", Select.BLANK)])
-                server_select.disabled = self.context.selected_source != "server" or not bool(server_targets)
+                server_select.set_options(
+                    server_targets or [("No configured servers", Select.BLANK)]
+                )
+                server_select.disabled = (
+                    self.context.selected_source != "server" or not bool(server_targets)
+                )
                 server_values = {value for _label, value in server_targets}
                 if self.context.selected_active_server_id in server_values:
                     server_select.value = self.context.selected_active_server_id
@@ -541,12 +614,20 @@ class UnifiedMCPPanel(Container):
 
                 scope_options = self._available_scope_options()
                 scope_select.set_options(scope_options)
-                scope_select.disabled = self.context.selected_source != "server" or self.context.selected_active_server_id is None
+                scope_select.disabled = (
+                    self.context.selected_source != "server"
+                    or self.context.selected_active_server_id is None
+                )
                 scope_select.value = self.context.selected_scope or "personal"
 
                 scope_ref_options = self._available_scope_ref_options()
-                scope_ref_select.set_options(scope_ref_options or [("No scope entities", Select.BLANK)])
-                scope_ref_select.disabled = not bool(scope_ref_options) or self.context.selected_source != "server"
+                scope_ref_select.set_options(
+                    scope_ref_options or [("No scope entities", Select.BLANK)]
+                )
+                scope_ref_select.disabled = (
+                    not bool(scope_ref_options)
+                    or self.context.selected_source != "server"
+                )
                 scope_ref_values = {value for _label, value in scope_ref_options}
                 if self.context.selected_scope_ref in scope_ref_values:
                     scope_ref_select.value = self.context.selected_scope_ref
@@ -592,9 +673,15 @@ class UnifiedMCPPanel(Container):
         if access_context is None:
             return []
         if self.context.selected_scope == "team":
-            return [(f"Team {team_id}", str(team_id)) for team_id in access_context.manageable_team_ids]
+            return [
+                (f"Team {team_id}", str(team_id))
+                for team_id in access_context.manageable_team_ids
+            ]
         if self.context.selected_scope == "org":
-            return [(f"Org {org_id}", str(org_id)) for org_id in access_context.manageable_org_ids]
+            return [
+                (f"Org {org_id}", str(org_id))
+                for org_id in access_context.manageable_org_ids
+            ]
         return []
 
     def _available_section_options(self) -> list[tuple[str, str]]:
@@ -659,7 +746,10 @@ class UnifiedMCPPanel(Container):
                 payload_area.text = "{}"
                 return
 
-            action_options = [(str(descriptor["label"]), str(descriptor["name"])) for descriptor in descriptors]
+            action_options = [
+                (str(descriptor["label"]), str(descriptor["name"]))
+                for descriptor in descriptors
+            ]
             action_select.set_options(action_options)
             valid_action_names = {value for _label, value in action_options}
             if action_select.value not in valid_action_names:
@@ -737,14 +827,18 @@ class UnifiedMCPPanel(Container):
         app_instance = self.app_instance
         require_allowed = getattr(app_instance, "require_ui_action_allowed", None)
         if callable(require_allowed):
-            decision = require_allowed(action_id=action_id, runtime_state_override=runtime_state_override)
+            decision = require_allowed(
+                action_id=action_id, runtime_state_override=runtime_state_override
+            )
         else:
             engine = getattr(app_instance, "ui_policy_engine", None)
             if engine is None:
                 engine = PolicyEngine(CAPABILITY_REGISTRY)
                 if app_instance is not None:
                     setattr(app_instance, "ui_policy_engine", engine)
-            decision = engine.evaluate(action_id=action_id, state=runtime_state_override)
+            decision = engine.evaluate(
+                action_id=action_id, state=runtime_state_override
+            )
         return bool(decision.allowed)
 
     async def execute_selected_action(self) -> Any:
@@ -755,7 +849,9 @@ class UnifiedMCPPanel(Container):
         action_select = self.query_one("#unified-mcp-action", Select)
         payload_area = self.query_one("#unified-mcp-action-payload", TextArea)
         result_area = self.query_one("#unified-mcp-action-result", Static)
-        action_name = None if action_select.value == Select.BLANK else str(action_select.value)
+        action_name = (
+            None if action_select.value == Select.BLANK else str(action_select.value)
+        )
         if not action_name:
             result_area.update("No Unified MCP action is available for this section.")
             return None
@@ -834,7 +930,9 @@ class UnifiedMCPPanel(Container):
     async def _on_scope_ref_changed(self, event: Select.Changed) -> None:
         if self._refreshing_controls:
             return
-        scope_ref = None if self._is_empty_select_value(event.value) else str(event.value)
+        scope_ref = (
+            None if self._is_empty_select_value(event.value) else str(event.value)
+        )
         await self.select_scope_ref(scope_ref)
 
     @on(Select.Changed, "#unified-mcp-section")

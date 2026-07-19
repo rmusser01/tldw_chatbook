@@ -79,12 +79,16 @@ def _two_row_state(*, sort: str = "name") -> SkillsListState:
     return SkillsListState(
         rows=(
             SkillListRow(
-                name="code-review", secondary="user · agent · Reviews a diff",
-                trust_glyph="✓", blocked=False,
+                name="code-review",
+                secondary="user · agent · Reviews a diff",
+                trust_glyph="✓",
+                blocked=False,
             ),
             SkillListRow(
-                name="summarize", secondary="user · agent needs review [x]",
-                trust_glyph="⚠", blocked=True,
+                name="summarize",
+                secondary="user · agent needs review [x]",
+                trust_glyph="⚠",
+                blocked=True,
             ),
         ),
         count=2,
@@ -199,7 +203,9 @@ async def test_skills_canvas_empty_state_renders_exact_copy_not_list():
     app = _CanvasHost(empty_state)
     async with app.run_test() as pilot:
         empty = pilot.app.query_one("#library-skills-empty")
-        assert str(empty.renderable) == "No skills yet — create them in Library ▸ Skills."
+        assert (
+            str(empty.renderable) == "No skills yet — create them in Library ▸ Skills."
+        )
         assert len(pilot.app.query(".library-skill-row")) == 0
 
 
@@ -269,16 +275,29 @@ async def test_skill_editor_renders_all_field_ids_populated():
     app = _EditorHost(mode="editor", editor_state=state)
     async with app.run_test() as pilot:
         assert pilot.app.query_one("#library-skill-name", Input).value == "code-review"
-        assert pilot.app.query_one("#library-skill-description", Input).value == "Reviews a diff"
-        assert pilot.app.query_one("#library-skill-argument-hint", Input).value == "pr number"
-        assert pilot.app.query_one("#library-skill-allowed-tools", Input).value == "git.diff"
+        assert (
+            pilot.app.query_one("#library-skill-description", Input).value
+            == "Reviews a diff"
+        )
+        assert (
+            pilot.app.query_one("#library-skill-argument-hint", Input).value
+            == "pr number"
+        )
+        assert (
+            pilot.app.query_one("#library-skill-allowed-tools", Input).value
+            == "git.diff"
+        )
         assert pilot.app.query_one("#library-skill-model", Input).value == ""
         assert pilot.app.query_one("#library-skill-model-hint", Static)
-        model_hint = str(pilot.app.query_one("#library-skill-model-hint", Static).renderable)
+        model_hint = str(
+            pilot.app.query_one("#library-skill-model-hint", Static).renderable
+        )
         assert model_hint == "Not applied in v1."
         body_area = pilot.app.query_one("#library-skill-body", TextArea)
         assert body_area.text == "Review the diff."
-        supporting = str(pilot.app.query_one("#library-skill-supporting", Static).renderable)
+        supporting = str(
+            pilot.app.query_one("#library-skill-supporting", Static).renderable
+        )
         assert "checklist.md (42 bytes)" in supporting
 
 
@@ -316,7 +335,9 @@ async def test_skill_editor_name_input_editable_on_create_branch():
 @pytest.mark.asyncio
 async def test_skill_editor_toggle_and_context_button_labels_reflect_state():
     state = _editor_state(
-        user_invocable=False, disable_model_invocation=True, context="fork",
+        user_invocable=False,
+        disable_model_invocation=True,
+        context="fork",
     )
     app = _EditorHost(mode="editor", editor_state=state)
     async with app.run_test() as pilot:
@@ -333,7 +354,9 @@ async def test_skill_editor_warnings_static_shows_screen_computed_text():
     state = _editor_state()
     app = _EditorHost(mode="editor", editor_state=state, warnings="a warning line")
     async with app.run_test() as pilot:
-        warnings = str(pilot.app.query_one("#library-skill-warnings", Static).renderable)
+        warnings = str(
+            pilot.app.query_one("#library-skill-warnings", Static).renderable
+        )
         assert warnings == "a warning line"
 
 
@@ -363,16 +386,21 @@ async def test_skill_editor_conflict_mode_renders_reload_only():
 @pytest.mark.asyncio
 async def test_skill_editor_trust_panel_shows_state_line_and_gates_buttons():
     state = _editor_state(
-        trust_status="quarantined_modified", trust_blocked=True,
+        trust_status="quarantined_modified",
+        trust_blocked=True,
         trust_changed_files=("SKILL.md",),
     )
     app = _EditorHost(mode="editor", editor_state=state)
     async with app.run_test() as pilot:
-        state_line = str(pilot.app.query_one("#library-skill-trust-state", Static).renderable)
-        assert state_line == skill_trust_state_line("quarantined_modified", ("SKILL.md",))
-        assert pilot.app.query_one(
-            "#library-skill-trust-state", Static
-        ).has_class("library-skill-trust-state-blocked")
+        state_line = str(
+            pilot.app.query_one("#library-skill-trust-state", Static).renderable
+        )
+        assert state_line == skill_trust_state_line(
+            "quarantined_modified", ("SKILL.md",)
+        )
+        assert pilot.app.query_one("#library-skill-trust-state", Static).has_class(
+            "library-skill-trust-state-blocked"
+        )
         unlock_button = pilot.app.query_one("#library-skill-trust-unlock", Button)
         assert unlock_button.disabled is True
         review_button = pilot.app.query_one("#library-skill-trust-review", Button)
@@ -413,10 +441,14 @@ async def test_skill_editor_trust_panel_shows_setup_state_when_uninitialized():
     state = _editor_state(trust_status="trust_uninitialized", trust_blocked=True)
     app = _EditorHost(mode="editor", editor_state=state)
     async with app.run_test() as pilot:
-        state_line = str(pilot.app.query_one("#library-skill-trust-state", Static).renderable)
+        state_line = str(
+            pilot.app.query_one("#library-skill-trust-state", Static).renderable
+        )
         assert state_line == "Trust: not initialized"
         explanation = str(
-            pilot.app.query_one("#library-skill-trust-setup-explanation", Static).renderable
+            pilot.app.query_one(
+                "#library-skill-trust-setup-explanation", Static
+            ).renderable
         )
         assert explanation == _TRUST_SETUP_EXPLANATION_COPY
         setup_button = pilot.app.query_one("#library-skill-trust-setup", Button)
@@ -444,7 +476,12 @@ async def test_skill_editor_trust_panel_hides_setup_state_when_not_uninitialized
 
 def test_skill_trust_needs_setup_predicate():
     assert skill_trust_needs_setup("trust_uninitialized") is True
-    for other in ("trusted", "trust_locked", "quarantined_modified", "quarantined_added"):
+    for other in (
+        "trusted",
+        "trust_locked",
+        "quarantined_modified",
+        "quarantined_added",
+    ):
         assert skill_trust_needs_setup(other) is False
 
 
@@ -456,20 +493,29 @@ def test_skill_trust_state_line_appends_changed_files():
 
 def test_skill_editor_warning_lines_shadow_and_needs_review():
     assert skill_editor_warning_lines(
-        live_name="summarize", trust_status="trusted", trust_blocked=False,
+        live_name="summarize",
+        trust_status="trusted",
+        trust_blocked=False,
     ) == (
         'Saving marks this skill "needs review" — re-approve it in the trust '
         "panel after saving.",
     )
     assert skill_editor_warning_lines(
-        live_name="calculator", trust_status="quarantined_modified", trust_blocked=True,
+        live_name="calculator",
+        trust_status="quarantined_modified",
+        trust_blocked=True,
     ) == (
         'Name shadows a built-in command/tool ("calculator") — it will not be '
         "invocable as /calculator or as an agent tool.",
     )
-    assert skill_editor_warning_lines(
-        live_name="summarize", trust_status="quarantined_modified", trust_blocked=True,
-    ) == ()
+    assert (
+        skill_editor_warning_lines(
+            live_name="summarize",
+            trust_status="quarantined_modified",
+            trust_blocked=True,
+        )
+        == ()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -719,11 +765,7 @@ async def test_library_shell_skills_filter_submitted_rebuilds_state():
 
 
 _TAB_BAR_CLICK_BUG_SKILL_CONTENT = (
-    "---\n"
-    "description: Summarize notes\n"
-    "---\n"
-    "# Summarize\n"
-    "Summarize body text.\n"
+    "---\ndescription: Summarize notes\n---\n# Summarize\nSummarize body text.\n"
 )
 
 
@@ -769,11 +811,17 @@ async def test_opening_skill_editor_does_not_break_tab_bar_click_activation(tmp_
     way.
     """
     local_service = LocalSkillsService(
-        store_dir=tmp_path, trust_service=None,
-        allow_untrusted_without_trust_service=True, policy_enforcer=None,
+        store_dir=tmp_path,
+        trust_service=None,
+        allow_untrusted_without_trust_service=True,
+        policy_enforcer=None,
     )
-    await local_service.create_skill(name="summarize-notes", content=_TAB_BAR_CLICK_BUG_SKILL_CONTENT)
-    service = SkillsScopeService(local_service=local_service, server_service=None, policy_enforcer=None)
+    await local_service.create_skill(
+        name="summarize-notes", content=_TAB_BAR_CLICK_BUG_SKILL_CONTENT
+    )
+    service = SkillsScopeService(
+        local_service=local_service, server_service=None, policy_enforcer=None
+    )
 
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesListScopeService([])
@@ -801,7 +849,9 @@ async def test_opening_skill_editor_does_not_break_tab_bar_click_activation(tmp_
         # Description Input -- MouseDown captures the mouse -- whose
         # MouseUp never arrives before the screen recomposes.
         description_input = screen.query_one("#library-skill-description", Input)
-        message_arguments = _get_mouse_message_arguments(description_input, (1, 0), button=1)
+        message_arguments = _get_mouse_message_arguments(
+            description_input, (1, 0), button=1
+        )
         host.screen._forward_event(events.MouseDown(**message_arguments))
         await pilot.pause()
         assert host.app.mouse_captured is description_input
@@ -970,8 +1020,12 @@ def test_library_skills_import_row_css_blocks_match_prompt_parity():
             assert pinned in import_path_block
             assert pinned in prompts_import_path_block
 
-        import_path_focus_block = _css_block(text, "#library-skills-import-path:focus {")
-        prompts_import_path_focus_block = _css_block(text, "#library-prompts-import-path:focus {")
+        import_path_focus_block = _css_block(
+            text, "#library-skills-import-path:focus {"
+        )
+        prompts_import_path_focus_block = _css_block(
+            text, "#library-prompts-import-path:focus {"
+        )
         for pinned in (
             "border: tall $ds-input-focus-accent;",
             "outline: none;",
@@ -982,7 +1036,9 @@ def test_library_skills_import_row_css_blocks_match_prompt_parity():
             assert pinned in prompts_import_path_focus_block
 
         import_status_block = _css_block(text, "#library-skills-import-status {")
-        prompts_import_status_block = _css_block(text, "#library-prompts-import-status {")
+        prompts_import_status_block = _css_block(
+            text, "#library-prompts-import-status {"
+        )
         for pinned in (
             "width: 100%;",
             "height: auto;",

@@ -109,7 +109,9 @@ class SchedulingService:
         if self.watchlist_projection is not None:
             tasks.extend(self.watchlist_projection.list_jobs(owner_id=self.owner_id))
         # Sort by next_run_at (None sorts last)
-        tasks.sort(key=lambda t: t.next_run_at or datetime.max.replace(tzinfo=timezone.utc))
+        tasks.sort(
+            key=lambda t: t.next_run_at or datetime.max.replace(tzinfo=timezone.utc)
+        )
         return tasks
 
     async def get_reminder(self, task_id: str) -> ReminderTask | None:
@@ -188,9 +190,7 @@ class SchedulingService:
                 if server_id:
                     await self.server_client.delete_reminder(server_id)
                 self.db.delete_reminder_task(task_id)
-                self.db.delete_sync_mapping(
-                    task_id, _REMINDER_PRIMITIVE, self.owner_id
-                )
+                self.db.delete_sync_mapping(task_id, _REMINDER_PRIMITIVE, self.owner_id)
                 self.db.delete_pending_mutation_for_record(
                     task_id, _REMINDER_PRIMITIVE, self.owner_id
                 )
@@ -211,9 +211,7 @@ class SchedulingService:
                     task_id, _REMINDER_PRIMITIVE, self.owner_id
                 )
 
-            self.db.record_tombstone(
-                task_id, _REMINDER_PRIMITIVE, self.owner_id
-            )
+            self.db.record_tombstone(task_id, _REMINDER_PRIMITIVE, self.owner_id)
             self.db.delete_reminder_task(task_id)
             self.db.delete_pending_mutation_for_record(
                 task_id, _REMINDER_PRIMITIVE, self.owner_id

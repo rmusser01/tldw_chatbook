@@ -129,9 +129,7 @@ def test_start_quiet_line_hidden_when_registry_unavailable():
 
 
 def test_blank_path_with_whitespace_only_disables_start():
-    state = build_library_ingest_state(
-        (), form=LibraryIngestFormState(path="   ")
-    )
+    state = build_library_ingest_state((), form=LibraryIngestFormState(path="   "))
     assert state.start_enabled is False
 
 
@@ -388,8 +386,12 @@ def test_basename_used_for_nested_path():
 
 def test_row_order_mirrors_input_order():
     jobs = (
-        _job(job_id="ingest-job-2", state=IngestJobState.QUEUED, source_path="/tmp/b.txt"),
-        _job(job_id="ingest-job-1", state=IngestJobState.QUEUED, source_path="/tmp/a.txt"),
+        _job(
+            job_id="ingest-job-2", state=IngestJobState.QUEUED, source_path="/tmp/b.txt"
+        ),
+        _job(
+            job_id="ingest-job-1", state=IngestJobState.QUEUED, source_path="/tmp/a.txt"
+        ),
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     assert [row.job_id for row in state.queue_rows] == ["ingest-job-2", "ingest-job-1"]
@@ -405,19 +407,58 @@ def test_queue_counts_line_lists_only_nonzero_states_in_fixed_order():
         _job(job_id="ingest-job-1", state=IngestJobState.QUEUED),
         _job(job_id="ingest-job-2", state=IngestJobState.PARSING, started_at=1.0),
         _job(job_id="ingest-job-6", state=IngestJobState.WRITING, started_at=1.0),
-        _job(job_id="ingest-job-3", state=IngestJobState.DONE, started_at=1.0, finished_at=2.0, media_id=1),
-        _job(job_id="ingest-job-4", state=IngestJobState.DONE, started_at=1.0, finished_at=2.0, media_id=2),
-        _job(job_id="ingest-job-5", state=IngestJobState.FAILED, started_at=1.0, finished_at=2.0, error="x"),
+        _job(
+            job_id="ingest-job-3",
+            state=IngestJobState.DONE,
+            started_at=1.0,
+            finished_at=2.0,
+            media_id=1,
+        ),
+        _job(
+            job_id="ingest-job-4",
+            state=IngestJobState.DONE,
+            started_at=1.0,
+            finished_at=2.0,
+            media_id=2,
+        ),
+        _job(
+            job_id="ingest-job-5",
+            state=IngestJobState.FAILED,
+            started_at=1.0,
+            finished_at=2.0,
+            error="x",
+        ),
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
-    assert state.queue_counts_line == "1 parsing · 1 writing · 1 queued · 2 done · 1 failed"
+    assert (
+        state.queue_counts_line
+        == "1 parsing · 1 writing · 1 queued · 2 done · 1 failed"
+    )
 
 
 def test_queue_counts_line_omits_zero_states():
     jobs = (
-        _job(job_id="ingest-job-1", state=IngestJobState.DONE, started_at=1.0, finished_at=2.0, media_id=1),
-        _job(job_id="ingest-job-2", state=IngestJobState.DONE, started_at=1.0, finished_at=2.0, media_id=2),
-        _job(job_id="ingest-job-3", state=IngestJobState.FAILED, started_at=1.0, finished_at=2.0, error="x"),
+        _job(
+            job_id="ingest-job-1",
+            state=IngestJobState.DONE,
+            started_at=1.0,
+            finished_at=2.0,
+            media_id=1,
+        ),
+        _job(
+            job_id="ingest-job-2",
+            state=IngestJobState.DONE,
+            started_at=1.0,
+            finished_at=2.0,
+            media_id=2,
+        ),
+        _job(
+            job_id="ingest-job-3",
+            state=IngestJobState.FAILED,
+            started_at=1.0,
+            finished_at=2.0,
+            error="x",
+        ),
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     assert state.queue_counts_line == "2 done · 1 failed"

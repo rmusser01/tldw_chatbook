@@ -9,6 +9,7 @@ import toml
 
 from textual.widgets import Button, Checkbox, Input, Select, TextArea, Static
 from textual.app import App
+
 try:
     from textual.app import AppTest
 except ImportError:
@@ -18,11 +19,13 @@ except ImportError:
 from tldw_chatbook.UI.Tools_Settings_Window import ToolsSettingsWindow
 from tldw_chatbook.UI.Outputs_Panel import OutputsPanel
 from tldw_chatbook.UI.Sharing_Panel import SharingPanel
+
 # Import DEFAULT_CONFIG_PATH to be monkeypatched, and the function that uses it
 import tldw_chatbook.config
 
 # Import test utilities
 import sys
+
 sys.path.append(str(Path(__file__).parent.parent))
 from db_test_utilities import TestDatabaseSchema
 
@@ -86,12 +89,12 @@ def mock_config_path(monkeypatch, temp_config_path: Path):
     default_initial_content = {"initial_setting": "default_value"}
     create_dummy_config(temp_config_path, default_initial_content)
 
-    monkeypatch.setattr(tldw_chatbook.config, 'DEFAULT_CONFIG_PATH', temp_config_path)
+    monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
     # config.py resolves loads/saves through _get_effective_config_path(), which
     # honors the TLDW_CONFIG_PATH env override (also exported by conftest
     # isolation fixtures) ahead of DEFAULT_CONFIG_PATH. Point it at the temp file
     # so the content written here is what the window actually loads.
-    monkeypatch.setenv('TLDW_CONFIG_PATH', str(temp_config_path))
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(temp_config_path))
 
     # If load_cli_config_and_ensure_existence has its own reference to the original path (e.g. via default arg)
     # it might need to be mocked or reloaded. However, direct setattr should be effective for module-level constants.
@@ -109,7 +112,9 @@ def mock_app_instance():
 
 
 @pytest_asyncio.fixture
-async def settings_window(mock_app_instance, temp_config_path: Path) -> ToolsSettingsWindow:
+async def settings_window(
+    mock_app_instance, temp_config_path: Path
+) -> ToolsSettingsWindow:
     """
     Fixture to create ToolsSettingsWindow, mount it within a test app,
     and ensure it uses the temporary config path.
@@ -128,8 +133,10 @@ async def settings_window(mock_app_instance, temp_config_path: Path) -> ToolsSet
     # Mount the window in a test app environment
     if AppTest is None:
         pytest.skip("AppTest not available in this version of Textual")
-        
-    async with AppTest(app=mock_app_instance, driver_class=None) as pilot:  # Using AppTest for proper mounting
+
+    async with AppTest(
+        app=mock_app_instance, driver_class=None
+    ) as pilot:  # Using AppTest for proper mounting
         mock_app_instance.mount(window)  # Mount the window onto our mock app
         await pilot.pause()  # Allow compose to run
         yield window  # The window is now composed and ready
@@ -148,9 +155,14 @@ async def test_tab_renaming(settings_window: ToolsSettingsWindow):
 
 
 @pytest.mark.asyncio
-async def test_load_config_values(settings_window: ToolsSettingsWindow, temp_config_path: Path):
+async def test_load_config_values(
+    settings_window: ToolsSettingsWindow, temp_config_path: Path
+):
     """Test if configuration values are loaded and displayed correctly."""
-    expected_config_content = {"general": {"model": "gpt-4"}, "api_keys": {"openai": "sk-..."}}
+    expected_config_content = {
+        "general": {"model": "gpt-4"},
+        "api_keys": {"openai": "sk-..."},
+    }
     create_dummy_config(temp_config_path, expected_config_content)
 
     # Force reload within the window or re-initialize to pick up new config
@@ -169,8 +181,12 @@ async def test_load_config_values(settings_window: ToolsSettingsWindow, temp_con
     config_text_area = settings_window.query_one("#config-text-area", TextArea)
 
     # To ensure it loads the *expected_config_content* and not initial_window_config:
-    reloaded_config = tldw_chatbook.config.load_cli_config_and_ensure_existence(force_reload=True)
-    config_text_area.text = toml.dumps(reloaded_config)  # Manually set text after explicit load
+    reloaded_config = tldw_chatbook.config.load_cli_config_and_ensure_existence(
+        force_reload=True
+    )
+    config_text_area.text = toml.dumps(
+        reloaded_config
+    )  # Manually set text after explicit load
 
     assert config_text_area.text.strip() != ""
     loaded_text_area_config = toml.loads(config_text_area.text)
@@ -178,7 +194,9 @@ async def test_load_config_values(settings_window: ToolsSettingsWindow, temp_con
 
 
 @pytest.mark.asyncio
-async def test_save_config_values(settings_window: ToolsSettingsWindow, temp_config_path: Path, mock_app_instance):
+async def test_save_config_values(
+    settings_window: ToolsSettingsWindow, temp_config_path: Path, mock_app_instance
+):
     """Test if configuration values can be saved correctly."""
     config_text_area = settings_window.query_one("#config-text-area", TextArea)
     save_button = settings_window.query_one("#save-config-button", Button)
@@ -198,7 +216,9 @@ async def test_save_config_values(settings_window: ToolsSettingsWindow, temp_con
 
 
 @pytest.mark.asyncio
-async def test_reload_config_values(settings_window: ToolsSettingsWindow, temp_config_path: Path, mock_app_instance):
+async def test_reload_config_values(
+    settings_window: ToolsSettingsWindow, temp_config_path: Path, mock_app_instance
+):
     """Test if configuration values can be reloaded correctly."""
     # 1. Setup initial config on disk
     original_disk_config = {"settings": {"feature_x": True, "version": 1}}
@@ -217,18 +237,24 @@ async def test_reload_config_values(settings_window: ToolsSettingsWindow, temp_c
     # 3. Modify the TextArea to simulate user changes (these are not saved yet)
     user_modified_text_dict = {"settings": {"feature_x": False, "version": 2}}
     config_text_area.text = toml.dumps(user_modified_text_dict)
-    assert toml.loads(config_text_area.text) == user_modified_text_dict  # Verify change in TextArea
+    assert (
+        toml.loads(config_text_area.text) == user_modified_text_dict
+    )  # Verify change in TextArea
 
     # 4. Simulate reload button press again
     await settings_window.on_button_pressed(Button.Pressed(reload_button))
-    mock_app_instance.notify.assert_called_with("Configuration reloaded.")  # Called again
+    mock_app_instance.notify.assert_called_with(
+        "Configuration reloaded."
+    )  # Called again
 
     # 5. Verify TextArea content is reverted to original_disk_config (ignoring user_modified_text_dict)
     assert toml.loads(config_text_area.text) == original_disk_config
 
 
 @pytest.mark.asyncio
-async def test_save_invalid_toml_format(settings_window: ToolsSettingsWindow, mock_app_instance):
+async def test_save_invalid_toml_format(
+    settings_window: ToolsSettingsWindow, mock_app_instance
+):
     """Test saving invalid TOML data reports an error."""
     config_text_area = settings_window.query_one("#config-text-area", TextArea)
     save_button = settings_window.query_one("#save-config-button", Button)
@@ -238,13 +264,19 @@ async def test_save_invalid_toml_format(settings_window: ToolsSettingsWindow, mo
 
     await settings_window.on_button_pressed(Button.Pressed(save_button))
 
-    mock_app_instance.notify.assert_called_with("Error: Invalid TOML format.", severity="error")
+    mock_app_instance.notify.assert_called_with(
+        "Error: Invalid TOML format.", severity="error"
+    )
 
 
 # Test for save I/O error (conceptual - requires mocking 'open')
-@pytest.mark.skip(reason="Complex to mock built-in open reliably for this specific write operation only")
+@pytest.mark.skip(
+    reason="Complex to mock built-in open reliably for this specific write operation only"
+)
 @pytest.mark.asyncio
-async def test_save_io_error(settings_window: ToolsSettingsWindow, mock_app_instance, monkeypatch):
+async def test_save_io_error(
+    settings_window: ToolsSettingsWindow, mock_app_instance, monkeypatch
+):
     """Test saving config when an IOError occurs."""
     config_text_area = settings_window.query_one("#config-text-area", TextArea)
     settings_window.query_one("#save-config-button", Button)
@@ -275,16 +307,18 @@ async def test_save_io_error(settings_window: ToolsSettingsWindow, mock_app_inst
 # Database Tools Tests
 # ===========================================
 
+
 @pytest.fixture
 def test_db_dir(tmp_path):
     """Create a directory with test databases."""
     db_dir = tmp_path / "databases"
     db_dir.mkdir()
-    
+
     # Create test databases with sample data
     databases = {
-        'ChaChaNotes.db': TestDatabaseSchema.CONVERSATIONS_SCHEMA + TestDatabaseSchema.MESSAGES_SCHEMA,
-        'Client_Media_DB.db': """
+        "ChaChaNotes.db": TestDatabaseSchema.CONVERSATIONS_SCHEMA
+        + TestDatabaseSchema.MESSAGES_SCHEMA,
+        "Client_Media_DB.db": """
             CREATE TABLE IF NOT EXISTS media (
                 id INTEGER PRIMARY KEY,
                 title TEXT,
@@ -292,7 +326,7 @@ def test_db_dir(tmp_path):
             );
             INSERT INTO media (title, content) VALUES ('Test Media', 'Content');
         """,
-        'Prompts_DB.db': """
+        "Prompts_DB.db": """
             CREATE TABLE IF NOT EXISTS prompts (
                 id INTEGER PRIMARY KEY,
                 name TEXT,
@@ -300,29 +334,29 @@ def test_db_dir(tmp_path):
             );
             INSERT INTO prompts (name, content) VALUES ('Test Prompt', 'Content');
         """,
-        'Evals_DB.db': """
+        "Evals_DB.db": """
             CREATE TABLE IF NOT EXISTS evaluations (
                 id INTEGER PRIMARY KEY,
                 name TEXT,
                 score REAL
             );
         """,
-        'RAG_Indexing_DB.db': """
+        "RAG_Indexing_DB.db": """
             CREATE TABLE IF NOT EXISTS embeddings (
                 id INTEGER PRIMARY KEY,
                 content TEXT,
                 vector BLOB
             );
         """,
-        'Subscriptions_DB.db': """
+        "Subscriptions_DB.db": """
             CREATE TABLE IF NOT EXISTS subscriptions (
                 id INTEGER PRIMARY KEY,
                 name TEXT,
                 url TEXT
             );
-        """
+        """,
     }
-    
+
     db_paths = {}
     for db_name, schema in databases.items():
         db_path = db_dir / db_name
@@ -332,8 +366,8 @@ def test_db_dir(tmp_path):
         conn.execute("PRAGMA user_version = 1")
         conn.commit()
         conn.close()
-        db_paths[db_name.replace('.db', '')] = str(db_path)
-    
+        db_paths[db_name.replace(".db", "")] = str(db_path)
+
     return db_dir, db_paths
 
 
@@ -341,16 +375,16 @@ def test_db_dir(tmp_path):
 def mock_database_path_lookup(test_db_dir, monkeypatch):
     """Mock the database path lookup functions."""
     db_dir, db_paths = test_db_dir
-    
+
     def mock_get_db_path(db_name):
         return db_paths.get(db_name, str(db_dir / f"{db_name}.db"))
-    
+
     # Mock the app instance's database path method
     monkeypatch.setattr(
         "tldw_chatbook.UI.Tools_Settings_Window.ToolsSettingsWindow._get_database_path",
-        mock_get_db_path
+        mock_get_db_path,
     )
-    
+
     return db_paths
 
 
@@ -361,13 +395,20 @@ async def test_database_tools_composition(settings_window: ToolsSettingsWindow):
     nav_button = settings_window.query_one("#ts-nav-database-tools", Button)
     assert nav_button is not None
     assert nav_button.label.plain == "Database Tools"
-    
+
     # Check that the content area exists
     content_area = settings_window.query_one("#ts-view-database-tools")
     assert content_area is not None
-    
+
     # Check for individual database sections
-    database_names = ["ChaChaNotes", "Media", "Prompts", "Evals", "RAG", "Subscriptions"]
+    database_names = [
+        "ChaChaNotes",
+        "Media",
+        "Prompts",
+        "Evals",
+        "RAG",
+        "Subscriptions",
+    ]
     for db_name in database_names:
         # Each database should have its own section
         db_section = content_area.query(f".db-section-{db_name.lower()}")
@@ -375,15 +416,17 @@ async def test_database_tools_composition(settings_window: ToolsSettingsWindow):
 
 
 @pytest.mark.asyncio
-async def test_individual_database_vacuum(settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup):
+async def test_individual_database_vacuum(
+    settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup
+):
     """Test vacuum operation on individual databases."""
     # Find the vacuum button for ChaChaNotes
     vacuum_button = settings_window.query_one("#vacuum-chachanotes", Button)
     assert vacuum_button is not None
-    
+
     # Simulate button press
     await settings_window.on_button_pressed(Button.Pressed(vacuum_button))
-    
+
     # Check that notification was called
     mock_app_instance.notify.assert_called()
     # Should notify about starting vacuum
@@ -392,36 +435,45 @@ async def test_individual_database_vacuum(settings_window: ToolsSettingsWindow, 
 
 
 @pytest.mark.asyncio
-async def test_individual_database_backup(settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup, tmp_path):
+async def test_individual_database_backup(
+    settings_window: ToolsSettingsWindow,
+    mock_app_instance,
+    mock_database_path_lookup,
+    tmp_path,
+):
     """Test backup operation on individual databases."""
     # Mock the backup directory
     backup_dir = tmp_path / "backups"
     backup_dir.mkdir()
-    
+
     with patch("pathlib.Path.home", return_value=tmp_path):
         # Find the backup button for Media database
         backup_button = settings_window.query_one("#backup-media", Button)
         assert backup_button is not None
-        
+
         # Simulate button press
         await settings_window.on_button_pressed(Button.Pressed(backup_button))
-        
+
         # Check that a worker was started
         mock_app_instance.run_worker.assert_called()
 
 
 @pytest.mark.asyncio
-async def test_database_restore_with_file_picker(settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup):
+async def test_database_restore_with_file_picker(
+    settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup
+):
     """Test restore operation with file picker dialog."""
     # Find the restore button for Prompts database
     restore_button = settings_window.query_one("#restore-prompts", Button)
     assert restore_button is not None
-    
+
     # Mock the file picker dialog
-    with patch("tldw_chatbook.UI.Tools_Settings_Window.ToolsSettingsWindow.push_screen") as mock_push_screen:
+    with patch(
+        "tldw_chatbook.UI.Tools_Settings_Window.ToolsSettingsWindow.push_screen"
+    ) as mock_push_screen:
         # Simulate button press
         await settings_window.on_button_pressed(Button.Pressed(restore_button))
-        
+
         # Verify file picker was pushed
         mock_push_screen.assert_called_once()
         # The first argument should be the FilePickerDialog instance
@@ -430,15 +482,17 @@ async def test_database_restore_with_file_picker(settings_window: ToolsSettingsW
 
 
 @pytest.mark.asyncio
-async def test_database_integrity_check(settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup):
+async def test_database_integrity_check(
+    settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup
+):
     """Test database integrity check operation."""
     # Find the check button for RAG database
     check_button = settings_window.query_one("#check-rag", Button)
     assert check_button is not None
-    
+
     # Simulate button press
     await settings_window.on_button_pressed(Button.Pressed(check_button))
-    
+
     # Check that notification was called
     mock_app_instance.notify.assert_called()
     # Should notify about checking integrity
@@ -447,78 +501,97 @@ async def test_database_integrity_check(settings_window: ToolsSettingsWindow, mo
 
 
 @pytest.mark.asyncio
-async def test_all_databases_operations(settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup):
+async def test_all_databases_operations(
+    settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup
+):
     """Test operations on all databases at once."""
     # Find the "All Databases" section
     all_db_section = settings_window.query_one(".db-section-all")
     assert all_db_section is not None
-    
+
     # Test vacuum all
     vacuum_all_button = settings_window.query_one("#vacuum-all", Button)
     assert vacuum_all_button is not None
-    
+
     await settings_window.on_button_pressed(Button.Pressed(vacuum_all_button))
-    
+
     # Should have multiple notifications (one per database)
     assert mock_app_instance.notify.call_count >= 6  # At least 6 databases
 
 
 @pytest.mark.asyncio
-async def test_database_status_display(settings_window: ToolsSettingsWindow, mock_database_path_lookup):
+async def test_database_status_display(
+    settings_window: ToolsSettingsWindow, mock_database_path_lookup
+):
     """Test that database status information is displayed correctly."""
     # Check each database status container
-    database_names = ["chachanotes", "media", "prompts", "evals", "rag", "subscriptions"]
-    
+    database_names = [
+        "chachanotes",
+        "media",
+        "prompts",
+        "evals",
+        "rag",
+        "subscriptions",
+    ]
+
     for db_name in database_names:
         status_container = settings_window.query_one(f"#db-status-{db_name}")
         assert status_container is not None
-        
+
         # Should contain schema version and file size
         status_text = status_container.query_one(Static)
         assert "Schema" in status_text.renderable or "Version" in status_text.renderable
 
 
 @pytest.mark.asyncio
-async def test_create_chatbook_button(settings_window: ToolsSettingsWindow, mock_app_instance):
+async def test_create_chatbook_button(
+    settings_window: ToolsSettingsWindow, mock_app_instance
+):
     """Test that chatbook creation button exists and works."""
     # Find the create chatbook button
     create_button = settings_window.query_one("#create-chatbook", Button)
     assert create_button is not None
     assert "Create Chatbook" in create_button.label.plain
-    
+
     # Mock the chatbook creation window
     with patch("tldw_chatbook.UI.Tools_Settings_Window.ChatbookCreationWindow"):
         await settings_window.on_button_pressed(Button.Pressed(create_button))
-        
+
         # Should push the chatbook creation screen
         mock_app_instance.push_screen.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_import_chatbook_button(settings_window: ToolsSettingsWindow, mock_app_instance):
+async def test_import_chatbook_button(
+    settings_window: ToolsSettingsWindow, mock_app_instance
+):
     """Test that chatbook import button exists and works."""
     # Find the import chatbook button
     import_button = settings_window.query_one("#import-chatbook", Button)
     assert import_button is not None
     assert "Import Chatbook" in import_button.label.plain
-    
+
     # Mock file picker for import
-    with patch("tldw_chatbook.UI.Tools_Settings_Window.ToolsSettingsWindow.push_screen") as mock_push_screen:
+    with patch(
+        "tldw_chatbook.UI.Tools_Settings_Window.ToolsSettingsWindow.push_screen"
+    ) as mock_push_screen:
         await settings_window.on_button_pressed(Button.Pressed(import_button))
-        
+
         # Should push the file picker
         mock_push_screen.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_database_error_handling(settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup):
+async def test_database_error_handling(
+    settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup
+):
     """Test error handling for database operations."""
     # Mock a database operation to fail
     with patch("sqlite3.connect", side_effect=sqlite3.Error("Database is locked")):
         # Try to vacuum a database
         vacuum_button = settings_window.query_one("#vacuum-chachanotes", Button)
         await settings_window.on_button_pressed(Button.Pressed(vacuum_button))
-        
+
         # Should show error notification
         mock_app_instance.notify.assert_called()
         calls = mock_app_instance.notify.call_args_list
@@ -653,17 +726,30 @@ async def test_sharing_panel_rejects_local_mode_with_explicit_guidance():
 
         assert panel.query_one("#sharing-disabled", Static).display is True
         assert panel.query_one("#sharing-main").display is False
-        assert panel.query_one("#sharing-create-workspace-share-btn", Button).disabled is True
+        assert (
+            panel.query_one("#sharing-create-workspace-share-btn", Button).disabled
+            is True
+        )
 
 
 @pytest.mark.asyncio
 async def test_sharing_panel_routes_server_workspace_share_and_token_operations():
     scope_service = MagicMock()
-    scope_service.share_workspace = AsyncMock(return_value={"id": "server:share:7", "access_level": "view_chat"})
-    scope_service.list_workspace_shares = AsyncMock(return_value={"shares": [{"id": "server:share:7"}], "total": 1})
-    scope_service.create_share_token = AsyncMock(return_value={"id": "server:share_token:5", "raw_token": "raw-token"})
-    scope_service.list_share_tokens = AsyncMock(return_value={"tokens": [{"id": "server:share_token:5"}], "total": 1})
-    scope_service.list_shared_with_me = AsyncMock(return_value={"items": [{"id": "server:share:9"}], "total": 1})
+    scope_service.share_workspace = AsyncMock(
+        return_value={"id": "server:share:7", "access_level": "view_chat"}
+    )
+    scope_service.list_workspace_shares = AsyncMock(
+        return_value={"shares": [{"id": "server:share:7"}], "total": 1}
+    )
+    scope_service.create_share_token = AsyncMock(
+        return_value={"id": "server:share_token:5", "raw_token": "raw-token"}
+    )
+    scope_service.list_share_tokens = AsyncMock(
+        return_value={"tokens": [{"id": "server:share_token:5"}], "total": 1}
+    )
+    scope_service.list_shared_with_me = AsyncMock(
+        return_value={"items": [{"id": "server:share:9"}], "total": 1}
+    )
     app = SharingPanelHostApp(runtime_backend="server", scope_service=scope_service)
 
     async with app.run_test() as pilot:
@@ -736,7 +822,10 @@ async def test_outputs_panel_rejects_local_mode_with_explicit_guidance():
 async def test_outputs_panel_routes_server_template_and_artifact_operations():
     scope_service = MagicMock()
     scope_service.list_output_templates = AsyncMock(
-        return_value={"items": [{"id": "server:output_template:7", "name": "Weekly Briefing"}], "total": 1}
+        return_value={
+            "items": [{"id": "server:output_template:7", "name": "Weekly Briefing"}],
+            "total": 1,
+        }
     )
     scope_service.create_output_template = AsyncMock(
         return_value={"id": "server:output_template:7", "name": "Weekly Briefing"}
@@ -745,10 +834,19 @@ async def test_outputs_panel_routes_server_template_and_artifact_operations():
         return_value={"entity_kind": "output_template_preview", "rendered": "# Preview"}
     )
     scope_service.list_outputs = AsyncMock(
-        return_value={"items": [{"id": "server:output:11", "title": "Weekly Briefing"}], "total": 1, "page": 1, "size": 10}
+        return_value={
+            "items": [{"id": "server:output:11", "title": "Weekly Briefing"}],
+            "total": 1,
+            "page": 1,
+            "size": 10,
+        }
     )
     scope_service.create_output = AsyncMock(
-        return_value={"id": "server:output:11", "entity_kind": "output_render_result", "title": "Weekly Briefing"}
+        return_value={
+            "id": "server:output:11",
+            "entity_kind": "output_render_result",
+            "title": "Weekly Briefing",
+        }
     )
     scope_service.delete_output = AsyncMock(
         return_value={"entity_kind": "output_delete", "success": True, "output_id": 11}
@@ -766,7 +864,9 @@ async def test_outputs_panel_routes_server_template_and_artifact_operations():
         panel.query_one("#outputs-template-name", Input).value = "Weekly Briefing"
         panel.query_one("#outputs-template-type", Select).value = "briefing_markdown"
         panel.query_one("#outputs-template-format", Select).value = "md"
-        panel.query_one("#outputs-template-description", Input).value = "Render a weekly markdown briefing"
+        panel.query_one(
+            "#outputs-template-description", Input
+        ).value = "Render a weekly markdown briefing"
         panel.query_one("#outputs-template-body", TextArea).text = "# {{ job.name }}"
         panel.query_one("#outputs-template-default", Checkbox).value = True
         panel.query_one("#outputs-preview-template-id", Input).value = "7"
@@ -780,7 +880,9 @@ async def test_outputs_panel_routes_server_template_and_artifact_operations():
         panel.query_one("#outputs-artifact-page", Input).value = "1"
         panel.query_one("#outputs-artifact-size", Input).value = "10"
         panel.query_one("#outputs-artifact-run-id", Input).value = "77"
-        panel.query_one("#outputs-artifact-workspace-tag", Input).value = "workspace:demo"
+        panel.query_one(
+            "#outputs-artifact-workspace-tag", Input
+        ).value = "workspace:demo"
         panel.query_one("#outputs-create-template-id", Input).value = "7"
         panel.query_one("#outputs-create-item-ids", Input).value = "1,2"
         panel.query_one("#outputs-create-title", Input).value = "Weekly Briefing"
@@ -837,17 +939,24 @@ async def test_outputs_panel_routes_server_template_and_artifact_operations():
             delete_file=True,
         )
         rendered_status = str(panel.query_one("#outputs-status", Static).render())
-        assert "server:output:11" in rendered_status or "output_delete" in rendered_status
+        assert (
+            "server:output:11" in rendered_status or "output_delete" in rendered_status
+        )
 
 
 @pytest.mark.asyncio
-async def test_chat_api_key_field_prefilled_for_config_key(monkeypatch, temp_config_path):
+async def test_chat_api_key_field_prefilled_for_config_key(
+    monkeypatch, temp_config_path
+):
     config = {
         "providers": {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]},
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
         "api_settings": {"openai": {"api_key": "test-configured-key"}},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         field = window.query_one("#general-chat-api-key", Input)
         assert field.password is True
         assert field.value == "test-configured-key"
@@ -855,26 +964,36 @@ async def test_chat_api_key_field_prefilled_for_config_key(monkeypatch, temp_con
 
 
 @pytest.mark.asyncio
-async def test_chat_api_key_field_disabled_for_keyless_provider(monkeypatch, temp_config_path):
+async def test_chat_api_key_field_disabled_for_keyless_provider(
+    monkeypatch, temp_config_path
+):
     config = {
         "providers": {"Ollama": ["llama3"], "OpenAI": ["gpt-4o"]},
         "chat_defaults": {"provider": "Ollama", "model": "llama3"},
         "api_settings": {},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         field = window.query_one("#general-chat-api-key", Input)
         assert field.disabled is True
         assert "No API key needed" in field.placeholder
 
 
 @pytest.mark.asyncio
-async def test_chat_api_key_field_reloads_on_provider_change(monkeypatch, temp_config_path):
+async def test_chat_api_key_field_reloads_on_provider_change(
+    monkeypatch, temp_config_path
+):
     config = {
         "providers": {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]},
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
         "api_settings": {"openai": {"api_key": "test-configured-key"}},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         field = window.query_one("#general-chat-api-key", Input)
         assert field.value == "test-configured-key"
 
@@ -886,13 +1005,18 @@ async def test_chat_api_key_field_reloads_on_provider_change(monkeypatch, temp_c
 
 
 @pytest.mark.asyncio
-async def test_chat_api_key_save_writes_config_and_updates_live_config(monkeypatch, temp_config_path):
+async def test_chat_api_key_save_writes_config_and_updates_live_config(
+    monkeypatch, temp_config_path
+):
     config = {
         "providers": {"OpenAI": ["gpt-4o"]},
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
         "api_settings": {},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         window.app_instance.app_config = {"api_settings": {}}
         window.query_one("#general-chat-api-key", Input).value = "test-brand-new-key"
 
@@ -904,7 +1028,10 @@ async def test_chat_api_key_save_writes_config_and_updates_live_config(monkeypat
         assert written["api_settings"]["openai"]["api_key"] == "test-brand-new-key"
 
         # Live app config updated in place (no restart needed)
-        assert window.app_instance.app_config["api_settings"]["openai"]["api_key"] == "test-brand-new-key"
+        assert (
+            window.app_instance.app_config["api_settings"]["openai"]["api_key"]
+            == "test-brand-new-key"
+        )
 
 
 @pytest.mark.asyncio
@@ -914,7 +1041,10 @@ async def test_chat_api_key_save_skips_blank(monkeypatch, temp_config_path):
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
         "api_settings": {},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         window.app_instance.app_config = {"api_settings": {}}
         window.query_one("#general-chat-api-key", Input).value = "   "
         assert window._save_chat_api_key() is False
@@ -923,14 +1053,19 @@ async def test_chat_api_key_save_skips_blank(monkeypatch, temp_config_path):
 
 
 @pytest.mark.asyncio
-async def test_chat_api_key_field_clears_when_provider_blanked(monkeypatch, temp_config_path):
+async def test_chat_api_key_field_clears_when_provider_blanked(
+    monkeypatch, temp_config_path
+):
     """Blanking the provider must clear the field, not leave the prior key visible."""
     config = {
         "providers": {"OpenAI": ["gpt-4o"]},
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
         "api_settings": {"openai": {"api_key": "test-configured-key"}},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         field = window.query_one("#general-chat-api-key", Input)
         assert field.value == "test-configured-key"
 
@@ -944,7 +1079,9 @@ async def test_chat_api_key_field_clears_when_provider_blanked(monkeypatch, temp
 
 
 @pytest.mark.asyncio
-async def test_chat_api_key_save_pushes_decrypted_key_to_live_config_when_encrypted(monkeypatch, temp_config_path):
+async def test_chat_api_key_save_pushes_decrypted_key_to_live_config_when_encrypted(
+    monkeypatch, temp_config_path
+):
     """With config encryption on, the live app_config must receive the DECRYPTED
     key, never the on-disk ciphertext (which chat would send verbatim and fail)."""
     # A session password unlocks the field and enables encrypt-on-write.
@@ -955,7 +1092,10 @@ async def test_chat_api_key_save_pushes_decrypted_key_to_live_config_when_encryp
         "api_settings": {},
         "encryption": {"enabled": True},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         window.app_instance.app_config = {"api_settings": {}}
         window.query_one("#general-chat-api-key", Input).value = "test-secret-live-key"
 

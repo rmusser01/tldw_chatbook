@@ -11,8 +11,16 @@ from dataclasses import dataclass, field
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll, Horizontal, Container
 from textual.widgets import (
-    Static, Select, TextArea, Input, Collapsible, Button, 
-    Checkbox, ListView, TabbedContent, Label
+    Static,
+    Select,
+    TextArea,
+    Input,
+    Collapsible,
+    Button,
+    Checkbox,
+    ListView,
+    TabbedContent,
+    Label,
 )
 from textual.reactive import reactive
 from textual import on
@@ -27,6 +35,7 @@ from ..state.ui_state import UIState
 try:
     from ..RAG_Search.pipeline_integration import get_pipeline_manager
     from ..RAG_Search.pipeline_builder_simple import get_pipeline, BUILTIN_PIPELINES
+
     PIPELINE_INTEGRATION_AVAILABLE = True
 except ImportError:
     PIPELINE_INTEGRATION_AVAILABLE = False
@@ -38,31 +47,37 @@ except ImportError:
 #
 # Data Classes for Organization
 
+
 @dataclass
 class SettingGroup:
     """Represents a group of related settings."""
+
     name: str
     icon: str
     priority: str  # "essential", "common", "advanced"
     collapsed_default: bool
     settings: List[str] = field(default_factory=list)
     description: str = ""
-    
+
+
 @dataclass
 class SettingPreset:
     """Represents a preset configuration."""
+
     name: str
     icon: str
     description: str
     values: Dict[str, Any]
 
+
 #
 # Enhanced Sidebar Component
 #
 
+
 class EnhancedSettingsSidebar(Container):
     """Enhanced settings sidebar with improved UX and organization.
-    
+
     Features:
     - Tabbed interface for better organization
     - Smart search and filtering
@@ -71,17 +86,17 @@ class EnhancedSettingsSidebar(Container):
     - Lazy loading for performance
     - Persistent state management
     """
-    
+
     # CSS classes for styling - removed as they are now in the main CSS files
-    
+
     # Reactive properties
     search_query = reactive("", layout=False)
     active_preset = reactive("custom", layout=False)
     show_advanced = reactive(False, layout=False)
-    
+
     def __init__(self, id_prefix: str, config: dict, **kwargs):
         """Initialize the enhanced sidebar.
-        
+
         Args:
             id_prefix: Prefix for widget IDs (e.g., "chat")
             config: Configuration dictionary
@@ -92,19 +107,19 @@ class EnhancedSettingsSidebar(Container):
         self.config = config
         self.ui_state = UIState()
         self.modified_settings = set()
-        
+
         # Define setting groups for better organization
         self.setting_groups = self._define_setting_groups()
-        
+
         # Define presets
         self.presets = self._define_presets()
-        
+
         # Track loaded tabs for lazy loading
         self.loaded_tabs = set()
-        
+
         # Initialize logging
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-        
+
     def _define_setting_groups(self) -> Dict[str, SettingGroup]:
         """Define the organization of settings into groups."""
         return {
@@ -114,15 +129,15 @@ class EnhancedSettingsSidebar(Container):
                 priority="essential",
                 collapsed_default=False,
                 settings=["provider", "model", "temperature"],
-                description="Core LLM configuration"
+                description="Core LLM configuration",
             ),
             "chat_config": SettingGroup(
-                name="Chat Configuration", 
+                name="Chat Configuration",
                 icon="💬",
                 priority="essential",
                 collapsed_default=False,
                 settings=["system_prompt", "streaming", "conversation"],
-                description="Basic chat settings"
+                description="Basic chat settings",
             ),
             "rag": SettingGroup(
                 name="RAG Settings",
@@ -130,7 +145,7 @@ class EnhancedSettingsSidebar(Container):
                 priority="common",
                 collapsed_default=True,
                 settings=["rag_enable", "rag_preset", "rag_pipeline"],
-                description="Retrieval-Augmented Generation"
+                description="Retrieval-Augmented Generation",
             ),
             "model_params": SettingGroup(
                 name="Model Parameters",
@@ -138,7 +153,7 @@ class EnhancedSettingsSidebar(Container):
                 priority="advanced",
                 collapsed_default=True,
                 settings=["top_p", "top_k", "min_p", "max_tokens"],
-                description="Fine-tune model behavior"
+                description="Fine-tune model behavior",
             ),
             "tools": SettingGroup(
                 name="Tools & Extensions",
@@ -146,10 +161,10 @@ class EnhancedSettingsSidebar(Container):
                 priority="advanced",
                 collapsed_default=True,
                 settings=["tools", "templates", "dictionaries"],
-                description="Advanced features and integrations"
-            )
+                description="Advanced features and integrations",
+            ),
         }
-    
+
     def _define_presets(self) -> Dict[str, SettingPreset]:
         """Define preset configurations."""
         return {
@@ -161,8 +176,8 @@ class EnhancedSettingsSidebar(Container):
                     "temperature": 0.7,
                     "streaming": True,
                     "rag_enable": False,
-                    "show_advanced": False
-                }
+                    "show_advanced": False,
+                },
             ),
             "research": SettingPreset(
                 name="Research",
@@ -173,8 +188,8 @@ class EnhancedSettingsSidebar(Container):
                     "streaming": True,
                     "rag_enable": True,
                     "rag_preset": "high_accuracy",
-                    "max_tokens": 4096
-                }
+                    "max_tokens": 4096,
+                },
             ),
             "creative": SettingPreset(
                 name="Creative",
@@ -184,26 +199,31 @@ class EnhancedSettingsSidebar(Container):
                     "temperature": 0.9,
                     "top_p": 0.95,
                     "streaming": True,
-                    "rag_enable": False
-                }
+                    "rag_enable": False,
+                },
             ),
             "custom": SettingPreset(
                 name="Custom",
                 icon="⚡",
                 description="Your custom configuration",
-                values={}
-            )
+                values={},
+            ),
         }
-    
+
     def compose(self) -> ComposeResult:
         """Compose the enhanced sidebar UI with two collapsible sections."""
-        with VerticalScroll(id=f"{self.id_prefix}-left-sidebar", classes="sidebar enhanced-sidebar"):
+        with VerticalScroll(
+            id=f"{self.id_prefix}-left-sidebar", classes="sidebar enhanced-sidebar"
+        ):
             # Header with title and controls
             with Container(classes="sidebar-header"):
                 yield Static("Chat Settings", classes="sidebar-title")
-                yield Button("↩️", id=f"{self.id_prefix}-reset-all",
-                           classes="reset-button",
-                           tooltip="Reset all settings to defaults")
+                yield Button(
+                    "↩️",
+                    id=f"{self.id_prefix}-reset-all",
+                    classes="reset-button",
+                    tooltip="Reset all settings to defaults",
+                )
 
             # Preset selector bar
             with Horizontal(classes="preset-bar"):
@@ -212,7 +232,7 @@ class EnhancedSettingsSidebar(Container):
                         f"{preset.icon} {preset.name}",
                         id=f"{self.id_prefix}-preset-{preset_id}",
                         classes=f"preset-button {'active' if preset_id == self.active_preset else ''}",
-                        tooltip=preset.description
+                        tooltip=preset.description,
                     )
 
             # --- Session section (open by default) ---
@@ -220,7 +240,7 @@ class EnhancedSettingsSidebar(Container):
                 title="Session",
                 collapsed=False,
                 id=f"{self.id_prefix}-session-section",
-                classes="setting-group setting-group-essential"
+                classes="setting-group setting-group-essential",
             ):
                 # Provider & Model (kept for sidebar use; compact bar is the primary)
                 yield from self._compose_provider_section()
@@ -234,70 +254,76 @@ class EnhancedSettingsSidebar(Container):
                 title="Advanced",
                 collapsed=True,
                 id=f"{self.id_prefix}-advanced-section",
-                classes="setting-group setting-group-advanced"
+                classes="setting-group setting-group-advanced",
             ):
                 # Features: RAG, Notes, Image Gen, Search Media
                 yield from self._compose_features_content()
                 # Model parameters, tools, penalties
                 yield from self._compose_advanced_content()
-    
+
     def _compose_essentials_tab(self) -> ComposeResult:
         """Compose the essentials tab content."""
         self.logger.debug("Composing essentials tab content")
-        
+
         # Provider & Model section
         yield from self._compose_provider_section()
-        
+
         # Core Settings section
         yield from self._compose_core_settings()
-        
+
         # Current Chat section
         yield from self._compose_chat_details()
-    
+
     def _compose_provider_section(self) -> ComposeResult:
         """Compose the provider and model selection section."""
         self.logger.debug("Composing provider section")
-        defaults = self.config.get(f"{self.id_prefix}_defaults", 
-                                  self.config.get("chat_defaults", {}))
+        defaults = self.config.get(
+            f"{self.id_prefix}_defaults", self.config.get("chat_defaults", {})
+        )
         providers_models = get_cli_providers_and_models()
         available_providers = list(providers_models.keys())
-        default_provider = defaults.get("provider", 
-                                       available_providers[0] if available_providers else "")
-        self.logger.debug(f"Available providers: {available_providers}, default: {default_provider}")
-        
+        default_provider = defaults.get(
+            "provider", available_providers[0] if available_providers else ""
+        )
+        self.logger.debug(
+            f"Available providers: {available_providers}, default: {default_provider}"
+        )
+
         with Collapsible(
             title="🎯 Provider & Model",
             collapsed=False,
             id=f"{self.id_prefix}-provider-section",
-            classes="setting-group setting-group-essential"
+            classes="setting-group setting-group-essential",
         ):
             # Provider selection
             yield Label("Provider", classes="setting-label")
-            provider_options = [(provider, provider) for provider in available_providers]
+            provider_options = [
+                (provider, provider) for provider in available_providers
+            ]
             provider_select = Select(
                 options=provider_options,
                 prompt="Select Provider...",
                 allow_blank=False,
                 id=f"{self.id_prefix}-api-provider",
-                classes="setting-input"
+                classes="setting-input",
             )
             # Set value after creating with options
             if default_provider in available_providers:
                 provider_select.value = default_provider
             yield provider_select
-            
+
             # Model selection
             yield Label("Model", classes="setting-label")
             initial_models = providers_models.get(default_provider, [])
             model_options = [(model, model) for model in initial_models]
             default_model = defaults.get("model", "")
-            
+
             model_select = Select(
                 options=model_options,
                 prompt="Select Model...",
                 allow_blank=True,
                 id=f"{self.id_prefix}-api-model",
-                classes="setting-input"
+                classes="setting-input",
             )
             # Set value after creating with options
             if default_model in initial_models:
@@ -305,7 +331,7 @@ class EnhancedSettingsSidebar(Container):
             elif initial_models and len(initial_models) > 0:
                 model_select.value = initial_models[0]
             yield model_select
-            
+
             # Temperature with visual indicator
             yield Label("Temperature", classes="setting-label")
             with Horizontal(classes="temperature-container"):
@@ -313,11 +339,12 @@ class EnhancedSettingsSidebar(Container):
                     placeholder="0.7",
                     id=f"{self.id_prefix}-temperature",
                     value=str(defaults.get("temperature", 0.7)),
-                    classes="temperature-input"
+                    classes="temperature-input",
                 )
-                yield Static("🌡️", id=f"{self.id_prefix}-temp-indicator", 
-                           classes="temp-indicator")
-    
+                yield Static(
+                    "🌡️", id=f"{self.id_prefix}-temp-indicator", classes="temp-indicator"
+                )
+
     def _compose_core_settings(self) -> ComposeResult:
         """Compose core settings section (system prompt, streaming, etc).
 
@@ -325,8 +352,9 @@ class EnhancedSettingsSidebar(Container):
         Provider & Model section and the CompactModelBar.
         """
         self.logger.debug("Composing core settings")
-        defaults = self.config.get(f"{self.id_prefix}_defaults",
-                                  self.config.get("chat_defaults", {}))
+        defaults = self.config.get(
+            f"{self.id_prefix}_defaults", self.config.get("chat_defaults", {})
+        )
 
         # System prompt
         yield Label("System Prompt", classes="setting-label")
@@ -336,7 +364,7 @@ class EnhancedSettingsSidebar(Container):
         yield TextArea(
             id=f"{self.id_prefix}-system-prompt",
             text=defaults.get("system_prompt", ""),
-            classes=system_prompt_classes
+            classes=system_prompt_classes,
         )
 
         # Streaming toggle
@@ -345,36 +373,41 @@ class EnhancedSettingsSidebar(Container):
             id=f"{self.id_prefix}-streaming-enabled-checkbox",
             value=True,
             classes="streaming-toggle",
-            tooltip="Enable/disable streaming responses."
+            tooltip="Enable/disable streaming responses.",
         )
 
         # Show attach button toggle (only for chat)
         if self.id_prefix == "chat":
             try:
                 from ..config import get_cli_setting
-                show_attach_button = get_cli_setting("chat.images", "show_attach_button", True)
+
+                show_attach_button = get_cli_setting(
+                    "chat.images", "show_attach_button", True
+                )
                 yield Checkbox(
                     "Show Attach File Button",
                     id=f"{self.id_prefix}-show-attach-button-checkbox",
                     value=show_attach_button,
-                    classes="attach-toggle"
+                    classes="attach-toggle",
                 )
             except Exception as e:
-                self.logger.error(f"Error getting show_attach_button setting: {e}", exc_info=True)
+                self.logger.error(
+                    f"Error getting show_attach_button setting: {e}", exc_info=True
+                )
                 yield Checkbox(
                     "Show Attach File Button",
                     id=f"{self.id_prefix}-show-attach-button-checkbox",
                     value=True,
-                    classes="attach-toggle"
+                    classes="attach-toggle",
                 )
-    
+
     def _compose_chat_details(self) -> ComposeResult:
         """Compose current chat details section."""
         with Collapsible(
             title="💬 Current Chat",
             collapsed=False,
             id=f"{self.id_prefix}-chat-details",
-            classes="setting-group setting-group-essential"
+            classes="setting-group setting-group-essential",
         ):
             # New chat buttons with clear hierarchy
             with Horizontal(classes="new-chat-buttons"):
@@ -382,39 +415,39 @@ class EnhancedSettingsSidebar(Container):
                     "➕ New Chat",
                     id=f"{self.id_prefix}-new-chat",
                     classes="primary-button",
-                    variant="primary"
+                    variant="primary",
                 )
                 yield Button(
                     "📋 Clone",
                     id=f"{self.id_prefix}-clone-chat",
-                    classes="secondary-button"
+                    classes="secondary-button",
                 )
-            
+
             # Chat info display
             yield Label("Chat ID", classes="setting-label")
             yield Input(
                 id=f"{self.id_prefix}-chat-id",
                 value="Temp Chat",
                 disabled=True,
-                classes="info-display"
+                classes="info-display",
             )
-            
+
             yield Label("Title", classes="setting-label")
             yield Input(
                 id=f"{self.id_prefix}-chat-title",
                 placeholder="Enter chat title...",
-                classes="setting-input"
+                classes="setting-input",
             )
-    
+
     # Event Handlers
-    
+
     @on(TabbedContent.TabActivated)
     async def handle_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         """Handle tab activation (no longer needed for lazy loading)."""
         tab_id = event.tab.id
         self.logger.debug(f"Tab activated: {tab_id}")
         # All tabs are now loaded immediately, so no lazy loading needed
-    
+
     @on(Input.Changed)
     def handle_search(self, event: Input.Changed) -> None:
         """Handle search input changes."""
@@ -425,14 +458,14 @@ class EnhancedSettingsSidebar(Container):
                 self._perform_search()
             else:
                 self._clear_search()
-    
+
     @on(Button.Pressed, ".preset-button")
     def handle_preset_selection(self, event: Button.Pressed) -> None:
         """Handle preset button clicks."""
         # Extract preset ID from button ID
         preset_id = event.button.id.split("-preset-")[-1]
         self._apply_preset(preset_id)
-    
+
     @on(Checkbox.Changed)
     def handle_advanced_toggle(self, event: Checkbox.Changed) -> None:
         """Handle advanced settings toggle."""
@@ -440,122 +473,148 @@ class EnhancedSettingsSidebar(Container):
         if event.checkbox.id and "show-advanced-checkbox" in event.checkbox.id:
             self.show_advanced = event.value
             self._update_visibility()
-    
+
     # Helper Methods
-    
+
     async def _load_features_tab(self) -> None:
         """Lazy load the features tab content."""
         self.logger.debug("Loading features tab content")
         try:
             container = self.query_one(f"#{self.id_prefix}-features-content")
             self.logger.debug("Found features content container")
-            
+
             # Create and mount simple collapsible sections
             await self._mount_features_widgets(container)
             self.logger.debug("Successfully loaded features tab content")
-                    
+
         except NoMatches as e:
             self.logger.error(f"Features content container not found: {e}")
         except Exception as e:
             self.logger.error(f"Error loading features tab: {e}", exc_info=True)
-    
+
     async def _mount_features_widgets(self, container) -> None:
         """Mount features tab widgets to container."""
         from textual.widgets import Collapsible, Label, ListView
-        
+
         # RAG Settings
         rag_section = Collapsible(
             title="🔍 RAG Settings",
             collapsed=True,
             id=f"{self.id_prefix}-rag-panel",
-            classes="setting-group setting-group-common"
+            classes="setting-group setting-group-common",
         )
         await container.mount(rag_section)
-        await rag_section.mount(Label("RAG search and indexing settings", classes="setting-label"))
-        
-        # Notes section  
+        await rag_section.mount(
+            Label("RAG search and indexing settings", classes="setting-label")
+        )
+
+        # Notes section
         notes_section = Collapsible(
             title="📝 Notes",
             collapsed=True,
             id=f"{self.id_prefix}-notes-collapsible",
-            classes="setting-group setting-group-common"
+            classes="setting-group setting-group-common",
         )
         await container.mount(notes_section)
-        await notes_section.mount(Label("Notes management settings", classes="setting-label"))
-        
+        await notes_section.mount(
+            Label("Notes management settings", classes="setting-label")
+        )
+
         # Image Generation (if chat)
         if self.id_prefix == "chat":
             image_section = Collapsible(
                 title="🎨 Image Generation",
                 collapsed=True,
                 id=f"{self.id_prefix}-image-generation-collapsible",
-                classes="setting-group setting-group-common"
+                classes="setting-group setting-group-common",
             )
             await container.mount(image_section)
-            await image_section.mount(Label("Image generation settings", classes="setting-label"))
-        
+            await image_section.mount(
+                Label("Image generation settings", classes="setting-label")
+            )
+
         # Search Media
         media_section = Collapsible(
             title="🔍 Search Media",
             collapsed=True,
             id=f"{self.id_prefix}-media-collapsible",
-            classes="setting-group setting-group-common"
+            classes="setting-group setting-group-common",
         )
         await container.mount(media_section)
-        await media_section.mount(Label("Search media content", classes="setting-label"))
-        await media_section.mount(ListView(id=f"{self.id_prefix}-media-search-results-listview", classes="sidebar-listview"))
-    
+        await media_section.mount(
+            Label("Search media content", classes="setting-label")
+        )
+        await media_section.mount(
+            ListView(
+                id=f"{self.id_prefix}-media-search-results-listview",
+                classes="sidebar-listview",
+            )
+        )
+
     def _build_features_content(self) -> list:
         """Build features tab content widgets."""
         self.logger.debug("Building features content widgets")
         widgets = []
-        
+
         try:
             # RAG Settings
             rag_collapsible = Collapsible(
                 title="🔍 RAG Settings",
                 collapsed=True,
                 id=f"{self.id_prefix}-rag-panel",
-                classes="setting-group setting-group-common"
+                classes="setting-group setting-group-common",
             )
-            rag_collapsible.mount(Label("RAG search and indexing settings", classes="setting-label"))
+            rag_collapsible.mount(
+                Label("RAG search and indexing settings", classes="setting-label")
+            )
             widgets.append(rag_collapsible)
-            
+
             # Notes section
             notes_collapsible = Collapsible(
                 title="📝 Notes",
                 collapsed=True,
                 id=f"{self.id_prefix}-notes-collapsible",
-                classes="setting-group setting-group-common"
+                classes="setting-group setting-group-common",
             )
-            notes_collapsible.mount(Label("Notes management settings", classes="setting-label"))
+            notes_collapsible.mount(
+                Label("Notes management settings", classes="setting-label")
+            )
             widgets.append(notes_collapsible)
-            
+
             # Image Generation (if chat)
             if self.id_prefix == "chat":
                 image_collapsible = Collapsible(
                     title="🎨 Image Generation",
                     collapsed=True,
                     id=f"{self.id_prefix}-image-generation-collapsible",
-                    classes="setting-group setting-group-common"
+                    classes="setting-group setting-group-common",
                 )
-                image_collapsible.mount(Label("Image generation settings", classes="setting-label"))
+                image_collapsible.mount(
+                    Label("Image generation settings", classes="setting-label")
+                )
                 widgets.append(image_collapsible)
-            
+
             # Search Media
             media_collapsible = Collapsible(
                 title="🔍 Search Media",
                 collapsed=True,
                 id=f"{self.id_prefix}-media-collapsible",
-                classes="setting-group setting-group-common"
+                classes="setting-group setting-group-common",
             )
-            media_collapsible.mount(Label("Search media content", classes="setting-label"))
-            media_collapsible.mount(ListView(id=f"{self.id_prefix}-media-search-results-listview", classes="sidebar-listview"))
+            media_collapsible.mount(
+                Label("Search media content", classes="setting-label")
+            )
+            media_collapsible.mount(
+                ListView(
+                    id=f"{self.id_prefix}-media-search-results-listview",
+                    classes="sidebar-listview",
+                )
+            )
             widgets.append(media_collapsible)
-            
+
         except Exception as e:
             self.logger.error(f"Error building features content: {e}", exc_info=True)
-            
+
         return widgets
 
     def _compose_features_content(self) -> ComposeResult:
@@ -565,76 +624,85 @@ class EnhancedSettingsSidebar(Container):
             # RAG Settings
             self.logger.debug("Composing RAG section")
             yield from self._compose_rag_section()
-            
+
             # Notes section
             self.logger.debug("Composing notes section")
             yield from self._compose_notes_section()
-            
+
             # Image Generation (if chat)
             if self.id_prefix == "chat":
                 self.logger.debug("Composing image generation section")
                 yield from self._compose_image_generation_section()
-            
+
             # Search Media
             self.logger.debug("Composing search media section")
             yield from self._compose_search_media_section()
         except Exception as e:
             self.logger.error(f"Error in _compose_features_content: {e}", exc_info=True)
             raise
-    
+
     def _compose_rag_section(self) -> ComposeResult:
         """Compose RAG settings section."""
         with Collapsible(
             title="🔍 RAG Settings",
             collapsed=True,
             id=f"{self.id_prefix}-rag-panel",
-            classes="setting-group setting-group-common"
+            classes="setting-group setting-group-common",
         ):
             # RAG Enable checkbox
             yield Checkbox(
                 "Enable RAG",
                 id=f"{self.id_prefix}-rag-enabled-checkbox",
                 value=False,
-                tooltip="Enable Retrieval-Augmented Generation"
+                tooltip="Enable Retrieval-Augmented Generation",
             )
-            
+
             # RAG Search checkboxes
             yield Label("Search in:", classes="setting-label")
-            yield Checkbox("Media Items", id=f"{self.id_prefix}-rag-search-media-checkbox", value=True)
-            yield Checkbox("Conversations", id=f"{self.id_prefix}-rag-search-conversations-checkbox", value=False)
-            yield Checkbox("Notes", id=f"{self.id_prefix}-rag-search-notes-checkbox", value=False)
-    
+            yield Checkbox(
+                "Media Items",
+                id=f"{self.id_prefix}-rag-search-media-checkbox",
+                value=True,
+            )
+            yield Checkbox(
+                "Conversations",
+                id=f"{self.id_prefix}-rag-search-conversations-checkbox",
+                value=False,
+            )
+            yield Checkbox(
+                "Notes", id=f"{self.id_prefix}-rag-search-notes-checkbox", value=False
+            )
+
     def _compose_notes_section(self) -> ComposeResult:
         """Compose notes section."""
         with Collapsible(
             title="📝 Notes",
             collapsed=True,
             id=f"{self.id_prefix}-notes-collapsible",
-            classes="setting-group setting-group-common"
+            classes="setting-group setting-group-common",
         ):
             yield Label("Notes content will be loaded here", classes="setting-label")
             yield TextArea(
-                id=f"{self.id_prefix}-notes-content",
-                classes="notes-textarea-normal"
+                id=f"{self.id_prefix}-notes-content", classes="notes-textarea-normal"
             )
-    
+
     def _compose_image_generation_section(self) -> ComposeResult:
         """Compose image generation section."""
         with Collapsible(
             title="🎨 Image Generation",
             collapsed=True,
             id=f"{self.id_prefix}-image-generation-collapsible",
-            classes="setting-group setting-group-common"
+            classes="setting-group setting-group-common",
         ):
             yield Label("Image generation settings", classes="setting-label")
-    
+
     def _compose_search_media_section(self) -> ComposeResult:
         """Compose search media section."""
         with Collapsible(
             title="🔍 Search Media",
             collapsed=True,
             id=f"{self.id_prefix}-media-collapsible",
-            classes="setting-group setting-group-common"
+            classes="setting-group setting-group-common",
         ):
             yield Label("Search Term:", classes="sidebar-label")
             yield Input(
@@ -648,258 +716,356 @@ class EnhancedSettingsSidebar(Container):
                 placeholder="e.g., python, tutorial",
                 classes="sidebar-input",
             )
-            yield Button("Search", id="chat-media-search-button", classes="sidebar-button")
-            yield ListView(id=f"{self.id_prefix}-media-search-results-listview", classes="sidebar-listview")
+            yield Button(
+                "Search", id="chat-media-search-button", classes="sidebar-button"
+            )
+            yield ListView(
+                id=f"{self.id_prefix}-media-search-results-listview",
+                classes="sidebar-listview",
+            )
 
-            with Horizontal(classes="pagination-controls", id="chat-media-pagination-controls"):
+            with Horizontal(
+                classes="pagination-controls", id="chat-media-pagination-controls"
+            ):
                 yield Button("Prev", id="chat-media-prev-page-button", disabled=True)
                 yield Label("Page 1/1", id="chat-media-page-label")
                 yield Button("Next", id="chat-media-next-page-button", disabled=True)
 
-            yield Static("--- Selected Media Details ---", classes="sidebar-label", id="chat-media-details-header")
+            yield Static(
+                "--- Selected Media Details ---",
+                classes="sidebar-label",
+                id="chat-media-details-header",
+            )
 
             with VerticalScroll(id="chat-media-details-view"):
                 with Horizontal(classes="detail-field-container"):
                     yield Label("Title:", classes="detail-label")
-                    yield Button("Copy", id="chat-media-copy-title-button", classes="copy-button", disabled=True)
-                title_display = TextArea("", id="chat-media-title-display", read_only=True, classes="detail-textarea")
+                    yield Button(
+                        "Copy",
+                        id="chat-media-copy-title-button",
+                        classes="copy-button",
+                        disabled=True,
+                    )
+                title_display = TextArea(
+                    "",
+                    id="chat-media-title-display",
+                    read_only=True,
+                    classes="detail-textarea",
+                )
                 title_display.styles.height = 3
                 yield title_display
 
                 with Horizontal(classes="detail-field-container"):
                     yield Label("Author:", classes="detail-label")
-                    yield Button("Copy", id="chat-media-copy-author-button", classes="copy-button", disabled=True)
-                author_display = TextArea("", id="chat-media-author-display", read_only=True, classes="detail-textarea")
+                    yield Button(
+                        "Copy",
+                        id="chat-media-copy-author-button",
+                        classes="copy-button",
+                        disabled=True,
+                    )
+                author_display = TextArea(
+                    "",
+                    id="chat-media-author-display",
+                    read_only=True,
+                    classes="detail-textarea",
+                )
                 author_display.styles.height = 3
                 yield author_display
 
                 with Horizontal(classes="detail-field-container"):
                     yield Label("URL:", classes="detail-label")
-                    yield Button("Copy", id="chat-media-copy-url-button", classes="copy-button", disabled=True)
-                url_display = TextArea("", id="chat-media-url-display", read_only=True, classes="detail-textarea")
+                    yield Button(
+                        "Copy",
+                        id="chat-media-copy-url-button",
+                        classes="copy-button",
+                        disabled=True,
+                    )
+                url_display = TextArea(
+                    "",
+                    id="chat-media-url-display",
+                    read_only=True,
+                    classes="detail-textarea",
+                )
                 url_display.styles.height = 3
                 yield url_display
 
                 with Horizontal(classes="detail-field-container"):
                     yield Label("Content:", classes="detail-label")
-                    yield Button("Copy", id="chat-media-copy-content-button", classes="copy-button", disabled=True)
-                content_display = TextArea("", id="chat-media-content-display", read_only=True, classes="detail-textarea")
+                    yield Button(
+                        "Copy",
+                        id="chat-media-copy-content-button",
+                        classes="copy-button",
+                        disabled=True,
+                    )
+                content_display = TextArea(
+                    "",
+                    id="chat-media-content-display",
+                    read_only=True,
+                    classes="detail-textarea",
+                )
                 content_display.styles.height = 10
                 yield content_display
-    
+
     async def _load_advanced_tab(self) -> None:
         """Lazy load the advanced tab content."""
         self.logger.debug("Loading advanced tab content")
         try:
             container = self.query_one(f"#{self.id_prefix}-advanced-content")
             self.logger.debug("Found advanced content container")
-            
+
             # Create and mount advanced settings sections
             await self._mount_advanced_widgets(container)
             self.logger.debug("Successfully loaded advanced tab content")
-                    
+
         except NoMatches as e:
             self.logger.error(f"Advanced content container not found: {e}")
         except Exception as e:
             self.logger.error(f"Error loading advanced tab: {e}", exc_info=True)
-    
+
     async def _mount_advanced_widgets(self, container) -> None:
         """Mount advanced tab widgets to container."""
-        from textual.widgets import Collapsible, Label, Input, Select, Checkbox, TextArea
-        
-        defaults = self.config.get(f"{self.id_prefix}_defaults", 
-                                  self.config.get("chat_defaults", {}))
-        
+        from textual.widgets import (
+            Collapsible,
+            Label,
+            Input,
+            Select,
+            Checkbox,
+            TextArea,
+        )
+
+        defaults = self.config.get(
+            f"{self.id_prefix}_defaults", self.config.get("chat_defaults", {})
+        )
+
         # Model Parameters Section
         model_params = Collapsible(
             title="⚙️ Model Parameters",
             collapsed=True,
             id=f"{self.id_prefix}-model-params",
-            classes="setting-group setting-group-advanced"
+            classes="setting-group setting-group-advanced",
         )
         await container.mount(model_params)
-        
+
         # Top-p
         await model_params.mount(Label("Top P", classes="setting-label"))
-        await model_params.mount(Input(
-            placeholder="e.g., 0.95",
-            id=f"{self.id_prefix}-top-p",
-            value=str(defaults.get("top_p", 0.95)),
-            classes="setting-input"
-        ))
-        
+        await model_params.mount(
+            Input(
+                placeholder="e.g., 0.95",
+                id=f"{self.id_prefix}-top-p",
+                value=str(defaults.get("top_p", 0.95)),
+                classes="setting-input",
+            )
+        )
+
         # Min-p
         await model_params.mount(Label("Min P", classes="setting-label"))
-        await model_params.mount(Input(
-            placeholder="e.g., 0.05",
-            id=f"{self.id_prefix}-min-p",
-            value=str(defaults.get("min_p", 0.05)),
-            classes="setting-input"
-        ))
-        
+        await model_params.mount(
+            Input(
+                placeholder="e.g., 0.05",
+                id=f"{self.id_prefix}-min-p",
+                value=str(defaults.get("min_p", 0.05)),
+                classes="setting-input",
+            )
+        )
+
         # Top-k
         await model_params.mount(Label("Top K", classes="setting-label"))
-        await model_params.mount(Input(
-            placeholder="e.g., 50",
-            id=f"{self.id_prefix}-top-k",
-            value=str(defaults.get("top_k", 50)),
-            classes="setting-input"
-        ))
-        
+        await model_params.mount(
+            Input(
+                placeholder="e.g., 50",
+                id=f"{self.id_prefix}-top-k",
+                value=str(defaults.get("top_k", 50)),
+                classes="setting-input",
+            )
+        )
+
         # Max tokens
         await model_params.mount(Label("Max Tokens", classes="setting-label"))
-        await model_params.mount(Input(
-            placeholder="e.g., 2048",
-            id=f"{self.id_prefix}-llm-max-tokens",
-            value="2048",
-            classes="setting-input"
-        ))
-        
+        await model_params.mount(
+            Input(
+                placeholder="e.g., 2048",
+                id=f"{self.id_prefix}-llm-max-tokens",
+                value="2048",
+                classes="setting-input",
+            )
+        )
+
         # Seed
         await model_params.mount(Label("Seed", classes="setting-label"))
-        await model_params.mount(Input(
-            placeholder="e.g., 42",
-            id=f"{self.id_prefix}-llm-seed",
-            value="",
-            classes="setting-input"
-        ))
-        
+        await model_params.mount(
+            Input(
+                placeholder="e.g., 42",
+                id=f"{self.id_prefix}-llm-seed",
+                value="",
+                classes="setting-input",
+            )
+        )
+
         # Advanced Settings Section
         advanced_settings = Collapsible(
             title="🔧 Advanced Settings",
             collapsed=True,
             id=f"{self.id_prefix}-advanced-settings",
-            classes="setting-group setting-group-advanced"
+            classes="setting-group setting-group-advanced",
         )
         await container.mount(advanced_settings)
-        
+
         # Stop sequences
         await advanced_settings.mount(Label("Stop Sequences", classes="setting-label"))
-        await advanced_settings.mount(Input(
-            placeholder="e.g., <|endoftext|>,<|eot_id|>",
-            id=f"{self.id_prefix}-llm-stop",
-            value="",
-            classes="setting-input"
-        ))
-        
+        await advanced_settings.mount(
+            Input(
+                placeholder="e.g., <|endoftext|>,<|eot_id|>",
+                id=f"{self.id_prefix}-llm-stop",
+                value="",
+                classes="setting-input",
+            )
+        )
+
         # Response format
         await advanced_settings.mount(Label("Response Format", classes="setting-label"))
         response_format_select = Select(
             options=[("auto", "auto"), ("json", "json"), ("text", "text")],
             id=f"{self.id_prefix}-llm-response-format",
             classes="setting-input",
-            value="auto"
+            value="auto",
         )
         await advanced_settings.mount(response_format_select)
-        
+
         # Number of responses
-        await advanced_settings.mount(Label("Number of Responses", classes="setting-label"))
-        await advanced_settings.mount(Input(
-            placeholder="1",
-            id=f"{self.id_prefix}-llm-n",
-            value="1",
-            classes="setting-input"
-        ))
-        
+        await advanced_settings.mount(
+            Label("Number of Responses", classes="setting-label")
+        )
+        await advanced_settings.mount(
+            Input(
+                placeholder="1",
+                id=f"{self.id_prefix}-llm-n",
+                value="1",
+                classes="setting-input",
+            )
+        )
+
         # User identifier
         await advanced_settings.mount(Label("User Identifier", classes="setting-label"))
-        await advanced_settings.mount(Input(
-            placeholder="user_123",
-            id=f"{self.id_prefix}-llm-user-identifier",
-            value="",
-            classes="setting-input"
-        ))
-        
+        await advanced_settings.mount(
+            Input(
+                placeholder="user_123",
+                id=f"{self.id_prefix}-llm-user-identifier",
+                value="",
+                classes="setting-input",
+            )
+        )
+
         # Logprobs
-        await advanced_settings.mount(Checkbox(
-            "Enable Logprobs",
-            id=f"{self.id_prefix}-llm-logprobs",
-            value=False,
-            classes="setting-checkbox"
-        ))
-        
+        await advanced_settings.mount(
+            Checkbox(
+                "Enable Logprobs",
+                id=f"{self.id_prefix}-llm-logprobs",
+                value=False,
+                classes="setting-checkbox",
+            )
+        )
+
         # Top logprobs
         await advanced_settings.mount(Label("Top Logprobs", classes="setting-label"))
-        await advanced_settings.mount(Input(
-            placeholder="5",
-            id=f"{self.id_prefix}-llm-top-logprobs",
-            value="",
-            classes="setting-input"
-        ))
-        
+        await advanced_settings.mount(
+            Input(
+                placeholder="5",
+                id=f"{self.id_prefix}-llm-top-logprobs",
+                value="",
+                classes="setting-input",
+            )
+        )
+
         # Logit bias
         await advanced_settings.mount(Label("Logit Bias", classes="setting-label"))
-        await advanced_settings.mount(TextArea(
-            placeholder="{}",
-            id=f"{self.id_prefix}-llm-logit-bias",
-            classes="setting-textarea"
-        ))
-        
+        await advanced_settings.mount(
+            TextArea(
+                placeholder="{}",
+                id=f"{self.id_prefix}-llm-logit-bias",
+                classes="setting-textarea",
+            )
+        )
+
         # Presence penalty
-        await advanced_settings.mount(Label("Presence Penalty", classes="setting-label"))
-        await advanced_settings.mount(Input(
-            placeholder="e.g., 0.0 to 2.0",
-            id=f"{self.id_prefix}-llm-presence-penalty",
-            value="0.0",
-            classes="setting-input"
-        ))
-        
+        await advanced_settings.mount(
+            Label("Presence Penalty", classes="setting-label")
+        )
+        await advanced_settings.mount(
+            Input(
+                placeholder="e.g., 0.0 to 2.0",
+                id=f"{self.id_prefix}-llm-presence-penalty",
+                value="0.0",
+                classes="setting-input",
+            )
+        )
+
         # Frequency penalty
-        await advanced_settings.mount(Label("Frequency Penalty", classes="setting-label"))
-        await advanced_settings.mount(Input(
-            placeholder="e.g., 0.0 to 2.0",
-            id=f"{self.id_prefix}-llm-frequency-penalty",
-            value="0.0",
-            classes="setting-input"
-        ))
-        
+        await advanced_settings.mount(
+            Label("Frequency Penalty", classes="setting-label")
+        )
+        await advanced_settings.mount(
+            Input(
+                placeholder="e.g., 0.0 to 2.0",
+                id=f"{self.id_prefix}-llm-frequency-penalty",
+                value="0.0",
+                classes="setting-input",
+            )
+        )
+
         # Tools Section
         tools_section = Collapsible(
             title="🛠️ Tools & Function Calling",
             collapsed=True,
             id=f"{self.id_prefix}-tools",
-            classes="setting-group setting-group-advanced"
+            classes="setting-group setting-group-advanced",
         )
         await container.mount(tools_section)
-        
+
         # Tools configuration
         await tools_section.mount(Label("Tools Configuration", classes="setting-label"))
-        await tools_section.mount(TextArea(
-            placeholder="[]",
-            id=f"{self.id_prefix}-llm-tools",
-            classes="setting-textarea"
-        ))
-        
+        await tools_section.mount(
+            TextArea(
+                placeholder="[]",
+                id=f"{self.id_prefix}-llm-tools",
+                classes="setting-textarea",
+            )
+        )
+
         # Tool choice
         await tools_section.mount(Label("Tool Choice", classes="setting-label"))
-        await tools_section.mount(Input(
-            placeholder="auto",
-            id=f"{self.id_prefix}-llm-tool-choice",
-            value="auto",
-            classes="setting-input"
-        ))
-        
+        await tools_section.mount(
+            Input(
+                placeholder="auto",
+                id=f"{self.id_prefix}-llm-tool-choice",
+                value="auto",
+                classes="setting-input",
+            )
+        )
+
         # Fixed tokens (Kobold-specific)
-        await tools_section.mount(Checkbox(
-            "Fixed Tokens (Kobold)",
-            id=f"{self.id_prefix}-llm-fixed-tokens-kobold",
-            value=False,
-            classes="setting-checkbox"
-        ))
-    
+        await tools_section.mount(
+            Checkbox(
+                "Fixed Tokens (Kobold)",
+                id=f"{self.id_prefix}-llm-fixed-tokens-kobold",
+                value=False,
+                classes="setting-checkbox",
+            )
+        )
+
     def _compose_advanced_content(self) -> ComposeResult:
         """Compose advanced tab content."""
         self.logger.debug("Composing advanced content")
         try:
-            defaults = self.config.get(f"{self.id_prefix}_defaults", 
-                                      self.config.get("chat_defaults", {}))
-            
+            defaults = self.config.get(
+                f"{self.id_prefix}_defaults", self.config.get("chat_defaults", {})
+            )
+
             # Model Parameters Section
             with Collapsible(
                 title="⚙️ Model Parameters",
                 collapsed=True,
                 id=f"{self.id_prefix}-model-params",
-                classes="setting-group setting-group-advanced"
+                classes="setting-group setting-group-advanced",
             ):
                 # Top-p
                 yield Label("Top P", classes="setting-label")
@@ -907,51 +1073,51 @@ class EnhancedSettingsSidebar(Container):
                     placeholder="e.g., 0.95",
                     id=f"{self.id_prefix}-top-p",
                     value=str(defaults.get("top_p", 0.95)),
-                    classes="setting-input"
+                    classes="setting-input",
                 )
-                
+
                 # Min-p
                 yield Label("Min P", classes="setting-label")
                 yield Input(
                     placeholder="e.g., 0.05",
                     id=f"{self.id_prefix}-min-p",
                     value=str(defaults.get("min_p", 0.05)),
-                    classes="setting-input"
+                    classes="setting-input",
                 )
-                
+
                 # Top-k
                 yield Label("Top K", classes="setting-label")
                 yield Input(
                     placeholder="e.g., 50",
                     id=f"{self.id_prefix}-top-k",
                     value=str(defaults.get("top_k", 50)),
-                    classes="setting-input"
+                    classes="setting-input",
                 )
-                
+
                 # Max tokens
                 yield Label("Max Tokens", classes="setting-label")
                 yield Input(
                     placeholder="e.g., 2048",
                     id=f"{self.id_prefix}-llm-max-tokens",
                     value="2048",
-                    classes="setting-input"
+                    classes="setting-input",
                 )
-                
+
                 # Seed
                 yield Label("Seed", classes="setting-label")
                 yield Input(
                     placeholder="e.g., 42",
                     id=f"{self.id_prefix}-llm-seed",
                     value="0",
-                    classes="setting-input"
+                    classes="setting-input",
                 )
-            
+
             # Advanced Settings Section
             with Collapsible(
                 title="🔧 Advanced Settings",
                 collapsed=True,
                 id=f"{self.id_prefix}-advanced-settings",
-                classes="setting-group setting-group-advanced"
+                classes="setting-group setting-group-advanced",
             ):
                 # Stop sequences
                 yield Label("Stop Sequences", classes="setting-label")
@@ -959,122 +1125,122 @@ class EnhancedSettingsSidebar(Container):
                     placeholder="e.g., <|endoftext|>,<|eot_id|>",
                     id=f"{self.id_prefix}-llm-stop",
                     value="",
-                    classes="setting-input"
+                    classes="setting-input",
                 )
-                
+
                 # Response format
                 yield Label("Response Format", classes="setting-label")
                 yield Select(
                     options=[("auto", "auto"), ("json", "json"), ("text", "text")],
                     id=f"{self.id_prefix}-llm-response-format",
                     classes="setting-input",
-                    value="auto"
+                    value="auto",
                 )
-                
+
                 # Number of responses
                 yield Label("Number of Responses", classes="setting-label")
                 yield Input(
                     placeholder="1",
                     id=f"{self.id_prefix}-llm-n",
                     value="1",
-                    classes="setting-input"
+                    classes="setting-input",
                 )
-                
+
                 # User identifier
                 yield Label("User Identifier", classes="setting-label")
                 yield Input(
                     placeholder="user_123",
                     id=f"{self.id_prefix}-llm-user-identifier",
                     value="",
-                    classes="setting-input"
+                    classes="setting-input",
                 )
-                
+
                 # Logprobs
                 yield Checkbox(
                     "Enable Logprobs",
                     id=f"{self.id_prefix}-llm-logprobs",
                     value=False,
-                    classes="setting-checkbox"
+                    classes="setting-checkbox",
                 )
-                
+
                 # Top logprobs
                 yield Label("Top Logprobs", classes="setting-label")
                 yield Input(
                     placeholder="5",
                     id=f"{self.id_prefix}-llm-top-logprobs",
                     value="",
-                    classes="setting-input"
+                    classes="setting-input",
                 )
-                
+
                 # Logit bias
                 yield Label("Logit Bias", classes="setting-label")
                 yield TextArea(
                     text="{}",
                     id=f"{self.id_prefix}-llm-logit-bias",
-                    classes="setting-textarea"
+                    classes="setting-textarea",
                 )
-                
+
                 # Presence penalty
                 yield Label("Presence Penalty", classes="setting-label")
                 yield Input(
                     placeholder="e.g., 0.0 to 2.0",
                     id=f"{self.id_prefix}-llm-presence-penalty",
                     value="0.0",
-                    classes="setting-input"
+                    classes="setting-input",
                 )
-                
+
                 # Frequency penalty
                 yield Label("Frequency Penalty", classes="setting-label")
                 yield Input(
                     placeholder="e.g., 0.0 to 2.0",
                     id=f"{self.id_prefix}-llm-frequency-penalty",
                     value="0.0",
-                    classes="setting-input"
+                    classes="setting-input",
                 )
-            
+
             # Tools Section
             with Collapsible(
                 title="🛠️ Tools & Function Calling",
                 collapsed=True,
                 id=f"{self.id_prefix}-tools",
-                classes="setting-group setting-group-advanced"
+                classes="setting-group setting-group-advanced",
             ):
                 # Tools configuration
                 yield Label("Tools Configuration", classes="setting-label")
                 yield TextArea(
                     text="[]",
                     id=f"{self.id_prefix}-llm-tools",
-                    classes="setting-textarea"
+                    classes="setting-textarea",
                 )
-                
+
                 # Tool choice
                 yield Label("Tool Choice", classes="setting-label")
                 yield Input(
                     placeholder="auto",
                     id=f"{self.id_prefix}-llm-tool-choice",
                     value="auto",
-                    classes="setting-input"
+                    classes="setting-input",
                 )
-                
+
                 # Fixed tokens (Kobold-specific)
                 yield Checkbox(
                     "Fixed Tokens (Kobold)",
                     id=f"{self.id_prefix}-llm-fixed-tokens-kobold",
                     value=False,
-                    classes="setting-checkbox"
+                    classes="setting-checkbox",
                 )
-                
+
         except Exception as e:
             self.logger.error(f"Error in _compose_advanced_content: {e}", exc_info=True)
             raise
-    
+
     def _compose_model_parameters_section(self, defaults: dict) -> ComposeResult:
         """Compose model parameters section."""
         with Collapsible(
             title="⚙️ Model Parameters",
             collapsed=True,
             id=f"{self.id_prefix}-model-params",
-            classes="setting-group setting-group-advanced"
+            classes="setting-group setting-group-advanced",
         ):
             # Top-p
             yield Label("Top P", classes="setting-label")
@@ -1082,52 +1248,52 @@ class EnhancedSettingsSidebar(Container):
                 placeholder="e.g., 0.95",
                 id=f"{self.id_prefix}-top-p",
                 value=str(defaults.get("top_p", 0.95)),
-                classes="setting-input"
+                classes="setting-input",
             )
-            
-            # Min-p  
+
+            # Min-p
             yield Label("Min P", classes="setting-label")
             yield Input(
                 placeholder="e.g., 0.05",
-                id=f"{self.id_prefix}-min-p", 
+                id=f"{self.id_prefix}-min-p",
                 value=str(defaults.get("min_p", 0.05)),
-                classes="setting-input"
+                classes="setting-input",
             )
-            
+
             # Top-k
             yield Label("Top K", classes="setting-label")
             yield Input(
                 placeholder="e.g., 50",
                 id=f"{self.id_prefix}-top-k",
                 value=str(defaults.get("top_k", 50)),
-                classes="setting-input"
+                classes="setting-input",
             )
-            
+
             # Max tokens
             yield Label("Max Tokens", classes="setting-label")
             yield Input(
                 placeholder="e.g., 2048",
                 id=f"{self.id_prefix}-llm-max-tokens",
                 value="2048",
-                classes="setting-input"
+                classes="setting-input",
             )
-            
+
             # Seed
             yield Label("Seed", classes="setting-label")
             yield Input(
                 placeholder="e.g., 42",
                 id=f"{self.id_prefix}-llm-seed",
                 value="0",
-                classes="setting-input"
+                classes="setting-input",
             )
-    
+
     def _compose_advanced_settings_section(self) -> ComposeResult:
         """Compose advanced settings section."""
         with Collapsible(
             title="🔧 Advanced Settings",
             collapsed=True,
             id=f"{self.id_prefix}-advanced-settings",
-            classes="setting-group setting-group-advanced"
+            classes="setting-group setting-group-advanced",
         ):
             # Custom token limit
             yield Label("Custom Token Limit", classes="setting-label")
@@ -1135,55 +1301,55 @@ class EnhancedSettingsSidebar(Container):
                 placeholder="0 = use Max Tokens",
                 id=f"{self.id_prefix}-custom-token-limit",
                 value="12888",
-                classes="setting-input"
+                classes="setting-input",
             )
-            
+
             # Stop sequences
-            yield Label("Stop Sequences", classes="setting-label") 
+            yield Label("Stop Sequences", classes="setting-label")
             yield Input(
                 placeholder="e.g., <|endoftext|>,<|eot_id|>",
                 id=f"{self.id_prefix}-llm-stop",
-                classes="setting-input"
+                classes="setting-input",
             )
-            
+
             # Frequency penalty
             yield Label("Frequency Penalty", classes="setting-label")
             yield Input(
-                placeholder="e.g., 0.0 to 2.0", 
+                placeholder="e.g., 0.0 to 2.0",
                 id=f"{self.id_prefix}-llm-frequency-penalty",
                 value="0.0",
-                classes="setting-input"
+                classes="setting-input",
             )
-            
+
             # Presence penalty
             yield Label("Presence Penalty", classes="setting-label")
             yield Input(
                 placeholder="e.g., 0.0 to 2.0",
-                id=f"{self.id_prefix}-llm-presence-penalty", 
+                id=f"{self.id_prefix}-llm-presence-penalty",
                 value="0.0",
-                classes="setting-input"
+                classes="setting-input",
             )
-    
+
     def _compose_tools_section(self) -> ComposeResult:
         """Compose tools and templates section."""
         with Collapsible(
             title="🛠️ Tools & Templates",
             collapsed=True,
             id=f"{self.id_prefix}-tools",
-            classes="setting-group setting-group-advanced"
+            classes="setting-group setting-group-advanced",
         ):
             yield Label("Tools and templates configuration", classes="setting-label")
-    
+
     def _perform_search(self) -> None:
         """Perform search and show results."""
         # Implementation for searching through settings
         # Would highlight matching settings and show in search tab
         pass
-    
+
     def _clear_search(self) -> None:
         """Clear search results and return to normal view."""
         pass
-    
+
     def _apply_preset(self, preset_id: str) -> None:
         """Apply a preset configuration."""
         if preset_id in self.presets:
@@ -1191,15 +1357,15 @@ class EnhancedSettingsSidebar(Container):
             # Apply preset values to settings
             for key, value in preset.values.items():
                 self._set_setting_value(key, value)
-            
+
             self.active_preset = preset_id
             self._update_preset_buttons()
-    
+
     def _set_setting_value(self, key: str, value: Any) -> None:
         """Set a setting value programmatically."""
         # Implementation to set various setting types
         pass
-    
+
     def _update_preset_buttons(self) -> None:
         """Update preset button styles based on active preset."""
         for preset_id in self.presets:
@@ -1211,12 +1377,12 @@ class EnhancedSettingsSidebar(Container):
                     button.remove_class("active")
             except NoMatches:
                 pass
-    
+
     def _update_visibility(self) -> None:
         """Update visibility of advanced settings."""
         # Show/hide advanced settings based on toggle
         pass
-    
+
     def mark_setting_modified(self, setting_id: str) -> None:
         """Mark a setting as modified from default."""
         self.modified_settings.add(setting_id)
@@ -1225,35 +1391,38 @@ class EnhancedSettingsSidebar(Container):
             widget.add_class("setting-modified")
         except NoMatches:
             pass
-    
+
     def reset_all_settings(self) -> None:
         """Reset all settings to defaults."""
         # Implementation to reset all settings
         self.modified_settings.clear()
         self._apply_preset("basic")
 
+
 #
 # Factory function for backwards compatibility
 #
 
-def create_enhanced_settings_sidebar(id_prefix: str, config: dict) -> EnhancedSettingsSidebar:
+
+def create_enhanced_settings_sidebar(
+    id_prefix: str, config: dict
+) -> EnhancedSettingsSidebar:
     """Create an enhanced settings sidebar instance.
-    
+
     This function provides backwards compatibility with the existing codebase
     while offering the new enhanced sidebar.
-    
+
     Args:
         id_prefix: Prefix for widget IDs
         config: Configuration dictionary
-        
+
     Returns:
         EnhancedSettingsSidebar instance
     """
     return EnhancedSettingsSidebar(
-        id_prefix=id_prefix,
-        config=config,
-        id=f"{id_prefix}-enhanced-sidebar"
+        id_prefix=id_prefix, config=config, id=f"{id_prefix}-enhanced-sidebar"
     )
+
 
 #
 # End of enhanced_settings_sidebar.py

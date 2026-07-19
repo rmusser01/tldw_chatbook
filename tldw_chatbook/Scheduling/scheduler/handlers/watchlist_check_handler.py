@@ -81,9 +81,7 @@ class WatchlistCheckHandler:
             subscription_type = subscription.get("type", "unknown")
 
             if subscription.get("is_paused") or not subscription.get("is_active"):
-                logger.info(
-                    f"Skipping paused/inactive subscription {subscription_id}"
-                )
+                logger.info(f"Skipping paused/inactive subscription {subscription_id}")
                 status = _STATUS_SKIPPED
                 return
 

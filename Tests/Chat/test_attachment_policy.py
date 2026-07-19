@@ -22,7 +22,8 @@ from tldw_chatbook.Chat.attachment_core import (
 def defaults_config(monkeypatch):
     """Simulate a config with no [chat.images] overrides (never read live config)."""
     monkeypatch.setattr(
-        config_mod, "get_cli_setting",
+        config_mod,
+        "get_cli_setting",
         lambda section, key=None, default=None: default,
     )
 
@@ -38,7 +39,8 @@ def config_override(monkeypatch):
 
     def _set(key, value):
         monkeypatch.setattr(
-            config_mod, "get_cli_setting",
+            config_mod,
+            "get_cli_setting",
             lambda section, k=None, default=None: (
                 {key: value} if (section, k) == ("chat", "images") else default
             ),
@@ -89,7 +91,9 @@ class TestSupportedImageFormats:
         monkeypatch.setattr(attachment_core, "svg_rendering_available", lambda: False)
 
         messages: list[str] = []
-        sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+        sink_id = loguru_logger.add(
+            messages.append, level="WARNING", format="{message}"
+        )
         try:
             formats = supported_image_formats()
         finally:
@@ -149,8 +153,13 @@ class TestFilterSpecsDrift:
     def test_non_image_rows_unchanged(self, defaults_config, svg_on):
         labels = [label for label, _ in attachment_filter_specs()]
         assert labels == [
-            "All Supported Files", "Image Files", "Document Files",
-            "E-book Files", "Text Files", "Code Files", "Data Files",
+            "All Supported Files",
+            "Image Files",
+            "Document Files",
+            "E-book Files",
+            "Text Files",
+            "Code Files",
+            "Data Files",
         ]
 
 

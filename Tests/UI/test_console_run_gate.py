@@ -85,11 +85,14 @@ def _start_fake_run(screen) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action_id,target", [
-    ("retry", "failed"),
-    ("regenerate", "completed"),
-    ("continue", "completed"),
-])
+@pytest.mark.parametrize(
+    "action_id,target",
+    [
+        ("retry", "failed"),
+        ("regenerate", "completed"),
+        ("continue", "completed"),
+    ],
+)
 async def test_mid_run_action_notifies_instead_of_spawning(action_id, target):
     """While a run is active, the action must NOT spawn a console-run worker
     (which would cancel the in-flight stream) — it must notify and return."""
@@ -112,11 +115,14 @@ async def test_mid_run_action_notifies_instead_of_spawning(action_id, target):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action_id,target", [
-    ("retry", "failed"),
-    ("regenerate", "completed"),
-    ("continue", "completed"),
-])
+@pytest.mark.parametrize(
+    "action_id,target",
+    [
+        ("retry", "failed"),
+        ("regenerate", "completed"),
+        ("continue", "completed"),
+    ],
+)
 async def test_idle_action_still_spawns_console_run_worker(action_id, target):
     """Regression guard: with no active run, the actions dispatch exactly one
     worker in the console-run group."""

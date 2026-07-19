@@ -19,9 +19,9 @@ def test_subscription_scheduler_module_emits_deprecation_warning():
     """Importing the legacy scheduler module must emit a DeprecationWarning."""
     deprecation_warnings = _reload_and_capture(scheduler_module)
     messages = [str(w.message) for w in deprecation_warnings]
-    assert any(
-        "SubscriptionScheduler is deprecated" in msg for msg in messages
-    ), f"Expected deprecation warning not found in: {messages}"
+    assert any("SubscriptionScheduler is deprecated" in msg for msg in messages), (
+        f"Expected deprecation warning not found in: {messages}"
+    )
 
 
 def test_textual_scheduler_worker_module_emits_deprecation_warning():
@@ -44,8 +44,7 @@ def test_package_import_of_non_deprecated_symbol_does_not_emit_scheduler_warning
         _ = subscriptions_module.LocalWatchlistsService
 
     scheduler_warnings = [
-        w for w in caught
-        if issubclass(w.category, DeprecationWarning)
+        w for w in caught if issubclass(w.category, DeprecationWarning)
     ]
     assert not scheduler_warnings, (
         f"Unexpected deprecation warnings on package import: "

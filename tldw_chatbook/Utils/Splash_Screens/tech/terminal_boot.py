@@ -14,19 +14,19 @@ class TerminalBootEffect(BaseEffect):
     @dataclass
     class BootLine:
         text: str
-        delay_before: float = 0.1 # Delay before this line starts typing
-        type_speed: float = 0.03 # Seconds per character
-        pause_after: float = 0.2 # Pause after line is fully typed
+        delay_before: float = 0.1  # Delay before this line starts typing
+        type_speed: float = 0.03  # Seconds per character
+        pause_after: float = 0.2  # Pause after line is fully typed
         style: str = "default"
 
     def __init__(
         self,
         parent_widget: Any,
-        boot_sequence: List[Dict[str, Any]], # List of dicts for BootLine properties
+        boot_sequence: List[Dict[str, Any]],  # List of dicts for BootLine properties
         width: int = 80,
         height: int = 24,
         cursor: str = "_",
-        **kwargs
+        **kwargs,
     ):
         super().__init__(parent_widget, **kwargs)
 
@@ -44,17 +44,19 @@ class TerminalBootEffect(BaseEffect):
         self.time_waiting_for_next_line = 0
         self.time_paused_after_line = 0
 
-        self.output_buffer: List[str] = [""] * self.height # Stores fully typed lines
-        self.current_display_line = 0 # Which line in output_buffer we are writing to
+        self.output_buffer: List[str] = [""] * self.height  # Stores fully typed lines
+        self.current_display_line = 0  # Which line in output_buffer we are writing to
 
-        self.state = "delay_before_line" # States: delay_before_line, typing, paused_after_line, done
+        self.state = "delay_before_line"  # States: delay_before_line, typing, paused_after_line, done
 
     def update(self) -> Optional[str]:
         if self.current_line_index >= len(self.lines_to_display):
             self.state = "done"
 
-        elapsed_frame_time = time.time() - self.start_time # More like delta_time if called frequently
-        self.start_time = time.time() # Reset for next frame's delta_time calculation
+        elapsed_frame_time = (
+            time.time() - self.start_time
+        )  # More like delta_time if called frequently
+        self.start_time = time.time()  # Reset for next frame's delta_time calculation
 
         current_boot_line = None
         if self.state != "done":
@@ -78,16 +80,17 @@ class TerminalBootEffect(BaseEffect):
                         # Scroll up output_buffer
                         self.output_buffer.pop(0)
                         self.output_buffer.append("")
-                        self.current_display_line = self.height -1
+                        self.current_display_line = self.height - 1
 
-                    self.output_buffer[self.current_display_line] += current_boot_line.text[self.current_char_index]
+                    self.output_buffer[self.current_display_line] += (
+                        current_boot_line.text[self.current_char_index]
+                    )
                     self.current_char_index += 1
 
                 if self.current_char_index >= len(current_boot_line.text):
                     self.state = "paused_after_line"
                     # Move to next line in buffer for next boot message
-                    self.current_display_line +=1
-
+                    self.current_display_line += 1
 
         if self.state == "paused_after_line":
             self.time_paused_after_line += elapsed_frame_time
@@ -145,8 +148,8 @@ class TerminalBootEffect(BaseEffect):
 
         for i in range(self.height):
             line_text = self.output_buffer[i] if i < len(self.output_buffer) else ""
-            line_to_render = line_text.replace('[', r'\[')
-            style_to_use = "default" # Default style
+            line_to_render = line_text.replace("[", r"\[")
+            style_to_use = "default"  # Default style
 
             # Try to find the original BootLine that corresponds to this output_buffer line
             # This is an approximation assuming lines map somewhat directly if no/simple scrolling.
@@ -154,7 +157,9 @@ class TerminalBootEffect(BaseEffect):
             # This logic is tricky because `current_display_line` increments AFTER a line is full.
 
             # If line `i` is the one being currently typed or was just finished:
-            is_active_typing_line = (self.state == "typing" and i == self.current_display_line)
+            is_active_typing_line = (
+                self.state == "typing" and i == self.current_display_line
+            )
 
             # Determine the source BootLine for styling
             # This needs to account for scrolling. If output_buffer[0] was line k,
@@ -170,31 +175,47 @@ class TerminalBootEffect(BaseEffect):
 
             if is_active_typing_line and current_boot_line:
                 style_to_use = current_boot_line.style
-                final_styled_lines.append(f"[{style_to_use}]{line_to_render}{self.cursor_char}[/{style_to_use}]")
-            elif self.state == "paused_after_line" and i == self.current_display_line -1 and current_boot_line:
+                final_styled_lines.append(
+                    f"[{style_to_use}]{line_to_render}{self.cursor_char}[/{style_to_use}]"
+                )
+            elif (
+                self.state == "paused_after_line"
+                and i == self.current_display_line - 1
+                and current_boot_line
+            ):
                 # Line just finished, use its style, no cursor yet for next line
                 # current_boot_line here is the one that just finished.
-                 style_to_use = current_boot_line.style
-                 final_styled_lines.append(f"[{style_to_use}]{line_to_render}[/{style_to_use}]")
-            elif self.state == "done" and i == self.current_display_line -1 and self.current_display_line > 0:
-                 # Last line that was typed.
-                 if self.lines_to_display:
-                    last_typed_line_style = self.lines_to_display[len(self.lines_to_display)-1].style
-                    final_styled_lines.append(f"[{last_typed_line_style}]{line_to_render}[/{last_typed_line_style}]")
-                 else:
+                style_to_use = current_boot_line.style
+                final_styled_lines.append(
+                    f"[{style_to_use}]{line_to_render}[/{style_to_use}]"
+                )
+            elif (
+                self.state == "done"
+                and i == self.current_display_line - 1
+                and self.current_display_line > 0
+            ):
+                # Last line that was typed.
+                if self.lines_to_display:
+                    last_typed_line_style = self.lines_to_display[
+                        len(self.lines_to_display) - 1
+                    ].style
+                    final_styled_lines.append(
+                        f"[{last_typed_line_style}]{line_to_render}[/{last_typed_line_style}]"
+                    )
+                else:
                     final_styled_lines.append(f"[default]{line_to_render}[/default]")
             else:
                 # For other lines (already scrolled or not yet typed fully on screen part)
                 # This is where it's hard to get the original style back easily.
                 # Use default for lines that are "old" or if style cannot be determined.
                 # If line_text is not empty, it means it was typed.
-                if line_text: # It's a previously completed line
+                if line_text:  # It's a previously completed line
                     # Try to guess its original style - this is the weak point.
                     # For now, let's assume if it has text, it's from a previous line.
                     # This part needs a more robust solution for varied styles on completed lines.
                     # Simplest: use default for all non-active lines.
-                     final_styled_lines.append(f"[default]{line_to_render}[/default]")
+                    final_styled_lines.append(f"[default]{line_to_render}[/default]")
                 else:
-                     final_styled_lines.append(line_to_render) # Empty line
+                    final_styled_lines.append(line_to_render)  # Empty line
 
         return "\n".join(final_styled_lines)

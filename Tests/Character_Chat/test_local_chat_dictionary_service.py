@@ -2,7 +2,9 @@ import json as _json
 
 import pytest
 
-from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
+from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
+    LocalChatDictionaryService,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 
 
@@ -35,7 +37,9 @@ def test_local_chat_dictionary_service_routes_core_crud(dictionary_db):
         expected_version=detail["version"],
     )
     listed = service.list_dictionaries(include_inactive=True)
-    deleted = service.delete_dictionary(updated["id"], expected_version=updated["version"])
+    deleted = service.delete_dictionary(
+        updated["id"], expected_version=updated["version"]
+    )
 
     assert created["source"] == "local"
     assert detail["name"] == "Local Lore"
@@ -44,7 +48,11 @@ def test_local_chat_dictionary_service_routes_core_crud(dictionary_db):
     assert updated["enabled"] is False
     assert updated["max_tokens"] == 900
     assert listed["dictionaries"][0]["id"] == created["id"]
-    assert deleted == {"status": "deleted", "dictionary_id": created["id"], "source": "local"}
+    assert deleted == {
+        "status": "deleted",
+        "dictionary_id": created["id"],
+        "source": "local",
+    }
     assert service.get_dictionary(created["id"]) is None
 
 
@@ -80,7 +88,9 @@ def test_list_dictionaries_reports_entry_count_without_inflating_entries(diction
     assert len(detail["entries"]) == 2
 
 
-def test_local_chat_dictionary_service_imports_exports_and_processes_markdown(dictionary_db):
+def test_local_chat_dictionary_service_imports_exports_and_processes_markdown(
+    dictionary_db,
+):
     service = LocalChatDictionaryService(dictionary_db)
 
     imported = service.import_markdown(
@@ -91,7 +101,9 @@ def test_local_chat_dictionary_service_imports_exports_and_processes_markdown(di
         }
     )
     exported = service.export_markdown(imported["dictionary_id"])
-    processed = service.process_text({"text": "Ada met Turing.", "dictionary_id": imported["dictionary_id"]})
+    processed = service.process_text(
+        {"text": "Ada met Turing.", "dictionary_id": imported["dictionary_id"]}
+    )
 
     assert imported["source"] == "local"
     assert exported["name"] == "Imported Lore"
@@ -113,8 +125,12 @@ def test_local_chat_dictionary_service_uses_source_scoped_entry_ids(dictionary_d
         },
     )
     entries = service.list_entries(dictionary["id"], group="people")
-    updated_entry = service.update_entry(created_entry["id"], {"replacement": "Professor Ada"})
-    reordered = service.reorder_entries(dictionary["id"], {"entry_ids": [created_entry["id"]]})
+    updated_entry = service.update_entry(
+        created_entry["id"], {"replacement": "Professor Ada"}
+    )
+    reordered = service.reorder_entries(
+        dictionary["id"], {"entry_ids": [created_entry["id"]]}
+    )
     deleted = service.delete_entry(created_entry["id"])
 
     assert created_entry["id"] == f"local:chat_dictionary_entry:{dictionary['id']}:0"
@@ -122,7 +138,11 @@ def test_local_chat_dictionary_service_uses_source_scoped_entry_ids(dictionary_d
     assert entries["entries"][0]["replacement"] == "Dr. Ada"
     assert updated_entry["replacement"] == "Professor Ada"
     assert reordered["entry_ids"] == [created_entry["id"]]
-    assert deleted == {"status": "deleted", "entry_id": created_entry["id"], "source": "local"}
+    assert deleted == {
+        "status": "deleted",
+        "entry_id": created_entry["id"],
+        "source": "local",
+    }
     assert service.list_entries(dictionary["id"])["entries"] == []
 
 
@@ -148,7 +168,9 @@ def test_local_chat_dictionary_service_reports_basic_statistics(dictionary_db):
     }
 
 
-def test_local_chat_dictionary_service_records_activity_versions_and_reverts(dictionary_db, tmp_path):
+def test_local_chat_dictionary_service_records_activity_versions_and_reverts(
+    dictionary_db, tmp_path
+):
     history_path = tmp_path / "chat_dictionary_history.json"
     service = LocalChatDictionaryService(dictionary_db, history_store_path=history_path)
 
@@ -162,7 +184,9 @@ def test_local_chat_dictionary_service_records_activity_versions_and_reverts(dic
     versions = service.list_versions(created["id"], limit=10)
     version_one = service.get_version(created["id"], 1)
     reverted = service.revert_version(created["id"], 1)
-    reloaded = LocalChatDictionaryService(dictionary_db, history_store_path=history_path)
+    reloaded = LocalChatDictionaryService(
+        dictionary_db, history_store_path=history_path
+    )
 
     assert updated["version"] == 2
     assert [item["action"] for item in activity["activity"]] == ["update", "create"]
@@ -173,7 +197,9 @@ def test_local_chat_dictionary_service_records_activity_versions_and_reverts(dic
     assert reloaded.list_versions(created["id"], limit=10)["total"] == 3
 
 
-def test_local_chat_dictionary_service_update_raises_conflict_error_on_stale_version(dictionary_db):
+def test_local_chat_dictionary_service_update_raises_conflict_error_on_stale_version(
+    dictionary_db,
+):
     service = LocalChatDictionaryService(dictionary_db)
     dictionary = service.create_dictionary({"name": "Conflict Lore"})
 
@@ -185,15 +211,21 @@ def test_local_chat_dictionary_service_update_raises_conflict_error_on_stale_ver
         )
 
 
-def test_local_chat_dictionary_service_delete_raises_conflict_error_on_stale_version(dictionary_db):
+def test_local_chat_dictionary_service_delete_raises_conflict_error_on_stale_version(
+    dictionary_db,
+):
     service = LocalChatDictionaryService(dictionary_db)
     dictionary = service.create_dictionary({"name": "Conflict Lore Delete"})
 
     with pytest.raises(ConflictError):
-        service.delete_dictionary(dictionary["id"], expected_version=dictionary["version"] + 1)
+        service.delete_dictionary(
+            dictionary["id"], expected_version=dictionary["version"] + 1
+        )
 
 
-def test_local_chat_dictionary_service_repairs_legacy_fts_trigger_before_delete(dictionary_db):
+def test_local_chat_dictionary_service_repairs_legacy_fts_trigger_before_delete(
+    dictionary_db,
+):
     service = LocalChatDictionaryService(dictionary_db)
     dictionary = service.create_dictionary({"name": "Legacy Trigger Lore"})
     conn = dictionary_db.get_connection()
@@ -210,7 +242,9 @@ def test_local_chat_dictionary_service_repairs_legacy_fts_trigger_before_delete(
     )
     conn.commit()
 
-    deleted = service.delete_dictionary(dictionary["id"], expected_version=dictionary["version"])
+    deleted = service.delete_dictionary(
+        dictionary["id"], expected_version=dictionary["version"]
+    )
 
     assert deleted["status"] == "deleted"
 
@@ -231,7 +265,9 @@ def test_process_text_carries_enriched_diagnostics(dictionary_db):
     service = LocalChatDictionaryService(dictionary_db)
     created = _create_two_entry_dictionary(service)
 
-    response = service.process_text({"text": "BP and HR", "dictionary_id": created["id"]})
+    response = service.process_text(
+        {"text": "BP and HR", "dictionary_id": created["id"]}
+    )
 
     # Existing keys byte-identical in name and meaning.
     assert response["text"] == "BP and HR"
@@ -268,7 +304,10 @@ def test_process_text_all_dictionaries_path_ids_carry_own_dict(dictionary_db):
     service = LocalChatDictionaryService(dictionary_db)
     first = _create_two_entry_dictionary(service, name="First")
     second = service.create_dictionary(
-        {"name": "Second", "entries": [{"pattern": "RR", "replacement": "respiratory rate"}]}
+        {
+            "name": "Second",
+            "entries": [{"pattern": "RR", "replacement": "respiratory rate"}],
+        }
     )
 
     response = service.process_text({"text": "BP and RR"})
@@ -301,19 +340,28 @@ def test_entry_new_fields_roundtrip_through_service(dictionary_db):
         {
             "name": "Fields",
             "entries": [
-                {"pattern": "BP", "replacement": "blood pressure",
-                 "enabled": False, "case_sensitive": True, "priority": 9},
+                {
+                    "pattern": "BP",
+                    "replacement": "blood pressure",
+                    "enabled": False,
+                    "case_sensitive": True,
+                    "priority": 9,
+                },
             ],
         }
     )
     record = service.get_dictionary(created["id"])
     entry = record["entries"][0]
-    assert entry["enabled"] is False          # no longer hardcoded True
+    assert entry["enabled"] is False  # no longer hardcoded True
     assert entry["case_sensitive"] is True
     assert entry["priority"] == 9
     # Partial update touching only the replacement preserves the three fields.
     updated = service.update_entry(entry["id"], {"replacement": "arterial pressure"})
-    assert (updated["enabled"], updated["case_sensitive"], updated["priority"]) == (False, True, 9)
+    assert (updated["enabled"], updated["case_sensitive"], updated["priority"]) == (
+        False,
+        True,
+        9,
+    )
 
 
 def test_entry_loose_typed_priority_and_enabled_do_not_crash(dictionary_db):
@@ -324,8 +372,12 @@ def test_entry_loose_typed_priority_and_enabled_do_not_crash(dictionary_db):
         {
             "name": "Loose Types",
             "entries": [
-                {"pattern": "BP", "replacement": "blood pressure",
-                 "priority": "garbage", "enabled": "false"},
+                {
+                    "pattern": "BP",
+                    "replacement": "blood pressure",
+                    "priority": "garbage",
+                    "enabled": "false",
+                },
             ],
         }
     )
@@ -342,10 +394,18 @@ def test_json_export_import_roundtrips_every_field(dictionary_db):
             "name": "Round Trip",
             "description": "all fields",
             "entries": [
-                {"pattern": "BP", "replacement": "blood pressure", "probability": 0.85,
-                 "group": "med", "timed_effects": {"sticky": 0, "cooldown": 5, "delay": 0},
-                 "max_replacements": 3, "type": "literal",
-                 "enabled": False, "case_sensitive": True, "priority": 7},
+                {
+                    "pattern": "BP",
+                    "replacement": "blood pressure",
+                    "probability": 0.85,
+                    "group": "med",
+                    "timed_effects": {"sticky": 0, "cooldown": 5, "delay": 0},
+                    "max_replacements": 3,
+                    "type": "literal",
+                    "enabled": False,
+                    "case_sensitive": True,
+                    "priority": 7,
+                },
             ],
             "max_tokens": 750,
         }
@@ -366,8 +426,18 @@ def test_json_export_import_roundtrips_every_field(dictionary_db):
     assert record["max_tokens"] == 750
     src_entry = service.get_dictionary(created["id"])["entries"][0]
     dup_entry = record["entries"][0]
-    for field in ("pattern", "replacement", "probability", "group", "timed_effects",
-                  "max_replacements", "type", "enabled", "case_sensitive", "priority"):
+    for field in (
+        "pattern",
+        "replacement",
+        "probability",
+        "group",
+        "timed_effects",
+        "max_replacements",
+        "type",
+        "enabled",
+        "case_sensitive",
+        "priority",
+    ):
         assert dup_entry.get(field) == src_entry.get(field), field
 
 
@@ -387,9 +457,9 @@ def test_attach_is_idempotent_and_dedups(dictionary_db):
 
     r1 = service.attach_to_conversation(d["id"], conv)
     assert r1["active_dictionaries"] == [d["id"]]
-    r2 = service.attach_to_conversation(d["id"], conv)          # idempotent
-    assert r2["active_dictionaries"] == [d["id"]]               # no duplicate
-    assert _active(dictionary_db, conv) == [d["id"]]            # persisted as int
+    r2 = service.attach_to_conversation(d["id"], conv)  # idempotent
+    assert r2["active_dictionaries"] == [d["id"]]  # no duplicate
+    assert _active(dictionary_db, conv) == [d["id"]]  # persisted as int
 
 
 def test_detach_removes_and_noop_when_absent(dictionary_db):
@@ -481,7 +551,9 @@ def test_attach_survives_non_dict_metadata_json(dictionary_db):
     d = service.create_dictionary({"name": "Meds"})
     conv = _seed_conversation(dictionary_db)
     record = dictionary_db.get_conversation_by_id(conv)
-    dictionary_db.update_conversation(conv, {"metadata": "5"}, expected_version=record["version"])
+    dictionary_db.update_conversation(
+        conv, {"metadata": "5"}, expected_version=record["version"]
+    )
 
     result = service.attach_to_conversation(d["id"], conv)
     assert result["active_dictionaries"] == [d["id"]]
@@ -563,7 +635,9 @@ def test_list_character_dictionaries_summarizes_embedded(dictionary_db):
 
     listing = service.list_character_dictionaries(char_id)
 
-    assert listing["dictionaries"] == [{"name": "Slang", "entry_count": 1, "enabled": True}]
+    assert listing["dictionaries"] == [
+        {"name": "Slang", "entry_count": 1, "enabled": True}
+    ]
 
 
 def test_attach_to_missing_character_raises_value_error(dictionary_db):
@@ -579,7 +653,9 @@ def test_attach_to_character_raises_conflict_on_stale_version(dictionary_db):
     char_id = dictionary_db.add_character_card({"name": "Noir"})
     # Bump the character version out from under a captured-stale record.
     stale = dictionary_db.get_character_card_by_id(char_id)
-    dictionary_db.update_character_card(char_id, {"name": "Noir2"}, expected_version=stale["version"])
+    dictionary_db.update_character_card(
+        char_id, {"name": "Noir2"}, expected_version=stale["version"]
+    )
     # Monkeypatch the load to return the stale record so the write uses version 1.
     service._load_character_or_raise = lambda cid: stale  # type: ignore[assignment]
     with pytest.raises(ConflictError):
@@ -597,7 +673,9 @@ def test_detach_and_list_normalize_non_str_embedded_names(dictionary_db):
     record = dictionary_db.get_character_card_by_id(char_id)
     ext = record["extensions"] if isinstance(record["extensions"], dict) else {}
     ext["chat_dictionaries"] = [{"name": 123, "entries": []}]
-    dictionary_db.update_character_card(char_id, {"extensions": ext}, expected_version=record["version"])
+    dictionary_db.update_character_card(
+        char_id, {"extensions": ext}, expected_version=record["version"]
+    )
 
     listing = service.list_character_dictionaries(char_id)
     assert listing["dictionaries"][0]["name"] == "123"
@@ -609,7 +687,9 @@ def test_detach_and_list_normalize_non_str_embedded_names(dictionary_db):
     assert record["extensions"].get("chat_dictionaries") == []
 
 
-def test_list_character_dictionaries_entry_count_tolerates_non_list_entries(dictionary_db):
+def test_list_character_dictionaries_entry_count_tolerates_non_list_entries(
+    dictionary_db,
+):
     """entries can be a malformed non-list (e.g. int) in an imported block;
     entry_count must degrade to 0 instead of raising TypeError."""
     service = LocalChatDictionaryService(dictionary_db)
@@ -617,7 +697,9 @@ def test_list_character_dictionaries_entry_count_tolerates_non_list_entries(dict
     record = dictionary_db.get_character_card_by_id(char_id)
     ext = record["extensions"] if isinstance(record["extensions"], dict) else {}
     ext["chat_dictionaries"] = [{"name": "X", "entries": 5}]
-    dictionary_db.update_character_card(char_id, {"extensions": ext}, expected_version=record["version"])
+    dictionary_db.update_character_card(
+        char_id, {"extensions": ext}, expected_version=record["version"]
+    )
 
     listing = service.list_character_dictionaries(char_id)
     assert listing["dictionaries"] == [{"name": "X", "entry_count": 0, "enabled": True}]

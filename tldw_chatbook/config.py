@@ -5,6 +5,7 @@
 import copy
 import json
 import sys
+
 if sys.version_info < (3, 11):
     import tomli as tomllib
 else:
@@ -13,16 +14,20 @@ import os
 from pathlib import Path
 import toml
 from typing import Dict, Any, List, Optional, Mapping
+
 #
 # Third-Party Imports
 from loguru import logger
+
 #
 # Local Imports
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
-from tldw_chatbook.Utils.console_background_effects import normalize_console_background_effects
+from tldw_chatbook.Utils.console_background_effects import (
+    normalize_console_background_effects,
+)
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 #
 #######################################################################################################################
@@ -46,9 +51,10 @@ def _get_effective_config_path() -> Path:
     candidate = Path(override).expanduser() if override else DEFAULT_CONFIG_PATH
     return validate_path_simple(candidate, require_exists=False).resolve()
 
+
 # --- Encryption support ---
 _ENCRYPTION_PASSWORD = None  # Cached password for the session
-_ENCRYPTION_MODULE = None    # Lazily loaded encryption module
+_ENCRYPTION_MODULE = None  # Lazily loaded encryption module
 
 # --- Chunking Settings (Default, can be overridden by TOML) ---
 global_default_chunk_language = "en"
@@ -56,20 +62,18 @@ global_default_chunk_language = "en"
 # --- Default Fallback Configurations (if not found in TOML) ---
 # These will be populated from TOML or use these hardcoded dicts as fallbacks.
 DEFAULT_APP_TTS_CONFIG = {
-    "OPENAI_API_KEY_fallback": "sk-...", # Note: API keys should primarily come from [API] section or ENV
+    "OPENAI_API_KEY_fallback": "sk-...",  # Note: API keys should primarily come from [API] section or ENV
     "KOKORO_ONNX_MODEL_PATH_DEFAULT": "path/to/your/downloaded/kokoro-v0_19.onnx",
     "KOKORO_ONNX_VOICES_JSON_DEFAULT": "path/to/your/downloaded/voices.json",
-    "KOKORO_DEVICE_DEFAULT": "cpu", # or "cuda"
-    "ELEVENLABS_API_KEY_fallback": "el-...", # Note: API keys should primarily come from [API] section or ENV
-    "local_kokoro_default_onnx": {
-        "KOKORO_DEVICE": "cuda:0"
-    },
+    "KOKORO_DEVICE_DEFAULT": "cpu",  # or "cuda"
+    "ELEVENLABS_API_KEY_fallback": "el-...",  # Note: API keys should primarily come from [API] section or ENV
+    "local_kokoro_default_onnx": {"KOKORO_DEVICE": "cuda:0"},
     "global_tts_settings": {
         # shared settings
-    }
+    },
 }
 
-DEFAULT_DATABASE_CONFIG = {} # Example, can be populated if needed
+DEFAULT_DATABASE_CONFIG = {}  # Example, can be populated if needed
 
 DEFAULT_RAG_SEARCH_CONFIG = {
     # Legacy settings for backwards compatibility
@@ -78,7 +82,6 @@ DEFAULT_RAG_SEARCH_CONFIG = {
     "web_vector_top_k": 10,
     "llm_context_document_limit": 10,
     "chat_context_limit": 10,
-    
     # New comprehensive RAG settings
     "retriever": {
         "fts_top_k": 10,
@@ -91,7 +94,7 @@ DEFAULT_RAG_SEARCH_CONFIG = {
         "media_collection": "media_embeddings",
         "chat_collection": "chat_embeddings",
         "notes_collection": "notes_embeddings",
-        "character_collection": "character_embeddings"
+        "character_collection": "character_embeddings",
     },
     "search": {
         "default_search_mode": "semantic",
@@ -100,7 +103,7 @@ DEFAULT_RAG_SEARCH_CONFIG = {
         "include_citations": True,
         "citation_style": "inline",
         "snippet_max_chars": 240,
-        "max_context_size": 16000
+        "max_context_size": 16000,
     },
     "processor": {
         "enable_reranking": True,
@@ -108,21 +111,21 @@ DEFAULT_RAG_SEARCH_CONFIG = {
         "reranker_top_k": 5,
         "deduplication_threshold": 0.85,
         "max_context_length": 4096,
-        "combination_method": "weighted"
+        "combination_method": "weighted",
     },
     "generator": {
         "default_model": None,
         "default_temperature": 0.7,
         "max_tokens": 1024,
         "enable_streaming": True,
-        "stream_chunk_size": 10
+        "stream_chunk_size": 10,
     },
     "chroma": {
         "persist_directory": None,
         "collection_prefix": "tldw_rag",
         "embedding_model": "all-MiniLM-L6-v2",
         "embedding_dimension": 384,
-        "distance_metric": "cosine"
+        "distance_metric": "cosine",
     },
     "cache": {
         "enable_cache": True,
@@ -130,7 +133,7 @@ DEFAULT_RAG_SEARCH_CONFIG = {
         "max_cache_size": 1000,
         "cache_embedding_results": True,
         "cache_search_results": True,
-        "cache_llm_responses": False
+        "cache_llm_responses": False,
     },
     "service": {
         "profile": "hybrid_basic",  # Default profile: "bm25_only", "vector_only", "hybrid_basic", "hybrid_enhanced", "hybrid_full"
@@ -150,7 +153,7 @@ DEFAULT_RAG_SEARCH_CONFIG = {
             # "expand_context_on_retrieval": True,
             # "clean_pdf_artifacts": True,
             # "reranking_strategy": "cross_encoder"
-        }
+        },
     },
     "memory_management": {
         "max_total_size_mb": 1024.0,
@@ -164,8 +167,8 @@ DEFAULT_RAG_SEARCH_CONFIG = {
         "enable_lru_cache": True,
         "memory_limit_bytes": 2147483648,
         "min_documents_to_keep": 100,
-        "cleanup_confirmation_required": False
-    }
+        "cleanup_confirmation_required": False,
+    },
 }
 
 DEFAULT_MEDIA_INGESTION_CONFIG = {
@@ -182,7 +185,7 @@ DEFAULT_MEDIA_INGESTION_CONFIG = {
         "enable_ocr": False,  # Default to disabled for performance
         "ocr_language": "en",  # Default OCR language
         "ocr_backend": "docling",  # Default OCR backend
-        "ocr_confidence_threshold": 0.8  # Minimum confidence score
+        "ocr_confidence_threshold": 0.8,  # Minimum confidence score
     },
     "ebook": {
         "chunk_method": "ebook_chapters",
@@ -190,7 +193,7 @@ DEFAULT_MEDIA_INGESTION_CONFIG = {
         "chunk_overlap": 200,
         "use_adaptive_chunking": False,
         "use_multi_level_chunking": False,
-        "chunk_language": ""
+        "chunk_language": "",
     },
     "document": {
         "chunk_method": "sentences",
@@ -203,7 +206,7 @@ DEFAULT_MEDIA_INGESTION_CONFIG = {
         "enable_ocr": False,  # Default to disabled for performance
         "ocr_language": "en",  # Default OCR language
         "ocr_backend": "docling",  # Default OCR backend
-        "ocr_confidence_threshold": 0.8  # Minimum confidence score
+        "ocr_confidence_threshold": 0.8,  # Minimum confidence score
     },
     "plaintext": {
         "chunk_method": "paragraphs",
@@ -211,7 +214,7 @@ DEFAULT_MEDIA_INGESTION_CONFIG = {
         "chunk_overlap": 200,
         "use_adaptive_chunking": False,
         "use_multi_level_chunking": False,
-        "chunk_language": ""
+        "chunk_language": "",
     },
     "web_article": {
         "chunk_method": "paragraphs",
@@ -219,7 +222,7 @@ DEFAULT_MEDIA_INGESTION_CONFIG = {
         "chunk_overlap": 200,
         "use_adaptive_chunking": False,
         "use_multi_level_chunking": False,
-        "chunk_language": ""
+        "chunk_language": "",
     },
     "audio": {
         "chunk_method": "sentences",
@@ -231,7 +234,7 @@ DEFAULT_MEDIA_INGESTION_CONFIG = {
         "transcription_model": "base",
         "transcription_language": "en",
         "vad_filter": False,
-        "diarize": False
+        "diarize": False,
     },
     "video": {
         "chunk_method": "sentences",
@@ -244,7 +247,7 @@ DEFAULT_MEDIA_INGESTION_CONFIG = {
         "transcription_language": "en",
         "vad_filter": False,
         "diarize": False,
-        "extract_audio_only": True
+        "extract_audio_only": True,
     },
     "image": {
         "chunk_method": "visual_blocks",
@@ -262,8 +265,8 @@ DEFAULT_MEDIA_INGESTION_CONFIG = {
         "extract_visual_features": True,
         "visual_feature_model": "basic",
         "image_preprocessing": True,
-        "max_image_size": 4096  # Max dimension in pixels
-    }
+        "max_image_size": 4096,  # Max dimension in pixels
+    },
 }
 
 # OCR Backend Configurations
@@ -277,51 +280,41 @@ DEFAULT_OCR_BACKEND_CONFIG = {
         "max_new_tokens": 4096,
         # For OpenAI mode
         "openai_base_url": "http://localhost:8000/v1",
-        "openai_api_key": "123"
+        "openai_api_key": "123",
     },
     "tesseract": {
         "config": "",  # Additional tesseract config options
-        "lang": "eng"  # Default language
+        "lang": "eng",  # Default language
     },
-    "easyocr": {
-        "use_gpu": True,
-        "languages": ["en"]
-    },
-    "paddleocr": {
-        "use_gpu": True,
-        "lang": "en"
-    }
+    "easyocr": {"use_gpu": True, "languages": ["en"]},
+    "paddleocr": {"use_gpu": True, "lang": "en"},
 }
 
 DEFAULT_DIARIZATION_CONFIG = {
     # Enable diarization by default
     "enabled": False,
-    
     # VAD settings
     "vad_threshold": 0.5,
     "vad_min_speech_duration": 0.25,
     "vad_min_silence_duration": 0.25,
-    
     # Segmentation settings
     "segment_duration": 2.0,
     "segment_overlap": 0.5,
     "min_segment_duration": 1.0,
     "max_segment_duration": 3.0,
-    
     # Embedding model
     "embedding_model": "speechbrain/spkrec-ecapa-voxceleb",
     "embedding_device": "auto",  # auto, cuda, cpu
-    
     # Clustering settings
     "clustering_method": "spectral",  # spectral, agglomerative
     "similarity_threshold": 0.85,
     "min_speakers": 1,
     "max_speakers": 10,
-    
     # Post-processing
     "merge_threshold": 0.5,  # seconds between segments to merge
-    "min_speaker_duration": 3.0  # minimum total duration per speaker
+    "min_speaker_duration": 3.0,  # minimum total duration per speaker
 }
+
 
 def load_openai_mappings() -> Dict:
     """Load OpenAI TTS mappings from packaged resources.
@@ -330,31 +323,41 @@ def load_openai_mappings() -> Dict:
     Fallback to a file path inside the package directory if needed.
     """
     from importlib import resources as importlib_resources
+
     package = "tldw_chatbook.Config_Files"
     resource_name = "openai_tts_mappings.json"
 
     # Try importlib.resources first (works in wheels and editable installs)
     try:
         mapping_path = importlib_resources.files(package).joinpath(resource_name)
-        logger.info(f"Attempting to load OpenAI TTS mappings from resource: {mapping_path}")
+        logger.info(
+            f"Attempting to load OpenAI TTS mappings from resource: {mapping_path}"
+        )
         with mapping_path.open("r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e_res:
-        logger.debug(f"OpenAI TTS mappings unavailable via importlib.resources: {e_res}")
+        logger.debug(
+            f"OpenAI TTS mappings unavailable via importlib.resources: {e_res}"
+        )
 
     # Fallback: direct path within the installed package directory
     try:
         current_file_path = Path(__file__).resolve()
         mapping_path_fs = current_file_path.parent / "Config_Files" / resource_name
-        logger.info(f"Attempting to load OpenAI TTS mappings from filesystem: {mapping_path_fs}")
+        logger.info(
+            f"Attempting to load OpenAI TTS mappings from filesystem: {mapping_path_fs}"
+        )
         with open(mapping_path_fs, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e_fs:
-        logger.warning(f"OpenAI TTS mappings unavailable; using built-in defaults. Reason: {e_fs}")
+        logger.warning(
+            f"OpenAI TTS mappings unavailable; using built-in defaults. Reason: {e_fs}"
+        )
         return {
             "models": {"tts-1": "openai_official_tts-1"},
             "voices": {"alloy": "alloy"},
         }
+
 
 _openai_mappings = load_openai_mappings()
 
@@ -364,20 +367,25 @@ openai_tts_mappings = {
         "tts-1": "openai_official_tts-1",
         "tts-1-hd": "openai_official_tts-1-hd",
         "eleven_monolingual_v1": "elevenlabs_english_v1",
-        "kokoro": "local_kokoro_default_onnx"
+        "kokoro": "local_kokoro_default_onnx",
     },
     "voices": {
-        "alloy": "alloy", "echo": "echo", "fable": "fable",
-        "onyx": "onyx", "nova": "nova", "shimmer": "shimmer",
+        "alloy": "alloy",
+        "echo": "echo",
+        "fable": "fable",
+        "onyx": "onyx",
+        "nova": "nova",
+        "shimmer": "shimmer",
         "RachelEL": "21m00Tcm4TlvDq8ikWAM",
         "k_bella": "af_bella",
-        "k_adam" : "am_v0adam"
-    }
+        "k_adam": "am_v0adam",
+    },
 }
 # Update openai_tts_mappings with values from _openai_mappings (JSON file takes precedence)
 if _openai_mappings:
     openai_tts_mappings["models"].update(_openai_mappings.get("models", {}))
     openai_tts_mappings["voices"].update(_openai_mappings.get("voices", {}))
+
 
 def deep_merge_dicts(base: Dict, update: Dict) -> Dict:
     """Recursively merges update_dict into base_dict."""
@@ -395,6 +403,7 @@ def get_encryption_module():
     global _ENCRYPTION_MODULE
     if _ENCRYPTION_MODULE is None:
         from tldw_chatbook.Utils.config_encryption import config_encryption
+
         _ENCRYPTION_MODULE = config_encryption
     return _ENCRYPTION_MODULE
 
@@ -429,10 +438,10 @@ def clear_encryption_password():
 def decrypt_config_section(config_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Decrypt encrypted values in the config if encryption is enabled.
-    
+
     Args:
         config_data: The config dictionary potentially containing encrypted values
-        
+
     Returns:
         Config dictionary with decrypted values
     """
@@ -440,47 +449,53 @@ def decrypt_config_section(config_data: Dict[str, Any]) -> Dict[str, Any]:
     encryption_config = config_data.get("encryption", {})
     if not encryption_config.get("enabled", False):
         return config_data
-    
+
     password = get_encryption_password()
     if not password:
-        logger.warning("Encryption is enabled but no password is set. Cannot decrypt config.")
+        logger.warning(
+            "Encryption is enabled but no password is set. Cannot decrypt config."
+        )
         return config_data
-    
+
     try:
         enc_module = get_encryption_module()
-        
+
         # Decrypt all sections recursively
         decrypted_config = enc_module.decrypt_config(config_data, password)
-        
+
         return decrypted_config
     except Exception as e:
         logger.error(f"Failed to decrypt config: {e}")
         return config_data
 
 
-def encrypt_api_keys_in_config(config_data: Dict[str, Any], password: str) -> Dict[str, Any]:
+def encrypt_api_keys_in_config(
+    config_data: Dict[str, Any], password: str
+) -> Dict[str, Any]:
     """
     Encrypt API keys in the config data.
-    
+
     Args:
         config_data: The config dictionary
         password: The password to use for encryption
-        
+
     Returns:
         Config dictionary with encrypted API keys
     """
     enc_module = get_encryption_module()
     encrypted_config = copy.deepcopy(config_data)
-    
+
     # Set encryption metadata
     encryption_config = encrypted_config.get("encryption", {})
     encryption_config["enabled"] = True
     encryption_config["method"] = "AES-256-GCM-scrypt"
     encryption_config["version"] = 1  # New clean version
     # Create password verifier for authentication
-    encryption_config["password_verifier"] = enc_module.create_password_verifier(password)
+    encryption_config["password_verifier"] = enc_module.create_password_verifier(
+        password
+    )
     encrypted_config["encryption"] = encryption_config
-    
+
     # Encrypt all sensitive fields in all sections
     def encrypt_sensitive_fields(d: Dict[str, Any]) -> Dict[str, Any]:
         result = {}
@@ -489,7 +504,7 @@ def encrypt_api_keys_in_config(config_data: Dict[str, Any], password: str) -> Di
             if key == "encryption":
                 result[key] = value
                 continue
-                
+
             if isinstance(value, dict):
                 # Recursively encrypt nested dictionaries
                 result[key] = encrypt_sensitive_fields(value)
@@ -497,12 +512,31 @@ def encrypt_api_keys_in_config(config_data: Dict[str, Any], password: str) -> Di
                 # Check if this is a sensitive field
                 key_lower = key.lower()
                 # Check exact matches and also patterns
-                sensitive_exact = ['api_key', 'apikey', 'api-key', 'secret', 'token', 'password', 
-                                  'auth_token', 'api_token', 'access_token', 'secret_key',
-                                  'refresh_token', 'client_secret']
+                sensitive_exact = [
+                    "api_key",
+                    "apikey",
+                    "api-key",
+                    "secret",
+                    "token",
+                    "password",
+                    "auth_token",
+                    "api_token",
+                    "access_token",
+                    "secret_key",
+                    "refresh_token",
+                    "client_secret",
+                ]
                 # Also check if key contains these patterns
-                sensitive_patterns = ['api_key', 'apikey', 'api-key', '_key', '_token', '_secret', '_password']
-                
+                sensitive_patterns = [
+                    "api_key",
+                    "apikey",
+                    "api-key",
+                    "_key",
+                    "_token",
+                    "_secret",
+                    "_password",
+                ]
+
                 is_sensitive = key_lower in sensitive_exact
                 if not is_sensitive:
                     # Check if key contains any sensitive pattern
@@ -510,10 +544,13 @@ def encrypt_api_keys_in_config(config_data: Dict[str, Any], password: str) -> Di
                         if pattern in key_lower:
                             is_sensitive = True
                             break
-                
+
                 if is_sensitive:
                     # Skip if already encrypted or is a placeholder
-                    if not (enc_module.is_encrypted(value) or (value.startswith('<') and value.endswith('>'))):
+                    if not (
+                        enc_module.is_encrypted(value)
+                        or (value.startswith("<") and value.endswith(">"))
+                    ):
                         result[key] = enc_module.encrypt_value(value, password)
                     else:
                         result[key] = value
@@ -522,16 +559,20 @@ def encrypt_api_keys_in_config(config_data: Dict[str, Any], password: str) -> Di
             else:
                 result[key] = value
         return result
-    
+
     return encrypt_sensitive_fields(encrypted_config)
 
 
-def _get_typed_value(data_dict: Dict, key: str, default: Any, target_type: type = str) -> Any:
+def _get_typed_value(
+    data_dict: Dict, key: str, default: Any, target_type: type = str
+) -> Any:
     """Helper to get value from dict and cast to type, with logging for type errors."""
     value = data_dict.get(key, default)
-    if value is default and default is not None : # if value is the default, it's already typed
+    if (
+        value is default and default is not None
+    ):  # if value is the default, it's already typed
         return value
-    if value is None: # If key is missing and default is None
+    if value is None:  # If key is missing and default is None
         return None
 
     try:
@@ -539,12 +580,14 @@ def _get_typed_value(data_dict: Dict, key: str, default: Any, target_type: type 
             if isinstance(value, bool):
                 return value
             # For bools from TOML strings (shouldn't happen if TOML is well-formed)
-            return str(value).lower() in ['true', '1', 't', 'y', 'yes']
+            return str(value).lower() in ["true", "1", "t", "y", "yes"]
         if target_type == Path:
-             return Path(value) if value else default
+            return Path(value) if value else default
         return target_type(value)
     except (ValueError, TypeError) as e:
-        logger.warning(f"Config key '{key}' has value '{value}' which could not be converted to {target_type}. Using default: '{default}'. Error: {e}")
+        logger.warning(
+            f"Config key '{key}' has value '{value}' which could not be converted to {target_type}. Using default: '{default}'. Error: {e}"
+        )
         return default
 
 
@@ -595,10 +638,12 @@ def coerce_int_setting(
         return default
     return coerced
 
+
 # Global cache for load_settings to avoid redundant file I/O
 _SETTINGS_CACHE: Optional[Dict[str, Any]] = None
 _SETTINGS_CACHE_SOURCE: Optional[Path] = None
 _SETTINGS_CACHE_LOCK = None  # Will be initialized when needed
+
 
 def resolve_tldw_api_config(app_config) -> Dict:
     """Return the [tldw_api] section from either config shape.
@@ -625,21 +670,22 @@ def load_settings(force_reload: bool = False) -> Dict:
     Loads all settings from TOML config files, environment variables, or defaults into a dictionary.
     It first loads a base config (e.g., server-local), then attempts to load a user-specific
     CLI config which can override or extend the base settings.
-    
+
     Args:
         force_reload: If True, bypasses the cache and reloads from disk.
-    
+
     Returns:
         Dictionary containing all configuration settings.
     """
     global _SETTINGS_CACHE, _SETTINGS_CACHE_SOURCE, _SETTINGS_CACHE_LOCK
     active_config_path = _get_effective_config_path()
-    
+
     # Initialize lock on first use to avoid import issues
     if _SETTINGS_CACHE_LOCK is None:
         import threading
+
         _SETTINGS_CACHE_LOCK = threading.Lock()
-    
+
     # Thread-safe cache check
     with _SETTINGS_CACHE_LOCK:
         if (
@@ -652,9 +698,11 @@ def load_settings(force_reload: bool = False) -> Dict:
 
     current_file_path = Path(__file__).resolve()
     # config.py is in project_root/tldw_server_api/app/core/config.py
-    ACTUAL_PROJECT_ROOT = current_file_path.parent # /project_root/
-    APP_COMPONENT_ROOT = current_file_path.parent # /project_root/tldw_server_api/
-    logger.info(f"Determined ACTUAL_PROJECT_ROOT for general paths: {ACTUAL_PROJECT_ROOT}")
+    ACTUAL_PROJECT_ROOT = current_file_path.parent  # /project_root/
+    APP_COMPONENT_ROOT = current_file_path.parent  # /project_root/tldw_server_api/
+    logger.info(
+        f"Determined ACTUAL_PROJECT_ROOT for general paths: {ACTUAL_PROJECT_ROOT}"
+    )
     logger.info(f"Determined APP_COMPONENT_ROOT for config files: {APP_COMPONENT_ROOT}")
 
     # --- Load Comprehensive Config from TOML ---
@@ -677,44 +725,50 @@ def load_settings(force_reload: bool = False) -> Dict:
     # ciphertext keys that the Chat send path passes to providers verbatim,
     # failing auth.
     toml_config_data = decrypt_config_section(toml_config_data)
-    logger.debug("load_settings: Configuration loaded from disk (cache miss or forced reload)")
+    logger.debug(
+        "load_settings: Configuration loaded from disk (cache miss or forced reload)"
+    )
     # logger.debug(f"Final toml_config_data after potential merge: {toml_config_data}") # Optional: for verbose debugging
 
     # --- Extract settings from the (potentially merged) TOML, with fallbacks ---
     # Helper to get values from specific TOML sections within the final toml_config_data
     def get_toml_section(section_name: str, default_val: Optional[Dict] = None) -> Dict:
-        return toml_config_data.get(section_name, default_val if default_val is not None else {})
+        return toml_config_data.get(
+            section_name, default_val if default_val is not None else {}
+        )
 
-    api_section = get_toml_section('API') # This will now check the merged config
+    api_section = get_toml_section("API")  # This will now check the merged config
     # If [API] exists in the user's CLI config, it would have merged with/overridden the CLI defaults' [API]
     # Same applies to all other sections retrieved below.
 
-    paths_section = get_toml_section('Paths')
-    logging_section_server = get_toml_section('Logging')
-    processing_section = get_toml_section('Processing')
-    chunking_section = get_toml_section('Chunking')
-    embeddings_section = get_toml_section('Embeddings')
-    embedding_config_section = get_toml_section('embedding_config')  # Get the [embedding_config] table
-    chat_dicts_section = get_toml_section('ChatDictionaries')
-    auto_save_section = get_toml_section('AutoSave')
-    stt_settings_section = get_toml_section('STTSettings')
-    tts_settings_section = get_toml_section('TTSSettings')
-    search_engines_section = get_toml_section('SearchEngines')
-    search_settings_section = get_toml_section('SearchSettings')
-    web_scraper_section = get_toml_section('WebScraper')
-    confluence_section = get_toml_section('Confluence')
-    get_toml_section('FileValidation')
-    get_toml_section('providers')  # Get the [providers] table
+    paths_section = get_toml_section("Paths")
+    logging_section_server = get_toml_section("Logging")
+    processing_section = get_toml_section("Processing")
+    chunking_section = get_toml_section("Chunking")
+    embeddings_section = get_toml_section("Embeddings")
+    embedding_config_section = get_toml_section(
+        "embedding_config"
+    )  # Get the [embedding_config] table
+    chat_dicts_section = get_toml_section("ChatDictionaries")
+    auto_save_section = get_toml_section("AutoSave")
+    stt_settings_section = get_toml_section("STTSettings")
+    tts_settings_section = get_toml_section("TTSSettings")
+    search_engines_section = get_toml_section("SearchEngines")
+    search_settings_section = get_toml_section("SearchSettings")
+    web_scraper_section = get_toml_section("WebScraper")
+    confluence_section = get_toml_section("Confluence")
+    get_toml_section("FileValidation")
+    get_toml_section("providers")  # Get the [providers] table
 
-    final_api_settings = get_toml_section('api_settings')
-    final_logging_settings = get_toml_section('logging')
-    final_providers_settings = get_toml_section('providers')
-    final_general_settings_cli = get_toml_section('general')
-    final_database_settings_cli = get_toml_section('database')
-    final_chat_defaults_cli = get_toml_section('chat_defaults')
-    final_character_defaults_cli = get_toml_section('character_defaults')
-    final_notes_settings_cli = get_toml_section('notes')
-    final_console_settings_cli = copy.deepcopy(get_toml_section('console'))
+    final_api_settings = get_toml_section("api_settings")
+    final_logging_settings = get_toml_section("logging")
+    final_providers_settings = get_toml_section("providers")
+    final_general_settings_cli = get_toml_section("general")
+    final_database_settings_cli = get_toml_section("database")
+    final_chat_defaults_cli = get_toml_section("chat_defaults")
+    final_character_defaults_cli = get_toml_section("character_defaults")
+    final_notes_settings_cli = get_toml_section("notes")
+    final_console_settings_cli = copy.deepcopy(get_toml_section("console"))
     if not isinstance(final_console_settings_cli, dict):
         final_console_settings_cli = {}
     final_console_settings_cli["collapse_large_pastes"] = coerce_bool_setting(
@@ -738,66 +792,97 @@ def load_settings(force_reload: bool = False) -> Dict:
     )
 
     # --- Application Mode ---
-    single_user_mode_str = os.getenv("APP_MODE", _get_typed_value(processing_section, "app_mode", "single")).lower()
+    single_user_mode_str = os.getenv(
+        "APP_MODE", _get_typed_value(processing_section, "app_mode", "single")
+    ).lower()
     single_user_mode = single_user_mode_str != "multi"
 
     # --- Single-User Settings ---
-    single_user_fixed_id = int(os.getenv("SINGLE_USER_FIXED_ID", _get_typed_value(processing_section, "single_user_fixed_id", "0", int)))
-    os.getenv("API_KEY", _get_typed_value(api_section, "single_user_api_key", "default-secret-key-for-single-user"))
+    single_user_fixed_id = int(
+        os.getenv(
+            "SINGLE_USER_FIXED_ID",
+            _get_typed_value(processing_section, "single_user_fixed_id", "0", int),
+        )
+    )
+    os.getenv(
+        "API_KEY",
+        _get_typed_value(
+            api_section, "single_user_api_key", "default-secret-key-for-single-user"
+        ),
+    )
 
     # --- Paths ---
-    api_section_legacy = get_toml_section('API')  # For legacy direct API key access if any
-    paths_section_legacy = get_toml_section('Paths')
-    get_toml_section('Processing')
-    get_toml_section('Chunking')
+    api_section_legacy = get_toml_section(
+        "API"
+    )  # For legacy direct API key access if any
+    paths_section_legacy = get_toml_section("Paths")
+    get_toml_section("Processing")
+    get_toml_section("Chunking")
 
     # --- User Name ---
     default_users_name_fallback = "default_user"
-    users_name_from_toml_general = _get_typed_value(final_general_settings_cli, "users_name",
-                                                    default_users_name_fallback, str)
+    users_name_from_toml_general = _get_typed_value(
+        final_general_settings_cli, "users_name", default_users_name_fallback, str
+    )
     users_name = os.getenv("USERS_NAME", users_name_from_toml_general)
 
-    users_db_configured = os.getenv("USERS_DB_ENABLED", _get_typed_value(processing_section, "users_db_enabled", "false", str)).lower() == "true"
+    users_db_configured = (
+        os.getenv(
+            "USERS_DB_ENABLED",
+            _get_typed_value(processing_section, "users_db_enabled", "false", str),
+        ).lower()
+        == "true"
+    )
     log_level_env = os.getenv("LOG_LEVEL", "INFO").upper()
     _get_typed_value(logging_section_server, "log_level", log_level_env, str).upper()
 
-
-
     # --- Load specific configurations from TOML or use defaults ---
-    app_tts_config = get_toml_section('AppTTSConfig') # For APP_CONFIG related values
-    app_database_config = get_toml_section('AppDatabaseConfig') # For DATABASE_CONFIG
-    app_rag_search_config = get_toml_section('AppRAGSearchConfig') # For RAG_SEARCH_CONFIG
+    app_tts_config = get_toml_section("AppTTSConfig")  # For APP_CONFIG related values
+    app_database_config = get_toml_section("AppDatabaseConfig")  # For DATABASE_CONFIG
+    app_rag_search_config = get_toml_section(
+        "AppRAGSearchConfig"
+    )  # For RAG_SEARCH_CONFIG
 
     # API Keys (Prioritize ENV, then TOML, then None)
-    def get_api_key(toml_key: str, env_var: str, section: Dict = api_section_legacy) -> Optional[str]:
+    def get_api_key(
+        toml_key: str, env_var: str, section: Dict = api_section_legacy
+    ) -> Optional[str]:
         return os.getenv(env_var, section.get(toml_key))
 
-    openai_api_key = get_api_key('openai_api_key', 'OPENAI_API_KEY')
-    anthropic_api_key = get_api_key('anthropic_api_key', 'ANTHROPIC_API_KEY')
-    cohere_api_key = get_api_key('cohere_api_key', 'COHERE_API_KEY')
-    groq_api_key = get_api_key('groq_api_key', 'GROQ_API_KEY')
-    huggingface_api_key = get_api_key('huggingface_api_key', 'HUGGINGFACE_API_KEY')
-    openrouter_api_key = get_api_key('openrouter_api_key', 'OPENROUTER_API_KEY')
-    deepseek_api_key = get_api_key('deepseek_api_key', 'DEEPSEEK_API_KEY')
-    mistral_api_key = get_api_key('mistral_api_key', 'MISTRAL_API_KEY')
-    google_api_key = get_api_key('google_api_key', 'GOOGLE_API_KEY')
-    elevenlabs_api_key = get_api_key('elevenlabs_api_key', 'ELEVENLABS_API_KEY')
+    openai_api_key = get_api_key("openai_api_key", "OPENAI_API_KEY")
+    anthropic_api_key = get_api_key("anthropic_api_key", "ANTHROPIC_API_KEY")
+    cohere_api_key = get_api_key("cohere_api_key", "COHERE_API_KEY")
+    groq_api_key = get_api_key("groq_api_key", "GROQ_API_KEY")
+    huggingface_api_key = get_api_key("huggingface_api_key", "HUGGINGFACE_API_KEY")
+    openrouter_api_key = get_api_key("openrouter_api_key", "OPENROUTER_API_KEY")
+    deepseek_api_key = get_api_key("deepseek_api_key", "DEEPSEEK_API_KEY")
+    mistral_api_key = get_api_key("mistral_api_key", "MISTRAL_API_KEY")
+    google_api_key = get_api_key("google_api_key", "GOOGLE_API_KEY")
+    elevenlabs_api_key = get_api_key("elevenlabs_api_key", "ELEVENLABS_API_KEY")
 
     # Determine platform-specific default STT provider
-    default_stt_provider = 'faster_whisper'
-    if sys.platform == 'darwin':
+    default_stt_provider = "faster_whisper"
+    if sys.platform == "darwin":
         # Check if macOS-specific providers are available
         try:
             import parakeet_mlx
-            default_stt_provider = 'parakeet-mlx'
-            logger.debug("Detected parakeet-mlx available on macOS, setting as default STT provider")
+
+            default_stt_provider = "parakeet-mlx"
+            logger.debug(
+                "Detected parakeet-mlx available on macOS, setting as default STT provider"
+            )
         except ImportError:
             try:
                 from lightning_whisper_mlx import LightningWhisperMLX
-                default_stt_provider = 'lightning-whisper-mlx'
-                logger.debug("Detected lightning-whisper-mlx available on macOS, setting as default STT provider")
+
+                default_stt_provider = "lightning-whisper-mlx"
+                logger.debug(
+                    "Detected lightning-whisper-mlx available on macOS, setting as default STT provider"
+                )
             except ImportError:
-                logger.debug("No macOS-specific STT providers found, using faster-whisper as default")
+                logger.debug(
+                    "No macOS-specific STT providers found, using faster-whisper as default"
+                )
 
     config_dict = {
         # General App
@@ -807,7 +892,6 @@ def load_settings(force_reload: bool = False) -> Dict:
         "PROJECT_ROOT": ACTUAL_PROJECT_ROOT,
         "API_COMPONENT_ROOT": APP_COMPONENT_ROOT,
         "USERS_NAME": users_name,
-
         # --- Pass through the full tables ---
         "general": final_general_settings_cli,  # For TUI settings like default_tab
         "logging": final_logging_settings,  # For TUI log settings like log_max_bytes
@@ -818,533 +902,1039 @@ def load_settings(force_reload: bool = False) -> Dict:
         "character_defaults": final_character_defaults_cli,
         "notes": final_notes_settings_cli,  # For notes auto-save settings
         "console": final_console_settings_cli,  # For Console behavior settings
-
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
-
         # Auth
-        "SINGLE_USER_API_KEY": get_api_key("single_user_api_key", "API_KEY", section=api_section_legacy) or "default-secret-key-for-single-user",
-        "DATABASE_URL": os.getenv("DATABASE_URL", paths_section_legacy.get("database_url",
-                                                                           f"sqlite:///{ACTUAL_PROJECT_ROOT / 'user_databases' / 'single_user' / 'tldw.db'}")),
+        "SINGLE_USER_API_KEY": get_api_key(
+            "single_user_api_key", "API_KEY", section=api_section_legacy
+        )
+        or "default-secret-key-for-single-user",
+        "DATABASE_URL": os.getenv(
+            "DATABASE_URL",
+            paths_section_legacy.get(
+                "database_url",
+                f"sqlite:///{ACTUAL_PROJECT_ROOT / 'user_databases' / 'single_user' / 'tldw.db'}",
+            ),
+        ),
         "USERS_DB_CONFIGURED": users_db_configured,
-
         # --- Configurations migrated from load_and_log_configs ---
         "anthropic_api": {
-            'api_key': anthropic_api_key,
-            'model': api_section_legacy.get('anthropic_model', 'claude-sonnet-4-20250514'),
-            'streaming': api_section_legacy.get("anthropic_streaming", False),
-            'temperature': api_section_legacy.get('anthropic_temperature', 0.7),
-            'top_p': api_section_legacy.get('anthropic_top_p', 0.95),
-            'top_k': api_section_legacy.get('anthropic_top_k', 100),
-            'max_tokens': api_section_legacy.get('anthropic_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('anthropic_api_timeout', 90),
-            'api_retries': api_section_legacy.get('anthropic_api_retry', 3), # Key name consistency
-            'api_retry_delay': api_section_legacy.get('anthropic_api_retry_delay', 5)
+            "api_key": anthropic_api_key,
+            "model": api_section_legacy.get(
+                "anthropic_model", "claude-sonnet-4-20250514"
+            ),
+            "streaming": api_section_legacy.get("anthropic_streaming", False),
+            "temperature": api_section_legacy.get("anthropic_temperature", 0.7),
+            "top_p": api_section_legacy.get("anthropic_top_p", 0.95),
+            "top_k": api_section_legacy.get("anthropic_top_k", 100),
+            "max_tokens": api_section_legacy.get("anthropic_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("anthropic_api_timeout", 90),
+            "api_retries": api_section_legacy.get(
+                "anthropic_api_retry", 3
+            ),  # Key name consistency
+            "api_retry_delay": api_section_legacy.get("anthropic_api_retry_delay", 5),
         },
         "cohere_api": {
-            'api_key': cohere_api_key,
-            'model': api_section_legacy.get('cohere_model', 'command-a-03-2025'),
-            'streaming': api_section_legacy.get('cohere_streaming', False),
-            'temperature': api_section_legacy.get('cohere_temperature', 0.7),
-            'max_p': api_section_legacy.get('cohere_max_p', 0.95), # Note: check param name, Cohere might use 'p' or 'top_p'
-            'top_k': api_section_legacy.get('cohere_top_k', 100),
-            'max_tokens': api_section_legacy.get('cohere_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('cohere_api_timeout', 90),
-            'api_retries': api_section_legacy.get('cohere_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('cohere_api_retry_delay', 5)
+            "api_key": cohere_api_key,
+            "model": api_section_legacy.get("cohere_model", "command-a-03-2025"),
+            "streaming": api_section_legacy.get("cohere_streaming", False),
+            "temperature": api_section_legacy.get("cohere_temperature", 0.7),
+            "max_p": api_section_legacy.get(
+                "cohere_max_p", 0.95
+            ),  # Note: check param name, Cohere might use 'p' or 'top_p'
+            "top_k": api_section_legacy.get("cohere_top_k", 100),
+            "max_tokens": api_section_legacy.get("cohere_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("cohere_api_timeout", 90),
+            "api_retries": api_section_legacy.get("cohere_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get("cohere_api_retry_delay", 5),
         },
         "deepseek_api": {
-            'api_key': deepseek_api_key,
-            'model': api_section_legacy.get('deepseek_model', 'deepseek-chat'),
-            'streaming': api_section_legacy.get('deepseek_streaming', False),
-            'temperature': api_section_legacy.get('deepseek_temperature', 0.7),
-            'top_p': api_section_legacy.get('deepseek_top_p', 0.95),
-            'min_p': api_section_legacy.get('deepseek_min_p', 0.05),
-            'max_tokens': api_section_legacy.get('deepseek_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('deepseek_api_timeout', 90),
-            'api_retries': api_section_legacy.get('deepseek_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('deepseek_api_retry_delay', 5)
+            "api_key": deepseek_api_key,
+            "model": api_section_legacy.get("deepseek_model", "deepseek-chat"),
+            "streaming": api_section_legacy.get("deepseek_streaming", False),
+            "temperature": api_section_legacy.get("deepseek_temperature", 0.7),
+            "top_p": api_section_legacy.get("deepseek_top_p", 0.95),
+            "min_p": api_section_legacy.get("deepseek_min_p", 0.05),
+            "max_tokens": api_section_legacy.get("deepseek_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("deepseek_api_timeout", 90),
+            "api_retries": api_section_legacy.get("deepseek_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get("deepseek_api_retry_delay", 5),
         },
-        "google_generative_api": { # Renamed to avoid confusion with Google Search API
-            'api_key': google_api_key,
-            'model': api_section_legacy.get('google_model', 'gemini-2.5-flash'),
-            'streaming': api_section_legacy.get('google_streaming', False),
-            'temperature': api_section_legacy.get('google_temperature', 0.7),
-            'top_p': api_section_legacy.get('google_top_p', 0.95),
-            'min_p': api_section_legacy.get('google_min_p', 0.05), # Check if 'min_p' is valid for Gemini
-            'max_tokens': api_section_legacy.get('google_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('google_api_timeout', 90),
-            'api_retries': api_section_legacy.get('google_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('google_api_retry_delay', 5)
+        "google_generative_api": {  # Renamed to avoid confusion with Google Search API
+            "api_key": google_api_key,
+            "model": api_section_legacy.get("google_model", "gemini-2.5-flash"),
+            "streaming": api_section_legacy.get("google_streaming", False),
+            "temperature": api_section_legacy.get("google_temperature", 0.7),
+            "top_p": api_section_legacy.get("google_top_p", 0.95),
+            "min_p": api_section_legacy.get(
+                "google_min_p", 0.05
+            ),  # Check if 'min_p' is valid for Gemini
+            "max_tokens": api_section_legacy.get("google_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("google_api_timeout", 90),
+            "api_retries": api_section_legacy.get("google_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get("google_api_retry_delay", 5),
         },
         "groq_api": {
-            'api_key': groq_api_key,
-            'model': api_section_legacy.get('groq_model', 'llama-3.3-70b-versatile'),
-            'streaming': api_section_legacy.get('groq_streaming', False),
-            'temperature': api_section_legacy.get('groq_temperature', 0.7),
-            'top_p': api_section_legacy.get('groq_top_p', 0.95),
-            'max_tokens': api_section_legacy.get('groq_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('groq_api_timeout', 90),
-            'api_retries': api_section_legacy.get('groq_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('groq_api_retry_delay', 5)
+            "api_key": groq_api_key,
+            "model": api_section_legacy.get("groq_model", "llama-3.3-70b-versatile"),
+            "streaming": api_section_legacy.get("groq_streaming", False),
+            "temperature": api_section_legacy.get("groq_temperature", 0.7),
+            "top_p": api_section_legacy.get("groq_top_p", 0.95),
+            "max_tokens": api_section_legacy.get("groq_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("groq_api_timeout", 90),
+            "api_retries": api_section_legacy.get("groq_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get("groq_api_retry_delay", 5),
         },
         "huggingface_api": {
-            'api_key': huggingface_api_key,
-            'use_router_url_format': api_section_legacy.get('huggingface_use_router_url_format', False),
-            'router_base_url': api_section_legacy.get('huggingface_router_base_url', 'https://router.huggingface.co/hf-inference'),
-            'api_base_url': api_section_legacy.get('huggingface_api_base_url', 'https://router.huggingface.co/v1'),
-            'api_chat_path': api_section_legacy.get('huggingface_api_chat_path', 'chat/completions'),
-            'model': api_section_legacy.get('huggingface_model', 'openai/gpt-oss-120b'),
-            'streaming': api_section_legacy.get('huggingface_streaming', False),
-            'temperature': api_section_legacy.get('huggingface_temperature', 0.7),
-            'top_p': api_section_legacy.get('huggingface_top_p', 0.95),
-            'min_p': api_section_legacy.get('huggingface_min_p', 0.05),
-            'max_tokens': api_section_legacy.get('huggingface_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('huggingface_api_timeout', 90),
-            'api_retries': api_section_legacy.get('huggingface_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('huggingface_api_retry_delay', 5)
+            "api_key": huggingface_api_key,
+            "use_router_url_format": api_section_legacy.get(
+                "huggingface_use_router_url_format", False
+            ),
+            "router_base_url": api_section_legacy.get(
+                "huggingface_router_base_url",
+                "https://router.huggingface.co/hf-inference",
+            ),
+            "api_base_url": api_section_legacy.get(
+                "huggingface_api_base_url", "https://router.huggingface.co/v1"
+            ),
+            "api_chat_path": api_section_legacy.get(
+                "huggingface_api_chat_path", "chat/completions"
+            ),
+            "model": api_section_legacy.get("huggingface_model", "openai/gpt-oss-120b"),
+            "streaming": api_section_legacy.get("huggingface_streaming", False),
+            "temperature": api_section_legacy.get("huggingface_temperature", 0.7),
+            "top_p": api_section_legacy.get("huggingface_top_p", 0.95),
+            "min_p": api_section_legacy.get("huggingface_min_p", 0.05),
+            "max_tokens": api_section_legacy.get("huggingface_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("huggingface_api_timeout", 90),
+            "api_retries": api_section_legacy.get("huggingface_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get("huggingface_api_retry_delay", 5),
         },
         "mistral_api": {
-            'api_key': mistral_api_key,
-            'model': api_section_legacy.get('mistral_model', 'mistral-large-latest'),
-            'streaming': api_section_legacy.get('mistral_streaming', False),
-            'temperature': api_section_legacy.get('mistral_temperature', 0.7),
-            'top_p': api_section_legacy.get('mistral_top_p', 0.95),
-            'max_tokens': api_section_legacy.get('mistral_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('mistral_api_timeout', 90),
-            'api_retries': api_section_legacy.get('mistral_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('mistral_api_retry_delay', 5)
+            "api_key": mistral_api_key,
+            "model": api_section_legacy.get("mistral_model", "mistral-large-latest"),
+            "streaming": api_section_legacy.get("mistral_streaming", False),
+            "temperature": api_section_legacy.get("mistral_temperature", 0.7),
+            "top_p": api_section_legacy.get("mistral_top_p", 0.95),
+            "max_tokens": api_section_legacy.get("mistral_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("mistral_api_timeout", 90),
+            "api_retries": api_section_legacy.get("mistral_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get("mistral_api_retry_delay", 5),
         },
         "openrouter_api": {
-            'api_key': openrouter_api_key,
-            'model': api_section_legacy.get('openrouter_model', 'microsoft/wizardlm-2-8x22b'),
-            'streaming': api_section_legacy.get('openrouter_streaming', False),
-            'temperature': api_section_legacy.get('openrouter_temperature', 0.7),
-            'top_p': api_section_legacy.get('openrouter_top_p', 0.95),
-            'min_p': api_section_legacy.get('openrouter_min_p', 0.05),
-            'top_k': api_section_legacy.get('openrouter_top_k', 100),
-            'max_tokens': api_section_legacy.get('openrouter_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('openrouter_api_timeout', 90),
-            'api_retries': api_section_legacy.get('openrouter_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('openrouter_api_retry_delay', 5)
+            "api_key": openrouter_api_key,
+            "model": api_section_legacy.get(
+                "openrouter_model", "microsoft/wizardlm-2-8x22b"
+            ),
+            "streaming": api_section_legacy.get("openrouter_streaming", False),
+            "temperature": api_section_legacy.get("openrouter_temperature", 0.7),
+            "top_p": api_section_legacy.get("openrouter_top_p", 0.95),
+            "min_p": api_section_legacy.get("openrouter_min_p", 0.05),
+            "top_k": api_section_legacy.get("openrouter_top_k", 100),
+            "max_tokens": api_section_legacy.get("openrouter_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("openrouter_api_timeout", 90),
+            "api_retries": api_section_legacy.get("openrouter_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get("openrouter_api_retry_delay", 5),
         },
-        "openai_api": { # OpenAI specific model params, API key is separate
-            'api_key': openai_api_key, # This is now the primary OpenAI API key
-            'model': api_section_legacy.get('openai_model', 'gpt-4o'),
-            'streaming': api_section_legacy.get('openai_streaming', False),
-            'temperature': api_section_legacy.get('openai_temperature', 0.7),
-            'top_p': api_section_legacy.get('openai_top_p', 0.95),
-            'max_tokens': api_section_legacy.get('openai_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('openai_api_timeout', 90),
-            'api_retries': api_section_legacy.get('openai_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('openai_api_retry_delay', 5)
+        "openai_api": {  # OpenAI specific model params, API key is separate
+            "api_key": openai_api_key,  # This is now the primary OpenAI API key
+            "model": api_section_legacy.get("openai_model", "gpt-4o"),
+            "streaming": api_section_legacy.get("openai_streaming", False),
+            "temperature": api_section_legacy.get("openai_temperature", 0.7),
+            "top_p": api_section_legacy.get("openai_top_p", 0.95),
+            "max_tokens": api_section_legacy.get("openai_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("openai_api_timeout", 90),
+            "api_retries": api_section_legacy.get("openai_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get("openai_api_retry_delay", 5),
         },
-        "elevenlabs_api": { # Primarily for the API key, other settings in TTS
-            'api_key': elevenlabs_api_key,
+        "elevenlabs_api": {  # Primarily for the API key, other settings in TTS
+            "api_key": elevenlabs_api_key,
         },
         # Local APIs from LocalAPI section
         "kobold_api": {
-            'api_ip': api_section_legacy.get('kobold_api_IP', 'http://127.0.0.1:5000/api/v1/generate'),
-            'api_streaming_ip': api_section_legacy.get('kobold_openai_api_IP', 'http://127.0.0.1:5001/v1/chat/completions'),
-            'api_key': api_section_legacy.get('kobold_api_key', ''),
-            'streaming': api_section_legacy.get('kobold_streaming', False),
-            'temperature': api_section_legacy.get('kobold_temperature', 0.7),
-            'top_p': api_section_legacy.get('kobold_top_p', 0.95),
-            'top_k': api_section_legacy.get('kobold_top_k', 100),
-            'max_tokens': api_section_legacy.get('kobold_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('kobold_api_timeout', 90),
-            'api_retries': api_section_legacy.get('kobold_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('kobold_api_retry_delay', 5)
+            "api_ip": api_section_legacy.get(
+                "kobold_api_IP", "http://127.0.0.1:5000/api/v1/generate"
+            ),
+            "api_streaming_ip": api_section_legacy.get(
+                "kobold_openai_api_IP", "http://127.0.0.1:5001/v1/chat/completions"
+            ),
+            "api_key": api_section_legacy.get("kobold_api_key", ""),
+            "streaming": api_section_legacy.get("kobold_streaming", False),
+            "temperature": api_section_legacy.get("kobold_temperature", 0.7),
+            "top_p": api_section_legacy.get("kobold_top_p", 0.95),
+            "top_k": api_section_legacy.get("kobold_top_k", 100),
+            "max_tokens": api_section_legacy.get("kobold_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("kobold_api_timeout", 90),
+            "api_retries": api_section_legacy.get("kobold_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get("kobold_api_retry_delay", 5),
         },
-        "llama_cpp_api": { # Renamed for clarity, assuming llama.cpp server
-            'api_ip': api_section_legacy.get('llama_api_IP', 'http://127.0.0.1:8080/v1/chat/completions'),
-            'api_key': api_section_legacy.get('llama_api_key', ''),
-            'streaming': api_section_legacy.get('llama_streaming', False),
-            'temperature': api_section_legacy.get('llama_temperature', 0.7),
-            'top_p': api_section_legacy.get('llama_top_p', 0.95),
-            'min_p': api_section_legacy.get('llama_min_p', 0.05),
-            'top_k': api_section_legacy.get('llama_top_k', 100),
-            'max_tokens': api_section_legacy.get('llama_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('llama_api_timeout', 90),
-            'api_retries': api_section_legacy.get('llama_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('llama_api_retry_delay', 5)
+        "llama_cpp_api": {  # Renamed for clarity, assuming llama.cpp server
+            "api_ip": api_section_legacy.get(
+                "llama_api_IP", "http://127.0.0.1:8080/v1/chat/completions"
+            ),
+            "api_key": api_section_legacy.get("llama_api_key", ""),
+            "streaming": api_section_legacy.get("llama_streaming", False),
+            "temperature": api_section_legacy.get("llama_temperature", 0.7),
+            "top_p": api_section_legacy.get("llama_top_p", 0.95),
+            "min_p": api_section_legacy.get("llama_min_p", 0.05),
+            "top_k": api_section_legacy.get("llama_top_k", 100),
+            "max_tokens": api_section_legacy.get("llama_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("llama_api_timeout", 90),
+            "api_retries": api_section_legacy.get("llama_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get("llama_api_retry_delay", 5),
         },
         "ooba_api": {
-            'api_ip': api_section_legacy.get('ooba_api_IP', 'http://127.0.0.1:5000/v1/chat/completions'),
-            'api_key': api_section_legacy.get('ooba_api_key', ''),
-            'streaming': api_section_legacy.get('ooba_streaming', False),
-            'temperature': api_section_legacy.get('ooba_temperature', 0.7),
-            'top_p': api_section_legacy.get('ooba_top_p', 0.95),
-            'min_p': api_section_legacy.get('ooba_min_p', 0.05),
-            'top_k': api_section_legacy.get('ooba_top_k', 100),
-            'max_tokens': api_section_legacy.get('ooba_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('ooba_api_timeout', 90),
-            'api_retries': api_section_legacy.get('ooba_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('ooba_api_retry_delay', 5)
+            "api_ip": api_section_legacy.get(
+                "ooba_api_IP", "http://127.0.0.1:5000/v1/chat/completions"
+            ),
+            "api_key": api_section_legacy.get("ooba_api_key", ""),
+            "streaming": api_section_legacy.get("ooba_streaming", False),
+            "temperature": api_section_legacy.get("ooba_temperature", 0.7),
+            "top_p": api_section_legacy.get("ooba_top_p", 0.95),
+            "min_p": api_section_legacy.get("ooba_min_p", 0.05),
+            "top_k": api_section_legacy.get("ooba_top_k", 100),
+            "max_tokens": api_section_legacy.get("ooba_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("ooba_api_timeout", 90),
+            "api_retries": api_section_legacy.get("ooba_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get("ooba_api_retry_delay", 5),
         },
-         "tabby_api": {
-            'api_ip': api_section_legacy.get('tabby_api_IP', 'http://127.0.0.1:5000/api/v1/generate'),
-            'api_key': api_section_legacy.get('tabby_api_key', None),
-            'model': api_section_legacy.get('tabby_model', None), # Tabby model might be part of URL or configured in Tabby
-            'streaming': api_section_legacy.get('tabby_streaming', False),
-            'temperature': api_section_legacy.get('tabby_temperature', 0.7),
-            'top_p': api_section_legacy.get('tabby_top_p', 0.95),
-            'top_k': api_section_legacy.get('tabby_top_k', 100),
-            'min_p': api_section_legacy.get('tabby_min_p', 0.05),
-            'max_tokens': api_section_legacy.get('tabby_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('tabby_api_timeout', 90),
-            'api_retries': api_section_legacy.get('tabby_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('tabby_api_retry_delay', 5)
+        "tabby_api": {
+            "api_ip": api_section_legacy.get(
+                "tabby_api_IP", "http://127.0.0.1:5000/api/v1/generate"
+            ),
+            "api_key": api_section_legacy.get("tabby_api_key", None),
+            "model": api_section_legacy.get(
+                "tabby_model", None
+            ),  # Tabby model might be part of URL or configured in Tabby
+            "streaming": api_section_legacy.get("tabby_streaming", False),
+            "temperature": api_section_legacy.get("tabby_temperature", 0.7),
+            "top_p": api_section_legacy.get("tabby_top_p", 0.95),
+            "top_k": api_section_legacy.get("tabby_top_k", 100),
+            "min_p": api_section_legacy.get("tabby_min_p", 0.05),
+            "max_tokens": api_section_legacy.get("tabby_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("tabby_api_timeout", 90),
+            "api_retries": api_section_legacy.get("tabby_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get("tabby_api_retry_delay", 5),
         },
         "vllm_api": {
-            'api_ip': api_section_legacy.get('vllm_api_IP', 'http://127.0.0.1:5000/v1/chat/completions'), # Corrected key
-            'api_key': api_section_legacy.get('vllm_api_key', None),
-            'model': api_section_legacy.get('vllm_model', None),
-            'streaming': api_section_legacy.get('vllm_streaming', False),
-            'temperature': api_section_legacy.get('vllm_temperature', 0.7),
-            'top_p': api_section_legacy.get('vllm_top_p', 0.95),
-            'top_k': api_section_legacy.get('vllm_top_k', 100),
-            'min_p': api_section_legacy.get('vllm_min_p', 0.05),
-            'max_tokens': api_section_legacy.get('vllm_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('vllm_api_timeout', 90),
-            'api_retries': api_section_legacy.get('vllm_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('vllm_api_retry_delay', 5)
+            "api_ip": api_section_legacy.get(
+                "vllm_api_IP", "http://127.0.0.1:5000/v1/chat/completions"
+            ),  # Corrected key
+            "api_key": api_section_legacy.get("vllm_api_key", None),
+            "model": api_section_legacy.get("vllm_model", None),
+            "streaming": api_section_legacy.get("vllm_streaming", False),
+            "temperature": api_section_legacy.get("vllm_temperature", 0.7),
+            "top_p": api_section_legacy.get("vllm_top_p", 0.95),
+            "top_k": api_section_legacy.get("vllm_top_k", 100),
+            "min_p": api_section_legacy.get("vllm_min_p", 0.05),
+            "max_tokens": api_section_legacy.get("vllm_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("vllm_api_timeout", 90),
+            "api_retries": api_section_legacy.get("vllm_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get("vllm_api_retry_delay", 5),
         },
         "ollama_api": {
-            'api_url': api_section_legacy.get('ollama_api_IP', 'http://127.0.0.1:11434/api/generate'), # ollama_api_url or IP
-            'api_key': api_section_legacy.get('ollama_api_key', None), # Ollama doesn't typically use API keys
-            'model': api_section_legacy.get('ollama_model', None),
-            'streaming': api_section_legacy.get('ollama_streaming', False),
-            'temperature': api_section_legacy.get('ollama_temperature', 0.7),
-            'top_p': api_section_legacy.get('ollama_top_p', 0.95),
-            'max_tokens': api_section_legacy.get('ollama_max_tokens', 4096), # Ollama might handle max_tokens differently (num_predict)
-            'api_timeout': api_section_legacy.get('ollama_api_timeout', 90),
-            'api_retries': api_section_legacy.get('ollama_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('ollama_api_retry_delay', 5)
+            "api_url": api_section_legacy.get(
+                "ollama_api_IP", "http://127.0.0.1:11434/api/generate"
+            ),  # ollama_api_url or IP
+            "api_key": api_section_legacy.get(
+                "ollama_api_key", None
+            ),  # Ollama doesn't typically use API keys
+            "model": api_section_legacy.get("ollama_model", None),
+            "streaming": api_section_legacy.get("ollama_streaming", False),
+            "temperature": api_section_legacy.get("ollama_temperature", 0.7),
+            "top_p": api_section_legacy.get("ollama_top_p", 0.95),
+            "max_tokens": api_section_legacy.get(
+                "ollama_max_tokens", 4096
+            ),  # Ollama might handle max_tokens differently (num_predict)
+            "api_timeout": api_section_legacy.get("ollama_api_timeout", 90),
+            "api_retries": api_section_legacy.get("ollama_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get("ollama_api_retry_delay", 5),
         },
         "aphrodite_api": {
-            'api_ip': api_section_legacy.get('aphrodite_api_IP', 'http://127.0.0.1:8080/v1/chat/completions'),
-            'api_key': api_section_legacy.get('aphrodite_api_key', ''),
-            'model': api_section_legacy.get('aphrodite_model', ''),
-            'max_tokens': api_section_legacy.get('aphrodite_max_tokens', 4096),
-            'streaming': api_section_legacy.get('aphrodite_streaming', False),
-            'api_timeout': api_section_legacy.get('aphrodite_api_timeout', 90), # Original used llama_api_timeout
-            'api_retries': api_section_legacy.get('aphrodite_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('aphrodite_api_retry_delay', 5)
+            "api_ip": api_section_legacy.get(
+                "aphrodite_api_IP", "http://127.0.0.1:8080/v1/chat/completions"
+            ),
+            "api_key": api_section_legacy.get("aphrodite_api_key", ""),
+            "model": api_section_legacy.get("aphrodite_model", ""),
+            "max_tokens": api_section_legacy.get("aphrodite_max_tokens", 4096),
+            "streaming": api_section_legacy.get("aphrodite_streaming", False),
+            "api_timeout": api_section_legacy.get(
+                "aphrodite_api_timeout", 90
+            ),  # Original used llama_api_timeout
+            "api_retries": api_section_legacy.get("aphrodite_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get("aphrodite_api_retry_delay", 5),
         },
         "custom_openai_api": {
-            'api_ip': api_section_legacy.get('custom_openai_api_ip', 'http://127.0.0.1:5000/v1/chat/completions'),
-            'api_key': api_section_legacy.get('custom_openai_api_key', None),
-            'model': api_section_legacy.get('custom_openai_api_model', None),
-            'streaming': api_section_legacy.get('custom_openai_api_streaming', False),
-            'temperature': api_section_legacy.get('custom_openai_api_temperature', 0.7),
-            'top_p': api_section_legacy.get('custom_openai_api_top_p', 0.95),
-            'min_p': api_section_legacy.get('custom_openai_api_min_p', 0.05), # Original used top_k, ensure consistency
-            'max_tokens': api_section_legacy.get('custom_openai_api_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('custom_openai_api_timeout', 90),
-            'api_retries': api_section_legacy.get('custom_openai_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('custom_openai_api_retry_delay', 5)
+            "api_ip": api_section_legacy.get(
+                "custom_openai_api_ip", "http://127.0.0.1:5000/v1/chat/completions"
+            ),
+            "api_key": api_section_legacy.get("custom_openai_api_key", None),
+            "model": api_section_legacy.get("custom_openai_api_model", None),
+            "streaming": api_section_legacy.get("custom_openai_api_streaming", False),
+            "temperature": api_section_legacy.get("custom_openai_api_temperature", 0.7),
+            "top_p": api_section_legacy.get("custom_openai_api_top_p", 0.95),
+            "min_p": api_section_legacy.get(
+                "custom_openai_api_min_p", 0.05
+            ),  # Original used top_k, ensure consistency
+            "max_tokens": api_section_legacy.get("custom_openai_api_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("custom_openai_api_timeout", 90),
+            "api_retries": api_section_legacy.get("custom_openai_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get(
+                "custom_openai_api_retry_delay", 5
+            ),
         },
-        "custom_openai_api_2": { # Ensure key names are consistent e.g. custom_openai2_api_min_p
-            'api_ip': api_section_legacy.get('custom_openai2_api_ip', 'http://127.0.0.1:5000/v1/chat/completions'),
-            'api_key': api_section_legacy.get('custom_openai2_api_key', None),
-            'model': api_section_legacy.get('custom_openai2_api_model', None),
-            'streaming': api_section_legacy.get('custom_openai2_api_streaming', False),
-            'temperature': api_section_legacy.get('custom_openai2_api_temperature', 0.7),
-            'top_p': api_section_legacy.get('custom_openai2_api_top_p', 0.95), # original had custom_openai_api2_top_p
-            'min_p': api_section_legacy.get('custom_openai2_api_min_p', 0.05), # original had custom_openai_api2_top_k
-            'max_tokens': api_section_legacy.get('custom_openai2_api_max_tokens', 4096),
-            'api_timeout': api_section_legacy.get('custom_openai2_api_timeout', 90),
-            'api_retries': api_section_legacy.get('custom_openai2_api_retry', 3),
-            'api_retry_delay': api_section_legacy.get('custom_openai2_api_retry_delay', 5)
+        "custom_openai_api_2": {  # Ensure key names are consistent e.g. custom_openai2_api_min_p
+            "api_ip": api_section_legacy.get(
+                "custom_openai2_api_ip", "http://127.0.0.1:5000/v1/chat/completions"
+            ),
+            "api_key": api_section_legacy.get("custom_openai2_api_key", None),
+            "model": api_section_legacy.get("custom_openai2_api_model", None),
+            "streaming": api_section_legacy.get("custom_openai2_api_streaming", False),
+            "temperature": api_section_legacy.get(
+                "custom_openai2_api_temperature", 0.7
+            ),
+            "top_p": api_section_legacy.get(
+                "custom_openai2_api_top_p", 0.95
+            ),  # original had custom_openai_api2_top_p
+            "min_p": api_section_legacy.get(
+                "custom_openai2_api_min_p", 0.05
+            ),  # original had custom_openai_api2_top_k
+            "max_tokens": api_section_legacy.get("custom_openai2_api_max_tokens", 4096),
+            "api_timeout": api_section_legacy.get("custom_openai2_api_timeout", 90),
+            "api_retries": api_section_legacy.get("custom_openai2_api_retry", 3),
+            "api_retry_delay": api_section_legacy.get(
+                "custom_openai2_api_retry_delay", 5
+            ),
         },
-        "llm_api_settings": { # General LLM settings
-            'default_api': api_section_legacy.get('default_api', 'openai'),
-            'local_api_timeout': api_section_legacy.get('local_api_timeout', 90), # Note: this was also in Local-API Settings before
-            'local_api_retries': api_section_legacy.get('local_api_retry', 3), # Key name consistency
-            'local_api_retry_delay': api_section_legacy.get('local_api_retry_delay', 5),
+        "llm_api_settings": {  # General LLM settings
+            "default_api": api_section_legacy.get("default_api", "openai"),
+            "local_api_timeout": api_section_legacy.get(
+                "local_api_timeout", 90
+            ),  # Note: this was also in Local-API Settings before
+            "local_api_retries": api_section_legacy.get(
+                "local_api_retry", 3
+            ),  # Key name consistency
+            "local_api_retry_delay": api_section_legacy.get("local_api_retry_delay", 5),
         },
-        "output_path": _get_typed_value(paths_section, 'output_path', 'results', Path),
+        "output_path": _get_typed_value(paths_section, "output_path", "results", Path),
         "system_preferences": {
-            'save_video_transcripts': _get_typed_value(paths_section, 'save_video_transcripts', True, bool),
+            "save_video_transcripts": _get_typed_value(
+                paths_section, "save_video_transcripts", True, bool
+            ),
         },
-        "processing_choice": _get_typed_value(processing_section, 'processing_choice', 'cpu'),
-
+        "processing_choice": _get_typed_value(
+            processing_section, "processing_choice", "cpu"
+        ),
         "chat_dictionaries": {
-            'enable_chat_dictionaries': _get_typed_value(chat_dicts_section, 'enable_chat_dictionaries', False, bool),
-            'post_gen_replacement': _get_typed_value(chat_dicts_section, 'post_gen_replacement', False, bool),
-            'post_gen_replacement_dict': _get_typed_value(chat_dicts_section, 'post_gen_replacement_dict', ''),
-            'chat_dict_chat_prompts': _get_typed_value(chat_dicts_section, 'chat_dictionary_chat_prompts', ''),
-            'chat_dict_RAG_prompts': _get_typed_value(chat_dicts_section, 'chat_dictionary_RAG_prompts', ''),
-            'chat_dict_replacement_strategy': _get_typed_value(chat_dicts_section, 'chat_dictionary_replacement_strategy', 'character_lore_first'),
-            'chat_dict_max_tokens': _get_typed_value(chat_dicts_section, 'chat_dictionary_max_tokens', 1000, int),
-            'default_rag_prompt': _get_typed_value(chat_dicts_section, 'default_rag_prompt', ''),
-            'chat_dicts_folder': ''  # Will be set dynamically below
+            "enable_chat_dictionaries": _get_typed_value(
+                chat_dicts_section, "enable_chat_dictionaries", False, bool
+            ),
+            "post_gen_replacement": _get_typed_value(
+                chat_dicts_section, "post_gen_replacement", False, bool
+            ),
+            "post_gen_replacement_dict": _get_typed_value(
+                chat_dicts_section, "post_gen_replacement_dict", ""
+            ),
+            "chat_dict_chat_prompts": _get_typed_value(
+                chat_dicts_section, "chat_dictionary_chat_prompts", ""
+            ),
+            "chat_dict_RAG_prompts": _get_typed_value(
+                chat_dicts_section, "chat_dictionary_RAG_prompts", ""
+            ),
+            "chat_dict_replacement_strategy": _get_typed_value(
+                chat_dicts_section,
+                "chat_dictionary_replacement_strategy",
+                "character_lore_first",
+            ),
+            "chat_dict_max_tokens": _get_typed_value(
+                chat_dicts_section, "chat_dictionary_max_tokens", 1000, int
+            ),
+            "default_rag_prompt": _get_typed_value(
+                chat_dicts_section, "default_rag_prompt", ""
+            ),
+            "chat_dicts_folder": "",  # Will be set dynamically below
         },
         "chunking_config": {
             # Global defaults
-            'chunking_method': _get_typed_value(chunking_section, 'chunking_method', 'words'),
-            'chunk_max_size': _get_typed_value(chunking_section, 'chunk_max_size', 400, int),
-            'chunk_overlap': _get_typed_value(chunking_section, 'chunk_overlap', 200, int),
-            'adaptive_chunking': _get_typed_value(chunking_section, 'adaptive_chunking', False, bool),
-            'multi_level': _get_typed_value(chunking_section, 'chunking_multi_level', False, bool),
-            'chunk_language': _get_typed_value(chunking_section, 'chunk_language', global_default_chunk_language), # Use global default
+            "chunking_method": _get_typed_value(
+                chunking_section, "chunking_method", "words"
+            ),
+            "chunk_max_size": _get_typed_value(
+                chunking_section, "chunk_max_size", 400, int
+            ),
+            "chunk_overlap": _get_typed_value(
+                chunking_section, "chunk_overlap", 200, int
+            ),
+            "adaptive_chunking": _get_typed_value(
+                chunking_section, "adaptive_chunking", False, bool
+            ),
+            "multi_level": _get_typed_value(
+                chunking_section, "chunking_multi_level", False, bool
+            ),
+            "chunk_language": _get_typed_value(
+                chunking_section, "chunk_language", global_default_chunk_language
+            ),  # Use global default
             # Per-type overrides (example for article, repeat for others: audio, book, etc.)
-            'article_chunking_method': _get_typed_value(chunking_section, 'article_chunking_method', 'words'),
-            'article_chunk_max_size': _get_typed_value(chunking_section, 'article_chunk_max_size', 400, int),
-            'article_chunk_overlap': _get_typed_value(chunking_section, 'article_chunk_overlap', 200, int),
-            'article_adaptive_chunking': _get_typed_value(chunking_section, 'article_adaptive_chunking', False, bool),
-            'article_chunking_multi_level': _get_typed_value(chunking_section,'article_chunking_multi_level', False, bool),
-            'article_language': _get_typed_value(chunking_section,'article_language', 'en'),
-            'audio_chunking_method': _get_typed_value(chunking_section,'audio_chunking_method', 'words'),
-            'audio_chunk_max_size': _get_typed_value(chunking_section,'audio_chunk_max_size', 400, int),
-            'audio_chunk_overlap': _get_typed_value(chunking_section,'audio_chunk_overlap', 200, int),
-            'audio_adaptive_chunking': _get_typed_value(chunking_section,'audio_adaptive_chunking', False, bool),
-            'audio_chunking_multi_level': _get_typed_value(chunking_section,'audio_chunking_multi_level', False, bool),
-            'audio_language': _get_typed_value(chunking_section,'audio_language', 'en'),
-            'book_chunking_method': _get_typed_value(chunking_section,'book_chunking_method', 'ebook_chunk_by_chapter'),
-            'book_chunk_max_size': _get_typed_value(chunking_section,'book_chunk_max_size', 400, int),
-            'book_chunk_overlap': _get_typed_value(chunking_section,'book_chunk_overlap', 200, int),
-            'book_adaptive_chunking': _get_typed_value(chunking_section,'book_adaptive_chunking', False, bool),
-            'book_chunking_multi_level': _get_typed_value(chunking_section,'book_chunking_multi_level', False, bool),
-            'book_language': _get_typed_value(chunking_section,'book_language', 'en'),
-            'document_chunking_method': _get_typed_value(chunking_section,'document_chunking_method', 'words'),
-            'document_chunk_max_size': _get_typed_value(chunking_section,'document_chunk_max_size', 400, int),
-            'document_chunk_overlap': _get_typed_value(chunking_section,'document_chunk_overlap', 200, int),
-            'document_adaptive_chunking': _get_typed_value(chunking_section,'document_adaptive_chunking', False, bool),
-            'document_chunking_multi_level': _get_typed_value(chunking_section,'document_chunking_multi_level', False, bool),
-            'document_language': _get_typed_value(chunking_section,'document_language', 'en'),
-            'mediawiki_article_chunking_method': _get_typed_value(chunking_section,'mediawiki_article_chunking_method', 'words'),
-            'mediawiki_article_chunk_max_size': _get_typed_value(chunking_section,'mediawiki_article_chunk_max_size', 400, int),
-            'mediawiki_article_chunk_overlap': _get_typed_value(chunking_section,'mediawiki_article_chunk_overlap', 200, int),
-            'mediawiki_article_adaptive_chunking': _get_typed_value(chunking_section,'mediawiki_article_adaptive_chunking', False, bool),
-            'mediawiki_article_chunking_multi_level': _get_typed_value(chunking_section,'mediawiki_article_chunking_multi_level', False, bool),
-            'mediawiki_article_language': _get_typed_value(chunking_section,'mediawiki_article_language', 'en'),
-            'mediawiki_dump_chunking_method': _get_typed_value(chunking_section,'mediawiki_dump_chunking_method', 'words'),
-            'mediawiki_dump_chunk_max_size': _get_typed_value(chunking_section,'mediawiki_dump_chunk_max_size', 400, int),
-            'mediawiki_dump_chunk_overlap': _get_typed_value(chunking_section,'mediawiki_dump_chunk_overlap', 200, int),
-            'mediawiki_dump_adaptive_chunking': _get_typed_value(chunking_section,'mediawiki_dump_adaptive_chunking', False, bool),
-            'mediawiki_dump_chunking_multi_level': _get_typed_value(chunking_section,'mediawiki_dump_chunking_multi_level', False, bool),
-            'mediawiki_dump_language': _get_typed_value(chunking_section,'mediawiki_dump_language', 'en'),
-            'obsidian_note_chunking_method': _get_typed_value(chunking_section,'obsidian_note_chunking_method', 'words'),
-            'obsidian_note_chunk_max_size': _get_typed_value(chunking_section,'obsidian_note_chunk_max_size', 400, int),
-            'obsidian_note_chunk_overlap': _get_typed_value(chunking_section,'obsidian_note_chunk_overlap', 200, int),
-            'obsidian_note_adaptive_chunking': _get_typed_value(chunking_section,'obsidian_note_adaptive_chunking', False, bool),
-            'obsidian_note_chunking_multi_level': _get_typed_value(chunking_section,'obsidian_note_chunking_multi_level', False, bool),
-            'obsidian_note_language': _get_typed_value(chunking_section,'obsidian_note_language', 'en'),
-            'podcast_chunking_method': _get_typed_value(chunking_section,'podcast_chunking_method', 'sentences'),
-            'podcast_chunk_max_size': _get_typed_value(chunking_section,'podcast_chunk_max_size', 300, int),
-            'podcast_chunk_overlap': _get_typed_value(chunking_section,'podcast_chunk_overlap', 30, int),
-            'podcast_adaptive_chunking': _get_typed_value(chunking_section,'podcast_adaptive_chunking', False, bool),
-            'podcast_chunking_multi_level': _get_typed_value(chunking_section,'podcast_chunking_multi_level', False, bool),
-            'podcast_language': _get_typed_value(chunking_section,'podcast_language', 'en'),
-            'text_chunking_method': _get_typed_value(chunking_section,'text_chunking_method', 'words'),
-            'text_chunk_max_size': _get_typed_value(chunking_section,'text_chunk_max_size', 400, int),
-            'text_chunk_overlap': _get_typed_value(chunking_section,'text_chunk_overlap', 200, int),
-            'text_adaptive_chunking': _get_typed_value(chunking_section,'text_adaptive_chunking', False, bool),
-            'text_chunking_multi_level': _get_typed_value(chunking_section,'text_chunking_multi_level', False, bool),
-            'text_language': _get_typed_value(chunking_section,'text_language', 'en'),
-            'video_chunking_method': _get_typed_value(chunking_section,'video_chunking_method', 'words'),
-            'video_chunk_max_size': _get_typed_value(chunking_section,'video_chunk_max_size', 400, int),
-            'video_chunk_overlap': _get_typed_value(chunking_section,'video_chunk_overlap', 200, int),
-            'video_adaptive_chunking': _get_typed_value(chunking_section,'video_adaptive_chunking', False, bool),
-            'video_chunking_multi_level': _get_typed_value(chunking_section,'video_chunking_multi_level', False, bool),
-            'video_language': _get_typed_value(chunking_section,'video_language', 'en'),
+            "article_chunking_method": _get_typed_value(
+                chunking_section, "article_chunking_method", "words"
+            ),
+            "article_chunk_max_size": _get_typed_value(
+                chunking_section, "article_chunk_max_size", 400, int
+            ),
+            "article_chunk_overlap": _get_typed_value(
+                chunking_section, "article_chunk_overlap", 200, int
+            ),
+            "article_adaptive_chunking": _get_typed_value(
+                chunking_section, "article_adaptive_chunking", False, bool
+            ),
+            "article_chunking_multi_level": _get_typed_value(
+                chunking_section, "article_chunking_multi_level", False, bool
+            ),
+            "article_language": _get_typed_value(
+                chunking_section, "article_language", "en"
+            ),
+            "audio_chunking_method": _get_typed_value(
+                chunking_section, "audio_chunking_method", "words"
+            ),
+            "audio_chunk_max_size": _get_typed_value(
+                chunking_section, "audio_chunk_max_size", 400, int
+            ),
+            "audio_chunk_overlap": _get_typed_value(
+                chunking_section, "audio_chunk_overlap", 200, int
+            ),
+            "audio_adaptive_chunking": _get_typed_value(
+                chunking_section, "audio_adaptive_chunking", False, bool
+            ),
+            "audio_chunking_multi_level": _get_typed_value(
+                chunking_section, "audio_chunking_multi_level", False, bool
+            ),
+            "audio_language": _get_typed_value(
+                chunking_section, "audio_language", "en"
+            ),
+            "book_chunking_method": _get_typed_value(
+                chunking_section, "book_chunking_method", "ebook_chunk_by_chapter"
+            ),
+            "book_chunk_max_size": _get_typed_value(
+                chunking_section, "book_chunk_max_size", 400, int
+            ),
+            "book_chunk_overlap": _get_typed_value(
+                chunking_section, "book_chunk_overlap", 200, int
+            ),
+            "book_adaptive_chunking": _get_typed_value(
+                chunking_section, "book_adaptive_chunking", False, bool
+            ),
+            "book_chunking_multi_level": _get_typed_value(
+                chunking_section, "book_chunking_multi_level", False, bool
+            ),
+            "book_language": _get_typed_value(chunking_section, "book_language", "en"),
+            "document_chunking_method": _get_typed_value(
+                chunking_section, "document_chunking_method", "words"
+            ),
+            "document_chunk_max_size": _get_typed_value(
+                chunking_section, "document_chunk_max_size", 400, int
+            ),
+            "document_chunk_overlap": _get_typed_value(
+                chunking_section, "document_chunk_overlap", 200, int
+            ),
+            "document_adaptive_chunking": _get_typed_value(
+                chunking_section, "document_adaptive_chunking", False, bool
+            ),
+            "document_chunking_multi_level": _get_typed_value(
+                chunking_section, "document_chunking_multi_level", False, bool
+            ),
+            "document_language": _get_typed_value(
+                chunking_section, "document_language", "en"
+            ),
+            "mediawiki_article_chunking_method": _get_typed_value(
+                chunking_section, "mediawiki_article_chunking_method", "words"
+            ),
+            "mediawiki_article_chunk_max_size": _get_typed_value(
+                chunking_section, "mediawiki_article_chunk_max_size", 400, int
+            ),
+            "mediawiki_article_chunk_overlap": _get_typed_value(
+                chunking_section, "mediawiki_article_chunk_overlap", 200, int
+            ),
+            "mediawiki_article_adaptive_chunking": _get_typed_value(
+                chunking_section, "mediawiki_article_adaptive_chunking", False, bool
+            ),
+            "mediawiki_article_chunking_multi_level": _get_typed_value(
+                chunking_section, "mediawiki_article_chunking_multi_level", False, bool
+            ),
+            "mediawiki_article_language": _get_typed_value(
+                chunking_section, "mediawiki_article_language", "en"
+            ),
+            "mediawiki_dump_chunking_method": _get_typed_value(
+                chunking_section, "mediawiki_dump_chunking_method", "words"
+            ),
+            "mediawiki_dump_chunk_max_size": _get_typed_value(
+                chunking_section, "mediawiki_dump_chunk_max_size", 400, int
+            ),
+            "mediawiki_dump_chunk_overlap": _get_typed_value(
+                chunking_section, "mediawiki_dump_chunk_overlap", 200, int
+            ),
+            "mediawiki_dump_adaptive_chunking": _get_typed_value(
+                chunking_section, "mediawiki_dump_adaptive_chunking", False, bool
+            ),
+            "mediawiki_dump_chunking_multi_level": _get_typed_value(
+                chunking_section, "mediawiki_dump_chunking_multi_level", False, bool
+            ),
+            "mediawiki_dump_language": _get_typed_value(
+                chunking_section, "mediawiki_dump_language", "en"
+            ),
+            "obsidian_note_chunking_method": _get_typed_value(
+                chunking_section, "obsidian_note_chunking_method", "words"
+            ),
+            "obsidian_note_chunk_max_size": _get_typed_value(
+                chunking_section, "obsidian_note_chunk_max_size", 400, int
+            ),
+            "obsidian_note_chunk_overlap": _get_typed_value(
+                chunking_section, "obsidian_note_chunk_overlap", 200, int
+            ),
+            "obsidian_note_adaptive_chunking": _get_typed_value(
+                chunking_section, "obsidian_note_adaptive_chunking", False, bool
+            ),
+            "obsidian_note_chunking_multi_level": _get_typed_value(
+                chunking_section, "obsidian_note_chunking_multi_level", False, bool
+            ),
+            "obsidian_note_language": _get_typed_value(
+                chunking_section, "obsidian_note_language", "en"
+            ),
+            "podcast_chunking_method": _get_typed_value(
+                chunking_section, "podcast_chunking_method", "sentences"
+            ),
+            "podcast_chunk_max_size": _get_typed_value(
+                chunking_section, "podcast_chunk_max_size", 300, int
+            ),
+            "podcast_chunk_overlap": _get_typed_value(
+                chunking_section, "podcast_chunk_overlap", 30, int
+            ),
+            "podcast_adaptive_chunking": _get_typed_value(
+                chunking_section, "podcast_adaptive_chunking", False, bool
+            ),
+            "podcast_chunking_multi_level": _get_typed_value(
+                chunking_section, "podcast_chunking_multi_level", False, bool
+            ),
+            "podcast_language": _get_typed_value(
+                chunking_section, "podcast_language", "en"
+            ),
+            "text_chunking_method": _get_typed_value(
+                chunking_section, "text_chunking_method", "words"
+            ),
+            "text_chunk_max_size": _get_typed_value(
+                chunking_section, "text_chunk_max_size", 400, int
+            ),
+            "text_chunk_overlap": _get_typed_value(
+                chunking_section, "text_chunk_overlap", 200, int
+            ),
+            "text_adaptive_chunking": _get_typed_value(
+                chunking_section, "text_adaptive_chunking", False, bool
+            ),
+            "text_chunking_multi_level": _get_typed_value(
+                chunking_section, "text_chunking_multi_level", False, bool
+            ),
+            "text_language": _get_typed_value(chunking_section, "text_language", "en"),
+            "video_chunking_method": _get_typed_value(
+                chunking_section, "video_chunking_method", "words"
+            ),
+            "video_chunk_max_size": _get_typed_value(
+                chunking_section, "video_chunk_max_size", 400, int
+            ),
+            "video_chunk_overlap": _get_typed_value(
+                chunking_section, "video_chunk_overlap", 200, int
+            ),
+            "video_adaptive_chunking": _get_typed_value(
+                chunking_section, "video_adaptive_chunking", False, bool
+            ),
+            "video_chunking_multi_level": _get_typed_value(
+                chunking_section, "video_chunking_multi_level", False, bool
+            ),
+            "video_language": _get_typed_value(
+                chunking_section, "video_language", "en"
+            ),
         },
         "embedding_config": {
-            'embedding_provider': _get_typed_value(embeddings_section, 'embedding_provider', 'openai'),
-            'embedding_model': _get_typed_value(embeddings_section, 'embedding_model', 'text-embedding-3-large'),
-            'onnx_model_path': _get_typed_value(embeddings_section, 'onnx_model_path', "./Models/onnx_models/text-embedding-3-small.onnx", Path),
-            'model_dir': _get_typed_value(embeddings_section, 'model_dir', "./Models", Path),
-            'embedding_api_url': _get_typed_value(embeddings_section, 'embedding_api_url', "http://localhost:8080/v1/embeddings"),
-            'embedding_api_key': _get_typed_value(embeddings_section, 'embedding_api_key', ''),
-            'chunk_size': _get_typed_value(embeddings_section, 'chunk_size', 400, int), # This was 'chunk_size' in old Embeddings, also in Chunking
-            'chunk_overlap': _get_typed_value(embeddings_section, 'overlap', 200, int), # This was 'overlap' in old Embeddings
-            'models': embedding_config_section.get('models', {})  # Include the models from the embedding_config section
+            "embedding_provider": _get_typed_value(
+                embeddings_section, "embedding_provider", "openai"
+            ),
+            "embedding_model": _get_typed_value(
+                embeddings_section, "embedding_model", "text-embedding-3-large"
+            ),
+            "onnx_model_path": _get_typed_value(
+                embeddings_section,
+                "onnx_model_path",
+                "./Models/onnx_models/text-embedding-3-small.onnx",
+                Path,
+            ),
+            "model_dir": _get_typed_value(
+                embeddings_section, "model_dir", "./Models", Path
+            ),
+            "embedding_api_url": _get_typed_value(
+                embeddings_section,
+                "embedding_api_url",
+                "http://localhost:8080/v1/embeddings",
+            ),
+            "embedding_api_key": _get_typed_value(
+                embeddings_section, "embedding_api_key", ""
+            ),
+            "chunk_size": _get_typed_value(
+                embeddings_section, "chunk_size", 400, int
+            ),  # This was 'chunk_size' in old Embeddings, also in Chunking
+            "chunk_overlap": _get_typed_value(
+                embeddings_section, "overlap", 200, int
+            ),  # This was 'overlap' in old Embeddings
+            "models": embedding_config_section.get(
+                "models", {}
+            ),  # Include the models from the embedding_config section
         },
         "auto_save": {
-            'save_character_chats': _get_typed_value(auto_save_section, 'save_character_chats', False, bool),
-            'save_rag_chats': _get_typed_value(auto_save_section, 'save_rag_chats', False, bool),
+            "save_character_chats": _get_typed_value(
+                auto_save_section, "save_character_chats", False, bool
+            ),
+            "save_rag_chats": _get_typed_value(
+                auto_save_section, "save_rag_chats", False, bool
+            ),
         },
-        "STT_settings": { # Corrected key from STT-Settings
-            'default_stt_provider': _get_typed_value(stt_settings_section, 'default_stt_provider', default_stt_provider),
+        "STT_settings": {  # Corrected key from STT-Settings
+            "default_stt_provider": _get_typed_value(
+                stt_settings_section, "default_stt_provider", default_stt_provider
+            ),
         },
         "tts_settings": {
-            'default_tts_provider': _get_typed_value(tts_settings_section, 'default_tts_provider', 'openai'),
-            'tts_voice': _get_typed_value(tts_settings_section, 'default_tts_voice', 'shimmer'), # General default voice
-            'local_tts_device': _get_typed_value(tts_settings_section, 'local_tts_device', 'cpu'),
+            "default_tts_provider": _get_typed_value(
+                tts_settings_section, "default_tts_provider", "openai"
+            ),
+            "tts_voice": _get_typed_value(
+                tts_settings_section, "default_tts_voice", "shimmer"
+            ),  # General default voice
+            "local_tts_device": _get_typed_value(
+                tts_settings_section, "local_tts_device", "cpu"
+            ),
             # OpenAI TTS
-            'default_openai_tts_model': _get_typed_value(tts_settings_section, 'default_openai_tts_model', 'tts-1-hd'),
-            'default_openai_tts_voice': _get_typed_value(tts_settings_section, 'default_openai_tts_voice', 'shimmer'),
-            'default_openai_tts_speed': _get_typed_value(tts_settings_section, 'default_openai_tts_speed', 1.0, float),
-            'default_openai_tts_output_format': _get_typed_value(tts_settings_section, 'default_openai_tts_output_format', 'mp3'),
-            'default_openai_tts_streaming': _get_typed_value(tts_settings_section, 'default_openai_tts_streaming', False, bool),
-             # Google TTS
-            'default_google_tts_model': _get_typed_value(tts_settings_section, 'default_google_tts_model', 'en'), # FIXME: Review defaults
-            'default_google_tts_voice': _get_typed_value(tts_settings_section, 'default_google_tts_voice', 'en'), # FIXME: Review defaults
-            'default_google_tts_speed': _get_typed_value(tts_settings_section, 'default_google_tts_speed', 1.0, float), # FIXME: Review defaults
+            "default_openai_tts_model": _get_typed_value(
+                tts_settings_section, "default_openai_tts_model", "tts-1-hd"
+            ),
+            "default_openai_tts_voice": _get_typed_value(
+                tts_settings_section, "default_openai_tts_voice", "shimmer"
+            ),
+            "default_openai_tts_speed": _get_typed_value(
+                tts_settings_section, "default_openai_tts_speed", 1.0, float
+            ),
+            "default_openai_tts_output_format": _get_typed_value(
+                tts_settings_section, "default_openai_tts_output_format", "mp3"
+            ),
+            "default_openai_tts_streaming": _get_typed_value(
+                tts_settings_section, "default_openai_tts_streaming", False, bool
+            ),
+            # Google TTS
+            "default_google_tts_model": _get_typed_value(
+                tts_settings_section, "default_google_tts_model", "en"
+            ),  # FIXME: Review defaults
+            "default_google_tts_voice": _get_typed_value(
+                tts_settings_section, "default_google_tts_voice", "en"
+            ),  # FIXME: Review defaults
+            "default_google_tts_speed": _get_typed_value(
+                tts_settings_section, "default_google_tts_speed", 1.0, float
+            ),  # FIXME: Review defaults
             # ElevenLabs TTS
-            'default_eleven_tts_model': _get_typed_value(tts_settings_section, 'default_eleven_tts_model', 'eleven_multilingual_v2'), # FIXME: Placeholder
-            'default_eleven_tts_voice': _get_typed_value(tts_settings_section, 'default_eleven_tts_voice', 'Rachel'), # FIXME: Placeholder
-            'default_eleven_tts_language_code': _get_typed_value(tts_settings_section, 'default_eleven_tts_language_code', 'en-US'), # FIXME
-            'default_eleven_tts_voice_stability': _get_typed_value(tts_settings_section, 'default_eleven_tts_voice_stability', 0.5, float), # FIXME
-            'default_eleven_tts_voice_similiarity_boost': _get_typed_value(tts_settings_section, 'default_eleven_tts_voice_similiarity_boost', 0.75, float), # FIXME
-            'default_eleven_tts_voice_style': _get_typed_value(tts_settings_section, 'default_eleven_tts_voice_style', 0.0, float), # FIXME
-            'default_eleven_tts_voice_use_speaker_boost': _get_typed_value(tts_settings_section, 'default_eleven_tts_voice_use_speaker_boost', True, bool), # FIXME
-            'default_eleven_tts_output_format': _get_typed_value(tts_settings_section, 'default_eleven_tts_output_format', 'mp3_44100_192'),
+            "default_eleven_tts_model": _get_typed_value(
+                tts_settings_section,
+                "default_eleven_tts_model",
+                "eleven_multilingual_v2",
+            ),  # FIXME: Placeholder
+            "default_eleven_tts_voice": _get_typed_value(
+                tts_settings_section, "default_eleven_tts_voice", "Rachel"
+            ),  # FIXME: Placeholder
+            "default_eleven_tts_language_code": _get_typed_value(
+                tts_settings_section, "default_eleven_tts_language_code", "en-US"
+            ),  # FIXME
+            "default_eleven_tts_voice_stability": _get_typed_value(
+                tts_settings_section, "default_eleven_tts_voice_stability", 0.5, float
+            ),  # FIXME
+            "default_eleven_tts_voice_similiarity_boost": _get_typed_value(
+                tts_settings_section,
+                "default_eleven_tts_voice_similiarity_boost",
+                0.75,
+                float,
+            ),  # FIXME
+            "default_eleven_tts_voice_style": _get_typed_value(
+                tts_settings_section, "default_eleven_tts_voice_style", 0.0, float
+            ),  # FIXME
+            "default_eleven_tts_voice_use_speaker_boost": _get_typed_value(
+                tts_settings_section,
+                "default_eleven_tts_voice_use_speaker_boost",
+                True,
+                bool,
+            ),  # FIXME
+            "default_eleven_tts_output_format": _get_typed_value(
+                tts_settings_section,
+                "default_eleven_tts_output_format",
+                "mp3_44100_192",
+            ),
             # AllTalk TTS (from load_and_log_configs, now integrated)
-            'alltalk_api_ip': _get_typed_value(tts_settings_section, 'alltalk_api_ip', 'http://127.0.0.1:7851/v1/audio/speech'),
-            'default_alltalk_tts_model': _get_typed_value(tts_settings_section, 'default_alltalk_tts_model', 'alltalk_model'),
-            'default_alltalk_tts_voice': _get_typed_value(tts_settings_section, 'default_alltalk_tts_voice', 'alloy'),
-            'default_alltalk_tts_speed': _get_typed_value(tts_settings_section, 'default_alltalk_tts_speed', 1.0, float),
-            'default_alltalk_tts_output_format': _get_typed_value(tts_settings_section, 'default_alltalk_tts_output_format', 'mp3'),
+            "alltalk_api_ip": _get_typed_value(
+                tts_settings_section,
+                "alltalk_api_ip",
+                "http://127.0.0.1:7851/v1/audio/speech",
+            ),
+            "default_alltalk_tts_model": _get_typed_value(
+                tts_settings_section, "default_alltalk_tts_model", "alltalk_model"
+            ),
+            "default_alltalk_tts_voice": _get_typed_value(
+                tts_settings_section, "default_alltalk_tts_voice", "alloy"
+            ),
+            "default_alltalk_tts_speed": _get_typed_value(
+                tts_settings_section, "default_alltalk_tts_speed", 1.0, float
+            ),
+            "default_alltalk_tts_output_format": _get_typed_value(
+                tts_settings_section, "default_alltalk_tts_output_format", "mp3"
+            ),
             # Kokoro TTS
-            'kokoro_model_path': _get_typed_value(tts_settings_section, 'kokoro_model_path', 'Databases/kokoro_models', Path),
-            'default_kokoro_tts_model': _get_typed_value(tts_settings_section, 'default_kokoro_tts_model', 'pht'),
-            'default_kokoro_tts_voice': _get_typed_value(tts_settings_section, 'default_kokoro_tts_voice', 'sky'),
-            'default_kokoro_tts_speed': _get_typed_value(tts_settings_section, 'default_kokoro_tts_speed', 1.0, float),
-            'default_kokoro_tts_output_format': _get_typed_value(tts_settings_section, 'default_kokoro_tts_output_format', 'wav'),
+            "kokoro_model_path": _get_typed_value(
+                tts_settings_section,
+                "kokoro_model_path",
+                "Databases/kokoro_models",
+                Path,
+            ),
+            "default_kokoro_tts_model": _get_typed_value(
+                tts_settings_section, "default_kokoro_tts_model", "pht"
+            ),
+            "default_kokoro_tts_voice": _get_typed_value(
+                tts_settings_section, "default_kokoro_tts_voice", "sky"
+            ),
+            "default_kokoro_tts_speed": _get_typed_value(
+                tts_settings_section, "default_kokoro_tts_speed", 1.0, float
+            ),
+            "default_kokoro_tts_output_format": _get_typed_value(
+                tts_settings_section, "default_kokoro_tts_output_format", "wav"
+            ),
             # Self-hosted OpenAI API TTS
-            'default_openai_api_tts_model': _get_typed_value(tts_settings_section, 'default_openai_api_tts_model', 'tts-1-hd'),
-            'default_openai_api_tts_voice': _get_typed_value(tts_settings_section, 'default_openai_api_tts_voice', 'shimmer'),
-            'default_openai_api_tts_speed': _get_typed_value(tts_settings_section, 'default_openai_api_tts_speed', 1.0, float), # Was '1' string
-            'default_openai_api_tts_output_format': _get_typed_value(tts_settings_section, 'default_openai_api_tts_output_format', 'mp3'), # key was default_openai_tts_api_output_format
-            'default_openai_api_tts_streaming': _get_typed_value(tts_settings_section, 'default_openai_api_tts_streaming', False, bool),
+            "default_openai_api_tts_model": _get_typed_value(
+                tts_settings_section, "default_openai_api_tts_model", "tts-1-hd"
+            ),
+            "default_openai_api_tts_voice": _get_typed_value(
+                tts_settings_section, "default_openai_api_tts_voice", "shimmer"
+            ),
+            "default_openai_api_tts_speed": _get_typed_value(
+                tts_settings_section, "default_openai_api_tts_speed", 1.0, float
+            ),  # Was '1' string
+            "default_openai_api_tts_output_format": _get_typed_value(
+                tts_settings_section, "default_openai_api_tts_output_format", "mp3"
+            ),  # key was default_openai_tts_api_output_format
+            "default_openai_api_tts_streaming": _get_typed_value(
+                tts_settings_section, "default_openai_api_tts_streaming", False, bool
+            ),
         },
-        "search_settings_general": { # Renamed from 'search_settings' to avoid conflict with SearchEngines section for keys
-            'default_search_provider': _get_typed_value(search_settings_section, 'search_provider_default', 'google'),
-            'search_language_query': _get_typed_value(search_settings_section, 'search_language_query', 'en'),
-            'search_language_analysis': _get_typed_value(search_settings_section, 'search_language_analysis', 'en'),
-            'search_default_max_queries': _get_typed_value(search_settings_section, 'search_default_max_queries', 5, int),
-            'search_enable_subquery': _get_typed_value(search_settings_section, 'search_enable_subquery', False, bool),
-            'search_enable_subquery_count_max': _get_typed_value(search_settings_section, 'search_enable_subquery_count_max', 3, int),
-            'search_result_rerank': _get_typed_value(search_settings_section, 'search_result_rerank', False, bool),
-            'search_result_max': _get_typed_value(search_settings_section, 'search_result_max', 10, int),
-            'search_result_max_per_query': _get_typed_value(search_settings_section, 'search_result_max_per_query', 10, int),
-            'search_result_blacklist': _get_typed_value(search_settings_section, 'search_result_blacklist' , ''),
-            'search_result_display_type': _get_typed_value(search_settings_section, 'search_result_display_type' , 'text'),
-            'search_result_display_metadata': _get_typed_value(search_settings_section, 'search_result_display_metadata' , True, bool),
-            'search_result_save_to_db': _get_typed_value(search_settings_section, 'search_result_save_to_db' , True, bool),
-            'search_result_analysis_tone': _get_typed_value(search_settings_section, 'search_result_analysis_tone' , 'neutral'),
-            'relevance_analysis_llm': _get_typed_value(search_settings_section, 'relevance_analysis_llm' , 'openai'),
-            'final_answer_llm': _get_typed_value(search_settings_section, 'final_answer_llm' , 'openai'),
+        "search_settings_general": {  # Renamed from 'search_settings' to avoid conflict with SearchEngines section for keys
+            "default_search_provider": _get_typed_value(
+                search_settings_section, "search_provider_default", "google"
+            ),
+            "search_language_query": _get_typed_value(
+                search_settings_section, "search_language_query", "en"
+            ),
+            "search_language_analysis": _get_typed_value(
+                search_settings_section, "search_language_analysis", "en"
+            ),
+            "search_default_max_queries": _get_typed_value(
+                search_settings_section, "search_default_max_queries", 5, int
+            ),
+            "search_enable_subquery": _get_typed_value(
+                search_settings_section, "search_enable_subquery", False, bool
+            ),
+            "search_enable_subquery_count_max": _get_typed_value(
+                search_settings_section, "search_enable_subquery_count_max", 3, int
+            ),
+            "search_result_rerank": _get_typed_value(
+                search_settings_section, "search_result_rerank", False, bool
+            ),
+            "search_result_max": _get_typed_value(
+                search_settings_section, "search_result_max", 10, int
+            ),
+            "search_result_max_per_query": _get_typed_value(
+                search_settings_section, "search_result_max_per_query", 10, int
+            ),
+            "search_result_blacklist": _get_typed_value(
+                search_settings_section, "search_result_blacklist", ""
+            ),
+            "search_result_display_type": _get_typed_value(
+                search_settings_section, "search_result_display_type", "text"
+            ),
+            "search_result_display_metadata": _get_typed_value(
+                search_settings_section, "search_result_display_metadata", True, bool
+            ),
+            "search_result_save_to_db": _get_typed_value(
+                search_settings_section, "search_result_save_to_db", True, bool
+            ),
+            "search_result_analysis_tone": _get_typed_value(
+                search_settings_section, "search_result_analysis_tone", "neutral"
+            ),
+            "relevance_analysis_llm": _get_typed_value(
+                search_settings_section, "relevance_analysis_llm", "openai"
+            ),
+            "final_answer_llm": _get_typed_value(
+                search_settings_section, "final_answer_llm", "openai"
+            ),
         },
         "search_engine_specific_settings": {  # API Keys for various search engines from 'SearchEngines' TOML table
-            'baidu_search_api_key': _get_typed_value(search_engines_section, 'baidu_search_api_key', ''),
-            'bing_country_code': _get_typed_value(search_engines_section, 'bing_country_code', ''),
-            'bing_search_api_url': _get_typed_value(search_engines_section, 'bing_search_api_url', ''),
-            'brave_country_code': _get_typed_value(search_engines_section, 'brave_country_code', ''),
-            'google_search_api_url': _get_typed_value(search_engines_section, 'google_search_api_url', ''),
-            'google_search_engine_id': _get_typed_value(search_engines_section, 'google_search_engine_id', ''),
-            'google_simp_trad_chinese': _get_typed_value(search_engines_section, 'google_simp_trad_chinese', False, bool),
-            'limit_google_search_to_country': _get_typed_value(search_engines_section, 'limit_google_search_to_country', False, bool),
-            'google_search_country': _get_typed_value(search_engines_section, 'google_search_country', ''),
-            'google_search_country_code': _get_typed_value(search_engines_section, 'google_search_country_code', ''),
-            'google_search_filter_setting': _get_typed_value(search_engines_section, 'google_filter_setting', ''),
-            'google_user_geolocation': _get_typed_value(search_engines_section, 'google_user_geolocation', False, bool),
-            'google_ui_language': _get_typed_value(search_engines_section, 'google_ui_language', ''),
-            'google_limit_search_results_to_language': _get_typed_value(search_engines_section, 'google_limit_search_results_to_language', False, bool),
-            'google_site_search_include': _get_typed_value(search_engines_section, 'google_site_search_include', ''),
-            'google_site_search_exclude': _get_typed_value(search_engines_section, 'google_site_search_exclude', ''),
-            'google_sort_results_by': _get_typed_value(search_engines_section, 'google_sort_results_by', ''),
-            'google_default_search_results': _get_typed_value(search_engines_section, 'google_default_search_results', 10, int),
-            'google_safe_search': _get_typed_value(search_engines_section, 'google_safe_search', False, bool),
-            'google_enable_site_search': _get_typed_value(search_engines_section, 'google_enable_site_search', False, bool),
-            'yandex_search_engine_id': _get_typed_value(search_engines_section, 'yandex_search_engine_id', ''),
+            "baidu_search_api_key": _get_typed_value(
+                search_engines_section, "baidu_search_api_key", ""
+            ),
+            "bing_country_code": _get_typed_value(
+                search_engines_section, "bing_country_code", ""
+            ),
+            "bing_search_api_url": _get_typed_value(
+                search_engines_section, "bing_search_api_url", ""
+            ),
+            "brave_country_code": _get_typed_value(
+                search_engines_section, "brave_country_code", ""
+            ),
+            "google_search_api_url": _get_typed_value(
+                search_engines_section, "google_search_api_url", ""
+            ),
+            "google_search_engine_id": _get_typed_value(
+                search_engines_section, "google_search_engine_id", ""
+            ),
+            "google_simp_trad_chinese": _get_typed_value(
+                search_engines_section, "google_simp_trad_chinese", False, bool
+            ),
+            "limit_google_search_to_country": _get_typed_value(
+                search_engines_section, "limit_google_search_to_country", False, bool
+            ),
+            "google_search_country": _get_typed_value(
+                search_engines_section, "google_search_country", ""
+            ),
+            "google_search_country_code": _get_typed_value(
+                search_engines_section, "google_search_country_code", ""
+            ),
+            "google_search_filter_setting": _get_typed_value(
+                search_engines_section, "google_filter_setting", ""
+            ),
+            "google_user_geolocation": _get_typed_value(
+                search_engines_section, "google_user_geolocation", False, bool
+            ),
+            "google_ui_language": _get_typed_value(
+                search_engines_section, "google_ui_language", ""
+            ),
+            "google_limit_search_results_to_language": _get_typed_value(
+                search_engines_section,
+                "google_limit_search_results_to_language",
+                False,
+                bool,
+            ),
+            "google_site_search_include": _get_typed_value(
+                search_engines_section, "google_site_search_include", ""
+            ),
+            "google_site_search_exclude": _get_typed_value(
+                search_engines_section, "google_site_search_exclude", ""
+            ),
+            "google_sort_results_by": _get_typed_value(
+                search_engines_section, "google_sort_results_by", ""
+            ),
+            "google_default_search_results": _get_typed_value(
+                search_engines_section, "google_default_search_results", 10, int
+            ),
+            "google_safe_search": _get_typed_value(
+                search_engines_section, "google_safe_search", False, bool
+            ),
+            "google_enable_site_search": _get_typed_value(
+                search_engines_section, "google_enable_site_search", False, bool
+            ),
+            "yandex_search_engine_id": _get_typed_value(
+                search_engines_section, "yandex_search_engine_id", ""
+            ),
         },
-        "search_engines_keys": { # API Keys for various search engines from 'SearchEngines' TOML table
-            'baidu_search_api_key': _get_typed_value(search_engines_section, 'search_engine_api_key_baidu', ''),
-            'bing_search_api_key': _get_typed_value(search_engines_section, 'search_engine_api_key_bing', ''),
-            'brave_search_api_key': _get_typed_value(search_engines_section, 'brave_search_api_key', ''),
-            'brave_search_ai_api_key': _get_typed_value(search_engines_section, 'brave_search_ai_api_key', ''),
-            'duckduckgo_search_api_key': _get_typed_value(search_engines_section, 'duckduckgo_search_api_key', ''),
-            'google_search_api_key': _get_typed_value(search_engines_section, 'google_search_api_key', ''),
-            'kagi_search_api_key': _get_typed_value(search_engines_section, 'kagi_search_api_key', ''),
-            'searx_search_api_url': _get_typed_value(search_engines_section, 'search_engine_searx_api', ''),
-            'tavily_search_api_key': _get_typed_value(search_engines_section, 'tavily_search_api_key', ''),
-            'yandex_search_api_key': _get_typed_value(search_engines_section, 'yandex_search_api_key', ''),
+        "search_engines_keys": {  # API Keys for various search engines from 'SearchEngines' TOML table
+            "baidu_search_api_key": _get_typed_value(
+                search_engines_section, "search_engine_api_key_baidu", ""
+            ),
+            "bing_search_api_key": _get_typed_value(
+                search_engines_section, "search_engine_api_key_bing", ""
+            ),
+            "brave_search_api_key": _get_typed_value(
+                search_engines_section, "brave_search_api_key", ""
+            ),
+            "brave_search_ai_api_key": _get_typed_value(
+                search_engines_section, "brave_search_ai_api_key", ""
+            ),
+            "duckduckgo_search_api_key": _get_typed_value(
+                search_engines_section, "duckduckgo_search_api_key", ""
+            ),
+            "google_search_api_key": _get_typed_value(
+                search_engines_section, "google_search_api_key", ""
+            ),
+            "kagi_search_api_key": _get_typed_value(
+                search_engines_section, "kagi_search_api_key", ""
+            ),
+            "searx_search_api_url": _get_typed_value(
+                search_engines_section, "search_engine_searx_api", ""
+            ),
+            "tavily_search_api_key": _get_typed_value(
+                search_engines_section, "tavily_search_api_key", ""
+            ),
+            "yandex_search_api_key": _get_typed_value(
+                search_engines_section, "yandex_search_api_key", ""
+            ),
         },
-        "prompts_strings": { # Specific prompt strings from 'Prompts' TOML table
-            'sub_question_generation_prompt': _get_typed_value(get_toml_section('Prompts'), 'sub_question_generation_prompt', ''),
-            'search_result_relevance_eval_prompt': _get_typed_value(get_toml_section('Prompts'), 'search_result_relevance_eval_prompt', ''),
-            'analyze_search_results_prompt': _get_typed_value(get_toml_section('Prompts'), 'analyze_search_results_prompt', ''),
+        "prompts_strings": {  # Specific prompt strings from 'Prompts' TOML table
+            "sub_question_generation_prompt": _get_typed_value(
+                get_toml_section("Prompts"), "sub_question_generation_prompt", ""
+            ),
+            "search_result_relevance_eval_prompt": _get_typed_value(
+                get_toml_section("Prompts"), "search_result_relevance_eval_prompt", ""
+            ),
+            "analyze_search_results_prompt": _get_typed_value(
+                get_toml_section("Prompts"), "analyze_search_results_prompt", ""
+            ),
         },
         "web_scraper_settings": {
-            'web_scraper_api_key': _get_typed_value(web_scraper_section, 'web_scraper_api_key', ''),
-            'web_scraper_api_url': _get_typed_value(web_scraper_section, 'web_scraper_api_url', ''),
+            "web_scraper_api_key": _get_typed_value(
+                web_scraper_section, "web_scraper_api_key", ""
+            ),
+            "web_scraper_api_url": _get_typed_value(
+                web_scraper_section, "web_scraper_api_url", ""
+            ),
             # ... (all web scraper settings)
         },
         "confluence": {
-            'base_url': _get_typed_value(confluence_section, 'base_url', os.getenv('CONFLUENCE_BASE_URL', '')),
-            'auth_method': _get_typed_value(confluence_section, 'auth_method', os.getenv('CONFLUENCE_AUTH_METHOD', 'api_token')),
-            'username': _get_typed_value(confluence_section, 'username', os.getenv('CONFLUENCE_USERNAME', '')),
-            'api_token': _get_typed_value(confluence_section, 'api_token', os.getenv('CONFLUENCE_API_TOKEN', '')),
-            'oauth_token': _get_typed_value(confluence_section, 'oauth_token', os.getenv('CONFLUENCE_OAUTH_TOKEN', '')),
-            'password': _get_typed_value(confluence_section, 'password', os.getenv('CONFLUENCE_PASSWORD', '')),
-            'browser': _get_typed_value(confluence_section, 'browser', 'all'),
-            'space_keys': _get_typed_value(confluence_section, 'space_keys', [], list),
-            'max_pages_per_space': _get_typed_value(confluence_section, 'max_pages_per_space', 100, int),
-            'max_crawl_depth': _get_typed_value(confluence_section, 'max_crawl_depth', 5, int),
-            'include_attachments': _get_typed_value(confluence_section, 'include_attachments', False, bool),
-            'follow_links': _get_typed_value(confluence_section, 'follow_links', False, bool),
-            'rate_limit_delay': _get_typed_value(confluence_section, 'rate_limit_delay', 0.5, float),
+            "base_url": _get_typed_value(
+                confluence_section, "base_url", os.getenv("CONFLUENCE_BASE_URL", "")
+            ),
+            "auth_method": _get_typed_value(
+                confluence_section,
+                "auth_method",
+                os.getenv("CONFLUENCE_AUTH_METHOD", "api_token"),
+            ),
+            "username": _get_typed_value(
+                confluence_section, "username", os.getenv("CONFLUENCE_USERNAME", "")
+            ),
+            "api_token": _get_typed_value(
+                confluence_section, "api_token", os.getenv("CONFLUENCE_API_TOKEN", "")
+            ),
+            "oauth_token": _get_typed_value(
+                confluence_section,
+                "oauth_token",
+                os.getenv("CONFLUENCE_OAUTH_TOKEN", ""),
+            ),
+            "password": _get_typed_value(
+                confluence_section, "password", os.getenv("CONFLUENCE_PASSWORD", "")
+            ),
+            "browser": _get_typed_value(confluence_section, "browser", "all"),
+            "space_keys": _get_typed_value(confluence_section, "space_keys", [], list),
+            "max_pages_per_space": _get_typed_value(
+                confluence_section, "max_pages_per_space", 100, int
+            ),
+            "max_crawl_depth": _get_typed_value(
+                confluence_section, "max_crawl_depth", 5, int
+            ),
+            "include_attachments": _get_typed_value(
+                confluence_section, "include_attachments", False, bool
+            ),
+            "follow_links": _get_typed_value(
+                confluence_section, "follow_links", False, bool
+            ),
+            "rate_limit_delay": _get_typed_value(
+                confluence_section, "rate_limit_delay", 0.5, float
+            ),
         },
-
         # Configurations from hardcoded dicts (now from TOML or fallback to Python dicts)
         "APP_TTS_CONFIG": {**DEFAULT_APP_TTS_CONFIG, **app_tts_config},
         "APP_DATABASE_CONFIG": {**DEFAULT_DATABASE_CONFIG, **app_database_config},
         "APP_RAG_SEARCH_CONFIG": {**DEFAULT_RAG_SEARCH_CONFIG, **app_rag_search_config},
         "acp": get_toml_section("acp"),
-
-        "COMPREHENSIVE_CONFIG_RAW": toml_config_data, # Store the raw TOML data if needed
-        "OPENAI_API_KEY": openai_api_key, # Top-level convenience access
+        "COMPREHENSIVE_CONFIG_RAW": toml_config_data,  # Store the raw TOML data if needed
+        "OPENAI_API_KEY": openai_api_key,  # Top-level convenience access
     }
 
     # Bridge TTSSettings defaults into APP_TTS_CONFIG for runtime use
     # This ensures TTS event handlers can find the user's selected defaults
-    if 'default_provider' not in config_dict['APP_TTS_CONFIG']:
-        config_dict['APP_TTS_CONFIG']['default_provider'] = config_dict['tts_settings'].get('default_tts_provider', 'openai')
-    if 'default_voice' not in config_dict['APP_TTS_CONFIG']:
-        config_dict['APP_TTS_CONFIG']['default_voice'] = config_dict['tts_settings'].get('default_tts_voice', 'alloy')
-    if 'default_model' not in config_dict['APP_TTS_CONFIG']:
-        config_dict['APP_TTS_CONFIG']['default_model'] = config_dict['tts_settings'].get('default_openai_tts_model', 'tts-1')
-    if 'default_format' not in config_dict['APP_TTS_CONFIG']:
-        config_dict['APP_TTS_CONFIG']['default_format'] = config_dict['tts_settings'].get('default_openai_tts_output_format', 'mp3')
-    if 'default_speed' not in config_dict['APP_TTS_CONFIG']:
-        config_dict['APP_TTS_CONFIG']['default_speed'] = config_dict['tts_settings'].get('default_openai_tts_speed', 1.0)
+    if "default_provider" not in config_dict["APP_TTS_CONFIG"]:
+        config_dict["APP_TTS_CONFIG"]["default_provider"] = config_dict[
+            "tts_settings"
+        ].get("default_tts_provider", "openai")
+    if "default_voice" not in config_dict["APP_TTS_CONFIG"]:
+        config_dict["APP_TTS_CONFIG"]["default_voice"] = config_dict[
+            "tts_settings"
+        ].get("default_tts_voice", "alloy")
+    if "default_model" not in config_dict["APP_TTS_CONFIG"]:
+        config_dict["APP_TTS_CONFIG"]["default_model"] = config_dict[
+            "tts_settings"
+        ].get("default_openai_tts_model", "tts-1")
+    if "default_format" not in config_dict["APP_TTS_CONFIG"]:
+        config_dict["APP_TTS_CONFIG"]["default_format"] = config_dict[
+            "tts_settings"
+        ].get("default_openai_tts_output_format", "mp3")
+    if "default_speed" not in config_dict["APP_TTS_CONFIG"]:
+        config_dict["APP_TTS_CONFIG"]["default_speed"] = config_dict[
+            "tts_settings"
+        ].get("default_openai_tts_speed", 1.0)
 
     # Populate the rest of chunking_config (tedious but necessary)
-    chunking_types = ['audio', 'book', 'document', 'mediawiki_article', 'mediawiki_dump',
-                      'obsidian_note', 'podcast', 'text', 'video']
+    chunking_types = [
+        "audio",
+        "book",
+        "document",
+        "mediawiki_article",
+        "mediawiki_dump",
+        "obsidian_note",
+        "podcast",
+        "text",
+        "video",
+    ]
     for ctype in chunking_types:
         # Use direct defaults from chunking_section or hardcoded fallbacks
         default_method = _get_typed_value(chunking_section, "chunking_method", "words")
-        default_max_size = _get_typed_value(chunking_section, "chunk_max_size", 400, int)
+        default_max_size = _get_typed_value(
+            chunking_section, "chunk_max_size", 400, int
+        )
         default_overlap = _get_typed_value(chunking_section, "chunk_overlap", 200, int)
-        default_adaptive = _get_typed_value(chunking_section, "adaptive_chunking", False, bool)
-        default_multi_level = _get_typed_value(chunking_section, "chunking_multi_level", False, bool)
-        default_language = _get_typed_value(chunking_section, "chunk_language", global_default_chunk_language)
+        default_adaptive = _get_typed_value(
+            chunking_section, "adaptive_chunking", False, bool
+        )
+        default_multi_level = _get_typed_value(
+            chunking_section, "chunking_multi_level", False, bool
+        )
+        default_language = _get_typed_value(
+            chunking_section, "chunk_language", global_default_chunk_language
+        )
 
         # Only set if not already defined in lines 494-562
         if f"{ctype}_chunking_method" not in config_dict["chunking_config"]:
-            config_dict["chunking_config"][f"{ctype}_chunking_method"] = _get_typed_value(
-                chunking_section, f"{ctype}_chunking_method", default_method)
+            config_dict["chunking_config"][f"{ctype}_chunking_method"] = (
+                _get_typed_value(
+                    chunking_section, f"{ctype}_chunking_method", default_method
+                )
+            )
         if f"{ctype}_chunk_max_size" not in config_dict["chunking_config"]:
-            config_dict["chunking_config"][f"{ctype}_chunk_max_size"] = _get_typed_value(
-                chunking_section, f"{ctype}_chunk_max_size", default_max_size, int)
+            config_dict["chunking_config"][f"{ctype}_chunk_max_size"] = (
+                _get_typed_value(
+                    chunking_section, f"{ctype}_chunk_max_size", default_max_size, int
+                )
+            )
         if f"{ctype}_chunk_overlap" not in config_dict["chunking_config"]:
             config_dict["chunking_config"][f"{ctype}_chunk_overlap"] = _get_typed_value(
-                chunking_section, f"{ctype}_chunk_overlap", default_overlap, int)
+                chunking_section, f"{ctype}_chunk_overlap", default_overlap, int
+            )
         if f"{ctype}_adaptive_chunking" not in config_dict["chunking_config"]:
-            config_dict["chunking_config"][f"{ctype}_adaptive_chunking"] = _get_typed_value(
-                chunking_section, f"{ctype}_adaptive_chunking", default_adaptive, bool)
+            config_dict["chunking_config"][f"{ctype}_adaptive_chunking"] = (
+                _get_typed_value(
+                    chunking_section,
+                    f"{ctype}_adaptive_chunking",
+                    default_adaptive,
+                    bool,
+                )
+            )
         if f"{ctype}_chunking_multi_level" not in config_dict["chunking_config"]:
-            config_dict["chunking_config"][f"{ctype}_chunking_multi_level"] = _get_typed_value(
-                chunking_section, f"{ctype}_chunking_multi_level", default_multi_level, bool)
+            config_dict["chunking_config"][f"{ctype}_chunking_multi_level"] = (
+                _get_typed_value(
+                    chunking_section,
+                    f"{ctype}_chunking_multi_level",
+                    default_multi_level,
+                    bool,
+                )
+            )
         if f"{ctype}_language" not in config_dict["chunking_config"]:
             config_dict["chunking_config"][f"{ctype}_language"] = _get_typed_value(
-                chunking_section, f"{ctype}_language", default_language)
-
+                chunking_section, f"{ctype}_language", default_language
+            )
 
     # --- Warnings ---
 
@@ -1359,70 +1949,155 @@ def load_settings(force_reload: bool = False) -> Dict:
         try:
             main_db_file_path_server.parent.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            logger.error(f"Could not create server database directory {main_db_file_path_server.parent}: {e}")
+            logger.error(
+                f"Could not create server database directory {main_db_file_path_server.parent}: {e}"
+            )
 
     user_data_base_dir_server = config_dict.get("USER_DB_BASE_DIR")
     if user_data_base_dir_server and isinstance(user_data_base_dir_server, Path):
         try:
             user_data_base_dir_server.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            logger.error(f"Could not create server user data base directory {user_data_base_dir_server}: {e}")
-    
+            logger.error(
+                f"Could not create server user data base directory {user_data_base_dir_server}: {e}"
+            )
+
     # Set the chat dictionaries folder path dynamically
     from .Utils.paths import get_user_data_dir
+
     chat_dicts_folder = get_user_data_dir() / "chat_dicts"
     config_dict["chat_dictionaries"]["chat_dicts_folder"] = str(chat_dicts_folder)
-    
+
     # Create the chat dictionaries folder if it doesn't exist
     try:
         chat_dicts_folder.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Ensured chat dictionaries folder exists: {chat_dicts_folder}")
     except Exception as e:
-        logger.error(f"Could not create chat dictionaries folder {chat_dicts_folder}: {e}")
-    
+        logger.error(
+            f"Could not create chat dictionaries folder {chat_dicts_folder}: {e}"
+        )
+
     # Cache the configuration before returning
     with _SETTINGS_CACHE_LOCK:
         _SETTINGS_CACHE = config_dict
         _SETTINGS_CACHE_SOURCE = active_config_path
         logger.debug("load_settings: Configuration cached for future use")
-    
+
     return config_dict
+
 
 # --- Define API Models (Combined Cloud & Local) ---
 # (Keep your existing API_MODELS_BY_PROVIDER and LOCAL_PROVIDERS dictionaries)
 API_MODELS_BY_PROVIDER = {
-    "OpenAI": ["gpt-4.1-2025-04-14", "o4-mini-2025-04-16", "o3-2025-04-16", "o3-mini-2025-01-31",
-               "o1-2024-12-17", "chatgpt-4o-latest", "gpt-4o-2024-11-20", "gpt-4o-2024-08-06",
-               "gpt-4.1-mini-2025-04-14", "gpt-4.1-nano-2025-04-14", "gpt-4o-mini-2024-07-18", ],
-    "Anthropic": ["claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219",
-                  "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-5-sonnet-20240620",
-                  "claude-3-haiku-20240307", "claude-3-opus-20240229", "claude-3-sonnet-20240229",
-                  "claude-2.1", "claude-2.0"],
-    "Cohere": ["command-a-03-2025", "command-r7b-12-2024", "command-r-plus-04-2024", "command-r-plus",
-               "command-r-08-2024", "command-r-03-2024", "command", "command-nightly", "command-light",
-               "command-light-nightly"],
+    "OpenAI": [
+        "gpt-4.1-2025-04-14",
+        "o4-mini-2025-04-16",
+        "o3-2025-04-16",
+        "o3-mini-2025-01-31",
+        "o1-2024-12-17",
+        "chatgpt-4o-latest",
+        "gpt-4o-2024-11-20",
+        "gpt-4o-2024-08-06",
+        "gpt-4.1-mini-2025-04-14",
+        "gpt-4.1-nano-2025-04-14",
+        "gpt-4o-mini-2024-07-18",
+    ],
+    "Anthropic": [
+        "claude-opus-4-20250514",
+        "claude-sonnet-4-20250514",
+        "claude-3-7-sonnet-20250219",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku-20241022",
+        "claude-3-5-sonnet-20240620",
+        "claude-3-haiku-20240307",
+        "claude-3-opus-20240229",
+        "claude-3-sonnet-20240229",
+        "claude-2.1",
+        "claude-2.0",
+    ],
+    "Cohere": [
+        "command-a-03-2025",
+        "command-r7b-12-2024",
+        "command-r-plus-04-2024",
+        "command-r-plus",
+        "command-r-08-2024",
+        "command-r-03-2024",
+        "command",
+        "command-nightly",
+        "command-light",
+        "command-light-nightly",
+    ],
     "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
-    "Groq": ["gemma2-9b-it", "mmeta-llama/Llama-Guard-4-12B", "llama-3.3-70b-versatile", "llama-3.1-8b-instant",
-             "llama3-70b-8192", "llama3-70b-8192", "llama3-8b-8192",],
-    "Google": ["gemini-2.5-flash", "gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash",
-               "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", ],
-    "HuggingFace": ["openai/gpt-oss-120b", "meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",],
-    "MistralAI": ["open-mistral-nemo", "mistral-medium-2505", "codestral-2501", "mistral-saba-2502",
-                  "mistral-large-2411", "ministral-3b-2410", "ministral-8b-2410", "mistral-moderation-2411",
-                  "devstral-small-2505", "mistral-small-2503", ],
-    "OpenRouter": ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001",
-                   "google/gemini-2.5-pro-preview", "google/gemini-2.5-flash-preview",
-                   "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324",
-                   "openai/gpt-4.1", "anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free",
-                   "anthropic/claude-3.7-sonnet:thinking", "google/gemini-flash-1.5-8b",
-                   "mistralai/mistral-nemo", "google/gemini-2.5-flash-preview-05-20", ],
+    "Groq": [
+        "gemma2-9b-it",
+        "mmeta-llama/Llama-Guard-4-12B",
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "llama3-70b-8192",
+        "llama3-70b-8192",
+        "llama3-8b-8192",
+    ],
+    "Google": [
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-preview-05-20",
+        "gemini-2.5-pro-preview-05-06",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b",
+        "gemini-1.5-pro",
+    ],
+    "HuggingFace": [
+        "openai/gpt-oss-120b",
+        "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "meta-llama/Meta-Llama-3.1-70B-Instruct",
+    ],
+    "MistralAI": [
+        "open-mistral-nemo",
+        "mistral-medium-2505",
+        "codestral-2501",
+        "mistral-saba-2502",
+        "mistral-large-2411",
+        "ministral-3b-2410",
+        "ministral-8b-2410",
+        "mistral-moderation-2411",
+        "devstral-small-2505",
+        "mistral-small-2503",
+    ],
+    "OpenRouter": [
+        "openai/gpt-4o-mini",
+        "anthropic/claude-3.7-sonnet",
+        "google/gemini-2.0-flash-001",
+        "google/gemini-2.5-pro-preview",
+        "google/gemini-2.5-flash-preview",
+        "deepseek/deepseek-chat-v3-0324:free",
+        "deepseek/deepseek-chat-v3-0324",
+        "openai/gpt-4.1",
+        "anthropic/claude-sonnet-4",
+        "deepseek/deepseek-r1:free",
+        "anthropic/claude-3.7-sonnet:thinking",
+        "google/gemini-flash-1.5-8b",
+        "mistralai/mistral-nemo",
+        "google/gemini-2.5-flash-preview-05-20",
+    ],
 }
 LOCAL_PROVIDERS = {
     "llama_cpp": ["None"],
     "Oobabooga": ["None"],
     "koboldcpp": ["None"],
-    "Ollama": ["gemma3:12b", "gemma3:4b", "gemma3:27b", "qwen3:4b", "qwen3:8b", "qwen3:14b", "qwen3:30b",
-               "qwen3:32b", "qwen3:235b", "devstral:24b", "deepseek-r1:671b"],
+    "Ollama": [
+        "gemma3:12b",
+        "gemma3:4b",
+        "gemma3:27b",
+        "qwen3:4b",
+        "qwen3:8b",
+        "qwen3:14b",
+        "qwen3:30b",
+        "qwen3:32b",
+        "qwen3:235b",
+        "devstral:24b",
+        "deepseek-r1:671b",
+    ],
     "vLLM": ["vllm-model-z", "vllm-model-x", "vllm-model-y", "vllm-model-a"],
     "TabbyAPI": ["tabby-model", "tabby-model-2", "tabby-model-3"],
     "Aphrodite": ["aphrodite-engine", "aphrodite-engine-2"],
@@ -2737,8 +3412,11 @@ debug = false  # Enable debug mode for development
 try:
     DEFAULT_CONFIG_FROM_TOML: Dict[str, Any] = tomllib.loads(CONFIG_TOML_CONTENT)
 except tomllib.TOMLDecodeError as e:
-    logger.critical(f"FATAL: Could not parse internal DEFAULT_CONFIG_TOML_CONTENT: {e}. Application cannot start correctly.")
-    DEFAULT_CONFIG_FROM_TOML = {} # Should not happen with valid TOML string
+    logger.critical(
+        f"FATAL: Could not parse internal DEFAULT_CONFIG_TOML_CONTENT: {e}. Application cannot start correctly."
+    )
+    DEFAULT_CONFIG_FROM_TOML = {}  # Should not happen with valid TOML string
+
 
 # --- Helper for deep merging dictionaries ---
 def deep_merge_dicts(base: Dict, update: Dict) -> Dict:
@@ -2751,11 +3429,15 @@ def deep_merge_dicts(base: Dict, update: Dict) -> Dict:
             merged[key] = value
     return merged
 
+
 # --- Primary Configuration Loading Logic for the CLI ---
 _CONFIG_CACHE: Optional[Dict[str, Any]] = None
 _CONFIG_CACHE_SOURCE: Optional[Path] = None
 
-def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str, Any]: # Renamed from load_cli_config
+
+def load_cli_config_and_ensure_existence(
+    force_reload: bool = False,
+) -> Dict[str, Any]:  # Renamed from load_cli_config
     """
     Loads settings for the CLI application from ~/.config/tldw_cli/config.toml.
     If the file doesn't exist, it's created with default values from CONFIG_TOML_CONTENT.
@@ -2763,18 +3445,24 @@ def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str
     """
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE
     config_path = _get_effective_config_path()
-    if _CONFIG_CACHE is not None and _CONFIG_CACHE_SOURCE == config_path and not force_reload:
+    if (
+        _CONFIG_CACHE is not None
+        and _CONFIG_CACHE_SOURCE == config_path
+        and not force_reload
+    ):
         return _CONFIG_CACHE
 
     # Start with the programmatic defaults defined in CONFIG_TOML_CONTENT
     loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
 
     if not config_path.exists():
-        logger.info(f"CLI Config file not found at {config_path}. Creating with default values from CONFIG_TOML_CONTENT.")
+        logger.info(
+            f"CLI Config file not found at {config_path}. Creating with default values from CONFIG_TOML_CONTENT."
+        )
         try:
             config_path.parent.mkdir(parents=True, exist_ok=True)
             with open(config_path, "w", encoding="utf-8") as f:
-                f.write(CONFIG_TOML_CONTENT) # Write the raw TOML string
+                f.write(CONFIG_TOML_CONTENT)  # Write the raw TOML string
             logger.info(f"Created default CLI config file at {config_path}")
             # Set a flag to notify the user on first run
             loaded_config["_first_run"] = True
@@ -2783,20 +3471,32 @@ def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str
             # Try alternative location in user's home directory
             logger.warning(f"Permission denied creating config at {config_path}: {e}")
             alt_config_path = Path.home() / ".tldw_cli_config.toml"
-            logger.info(f"Attempting to create config at alternative location: {alt_config_path}")
+            logger.info(
+                f"Attempting to create config at alternative location: {alt_config_path}"
+            )
             try:
                 with open(alt_config_path, "w", encoding="utf-8") as f:
                     f.write(CONFIG_TOML_CONTENT)
-                logger.warning(f"Created config file at alternative location: {alt_config_path}")
-                logger.warning("Please move this file to the standard location when possible.")
+                logger.warning(
+                    f"Created config file at alternative location: {alt_config_path}"
+                )
+                logger.warning(
+                    "Please move this file to the standard location when possible."
+                )
                 # Note: We don't update the active config path here to maintain consistency
             except Exception as alt_e:
-                logger.error(f"Could not create config file at alternative location either: {alt_e}")
+                logger.error(
+                    f"Could not create config file at alternative location either: {alt_e}"
+                )
                 logger.error("Application will use internal defaults only.")
         except OSError as e:
-            logger.error(f"Could not create default CLI config file {config_path}: {e}. Using internal defaults.")
+            logger.error(
+                f"Could not create default CLI config file {config_path}: {e}. Using internal defaults."
+            )
             # Log more helpful information for the user
-            logger.info(f"You may need to manually create the directory: {config_path.parent}")
+            logger.info(
+                f"You may need to manually create the directory: {config_path.parent}"
+            )
             logger.info("Or check that you have write permissions to this location.")
     else:
         logger.info(f"Attempting to load CLI config from: {config_path}")
@@ -2806,24 +3506,34 @@ def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str
             # Merge user's file settings on top of the programmatic defaults
             loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
             logger.info(f"Successfully loaded and merged CLI config from {config_path}")
-            
+
             # Decrypt config if encryption is enabled
             loaded_config = decrypt_config_section(loaded_config)
         except tomllib.TOMLDecodeError as e:
-            logger.opt(exception=True).error(f"Error decoding CLI TOML config file {config_path}: {e}. Using internal defaults + any previous successful load.")
+            logger.opt(exception=True).error(
+                f"Error decoding CLI TOML config file {config_path}: {e}. Using internal defaults + any previous successful load."
+            )
             # `loaded_config` remains the programmatic defaults in this case.
         except Exception as e:
-            logger.opt(exception=True).error(f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load.")
+            logger.opt(exception=True).error(
+                f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load."
+            )
             # `loaded_config` remains the programmatic defaults.
 
     _CONFIG_CACHE = loaded_config
     _CONFIG_CACHE_SOURCE = config_path
     # Log the keys of the configuration being returned to verify its structure
-    logger.debug(f"load_cli_config_and_ensure_existence returning config with top-level keys: {list(loaded_config.keys())}")
+    logger.debug(
+        f"load_cli_config_and_ensure_existence returning config with top-level keys: {list(loaded_config.keys())}"
+    )
     if "api_settings" in loaded_config:
-        logger.debug(f"  'api_settings' found with keys: {list(loaded_config.get('api_settings', {}).keys())}")
+        logger.debug(
+            f"  'api_settings' found with keys: {list(loaded_config.get('api_settings', {}).keys())}"
+        )
     else:
-        logger.warning("  'api_settings' key NOT FOUND in the loaded configuration for load_cli_config_and_ensure_existence.")
+        logger.warning(
+            "  'api_settings' key NOT FOUND in the loaded configuration for load_cli_config_and_ensure_existence."
+        )
 
     return _CONFIG_CACHE
 
@@ -2831,12 +3541,31 @@ def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str
 def _is_sensitive_setting_key(key: Any) -> bool:
     key_lower = str(key).lower()
     sensitive_exact = [
-        'api_key', 'apikey', 'api-key', 'secret', 'token', 'password',
-        'auth_token', 'api_token', 'access_token', 'secret_key',
-        'refresh_token', 'client_secret'
+        "api_key",
+        "apikey",
+        "api-key",
+        "secret",
+        "token",
+        "password",
+        "auth_token",
+        "api_token",
+        "access_token",
+        "secret_key",
+        "refresh_token",
+        "client_secret",
     ]
-    sensitive_patterns = ['api_key', 'apikey', 'api-key', '_key', '_token', '_secret', '_password']
-    return key_lower in sensitive_exact or any(pattern in key_lower for pattern in sensitive_patterns)
+    sensitive_patterns = [
+        "api_key",
+        "apikey",
+        "api-key",
+        "_key",
+        "_token",
+        "_secret",
+        "_password",
+    ]
+    return key_lower in sensitive_exact or any(
+        pattern in key_lower for pattern in sensitive_patterns
+    )
 
 
 def _setting_value_for_log(key: Any, value: Any) -> str:
@@ -2846,7 +3575,9 @@ def _setting_value_for_log(key: Any, value: Any) -> str:
     return repr(value)
 
 
-def _maybe_encrypt_setting_value(config_data: Dict[str, Any], key: Any, value: Any) -> Any:
+def _maybe_encrypt_setting_value(
+    config_data: Dict[str, Any], key: Any, value: Any
+) -> Any:
     encryption_config = config_data.get("encryption", {})
     if not (
         isinstance(encryption_config, dict)
@@ -2874,7 +3605,7 @@ def _maybe_encrypt_setting_value(config_data: Dict[str, Any], key: Any, value: A
 
 def _target_config_section(config_data: Dict[str, Any], section: str) -> Dict[str, Any]:
     current_level = config_data
-    for part in section.split('.'):
+    for part in section.split("."):
         next_level = current_level.setdefault(part, {})
         if not isinstance(next_level, dict):
             raise TypeError(part)
@@ -2924,12 +3655,13 @@ def _config_write_mode(config_path: Path) -> int:
     return _CONFIG_FILE_DEFAULT_MODE
 
 
-def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]]) -> bool:
+def save_settings_to_cli_config(
+    section_values: Mapping[str, Mapping[Any, Any]],
+) -> bool:
     """Persist multiple config values with one TOML read/write and one cache reload."""
     global _CONFIG_CACHE, _SETTINGS_CACHE, settings
     logged_keys = {
-        section: list(values.keys())
-        for section, values in section_values.items()
+        section: list(values.keys()) for section, values in section_values.items()
     }
     logger.info(f"Attempting to save settings batch: {logged_keys!r}")
     config_path = _get_effective_config_path()
@@ -2947,11 +3679,15 @@ def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]])
                 with open(config_path, "rb") as f:
                     config_data = tomllib.load(f)
             except tomllib.TOMLDecodeError as e:
-                logger.error(f"Corrupted config file at {config_path}. Cannot save. Please fix or delete it. Error: {e}")
+                logger.error(
+                    f"Corrupted config file at {config_path}. Cannot save. Please fix or delete it. Error: {e}"
+                )
                 # Consider creating a backup of the corrupt file for the user.
                 return False
             except Exception as e:
-                logger.opt(exception=True).error(f"Unexpected error reading {config_path}: {e}")
+                logger.opt(exception=True).error(
+                    f"Unexpected error reading {config_path}: {e}"
+                )
                 return False
 
         try:
@@ -2960,7 +3696,9 @@ def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]])
                     continue
                 current_level = _target_config_section(config_data, section)
                 for key, value in values.items():
-                    current_level[key] = _maybe_encrypt_setting_value(config_data, key, value)
+                    current_level[key] = _maybe_encrypt_setting_value(
+                        config_data, key, value
+                    )
         except (TypeError, AttributeError):
             logger.error(
                 "Configuration structure conflict. Could not save settings batch "
@@ -2984,7 +3722,9 @@ def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]])
 
             return True
         except (IOError, OSError, toml.TomlDecodeError) as e:
-            logger.opt(exception=True).error(f"Failed to write updated config to {config_path}: {e}")
+            logger.opt(exception=True).error(
+                f"Failed to write updated config to {config_path}: {e}"
+            )
             return False
 
 
@@ -3010,14 +3750,18 @@ def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
             with open(config_path, "rb") as f:
                 config_data: Dict[str, Any] = tomllib.load(f)
         except tomllib.TOMLDecodeError as e:
-            logger.error(f"Corrupted config file at {config_path}. Cannot delete from it. Error: {e}")
+            logger.error(
+                f"Corrupted config file at {config_path}. Cannot delete from it. Error: {e}"
+            )
             return False
         except Exception as e:
-            logger.opt(exception=True).error(f"Unexpected error reading {config_path}: {e}")
+            logger.opt(exception=True).error(
+                f"Unexpected error reading {config_path}: {e}"
+            )
             return False
 
         current_level: Any = config_data
-        for part in section.split('.'):
+        for part in section.split("."):
             if not isinstance(current_level, dict) or part not in current_level:
                 return True
             current_level = current_level[part]
@@ -3030,7 +3774,9 @@ def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
         # Sentinel, not None: a key whose stored value is legitimately None
         # must still count as removed so the file is rewritten.
         _MISSING = object()
-        removed = [key for key in keys if current_level.pop(key, _MISSING) is not _MISSING]
+        removed = [
+            key for key in keys if current_level.pop(key, _MISSING) is not _MISSING
+        ]
         if not removed:
             return True
 
@@ -3040,7 +3786,9 @@ def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
                 toml.dumps(config_data),
                 mode=_config_write_mode(config_path),
             )
-            logger.info(f"Removed {len(removed)} key(s) from [{section}] in {config_path}")
+            logger.info(
+                f"Removed {len(removed)} key(s) from [{section}] in {config_path}"
+            )
 
             _CONFIG_CACHE = None
             _SETTINGS_CACHE = None
@@ -3049,7 +3797,9 @@ def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
 
             return True
         except (IOError, OSError, toml.TomlDecodeError) as e:
-            logger.opt(exception=True).error(f"Failed to write updated config to {config_path}: {e}")
+            logger.opt(exception=True).error(
+                f"Failed to write updated config to {config_path}: {e}"
+            )
             return False
 
 
@@ -3099,29 +3849,29 @@ def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
         The resolved setting value, or ``default`` when the section/key does
         not exist.
     """
-    config = load_cli_config_and_ensure_existence() # Ensures config is loaded
-    
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+
     # Handle dotted notation when key is None (called with positional args)
-    if key is None and '.' in section:
+    if key is None and "." in section:
         # Split on first dot only to handle nested keys
-        parts = section.split('.', 1)
+        parts = section.split(".", 1)
         section = parts[0]
         key = parts[1]
     elif key is None:
         # No dot found and no key provided - invalid call
         return default
-    
+
     # Handle the case where default was passed as second argument in dotted notation
     # e.g., get_cli_setting("section.key", 500) where 500 is the default
     if not isinstance(key, str) and default is None:
         default = key
-        if '.' in section:
-            parts = section.split('.', 1)
+        if "." in section:
+            parts = section.split(".", 1)
             section = parts[0]
             key = parts[1]
         else:
             return default
-    
+
     # Flat lookup first: preserves every previously-working shape bit-for-bit
     # (a literal dotted top-level key, while impossible from TOML, wins).
     section_data = config.get(section)
@@ -3163,80 +3913,91 @@ def get_chat_defaults_streaming(default: bool = True) -> bool:
 def get_media_ingestion_defaults(media_type: str) -> Dict[str, Any]:
     """
     Get default chunking settings for a specific media type.
-    
+
     Args:
         media_type: Type of media ('pdf', 'ebook', 'document', 'plaintext', 'web_article')
-        
+
     Returns:
         Dictionary containing chunking configuration for the media type
     """
     # First check if user has custom settings in config
     config = load_cli_config_and_ensure_existence()
     media_ingestion_config = config.get("media_ingestion", {})
-    
+
     # Get media-specific config if it exists
-    if media_type in media_ingestion_config and isinstance(media_ingestion_config[media_type], dict):
+    if media_type in media_ingestion_config and isinstance(
+        media_ingestion_config[media_type], dict
+    ):
         # Use deep merge to combine with defaults, allowing partial overrides
         return deep_merge_dicts(
             DEFAULT_MEDIA_INGESTION_CONFIG.get(media_type, {}),
-            media_ingestion_config[media_type]
+            media_ingestion_config[media_type],
         )
-    
+
     # Fall back to hardcoded defaults
-    return DEFAULT_MEDIA_INGESTION_CONFIG.get(media_type, {
-        "chunk_method": "paragraphs",
-        "chunk_size": 500,
-        "chunk_overlap": 200,
-        "use_adaptive_chunking": False,
-        "use_multi_level_chunking": False,
-        "chunk_language": ""
-    })
+    return DEFAULT_MEDIA_INGESTION_CONFIG.get(
+        media_type,
+        {
+            "chunk_method": "paragraphs",
+            "chunk_size": 500,
+            "chunk_overlap": 200,
+            "use_adaptive_chunking": False,
+            "use_multi_level_chunking": False,
+            "chunk_language": "",
+        },
+    )
 
 
 def get_ingest_ui_style() -> str:
     """
     Get the configured UI style for media ingestion.
-    
+
     Returns:
         UI style string: "simplified", "grid", "wizard", or "split"
     """
     config = load_cli_config_and_ensure_existence()
     media_ingestion_config = config.get("media_ingestion", {})
-    
+
     # Get UI style from config, fall back to default
-    ui_style = media_ingestion_config.get("ui_style", DEFAULT_MEDIA_INGESTION_CONFIG.get("ui_style", "default"))
-    
+    ui_style = media_ingestion_config.get(
+        "ui_style", DEFAULT_MEDIA_INGESTION_CONFIG.get("ui_style", "default")
+    )
+
     # Validate the UI style
     valid_styles = ["default", "redesigned", "new", "grid", "wizard", "split"]
     if ui_style not in valid_styles:
-        logger.warning(f"Invalid ingest UI style '{ui_style}', falling back to 'default'")
+        logger.warning(
+            f"Invalid ingest UI style '{ui_style}', falling back to 'default'"
+        )
         return "default"
-    
+
     return ui_style
 
 
 def get_ocr_backend_config(backend_name: str) -> Dict[str, Any]:
     """
     Get configuration for a specific OCR backend.
-    
+
     Args:
         backend_name: Name of the OCR backend (e.g., 'docext', 'tesseract')
-        
+
     Returns:
         Dictionary containing backend configuration
     """
     # First check if user has custom settings in config
     config = load_cli_config_and_ensure_existence()
     ocr_backend_config = config.get("ocr_backends", {})
-    
+
     # Get backend-specific config if it exists
-    if backend_name in ocr_backend_config and isinstance(ocr_backend_config[backend_name], dict):
+    if backend_name in ocr_backend_config and isinstance(
+        ocr_backend_config[backend_name], dict
+    ):
         # Use deep merge to combine with defaults, allowing partial overrides
         return deep_merge_dicts(
             DEFAULT_OCR_BACKEND_CONFIG.get(backend_name, {}),
-            ocr_backend_config[backend_name]
+            ocr_backend_config[backend_name],
         )
-    
+
     # Fall back to hardcoded defaults
     return DEFAULT_OCR_BACKEND_CONFIG.get(backend_name, {})
 
@@ -3244,16 +4005,22 @@ def get_ocr_backend_config(backend_name: str) -> Dict[str, Any]:
 # --- CLI Providers and Models Getter ---
 def get_cli_providers_and_models() -> Dict[str, List[str]]:
     config = load_settings()
-    providers_data = config.get("providers", {}) # Default to empty dict if "providers" isn't there
+    providers_data = config.get(
+        "providers", {}
+    )  # Default to empty dict if "providers" isn't there
     valid_providers: Dict[str, List[str]] = {}
     if isinstance(providers_data, dict):
         for provider, models in providers_data.items():
             if isinstance(models, list) and all(isinstance(m, str) for m in models):
                 valid_providers[provider] = models
             else:
-                logger.warning(f"Invalid model list for provider '{provider}' in CLI config [providers]. Models: {models}. Skipping.")
+                logger.warning(
+                    f"Invalid model list for provider '{provider}' in CLI config [providers]. Models: {models}. Skipping."
+                )
     else:
-        logger.error(f"CLI Config 'providers' section is not a dictionary. Found: {type(providers_data)}. No provider/model data available.")
+        logger.error(
+            f"CLI Config 'providers' section is not a dictionary. Found: {type(providers_data)}. No provider/model data available."
+        )
     return valid_providers
 
 
@@ -3288,16 +4055,16 @@ def resolve_provider_name(
 def check_encryption_needed() -> bool:
     """
     Check if the config has API keys that should be encrypted.
-    
+
     Returns:
         True if API keys are detected and encryption is not enabled
     """
     config = load_cli_config_and_ensure_existence()
-    
+
     # Check if encryption is already enabled
     if config.get("encryption", {}).get("enabled", False):
         return False
-    
+
     # Check for API keys
     enc_module = get_encryption_module()
     return enc_module.detect_api_keys(config)
@@ -3306,31 +4073,31 @@ def check_encryption_needed() -> bool:
 def get_detected_api_providers() -> List[str]:
     """
     Get list of providers with detected API keys.
-    
+
     Returns:
         List of provider names with API keys
     """
     config = load_cli_config_and_ensure_existence()
     providers = []
-    
+
     for section_name, section_value in config.items():
-        if section_name.startswith('api_settings.') and isinstance(section_value, dict):
-            api_key = section_value.get('api_key', '')
+        if section_name.startswith("api_settings.") and isinstance(section_value, dict):
+            api_key = section_value.get("api_key", "")
             # Check if API key exists and is not a placeholder
-            if api_key and not api_key.startswith('<') and not api_key.endswith('>'):
-                provider_name = section_name.replace('api_settings.', '')
+            if api_key and not api_key.startswith("<") and not api_key.endswith(">"):
+                provider_name = section_name.replace("api_settings.", "")
                 providers.append(provider_name)
-    
+
     return providers
 
 
 def enable_config_encryption(password: str) -> bool:
     """
     Enable encryption for the config file and encrypt existing API keys.
-    
+
     Args:
         password: The master password to use for encryption
-        
+
     Returns:
         True if encryption was enabled successfully
     """
@@ -3340,25 +4107,25 @@ def enable_config_encryption(password: str) -> bool:
         if DEFAULT_CONFIG_PATH.exists():
             with open(DEFAULT_CONFIG_PATH, "rb") as f:
                 config_data = tomllib.load(f)
-        
+
         # Encrypt the config
         encrypted_config = encrypt_api_keys_in_config(config_data, password)
-        
+
         # Save the encrypted config
         with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
             toml.dump(encrypted_config, f)
-        
+
         # Set the password for the current session
         set_encryption_password(password)
-        
+
         # Clear and reload caches
         global _CONFIG_CACHE, _SETTINGS_CACHE
         _CONFIG_CACHE = None
         _SETTINGS_CACHE = None
-        
+
         logger.success("Config encryption enabled successfully")
         return True
-        
+
     except Exception as e:
         logger.error(f"Failed to enable config encryption: {e}")
         return False
@@ -3367,10 +4134,10 @@ def enable_config_encryption(password: str) -> bool:
 def disable_config_encryption(password: str) -> bool:
     """
     Disable encryption for the config file and decrypt all values.
-    
+
     Args:
         password: The master password to verify before disabling
-        
+
     Returns:
         True if encryption was disabled successfully
     """
@@ -3380,47 +4147,47 @@ def disable_config_encryption(password: str) -> bool:
         if DEFAULT_CONFIG_PATH.exists():
             with open(DEFAULT_CONFIG_PATH, "rb") as f:
                 config_data = tomllib.load(f)
-        
+
         # Verify password
         encryption_config = config_data.get("encryption", {})
         if encryption_config.get("enabled", False):
             enc_module = get_encryption_module()
-            
+
             # Verify using password verifier
             password_verifier = encryption_config.get("password_verifier", "")
             if not password_verifier:
                 logger.error("No password verifier found in encryption config")
                 return False
-            
+
             if not enc_module.verify_password(password, password_verifier):
                 logger.error("Invalid password provided")
                 return False
-        
+
         # Set password temporarily for decryption
         set_encryption_password(password)
-        
+
         # Decrypt the config
         decrypted_config = decrypt_config_section(config_data)
-        
+
         # Remove encryption metadata
         if "encryption" in decrypted_config:
             del decrypted_config["encryption"]
-        
+
         # Save the decrypted config
         config_str = toml.dumps(decrypted_config)
         atomic_write_text(DEFAULT_CONFIG_PATH, config_str, encoding="utf-8")
-        
+
         # Clear password
         clear_encryption_password()
-        
+
         # Clear and reload caches
         global _CONFIG_CACHE, _SETTINGS_CACHE
         _CONFIG_CACHE = None
         _SETTINGS_CACHE = None
-        
+
         logger.success("Config encryption disabled successfully")
         return True
-        
+
     except Exception as e:
         logger.error(f"Failed to disable config encryption: {e}")
         return False
@@ -3429,11 +4196,11 @@ def disable_config_encryption(password: str) -> bool:
 def change_encryption_password(old_password: str, new_password: str) -> bool:
     """
     Change the encryption password.
-    
+
     Args:
         old_password: The current password
         new_password: The new password to set
-        
+
     Returns:
         True if password was changed successfully
     """
@@ -3443,91 +4210,95 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
         if DEFAULT_CONFIG_PATH.exists():
             with open(DEFAULT_CONFIG_PATH, "rb") as f:
                 config_data = tomllib.load(f)
-        
+
         # Verify old password
         encryption_config = config_data.get("encryption", {})
         if encryption_config.get("enabled", False):
             enc_module = get_encryption_module()
-            
+
             # Verify using password verifier
             password_verifier = encryption_config.get("password_verifier", "")
             if not password_verifier:
                 logger.error("No password verifier found in encryption config")
                 return False
-            
+
             if not enc_module.verify_password(old_password, password_verifier):
                 logger.error("Invalid current password provided")
                 return False
         else:
             logger.error("Encryption is not enabled")
             return False
-        
+
         # Set old password temporarily for decryption
         set_encryption_password(old_password)
-        
+
         # Decrypt the config
         decrypted_config = decrypt_config_section(config_data)
-        
+
         # Re-encrypt with new password
         encrypted_config = encrypt_api_keys_in_config(decrypted_config, new_password)
-        
+
         # Save the re-encrypted config
         config_str = toml.dumps(encrypted_config)
         atomic_write_text(DEFAULT_CONFIG_PATH, config_str, encoding="utf-8")
-        
+
         # Set the new password for the current session
         set_encryption_password(new_password)
-        
+
         # Clear and reload caches
         global _CONFIG_CACHE, _SETTINGS_CACHE
         _CONFIG_CACHE = None
         _SETTINGS_CACHE = None
-        
+
         logger.success("Encryption password changed successfully")
         return True
-        
+
     except Exception as e:
         logger.error(f"Failed to change encryption password: {e}")
         return False
 
 
 # --- CLI Database and Log File Path Getters ---
-BASE_DATA_DIR_CLI = Path.home() / ".local" / "share" / "tldw_cli" # Renamed for clarity
+BASE_DATA_DIR_CLI = Path.home() / ".local" / "share" / "tldw_cli"  # Renamed for clarity
+
 
 def get_api_key(api_name: str) -> Optional[str]:
     """
     Get API key for a given provider.
-    
+
     Args:
         api_name: The API provider name (e.g., 'openai', 'anthropic', 'groq')
-        
+
     Returns:
         The API key if found, None otherwise
     """
     # Normalize the API name
     api_name_lower = api_name.lower()
-    
+
     # First try the newer api_settings.{provider} structure
     try:
         settings = load_settings()
         api_settings_key = f"api_settings.{api_name_lower}"
-        
+
         if api_settings_key in settings:
             api_settings = settings[api_settings_key]
-            
+
             # Check environment variable first if specified
-            if 'api_key_env_var' in api_settings:
-                env_var = api_settings['api_key_env_var']
+            if "api_key_env_var" in api_settings:
+                env_var = api_settings["api_key_env_var"]
                 env_value = os.getenv(env_var)
                 if env_value:
                     return env_value
-            
+
             # Fall back to config file API key
-            if 'api_key' in api_settings and api_settings['api_key'] != "<API_KEY_HERE>":
-                return api_settings['api_key']
+            if (
+                "api_key" in api_settings
+                and api_settings["api_key"] != "<API_KEY_HERE>"
+            ):
+                return api_settings["api_key"]
     except Exception as e:
         logger.debug(f"Error accessing api_settings for {api_name}: {e}")
-    
+
     # Try the legacy approach used elsewhere in the codebase
     try:
         # This is the pattern used in other files like Summarization_General_Lib.py
@@ -3536,31 +4307,33 @@ def get_api_key(api_name: str) -> Optional[str]:
             return api_key
     except Exception as e:
         logger.debug(f"Error getting API key via get_cli_setting for {api_name}: {e}")
-    
+
     # Try direct environment variable access with common patterns
-    env_var_names = [
-        f"{api_name_lower.upper()}_API_KEY",
-        f"{api_name.upper()}_API_KEY"
-    ]
-    
+    env_var_names = [f"{api_name_lower.upper()}_API_KEY", f"{api_name.upper()}_API_KEY"]
+
     for env_var in env_var_names:
         env_value = os.getenv(env_var)
         if env_value:
             return env_value
-    
+
     # No API key found
     logger.debug(f"No API key found for provider: {api_name}")
     return None
 
+
 def get_user_folder_name() -> str:
     """Get the current user folder name from configuration."""
-    default_user = DEFAULT_CONFIG_FROM_TOML.get("general", {}).get("users_name", "default_user")
+    default_user = DEFAULT_CONFIG_FROM_TOML.get("general", {}).get(
+        "users_name", "default_user"
+    )
     user_name = get_cli_setting("general", "users_name", default_user)
     # Sanitize user name to make it safe for folder names
     # Replace spaces and special characters with underscores
     import re
-    safe_user_name = re.sub(r'[^a-zA-Z0-9_-]', '_', user_name)
+
+    safe_user_name = re.sub(r"[^a-zA-Z0-9_-]", "_", user_name)
     return safe_user_name if safe_user_name else "default_user"
+
 
 def get_user_data_dir() -> Path:
     """Get the user-specific data directory."""
@@ -3568,16 +4341,23 @@ def get_user_data_dir() -> Path:
     configured_data_dir = get_cli_setting("paths", "data_dir", None)
     if configured_data_dir is None:
         configured_data_dir = get_cli_setting("Paths", "data_dir", None)
-    base_data_dir = Path(configured_data_dir).expanduser() if configured_data_dir else BASE_DATA_DIR_CLI
+    base_data_dir = (
+        Path(configured_data_dir).expanduser()
+        if configured_data_dir
+        else BASE_DATA_DIR_CLI
+    )
     user_dir = base_data_dir / user_folder
     # Create directory if it doesn't exist
     user_dir.mkdir(parents=True, exist_ok=True)
     return user_dir
 
+
 def get_chachanotes_db_path() -> Path:
     # Check if a custom path is configured
     custom_path = get_cli_setting("database", "chachanotes_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("chachanotes_db_path"):
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+        "chachanotes_db_path"
+    ):
         # Use custom path if explicitly configured
         db_path = Path(custom_path).expanduser().resolve()
     else:
@@ -3586,10 +4366,13 @@ def get_chachanotes_db_path() -> Path:
         db_path = user_dir / "tldw_chatbook_ChaChaNotes.db"
     return db_path
 
+
 def get_prompts_db_path() -> Path:
     # Check if a custom path is configured
     custom_path = get_cli_setting("database", "prompts_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("prompts_db_path"):
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+        "prompts_db_path"
+    ):
         # Use custom path if explicitly configured
         db_path = Path(custom_path).expanduser().resolve()
     else:
@@ -3598,10 +4381,13 @@ def get_prompts_db_path() -> Path:
         db_path = user_dir / "tldw_chatbook_prompts.db"
     return db_path
 
+
 def get_media_db_path() -> Path:
     # Check if a custom path is configured
     custom_path = get_cli_setting("database", "media_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("media_db_path"):
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+        "media_db_path"
+    ):
         # Use custom path if explicitly configured
         db_path = Path(custom_path).expanduser().resolve()
     else:
@@ -3610,36 +4396,54 @@ def get_media_db_path() -> Path:
         db_path = user_dir / "tldw_chatbook_media_v2.db"
     return db_path
 
+
 def get_library_collections_db_path() -> Path:
     custom_path = get_cli_setting("database", "library_collections_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("library_collections_db_path"):
-        db_path = validate_path_simple(Path(str(custom_path)).expanduser(), require_exists=False).resolve()
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+        "library_collections_db_path"
+    ):
+        db_path = validate_path_simple(
+            Path(str(custom_path)).expanduser(), require_exists=False
+        ).resolve()
     else:
         user_dir = get_user_data_dir()
         db_path = user_dir / "tldw_chatbook_library_collections.db"
     return db_path
 
+
 def get_library_ingest_jobs_db_path() -> Path:
     custom_path = get_cli_setting("database", "library_ingest_jobs_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("library_ingest_jobs_db_path"):
-        db_path = validate_path_simple(Path(str(custom_path)).expanduser(), require_exists=False).resolve()
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+        "library_ingest_jobs_db_path"
+    ):
+        db_path = validate_path_simple(
+            Path(str(custom_path)).expanduser(), require_exists=False
+        ).resolve()
     else:
         db_path = get_user_data_dir() / "tldw_chatbook_library_ingest_jobs.db"
     return db_path
 
+
 def get_workspaces_db_path() -> Path:
     custom_path = get_cli_setting("database", "workspaces_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("workspaces_db_path"):
-        db_path = validate_path_simple(Path(str(custom_path)).expanduser(), require_exists=False).resolve()
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+        "workspaces_db_path"
+    ):
+        db_path = validate_path_simple(
+            Path(str(custom_path)).expanduser(), require_exists=False
+        ).resolve()
     else:
         user_dir = get_user_data_dir()
         db_path = user_dir / "tldw_chatbook_workspaces.db"
     return db_path
 
+
 def get_subscriptions_db_path() -> Path:
     # Check if a custom path is configured
     custom_path = get_cli_setting("database", "subscriptions_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("subscriptions_db_path"):
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+        "subscriptions_db_path"
+    ):
         # Use custom path if explicitly configured
         db_path = Path(custom_path).expanduser().resolve()
     else:
@@ -3648,51 +4452,68 @@ def get_subscriptions_db_path() -> Path:
         db_path = user_dir / "tldw_chatbook_subscriptions.db"
     return db_path
 
+
 def get_notifications_db_path() -> Path:
     # Check if a custom path is configured
     custom_path = get_cli_setting("database", "notifications_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("notifications_db_path"):
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+        "notifications_db_path"
+    ):
         db_path = Path(custom_path).expanduser().resolve()
     else:
         user_dir = get_user_data_dir()
         db_path = user_dir / "tldw_chatbook_notifications.db"
     return db_path
 
+
 def get_research_db_path() -> Path:
     # Check if a custom path is configured
     custom_path = get_cli_setting("database", "research_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("research_db_path"):
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+        "research_db_path"
+    ):
         db_path = Path(custom_path).expanduser().resolve()
     else:
         user_dir = get_user_data_dir()
         db_path = user_dir / "tldw_chatbook_research.db"
     return db_path
 
+
 def get_writing_db_path() -> Path:
     custom_path = get_cli_setting("database", "writing_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("writing_db_path"):
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+        "writing_db_path"
+    ):
         db_path = Path(custom_path).expanduser().resolve()
     else:
         user_dir = get_user_data_dir()
         db_path = user_dir / "tldw_chatbook_writing.db"
     return db_path
 
+
 def get_scheduled_tasks_db_path() -> Path:
     custom_path = get_cli_setting("database", "scheduled_tasks_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("scheduled_tasks_db_path"):
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+        "scheduled_tasks_db_path"
+    ):
         return Path(custom_path).expanduser().resolve()
     return get_user_data_dir() / "tldw_chatbook_scheduled_tasks.db"
+
 
 def get_cli_log_file_path() -> Path:
     # Use user-specific folder for logs
     user_dir = get_user_data_dir()
-    default_log_filename = DEFAULT_CONFIG_FROM_TOML.get("logging", {}).get("log_filename", "tldw_cli_app.log")
+    default_log_filename = DEFAULT_CONFIG_FROM_TOML.get("logging", {}).get(
+        "log_filename", "tldw_cli_app.log"
+    )
     log_filename = get_cli_setting("logging", "log_filename", default_log_filename)
     log_file_path = user_dir / log_filename
     try:
         log_file_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as e:
-        logger.opt(exception=True).error(f"Could not create log directory {log_file_path.parent}: {e}")
+        logger.opt(exception=True).error(
+            f"Could not create log directory {log_file_path.parent}: {e}"
+        )
     return log_file_path
 
 
@@ -3701,12 +4522,17 @@ def get_cli_data_dir() -> Path:
     # Return user-specific directory
     return get_user_data_dir()
 
+
 def get_model_cache_dir() -> Path:
     """Get the user-specific model cache directory for embeddings."""
     # Check if a custom cache dir is configured
-    default_cache_dir = DEFAULT_CONFIG_FROM_TOML.get("embedding_config", {}).get("model_cache_dir", None)
-    custom_cache_dir = get_cli_setting("embedding_config", "model_cache_dir", default_cache_dir)
-    
+    default_cache_dir = DEFAULT_CONFIG_FROM_TOML.get("embedding_config", {}).get(
+        "model_cache_dir", None
+    )
+    custom_cache_dir = get_cli_setting(
+        "embedding_config", "model_cache_dir", default_cache_dir
+    )
+
     if custom_cache_dir and custom_cache_dir != default_cache_dir:
         # Use custom path if explicitly configured
         cache_path = Path(custom_cache_dir).expanduser().resolve()
@@ -3714,19 +4540,23 @@ def get_model_cache_dir() -> Path:
         # Use user-specific folder
         user_dir = get_user_data_dir()
         cache_path = user_dir / "models" / "embeddings"
-    
+
     # Create directory if it doesn't exist
     try:
         cache_path.mkdir(parents=True, exist_ok=True)
     except OSError as e:
-        logger.opt(exception=True).error(f"Could not create model cache directory {cache_path}: {e}")
-    
+        logger.opt(exception=True).error(
+            f"Could not create model cache directory {cache_path}: {e}"
+        )
+
     return cache_path
+
 
 # --- Global CLI Database Instances ---
 chachanotes_db: Optional[CharactersRAGDB] = None
 prompts_db: Optional[PromptsDatabase] = None
 media_db: Optional[MediaDatabase] = None
+
 
 # --- Database Initialization Function (remains largely the same) ---
 def initialize_all_databases():
@@ -3737,10 +4567,14 @@ def initialize_all_databases():
     chachanotes_path = get_chachanotes_db_path()
     logger.info(f"Attempting to initialize ChaChaNotes_DB at: {chachanotes_path}")
     try:
-        chachanotes_db = CharactersRAGDB(db_path=chachanotes_path, client_id=CLI_APP_CLIENT_ID)
+        chachanotes_db = CharactersRAGDB(
+            db_path=chachanotes_path, client_id=CLI_APP_CLIENT_ID
+        )
         logger.success(f"ChaChaNotes_DB initialized successfully at {chachanotes_path}")
     except Exception as e:
-        logger.opt(exception=True).error(f"Failed to initialize ChaChaNotes_DB at {chachanotes_path}: {e}")
+        logger.opt(exception=True).error(
+            f"Failed to initialize ChaChaNotes_DB at {chachanotes_path}: {e}"
+        )
         chachanotes_db = None
     # Prompts DB
     prompts_path = get_prompts_db_path()
@@ -3749,7 +4583,9 @@ def initialize_all_databases():
         prompts_db = PromptsDatabase(db_path=prompts_path, client_id=CLI_APP_CLIENT_ID)
         logger.success(f"Prompts_DB initialized successfully at {prompts_path}")
     except Exception as e:
-        logger.opt(exception=True).error(f"Failed to initialize Prompts_DB at {prompts_path}: {e}")
+        logger.opt(exception=True).error(
+            f"Failed to initialize Prompts_DB at {prompts_path}: {e}"
+        )
         prompts_db = None
     # Media DB
     media_path = get_media_db_path()
@@ -3758,7 +4594,9 @@ def initialize_all_databases():
         media_db = MediaDatabase(db_path=media_path, client_id=CLI_APP_CLIENT_ID)
         logger.success(f"Media_DB_v2 initialized successfully at {media_path}")
     except Exception as e:
-        logger.opt(exception=True).error(f"Failed to initialize Media_DB_v2 at {media_path}: {e}")
+        logger.opt(exception=True).error(
+            f"Failed to initialize Media_DB_v2 at {media_path}: {e}"
+        )
         media_db = None
     logger.info("CLI database initialization complete.")
 
@@ -3773,16 +4611,22 @@ def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
         try:
             # Get integrity check configuration
             config = load_settings()
-            check_integrity = config.get('database', {}).get('check_integrity_on_startup', False)
-            
-            chachanotes_db = CharactersRAGDB(
-                db_path=chachanotes_path, 
-                client_id=CLI_APP_CLIENT_ID,
-                check_integrity_on_startup=check_integrity
+            check_integrity = config.get("database", {}).get(
+                "check_integrity_on_startup", False
             )
-            logger.success(f"ChaChaNotes_DB lazy-initialized successfully at {chachanotes_path}")
+
+            chachanotes_db = CharactersRAGDB(
+                db_path=chachanotes_path,
+                client_id=CLI_APP_CLIENT_ID,
+                check_integrity_on_startup=check_integrity,
+            )
+            logger.success(
+                f"ChaChaNotes_DB lazy-initialized successfully at {chachanotes_path}"
+            )
         except Exception as e:
-            logger.opt(exception=True).error(f"Failed to lazy-initialize ChaChaNotes_DB at {chachanotes_path}: {e}")
+            logger.opt(exception=True).error(
+                f"Failed to lazy-initialize ChaChaNotes_DB at {chachanotes_path}: {e}"
+            )
             chachanotes_db = None
     return chachanotes_db
 
@@ -3796,16 +4640,22 @@ def get_prompts_db_lazy() -> Optional[PromptsDatabase]:
         try:
             # Get integrity check configuration
             config = load_settings()
-            check_integrity = config.get('database', {}).get('check_integrity_on_startup', False)
-            
-            prompts_db = PromptsDatabase(
-                db_path=prompts_path, 
-                client_id=CLI_APP_CLIENT_ID,
-                check_integrity_on_startup=check_integrity
+            check_integrity = config.get("database", {}).get(
+                "check_integrity_on_startup", False
             )
-            logger.success(f"Prompts_DB lazy-initialized successfully at {prompts_path}")
+
+            prompts_db = PromptsDatabase(
+                db_path=prompts_path,
+                client_id=CLI_APP_CLIENT_ID,
+                check_integrity_on_startup=check_integrity,
+            )
+            logger.success(
+                f"Prompts_DB lazy-initialized successfully at {prompts_path}"
+            )
         except Exception as e:
-            logger.opt(exception=True).error(f"Failed to lazy-initialize Prompts_DB at {prompts_path}: {e}")
+            logger.opt(exception=True).error(
+                f"Failed to lazy-initialize Prompts_DB at {prompts_path}: {e}"
+            )
             prompts_db = None
     return prompts_db
 
@@ -3820,7 +4670,9 @@ def get_media_db_lazy() -> Optional[MediaDatabase]:
             media_db = MediaDatabase(db_path=media_path, client_id=CLI_APP_CLIENT_ID)
             logger.success(f"Media_DB_v2 lazy-initialized successfully at {media_path}")
         except Exception as e:
-            logger.opt(exception=True).error(f"Failed to lazy-initialize Media_DB_v2 at {media_path}: {e}")
+            logger.opt(exception=True).error(
+                f"Failed to lazy-initialize Media_DB_v2 at {media_path}: {e}"
+            )
             media_db = None
     return media_db
 
@@ -3836,21 +4688,39 @@ API_MODELS_BY_PROVIDER: Dict[str, List[str]] = {}
 LOCAL_PROVIDERS: Dict[str, List[str]] = {}
 
 _config_providers = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML.get("providers", {}))
-_cloud_provider_keys = ["OpenAI", "Anthropic", "Cohere", "DeepSeek", "Groq", "Google", "HuggingFace", "MistralAI", "OpenRouter"] # Example list
+_cloud_provider_keys = [
+    "OpenAI",
+    "Anthropic",
+    "Cohere",
+    "DeepSeek",
+    "Groq",
+    "Google",
+    "HuggingFace",
+    "MistralAI",
+    "OpenRouter",
+]  # Example list
 
 for provider_name, models_list in _config_providers.items():
     if isinstance(models_list, list):
-        if provider_name in _cloud_provider_keys: # Crude way to separate, adjust as needed
+        if (
+            provider_name in _cloud_provider_keys
+        ):  # Crude way to separate, adjust as needed
             API_MODELS_BY_PROVIDER[provider_name] = models_list
         else:
             LOCAL_PROVIDERS[provider_name] = models_list
     else:
-        logger.warning(f"Models for provider '{provider_name}' in CONFIG_TOML_CONTENT is not a list. Skipping.")
+        logger.warning(
+            f"Models for provider '{provider_name}' in CONFIG_TOML_CONTENT is not a list. Skipping."
+        )
 
-if not API_MODELS_BY_PROVIDER and not LOCAL_PROVIDERS: # Fallback if [providers] was empty or malformed
-    logger.warning("No providers found in CONFIG_TOML_CONTENT's [providers] section. Using hardcoded fallbacks for API_MODELS_BY_PROVIDER and LOCAL_PROVIDERS.")
-    API_MODELS_BY_PROVIDER = { "OpenAI": ["gpt-4o"] } # Minimal fallback
-    LOCAL_PROVIDERS = { "Ollama": ["llama3"] } # Minimal fallback
+if (
+    not API_MODELS_BY_PROVIDER and not LOCAL_PROVIDERS
+):  # Fallback if [providers] was empty or malformed
+    logger.warning(
+        "No providers found in CONFIG_TOML_CONTENT's [providers] section. Using hardcoded fallbacks for API_MODELS_BY_PROVIDER and LOCAL_PROVIDERS."
+    )
+    API_MODELS_BY_PROVIDER = {"OpenAI": ["gpt-4o"]}  # Minimal fallback
+    LOCAL_PROVIDERS = {"Ollama": ["llama3"]}  # Minimal fallback
 
 
 # --- Global default_api_endpoint (example of using the new settings) ---
@@ -3861,10 +4731,16 @@ settings = load_settings()
 
 try:
     # Accessing deeply nested key safely
-    default_api_endpoint = settings.get('llm_api_settings', {}).get('default_api', 'openai')
-    logger.info(f"Default API Endpoint (from config.py global scope): {default_api_endpoint}")
+    default_api_endpoint = settings.get("llm_api_settings", {}).get(
+        "default_api", "openai"
+    )
+    logger.info(
+        f"Default API Endpoint (from config.py global scope): {default_api_endpoint}"
+    )
 except Exception as e:
-    logger.opt(exception=True).error(f"Critical error setting default_api_endpoint in config.py global scope: {str(e)}")
+    logger.opt(exception=True).error(
+        f"Critical error setting default_api_endpoint in config.py global scope: {str(e)}"
+    )
     default_api_endpoint = "openai"  # Fallback
 
 # --- Optional: Export individual variables if needed (generally prefer using settings dict) ---
@@ -3873,16 +4749,23 @@ except Exception as e:
 
 # Make APP_CONFIG, DATABASE_CONFIG, RAG_SEARCH_CONFIG available globally if needed
 # These are now loaded from TOML into the `settings` dictionary.
-APP_CONFIG = settings.get("APP_TTS_CONFIG", DEFAULT_APP_TTS_CONFIG) # Fallback if not in settings for some reason
+APP_CONFIG = settings.get(
+    "APP_TTS_CONFIG", DEFAULT_APP_TTS_CONFIG
+)  # Fallback if not in settings for some reason
 DATABASE_CONFIG = settings.get("APP_DATABASE_CONFIG", DEFAULT_DATABASE_CONFIG)
 RAG_SEARCH_CONFIG = settings.get("APP_RAG_SEARCH_CONFIG", DEFAULT_RAG_SEARCH_CONFIG)
 
 # --- Default Prompts ---
-CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT = settings.get("prompts_strings", {}).get("situate_chunk_context_prompt", "You are an AI assistant. Please follow the instructions provided in the input text carefully and accurately.")
+CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT = settings.get("prompts_strings", {}).get(
+    "situate_chunk_context_prompt",
+    "You are an AI assistant. Please follow the instructions provided in the input text carefully and accurately.",
+)
 
 # --- Load CLI Config and Initialize Databases on module import ---
 # The `settings` global variable is now the result of the unified load_settings()
-logger.debug("CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access")
+logger.debug(
+    "CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access"
+)
 
 # Databases will be initialized lazily on first access
 # This significantly improves startup time by deferring expensive DB operations

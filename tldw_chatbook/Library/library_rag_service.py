@@ -185,7 +185,9 @@ def _raw_items_from_result(raw_result: Any) -> tuple[Any, ...]:
             ):
                 return tuple(value)
         return ()
-    if isinstance(raw_result, Sequence) and not isinstance(raw_result, (str, bytes, bytearray)):
+    if isinstance(raw_result, Sequence) and not isinstance(
+        raw_result, (str, bytes, bytearray)
+    ):
         return tuple(raw_result)
     return ()
 

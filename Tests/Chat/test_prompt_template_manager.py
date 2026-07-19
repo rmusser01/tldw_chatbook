@@ -10,11 +10,12 @@ from tldw_chatbook.Chat.prompt_template_manager import (
     apply_template_to_string,
     get_available_templates,
     _loaded_templates,
-    DEFAULT_RAW_PASSTHROUGH_TEMPLATE
+    DEFAULT_RAW_PASSTHROUGH_TEMPLATE,
 )
 
 
 # --- Test Setup ---
+
 
 @pytest.fixture(autouse=True)
 def clear_template_cache():
@@ -36,20 +37,22 @@ def mock_templates_dir(tmp_path, monkeypatch):
     templates_dir.mkdir()
 
     # Patch the PROMPT_TEMPLATES_DIR constant in the target module
-    monkeypatch.setattr('tldw_chatbook.Chat.prompt_template_manager.PROMPT_TEMPLATES_DIR', templates_dir)
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.prompt_template_manager.PROMPT_TEMPLATES_DIR", templates_dir
+    )
 
     # Create some dummy template files
     template1_data = {
         "name": "test_template_1",
         "description": "A simple test template.",
-        "user_message_content_template": "User said: {{message_content}}"
+        "user_message_content_template": "User said: {{message_content}}",
     }
     (templates_dir / "test_template_1.json").write_text(json.dumps(template1_data))
 
     template2_data = {
         "name": "test_template_2",
         "system_message_template": "System context: {{system_context}}",
-        "user_message_content_template": "{{message_content}}"
+        "user_message_content_template": "{{message_content}}",
     }
     (templates_dir / "test_template_2.json").write_text(json.dumps(template2_data))
 
@@ -61,15 +64,17 @@ def mock_templates_dir(tmp_path, monkeypatch):
 
 # --- Test Cases ---
 
-class TestPromptTemplateManager:
 
+class TestPromptTemplateManager:
     def test_load_template_success(self, mock_templates_dir):
         """Test successfully loading a valid template file."""
         template = load_template("test_template_1")
         assert template is not None
         assert isinstance(template, PromptTemplate)
         assert template.name == "test_template_1"
-        assert template.user_message_content_template == "User said: {{message_content}}"
+        assert (
+            template.user_message_content_template == "User said: {{message_content}}"
+        )
 
     def test_load_template_not_found(self, mock_templates_dir):
         """Test loading a template that does not exist."""
@@ -87,7 +92,9 @@ class TestPromptTemplateManager:
         assert "test_template_1" in _loaded_templates
 
         # Modify the file on disk
-        (mock_templates_dir / "test_template_1.json").write_text(json.dumps({"name": "modified"}))
+        (mock_templates_dir / "test_template_1.json").write_text(
+            json.dumps({"name": "modified"})
+        )
 
         # Load again - should return the cached version
         template2 = load_template("test_template_1")
@@ -104,7 +111,10 @@ class TestPromptTemplateManager:
     def test_get_available_templates_no_dir(self, tmp_path, monkeypatch):
         """Test getting templates when the directory doesn't exist."""
         non_existent_dir = tmp_path / "non_existent_dir"
-        monkeypatch.setattr('tldw_chatbook.Chat.prompt_template_manager.PROMPT_TEMPLATES_DIR', non_existent_dir)
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.prompt_template_manager.PROMPT_TEMPLATES_DIR",
+            non_existent_dir,
+        )
         assert get_available_templates() == []
 
     def test_default_passthrough_template_is_available(self):
@@ -116,7 +126,6 @@ class TestPromptTemplateManager:
 
 
 class TestTemplateRendering:
-
     def test_apply_template_to_string_success(self):
         """Test basic successful rendering."""
         template_str = "Hello, {{ name }}!"
@@ -129,7 +138,9 @@ class TestTemplateRendering:
         template_str = "Hello, {{ name }}! Your age is {{ age }}."
         data = {"name": "World"}  # 'age' is missing
         result = apply_template_to_string(template_str, data)
-        assert result == "Hello, World! Your age is ."  # Jinja renders missing variables as empty strings
+        assert (
+            result == "Hello, World! Your age is ."
+        )  # Jinja renders missing variables as empty strings
 
     def test_apply_template_with_none_input_string(self):
         """Test that a None template string returns an empty string."""
@@ -140,10 +151,7 @@ class TestTemplateRendering:
     def test_apply_template_with_complex_data(self):
         """Test rendering with more complex data structures like lists and dicts."""
         template_str = "User: {{ user.name }}. Items: {% for item in items %}{{ item }}{% if not loop.last %}, {% endif %}{% endfor %}."
-        data = {
-            "user": {"name": "Alice"},
-            "items": ["apple", "banana", "cherry"]
-        }
+        data = {"user": {"name": "Alice"}, "items": ["apple", "banana", "cherry"]}
         result = apply_template_to_string(template_str, data)
         assert result == "User: Alice. Items: apple, banana, cherry."
 
@@ -152,7 +160,8 @@ class TestTemplateRendering:
         # Attempt to access a private attribute or a method that could be unsafe
         template_str = "Unsafe access: {{ my_obj.__class__ }}"
 
-        class MyObj: pass
+        class MyObj:
+            pass
 
         data = {"my_obj": MyObj()}
 

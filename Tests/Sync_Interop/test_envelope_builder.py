@@ -8,7 +8,9 @@ from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 
 def test_note_body_goes_into_encrypted_payload_without_plaintext_leak() -> None:
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
 
     envelope = builder.build_note_upsert(
         note_id="note-1",
@@ -33,7 +35,9 @@ def test_note_body_goes_into_encrypted_payload_without_plaintext_leak() -> None:
 
 def test_chat_message_uses_stable_message_identity() -> None:
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
 
     envelope = builder.build_chat_message(
         conversation_id="conversation-1",
@@ -45,7 +49,10 @@ def test_chat_message_uses_stable_message_identity() -> None:
     assert envelope.domain == "chat"
     assert envelope.entity_id == "message-1"
     assert envelope.stable_key == "conversation-1:message-1"
-    assert envelope.routing_metadata == {"conversation_id": "conversation-1", "entity_kind": "message"}
+    assert envelope.routing_metadata == {
+        "conversation_id": "conversation-1",
+        "entity_kind": "message",
+    }
     assert decrypt_sync_payload_json(envelope.payload_ciphertext, dataset_key) == {
         "content": "private answer",
         "role": "assistant",
@@ -54,7 +61,9 @@ def test_chat_message_uses_stable_message_identity() -> None:
 
 def test_chat_message_preserves_restore_metadata_without_plaintext_leak() -> None:
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
 
     envelope = builder.build_chat_message(
         conversation_id="conversation-1",
@@ -112,13 +121,18 @@ def test_workspace_source_ref_add_remove_maps_to_link_unlink() -> None:
     assert linked.domain == "workspaces"
     assert linked.operation == "link"
     assert linked.entity_id == "workspace-1:source-1"
-    assert linked.payload_clear == {"workspace_id": "workspace-1", "source_id": "source-1"}
+    assert linked.payload_clear == {
+        "workspace_id": "workspace-1",
+        "source_id": "source-1",
+    }
     assert unlinked.operation == "unlink"
 
 
 def test_source_cache_uses_source_id_and_content_hash_identity() -> None:
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
 
     envelope = builder.build_source_cache(
         source_id="source-1",
@@ -140,12 +154,16 @@ def test_source_cache_uses_source_id_and_content_hash_identity() -> None:
     }
 
 
-def decrypt_sync_payload_json(payload_ciphertext: str | None, dataset_key: bytes) -> dict:
+def decrypt_sync_payload_json(
+    payload_ciphertext: str | None, dataset_key: bytes
+) -> dict:
     assert payload_ciphertext is not None
     return decrypt_sync_payload_json_record(payload_ciphertext, dataset_key)
 
 
-def decrypt_sync_payload_json_record(payload_ciphertext: str, dataset_key: bytes) -> dict:
+def decrypt_sync_payload_json_record(
+    payload_ciphertext: str, dataset_key: bytes
+) -> dict:
     return decrypt_sync_payload(
         json.loads(payload_ciphertext),
         key=dataset_key,

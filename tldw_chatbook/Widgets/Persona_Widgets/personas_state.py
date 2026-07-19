@@ -110,7 +110,9 @@ class PersonasWorkbenchState:
             "selected_target_id": self.selected_runtime_target,
         }
 
-    def _default_runtime_target(self, entity_kind: PersonaEntityKind, entity_id: str) -> str:
+    def _default_runtime_target(
+        self, entity_kind: PersonaEntityKind, entity_id: str
+    ) -> str:
         return f"{self.runtime_source}:{entity_kind}:{entity_id}"
 
 

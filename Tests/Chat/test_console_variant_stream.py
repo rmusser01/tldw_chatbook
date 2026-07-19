@@ -1,4 +1,5 @@
 """Regenerate is unified onto the streaming reply engine (Task 1)."""
+
 import asyncio
 
 import pytest
@@ -12,7 +13,8 @@ def _store_with_answer():
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
     assistant = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="original")
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="original"
+    )
     # Non-empty content already yields status "complete" via _initial_status;
     # this mirrors the existing regenerate tests that seed via append_message alone.
     return store, session, assistant.id
@@ -22,12 +24,12 @@ def test_begin_variant_stream_resets_buffer_and_keeps_base():
     store, _session, mid = _store_with_answer()
     streaming = store.begin_variant_stream(mid)
     assert streaming.status == "streaming"
-    assert streaming.content == ""            # visible row cleared for the new take
+    assert streaming.content == ""  # visible row cleared for the new take
     store.append_stream_chunk(mid, "re")
     store.append_stream_chunk(mid, "generated")
     final = store.finalize_variant_stream(mid)
     assert final.status == "complete"
-    assert final.content == "regenerated"     # new variant selected
+    assert final.content == "regenerated"  # new variant selected
     assert final.variants is not None
     contents = [v.content for v in final.variants.variants]
     assert contents == ["original", "regenerated"]  # base preserved, no concat
@@ -42,7 +44,11 @@ def test_finalize_variant_stream_appends_to_existing_set():
     store.begin_variant_stream(mid)
     store.append_stream_chunk(mid, "third")
     final = store.finalize_variant_stream(mid)
-    assert [v.content for v in final.variants.variants] == ["original", "second", "third"]
+    assert [v.content for v in final.variants.variants] == [
+        "original",
+        "second",
+        "third",
+    ]
     assert final.variants.selected_index == 2
 
 
@@ -56,6 +62,7 @@ class _ScriptedGateway:
         class _R:  # noqa: D401 - tiny stub
             ready = True
             visible_copy = ""
+
         return _R()
 
     async def stream_chat(self, resolution, messages):
@@ -79,7 +86,9 @@ async def test_regenerate_delegates_and_streams_incrementally():
     message = store.get_message(mid)
     assert message.content == "Paris is the answer."
     assert [v.content for v in message.variants.variants] == [
-        "original", "Paris is the answer."]
+        "original",
+        "Paris is the answer.",
+    ]
     assert message.variants.selected_index == 1
 
 
@@ -138,6 +147,7 @@ async def test_regenerate_stop_mid_stream_restores_original_answer():
             class _R:  # noqa: D401 - tiny stub
                 ready = True
                 visible_copy = ""
+
             return _R()
 
         async def stream_chat(self, resolution, messages):
@@ -149,7 +159,8 @@ async def test_regenerate_stop_mid_stream_restores_original_answer():
     gateway = WaitingGateway()
     store, _session, mid = _store_with_answer()
     controller = ConsoleChatController(
-        store=store, provider_gateway=gateway, provider="llama_cpp", model="test-model")
+        store=store, provider_gateway=gateway, provider="llama_cpp", model="test-model"
+    )
 
     task = asyncio.create_task(controller.regenerate_message(mid))
     await asyncio.wait_for(gateway.started.wait(), timeout=1)

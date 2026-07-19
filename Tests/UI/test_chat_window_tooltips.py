@@ -1,4 +1,5 @@
 """Tests for Chat Window button tooltips."""
+
 import pytest
 import pytest_asyncio
 from unittest.mock import patch, Mock
@@ -24,7 +25,7 @@ class SimpleTestApp(App):
         self.mock_app = Mock()
         self.mock_app.app_config = {
             "api_endpoints": {},
-            "chat_defaults": {"use_enhanced_window": False}
+            "chat_defaults": {"use_enhanced_window": False},
         }
         self.mock_app.current_chat_is_ephemeral = False
         self.mock_app.get_current_chat_is_streaming = lambda: False
@@ -65,9 +66,12 @@ class TestChatWindowTooltips:
         # Expected tooltips for each button ID
         expected_tooltips = {
             "toggle-chat-left-sidebar": "Toggle left sidebar (Ctrl+[)",
-            "send-stop-chat": ["Send message", "Stop generation"],  # Dynamic based on state
+            "send-stop-chat": [
+                "Send message",
+                "Stop generation",
+            ],  # Dynamic based on state
             "respond-for-me-button": "Suggest a response",
-            "toggle-chat-right-sidebar": "Toggle right sidebar (Ctrl+])"
+            "toggle-chat-right-sidebar": "Toggle right sidebar (Ctrl+])",
         }
 
         # Query buttons within the ChatWindow
@@ -81,16 +85,20 @@ class TestChatWindowTooltips:
 
         # Verify all expected buttons were found and have correct tooltips
         for button_id, expected_tooltip in expected_tooltips.items():
-            assert button_id in found_buttons, f"Button '{button_id}' not found in ChatWindow"
+            assert button_id in found_buttons, (
+                f"Button '{button_id}' not found in ChatWindow"
+            )
             button = found_buttons[button_id]
 
             # Handle dynamic tooltips
             if isinstance(expected_tooltip, list):
-                assert button.tooltip in expected_tooltip, \
+                assert button.tooltip in expected_tooltip, (
                     f"Button '{button_id}' has incorrect tooltip: {button.tooltip} (expected one of: {expected_tooltip})"
+                )
             else:
-                assert button.tooltip == expected_tooltip, \
+                assert button.tooltip == expected_tooltip, (
                     f"Button '{button_id}' has incorrect tooltip: {button.tooltip} (expected: {expected_tooltip})"
+                )
 
     @pytest.mark.asyncio
     async def test_suggest_button_has_descriptive_tooltip(self, app_pilot: Pilot):
@@ -108,10 +116,15 @@ class TestChatWindowTooltips:
         except Exception:
             # If not found by ID, search all buttons
             all_buttons = chat_window.query(Button)
-            suggest_buttons = [b for b in all_buttons if b.id == "respond-for-me-button"]
+            suggest_buttons = [
+                b for b in all_buttons if b.id == "respond-for-me-button"
+            ]
             assert len(suggest_buttons) > 0, "Suggest button not found"
             suggest_button = suggest_buttons[0]
 
-        assert suggest_button.tooltip == "Suggest a response", \
+        assert suggest_button.tooltip == "Suggest a response", (
             f"Suggest button has incorrect tooltip: {suggest_button.tooltip}"
-        assert "💡" in str(suggest_button.label), "Suggest button should have lightbulb emoji"
+        )
+        assert "💡" in str(suggest_button.label), (
+            "Suggest button should have lightbulb emoji"
+        )

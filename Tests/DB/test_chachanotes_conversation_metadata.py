@@ -23,7 +23,9 @@ def test_update_conversation_persists_metadata_and_bumps_version(db):
     before = db.get_conversation_by_id(conv_id)
     blob = json.dumps({"active_dictionaries": [3, 7]})
 
-    ok = db.update_conversation(conv_id, {"metadata": blob}, expected_version=before["version"])
+    ok = db.update_conversation(
+        conv_id, {"metadata": blob}, expected_version=before["version"]
+    )
     assert ok
 
     after = db.get_conversation_by_id(conv_id)

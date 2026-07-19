@@ -80,28 +80,46 @@ class SharingPanel(ScrollableContainer):
             with Container(classes="sharing-section"):
                 yield Label("Workspace Shares")
                 yield Input(placeholder="Workspace ID", id="sharing-workspace-id")
-                scope_type = Select([("Team", "team"), ("Org", "org")], id="sharing-scope-type")
+                scope_type = Select(
+                    [("Team", "team"), ("Org", "org")], id="sharing-scope-type"
+                )
                 scope_type.value = "team"
                 yield scope_type
-                yield Input(placeholder="Scope ID", id="sharing-scope-id", validators=[Number()])
+                yield Input(
+                    placeholder="Scope ID", id="sharing-scope-id", validators=[Number()]
+                )
                 access_level = Select(
-                    [("View Chat", "view_chat"), ("View + Chat Add", "view_chat_add"), ("Full Edit", "full_edit")],
+                    [
+                        ("View Chat", "view_chat"),
+                        ("View + Chat Add", "view_chat_add"),
+                        ("Full Edit", "full_edit"),
+                    ],
                     id="sharing-access-level",
                 )
                 access_level.value = "view_chat"
                 yield access_level
                 yield Checkbox("Allow Clone", value=True, id="sharing-allow-clone")
                 yield Checkbox("Include Revoked", id="sharing-include-revoked")
-                yield Input(placeholder="Share ID", id="sharing-share-id", validators=[Number()])
+                yield Input(
+                    placeholder="Share ID", id="sharing-share-id", validators=[Number()]
+                )
                 with Horizontal(classes="sharing-actions"):
-                    yield Button("Create Share", variant="primary", id="sharing-create-workspace-share-btn")
+                    yield Button(
+                        "Create Share",
+                        variant="primary",
+                        id="sharing-create-workspace-share-btn",
+                    )
                     yield Button("List Shares", id="sharing-list-workspace-shares-btn")
                     yield Button("Update Share", id="sharing-update-share-btn")
                     yield Button("Revoke Share", id="sharing-revoke-share-btn")
 
             with Container(classes="sharing-section"):
                 yield Label("Shared With Me")
-                yield Input(placeholder="Shared media ID", id="sharing-shared-media-id", validators=[Number()])
+                yield Input(
+                    placeholder="Shared media ID",
+                    id="sharing-shared-media-id",
+                    validators=[Number()],
+                )
                 yield Input(placeholder="Clone name", id="sharing-clone-name")
                 yield TextArea("", id="sharing-chat-query")
                 with Horizontal(classes="sharing-actions"):
@@ -114,18 +132,39 @@ class SharingPanel(ScrollableContainer):
 
             with Container(classes="sharing-section"):
                 yield Label("Share Tokens")
-                resource_type = Select([("Workspace", "workspace"), ("Chatbook", "chatbook")], id="sharing-resource-type")
+                resource_type = Select(
+                    [("Workspace", "workspace"), ("Chatbook", "chatbook")],
+                    id="sharing-resource-type",
+                )
                 resource_type.value = "workspace"
                 yield resource_type
                 yield Input(placeholder="Resource ID", id="sharing-resource-id")
-                yield Input(placeholder="Password (optional)", password=True, id="sharing-token-password")
-                yield Input(placeholder="Max uses", id="sharing-token-max-uses", validators=[Number()])
-                yield Input(placeholder="Expires at ISO 8601", id="sharing-token-expires-at")
-                yield Input(placeholder="Token ID", id="sharing-token-id", validators=[Number()])
+                yield Input(
+                    placeholder="Password (optional)",
+                    password=True,
+                    id="sharing-token-password",
+                )
+                yield Input(
+                    placeholder="Max uses",
+                    id="sharing-token-max-uses",
+                    validators=[Number()],
+                )
+                yield Input(
+                    placeholder="Expires at ISO 8601", id="sharing-token-expires-at"
+                )
+                yield Input(
+                    placeholder="Token ID", id="sharing-token-id", validators=[Number()]
+                )
                 yield Input(placeholder="Raw/public token", id="sharing-public-token")
-                yield Input(placeholder="Password verify value", password=True, id="sharing-public-password")
+                yield Input(
+                    placeholder="Password verify value",
+                    password=True,
+                    id="sharing-public-password",
+                )
                 with Horizontal(classes="sharing-actions"):
-                    yield Button("Create Token", variant="primary", id="sharing-create-token-btn")
+                    yield Button(
+                        "Create Token", variant="primary", id="sharing-create-token-btn"
+                    )
                     yield Button("List Tokens", id="sharing-list-tokens-btn")
                     yield Button("Revoke Token", id="sharing-revoke-token-btn")
                     yield Button("Preview Public", id="sharing-preview-public-btn")
@@ -203,9 +242,13 @@ class SharingPanel(ScrollableContainer):
         self._show_server_ui(enabled)
         self._set_controls_disabled(not enabled)
         if self.runtime_backend != "server":
-            self.query_one("#sharing-status", Static).update("Server Sharing requires server mode.")
+            self.query_one("#sharing-status", Static).update(
+                "Server Sharing requires server mode."
+            )
         elif self.scope_service is None:
-            self.query_one("#sharing-status", Static).update("Server Sharing service is unavailable.")
+            self.query_one("#sharing-status", Static).update(
+                "Server Sharing service is unavailable."
+            )
 
     def on_mount(self) -> None:
         self.run_worker(self.refresh_for_mode(), exclusive=True)
@@ -234,11 +277,17 @@ class SharingPanel(ScrollableContainer):
             raise ValueError("Public token is required.")
         return token
 
-    def _render_payload(self, title: str, payload: Mapping[str, Any] | list[Any]) -> None:
+    def _render_payload(
+        self, title: str, payload: Mapping[str, Any] | list[Any]
+    ) -> None:
         formatted_payload = json.dumps(payload, indent=2, sort_keys=True, default=str)
-        self.query_one("#sharing-status", Static).update(f"{title}\n{formatted_payload}")
+        self.query_one("#sharing-status", Static).update(
+            f"{title}\n{formatted_payload}"
+        )
 
-    async def _run_operation(self, title: str, operation_name: str, **kwargs: Any) -> None:
+    async def _run_operation(
+        self, title: str, operation_name: str, **kwargs: Any
+    ) -> None:
         self.runtime_backend = self._current_runtime_backend()
         if self.runtime_backend != "server" or self.scope_service is None:
             self.notify("Server Sharing requires server mode.", severity="warning")
@@ -248,7 +297,9 @@ class SharingPanel(ScrollableContainer):
             result = await self._maybe_await(operation(mode="server", **kwargs))
             self._render_payload(title, result if result is not None else {})
         except Exception as exc:
-            logger.opt(exception=True).error(f"Server Sharing operation failed: {operation_name}: {exc}")
+            logger.opt(exception=True).error(
+                f"Server Sharing operation failed: {operation_name}: {exc}"
+            )
             self.query_one("#sharing-status", Static).update(f"Error: {exc}")
             self.notify(f"Server Sharing operation failed: {exc}", severity="error")
 
@@ -326,9 +377,13 @@ class SharingPanel(ScrollableContainer):
             "Workspace share created",
             "share_workspace",
             workspace_id=self._input_value("#sharing-workspace-id"),
-            share_scope_type=str(self.query_one("#sharing-scope-type", Select).value or "team"),
+            share_scope_type=str(
+                self.query_one("#sharing-scope-type", Select).value or "team"
+            ),
             share_scope_id=int(self._int_input("#sharing-scope-id")),
-            access_level=str(self.query_one("#sharing-access-level", Select).value or "view_chat"),
+            access_level=str(
+                self.query_one("#sharing-access-level", Select).value or "view_chat"
+            ),
             allow_clone=bool(self.query_one("#sharing-allow-clone", Checkbox).value),
         )
 
@@ -337,7 +392,9 @@ class SharingPanel(ScrollableContainer):
             "Workspace shares",
             "list_workspace_shares",
             workspace_id=self._input_value("#sharing-workspace-id"),
-            include_revoked=bool(self.query_one("#sharing-include-revoked", Checkbox).value),
+            include_revoked=bool(
+                self.query_one("#sharing-include-revoked", Checkbox).value
+            ),
         )
 
     async def update_share(self) -> None:
@@ -345,25 +402,40 @@ class SharingPanel(ScrollableContainer):
             "Workspace share updated",
             "update_share",
             share_id=int(self._share_id()),
-            access_level=str(self.query_one("#sharing-access-level", Select).value or "view_chat"),
+            access_level=str(
+                self.query_one("#sharing-access-level", Select).value or "view_chat"
+            ),
             allow_clone=bool(self.query_one("#sharing-allow-clone", Checkbox).value),
         )
 
     async def revoke_share(self) -> None:
-        await self._run_operation("Workspace share revoked", "revoke_share", share_id=int(self._share_id()))
+        await self._run_operation(
+            "Workspace share revoked", "revoke_share", share_id=int(self._share_id())
+        )
 
     async def list_shared_with_me(self) -> None:
         await self._run_operation("Shared with me", "list_shared_with_me")
 
     async def get_shared_workspace(self) -> None:
-        await self._run_operation("Shared workspace", "get_shared_workspace", share_id=int(self._share_id()))
+        await self._run_operation(
+            "Shared workspace", "get_shared_workspace", share_id=int(self._share_id())
+        )
 
     async def clone_shared_workspace(self) -> None:
         new_name = self._input_value("#sharing-clone-name") or None
-        await self._run_operation("Shared workspace clone", "clone_shared_workspace", share_id=int(self._share_id()), new_name=new_name)
+        await self._run_operation(
+            "Shared workspace clone",
+            "clone_shared_workspace",
+            share_id=int(self._share_id()),
+            new_name=new_name,
+        )
 
     async def list_shared_workspace_sources(self) -> None:
-        await self._run_operation("Shared workspace sources", "list_shared_workspace_sources", share_id=int(self._share_id()))
+        await self._run_operation(
+            "Shared workspace sources",
+            "list_shared_workspace_sources",
+            share_id=int(self._share_id()),
+        )
 
     async def get_shared_workspace_media(self) -> None:
         await self._run_operation(
@@ -377,16 +449,25 @@ class SharingPanel(ScrollableContainer):
         query = self.query_one("#sharing-chat-query", TextArea).text.strip()
         if not query:
             raise ValueError("Chat query is required.")
-        await self._run_operation("Shared workspace chat", "chat_with_shared_workspace", share_id=int(self._share_id()), query=query)
+        await self._run_operation(
+            "Shared workspace chat",
+            "chat_with_shared_workspace",
+            share_id=int(self._share_id()),
+            query=query,
+        )
 
     async def create_share_token(self) -> None:
         max_uses = self._int_input("#sharing-token-max-uses", required=False)
         await self._run_operation(
             "Share token created",
             "create_share_token",
-            resource_type=str(self.query_one("#sharing-resource-type", Select).value or "workspace"),
+            resource_type=str(
+                self.query_one("#sharing-resource-type", Select).value or "workspace"
+            ),
             resource_id=self._input_value("#sharing-resource-id"),
-            access_level=str(self.query_one("#sharing-access-level", Select).value or "view_chat"),
+            access_level=str(
+                self.query_one("#sharing-access-level", Select).value or "view_chat"
+            ),
             allow_clone=bool(self.query_one("#sharing-allow-clone", Checkbox).value),
             password=self._input_value("#sharing-token-password") or None,
             max_uses=max_uses,
@@ -397,10 +478,16 @@ class SharingPanel(ScrollableContainer):
         await self._run_operation("Share tokens", "list_share_tokens")
 
     async def revoke_share_token(self) -> None:
-        await self._run_operation("Share token revoked", "revoke_share_token", token_id=int(self._int_input("#sharing-token-id")))
+        await self._run_operation(
+            "Share token revoked",
+            "revoke_share_token",
+            token_id=int(self._int_input("#sharing-token-id")),
+        )
 
     async def preview_public_share(self) -> None:
-        await self._run_operation("Public share preview", "preview_public_share", token=self._public_token())
+        await self._run_operation(
+            "Public share preview", "preview_public_share", token=self._public_token()
+        )
 
     async def verify_public_share_password(self) -> None:
         await self._run_operation(
@@ -411,4 +498,6 @@ class SharingPanel(ScrollableContainer):
         )
 
     async def import_public_share(self) -> None:
-        await self._run_operation("Public share imported", "import_public_share", token=self._public_token())
+        await self._run_operation(
+            "Public share imported", "import_public_share", token=self._public_token()
+        )

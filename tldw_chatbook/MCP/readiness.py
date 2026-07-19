@@ -88,14 +88,30 @@ REASON_TO_STATE: dict[ReasonCode, ReadinessState] = {
 
 REASON_TO_ACTIONS: dict[ReasonCode, tuple[HubAction, ...]] = {
     ReasonCode.NOT_CONFIGURED: (HubAction.ADD_SERVER,),
-    ReasonCode.AUTH_MISSING: (HubAction.OPEN_CREDENTIALS, HubAction.EDIT_CONFIG, HubAction.VIEW_DETAILS),
+    ReasonCode.AUTH_MISSING: (
+        HubAction.OPEN_CREDENTIALS,
+        HubAction.EDIT_CONFIG,
+        HubAction.VIEW_DETAILS,
+    ),
     ReasonCode.RUNTIME_UNAVAILABLE: (HubAction.CONNECT, HubAction.VIEW_DETAILS),
     ReasonCode.PREFLIGHT_FAILED: (HubAction.EDIT_CONFIG, HubAction.VIEW_DETAILS),
-    ReasonCode.UNREACHABLE: (HubAction.VALIDATE, HubAction.EDIT_CONFIG, HubAction.VIEW_DETAILS),
+    ReasonCode.UNREACHABLE: (
+        HubAction.VALIDATE,
+        HubAction.EDIT_CONFIG,
+        HubAction.VIEW_DETAILS,
+    ),
     ReasonCode.DISCOVERY_FAILED: (HubAction.REFRESH_DISCOVERY, HubAction.VIEW_DETAILS),
     ReasonCode.CONFIG_CHANGED: (HubAction.REFRESH_DISCOVERY, HubAction.VIEW_DETAILS),
-    ReasonCode.DISCOVERY_NOT_RUN: (HubAction.CONNECT, HubAction.VALIDATE, HubAction.VIEW_DETAILS),
-    ReasonCode.NO_TOOLS_RETURNED: (HubAction.REFRESH_DISCOVERY, HubAction.EDIT_CONFIG, HubAction.VIEW_DETAILS),
+    ReasonCode.DISCOVERY_NOT_RUN: (
+        HubAction.CONNECT,
+        HubAction.VALIDATE,
+        HubAction.VIEW_DETAILS,
+    ),
+    ReasonCode.NO_TOOLS_RETURNED: (
+        HubAction.REFRESH_DISCOVERY,
+        HubAction.EDIT_CONFIG,
+        HubAction.VIEW_DETAILS,
+    ),
     ReasonCode.CATALOG_EXPIRED: (HubAction.REFRESH_DISCOVERY, HubAction.VIEW_DETAILS),
     ReasonCode.PARTIAL_CAPABILITY: (HubAction.VIEW_DETAILS, HubAction.OPEN_AUDIT),
 }
@@ -246,14 +262,14 @@ def worst_state(snapshots: list[ReadinessSnapshot]) -> ReadinessState:
 
 BUILTIN_SERVER_KEY = "builtin:tldw_chatbook"
 BUILTIN_CLIENT_SNIPPET = (
-    '{\n'
+    "{\n"
     '  "mcpServers": {\n'
     '    "tldw_chatbook": {\n'
     '      "command": "python3",\n'
     '      "args": ["-m", "tldw_chatbook.MCP"]\n'
-    '    }\n'
-    '  }\n'
-    '}'
+    "    }\n"
+    "  }\n"
+    "}"
 )
 
 _PLACEHOLDER_RE = re.compile(r"^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$")
@@ -269,7 +285,9 @@ def env_placeholder_names(env_placeholders: Mapping[str, str]) -> list[str]:
     return names
 
 
-def _snapshot_counts(snapshot: Mapping[str, Any] | None) -> tuple[int | None, int | None, int | None]:
+def _snapshot_counts(
+    snapshot: Mapping[str, Any] | None,
+) -> tuple[int | None, int | None, int | None]:
     if not snapshot:
         return None, None, None
     return (
@@ -330,7 +348,11 @@ def local_profile_readiness(
     if snapshot is None:
         reasons.append(ReasonCode.DISCOVERY_NOT_RUN)
     else:
-        if (tool_count or 0) == 0 and (resource_count or 0) == 0 and (prompt_count or 0) == 0:
+        if (
+            (tool_count or 0) == 0
+            and (resource_count or 0) == 0
+            and (prompt_count or 0) == 0
+        ):
             reasons.append(ReasonCode.NO_TOOLS_RETURNED)
         # A recorded failure is strictly more informative than "not
         # connected" -- don't add the generic reason on top of it.
@@ -372,7 +394,9 @@ def local_profile_readiness(
             "env_placeholders": placeholders,
             "missing_env": missing,
             "discovery_snapshot": snapshot,
-            "last_ok_at": runtime_state.get("last_ok_at") if isinstance(runtime_state, dict) else None,
+            "last_ok_at": runtime_state.get("last_ok_at")
+            if isinstance(runtime_state, dict)
+            else None,
         },
     )
 
@@ -421,7 +445,9 @@ _VALID_REASON_VALUES = {code.value for code in ReasonCode}
 _VALID_STATE_VALUES = {state.value for state in ReadinessState}
 
 
-def server_external_record_readiness(record: dict[str, Any], *, server_id: str) -> ReadinessSnapshot:
+def server_external_record_readiness(
+    record: dict[str, Any], *, server_id: str
+) -> ReadinessSnapshot:
     """Normalize a raw /mcp/hub external-server record (pass-through dict).
 
     Readiness fields are backend-owned and not guaranteed; unknown or missing
@@ -441,13 +467,17 @@ def server_external_record_readiness(record: dict[str, Any], *, server_id: str) 
     Returns:
         A `ReadinessSnapshot` normalizing the record's readiness fields.
     """
-    external_id = str(record.get("server_id") or record.get("id") or record.get("name") or "unknown")
+    external_id = str(
+        record.get("server_id") or record.get("id") or record.get("name") or "unknown"
+    )
     label = str(record.get("name") or external_id)
     raw_reasons = record.get("reason_codes")
     reasons: tuple[ReasonCode, ...] = ()
     if isinstance(raw_reasons, (list, tuple)):
         reasons = tuple(
-            ReasonCode(value) for value in raw_reasons if isinstance(value, str) and value in _VALID_REASON_VALUES
+            ReasonCode(value)
+            for value in raw_reasons
+            if isinstance(value, str) and value in _VALID_REASON_VALUES
         )
 
     display_state = record.get("display_state")

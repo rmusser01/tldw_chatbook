@@ -103,7 +103,9 @@ class PromptChatbookScopeService:
         self.server_chatbook_service = server_chatbook_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: PromptChatbookBackend | str | None) -> PromptChatbookBackend:
+    def _normalize_mode(
+        self, mode: PromptChatbookBackend | str | None
+    ) -> PromptChatbookBackend:
         if mode is None:
             return PromptChatbookBackend.LOCAL
         if isinstance(mode, PromptChatbookBackend):
@@ -115,9 +117,17 @@ class PromptChatbookScopeService:
 
     def _service_for_mode(self, resource: str, mode: PromptChatbookBackend) -> Any:
         if resource == "prompts":
-            service = self.local_prompt_service if mode == PromptChatbookBackend.LOCAL else self.server_prompt_service
+            service = (
+                self.local_prompt_service
+                if mode == PromptChatbookBackend.LOCAL
+                else self.server_prompt_service
+            )
         elif resource == "chatbooks":
-            service = self.local_chatbook_service if mode == PromptChatbookBackend.LOCAL else self.server_chatbook_service
+            service = (
+                self.local_chatbook_service
+                if mode == PromptChatbookBackend.LOCAL
+                else self.server_chatbook_service
+            )
         else:
             raise ValueError(f"Unknown prompt/chatbook resource: {resource}")
         if service is None:
@@ -143,12 +153,17 @@ class PromptChatbookScopeService:
         return f"prompts.versions.{action}.{mode.value}"
 
     @staticmethod
-    def _prompt_subresource_action_id(resource: str, action: str, mode: PromptChatbookBackend) -> str:
+    def _prompt_subresource_action_id(
+        resource: str, action: str, mode: PromptChatbookBackend
+    ) -> str:
         return f"prompts.{resource}.{action}.{mode.value}"
 
     @staticmethod
     def _supports_chatbook_record_crud(service: Any) -> bool:
-        return service is not None and all(callable(getattr(service, method_name, None)) for method_name in _CHATBOOK_RECORD_CRUD_METHODS)
+        return service is not None and all(
+            callable(getattr(service, method_name, None))
+            for method_name in _CHATBOOK_RECORD_CRUD_METHODS
+        )
 
     def list_unsupported_capabilities(
         self,
@@ -160,7 +175,8 @@ class PromptChatbookScopeService:
             reports = [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
             if self._supports_chatbook_record_crud(self.local_chatbook_service):
                 reports = [
-                    item for item in reports
+                    item
+                    for item in reports
                     if item["operation_id"] != "chatbooks.records.local"
                 ]
             return reports
@@ -171,9 +187,13 @@ class PromptChatbookScopeService:
         reports.append(dict(_SERVER_UNSUPPORTED_CAPABILITIES[1]))
         return reports
 
-    async def _call_service(self, service: Any, method_name: str, *args: Any, **kwargs: Any) -> Any:
+    async def _call_service(
+        self, service: Any, method_name: str, *args: Any, **kwargs: Any
+    ) -> Any:
         if not hasattr(service, method_name):
-            raise NotImplementedError(f"{service.__class__.__name__}.{method_name} is not supported.")
+            raise NotImplementedError(
+                f"{service.__class__.__name__}.{method_name} is not supported."
+            )
         method = getattr(service, method_name)
         signature = inspect.signature(method)
         accepts_kwargs = any(
@@ -181,7 +201,11 @@ class PromptChatbookScopeService:
             for parameter in signature.parameters.values()
         )
         if not accepts_kwargs:
-            kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
+            kwargs = {
+                key: value
+                for key, value in kwargs.items()
+                if key in signature.parameters
+            }
         return await self._maybe_await(method(*args, **kwargs))
 
     async def _call_server_prompt_utility(
@@ -196,8 +220,12 @@ class PromptChatbookScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode != PromptChatbookBackend.SERVER:
-            raise NotImplementedError(f"{method_name} is a server-only prompt utility surface.")
-        self._enforce_policy(self._prompt_subresource_action_id(resource, action, normalized_mode))
+            raise NotImplementedError(
+                f"{method_name} is a server-only prompt utility surface."
+            )
+        self._enforce_policy(
+            self._prompt_subresource_action_id(resource, action, normalized_mode)
+        )
         return await self._call_service(
             self._service_for_mode("prompts", normalized_mode),
             method_name,
@@ -224,7 +252,9 @@ class PromptChatbookScopeService:
         )
         return normalize_prompt_result(normalized_mode.value, result)
 
-    async def create_prompt(self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def create_prompt(
+        self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("prompts", "create", normalized_mode))
         result = await self._call_service(
@@ -234,7 +264,9 @@ class PromptChatbookScopeService:
         )
         return normalize_prompt_result(normalized_mode.value, result)
 
-    async def preview_prompt(self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def preview_prompt(
+        self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("prompts", "preview", normalized_mode))
         result = await self._call_service(
@@ -309,7 +341,9 @@ class PromptChatbookScopeService:
         )
         return normalize_prompt_result(normalized_mode.value, result)
 
-    async def get_prompts_health(self, *, mode: PromptChatbookBackend | str | None = None) -> Any:
+    async def get_prompts_health(
+        self, *, mode: PromptChatbookBackend | str | None = None
+    ) -> Any:
         return await self._call_server_prompt_utility(
             mode=mode,
             resource="health",
@@ -317,7 +351,9 @@ class PromptChatbookScopeService:
             method_name="get_prompts_health",
         )
 
-    async def get_prompt_sync_log(self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any) -> Any:
+    async def get_prompt_sync_log(
+        self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any
+    ) -> Any:
         return await self._call_server_prompt_utility(
             mode=mode,
             resource="sync_log",
@@ -326,7 +362,9 @@ class PromptChatbookScopeService:
             kwargs=kwargs,
         )
 
-    async def search_prompts(self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any) -> Any:
+    async def search_prompts(
+        self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any
+    ) -> Any:
         return await self._call_server_prompt_utility(
             mode=mode,
             resource="search",
@@ -349,7 +387,9 @@ class PromptChatbookScopeService:
             args=(keyword_text,),
         )
 
-    async def list_prompt_keywords(self, *, mode: PromptChatbookBackend | str | None = None) -> Any:
+    async def list_prompt_keywords(
+        self, *, mode: PromptChatbookBackend | str | None = None
+    ) -> Any:
         return await self._call_server_prompt_utility(
             mode=mode,
             resource="keywords",
@@ -371,7 +411,9 @@ class PromptChatbookScopeService:
             args=(keyword_text,),
         )
 
-    async def export_prompts(self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any) -> Any:
+    async def export_prompts(
+        self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any
+    ) -> Any:
         return await self._call_server_prompt_utility(
             mode=mode,
             resource="transfer",
@@ -380,7 +422,9 @@ class PromptChatbookScopeService:
             kwargs=kwargs,
         )
 
-    async def export_prompt_keywords(self, *, mode: PromptChatbookBackend | str | None = None) -> Any:
+    async def export_prompt_keywords(
+        self, *, mode: PromptChatbookBackend | str | None = None
+    ) -> Any:
         return await self._call_server_prompt_utility(
             mode=mode,
             resource="keywords",
@@ -490,7 +534,9 @@ class PromptChatbookScopeService:
             args=(prompt_identifier,),
         )
 
-    async def create_prompt_collection(self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any) -> Any:
+    async def create_prompt_collection(
+        self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any
+    ) -> Any:
         return await self._call_server_prompt_utility(
             mode=mode,
             resource="collections",
@@ -499,7 +545,9 @@ class PromptChatbookScopeService:
             kwargs=kwargs,
         )
 
-    async def list_prompt_collections(self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any) -> Any:
+    async def list_prompt_collections(
+        self, *, mode: PromptChatbookBackend | str | None = None, **kwargs: Any
+    ) -> Any:
         return await self._call_server_prompt_utility(
             mode=mode,
             resource="collections",
@@ -710,7 +758,9 @@ class PromptChatbookScopeService:
             token=token,
             exp=exp,
         )
-        return normalize_chatbook_result(normalized_mode.value, "chatbook_export", result)
+        return normalize_chatbook_result(
+            normalized_mode.value, "chatbook_export", result
+        )
 
     async def get_import_job(
         self,

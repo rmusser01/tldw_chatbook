@@ -66,7 +66,9 @@ class WritingWindow(Container):
             return []
         self.source_panel.set_projects(projects)
         await self.source_panel.refresh_project_list()
-        self._set_status(f"Loaded {len(projects)} {selected_source} writing project(s).")
+        self._set_status(
+            f"Loaded {len(projects)} {selected_source} writing project(s)."
+        )
         return projects
 
     async def switch_source(self, source: str) -> list[Any]:
@@ -208,9 +210,13 @@ class WritingWindow(Container):
         )
         if not capability.supported:
             self.detail_panel.set_trash([])
-            self._set_status(capability.reason or "Writing trash restore is unavailable.")
+            self._set_status(
+                capability.reason or "Writing trash restore is unavailable."
+            )
             return []
-        entries = await self.controller.list_trash(self.current_source, resolved_project_id)
+        entries = await self.controller.list_trash(
+            self.current_source, resolved_project_id
+        )
         self.detail_panel.set_trash(entries)
         return entries
 
@@ -258,7 +264,9 @@ class WritingWindow(Container):
         except Exception:
             pass
         try:
-            self.source_panel.query_one("#writing-source-status", Static).update(message)
+            self.source_panel.query_one("#writing-source-status", Static).update(
+                message
+            )
         except Exception:
             pass
 

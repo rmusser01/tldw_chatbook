@@ -13,8 +13,9 @@ except NameError:
 from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import chat_with_mlx_lm
 from tldw_chatbook.Local_Inference.mlx_lm_inference_local import (
     start_mlx_lm_server,
-    stop_mlx_lm_server
+    stop_mlx_lm_server,
 )
+
 # Define exception classes if they don't exist in Chat_Deps
 try:
     from tldw_chatbook.Chat.Chat_Deps import ChatConfigurationError, ChatProviderError
@@ -22,12 +23,14 @@ except ImportError:
     # Define minimal exception classes for testing
     class ChatConfigurationError(Exception):
         pass
+
     class ChatProviderError(Exception):
         def __init__(self, provider, message, status_code=None):
             self.provider = provider
             self.message = message
             self.status_code = status_code
             super().__init__(f"{provider}: {message}")
+
 
 # Mark all tests in this file as unit tests
 pytestmark = pytest.mark.unit
@@ -43,7 +46,7 @@ def_mlx_settings = {
     "top_p": 0.9,
     "api_timeout": 120,
     "api_retries": 1,
-    "api_retry_delay": 1
+    "api_retry_delay": 1,
 }
 
 
@@ -51,21 +54,18 @@ def_mlx_settings = {
 def mock_mlx_settings():
     # This fixture will automatically apply to all tests in this module
     # Since settings is a regular dict, we'll patch the entire settings dict
-    mock_settings = {
-        'api_settings': {
-            'mlx_lm': def_mlx_settings.copy()
-        }
-    }
-    
+    mock_settings = {"api_settings": {"mlx_lm": def_mlx_settings.copy()}}
+
     # Patch the entire settings object in the module where it's imported
-    with patch('tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.settings', mock_settings):
-        with patch('tldw_chatbook.config.settings', mock_settings):
+    with patch("tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.settings", mock_settings):
+        with patch("tldw_chatbook.config.settings", mock_settings):
             yield mock_settings
 
 
 # --- Tests for start_mlx_lm_server ---
 
-@patch('subprocess.Popen')
+
+@patch("subprocess.Popen")
 def test_start_mlx_lm_server_success(mock_popen):
     """Test successful server start."""
     mock_process = MagicMock()
@@ -79,10 +79,15 @@ def test_start_mlx_lm_server_success(mock_popen):
     process = start_mlx_lm_server(model_path, host, port)
 
     expected_command = [
-        "python", "-m", "mlx_lm.server",
-        "--model", model_path,
-        "--host", host,
-        "--port", str(port)
+        "python",
+        "-m",
+        "mlx_lm.server",
+        "--model",
+        model_path,
+        "--host",
+        host,
+        "--port",
+        str(port),
     ]
     mock_popen.assert_called_once_with(
         expected_command,
@@ -91,13 +96,13 @@ def test_start_mlx_lm_server_success(mock_popen):
         text=True,
         bufsize=1,
         universal_newlines=True,
-        env=ANY  # Check that env was passed, content checked separately if needed
+        env=ANY,  # Check that env was passed, content checked separately if needed
     )
     assert process == mock_process
     assert process.pid == 1234
 
 
-@patch('subprocess.Popen')
+@patch("subprocess.Popen")
 def test_start_mlx_lm_server_with_additional_args(mock_popen):
     """Test server start with additional arguments."""
     mock_process = MagicMock()
@@ -111,11 +116,18 @@ def test_start_mlx_lm_server_with_additional_args(mock_popen):
     start_mlx_lm_server(model_path, host, port, additional_args)
 
     expected_command = [
-        "python", "-m", "mlx_lm.server",
-        "--model", model_path,
-        "--host", host,
-        "--port", str(port),
-        "--num-threads", "4", "--no-cache"
+        "python",
+        "-m",
+        "mlx_lm.server",
+        "--model",
+        model_path,
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--num-threads",
+        "4",
+        "--no-cache",
     ]
     mock_popen.assert_called_once_with(
         expected_command,
@@ -124,18 +136,18 @@ def test_start_mlx_lm_server_with_additional_args(mock_popen):
         text=True,
         bufsize=1,
         universal_newlines=True,
-        env=ANY
+        env=ANY,
     )
 
 
-@patch('subprocess.Popen', side_effect=FileNotFoundError("python not found"))
+@patch("subprocess.Popen", side_effect=FileNotFoundError("python not found"))
 def test_start_mlx_lm_server_file_not_found(mock_popen_error):
     """Test FileNotFoundError when starting server."""
     process = start_mlx_lm_server("model", "host", 8080)
     assert process is None  # Function should catch FileNotFoundError and return None
 
 
-@patch('subprocess.Popen', side_effect=Exception("Some other error"))
+@patch("subprocess.Popen", side_effect=Exception("Some other error"))
 def test_start_mlx_lm_server_other_exception(mock_popen_exception):
     """Test other exceptions during Popen are caught."""
     process = start_mlx_lm_server("model", "host", 8080)
@@ -143,6 +155,7 @@ def test_start_mlx_lm_server_other_exception(mock_popen_exception):
 
 
 # --- Tests for stop_mlx_lm_server ---
+
 
 def test_stop_mlx_lm_server_graceful_termination():
     """Test graceful server stop (terminate then wait)."""
@@ -163,7 +176,9 @@ def test_stop_mlx_lm_server_force_kill_on_timeout():
     mock_process.pid = 123
     mock_process.poll.return_value = None  # Initially running
     # Simulate wait() timing out
-    mock_process.wait.side_effect = subprocess.TimeoutExpired(cmd="test_cmd", timeout=10)
+    mock_process.wait.side_effect = subprocess.TimeoutExpired(
+        cmd="test_cmd", timeout=10
+    )
 
     stop_mlx_lm_server(mock_process)
 
@@ -171,7 +186,11 @@ def test_stop_mlx_lm_server_force_kill_on_timeout():
     mock_process.wait.assert_any_call(timeout=10)  # First call for terminate
     mock_process.kill.assert_called_once()
     # Check if wait was called again after kill
-    assert any(call_args[1].get('timeout') == 5 for call_args in mock_process.wait.call_args_list if call_args[1])
+    assert any(
+        call_args[1].get("timeout") == 5
+        for call_args in mock_process.wait.call_args_list
+        if call_args[1]
+    )
 
 
 def test_stop_mlx_lm_server_already_terminated():
@@ -196,7 +215,10 @@ def test_stop_mlx_lm_server_no_process():
 
 # --- Tests for chat_with_mlx_lm ---
 
-@patch('tldw_chatbook.LLM_Calls.LLM_API_Calls_Local._chat_with_openai_compatible_local_server')
+
+@patch(
+    "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local._chat_with_openai_compatible_local_server"
+)
 def test_chat_with_mlx_lm_success_with_config(mock_openai_call, mock_mlx_settings):
     """Test successful chat using primarily config values."""
     input_data = [{"role": "user", "content": "Hello"}]
@@ -237,11 +259,13 @@ def test_chat_with_mlx_lm_success_with_config(mock_openai_call, mock_mlx_setting
         provider_name=None,
         timeout=def_mlx_settings["api_timeout"],
         api_retries=def_mlx_settings["api_retries"],
-        api_retry_delay=def_mlx_settings["api_retry_delay"]
+        api_retry_delay=def_mlx_settings["api_retry_delay"],
     )
 
 
-@patch('tldw_chatbook.LLM_Calls.LLM_API_Calls_Local._chat_with_openai_compatible_local_server')
+@patch(
+    "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local._chat_with_openai_compatible_local_server"
+)
 def test_chat_with_mlx_lm_args_override_config(mock_openai_call, mock_mlx_settings):
     """Test that function arguments override config values."""
     input_data = [{"role": "user", "content": "Override test"}]
@@ -260,7 +284,7 @@ def test_chat_with_mlx_lm_args_override_config(mock_openai_call, mock_mlx_settin
         input_data=input_data,
         model=custom_model,
         temp=custom_temp,
-        max_tokens=custom_max_tokens
+        max_tokens=custom_max_tokens,
         # Not passing host/port directly to chat_with_mlx_lm, as it relies on config or a full api_url override
     )
 
@@ -291,23 +315,22 @@ def test_chat_with_mlx_lm_args_override_config(mock_openai_call, mock_mlx_settin
         provider_name=None,
         timeout=def_mlx_settings["api_timeout"],
         api_retries=def_mlx_settings["api_retries"],
-        api_retry_delay=def_mlx_settings["api_retry_delay"]
+        api_retry_delay=def_mlx_settings["api_retry_delay"],
     )
 
 
-@patch('tldw_chatbook.LLM_Calls.LLM_API_Calls_Local._chat_with_openai_compatible_local_server')
+@patch(
+    "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local._chat_with_openai_compatible_local_server"
+)
 def test_chat_with_mlx_lm_api_url_override(mock_openai_call, mock_mlx_settings):
     """Test that api_url argument overrides config host/port for base URL."""
     input_data = [{"role": "user", "content": "API URL override"}]
     custom_api_url = "http://custom.server:1234/custom_v1_path"  # Full URL
 
-    chat_with_mlx_lm(
-        input_data=input_data,
-        api_url=custom_api_url
-    )
+    chat_with_mlx_lm(input_data=input_data, api_url=custom_api_url)
 
     mock_openai_call.assert_called_once_with(
-        api_base_url=custom_api_url.rstrip('/'),  # api_url is passed directly
+        api_base_url=custom_api_url.rstrip("/"),  # api_url is passed directly
         model_name=def_mlx_settings["model_path"],  # From config
         input_data=input_data,
         api_key=None,
@@ -317,13 +340,24 @@ def test_chat_with_mlx_lm_api_url_override(mock_openai_call, mock_mlx_settings):
         max_tokens=def_mlx_settings["max_tokens"],
         top_p=def_mlx_settings["top_p"],
         # ... other params from config or defaults ...
-        top_k=None, min_p=None, n=None, stop=None, presence_penalty=None, frequency_penalty=None,
-        logit_bias=None, seed=None, response_format=None, tools=None, tool_choice=None,
-        logprobs=None, top_logprobs=None, user_identifier=None,
+        top_k=None,
+        min_p=None,
+        n=None,
+        stop=None,
+        presence_penalty=None,
+        frequency_penalty=None,
+        logit_bias=None,
+        seed=None,
+        response_format=None,
+        tools=None,
+        tool_choice=None,
+        logprobs=None,
+        top_logprobs=None,
+        user_identifier=None,
         provider_name=None,
         timeout=def_mlx_settings["api_timeout"],
         api_retries=def_mlx_settings["api_retries"],
-        api_retry_delay=def_mlx_settings["api_retry_delay"]
+        api_retry_delay=def_mlx_settings["api_retry_delay"],
     )
 
 
@@ -333,18 +367,22 @@ def test_chat_with_mlx_lm_missing_model_config():
 
     # Mock settings to have an empty mlx_lm config for this test
     mock_settings = {
-        'api_settings': {
-            'mlx_lm': {}  # Empty mlx_lm config
+        "api_settings": {
+            "mlx_lm": {}  # Empty mlx_lm config
         }
     }
-    
-    with patch('tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.settings', mock_settings):
-        with pytest.raises(ChatConfigurationError, match="MLX-LM model path .* is required"):
+
+    with patch("tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.settings", mock_settings):
+        with pytest.raises(
+            ChatConfigurationError, match="MLX-LM model path .* is required"
+        ):
             chat_with_mlx_lm(input_data=input_data)
 
 
-@patch('tldw_chatbook.LLM_Calls.LLM_API_Calls_Local._chat_with_openai_compatible_local_server',
-       side_effect=ChatProviderError("MLX-LM", "Network Error", 503))
+@patch(
+    "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local._chat_with_openai_compatible_local_server",
+    side_effect=ChatProviderError("MLX-LM", "Network Error", 503),
+)
 def test_chat_with_mlx_lm_provider_error(mock_openai_call_error, mock_mlx_settings):
     """Test that ChatProviderError from underlying call propagates."""
     input_data = [{"role": "user", "content": "Test provider error"}]
@@ -357,8 +395,11 @@ def test_chat_with_mlx_lm_provider_error(mock_openai_call_error, mock_mlx_settin
 
 # Add more tests as needed, e.g., for streaming, different combinations of parameters, etc.
 
+
 # Example of how to test if specific kwargs are passed through
-@patch('tldw_chatbook.LLM_Calls.LLM_API_Calls_Local._chat_with_openai_compatible_local_server')
+@patch(
+    "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local._chat_with_openai_compatible_local_server"
+)
 def test_chat_with_mlx_lm_kwargs_passthrough(mock_openai_call, mock_mlx_settings):
     input_data = [{"role": "user", "content": "Test kwargs"}]
     custom_seed = 12345
@@ -367,10 +408,12 @@ def test_chat_with_mlx_lm_kwargs_passthrough(mock_openai_call, mock_mlx_settings
     chat_with_mlx_lm(
         input_data=input_data,
         seed=custom_seed,  # Passed as kwarg
-        stop=custom_stop_seq  # Passed as kwarg
+        stop=custom_stop_seq,  # Passed as kwarg
     )
 
-    expected_api_base_url = f"http://{def_mlx_settings['host']}:{def_mlx_settings['port']}/v1"
+    expected_api_base_url = (
+        f"http://{def_mlx_settings['host']}:{def_mlx_settings['port']}/v1"
+    )
 
     mock_openai_call.assert_called_once_with(
         api_base_url=expected_api_base_url,
@@ -399,7 +442,7 @@ def test_chat_with_mlx_lm_kwargs_passthrough(mock_openai_call, mock_mlx_settings
         provider_name=None,
         timeout=def_mlx_settings["api_timeout"],
         api_retries=def_mlx_settings["api_retries"],
-        api_retry_delay=def_mlx_settings["api_retry_delay"]
+        api_retry_delay=def_mlx_settings["api_retry_delay"],
     )
 
 
@@ -422,53 +465,59 @@ def test_chat_with_mlx_lm_kwargs_passthrough(mock_openai_call, mock_mlx_settings
 # Testing the UI event handlers that use these functions together would be integration testing.
 # (e.g., in `test_llm_management_events.py`)
 
+
 # Test for host/port missing from config and not overridden by api_url in chat_with_mlx_lm
 def test_chat_with_mlx_lm_missing_host_port_config():
     input_data = [{"role": "user", "content": "Test"}]
 
     # Mock settings to have mlx_lm config missing host/port
     mock_settings = {
-        'api_settings': {
-            'mlx_lm': {"model_path": "some/model"}  # Missing host/port
+        "api_settings": {
+            "mlx_lm": {"model_path": "some/model"}  # Missing host/port
         }
     }
 
     # Since host defaults to 127.0.0.1 and port to 8080 in chat_with_mlx_lm if not in config,
     # this test won't raise ChatConfigurationError unless those defaults are also removed from the function.
     # Instead, it should use the defaults. Let's verify that.
-    with patch('tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.settings', mock_settings):
+    with patch("tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.settings", mock_settings):
         with patch(
-                'tldw_chatbook.LLM_Calls.LLM_API_Calls_Local._chat_with_openai_compatible_local_server') as mock_openai_call:
+            "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local._chat_with_openai_compatible_local_server"
+        ) as mock_openai_call:
             chat_with_mlx_lm(input_data=input_data)
 
             args, kwargs = mock_openai_call.call_args
-            assert kwargs['api_base_url'] == "http://127.0.0.1:8080/v1"  # Default host/port used
-            assert kwargs['model_name'] == "some/model"
+            assert (
+                kwargs["api_base_url"] == "http://127.0.0.1:8080/v1"
+            )  # Default host/port used
+            assert kwargs["model_name"] == "some/model"
 
 
 # Test for model path missing but provided as argument
-@patch('tldw_chatbook.LLM_Calls.LLM_API_Calls_Local._chat_with_openai_compatible_local_server')
+@patch(
+    "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local._chat_with_openai_compatible_local_server"
+)
 def test_chat_with_mlx_lm_model_arg_overrides_missing_config(mock_openai_call):
     input_data = [{"role": "user", "content": "Test"}]
     model_arg = "specific/model_via_arg"
 
     # Config for mlx_lm exists but 'model_path' or 'model' is missing
     mock_settings = {
-        'api_settings': {
-            'mlx_lm': {"host": "127.0.0.1", "port": 8080}  # No model_path
+        "api_settings": {
+            "mlx_lm": {"host": "127.0.0.1", "port": 8080}  # No model_path
         }
     }
 
-    with patch('tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.settings', mock_settings):
+    with patch("tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.settings", mock_settings):
         chat_with_mlx_lm(input_data=input_data, model=model_arg)
 
         args, kwargs = mock_openai_call.call_args
-        assert kwargs['model_name'] == model_arg  # Model from argument is used
-        assert kwargs['api_base_url'] == "http://127.0.0.1:8080/v1"
+        assert kwargs["model_name"] == model_arg  # Model from argument is used
+        assert kwargs["api_base_url"] == "http://127.0.0.1:8080/v1"
 
 
 # Test for empty additional_args in start_mlx_lm_server
-@patch('subprocess.Popen')
+@patch("subprocess.Popen")
 def test_start_mlx_lm_server_empty_additional_args(mock_popen):
     mock_process = MagicMock()
     mock_popen.return_value = mock_process
@@ -477,19 +526,52 @@ def test_start_mlx_lm_server_empty_additional_args(mock_popen):
     port = 8080
 
     start_mlx_lm_server(model_path, host, port, additional_args="")  # Empty string
-    expected_command = ["python", "-m", "mlx_lm.server", "--model", model_path, "--host", host, "--port", str(port)]
-    mock_popen.assert_called_once_with(expected_command, stdout=ANY, stderr=ANY, text=True, bufsize=ANY,
-                                       universal_newlines=ANY, env=ANY)
+    expected_command = [
+        "python",
+        "-m",
+        "mlx_lm.server",
+        "--model",
+        model_path,
+        "--host",
+        host,
+        "--port",
+        str(port),
+    ]
+    mock_popen.assert_called_once_with(
+        expected_command,
+        stdout=ANY,
+        stderr=ANY,
+        text=True,
+        bufsize=ANY,
+        universal_newlines=ANY,
+        env=ANY,
+    )
 
     mock_popen.reset_mock()
-    start_mlx_lm_server(model_path, host, port, additional_args="   ")  # Whitespace string
-    mock_popen.assert_called_once_with(expected_command, stdout=ANY, stderr=ANY, text=True, bufsize=ANY,
-                                       universal_newlines=ANY, env=ANY)
+    start_mlx_lm_server(
+        model_path, host, port, additional_args="   "
+    )  # Whitespace string
+    mock_popen.assert_called_once_with(
+        expected_command,
+        stdout=ANY,
+        stderr=ANY,
+        text=True,
+        bufsize=ANY,
+        universal_newlines=ANY,
+        env=ANY,
+    )
 
     mock_popen.reset_mock()
     start_mlx_lm_server(model_path, host, port, additional_args=None)  # None
-    mock_popen.assert_called_once_with(expected_command, stdout=ANY, stderr=ANY, text=True, bufsize=ANY,
-                                       universal_newlines=ANY, env=ANY)
+    mock_popen.assert_called_once_with(
+        expected_command,
+        stdout=ANY,
+        stderr=ANY,
+        text=True,
+        bufsize=ANY,
+        universal_newlines=ANY,
+        env=ANY,
+    )
 
 
 # Test stop_mlx_lm_server when process.terminate() raises an exception
@@ -497,7 +579,9 @@ def test_stop_mlx_lm_server_terminate_exception():
     mock_process = MagicMock()
     mock_process.pid = 456
     mock_process.poll.return_value = None  # Running
-    mock_process.terminate.side_effect = ProcessLookupError("Process already terminated")
+    mock_process.terminate.side_effect = ProcessLookupError(
+        "Process already terminated"
+    )
     # Even if terminate says it's gone, kill might be tried if poll says otherwise.
     # Or, if terminate fails, kill path is taken. Let's assume poll is reliable.
 
@@ -512,9 +596,13 @@ def test_stop_mlx_lm_server_kill_exception_after_timeout():
     mock_process = MagicMock()
     mock_process.pid = 789
     mock_process.poll.return_value = None  # Running
-    mock_process.wait.side_effect = [subprocess.TimeoutExpired(cmd="test", timeout=10),
-                                     None]  # First wait times out, second (after kill) succeeds
-    mock_process.kill.side_effect = ProcessLookupError("Process died before kill")  # Kill itself fails
+    mock_process.wait.side_effect = [
+        subprocess.TimeoutExpired(cmd="test", timeout=10),
+        None,
+    ]  # First wait times out, second (after kill) succeeds
+    mock_process.kill.side_effect = ProcessLookupError(
+        "Process died before kill"
+    )  # Kill itself fails
 
     # Even if kill fails with ProcessLookupError, wait() after kill should be called.
     # The main thing is that an attempt was made.

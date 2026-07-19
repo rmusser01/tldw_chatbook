@@ -85,7 +85,10 @@ class FeedbackScopeService:
 
     def _normalize_response(self, mode: FeedbackBackend, result: Any) -> Any:
         if isinstance(result, list):
-            return [self._with_record_id(mode, item) if isinstance(item, dict) else item for item in result]
+            return [
+                self._with_record_id(mode, item) if isinstance(item, dict) else item
+                for item in result
+            ]
         if not isinstance(result, dict):
             return result
         payload = dict(result)
@@ -109,7 +112,8 @@ class FeedbackScopeService:
         reports = [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
         if callable(getattr(self.server_service, "get_feedback", None)):
             reports = [
-                item for item in reports
+                item
+                for item in reports
                 if item.get("operation_id") != "feedback.detail.server"
             ]
         return reports
@@ -126,11 +130,17 @@ class FeedbackScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
         self._enforce_policy(self._action_id(action, normalized_mode))
-        result = await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
+        result = await self._maybe_await(
+            getattr(service, method_name)(*args, **(kwargs or {}))
+        )
         return self._normalize_response(normalized_mode, result)
 
-    async def submit_feedback(self, *, mode: FeedbackBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
-        return await self._call(mode=mode, action="create", method_name="submit_feedback", kwargs=kwargs)
+    async def submit_feedback(
+        self, *, mode: FeedbackBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        return await self._call(
+            mode=mode, action="create", method_name="submit_feedback", kwargs=kwargs
+        )
 
     async def list_feedback(
         self,
@@ -138,7 +148,12 @@ class FeedbackScopeService:
         *,
         mode: FeedbackBackend | str | None = None,
     ) -> dict[str, Any]:
-        return await self._call(mode=mode, action="list", method_name="list_feedback", args=(conversation_id,))
+        return await self._call(
+            mode=mode,
+            action="list",
+            method_name="list_feedback",
+            args=(conversation_id,),
+        )
 
     async def get_feedback(
         self,
@@ -149,8 +164,12 @@ class FeedbackScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("detail", normalized_mode))
         service = self._service_for_mode(normalized_mode)
-        if normalized_mode == FeedbackBackend.SERVER and not callable(getattr(service, "get_feedback", None)):
-            raise ValueError("The current server feedback API does not expose single-feedback detail.")
+        if normalized_mode == FeedbackBackend.SERVER and not callable(
+            getattr(service, "get_feedback", None)
+        ):
+            raise ValueError(
+                "The current server feedback API does not expose single-feedback detail."
+            )
         result = await self._maybe_await(service.get_feedback(feedback_id))
         return self._normalize_response(normalized_mode, result)
 
@@ -175,8 +194,16 @@ class FeedbackScopeService:
         *,
         mode: FeedbackBackend | str | None = None,
     ) -> dict[str, Any]:
-        result = await self._call(mode=mode, action="delete", method_name="delete_feedback", args=(feedback_id,))
+        result = await self._call(
+            mode=mode,
+            action="delete",
+            method_name="delete_feedback",
+            args=(feedback_id,),
+        )
         if isinstance(result, dict) and result.get("record_id") is None:
             result.setdefault("feedback_id", feedback_id)
-            result.setdefault("record_id", f"{self._normalize_mode(mode).value}:feedback:{feedback_id}")
+            result.setdefault(
+                "record_id",
+                f"{self._normalize_mode(mode).value}:feedback:{feedback_id}",
+            )
         return result

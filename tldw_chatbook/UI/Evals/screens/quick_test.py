@@ -7,10 +7,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.containers import Container, ScrollableContainer
-from textual.widgets import (
-    Button, Static, Select, Input, Label,
-    ProgressBar, TextArea
-)
+from textual.widgets import Button, Static, Select, Input, Label, ProgressBar, TextArea
 from textual.binding import Binding
 from textual.reactive import reactive
 from textual.worker import Worker
@@ -27,14 +24,14 @@ if TYPE_CHECKING:
 class QuickTestScreen(Screen):
     """
     Streamlined screen for running single evaluations.
-    
+
     Features:
     - Simple form for task and model selection
     - Real-time progress tracking
     - Immediate results display
     - Quick configuration options
     """
-    
+
     BINDINGS = [
         Binding("ctrl+r", "run_evaluation", "Run", show=True, priority=True),
         Binding("ctrl+s", "stop_evaluation", "Stop", show=False),
@@ -43,7 +40,7 @@ class QuickTestScreen(Screen):
         Binding("tab", "focus_next", "Next Field", show=False),
         Binding("shift+tab", "focus_previous", "Prev Field", show=False),
     ]
-    
+
     DEFAULT_CSS = """
     QuickTestScreen {
         background: $background;
@@ -189,15 +186,15 @@ class QuickTestScreen(Screen):
         border: round $warning;
     }
     """
-    
+
     # Reactive properties
     selected_task_id = reactive(None)
     selected_model_id = reactive(None)
     evaluation_running = reactive(False)
     progress = reactive(0.0)
     progress_message = reactive("")
-    
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+
+    def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.nav_bar: Optional[EvalNavigationBar] = None
@@ -206,19 +203,19 @@ class QuickTestScreen(Screen):
         self.available_tasks: Dict[str, Any] = {}
         self.available_models: Dict[str, Any] = {}
         self.last_results = None
-    
+
     def compose(self) -> ComposeResult:
         """Compose the quick test screen."""
         # Navigation bar
         self.nav_bar = EvalNavigationBar(self.app_instance)
         yield self.nav_bar
-        
+
         # Main content
         with ScrollableContainer(classes="main-container"):
             # Configuration section
             with Container(classes="form-section"):
                 yield Static("⚡ Quick Test Configuration", classes="section-title")
-                
+
                 # Task selection
                 with Container(classes="form-row"):
                     yield Label("Task:", classes="form-label")
@@ -227,9 +224,9 @@ class QuickTestScreen(Screen):
                         prompt="Select a task...",
                         id="task-select",
                         classes="form-input",
-                        allow_blank=True
+                        allow_blank=True,
                     )
-                
+
                 # Model selection
                 with Container(classes="form-row"):
                     yield Label("Model:", classes="form-label")
@@ -238,9 +235,9 @@ class QuickTestScreen(Screen):
                         prompt="Select a model...",
                         id="model-select",
                         classes="form-input",
-                        allow_blank=True
+                        allow_blank=True,
                     )
-                
+
                 # Quick config
                 with Container(classes="config-row"):
                     yield Label("Samples:", classes="form-label")
@@ -249,7 +246,7 @@ class QuickTestScreen(Screen):
                         type="integer",
                         id="samples-input",
                         classes="config-input",
-                        placeholder="1-1000"
+                        placeholder="1-1000",
                     )
                     yield Label("Temp:", classes="form-label")
                     yield Input(
@@ -257,18 +254,18 @@ class QuickTestScreen(Screen):
                         type="number",
                         id="temp-input",
                         classes="config-input",
-                        placeholder="0.0-2.0"
+                        placeholder="0.0-2.0",
                     )
-            
+
             # Run button
             with Container(classes="run-section"):
                 yield Button(
                     "▶️ Run Test",
                     id="run-button",
                     classes="run-button",
-                    variant="primary"
+                    variant="primary",
                 )
-            
+
             # Progress section (hidden by default)
             with Container(classes="progress-section", id="progress-section"):
                 yield Static("📊 Evaluation Progress", classes="section-title")
@@ -276,24 +273,23 @@ class QuickTestScreen(Screen):
                     yield ProgressBar(id="progress-bar", show_eta=True)
                 yield Static("", id="progress-message", classes="progress-message")
                 yield Button("⏹️ Stop", id="stop-button", variant="error")
-            
+
             # Results section
             with Container(classes="results-section"):
                 yield Static("📊 Results", classes="section-title")
-                
+
                 # Summary box
                 with Container(classes="results-summary", id="results-summary"):
-                    yield Static("No results yet. Run a test to see results here.", 
-                               id="summary-text")
-                
+                    yield Static(
+                        "No results yet. Run a test to see results here.",
+                        id="summary-text",
+                    )
+
                 # Detailed results
                 yield TextArea(
-                    "",
-                    id="results-detail",
-                    classes="results-detail",
-                    read_only=True
+                    "", id="results-detail", classes="results-detail", read_only=True
                 )
-    
+
     def on_mount(self) -> None:
         """Initialize when screen mounts."""
         logger.info("Quick test screen mounted")
@@ -308,7 +304,7 @@ class QuickTestScreen(Screen):
         self._load_tasks()
         self._load_models()
         self.set_focus(self.query_one("#task-select"))
-    
+
     def _initialize_orchestrator(self) -> None:
         """Initialize the evaluation orchestrator."""
         try:
@@ -317,53 +313,53 @@ class QuickTestScreen(Screen):
         except Exception as e:
             logger.error(f"Failed to initialize orchestrator: {e}")
             self._show_status(f"Initialization error: {e}", "error")
-    
+
     def _load_tasks(self) -> None:
         """Load available tasks."""
         if not self.orchestrator:
             return
-        
+
         try:
             tasks = self.orchestrator.db.list_tasks()
             task_select = self.query_one("#task-select", Select)
-            
+
             options = []
             for task in tasks:
-                task_id = str(task.get('id'))
-                task_name = task.get('name', 'Unknown')
+                task_id = str(task.get("id"))
+                task_name = task.get("name", "Unknown")
                 options.append((task_name, task_id))
                 self.available_tasks[task_id] = task
-            
+
             task_select.set_options(options)
             logger.info(f"Loaded {len(tasks)} tasks")
-            
+
         except Exception as e:
             logger.error(f"Failed to load tasks: {e}")
-    
+
     def _load_models(self) -> None:
         """Load available models."""
         if not self.orchestrator:
             return
-        
+
         try:
             models = self.orchestrator.db.list_models()
             model_select = self.query_one("#model-select", Select)
-            
+
             options = []
             for model in models:
-                model_id = str(model.get('id'))
-                model_name = model.get('name', 'Unknown')
-                provider = model.get('provider', '')
+                model_id = str(model.get("id"))
+                model_name = model.get("name", "Unknown")
+                provider = model.get("provider", "")
                 display = f"{model_name} ({provider})" if provider else model_name
                 options.append((display, model_id))
                 self.available_models[model_id] = model
-            
+
             model_select.set_options(options)
             logger.info(f"Loaded {len(models)} models")
-            
+
         except Exception as e:
             logger.error(f"Failed to load models: {e}")
-    
+
     @on(Select.Changed)
     def handle_selection_change(self, event: Select.Changed) -> None:
         """Handle task or model selection."""
@@ -371,19 +367,21 @@ class QuickTestScreen(Screen):
             self.selected_task_id = None if event.value == Select.BLANK else event.value
             logger.info(f"Selected task: {event.value}")
         elif event.control.id == "model-select":
-            self.selected_model_id = None if event.value == Select.BLANK else event.value
+            self.selected_model_id = (
+                None if event.value == Select.BLANK else event.value
+            )
             logger.info(f"Selected model: {event.value}")
-    
+
     @on(Button.Pressed, "#run-button")
     def handle_run_button(self) -> None:
         """Handle run button press."""
         self.action_run_evaluation()
-    
+
     @on(Button.Pressed, "#stop-button")
     def handle_stop_button(self) -> None:
         """Handle stop button press."""
         self.action_stop_evaluation()
-    
+
     @on(QuickAction)
     def handle_quick_action(self, message: QuickAction) -> None:
         """Handle quick actions from nav bar."""
@@ -397,22 +395,22 @@ class QuickTestScreen(Screen):
             self._load_tasks()
             self._load_models()
             self._show_status("Refreshed tasks and models", "success")
-    
+
     def action_run_evaluation(self) -> None:
         """Run the evaluation."""
         if self.evaluation_running:
             self._show_status("Evaluation already running", "warning")
             return
-        
+
         # Validate inputs
         if not self.selected_task_id:
             self._show_status("Please select a task", "error")
             return
-        
+
         if not self.selected_model_id:
             self._show_status("Please select a model", "error")
             return
-        
+
         # Get configuration
         try:
             samples = int(self.query_one("#samples-input", Input).value)
@@ -420,16 +418,16 @@ class QuickTestScreen(Screen):
         except ValueError:
             self._show_status("Invalid configuration values", "error")
             return
-        
+
         # Start evaluation
         self.evaluation_running = True
         self.progress = 0.0
-        
+
         # Update UI
         self._show_progress(True)
         if self.nav_bar:
             self.nav_bar.set_status(EvalStatus.RUNNING)
-        
+
         # Run in worker
         self.run_worker(
             self._run_evaluation_worker,
@@ -437,9 +435,9 @@ class QuickTestScreen(Screen):
             model_id=self.selected_model_id,
             samples=samples,
             temperature=temperature,
-            thread=True
+            thread=True,
         )
-    
+
     def action_stop_evaluation(self) -> None:
         """Stop the running evaluation."""
         if self.current_worker:
@@ -449,35 +447,34 @@ class QuickTestScreen(Screen):
             if self.nav_bar:
                 self.nav_bar.set_status(EvalStatus.IDLE)
             self._show_status("Evaluation stopped", "warning")
-    
+
     def action_export_results(self) -> None:
         """Export the results."""
         if not self.last_results:
             self._show_status("No results to export", "warning")
             return
-        
+
         # TODO: Implement export functionality
         self._show_status("Export functionality coming soon", "warning")
-    
+
     @work(thread=True)
     def _run_evaluation_worker(
-        self,
-        task_id: str,
-        model_id: str,
-        samples: int,
-        temperature: float
+        self, task_id: str, model_id: str, samples: int, temperature: float
     ) -> None:
         """Worker to run evaluation."""
         try:
             # Simulate evaluation progress
             import time
+
             for i in range(101):
                 if self.is_cancelled:
                     break
-                
-                self.call_from_thread(self._update_progress, i, f"Processing sample {i}/{samples}")
+
+                self.call_from_thread(
+                    self._update_progress, i, f"Processing sample {i}/{samples}"
+                )
                 time.sleep(0.05)  # Simulate work
-            
+
             # Generate mock results
             results = {
                 "task": self.available_tasks.get(task_id, {}).get("name", "Unknown"),
@@ -485,69 +482,69 @@ class QuickTestScreen(Screen):
                 "samples": samples,
                 "accuracy": 0.87,
                 "duration": "5.2s",
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
-            
+
             self.call_from_thread(self._handle_results, results)
-            
+
         except Exception as e:
             logger.error(f"Evaluation error: {e}")
             self.call_from_thread(self._handle_error, str(e))
         finally:
             self.call_from_thread(self._cleanup_evaluation)
-    
+
     def _update_progress(self, value: float, message: str) -> None:
         """Update progress display."""
         self.progress = value
         self.progress_message = message
-        
+
         try:
             progress_bar = self.query_one("#progress-bar", ProgressBar)
             progress_bar.update(progress=value)
-            
+
             msg_widget = self.query_one("#progress-message", Static)
             msg_widget.update(message)
         except Exception as e:
             logger.warning(f"Failed to update progress: {e}")
-    
+
     def _handle_results(self, results: Dict[str, Any]) -> None:
         """Handle evaluation results."""
         self.last_results = results
-        
+
         # Update summary
         summary_text = f"""
-Task: {results['task']}
-Model: {results['model']}
-Samples: {results['samples']}
-Accuracy: {results['accuracy']:.2%}
-Duration: {results['duration']}
-Completed: {results['timestamp']}
+Task: {results["task"]}
+Model: {results["model"]}
+Samples: {results["samples"]}
+Accuracy: {results["accuracy"]:.2%}
+Duration: {results["duration"]}
+Completed: {results["timestamp"]}
         """.strip()
-        
+
         summary_widget = self.query_one("#summary-text", Static)
         summary_widget.update(summary_text)
-        
+
         # Update detailed results
         detail_widget = self.query_one("#results-detail", TextArea)
         detail_widget.text = f"Detailed results:\n\n{summary_text}\n\n[Additional metrics would appear here]"
-        
+
         if self.nav_bar:
             self.nav_bar.set_status(EvalStatus.SUCCESS)
-        
+
         self._show_status("Evaluation completed successfully!", "success")
-    
+
     def _handle_error(self, error: str) -> None:
         """Handle evaluation error."""
         if self.nav_bar:
             self.nav_bar.set_status(EvalStatus.ERROR)
         self._show_status(f"Evaluation failed: {error}", "error")
-    
+
     def _cleanup_evaluation(self) -> None:
         """Clean up after evaluation."""
         self.evaluation_running = False
         self._show_progress(False)
         self.current_worker = None
-    
+
     def _show_progress(self, show: bool) -> None:
         """Show or hide progress section."""
         try:
@@ -558,13 +555,13 @@ Completed: {results['timestamp']}
                 progress_section.remove_class("active")
         except Exception as e:
             logger.warning(f"Failed to toggle progress section: {e}")
-    
+
     def _show_status(self, message: str, level: str = "info") -> None:
         """Show status message."""
         if self.app_instance:
             severity = "information" if level == "info" else level
             self.app_instance.notify(message, severity=severity)
-    
+
     def watch_evaluation_running(self, old: bool, new: bool) -> None:
         """React to evaluation running state changes."""
         try:

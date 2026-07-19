@@ -11,7 +11,16 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
-from textual.widgets import Button, Checkbox, Input, Label, ListItem, ListView, Select, Static
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    Select,
+    Static,
+)
 
 from ...Media.media_reading_scope_service import ALLOWED_SERVER_CREATE_SOURCE_TYPES
 
@@ -27,9 +36,15 @@ CREATE_SOURCE_TYPE_OPTIONS = [
 ]
 CREATE_SOURCE_POLICY_OPTIONS = [("Canonical", "canonical")]
 
-SOURCE_ACTION_TOOLTIP_LOCAL_MODE = "Switch Media to server mode and select a source to use this action."
-SOURCE_ACTION_TOOLTIP_NO_SOURCE = "Create or select a server ingestion source to use this action."
-SOURCE_ACTION_TOOLTIP_ARCHIVE_ONLY = "Upload Archive is only available for archive ingestion sources."
+SOURCE_ACTION_TOOLTIP_LOCAL_MODE = (
+    "Switch Media to server mode and select a source to use this action."
+)
+SOURCE_ACTION_TOOLTIP_NO_SOURCE = (
+    "Create or select a server ingestion source to use this action."
+)
+SOURCE_ACTION_TOOLTIP_ARCHIVE_ONLY = (
+    "Upload Archive is only available for archive ingestion sources."
+)
 SOURCE_ACTION_TOOLTIP_SERVICE_UNAVAILABLE = "Media source service is unavailable."
 
 
@@ -112,7 +127,9 @@ class MediaIngestionSourcePanel(ScrollableContainer):
         self.selected_source: Optional[Dict[str, Any]] = None
 
     def compose(self) -> ComposeResult:
-        yield Static("Server ingestion sources require server mode.", id="source-panel-disabled")
+        yield Static(
+            "Server ingestion sources require server mode.", id="source-panel-disabled"
+        )
         with Horizontal(id="source-panel-main"):
             with Vertical(classes="source-column"):
                 yield Label("Create Source", classes="source-section-title")
@@ -150,7 +167,9 @@ class MediaIngestionSourcePanel(ScrollableContainer):
                 yield Checkbox("Enabled", id="source-enabled-checkbox")
                 with Horizontal(classes="source-actions"):
                     yield Button("Save Settings", id="save-source-btn", disabled=True)
-                    yield Button("Upload Archive", id="upload-archive-btn", disabled=True)
+                    yield Button(
+                        "Upload Archive", id="upload-archive-btn", disabled=True
+                    )
                 yield Input(placeholder="Archive path", id="archive-path-input")
                 yield Label("Source Items", classes="source-section-title")
                 yield ListView(id="source-items-list")
@@ -183,7 +202,10 @@ class MediaIngestionSourcePanel(ScrollableContainer):
     def _current_runtime_backend(self) -> str:
         runtime_backend = self.runtime_backend
         if self.runtime_state is not None:
-            runtime_backend = str(getattr(self.runtime_state, "runtime_backend", runtime_backend) or "local")
+            runtime_backend = str(
+                getattr(self.runtime_state, "runtime_backend", runtime_backend)
+                or "local"
+            )
         normalized_backend = str(runtime_backend or "local").strip().lower()
         if normalized_backend not in {"local", "server"}:
             return "local"
@@ -212,7 +234,9 @@ class MediaIngestionSourcePanel(ScrollableContainer):
             button.disabled = disabled
             button.tooltip = tooltip
 
-        upload_button.disabled = disabled if upload_disabled is None else upload_disabled
+        upload_button.disabled = (
+            disabled if upload_disabled is None else upload_disabled
+        )
         upload_button.tooltip = tooltip if upload_tooltip is None else upload_tooltip
 
     def _source_index_for_identity(self, source_identity: Any) -> Optional[int]:
@@ -249,8 +273,12 @@ class MediaIngestionSourcePanel(ScrollableContainer):
             self.selected_source = None
             await self._clear_list_view("#source-list")
             await self._clear_list_view("#source-items-list")
-            self.query_one("#source-detail", Static).update("Server ingestion sources require server mode.")
-            self._set_source_action_state(disabled=True, tooltip=SOURCE_ACTION_TOOLTIP_LOCAL_MODE)
+            self.query_one("#source-detail", Static).update(
+                "Server ingestion sources require server mode."
+            )
+            self._set_source_action_state(
+                disabled=True, tooltip=SOURCE_ACTION_TOOLTIP_LOCAL_MODE
+            )
             return
 
         self._show_server_ui(True)
@@ -258,11 +286,17 @@ class MediaIngestionSourcePanel(ScrollableContainer):
 
         if self.scope_service is None:
             self._set_create_controls_disabled(True)
-            self.query_one("#source-detail", Static).update("Media source service is unavailable.")
-            self._set_source_action_state(disabled=True, tooltip=SOURCE_ACTION_TOOLTIP_SERVICE_UNAVAILABLE)
+            self.query_one("#source-detail", Static).update(
+                "Media source service is unavailable."
+            )
+            self._set_source_action_state(
+                disabled=True, tooltip=SOURCE_ACTION_TOOLTIP_SERVICE_UNAVAILABLE
+            )
             return
 
-        sources = await self._maybe_await(self.scope_service.list_ingestion_sources(mode="server"))
+        sources = await self._maybe_await(
+            self.scope_service.list_ingestion_sources(mode="server")
+        )
         self.sources = [dict(source) for source in list(sources or [])]
         await self._load_source_list()
 
@@ -273,9 +307,13 @@ class MediaIngestionSourcePanel(ScrollableContainer):
             await self.select_source(selected_index)
         else:
             self.selected_source = None
-            self.query_one("#source-detail", Static).update("No server ingestion sources found.")
+            self.query_one("#source-detail", Static).update(
+                "No server ingestion sources found."
+            )
             await self._clear_list_view("#source-items-list")
-            self._set_source_action_state(disabled=True, tooltip=SOURCE_ACTION_TOOLTIP_NO_SOURCE)
+            self._set_source_action_state(
+                disabled=True, tooltip=SOURCE_ACTION_TOOLTIP_NO_SOURCE
+            )
 
     async def _load_source_list(self) -> None:
         list_view = await self._clear_list_view("#source-list")
@@ -287,7 +325,9 @@ class MediaIngestionSourcePanel(ScrollableContainer):
             label = f"{source.get('source_type', 'source')} -> {source.get('sink_type', 'sink')}"
             if source.get("enabled"):
                 label = f"{label} [enabled]"
-            await list_view.append(ListItem(Static(label), id=self._source_row_id(index)))
+            await list_view.append(
+                ListItem(Static(label), id=self._source_row_id(index))
+            )
 
     async def select_source(self, index: int) -> None:
         if index < 0 or index >= len(self.sources):
@@ -307,7 +347,9 @@ class MediaIngestionSourcePanel(ScrollableContainer):
             detail.update("No source selected.")
             policy_input.value = ""
             enabled_checkbox.value = False
-            self._set_source_action_state(disabled=True, tooltip=SOURCE_ACTION_TOOLTIP_NO_SOURCE)
+            self._set_source_action_state(
+                disabled=True, tooltip=SOURCE_ACTION_TOOLTIP_NO_SOURCE
+            )
             return
 
         source = self.selected_source
@@ -329,7 +371,9 @@ class MediaIngestionSourcePanel(ScrollableContainer):
             disabled=False,
             tooltip=None,
             upload_disabled=not archive_supported,
-            upload_tooltip=None if archive_supported else SOURCE_ACTION_TOOLTIP_ARCHIVE_ONLY,
+            upload_tooltip=None
+            if archive_supported
+            else SOURCE_ACTION_TOOLTIP_ARCHIVE_ONLY,
         )
 
     async def _load_source_items(self) -> None:
@@ -345,7 +389,9 @@ class MediaIngestionSourcePanel(ScrollableContainer):
                 )
             )
         except Exception as exc:
-            logger.opt(exception=True).error(f"Failed to load ingestion source items: {exc}")
+            logger.opt(exception=True).error(
+                f"Failed to load ingestion source items: {exc}"
+            )
             await items_view.append(ListItem(Static("Failed to load source items")))
             return
 
@@ -379,7 +425,9 @@ class MediaIngestionSourcePanel(ScrollableContainer):
         self.runtime_backend = self._current_runtime_backend()
         if self.runtime_backend != "server":
             self._set_create_controls_disabled(True)
-            self.notify("Server ingestion sources require server mode.", severity="warning")
+            self.notify(
+                "Server ingestion sources require server mode.", severity="warning"
+            )
             return
 
         if self.scope_service is None:
@@ -388,10 +436,15 @@ class MediaIngestionSourcePanel(ScrollableContainer):
 
         source_type = str(self.query_one("#create-source-type", Select).value or "")
         if source_type not in ALLOWED_CREATE_SOURCE_TYPES:
-            self.notify("This source type is not available from Chatbook yet.", severity="warning")
+            self.notify(
+                "This source type is not available from Chatbook yet.",
+                severity="warning",
+            )
             return
 
-        config_text = self.query_one("#create-config-input", Input).value.strip() or "{}"
+        config_text = (
+            self.query_one("#create-config-input", Input).value.strip() or "{}"
+        )
         try:
             config = json.loads(config_text)
         except json.JSONDecodeError:
@@ -402,7 +455,10 @@ class MediaIngestionSourcePanel(ScrollableContainer):
             self.notify("Config must be a JSON object.", severity="error")
             return
 
-        policy = str(self.query_one("#create-policy-type", Select).value or "canonical") or "canonical"
+        policy = (
+            str(self.query_one("#create-policy-type", Select).value or "canonical")
+            or "canonical"
+        )
         created = await self._maybe_await(
             self.scope_service.create_ingestion_source(
                 mode="server",
@@ -413,7 +469,9 @@ class MediaIngestionSourcePanel(ScrollableContainer):
             )
         )
         created_source = dict(created or {})
-        created_identity = created_source.get("id") or self._source_id_value(created_source)
+        created_identity = created_source.get("id") or self._source_id_value(
+            created_source
+        )
         await self.refresh_for_mode(preferred_source_id=created_identity)
         self.notify("Source created", severity="information")
 

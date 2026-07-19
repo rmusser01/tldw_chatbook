@@ -76,14 +76,18 @@ class LocalSkillsService:
         self.index_path = self.store_dir / _INDEX_FILENAME
         self.policy_enforcer = policy_enforcer
         self.trust_service = trust_service
-        self.allow_untrusted_without_trust_service = allow_untrusted_without_trust_service
+        self.allow_untrusted_without_trust_service = (
+            allow_untrusted_without_trust_service
+        )
         self._lock = asyncio.Lock()
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -92,10 +96,14 @@ class LocalSkillsService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Local skill action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "local",
-                    authority_owner=getattr(decision, "authority_owner", None) or "local",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Local skill action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "local",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "local",
                 )
 
     @staticmethod
@@ -157,7 +165,11 @@ class LocalSkillsService:
             raw_metadata = {}
         if not isinstance(raw_metadata, dict):
             raw_metadata = {}
-        metadata = {str(key): value for key, value in raw_metadata.items() if str(key) in _METADATA_FIELDS}
+        metadata = {
+            str(key): value
+            for key, value in raw_metadata.items()
+            if str(key) in _METADATA_FIELDS
+        }
         return metadata, content[match.end() :]
 
     @classmethod
@@ -237,7 +249,9 @@ class LocalSkillsService:
         return None
 
     @classmethod
-    def _agent_skill_validation(cls, *, directory_name: str, front_matter: dict[str, Any]) -> dict[str, Any]:
+    def _agent_skill_validation(
+        cls, *, directory_name: str, front_matter: dict[str, Any]
+    ) -> dict[str, Any]:
         errors: list[str] = []
         agent_skill_name = front_matter.get("name")
         description = front_matter.get("description")
@@ -382,14 +396,18 @@ class LocalSkillsService:
         for path in sorted(skill_dir.iterdir(), key=lambda item: item.name):
             if not path.is_file() or path.name == _SKILL_FILENAME:
                 continue
-            supporting_files[path.name] = LocalSkillsService._read_text_preserving_newlines(
-                path,
-                base_dir=skill_dir,
+            supporting_files[path.name] = (
+                LocalSkillsService._read_text_preserving_newlines(
+                    path,
+                    base_dir=skill_dir,
+                )
             )
         return supporting_files or None
 
     @staticmethod
-    def _read_text_preserving_newlines(path: Path, *, base_dir: Path | None = None) -> str:
+    def _read_text_preserving_newlines(
+        path: Path, *, base_dir: Path | None = None
+    ) -> str:
         base_dir = validate_path_simple(base_dir or path.parent)
         if base_dir.is_symlink():
             raise ValueError("unsafe local skill path")
@@ -433,7 +451,13 @@ class LocalSkillsService:
                 context=record.get("context", "inline"),
             )
         )
-        for field in ("agent_skill_name", "validation_status", "validation_errors", "record_id", "backend"):
+        for field in (
+            "agent_skill_name",
+            "validation_status",
+            "validation_errors",
+            "record_id",
+            "backend",
+        ):
             if field in record:
                 summary[field] = record[field]
         summary.update(self._trust_fields_for_record(record))
@@ -458,7 +482,9 @@ class LocalSkillsService:
                 "trust_manifest_generation": None,
                 "trust_last_verified_at": None,
             }
-        return self.trust_service.status_for_skill(str(record["name"])).response_fields()
+        return self.trust_service.status_for_skill(
+            str(record["name"])
+        ).response_fields()
 
     def _require_trusted_skill(self, skill_name: str) -> None:
         if self.trust_service is None:
@@ -471,7 +497,9 @@ class LocalSkillsService:
             )
         self.trust_service.ensure_skill_trusted(skill_name)
 
-    def _trust_after_approved_mutation(self, skill_name: str, *, trust_approved: bool) -> None:
+    def _trust_after_approved_mutation(
+        self, skill_name: str, *, trust_approved: bool
+    ) -> None:
         if not trust_approved:
             return
         # Writes and index updates intentionally happen before re-trust. If this
@@ -506,7 +534,9 @@ class LocalSkillsService:
             supporting_files=skill.get("supporting_files"),
         )
 
-    def _require_record(self, skill_name: str, records: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    def _require_record(
+        self, skill_name: str, records: dict[str, dict[str, Any]]
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.skills_schemas import _normalize_skill_name
 
@@ -517,12 +547,19 @@ class LocalSkillsService:
         return record
 
     @staticmethod
-    def _check_expected_version(skill_name: str, record: dict[str, Any], expected_version: int | None) -> None:
-        if expected_version is not None and int(record.get("version", 0)) != expected_version:
+    def _check_expected_version(
+        skill_name: str, record: dict[str, Any], expected_version: int | None
+    ) -> None:
+        if (
+            expected_version is not None
+            and int(record.get("version", 0)) != expected_version
+        ):
             raise ValueError(f"local_skill_version_conflict:{skill_name}")
 
     @staticmethod
-    def _apply_supporting_files(skill_dir: Path, supporting_files: dict[str, str | None] | None) -> None:
+    def _apply_supporting_files(
+        skill_dir: Path, supporting_files: dict[str, str | None] | None
+    ) -> None:
         if supporting_files is None:
             return
         for filename, content in supporting_files.items():
@@ -551,7 +588,11 @@ class LocalSkillsService:
     @staticmethod
     def _validate_archive_member(name: str) -> str:
         posix_path = PurePosixPath(name)
-        if posix_path.is_absolute() or ".." in posix_path.parts or len(posix_path.parts) != 1:
+        if (
+            posix_path.is_absolute()
+            or ".." in posix_path.parts
+            or len(posix_path.parts) != 1
+        ):
             raise ValueError(f"local_skill_invalid_archive:{name}")
         filename = posix_path.name
         if not filename:
@@ -570,9 +611,19 @@ class LocalSkillsService:
 
         self._enforce("skills.list.local")
         records = self._load_index()
-        summaries = [self._summary_for_record(record) for _, record in sorted(records.items())]
+        summaries = [
+            self._summary_for_record(record) for _, record in sorted(records.items())
+        ]
         page = summaries[offset : offset + limit]
-        return self._dump(SkillsListResponse(skills=page, count=len(page), total=len(summaries), limit=limit, offset=offset))
+        return self._dump(
+            SkillsListResponse(
+                skills=page,
+                count=len(page),
+                total=len(summaries),
+                limit=limit,
+                offset=offset,
+            )
+        )
 
     async def get_context(self) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
@@ -590,8 +641,14 @@ class LocalSkillsService:
             available.append(summary)
         context_lines = []
         for summary in available:
-            description = f": {summary['description']}" if summary.get("description") else ""
-            argument_hint = f" (args: {summary['argument_hint']})" if summary.get("argument_hint") else ""
+            description = (
+                f": {summary['description']}" if summary.get("description") else ""
+            )
+            argument_hint = (
+                f" (args: {summary['argument_hint']})"
+                if summary.get("argument_hint")
+                else ""
+            )
             context_lines.append(f"- {summary['name']}{description}{argument_hint}")
         payload = self._dump(
             SkillContextPayload(
@@ -616,7 +673,9 @@ class LocalSkillsService:
             ``len(available_skills) + len(blocked_skills)``.
         """
         ctx = await self.get_context()
-        return len(ctx.get("available_skills") or []) + len(ctx.get("blocked_skills") or [])
+        return len(ctx.get("available_skills") or []) + len(
+            ctx.get("blocked_skills") or []
+        )
 
     async def get_skill(self, skill_name: str) -> dict[str, Any]:
         self._enforce("skills.detail.local")
@@ -635,7 +694,9 @@ class LocalSkillsService:
         from ..tldw_api import SkillCreate
 
         self._enforce("skills.create.local")
-        request = SkillCreate(name=name, content=content, supporting_files=supporting_files)
+        request = SkillCreate(
+            name=name, content=content, supporting_files=supporting_files
+        )
         async with self._lock:
             records = self._load_index()
             skill_name = request.name
@@ -651,7 +712,9 @@ class LocalSkillsService:
                 skill_dir=skill_dir,
             )
             self._save_index(records)
-            self._trust_after_approved_mutation(skill_name, trust_approved=trust_approved)
+            self._trust_after_approved_mutation(
+                skill_name, trust_approved=trust_approved
+            )
             return self._response_for_record(records[skill_name])
 
     async def update_skill(
@@ -691,10 +754,14 @@ class LocalSkillsService:
             next_record["version"] = int(record.get("version", 0)) + 1
             records[normalized_name] = next_record
             self._save_index(records)
-            self._trust_after_approved_mutation(normalized_name, trust_approved=trust_approved)
+            self._trust_after_approved_mutation(
+                normalized_name, trust_approved=trust_approved
+            )
             return self._response_for_record(next_record)
 
-    async def delete_skill(self, skill_name: str, *, expected_version: int | None = None) -> bool:
+    async def delete_skill(
+        self, skill_name: str, *, expected_version: int | None = None
+    ) -> bool:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.skills_schemas import _normalize_skill_name
 
@@ -728,7 +795,9 @@ class LocalSkillsService:
             supporting_files=supporting_files,
             overwrite=overwrite,
         )
-        skill_name = request.name or self._derive_name_from_filename("imported-skill.md")
+        skill_name = request.name or self._derive_name_from_filename(
+            "imported-skill.md"
+        )
         async with self._lock:
             records = self._load_index()
             if skill_name in records and not request.overwrite:
@@ -750,7 +819,9 @@ class LocalSkillsService:
                 record["version"] = int(existing.get("version", 0)) + 1
             records[skill_name] = record
             self._save_index(records)
-            self._trust_after_approved_mutation(skill_name, trust_approved=trust_approved)
+            self._trust_after_approved_mutation(
+                skill_name, trust_approved=trust_approved
+            )
             return self._response_for_record(record)
 
     async def import_skill_file(
@@ -763,7 +834,10 @@ class LocalSkillsService:
         trust_approved: bool = False,
     ) -> dict[str, Any]:
         self._enforce("skills.import.launch.local")
-        is_zip = content_type in {"application/zip", "application/x-zip-compressed"} or filename.lower().endswith(".zip")
+        is_zip = content_type in {
+            "application/zip",
+            "application/x-zip-compressed",
+        } or filename.lower().endswith(".zip")
         if not is_zip:
             return await self.import_skill(
                 name=self._derive_name_from_filename(filename),
@@ -798,9 +872,13 @@ class LocalSkillsService:
         self._enforce("skills.export.launch.local")
         skill = await self.get_skill(skill_name)
         archive_buffer = io.BytesIO()
-        with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        with zipfile.ZipFile(
+            archive_buffer, "w", compression=zipfile.ZIP_DEFLATED
+        ) as archive:
             archive.writestr(_SKILL_FILENAME, skill["content"])
-            for filename, content in sorted((skill.get("supporting_files") or {}).items()):
+            for filename, content in sorted(
+                (skill.get("supporting_files") or {}).items()
+            ):
                 archive.writestr(filename, content)
         return {
             "content": archive_buffer.getvalue(),
@@ -808,7 +886,9 @@ class LocalSkillsService:
             "content_type": "application/zip",
         }
 
-    async def execute_skill(self, skill_name: str, *, args: str | None = None) -> dict[str, Any]:
+    async def execute_skill(
+        self, skill_name: str, *, args: str | None = None
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SkillExecuteRequest, SkillExecutionResult
 

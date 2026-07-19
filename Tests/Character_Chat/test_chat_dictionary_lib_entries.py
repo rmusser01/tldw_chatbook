@@ -33,8 +33,15 @@ class TestEntryModelFields:
         assert (clone.enabled, clone.case_sensitive, clone.priority) == (False, True, 7)
 
     def test_legacy_stored_dict_without_new_keys_parses(self):
-        legacy = {"key": "BP", "content": "blood pressure", "probability": 100,
-                  "group": None, "timed_effects": None, "max_replacements": 1, "is_regex": False}
+        legacy = {
+            "key": "BP",
+            "content": "blood pressure",
+            "probability": 100,
+            "group": None,
+            "timed_effects": None,
+            "max_replacements": 1,
+            "is_regex": False,
+        }
         clone = ChatDictionary.from_dict(legacy)
         assert (clone.enabled, clone.case_sensitive, clone.priority) == (True, False, 0)
 
@@ -63,7 +70,9 @@ class TestCaseSensitivity:
 
 class TestGroupWinner:
     def test_priority_wins_over_length(self):
-        long_low = _entry("blood pressure cuff", "sphygmomanometer", group="med", priority=0)
+        long_low = _entry(
+            "blood pressure cuff", "sphygmomanometer", group="med", priority=0
+        )
         short_high = _entry("cuff", "wrap", group="med", priority=5)
         winners = group_scoring([long_low, short_high])
         assert winners == [short_high]
@@ -87,12 +96,14 @@ class TestUnifiedOrdering:
 
     def test_priority_governs_budget_survival(self):
         # Strategy order (alphabetical) would put "aa" first; priority must trump it.
-        cheap_low = _entry("aa", "w1 w2 w3", priority=0)      # 3 tokens
+        cheap_low = _entry("aa", "w1 w2 w3", priority=0)  # 3 tokens
         pricey_high = _entry("zz", "w1 w2 w3 w4", priority=5)  # 4 tokens
-        _, diag = process_user_input_with_diagnostics("aa zz", [cheap_low, pricey_high], max_tokens=4)
+        _, diag = process_user_input_with_diagnostics(
+            "aa zz", [cheap_low, pricey_high], max_tokens=4
+        )
         by = {r.pattern: r for r in diag.entries}
-        assert by["zz"].status == "fired"                      # high priority survived
-        assert by["aa"].status == "skipped:token_budget"       # walk stopped after zz
+        assert by["zz"].status == "fired"  # high priority survived
+        assert by["aa"].status == "skipped:token_budget"  # walk stopped after zz
         assert diag.budget_exceeded is True
         assert diag.tokens_used == 4
 
@@ -101,7 +112,7 @@ class TestUnifiedOrdering:
         second = _entry("aa", "A", priority=0)
         _, diag = process_user_input_with_diagnostics("aa zz", [first, second])
         by = {r.pattern: r for r in diag.entries}
-        assert by["zz"].applied_order == 0                     # -priority beats alphabetical
+        assert by["zz"].applied_order == 0  # -priority beats alphabetical
         assert by["aa"].applied_order == 1
 
     def test_legacy_zero_priority_keeps_strategy_application_order(self):
@@ -109,14 +120,18 @@ class TestUnifiedOrdering:
         b = _entry("aa", "A")
         _, diag = process_user_input_with_diagnostics("aa bb", [a, b])
         by = {r.pattern: r for r in diag.entries}
-        assert by["aa"].applied_order == 0 and by["bb"].applied_order == 1  # alphabetical
+        assert (
+            by["aa"].applied_order == 0 and by["bb"].applied_order == 1
+        )  # alphabetical
 
     def test_legacy_budget_survival_now_follows_strategy_order(self):
         # THE spec'd legacy delta: stored order was [zz, aa]; survival now walks
         # strategy (alphabetical) order, so "aa" survives a 1-token budget.
-        stored_first = _entry("zz", "w1")   # 1 token
+        stored_first = _entry("zz", "w1")  # 1 token
         stored_second = _entry("aa", "w1")  # 1 token
-        _, diag = process_user_input_with_diagnostics("aa zz", [stored_first, stored_second], max_tokens=1)
+        _, diag = process_user_input_with_diagnostics(
+            "aa zz", [stored_first, stored_second], max_tokens=1
+        )
         by = {r.pattern: r for r in diag.entries}
         assert by["aa"].status == "fired"
         assert by["zz"].status == "skipped:token_budget"
@@ -133,23 +148,30 @@ class TestUnifiedOrdering:
             _entry("bp2", "exact", case_sensitive=True),
         ]
         sample = "BP HR bp2 end"
-        assert process_user_input(sample, entries) == \
-            process_user_input_with_diagnostics(sample, entries)[0]
+        assert (
+            process_user_input(sample, entries)
+            == process_user_input_with_diagnostics(sample, entries)[0]
+        )
 
 
 class TestLooseTypedCoercion:
     def test_priority_none_and_garbage_default_to_zero(self):
-        assert ChatDictionary.from_dict(
-            {"key": "BP", "content": "x", "priority": None}
-        ).priority == 0  # RED-first: TypeError pre-fix
+        assert (
+            ChatDictionary.from_dict(
+                {"key": "BP", "content": "x", "priority": None}
+            ).priority
+            == 0
+        )  # RED-first: TypeError pre-fix
         assert _entry("BP", "x", priority="garbage").priority == 0
 
     def test_string_false_is_false(self):
         entry = _entry("BP", "x", enabled="false", case_sensitive="False")
-        assert entry.enabled is False        # RED-first: True pre-fix
+        assert entry.enabled is False  # RED-first: True pre-fix
         assert entry.case_sensitive is False
 
     def test_string_true_and_unrecognized(self):
         assert _entry("BP", "x", enabled="yes").enabled is True
-        assert _entry("BP", "x", enabled="maybe").enabled is True   # default
-        assert _entry("BP", "x", case_sensitive="maybe").case_sensitive is False  # default
+        assert _entry("BP", "x", enabled="maybe").enabled is True  # default
+        assert (
+            _entry("BP", "x", case_sensitive="maybe").case_sensitive is False
+        )  # default

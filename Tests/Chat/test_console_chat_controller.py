@@ -198,13 +198,17 @@ def test_controller_session_changes_clear_terminal_run_copy() -> None:
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     first = store.ensure_session(title="Chat 1")
 
-    controller.run_state = ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete.")
+    controller.run_state = ConsoleRunState(
+        ConsoleRunStatus.COMPLETED, "Response complete."
+    )
     controller.new_session(title="Chat 2")
 
     assert controller.run_state.status is ConsoleRunStatus.IDLE
     assert controller.run_state.visible_copy == ""
 
-    controller.run_state = ConsoleRunState(ConsoleRunStatus.BLOCKED, "Provider blocked.")
+    controller.run_state = ConsoleRunState(
+        ConsoleRunStatus.BLOCKED, "Provider blocked."
+    )
     controller.switch_session(first.id)
 
     assert controller.run_state.status is ConsoleRunStatus.IDLE
@@ -216,13 +220,17 @@ def test_controller_session_changes_preserve_active_run_copy() -> None:
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     first = store.ensure_session(title="Chat 1")
 
-    controller.run_state = ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+    controller.run_state = ConsoleRunState(
+        ConsoleRunStatus.STREAMING, "Streaming response."
+    )
     controller.new_session(title="Chat 2")
 
     assert controller.run_state.status is ConsoleRunStatus.STREAMING
     assert controller.run_state.visible_copy == "Streaming response."
 
-    controller.run_state = ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+    controller.run_state = ConsoleRunState(
+        ConsoleRunStatus.VALIDATING, "Validating provider."
+    )
     controller.switch_session(first.id)
 
     assert controller.run_state.status is ConsoleRunStatus.VALIDATING
@@ -304,7 +312,9 @@ async def test_blocked_send_preserves_draft_and_adds_recovery_message():
     assert result.should_clear_draft is False
     assert controller.run_state.status is ConsoleRunStatus.BLOCKED
     assert "Provider blocked" in controller.run_state.visible_copy
-    assert store.messages_for_session(store.active_session_id)[-1].role.value == "system"
+    assert (
+        store.messages_for_session(store.active_session_id)[-1].role.value == "system"
+    )
 
 
 @pytest.mark.asyncio
@@ -485,13 +495,18 @@ async def test_submit_draft_blocks_unsafe_markup_before_storage_or_provider_send
 @pytest.mark.asyncio
 async def test_blocked_provider_wip_copy_is_normalized_once_in_controller():
     store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=WipBlockedGateway())
+    controller = ConsoleChatController(
+        store=store, provider_gateway=WipBlockedGateway()
+    )
 
     result = await controller.submit_draft("hello")
 
     messages = store.messages_for_session(store.active_session_id)
     assert result.accepted is False
-    assert result.visible_copy == "Provider blocked: WIP: Console native provider 'openai' is not wired yet."
+    assert (
+        result.visible_copy
+        == "Provider blocked: WIP: Console native provider 'openai' is not wired yet."
+    )
     assert [message.content for message in messages] == [result.visible_copy]
     assert controller.run_state.visible_copy == result.visible_copy
     assert controller.run_state_history[-1] is ConsoleRunStatus.BLOCKED
@@ -597,7 +612,8 @@ async def test_submit_draft_rejects_concurrent_send_while_streaming():
     assert blocked.should_clear_draft is False
     assert "already running" in blocked.visible_copy
     assert [
-        message.content for message in store.messages_for_session(store.active_session_id)
+        message.content
+        for message in store.messages_for_session(store.active_session_id)
         if message.role.value == "user"
     ] == ["first"]
 
@@ -672,6 +688,7 @@ async def test_stop_active_run_returns_without_waiting_for_next_provider_chunk()
 @pytest.mark.asyncio
 async def test_shutdown_stops_and_awaits_active_stream_task():
     """Verify controller shutdown stops and drains an active stream task."""
+
     class StalledGateway(StreamingGateway):
         def __init__(self):
             self.started = asyncio.Event()
@@ -760,7 +777,9 @@ async def test_close_streaming_session_stops_run_without_key_error():
 async def test_submit_draft_marks_assistant_failed_when_stream_errors():
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)
-    controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
+    controller = ConsoleChatController(
+        store=store, provider_gateway=FailingStreamingGateway()
+    )
 
     result = await controller.submit_draft("hello")
 
@@ -782,13 +801,17 @@ async def test_submit_draft_marks_assistant_failed_when_stream_errors():
     assert controller.run_state.status is ConsoleRunStatus.FAILED
     assert "stream failed" in controller.run_state.visible_copy
     assert result.visible_copy == system_row.content
-    assert persistence.updated_messages[-1]["message_id"] == assistant.persisted_message_id
+    assert (
+        persistence.updated_messages[-1]["message_id"] == assistant.persisted_message_id
+    )
     assert persistence.updated_messages[-1]["content"] == "partial"
     persisted_contents = [
         str(entry.get("content", ""))
         for entry in [*persistence.created_messages, *persistence.updated_messages]
     ]
-    assert not any("Provider stream failed" in content for content in persisted_contents)
+    assert not any(
+        "Provider stream failed" in content for content in persisted_contents
+    )
 
 
 @pytest.mark.asyncio
@@ -806,14 +829,19 @@ async def test_retry_failed_message_streams_replacement_from_original_turn():
     assert result.accepted is True
     assert store.get_message(failed_id).status == "complete"
     assert store.get_message(failed_id).content == "hello"
-    assert persistence.updated_messages[-1]["message_id"] == store.get_message(failed_id).persisted_message_id
+    assert (
+        persistence.updated_messages[-1]["message_id"]
+        == store.get_message(failed_id).persisted_message_id
+    )
     assert persistence.updated_messages[-1]["content"] == "hello"
 
 
 @pytest.mark.asyncio
 async def test_retry_rejects_failed_message_from_inactive_session():
     store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
+    controller = ConsoleChatController(
+        store=store, provider_gateway=FailingStreamingGateway()
+    )
     await controller.submit_draft("hello")
     first_session_id = store.active_session_id
     failed_id = _last_failed_assistant(store, first_session_id).id
@@ -832,7 +860,9 @@ async def test_retry_rejects_failed_message_from_inactive_session():
 @pytest.mark.asyncio
 async def test_retry_failed_message_records_retrying_then_streaming_transition():
     store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
+    controller = ConsoleChatController(
+        store=store, provider_gateway=FailingStreamingGateway()
+    )
     await controller.submit_draft("hello")
     failed_id = _last_failed_assistant(store).id
 
@@ -894,7 +924,9 @@ async def test_retry_failed_continuation_message_ends_provider_payload_with_user
 @pytest.mark.asyncio
 async def test_retry_keeps_failed_content_if_replacement_fails_before_first_chunk():
     store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
+    controller = ConsoleChatController(
+        store=store, provider_gateway=FailingStreamingGateway()
+    )
     await controller.submit_draft("hello")
     failed = _last_failed_assistant(store)
 
@@ -911,7 +943,9 @@ async def test_retry_keeps_failed_content_if_replacement_fails_before_first_chun
 @pytest.mark.asyncio
 async def test_initial_empty_stream_marks_assistant_failed():
     store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=EmptyStreamingGateway())
+    controller = ConsoleChatController(
+        store=store, provider_gateway=EmptyStreamingGateway()
+    )
 
     result = await controller.submit_draft("hello")
 
@@ -927,7 +961,9 @@ async def test_initial_empty_stream_marks_assistant_failed():
 @pytest.mark.asyncio
 async def test_retry_keeps_failed_content_if_replacement_stream_is_empty():
     store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
+    controller = ConsoleChatController(
+        store=store, provider_gateway=FailingStreamingGateway()
+    )
     await controller.submit_draft("hello")
     failed = _last_failed_assistant(store)
 
@@ -944,7 +980,9 @@ async def test_retry_keeps_failed_content_if_replacement_stream_is_empty():
 @pytest.mark.asyncio
 async def test_retry_ignores_empty_heartbeat_before_empty_replacement_stream_ends():
     store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
+    controller = ConsoleChatController(
+        store=store, provider_gateway=FailingStreamingGateway()
+    )
     await controller.submit_draft("hello")
     failed = _last_failed_assistant(store)
 
@@ -1245,7 +1283,9 @@ def test_submit_draft_sends_image_parts_when_vision_capable(monkeypatch):
     monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, model="vision-model"
+    )
     session = store.ensure_session()
     store.set_pending_attachment(session.id, _pending_image())
 
@@ -1256,7 +1296,9 @@ def test_submit_draft_sends_image_parts_when_vision_capable(monkeypatch):
     assert user_payload["role"] == "user"
     assert isinstance(user_payload["content"], list)
     assert user_payload["content"][0] == {"type": "text", "text": "what is this?"}
-    assert user_payload["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert user_payload["content"][1]["image_url"]["url"].startswith(
+        "data:image/png;base64,"
+    )
     assert store.pending_attachment(session.id) is None  # consumed on send
 
 
@@ -1280,7 +1322,9 @@ def test_image_only_draft_is_sendable(monkeypatch):
     monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, model="vision-model"
+    )
     session = store.ensure_session()
     store.set_pending_attachment(session.id, _pending_image())
 
@@ -1296,22 +1340,30 @@ def test_history_images_capped_to_most_recent(monkeypatch):
     monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 1)
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, model="vision-model"
+    )
     session = store.ensure_session()
     store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="first",
-        image_data=b"img-1", image_mime_type="image/png",
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="first",
+        image_data=b"img-1",
+        image_mime_type="image/png",
     )
     store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="second",
-        image_data=b"img-2", image_mime_type="image/png",
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="second",
+        image_data=b"img-2",
+        image_mime_type="image/png",
     )
 
     asyncio.run(controller.submit_draft("and now?"))
 
     contents = [m["content"] for m in gateway.messages_seen if m["role"] == "user"]
-    assert contents[0] == "first"           # over budget → text only
-    assert isinstance(contents[1], list)    # most recent image kept
+    assert contents[0] == "first"  # over budget → text only
+    assert isinstance(contents[1], list)  # most recent image kept
     assert contents[2] == "and now?"
 
 
@@ -1319,11 +1371,16 @@ def test_non_vision_history_stays_plain_strings(monkeypatch):
     monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: False)
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="text-model")
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, model="text-model"
+    )
     session = store.ensure_session()
     store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="had an image",
-        image_data=b"img-1", image_mime_type="image/png",
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="had an image",
+        image_data=b"img-1",
+        image_mime_type="image/png",
     )
 
     asyncio.run(controller.submit_draft("plain follow-up"))
@@ -1336,7 +1393,9 @@ def test_submit_stages_all_pendings_and_clears(monkeypatch):
     monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, model="vision-model"
+    )
     session = store.ensure_session()
     store.add_pending_attachment(session.id, _pending_image("a.png"))
     store.add_pending_attachment(session.id, _pending_image("b.png"))
@@ -1359,21 +1418,35 @@ def test_image_budget_counts_images_newest_first(monkeypatch):
     monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 3)
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, model="vision-model"
+    )
     session = store.ensure_session()
     from tldw_chatbook.Chat.console_chat_models import MessageAttachment
 
     def _atts(n, tag):
         return tuple(
-            MessageAttachment(data=f"{tag}-{i}".encode(), mime_type="image/png",
-                              display_name=f"{tag}{i}.png", position=i)
+            MessageAttachment(
+                data=f"{tag}-{i}".encode(),
+                mime_type="image/png",
+                display_name=f"{tag}{i}.png",
+                position=i,
+            )
             for i in range(n)
         )
 
-    store.append_message(session.id, role=ConsoleMessageRole.USER,
-                         content="older", attachments=_atts(2, "old"))
-    store.append_message(session.id, role=ConsoleMessageRole.USER,
-                         content="newer", attachments=_atts(2, "new"))
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="older",
+        attachments=_atts(2, "old"),
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="newer",
+        attachments=_atts(2, "new"),
+    )
 
     asyncio.run(controller.submit_draft("go"))
 
@@ -1381,8 +1454,16 @@ def test_image_budget_counts_images_newest_first(monkeypatch):
     # newest ("newer") gets both images; "older" gets 1 (budget 3), oldest first-dropped.
     newer = user_payloads[1]
     older = user_payloads[0]
-    newer_images = [p for p in newer["content"] if p["type"] == "image_url"] if isinstance(newer["content"], list) else []
-    older_images = [p for p in older["content"] if p["type"] == "image_url"] if isinstance(older["content"], list) else []
+    newer_images = (
+        [p for p in newer["content"] if p["type"] == "image_url"]
+        if isinstance(newer["content"], list)
+        else []
+    )
+    older_images = (
+        [p for p in older["content"] if p["type"] == "image_url"]
+        if isinstance(older["content"], list)
+        else []
+    )
     assert len(newer_images) == 2
     assert len(older_images) == 1
     # Budget-rule resolution: reservation walks messages newest-first, but a
@@ -1407,7 +1488,9 @@ def test_history_image_with_empty_mime_type_falls_back_to_default_mime(monkeypat
     monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, model="vision-model"
+    )
     session = store.ensure_session()
     from tldw_chatbook.Chat.console_chat_models import MessageAttachment
 
@@ -1416,7 +1499,9 @@ def test_history_image_with_empty_mime_type_falls_back_to_default_mime(monkeypat
         role=ConsoleMessageRole.USER,
         content="resumed image",
         attachments=(
-            MessageAttachment(data=b"img-bytes", mime_type="", display_name="a.png", position=0),
+            MessageAttachment(
+                data=b"img-bytes", mime_type="", display_name="a.png", position=0
+            ),
         ),
     )
 
@@ -1448,8 +1533,12 @@ class _FakeReviewProvider:
         if name not in self._gated_names:
             return None
         return MCPPendingCall(
-            llm_name=name, server_key="local:srv", tool_name=name,
-            server_label="Srv", arguments=dict(args or {}), reason="ask",
+            llm_name=name,
+            server_key="local:srv",
+            tool_name=name,
+            server_label="Srv",
+            arguments=dict(args or {}),
+            reason="ask",
         )
 
     def apply_batch_decisions(self, decisions: dict[str, str]) -> None:
@@ -1497,7 +1586,10 @@ def test_build_mcp_review_hook_stamps_decisions_when_gating_needed():
     # I3: the hook clears at ENTRY (unconditionally, before the round trip)
     # and then stamps the real decisions -- two calls, not one, matching
     # `provider.apply_batch_decisions`'s own REPLACE semantics either way.
-    assert provider.apply_batch_decisions_calls == [{}, {"mcp__srv__run": "approve_once"}]
+    assert provider.apply_batch_decisions_calls == [
+        {},
+        {"mcp__srv__run": "approve_once"},
+    ]
     assert len(seen_pending) == 1
 
 
@@ -1526,7 +1618,10 @@ def test_build_mcp_review_hook_shares_one_verdict_for_same_name_calls_this_turn(
     assert len(round_trips[0]) == 2  # ...covering both same-name calls
     # I3: the hook clears at ENTRY (unconditionally, before the round trip)
     # and then stamps the real decisions.
-    assert provider.apply_batch_decisions_calls == [{}, {"mcp__srv__run": "approve_once"}]
+    assert provider.apply_batch_decisions_calls == [
+        {},
+        {"mcp__srv__run": "approve_once"},
+    ]
 
 
 def test_build_mcp_review_hook_clears_stamp_at_entry_before_a_raising_round_trip():
@@ -1543,7 +1638,9 @@ def test_build_mcp_review_hook_clears_stamp_at_entry_before_a_raising_round_trip
     provider = _FakeReviewProvider(gated_names={"mcp__srv__run"})
 
     # Turn 1: a normal round trip that approves.
-    hook = build_mcp_review_hook(provider, lambda pending: {"mcp__srv__run": "approve_once"})
+    hook = build_mcp_review_hook(
+        provider, lambda pending: {"mcp__srv__run": "approve_once"}
+    )
     hook([ToolCall(name="mcp__srv__run", args={}, call_id="1")])
     assert provider.stamped_decision("mcp__srv__run") == "approve_once"
 

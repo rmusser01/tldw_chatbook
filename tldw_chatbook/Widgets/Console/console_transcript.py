@@ -17,13 +17,19 @@ from textual.events import Click, Key
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_image_view import (
     PIXELS_MAX_COLS,
     PIXELS_MAX_LINES,
     ConsoleImageRowSpec,
 )
-from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, ConsoleMessageActionService
+from tldw_chatbook.Chat.console_message_actions import (
+    ConsoleMessageAction,
+    ConsoleMessageActionService,
+)
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
     ConsoleSetupCardState,
@@ -217,7 +223,9 @@ class ConsoleTranscriptMessage(Static):
             classes=classes,
         )
 
-    def sync_message(self, message: ConsoleChatMessage, *, selected: bool = False) -> None:
+    def sync_message(
+        self, message: ConsoleChatMessage, *, selected: bool = False
+    ) -> None:
         """Update row content and selection styling without remounting the row."""
         self.message_id = message.id
         self.update(_message_render_text(message, selected=selected))
@@ -540,7 +548,11 @@ class ConsoleTranscript(VerticalScroll):
     def select_next_variant(self, message_id: str) -> None:
         """Select the next rendered variant for a message when available."""
         message = self._message_by_id(message_id)
-        if message is None or message.variants is None or not message.variants.can_go_next:
+        if (
+            message is None
+            or message.variants is None
+            or not message.variants.can_go_next
+        ):
             return
         message.variants.selected_index += 1
         if self.is_mounted:
@@ -549,7 +561,11 @@ class ConsoleTranscript(VerticalScroll):
     def select_previous_variant(self, message_id: str) -> None:
         """Select the previous rendered variant for a message when available."""
         message = self._message_by_id(message_id)
-        if message is None or message.variants is None or not message.variants.can_go_previous:
+        if (
+            message is None
+            or message.variants is None
+            or not message.variants.can_go_previous
+        ):
             return
         message.variants.selected_index -= 1
         if self.is_mounted:
@@ -673,11 +689,15 @@ class ConsoleTranscript(VerticalScroll):
         self.select_message(self._messages[index].id)
 
     def _message_by_id(self, message_id: str) -> ConsoleChatMessage | None:
-        return next((message for message in self._messages if message.id == message_id), None)
+        return next(
+            (message for message in self._messages if message.id == message_id), None
+        )
 
     def _notify_selection_changed(self) -> None:
         """Let the owning screen refresh inspector/control surfaces after selection changes."""
-        sync_console_control_bar = getattr(self.screen, "_sync_console_control_bar", None)
+        sync_console_control_bar = getattr(
+            self.screen, "_sync_console_control_bar", None
+        )
         if callable(sync_console_control_bar):
             sync_console_control_bar()
 
@@ -760,13 +780,17 @@ class ConsoleTranscript(VerticalScroll):
         return rows
 
     def _message_widgets(self) -> list[Widget]:
-        return [self._build_row_widget(row, track=False) for row in self._transcript_rows()]
+        return [
+            self._build_row_widget(row, track=False) for row in self._transcript_rows()
+        ]
 
     async def _reconcile_rows(self, rows: list[_TranscriptRow]) -> None:
         desired_keys = [row.key for row in rows]
         desired_key_set = set(desired_keys)
 
-        for stale_key in [key for key in self._row_widgets if key not in desired_key_set]:
+        for stale_key in [
+            key for key in self._row_widgets if key not in desired_key_set
+        ]:
             stale_widget = self._row_widgets.pop(stale_key)
             self._row_signatures.pop(stale_key, None)
             self._row_build_counts.pop(stale_key, None)
@@ -874,7 +898,11 @@ class ConsoleTranscript(VerticalScroll):
         return widget
 
     def _update_row_widget(self, widget: Widget, row: _TranscriptRow) -> Widget:
-        if row.kind == "message" and row.message is not None and isinstance(widget, ConsoleTranscriptMessage):
+        if (
+            row.kind == "message"
+            and row.message is not None
+            and isinstance(widget, ConsoleTranscriptMessage)
+        ):
             widget.sync_message(row.message, selected=row.selected)
             return widget
         if row.kind == "empty" and isinstance(widget, ConsoleTranscriptEmptyPanel):
@@ -892,7 +920,9 @@ class ConsoleTranscript(VerticalScroll):
         return "console-transcript-row-" + row.key.replace(":", "-")
 
     @staticmethod
-    def _message_signature_token(message: ConsoleChatMessage, *, selected: bool) -> tuple:
+    def _message_signature_token(
+        message: ConsoleChatMessage, *, selected: bool
+    ) -> tuple:
         """Return a cheap change-token covering every render-signature input.
 
         Captures the exact inputs of ``_message_render_text`` plus the
@@ -1003,18 +1033,32 @@ class ConsoleTranscript(VerticalScroll):
         buttons: list[Button] = []
         for action in ConsoleMessageActionService().available_actions(message):
             if action.action_id == "feedback":
-                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-up", "👍")))
-                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-down", "👎")))
+                buttons.append(
+                    self._action_button(
+                        message, ConsoleMessageAction("feedback-up", "👍")
+                    )
+                )
+                buttons.append(
+                    self._action_button(
+                        message, ConsoleMessageAction("feedback-down", "👎")
+                    )
+                )
                 continue
             buttons.append(self._action_button(message, action))
-        return Horizontal(*buttons, id=f"console-message-actions-{message.id}", classes="console-transcript-action-row")
+        return Horizontal(
+            *buttons,
+            id=f"console-message-actions-{message.id}",
+            classes="console-transcript-action-row",
+        )
 
     @staticmethod
     def _plain_action_row(message: ConsoleChatMessage) -> str:
         return ConsoleMessageActionService().plain_action_row(message)
 
     @staticmethod
-    def _action_button(message: ConsoleChatMessage, action: ConsoleMessageAction) -> Button:
+    def _action_button(
+        message: ConsoleChatMessage, action: ConsoleMessageAction
+    ) -> Button:
         button = ConsoleTranscriptActionButton(
             action.label,
             id=f"console-message-action-{action.action_id}-{message.id}",
@@ -1029,6 +1073,8 @@ class ConsoleTranscript(VerticalScroll):
 
     def _focus_action_button(self, message_id: str, action_id: str) -> None:
         try:
-            self.query_one(f"#console-message-action-{action_id}-{message_id}", Button).focus()
+            self.query_one(
+                f"#console-message-action-{action_id}-{message_id}", Button
+            ).focus()
         except Exception:
             return

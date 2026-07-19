@@ -210,10 +210,7 @@ class CommandStrip(Horizontal):
         actions = tuple(actions)
         self.actions = actions
         actions_by_id = {action.id: action for action in actions}
-        desired_button_ids = {
-            action.id: self._button_id(action)
-            for action in actions
-        }
+        desired_button_ids = {action.id: self._button_id(action) for action in actions}
         mounted = 0
         removed = 0
 
@@ -227,8 +224,7 @@ class CommandStrip(Horizontal):
                 self._sync_button(child, actions_by_id[action_id])
 
         existing_action_ids = {
-            getattr(child, "_workbench_action_id", "")
-            for child in self.children
+            getattr(child, "_workbench_action_id", "") for child in self.children
         }
         new_buttons = tuple(
             self._build_button(action)
@@ -238,10 +234,7 @@ class CommandStrip(Horizontal):
         if new_buttons:
             self.mount(*new_buttons)
             mounted += len(new_buttons)
-        desired_order = {
-            action.id: index
-            for index, action in enumerate(actions)
-        }
+        desired_order = {action.id: index for index, action in enumerate(actions)}
         _schedule_sort_state_children(
             self,
             desired_order,
@@ -249,8 +242,7 @@ class CommandStrip(Horizontal):
         )
 
         self._button_ids_by_action_id = {
-            action_id: button_id
-            for action_id, button_id in desired_button_ids.items()
+            action_id: button_id for action_id, button_id in desired_button_ids.items()
         }
         if mounted or removed:
             _record_mount_churn(
@@ -327,13 +319,10 @@ class ModeStrip(Horizontal):
                 self._sync_mode_label(child, modes_by_id[mode_id])
 
         existing_mode_ids = {
-            getattr(child, "_workbench_mode_id", "")
-            for child in self.children
+            getattr(child, "_workbench_mode_id", "") for child in self.children
         }
         new_modes = tuple(
-            self._build_mode(mode)
-            for mode in modes
-            if mode.id not in existing_mode_ids
+            self._build_mode(mode) for mode in modes if mode.id not in existing_mode_ids
         )
         if new_modes:
             self.mount(*new_modes)
@@ -378,8 +367,12 @@ class RecoveryCallout(Vertical):
         return Text(self._plain_text)
 
     def compose(self) -> ComposeResult:
-        yield Static("", id="workbench-recovery-title", classes="workbench-recovery-title")
-        yield Static("", id="workbench-recovery-body", classes="workbench-recovery-body")
+        yield Static(
+            "", id="workbench-recovery-title", classes="workbench-recovery-title"
+        )
+        yield Static(
+            "", id="workbench-recovery-body", classes="workbench-recovery-body"
+        )
         yield Button(
             "",
             id="workbench-recovery-action",
@@ -442,8 +435,16 @@ class WorkbenchPane(Vertical):
         setattr(self, "_workbench_pane_id", state.id)
 
     def compose(self) -> ComposeResult:
-        yield Static("", id=f"{self.id}-title" if self.id else None, classes="workbench-pane-title")
-        yield Static("", id=f"{self.id}-status" if self.id else None, classes="workbench-pane-status ds-status-badge")
+        yield Static(
+            "",
+            id=f"{self.id}-title" if self.id else None,
+            classes="workbench-pane-title",
+        )
+        yield Static(
+            "",
+            id=f"{self.id}-status" if self.id else None,
+            classes="workbench-pane-status ds-status-badge",
+        )
         content = self.content
         if isinstance(content, Widget):
             yield content
@@ -482,7 +483,9 @@ class StateBlock(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static("", id="workbench-state-route", classes="workbench-state-route")
-        yield Static("", id="workbench-state-density", classes="workbench-state-density")
+        yield Static(
+            "", id="workbench-state-density", classes="workbench-state-density"
+        )
 
     def on_mount(self) -> None:
         self.sync_state(self.state)
@@ -538,8 +541,7 @@ class WorkbenchFrame(Vertical):
                 child.sync_state(panes_by_id[pane_id])
 
         existing_pane_ids = {
-            getattr(child, "_workbench_pane_id", "")
-            for child in region.children
+            getattr(child, "_workbench_pane_id", "") for child in region.children
         }
         new_panes = tuple(
             WorkbenchPane(
@@ -580,7 +582,9 @@ class WorkbenchFrame(Vertical):
         self._sync_panes(state.panes)
         self.query_one("#workbench-state-block", StateBlock).sync_state(state)
         _sync_density_classes(self, state.density)
-        next_route_class = f"route-{_safe_id(state.route_id)}" if state.route_id else None
+        next_route_class = (
+            f"route-{_safe_id(state.route_id)}" if state.route_id else None
+        )
         if self._route_class and self._route_class != next_route_class:
             self.remove_class(self._route_class)
         if next_route_class:

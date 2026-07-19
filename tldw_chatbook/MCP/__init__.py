@@ -14,10 +14,12 @@ if TYPE_CHECKING:
 
 __all__ = ["TldwMCPServer", "MCPClient", "is_mcp_available"]
 
+
 def is_mcp_available() -> bool:
     """Check if MCP dependencies are available."""
     try:
         import mcp
+
         return True
     except ImportError:
         return False

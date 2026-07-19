@@ -17,7 +17,9 @@ def test_compact_navigation_labels_preserve_full_meaning():
     assert wc.label == "Watchlists"
     assert wc.full_label == "Watchlists"
     assert "Collections" not in wc.tooltip
-    assert wc.navigation_priority < get_shell_destination("settings").navigation_priority
+    assert (
+        wc.navigation_priority < get_shell_destination("settings").navigation_priority
+    )
 
 
 def test_master_shell_navigation_uses_compact_spacing_for_full_destination_rail():
@@ -39,7 +41,10 @@ async def test_master_shell_navigation_order_and_labels():
     async with app.run_test(size=(180, 20)) as pilot:
         await pilot.pause(0.1)
 
-        actual = [(button.id, str(button.label).strip()) for button in app.query(".nav-button")]
+        actual = [
+            (button.id, str(button.label).strip())
+            for button in app.query(".nav-button")
+        ]
 
     assert actual == [
         ("nav-home", "1 Home"),
@@ -255,7 +260,9 @@ async def test_every_visible_master_shell_nav_destination_resolves():
     app = _build_test_app()
 
     for destination in SHELL_DESTINATION_ORDER:
-        _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(destination.primary_route)
+        _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(
+            destination.primary_route
+        )
         assert screen_class is not None, destination.primary_route
 
 
@@ -321,8 +328,16 @@ def test_shell_destination_hotkeys_follow_destination_order():
 
     expected_keys = list(TldwCli.SHELL_DESTINATION_HOTKEYS)
     assert expected_keys == [
-        "ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5",
-        "ctrl+6", "ctrl+7", "ctrl+8", "ctrl+9", "ctrl+0",
+        "ctrl+1",
+        "ctrl+2",
+        "ctrl+3",
+        "ctrl+4",
+        "ctrl+5",
+        "ctrl+6",
+        "ctrl+7",
+        "ctrl+8",
+        "ctrl+9",
+        "ctrl+0",
     ]
     # One binding per hotkey, zipped against the destination order; the layer
     # never invents keys beyond ctrl+0 and never skips a destination.
@@ -349,7 +364,9 @@ def test_action_shell_destination_posts_primary_route():
         TldwCli.action_shell_destination(fake_app, index)
         message = posted[-1]
         assert isinstance(message, NavigateToScreen)
-        assert message.screen_name == destination.primary_route, destination.destination_id
+        assert message.screen_name == destination.primary_route, (
+            destination.destination_id
+        )
 
     # Textual binding actions pass the argument as a string.
     posted.clear()

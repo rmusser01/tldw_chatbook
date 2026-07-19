@@ -75,7 +75,9 @@ async def test_digit_shortcut_warns_for_unimplemented_workflow() -> None:
         await pilot.pause()
 
         screen = app.screen
-        screen.action_evals_open("comparison")  # card exists, screen not yet implemented
+        screen.action_evals_open(
+            "comparison"
+        )  # card exists, screen not yet implemented
         await pilot.pause()
 
         window = screen.query_one(EvalsWindowV3)

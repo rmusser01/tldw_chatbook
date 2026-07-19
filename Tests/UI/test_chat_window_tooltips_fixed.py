@@ -1,4 +1,5 @@
 """Tests for Chat Window button tooltips using proper Textual testing approach."""
+
 import pytest
 from unittest.mock import MagicMock, patch
 from textual.widgets import Button
@@ -38,7 +39,7 @@ class TestChatWindowTooltips:
                     "toggle-chat-left-sidebar": "Toggle left sidebar (Ctrl+[)",
                     "send-stop-chat": "Send message",  # This button ID is used for both send and stop
                     "respond-for-me-button": "Suggest a response",
-                    "toggle-chat-right-sidebar": "Toggle right sidebar (Ctrl+])"
+                    "toggle-chat-right-sidebar": "Toggle right sidebar (Ctrl+])",
                 }
 
                 # Wait a moment for the UI to fully compose
@@ -56,8 +57,9 @@ class TestChatWindowTooltips:
                 # Check all expected buttons were found
                 for button_id, expected_tooltip in expected_tooltips.items():
                     assert button_id in found_buttons, f"Button '{button_id}' not found"
-                    assert found_buttons[button_id] == expected_tooltip, \
+                    assert found_buttons[button_id] == expected_tooltip, (
                         f"Button '{button_id}' has incorrect tooltip: {found_buttons[button_id]}"
+                    )
 
     @pytest.mark.asyncio
     async def test_suggest_button_has_descriptive_tooltip(self, widget_pilot):
@@ -85,9 +87,12 @@ class TestChatWindowTooltips:
                 except Exception:
                     assert False, "Suggest button not found"
 
-                assert suggest_button.tooltip == "Suggest a response", \
+                assert suggest_button.tooltip == "Suggest a response", (
                     f"Suggest button has incorrect tooltip: {suggest_button.tooltip}"
-                assert "💡" in str(suggest_button.label), "Suggest button should have lightbulb emoji"
+                )
+                assert "💡" in str(suggest_button.label), (
+                    "Suggest button should have lightbulb emoji"
+                )
 
 
 @pytest.mark.asyncio
@@ -119,7 +124,9 @@ async def test_chat_window_tooltip_interactions(widget_pilot):
 
             # In a real scenario, we would check if tooltip is visible
             # For now, we just verify the tooltip text is set
-            assert send_button.tooltip == "Send message"  # Tooltip doesn't include "(Enter)"
+            assert (
+                send_button.tooltip == "Send message"
+            )  # Tooltip doesn't include "(Enter)"
 
 
 @pytest.mark.asyncio
@@ -147,7 +154,7 @@ async def test_all_interactive_elements_have_tooltips(widget_pilot):
                 "toggle-chat-left-sidebar",
                 "send-stop-chat",  # This is the unified send/stop button
                 "respond-for-me-button",
-                "toggle-chat-right-sidebar"
+                "toggle-chat-right-sidebar",
             ]
 
             for button_id in interactive_button_ids:
@@ -156,5 +163,6 @@ async def test_all_interactive_elements_have_tooltips(widget_pilot):
                 assert len(matching_buttons) > 0, f"Button '{button_id}' not found"
 
                 button = matching_buttons[0]
-                assert button.tooltip is not None and button.tooltip != "", \
+                assert button.tooltip is not None and button.tooltip != "", (
                     f"Button '{button_id}' has no tooltip"
+                )

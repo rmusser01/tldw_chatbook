@@ -25,7 +25,9 @@ class WorkbenchHelpState:
     def render_text(self) -> str:
         """Render visible actions and explicit shortcuts as plain text."""
         lines = [self.title]
-        visible_actions = tuple(action for action in self.actions if not action.disabled)
+        visible_actions = tuple(
+            action for action in self.actions if not action.disabled
+        )
         if visible_actions:
             lines.append("Actions:")
             lines.extend(f"- {action.label}" for action in visible_actions)

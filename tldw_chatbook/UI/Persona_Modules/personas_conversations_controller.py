@@ -84,9 +84,12 @@ class PersonasConversationsController:
     def _load_conversations_sync(self, character_id: str) -> None:
         """List the character's saved conversations off the UI thread."""
         try:
-            records = list_character_conversations(
-                self.screen._character_db(), int(character_id), limit=20
-            ) or []
+            records = (
+                list_character_conversations(
+                    self.screen._character_db(), int(character_id), limit=20
+                )
+                or []
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 f"Could not list conversations for character {character_id}.",
@@ -97,7 +100,9 @@ class PersonasConversationsController:
             for record in records
             if record.get("id") is not None
         )
-        self.screen.app.call_from_thread(self.apply_conversation_rows, character_id, rows)
+        self.screen.app.call_from_thread(
+            self.apply_conversation_rows, character_id, rows
+        )
 
     async def apply_conversation_rows(
         self, character_id: str, rows: tuple[tuple[str, str], ...]
@@ -106,10 +111,9 @@ class PersonasConversationsController:
         screen = self.screen
         if not screen.is_mounted or screen.state.active_mode != "characters":
             return
-        if (
-            screen.state.selected_entity_kind != "character"
-            or str(screen.state.selected_entity_id) != str(character_id)
-        ):
+        if screen.state.selected_entity_kind != "character" or str(
+            screen.state.selected_entity_id
+        ) != str(character_id):
             return
         self._conversation_rows = dict(rows)
         try:
@@ -119,7 +123,9 @@ class PersonasConversationsController:
                 rows, empty_copy="No saved conversations."
             )
         except Exception:
-            logger.opt(exception=True).warning("Could not render the conversations panel.")
+            logger.opt(exception=True).warning(
+                "Could not render the conversations panel."
+            )
 
     # ===== Read-only view =====
 
@@ -152,10 +158,14 @@ class PersonasConversationsController:
             conversation_id, screen.state.selected_entity_name or "Character"
         )
 
-    def load_conversation_messages(self, conversation_id: str, character_name: str) -> None:
+    def load_conversation_messages(
+        self, conversation_id: str, character_name: str
+    ) -> None:
         """Schedule the transcript fetch on the screen's worker pool."""
         self.screen.run_worker(
-            partial(self._load_conversation_messages_sync, conversation_id, character_name),
+            partial(
+                self._load_conversation_messages_sync, conversation_id, character_name
+            ),
             thread=True,
             exclusive=True,
             group="personas-conversation-view",
@@ -166,9 +176,16 @@ class PersonasConversationsController:
     ) -> None:
         """Fetch and shape the conversation's messages off the UI thread."""
         try:
-            history = retrieve_conversation_messages_for_ui(
-                self.screen._character_db(), conversation_id, character_name, None, limit=200
-            ) or []
+            history = (
+                retrieve_conversation_messages_for_ui(
+                    self.screen._character_db(),
+                    conversation_id,
+                    character_name,
+                    None,
+                    limit=200,
+                )
+                or []
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 f"Could not load messages for conversation {conversation_id}.",
@@ -239,7 +256,9 @@ class PersonasConversationsController:
         screen = self.screen
         conversation_id = self._open_conversation_id
         if not conversation_id:
-            screen._notify("Open a conversation before continuing in Console.", "warning")
+            screen._notify(
+                "Open a conversation before continuing in Console.", "warning"
+            )
             return
         if self._loaded_conversation_id != conversation_id:
             # The transcript worker has not delivered this conversation yet
@@ -268,7 +287,9 @@ class PersonasConversationsController:
         """
         conversation_id = str(self._open_conversation_id or "").strip()
         if not conversation_id:
-            self.screen._notify("Open a conversation before opening it in Library.", "warning")
+            self.screen._notify(
+                "Open a conversation before opening it in Library.", "warning"
+            )
             return
         self.screen.post_message(
             NavigateToScreen(

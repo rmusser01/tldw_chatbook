@@ -15,7 +15,9 @@ class ViewMode(str, Enum):
     thumbnails = "thumbnails"
 
 
-FileType = Literal["ical", "markdown_table", "html_table", "xlsx", "data_table", "image"]
+FileType = Literal[
+    "ical", "markdown_table", "html_table", "xlsx", "data_table", "image"
+]
 ExportFormat = Literal["ics", "md", "html", "xlsx", "csv", "json", "png", "jpg", "webp"]
 ExportMode = Literal["url", "inline"]
 AsyncMode = Literal["auto", "sync", "async"]
@@ -45,7 +47,9 @@ ItemsBulkAction = Literal[
 ]
 MediaNavigationFormat = Literal["auto", "plain", "markdown", "html"]
 MediaNavigationTargetType = Literal["page", "char_range", "time_range", "href"]
-WebContentScrapeMethod = Literal["individual", "sitemap", "url_level", "recursive_scraping"]
+WebContentScrapeMethod = Literal[
+    "individual", "sitemap", "url_level", "recursive_scraping"
+]
 WebScrapeMethod = WebContentScrapeMethod
 MediaKeywordsUpdateMode = Literal["add", "remove", "set"]
 
@@ -238,7 +242,9 @@ class MediaUpdateRequest(BaseModel):
             return value
         if not isinstance(value, list):
             raise ValueError("keywords_must_be_list")
-        return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
+        return [
+            _normalize_nonempty_string(entry, field_name="keyword") for entry in value
+        ]
 
 
 class MediaKeywordsUpdateRequest(BaseModel):
@@ -250,7 +256,9 @@ class MediaKeywordsUpdateRequest(BaseModel):
     def _normalize_keywords(cls, value: Any) -> Any:
         if not isinstance(value, list):
             raise ValueError("keywords_must_be_list")
-        return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
+        return [
+            _normalize_nonempty_string(entry, field_name="keyword") for entry in value
+        ]
 
 
 class MediaKeywordsResponse(BaseModel):
@@ -264,7 +272,9 @@ class MediaKeywordsResponse(BaseModel):
             return []
         if not isinstance(value, list):
             raise ValueError("keywords_must_be_list")
-        return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
+        return [
+            _normalize_nonempty_string(entry, field_name="keyword") for entry in value
+        ]
 
 
 class ServerMediaListItem(BaseModel):
@@ -283,7 +293,9 @@ class ServerMediaListItem(BaseModel):
             return []
         if not isinstance(value, list):
             raise ValueError("keywords_must_be_list")
-        return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
+        return [
+            _normalize_nonempty_string(entry, field_name="keyword") for entry in value
+        ]
 
 
 class ServerMediaListPagination(BaseModel):
@@ -312,7 +324,9 @@ class MediaKeywordListResponse(BaseModel):
             return []
         if not isinstance(value, list):
             raise ValueError("keywords_must_be_list")
-        return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
+        return [
+            _normalize_nonempty_string(entry, field_name="keyword") for entry in value
+        ]
 
 
 class MediaMetadataSearchPagination(BaseModel):
@@ -540,7 +554,9 @@ class MediaKeywordsUpdateRequest(BaseModel):
     def _normalize_keywords(cls, value: Any) -> Any:
         if not isinstance(value, list):
             raise ValueError("keywords_must_be_list")
-        return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
+        return [
+            _normalize_nonempty_string(entry, field_name="keyword") for entry in value
+        ]
 
 
 class MediaIngestJobStatus(BaseModel):
@@ -599,7 +615,9 @@ class IngestionSourceCreateRequest(BaseModel):
 class IngestionSourcePatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source_type: Literal["local_directory", "archive_snapshot", "git_repository"] | None = None
+    source_type: (
+        Literal["local_directory", "archive_snapshot", "git_repository"] | None
+    ) = None
     sink_type: Literal["media", "notes"] | None = None
     policy: Literal["canonical", "import_only"] | None = None
     enabled: bool | None = None
@@ -1029,7 +1047,9 @@ class MediaDetailResponse(BaseModel):
             return []
         if not isinstance(value, list):
             raise ValueError("keywords_must_be_list")
-        return [_normalize_nonempty_string(entry, field_name="keyword") for entry in value]
+        return [
+            _normalize_nonempty_string(entry, field_name="keyword") for entry in value
+        ]
 
 
 class MediaNavigationNode(BaseModel):

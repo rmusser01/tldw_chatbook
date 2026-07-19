@@ -26,8 +26,12 @@ class MediaRuntimeState:
     selected_record_id: Optional[str] = None
     browse_items: list[dict[str, Any]] = field(default_factory=list)
     detail_by_record_id: dict[str, dict[str, Any]] = field(default_factory=dict)
-    reading_progress_by_record_id: dict[str, dict[str, Any]] = field(default_factory=dict)
-    ingestion_source_items_by_id: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    reading_progress_by_record_id: dict[str, dict[str, Any]] = field(
+        default_factory=dict
+    )
+    ingestion_source_items_by_id: dict[str, list[dict[str, Any]]] = field(
+        default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         self.runtime_backend = _normalize_runtime_backend(self.runtime_backend)

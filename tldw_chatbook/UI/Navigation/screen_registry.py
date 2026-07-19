@@ -40,7 +40,9 @@ class ScreenRoute:
         """Load the screen class, returning None when an optional screen is unavailable."""
 
         if not self.dependencies_available():
-            logger.warning(f"Screen route unavailable due to missing dependencies: {self.screen_name}")
+            logger.warning(
+                f"Screen route unavailable due to missing dependencies: {self.screen_name}"
+            )
             return None
         try:
             module = import_module(self.module_path)
@@ -51,11 +53,27 @@ class ScreenRoute:
 
 
 _SCREEN_ROUTES: dict[str, ScreenRoute] = {
-    "home": ScreenRoute("home", "home", "tldw_chatbook.UI.Screens.home_screen", "HomeScreen"),
-    "chat": ScreenRoute("chat", "chat", "tldw_chatbook.UI.Screens.chat_screen", "ChatScreen"),
-    "library": ScreenRoute("library", "library", "tldw_chatbook.UI.Screens.library_screen", "LibraryScreen"),
-    "artifacts": ScreenRoute("artifacts", "artifacts", "tldw_chatbook.UI.Screens.artifacts_screen", "ArtifactsScreen"),
-    "personas": ScreenRoute("personas", "personas", "tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"),
+    "home": ScreenRoute(
+        "home", "home", "tldw_chatbook.UI.Screens.home_screen", "HomeScreen"
+    ),
+    "chat": ScreenRoute(
+        "chat", "chat", "tldw_chatbook.UI.Screens.chat_screen", "ChatScreen"
+    ),
+    "library": ScreenRoute(
+        "library", "library", "tldw_chatbook.UI.Screens.library_screen", "LibraryScreen"
+    ),
+    "artifacts": ScreenRoute(
+        "artifacts",
+        "artifacts",
+        "tldw_chatbook.UI.Screens.artifacts_screen",
+        "ArtifactsScreen",
+    ),
+    "personas": ScreenRoute(
+        "personas",
+        "personas",
+        "tldw_chatbook.UI.Screens.personas_screen",
+        "PersonasScreen",
+    ),
     "watchlists_collections": ScreenRoute(
         "watchlists_collections",
         "watchlists_collections",
@@ -68,30 +86,81 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         "tldw_chatbook.UI.Screens.scheduling.schedules_workbench",
         "SchedulesWorkbench",
     ),
-    "workflows": ScreenRoute("workflows", "workflows", "tldw_chatbook.UI.Screens.workflows_screen", "WorkflowsScreen"),
-    "mcp": ScreenRoute("mcp", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"),
-    "acp": ScreenRoute("acp", "acp", "tldw_chatbook.UI.Screens.acp_screen", "ACPScreen"),
-    "settings": ScreenRoute("settings", "settings", "tldw_chatbook.UI.Screens.settings_screen", "SettingsScreen"),
-    "ingest": ScreenRoute("ingest", "ingest", "tldw_chatbook.UI.Screens.media_ingest_screen", "MediaIngestScreen"),
+    "workflows": ScreenRoute(
+        "workflows",
+        "workflows",
+        "tldw_chatbook.UI.Screens.workflows_screen",
+        "WorkflowsScreen",
+    ),
+    "mcp": ScreenRoute(
+        "mcp", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"
+    ),
+    "acp": ScreenRoute(
+        "acp", "acp", "tldw_chatbook.UI.Screens.acp_screen", "ACPScreen"
+    ),
+    "settings": ScreenRoute(
+        "settings",
+        "settings",
+        "tldw_chatbook.UI.Screens.settings_screen",
+        "SettingsScreen",
+    ),
+    "ingest": ScreenRoute(
+        "ingest",
+        "ingest",
+        "tldw_chatbook.UI.Screens.media_ingest_screen",
+        "MediaIngestScreen",
+    ),
     "conversation": ScreenRoute(
         "conversation",
         "conversation",
         "tldw_chatbook.UI.Screens.library_conversations_screen",
         "LibraryConversationsScreen",
     ),
-    "ccp": ScreenRoute("ccp", "personas", "tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"),
-    "media": ScreenRoute("media", "media", "tldw_chatbook.UI.Screens.media_screen", "MediaScreen"),
-    "search": ScreenRoute("search", "search", "tldw_chatbook.UI.Screens.search_screen", "SearchScreen"),
-    "evals": ScreenRoute("evals", "evals", "tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"),
-    "tools_settings": ScreenRoute("tools_settings", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"),
-    "llm": ScreenRoute("llm", TAB_LLM, "tldw_chatbook.UI.Screens.llm_screen", "LLMScreen"),
-    "customize": ScreenRoute("customize", "customize", "tldw_chatbook.UI.Screens.customize_screen", "CustomizeScreen"),
-    "logs": ScreenRoute("logs", "logs", "tldw_chatbook.UI.Screens.logs_screen", "LogsScreen"),
-    "stats": ScreenRoute("stats", "stats", "tldw_chatbook.UI.Screens.stats_screen", "StatsScreen"),
-    "stts": ScreenRoute("stts", "stts", "tldw_chatbook.UI.Screens.stts_screen", "STTSScreen"),
-    "study": ScreenRoute("study", "study", "tldw_chatbook.UI.Screens.study_screen", "StudyScreen"),
-    "writing": ScreenRoute("writing", "writing", "tldw_chatbook.UI.Screens.writing_screen", "WritingScreen"),
-    "chatbooks": ScreenRoute("chatbooks", "chatbooks", "tldw_chatbook.UI.Screens.chatbooks_screen", "ChatbooksScreen"),
+    "ccp": ScreenRoute(
+        "ccp", "personas", "tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"
+    ),
+    "media": ScreenRoute(
+        "media", "media", "tldw_chatbook.UI.Screens.media_screen", "MediaScreen"
+    ),
+    "search": ScreenRoute(
+        "search", "search", "tldw_chatbook.UI.Screens.search_screen", "SearchScreen"
+    ),
+    "evals": ScreenRoute(
+        "evals", "evals", "tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"
+    ),
+    "tools_settings": ScreenRoute(
+        "tools_settings", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"
+    ),
+    "llm": ScreenRoute(
+        "llm", TAB_LLM, "tldw_chatbook.UI.Screens.llm_screen", "LLMScreen"
+    ),
+    "customize": ScreenRoute(
+        "customize",
+        "customize",
+        "tldw_chatbook.UI.Screens.customize_screen",
+        "CustomizeScreen",
+    ),
+    "logs": ScreenRoute(
+        "logs", "logs", "tldw_chatbook.UI.Screens.logs_screen", "LogsScreen"
+    ),
+    "stats": ScreenRoute(
+        "stats", "stats", "tldw_chatbook.UI.Screens.stats_screen", "StatsScreen"
+    ),
+    "stts": ScreenRoute(
+        "stts", "stts", "tldw_chatbook.UI.Screens.stts_screen", "STTSScreen"
+    ),
+    "study": ScreenRoute(
+        "study", "study", "tldw_chatbook.UI.Screens.study_screen", "StudyScreen"
+    ),
+    "writing": ScreenRoute(
+        "writing", "writing", "tldw_chatbook.UI.Screens.writing_screen", "WritingScreen"
+    ),
+    "chatbooks": ScreenRoute(
+        "chatbooks",
+        "chatbooks",
+        "tldw_chatbook.UI.Screens.chatbooks_screen",
+        "ChatbooksScreen",
+    ),
     "subscriptions": ScreenRoute(
         "subscriptions",
         TAB_SUBSCRIPTIONS,

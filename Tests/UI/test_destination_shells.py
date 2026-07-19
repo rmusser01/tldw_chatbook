@@ -36,7 +36,9 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWor
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.skills_screen import SkillsScreen
-from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
+from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+    WatchlistsCollectionsScreen,
+)
 from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens import skills_screen as skills_screen_module
@@ -146,14 +148,23 @@ class StaticLibraryNotesScopeService:
         self.count_calls.append({"scope": scope, "user_id": user_id, **kwargs})
         return len(self.notes)
 
-    async def search_notes(self, *, scope, query, limit=None, user_id=None, offset=0, **kwargs):
+    async def search_notes(
+        self, *, scope, query, limit=None, user_id=None, offset=0, **kwargs
+    ):
         """Case-insensitive title/content substring search, matching the
         real ``NotesScopeService.search_notes`` -> local backend's
         ``search_notes`` shape: a plain list of matching note records
         (no ``items``/``pagination`` envelope, unlike ``list_notes``).
         """
         self.search_calls.append(
-            {"scope": scope, "query": query, "limit": limit, "user_id": user_id, "offset": offset, **kwargs}
+            {
+                "scope": scope,
+                "query": query,
+                "limit": limit,
+                "user_id": user_id,
+                "offset": offset,
+                **kwargs,
+            }
         )
         needle = str(query or "").strip().lower()
         matches = [
@@ -170,7 +181,9 @@ class StaticLibraryNotesScopeService:
         return matches
 
     async def get_note_detail(self, *, scope, note_id, user_id=None, **kwargs):
-        self.detail_calls.append({"scope": scope, "note_id": note_id, "user_id": user_id, **kwargs})
+        self.detail_calls.append(
+            {"scope": scope, "note_id": note_id, "user_id": user_id, **kwargs}
+        )
         target_id = str(note_id)
         for note in self.notes:
             if str(note.get("id")) == target_id:
@@ -178,7 +191,16 @@ class StaticLibraryNotesScopeService:
         return None
 
     async def save_note(
-        self, *, scope, title, content, note_id=None, version=None, user_id=None, keywords=None, **kwargs
+        self,
+        *,
+        scope,
+        title,
+        content,
+        note_id=None,
+        version=None,
+        user_id=None,
+        keywords=None,
+        **kwargs,
     ):
         """Create (append, version=1) or update (version-checked) a note.
 
@@ -241,7 +263,13 @@ class StaticLibraryNotesScopeService:
 
     async def delete_note(self, *, scope, note_id, version, user_id=None, **kwargs):
         self.delete_calls.append(
-            {"scope": scope, "note_id": note_id, "version": version, "user_id": user_id, **kwargs}
+            {
+                "scope": scope,
+                "note_id": note_id,
+                "version": version,
+                "user_id": user_id,
+                **kwargs,
+            }
         )
         notes = list(self.notes)
         target_id = str(note_id)
@@ -314,9 +342,14 @@ class StaticLibraryMediaScopeService:
         chain (``mode`` accepted and discarded).
         """
         self.list_highlights_calls.append({"item_id": item_id})
-        return [dict(highlight) for highlight in self.highlights_by_item_id.get(str(item_id), [])]
+        return [
+            dict(highlight)
+            for highlight in self.highlights_by_item_id.get(str(item_id), [])
+        ]
 
-    async def create_highlight(self, *, item_id, quote, mode=None, note=None, color=None, **kwargs):
+    async def create_highlight(
+        self, *, item_id, quote, mode=None, note=None, color=None, **kwargs
+    ):
         """Record and store a new highlight, matching the real
         ``media_reading_scope_service.create_highlight`` -> ``LocalMediaReadingService.create_highlight``
         chain (``mode`` accepted and discarded).
@@ -342,7 +375,10 @@ class StaticLibraryMediaScopeService:
 
     async def list_media_items(self, **kwargs):
         self.calls.append(kwargs)
-        return {"items": list(self.media_items), "pagination": {"total_items": len(self.media_items)}}
+        return {
+            "items": list(self.media_items),
+            "pagination": {"total_items": len(self.media_items)},
+        }
 
     async def get_media_item(self, *, media_id, **kwargs):
         self.detail_calls.append({"media_id": media_id, **kwargs})
@@ -380,12 +416,15 @@ class StaticLibraryMediaScopeService:
                 allowlist.
         """
         unsupported = sorted(
-            key for key, value in fields.items()
+            key
+            for key, value in fields.items()
             if value is not None and key not in self._SUPPORTED_METADATA_FIELDS
         )
         if unsupported:
             unsupported_text = ", ".join(unsupported)
-            raise ValueError(f"Unsupported local media metadata fields: {unsupported_text}")
+            raise ValueError(
+                f"Unsupported local media metadata fields: {unsupported_text}"
+            )
 
         self.update_calls.append({"media_id": media_id, **fields})
         target_id = str(media_id)
@@ -478,7 +517,9 @@ class StaticLibraryMediaScopeService:
         self.media_items = tuple(updated_items)
         return {"media_id": media_id, "is_read_it_later": saved, "saved_at": saved_at}
 
-    async def save_analysis_version(self, *, media_id, content, analysis_content, mode=None, prompt=None):
+    async def save_analysis_version(
+        self, *, media_id, content, analysis_content, mode=None, prompt=None
+    ):
         """Create a new document version carrying ``analysis_content``, matching
         the real ``media_reading_scope_service.save_analysis_version`` ->
         ``LocalMediaReadingService.save_analysis_version`` ->
@@ -499,13 +540,19 @@ class StaticLibraryMediaScopeService:
             media_id, content=content, analysis_content=analysis_content, prompt=prompt
         )
 
-    async def overwrite_analysis_version(self, *, media_id, content, analysis_content, mode=None, prompt=None):
+    async def overwrite_analysis_version(
+        self, *, media_id, content, analysis_content, mode=None, prompt=None
+    ):
         """Alias for ``save_analysis_version``, matching the real backend
         (``LocalMediaReadingService.overwrite_analysis_version`` simply
         delegates to ``save_analysis_version``).
         """
         return await self.save_analysis_version(
-            media_id=media_id, content=content, analysis_content=analysis_content, mode=mode, prompt=prompt
+            media_id=media_id,
+            content=content,
+            analysis_content=analysis_content,
+            mode=mode,
+            prompt=prompt,
         )
 
     def _append_document_version(self, media_id, *, content, analysis_content, prompt):
@@ -518,7 +565,11 @@ class StaticLibraryMediaScopeService:
                 merged = dict(item)
                 existing_versions = list(merged.get("versions") or [])
                 next_version_number = (
-                    max((v.get("version_number", 0) for v in existing_versions), default=0) + 1
+                    max(
+                        (v.get("version_number", 0) for v in existing_versions),
+                        default=0,
+                    )
+                    + 1
                 )
                 new_version = {
                     "id": next_version_number,
@@ -545,7 +596,10 @@ class StaticLibraryConversationScopeService:
 
     async def list_conversations(self, **kwargs):
         self.calls.append(kwargs)
-        return {"items": list(self.conversations), "pagination": {"total": len(self.conversations)}}
+        return {
+            "items": list(self.conversations),
+            "pagination": {"total": len(self.conversations)},
+        }
 
 
 def _link_library_items_to_active_workspace(app, items) -> None:
@@ -818,7 +872,9 @@ async def _wait_for_personas_snapshot(screen, pilot, *, timeout: float = 2.0) ->
         "#personas-readiness-console",
     )
     while time.monotonic() < deadline:
-        terminal_state_visible = any(screen.query(selector) for selector in terminal_selectors)
+        terminal_state_visible = any(
+            screen.query(selector) for selector in terminal_selectors
+        )
         buttons = list(screen.query("#personas-attach-to-console"))
         if buttons:
             button = buttons[0]
@@ -829,7 +885,9 @@ async def _wait_for_personas_snapshot(screen, pilot, *, timeout: float = 2.0) ->
                 await pilot.pause()
                 return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for Personas snapshot. Visible text: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Timed out waiting for Personas snapshot. Visible text: {_visible_text(screen)}"
+    )
 
 
 async def _wait_for_wc_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
@@ -844,7 +902,9 @@ async def _wait_for_wc_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
             await pilot.pause()
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for Watchlists snapshot. Visible text: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Timed out waiting for Watchlists snapshot. Visible text: {_visible_text(screen)}"
+    )
 
 
 async def _wait_for_library_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
@@ -865,7 +925,9 @@ async def _wait_for_library_snapshot(screen, pilot, *, timeout: float = 2.0) -> 
             await pilot.pause()
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Library shell never loaded. Visible text: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Library shell never loaded. Visible text: {_visible_text(screen)}"
+    )
 
 
 async def _wait_for_skills_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
@@ -880,27 +942,37 @@ async def _wait_for_skills_snapshot(screen, pilot, *, timeout: float = 2.0) -> N
             await pilot.pause()
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for Skills snapshot. Visible text: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Timed out waiting for Skills snapshot. Visible text: {_visible_text(screen)}"
+    )
 
 
-async def _wait_for_selector(screen, pilot, selector: str, *, timeout: float = 2.0) -> None:
+async def _wait_for_selector(
+    screen, pilot, selector: str, *, timeout: float = 2.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if screen.query(selector):
             await pilot.pause()
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for {selector}. Visible text: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Timed out waiting for {selector}. Visible text: {_visible_text(screen)}"
+    )
 
 
-async def _wait_for_visible_text(screen, pilot, expected_text: str, *, timeout: float = 4.0) -> None:
+async def _wait_for_visible_text(
+    screen, pilot, expected_text: str, *, timeout: float = 4.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if expected_text in _visible_text(screen):
             await pilot.pause()
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for {expected_text!r}. Visible text: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Timed out waiting for {expected_text!r}. Visible text: {_visible_text(screen)}"
+    )
 
 
 async def _wait_for_mock_call(mock: Mock, pilot, *, timeout: float = 1.0) -> None:
@@ -924,16 +996,22 @@ async def _wait_for_skills_list_calls(
         if len(service.calls) >= count:
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for {count} Skills list calls; saw {len(service.calls)}")
+    raise AssertionError(
+        f"Timed out waiting for {count} Skills list calls; saw {len(service.calls)}"
+    )
 
 
-async def _wait_for_route(seen_routes: list[str], target_route: str, pilot, *, timeout: float = 1.0) -> None:
+async def _wait_for_route(
+    seen_routes: list[str], target_route: str, pilot, *, timeout: float = 1.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if seen_routes and seen_routes[-1] == target_route:
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for route {target_route!r}; seen routes: {seen_routes!r}")
+    raise AssertionError(
+        f"Timed out waiting for route {target_route!r}; seen routes: {seen_routes!r}"
+    )
 
 
 def _assert_policy_recovery_copy(
@@ -958,7 +1036,9 @@ def _assert_policy_recovery_copy(
     assert next_action in str(button.tooltip)
 
 
-def _custom_policy_recovery_state(exc, *, unavailable_what, stable_selector, policy_message=None):
+def _custom_policy_recovery_state(
+    exc, *, unavailable_what, stable_selector, policy_message=None
+):
     return DestinationRecoveryState(
         status_label="Custom policy state",
         unavailable_what=unavailable_what,
@@ -997,7 +1077,10 @@ async def test_primary_destination_wrappers_mount(route, title_id, purpose_text)
         assert title
         if route != "library":
             assert title.has_class("ds-destination-header")
-        assert purpose_text in _static_text(screen.query_one(".destination-purpose", Static)).lower()
+        assert (
+            purpose_text
+            in _static_text(screen.query_one(".destination-purpose", Static)).lower()
+        )
         assert screen.query_one(".ds-panel")
 
 
@@ -1085,7 +1168,10 @@ async def test_watchlists_collections_service_failure_uses_recovery_copy():
         await _wait_for_wc_snapshot(screen, pilot)
         button = screen.query_one("#wc-attach-to-console", Button)
 
-        assert "Watchlists services unavailable; retry Watchlists later." in _visible_text(screen)
+        assert (
+            "Watchlists services unavailable; retry Watchlists later."
+            in _visible_text(screen)
+        )
         assert button.disabled is True
         assert "Watchlists services are unavailable" in str(button.tooltip)
 
@@ -1101,12 +1187,17 @@ async def test_watchlists_collections_loading_times_out_to_recovery_copy():
         await _wait_for_selector(screen, pilot, "#wc-service-error", timeout=3.0)
         button = screen.query_one("#wc-attach-to-console", Button)
 
-        assert "Watchlists services unavailable; retry Watchlists later." in _visible_text(screen)
+        assert (
+            "Watchlists services unavailable; retry Watchlists later."
+            in _visible_text(screen)
+        )
         assert button.disabled is True
 
 
 @pytest.mark.asyncio
-async def test_watchlists_collections_initial_load_uses_distinct_loading_copy(monkeypatch):
+async def test_watchlists_collections_initial_load_uses_distinct_loading_copy(
+    monkeypatch,
+):
     monkeypatch.setattr(wc_screen_module, "WC_SNAPSHOT_TIMEOUT_SECONDS", 30.0)
     app = _build_test_app()
     app.watchlist_scope_service = HangingWatchlistsScopeService()
@@ -1147,7 +1238,9 @@ async def test_watchlists_collections_policy_denial_uses_runtime_recovery_taxono
 
 
 @pytest.mark.asyncio
-async def test_watchlists_collections_policy_denial_uses_recovery_state_selector(monkeypatch):
+async def test_watchlists_collections_policy_denial_uses_recovery_state_selector(
+    monkeypatch,
+):
     monkeypatch.setattr(
         wc_screen_module,
         "policy_denied_recovery_state",
@@ -1363,7 +1456,10 @@ async def test_library_destination_labels_plain_list_notes_as_sample_snapshot():
     # plain-list service (no pagination metadata) genuinely truncates,
     # exercising the "sample capped below actual" labeling.
     app.notes_scope_service = StaticLibraryNotesListScopeService(
-        [{"title": f"Research Note {index}", "id": f"note-{index}"} for index in range(1, 106)]
+        [
+            {"title": f"Research Note {index}", "id": f"note-{index}"}
+            for index in range(1, 106)
+        ]
     )
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
@@ -1426,7 +1522,10 @@ async def test_library_destination_service_failure_uses_recovery_copy():
         screen = _active_destination_screen(host)
         button = screen.query_one("#library-use-in-console", Button)
 
-        assert "Library source services unavailable; retry Library later." in _visible_text(screen)
+        assert (
+            "Library source services unavailable; retry Library later."
+            in _visible_text(screen)
+        )
         assert button.disabled is True
         assert "Library source services are unavailable" in str(button.tooltip)
 
@@ -1565,7 +1664,9 @@ async def test_library_use_in_console_uses_source_snapshot_context():
     ],
 )
 @pytest.mark.asyncio
-async def test_destination_action_buttons_emit_compatibility_routes(route, selector, target_route):
+async def test_destination_action_buttons_emit_compatibility_routes(
+    route, selector, target_route
+):
     app = _build_test_app()
     seen_routes = []
     host = DestinationHarness(app, route, seen_routes)
@@ -1830,7 +1931,10 @@ async def test_acp_configured_runtime_without_session_disables_console_follow():
     assert "ACP version: 0.1" in visible_text
     assert "Session: none" in visible_text
     assert "Console follow disabled: no ACP session payload" in visible_text
-    assert "Start or resume an ACP session in ACP before following it in Console." in visible_text
+    assert (
+        "Start or resume an ACP session in ACP before following it in Console."
+        in visible_text
+    )
     assert "Runtime owner: ACP" in visible_text
     assert follow_button.disabled is True
 
@@ -1928,7 +2032,10 @@ async def test_acp_runtime_and_session_labels_are_markup_escaped():
         assert screen.query_one("#acp-runtime-display", Static).renderable == (
             "  Runtime: \\[bold]Runtime\\[/bold]"
         )
-        assert screen.query_one("#acp-session-status", Static).renderable == "  Session: \\[red]Session\\[/red]"
+        assert (
+            screen.query_one("#acp-session-status", Static).renderable
+            == "  Session: \\[red]Session\\[/red]"
+        )
         assert screen.query_one("#acp-runtime-status", Static).renderable == (
             "  Runtime configured: \\[bold]Runtime\\[/bold]"
         )
@@ -2077,7 +2184,9 @@ async def test_destination_action_buttons_explain_their_outcome(route):
     ],
 )
 @pytest.mark.asyncio
-async def test_automation_destination_wrappers_explain_ownership(route, expected_sections):
+async def test_automation_destination_wrappers_explain_ownership(
+    route, expected_sections
+):
     app = _build_test_app()
     host = DestinationHarness(app, route)
 
@@ -2179,7 +2288,10 @@ async def test_workflows_approval_pending_run_exposes_review_before_console_stat
     assert "Next action: review approval before Console follow" in visible_text
     assert launch_button.disabled is False
     assert approval_button.disabled is True
-    assert str(approval_button.tooltip) == "Review this workflow approval from Workflows when approval services are available."
+    assert (
+        str(approval_button.tooltip)
+        == "Review this workflow approval from Workflows when approval services are available."
+    )
     assert retry_button.disabled is True
 
 
@@ -2234,7 +2346,10 @@ async def test_workflows_empty_state_reads_as_live_queue_with_recovery_path():
     assert "destination-workbench-pane" in list_pane.classes
     assert "destination-workbench-pane" in detail_pane.classes
     assert "destination-workbench-pane" in inspector_pane.classes
-    assert str(control_label.renderable) == "Recovery controls require an active workflow run"
+    assert (
+        str(control_label.renderable)
+        == "Recovery controls require an active workflow run"
+    )
 
 
 @pytest.mark.parametrize(
@@ -2247,7 +2362,9 @@ async def test_workflows_empty_state_reads_as_live_queue_with_recovery_path():
     ],
 )
 @pytest.mark.asyncio
-async def test_protocol_and_settings_wrappers_have_distinct_boundaries(route, expected_text):
+async def test_protocol_and_settings_wrappers_have_distinct_boundaries(
+    route, expected_text
+):
     app = _build_test_app()
     host = DestinationHarness(app, route)
 
@@ -2259,11 +2376,17 @@ async def test_protocol_and_settings_wrappers_have_distinct_boundaries(route, ex
 @pytest.mark.parametrize(
     ("route", "selector", "copy"),
     [
-        ("skills", "#skills-import-skill", "Skill import is not wired in this shell yet."),
+        (
+            "skills",
+            "#skills-import-skill",
+            "Skill import is not wired in this shell yet.",
+        ),
     ],
 )
 @pytest.mark.asyncio
-async def test_unwired_destination_actions_are_disabled_with_honest_copy(route, selector, copy):
+async def test_unwired_destination_actions_are_disabled_with_honest_copy(
+    route, selector, copy
+):
     app = _build_test_app()
     host = DestinationHarness(app, route)
 
@@ -2299,7 +2422,10 @@ async def test_mcp_destination_embeds_mcp_workbench():
         assert screen.query_one("#mcp-hub-inspector", MCPInspector)
         assert not screen.query(UnifiedMCPPanel)
         assert not screen.query("#mcp-open-management")
-        assert "Unified MCP management is not embedded in this shell yet." not in _visible_text(screen)
+        assert (
+            "Unified MCP management is not embedded in this shell yet."
+            not in _visible_text(screen)
+        )
 
 
 @pytest.mark.asyncio
@@ -2317,7 +2443,9 @@ async def test_mcp_destination_labels_server_first_workbench_columns():
     host = DestinationHarness(app, "mcp")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await _wait_for_selector(_active_destination_screen(host), pilot, "#mcp-hub-rail")
+        await _wait_for_selector(
+            _active_destination_screen(host), pilot, "#mcp-hub-rail"
+        )
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -2339,7 +2467,10 @@ async def test_mcp_destination_labels_server_first_workbench_columns():
         assert "Inspector" in text
         assert "Select an item to inspect." in text
 
-        assert "Manage MCP servers, scoped tools, permissions, and audit readiness." in text
+        assert (
+            "Manage MCP servers, scoped tools, permissions, and audit readiness."
+            in text
+        )
 
 
 @pytest.mark.asyncio
@@ -2362,7 +2493,14 @@ async def test_mcp_destination_restores_unified_mcp_view_state_after_mount(tmp_p
     """
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     app = _build_test_app()
     app.unified_mcp_service = FakeUnifiedMCPService(target_store)
@@ -2583,7 +2721,9 @@ def test_mcp_destination_manual_refresh_uses_exclusive_worker(monkeypatch):
     assert scheduled["kwargs"]["exclusive"] is True
 
 
-def test_mcp_destination_add_server_binding_switches_mode_and_schedules_worker(monkeypatch):
+def test_mcp_destination_add_server_binding_switches_mode_and_schedules_worker(
+    monkeypatch,
+):
     """T13: the `a` keybinding switches to Servers mode and dispatches
     `MCPWorkbench.open_add_server_form()` via a named, exclusive worker.
     The form's own T9 gate/notify behavior when server-source mutations are
@@ -2704,9 +2844,15 @@ async def test_mcp_destination_test_tool_binding_opens_panel_for_selected_tool_e
         await pilot.pause()
 
         tool = HubTool(
-            name="search", server_key="local:docs", server_label="docs",
-            source="local", description="Search docs", tags=(),
-            input_schema=None, executable=True, stale=False,
+            name="search",
+            server_key="local:docs",
+            server_label="docs",
+            source="local",
+            description="Search docs",
+            tags=(),
+            input_schema=None,
+            executable=True,
+            stale=False,
         )
         screen.workbench._last_hub_tools = [tool]
         await screen.workbench.on_mcp_tools_mode_tool_selected(
@@ -2763,7 +2909,10 @@ async def test_mcp_destination_registers_footer_workbench_shortcuts():
         # the harness's default-screen stand-in.
         footer = screen.query_one(AppFooterStatus)
 
-        assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
+        assert (
+            footer.shortcut_text
+            == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
+        )
 
 
 @pytest.mark.asyncio
@@ -2783,7 +2932,10 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
         # task-264: the registration lands on the SCREEN's own footer, not
         # the harness's default-screen stand-in.
         footer = screen.query_one(AppFooterStatus)
-        assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
+        assert (
+            footer.shortcut_text
+            == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
+        )
 
         overlay = TextualScreen()
         await host.push_screen(overlay)
@@ -2792,13 +2944,18 @@ async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend
 
         await host.pop_screen()
         await pilot.pause()
-        assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
+        assert (
+            footer.shortcut_text
+            == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
+        )
 
 
 def test_skills_screen_public_initializer_is_typed():
     signature = inspect.signature(SkillsScreen.__init__)
 
-    assert signature.parameters["app_instance"].annotation is not inspect.Parameter.empty
+    assert (
+        signature.parameters["app_instance"].annotation is not inspect.Parameter.empty
+    )
     assert signature.parameters["kwargs"].annotation is not inspect.Parameter.empty
     assert signature.return_annotation in {None, "None"}
 
@@ -2982,7 +3139,9 @@ async def test_skills_destination_bootstrap_action_calls_trust_service():
         initial_list_calls = len(app.skills_scope_service.calls)
         screen._request_skill_trust_passphrase = AsyncMock(return_value="passphrase")
         await pilot.click("#skills-bootstrap-trust")
-        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+        await _wait_for_skills_list_calls(
+            app.skills_scope_service, initial_list_calls + 1, pilot
+        )
 
         assert app.local_skill_trust_service.bootstrap_calls == 1
         assert app.local_skill_trust_service.bootstrap_passphrases == ["passphrase"]
@@ -3018,7 +3177,9 @@ async def test_skills_destination_unlock_action_calls_trust_service():
         assert unlock_button.disabled is False
 
         await pilot.click("#skills-unlock-trust")
-        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+        await _wait_for_skills_list_calls(
+            app.skills_scope_service, initial_list_calls + 1, pilot
+        )
 
         assert app.local_skill_trust_service.unlock_calls == 1
         assert app.local_skill_trust_service.unlock_passphrases == ["passphrase"]
@@ -3050,7 +3211,9 @@ async def test_skills_destination_review_action_enables_trust_reviewed_version()
         await _wait_for_skills_snapshot(screen, pilot)
         initial_list_calls = len(app.skills_scope_service.calls)
         await pilot.click("#skills-review-diff")
-        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+        await _wait_for_skills_list_calls(
+            app.skills_scope_service, initial_list_calls + 1, pilot
+        )
         text = _visible_text(screen)
 
         assert app.local_skill_trust_service.reviewed_skill == "summarize-notes"
@@ -3058,11 +3221,15 @@ async def test_skills_destination_review_action_enables_trust_reviewed_version()
         assert "Confirm these current files should become the trusted baseline." in text
         assert "Reviewed skill: summarize-notes" in text
         assert "/SKILL.md" not in text
-        assert screen.query_one("#skills-trust-reviewed-version", Button).disabled is False
+        assert (
+            screen.query_one("#skills-trust-reviewed-version", Button).disabled is False
+        )
 
         list_calls_after_review = len(app.skills_scope_service.calls)
         await pilot.click("#skills-trust-reviewed-version")
-        await _wait_for_skills_list_calls(app.skills_scope_service, list_calls_after_review + 1, pilot)
+        await _wait_for_skills_list_calls(
+            app.skills_scope_service, list_calls_after_review + 1, pilot
+        )
         assert app.local_skill_trust_service.trusted_review_id == "review-1"
 
 
@@ -3097,7 +3264,9 @@ async def test_skills_destination_clears_stale_review_after_refresh():
     )
     app.local_skill_trust_service = RecordingSkillTrustService(
         review_id="review-1",
-        on_capture_review=lambda _skill_name: app.skills_scope_service.set_skills([trusted_skill]),
+        on_capture_review=lambda _skill_name: app.skills_scope_service.set_skills(
+            [trusted_skill]
+        ),
     )
     host = DestinationHarness(app, "skills")
 
@@ -3107,7 +3276,9 @@ async def test_skills_destination_clears_stale_review_after_refresh():
         initial_list_calls = len(app.skills_scope_service.calls)
 
         await pilot.click("#skills-review-diff")
-        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+        await _wait_for_skills_list_calls(
+            app.skills_scope_service, initial_list_calls + 1, pilot
+        )
         await _wait_for_visible_text(screen, pilot, "Trust: trusted baseline")
 
         approve_button = screen.query_one("#skills-trust-reviewed-version", Button)
@@ -3156,18 +3327,24 @@ async def test_skills_destination_hides_review_summary_when_selecting_another_sk
         await _wait_for_skills_snapshot(screen, pilot)
         initial_list_calls = len(app.skills_scope_service.calls)
         await pilot.click("#skills-review-diff")
-        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+        await _wait_for_skills_list_calls(
+            app.skills_scope_service, initial_list_calls + 1, pilot
+        )
 
         assert "Reviewed skill: summarize-notes" in _visible_text(screen)
         assert "Review captured: SKILL.md." in _visible_text(screen)
-        assert screen.query_one("#skills-trust-reviewed-version", Button).disabled is False
+        assert (
+            screen.query_one("#skills-trust-reviewed-version", Button).disabled is False
+        )
 
         await pilot.click("#skills-select-local-1")
         await pilot.pause()
         text = _visible_text(screen)
 
         assert "Selected: code-review" in text
-        assert screen.query_one("#skills-trust-reviewed-version", Button).disabled is True
+        assert (
+            screen.query_one("#skills-trust-reviewed-version", Button).disabled is True
+        )
         assert "Reviewed skill: summarize-notes" not in text
         assert "Review captured: SKILL.md." not in text
 
@@ -3224,8 +3401,14 @@ async def test_skills_destination_uses_three_column_workbench_contract():
         await _wait_for_skills_snapshot(screen, pilot)
         text = _visible_text(screen)
 
-        assert "Skills | Agent Skills packs, validation, Console attachments | Local" in text
-        assert "Mode: Installed / Validate / Attach | Source: local SKILL.md directories" in text
+        assert (
+            "Skills | Agent Skills packs, validation, Console attachments | Local"
+            in text
+        )
+        assert (
+            "Mode: Installed / Validate / Attach | Source: local SKILL.md directories"
+            in text
+        )
         assert "Skill Library" in text
         assert "Skill Detail" in text
         assert "Skill Inspector" in text
@@ -3248,7 +3431,9 @@ async def test_skills_destination_service_failure_uses_recovery_copy():
         await _wait_for_skills_snapshot(screen, pilot)
         button = screen.query_one("#skills-attach-to-console", Button)
 
-        assert "Skills service unavailable; retry Skills later." in _visible_text(screen)
+        assert "Skills service unavailable; retry Skills later." in _visible_text(
+            screen
+        )
         assert button.disabled is True
         assert "Skills service is unavailable" in str(button.tooltip)
 
@@ -3290,7 +3475,9 @@ async def test_skills_destination_policy_denied_surfaces_policy_message():
             recovery_action="Workspace policy",
             authority_owner="local",
         )
-        assert "Skills service unavailable; retry Skills later." not in _visible_text(screen)
+        assert "Skills service unavailable; retry Skills later." not in _visible_text(
+            screen
+        )
 
 
 @pytest.mark.asyncio
@@ -3444,7 +3631,10 @@ async def test_settings_destination_uses_three_column_workbench_contract():
         )
         text = _visible_text(screen)
 
-        assert "Settings | Global preferences, appearance, accounts, storage | Local" in text
+        assert (
+            "Settings | Global preferences, appearance, accounts, storage | Local"
+            in text
+        )
         assert "Mode: Overview | Runtime controls stay in MCP and ACP" in text
         assert "Settings Sections" in text
         assert "Preference Detail" in text
@@ -3459,7 +3649,9 @@ async def test_settings_destination_uses_three_column_workbench_contract():
             "unless you run Manual sync yourself." in text
         )
         assert "Mutation replay: disabled" not in text
-        assert "runtime MCP, ACP, and tool control stay in their own destinations" in text
+        assert (
+            "runtime MCP, ACP, and tool control stay in their own destinations" in text
+        )
         assert "Column 1:" not in text
         assert "Column 2:" not in text
         assert "Column 3:" not in text
@@ -3538,7 +3730,9 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#settings-category-console-behavior")
         await pilot.click("#settings-category-console-behavior")
-        await _wait_for_selector(screen, pilot, "#settings-console-collapse-large-pastes-toggle")
+        await _wait_for_selector(
+            screen, pilot, "#settings-console-collapse-large-pastes-toggle"
+        )
         toggle = screen.query_one(
             "#settings-console-collapse-large-pastes-toggle",
             Button,
@@ -3556,13 +3750,17 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
         await _wait_for_visible_text(screen, pilot, "Console behavior settings saved.")
 
     assert app.app_config["console"]["collapse_large_pastes"] is expected_saved_value
-    assert saved_sections == [{"console": {"collapse_large_pastes": expected_saved_value}}]
+    assert saved_sections == [
+        {"console": {"collapse_large_pastes": expected_saved_value}}
+    ]
 
 
 @pytest.mark.asyncio
 async def test_legacy_tools_settings_route_opens_mcp_not_global_settings():
     app = _build_test_app()
-    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target("tools_settings")
+    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target(
+        "tools_settings"
+    )
 
     assert screen_name == "tools_settings"
     assert current_tab == "mcp"

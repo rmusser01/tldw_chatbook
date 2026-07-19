@@ -8,9 +8,9 @@ from .recording_service import AudioRecordingService, AudioRecordingError
 from .dictation_service import LiveDictationService, DictationResult, DictationState
 
 __all__ = [
-    'AudioRecordingService',
-    'AudioRecordingError', 
-    'LiveDictationService',
-    'DictationResult',
-    'DictationState'
+    "AudioRecordingService",
+    "AudioRecordingError",
+    "LiveDictationService",
+    "DictationResult",
+    "DictationState",
 ]

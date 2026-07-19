@@ -105,7 +105,14 @@ _ROW_GROUPS = (
     (
         "Selected Message",
         "console-inspector-selected-message-heading",
-        ("Selected message", "Message actions", "Keyboard", "Variants", "Excerpt", "Delete confirmation"),
+        (
+            "Selected message",
+            "Message actions",
+            "Keyboard",
+            "Variants",
+            "Excerpt",
+            "Delete confirmation",
+        ),
     ),
 )
 
@@ -193,7 +200,9 @@ class ConsoleRunInspector(Vertical):
             Row entries in compose order, dictionary rows last.
         """
         entries: list[tuple[str, str, str]] = []
-        rows_by_label = {row.label: (index, row) for index, row in enumerate(state.rows)}
+        rows_by_label = {
+            row.label: (index, row) for index, row in enumerate(state.rows)
+        }
         rendered_labels: set[str] = set()
         for _heading, _heading_id, labels in _ROW_GROUPS:
             for label in labels:
@@ -343,7 +352,9 @@ class ConsoleRunInspector(Vertical):
             id="console-inspector-run-status-summary",
             classes="console-inspector-status-summary",
         )
-        rows_by_label = {row.label: (index, row) for index, row in enumerate(self.state.rows)}
+        rows_by_label = {
+            row.label: (index, row) for index, row in enumerate(self.state.rows)
+        }
         rendered_labels: set[str] = set()
         rendered_action_ids: set[str] = set()
 

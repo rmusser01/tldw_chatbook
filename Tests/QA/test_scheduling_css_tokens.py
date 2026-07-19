@@ -12,9 +12,7 @@ GENERATED_CSS = REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 AGENTIC_TERMINAL_CSS = REPO_ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
 
 MODULE_BANNER = "/* ===== MODULE: features/_scheduling.tcss ===== */"
-BORDER_PATTERN = re.compile(
-    r"border\s*:\s*solid\s+\$ds-grid-line\s*;", re.IGNORECASE
-)
+BORDER_PATTERN = re.compile(r"border\s*:\s*solid\s+\$ds-grid-line\s*;", re.IGNORECASE)
 
 SELECTORS = (
     "#scheduling-workbench",

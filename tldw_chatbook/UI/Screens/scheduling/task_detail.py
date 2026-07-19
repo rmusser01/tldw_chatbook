@@ -133,15 +133,33 @@ def _humanize_cron(cron: str | None, timezone: str | None = None) -> str:
     def _is_digit(value: str) -> bool:
         return value.isdigit()
 
-    if _is_digit(minute) and _is_digit(hour) and _is_wildcard(dom) and _is_wildcard(month) and _is_wildcard(dow):
+    if (
+        _is_digit(minute)
+        and _is_digit(hour)
+        and _is_wildcard(dom)
+        and _is_wildcard(month)
+        and _is_wildcard(dow)
+    ):
         return f"Daily at {int(hour):02d}:{int(minute):02d}{tz}"
 
-    if _is_digit(minute) and _is_digit(hour) and _is_wildcard(dom) and _is_wildcard(month) and _is_digit(dow):
+    if (
+        _is_digit(minute)
+        and _is_digit(hour)
+        and _is_wildcard(dom)
+        and _is_wildcard(month)
+        and _is_digit(dow)
+    ):
         day_index = int(dow)
         if 0 <= day_index <= 6:
             return f"Weekly on {_WEEKDAYS[day_index]} at {int(hour):02d}:{int(minute):02d}{tz}"
 
-    if _is_digit(minute) and _is_digit(hour) and _is_digit(dom) and _is_wildcard(month) and _is_wildcard(dow):
+    if (
+        _is_digit(minute)
+        and _is_digit(hour)
+        and _is_digit(dom)
+        and _is_wildcard(month)
+        and _is_wildcard(dow)
+    ):
         return f"Monthly on the {int(dom)} at {int(hour):02d}:{int(minute):02d}{tz}"
 
     return f"cron: {cron}{tz}"
@@ -248,15 +266,27 @@ class TaskDetail(Vertical):
         with Vertical(id="scheduling-task-detail-metadata"):
             yield Horizontal(
                 Static("Title:", classes="scheduling-detail-label"),
-                Static("-", id="scheduling-task-detail-title", classes="scheduling-detail-value"),
+                Static(
+                    "-",
+                    id="scheduling-task-detail-title",
+                    classes="scheduling-detail-value",
+                ),
             )
             yield Horizontal(
                 Static("Type:", classes="scheduling-detail-label"),
-                Static("-", id="scheduling-task-detail-type", classes="scheduling-detail-value"),
+                Static(
+                    "-",
+                    id="scheduling-task-detail-type",
+                    classes="scheduling-detail-value",
+                ),
             )
             yield Horizontal(
                 Static("Schedule:", classes="scheduling-detail-label"),
-                Static("-", id="scheduling-task-detail-schedule", classes="scheduling-detail-value"),
+                Static(
+                    "-",
+                    id="scheduling-task-detail-schedule",
+                    classes="scheduling-detail-value",
+                ),
             )
             yield Horizontal(
                 Static("Status:", classes="scheduling-detail-label"),
@@ -264,7 +294,11 @@ class TaskDetail(Vertical):
             )
             yield Horizontal(
                 Static("Next Run:", classes="scheduling-detail-label"),
-                Static("-", id="scheduling-task-detail-next-run", classes="scheduling-detail-value"),
+                Static(
+                    "-",
+                    id="scheduling-task-detail-next-run",
+                    classes="scheduling-detail-value",
+                ),
             )
         yield Horizontal(
             Button(
@@ -355,7 +389,9 @@ class TaskDetail(Vertical):
 
         self._update_static("scheduling-task-detail-title", task.title)
         self._update_static("scheduling-task-detail-type", _task_type_label(task))
-        self._update_static("scheduling-task-detail-schedule", _task_schedule_label(task))
+        self._update_static(
+            "scheduling-task-detail-schedule", _task_schedule_label(task)
+        )
         self._update_static("scheduling-task-detail-next-run", _format_next_run(task))
 
         status = _task_status(task)
@@ -388,15 +424,27 @@ class TaskInspector(Vertical):
         with Vertical(id="scheduling-inspector-metadata"):
             yield Horizontal(
                 Static("Sync:", classes="scheduling-inspector-label"),
-                Static("-", id="scheduling-inspector-sync", classes="scheduling-inspector-value"),
+                Static(
+                    "-",
+                    id="scheduling-inspector-sync",
+                    classes="scheduling-inspector-value",
+                ),
             )
             yield Horizontal(
                 Static("Last Run:", classes="scheduling-inspector-label"),
-                Static("-", id="scheduling-inspector-last-run", classes="scheduling-inspector-value"),
+                Static(
+                    "-",
+                    id="scheduling-inspector-last-run",
+                    classes="scheduling-inspector-value",
+                ),
             )
             yield Horizontal(
                 Static("Owner:", classes="scheduling-inspector-label"),
-                Static("-", id="scheduling-inspector-owner", classes="scheduling-inspector-value"),
+                Static(
+                    "-",
+                    id="scheduling-inspector-owner",
+                    classes="scheduling-inspector-value",
+                ),
             )
         yield Vertical(
             Static("No conflict", id="scheduling-conflict-text"),

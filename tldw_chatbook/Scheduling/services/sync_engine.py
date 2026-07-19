@@ -128,9 +128,7 @@ class SyncEngine:
 
         server_fields = self._whitelist_reminder_fields(server_item)
         local_fields = {
-            key: local_row.get(key)
-            for key in server_fields
-            if key in local_row
+            key: local_row.get(key) for key in server_fields if key in local_row
         }
         fields_match = server_fields == local_fields
 
@@ -308,7 +306,11 @@ class SyncEngine:
 
         if resolution == "local":
             local_state = conflict.get("local_state") or {}
-            pending_mutation = local_state.get("pending_mutation") if isinstance(local_state, dict) else None
+            pending_mutation = (
+                local_state.get("pending_mutation")
+                if isinstance(local_state, dict)
+                else None
+            )
             if pending_mutation and pending_mutation.get("fields"):
                 fields = {
                     key: value

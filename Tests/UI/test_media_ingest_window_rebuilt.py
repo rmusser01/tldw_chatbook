@@ -6,7 +6,10 @@ from textual.app import App
 
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
-from tldw_chatbook.UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt, RemoteIngestionPanel
+from tldw_chatbook.UI.MediaIngestWindowRebuilt import (
+    MediaIngestWindowRebuilt,
+    RemoteIngestionPanel,
+)
 from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
 
@@ -36,7 +39,9 @@ def test_remote_ingestion_panel_server_job_method_names_exist_on_scope_service()
 
 @pytest.mark.asyncio
 async def test_ingest_window_does_not_construct_api_client_for_server_mode(monkeypatch):
-    ctor = Mock(side_effect=AssertionError("direct API client builder should not be used"))
+    ctor = Mock(
+        side_effect=AssertionError("direct API client builder should not be used")
+    )
     monkeypatch.setattr(
         "tldw_chatbook.UI.MediaIngestWindowRebuilt.build_runtime_api_client",
         ctor,
@@ -55,7 +60,9 @@ async def test_ingest_window_does_not_construct_api_client_for_server_mode(monke
             return {"batch_id": "batch-1", "jobs": []}
 
     app = SimpleNamespace(
-        app_config={"tldw_api": {"base_url": "https://server.test", "api_key": "secret"}},
+        app_config={
+            "tldw_api": {"base_url": "https://server.test", "api_key": "secret"}
+        },
         media_runtime_state=MediaRuntimeState(runtime_backend="server"),
         media_reading_scope_service=FakeScopeService(),
     )
@@ -76,7 +83,9 @@ async def test_ingest_window_does_not_construct_api_client_for_server_mode(monke
         "#pdf-engine": SimpleNamespace(value="pymupdf4llm"),
         "#remote-job-status": SimpleNamespace(update=Mock()),
     }
-    monkeypatch.setattr(panel, "query_one", lambda selector, *args, **kwargs: widgets[selector])
+    monkeypatch.setattr(
+        panel, "query_one", lambda selector, *args, **kwargs: widgets[selector]
+    )
 
     await panel.process_remote_content("https://example.test/doc.pdf")
 
@@ -92,7 +101,9 @@ async def test_ingest_window_does_not_construct_api_client_for_server_mode(monke
             "pdf_parsing_engine": "pymupdf4llm",
         }
     ]
-    panel._render_submission_response.assert_called_once_with({"batch_id": "batch-1", "jobs": []})
+    panel._render_submission_response.assert_called_once_with(
+        {"batch_id": "batch-1", "jobs": []}
+    )
 
 
 class WebClipperPanelTestApp(App):
@@ -107,7 +118,9 @@ class WebClipperPanelTestApp(App):
 
 @pytest.mark.asyncio
 async def test_ingest_window_refreshes_server_mode_panels_without_constructing_api_client():
-    app = SimpleNamespace(media_runtime_state=MediaRuntimeState(runtime_backend="server"))
+    app = SimpleNamespace(
+        media_runtime_state=MediaRuntimeState(runtime_backend="server")
+    )
     ingest_window = MediaIngestWindowRebuilt(app)
     ingest_window.runtime_state = app.media_runtime_state
     ingest_window.source_panel = SimpleNamespace(
@@ -130,7 +143,9 @@ async def test_ingest_window_refreshes_server_mode_panels_without_constructing_a
 
 
 @pytest.mark.asyncio
-async def test_ingest_window_refresh_backend_view_preserves_local_refresh_behavior(monkeypatch):
+async def test_ingest_window_refresh_backend_view_preserves_local_refresh_behavior(
+    monkeypatch,
+):
     ctor = Mock()
     monkeypatch.setattr(
         "tldw_chatbook.UI.MediaIngestWindowRebuilt.build_runtime_api_client",
@@ -138,7 +153,9 @@ async def test_ingest_window_refresh_backend_view_preserves_local_refresh_behavi
         raising=False,
     )
 
-    app = SimpleNamespace(media_runtime_state=MediaRuntimeState(runtime_backend="local"))
+    app = SimpleNamespace(
+        media_runtime_state=MediaRuntimeState(runtime_backend="local")
+    )
     ingest_window = MediaIngestWindowRebuilt(app)
     ingest_window.runtime_state = app.media_runtime_state
     ingest_window.source_panel = SimpleNamespace(

@@ -10,7 +10,11 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Chat.console_glyphs import GLYPH_ACTIVE, GLYPH_COLLAPSED, GLYPH_EXPANDED
+from tldw_chatbook.Chat.console_glyphs import (
+    GLYPH_ACTIVE,
+    GLYPH_COLLAPSED,
+    GLYPH_EXPANDED,
+)
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserGroup,
     ConsoleConversationBrowserRow,
@@ -71,7 +75,9 @@ def _conversation_row_render_height(subagent_count: int) -> int:
     return _ROW_BUTTON_HEIGHT
 
 
-def format_console_conversation_row_label(title: str, *, subagent_count: int = 0) -> str:
+def format_console_conversation_row_label(
+    title: str, *, subagent_count: int = 0
+) -> str:
     """Return a markup-safe conversation-row label with an optional badge.
 
     The badge renders on its own trailing line rather than being appended to
@@ -244,9 +250,8 @@ class ConsoleWorkspaceContextTray(Vertical):
             if getattr(ancestor, "id", None) == "console-left-rail-body":
                 return ancestor
         for ancestor in self.ancestors:
-            if (
-                getattr(ancestor, "max_scroll_y", 0) > 0
-                and callable(getattr(ancestor, "scroll_to", None))
+            if getattr(ancestor, "max_scroll_y", 0) > 0 and callable(
+                getattr(ancestor, "scroll_to", None)
             ):
                 return ancestor
         return None
@@ -429,7 +434,9 @@ class ConsoleWorkspaceContextTray(Vertical):
         # Escaped-then-markup rendering round-trips plain text unchanged while
         # letting `format_console_conversation_row_label` safely append a dim
         # "[N Sub-Agents]" badge when this conversation has historical runs.
-        label = format_console_conversation_row_label(text, subagent_count=subagent_count)
+        label = format_console_conversation_row_label(
+            text, subagent_count=subagent_count
+        )
         button = Button(
             Text.from_markup(label),
             id=id,
@@ -511,19 +518,15 @@ class ConsoleWorkspaceContextTray(Vertical):
                     if group.collapsed:
                         continue
                     if group.rows:
-                        height += (
-                            ConsoleWorkspaceContextTray._conversation_browser_rows_height(
-                                group.rows
-                            )
+                        height += ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+                            group.rows
                         )
                     elif group.empty_copy:
                         height += _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
                 continue
             if section.rows:
-                height += (
-                    ConsoleWorkspaceContextTray._conversation_browser_rows_height(
-                        section.rows
-                    )
+                height += ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+                    section.rows
                 )
             elif section.empty_copy:
                 height += _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
@@ -565,7 +568,10 @@ class ConsoleWorkspaceContextTray(Vertical):
                 disabled=not self.state.new_workspace_enabled,
             )
 
-        if not self.state.change_workspace_enabled and self.state.change_workspace_recovery:
+        if (
+            not self.state.change_workspace_enabled
+            and self.state.change_workspace_recovery
+        ):
             yield self._static(
                 self.state.change_workspace_recovery,
                 id="console-change-workspace-recovery",
@@ -615,8 +621,7 @@ class ConsoleWorkspaceContextTray(Vertical):
                 toggle_label,
                 id="console-workspace-conversations-toggle",
                 classes=(
-                    "console-workspace-action "
-                    "console-workspace-conversations-toggle"
+                    "console-workspace-action console-workspace-conversations-toggle"
                 ),
                 compact=True,
                 disabled=not section_controls_enabled,
@@ -784,7 +789,9 @@ class ConsoleWorkspaceContextTray(Vertical):
 
         row_index = 0
         conversation_list = Vertical(id="console-workspace-conversations")
-        conversation_list.styles.height = self._conversation_browser_list_height(browser)
+        conversation_list.styles.height = self._conversation_browser_list_height(
+            browser
+        )
         conversation_list.styles.min_height = 0
         with conversation_list:
             for section in browser.sections:
@@ -858,8 +865,7 @@ class ConsoleWorkspaceContextTray(Vertical):
                 GLYPH_COLLAPSED if section.collapsed else GLYPH_EXPANDED,
                 id=f"console-conversation-browser-section-toggle-{section.section_id}",
                 classes=(
-                    "console-workspace-action "
-                    "console-workspace-conversations-toggle"
+                    "console-workspace-action console-workspace-conversations-toggle"
                 ),
                 compact=True,
             )
@@ -889,8 +895,7 @@ class ConsoleWorkspaceContextTray(Vertical):
                 GLYPH_COLLAPSED if group.collapsed else GLYPH_EXPANDED,
                 id=f"console-conversation-browser-group-toggle-{index}",
                 classes=(
-                    "console-workspace-action "
-                    "console-workspace-conversations-toggle"
+                    "console-workspace-action console-workspace-conversations-toggle"
                 ),
                 compact=True,
             )

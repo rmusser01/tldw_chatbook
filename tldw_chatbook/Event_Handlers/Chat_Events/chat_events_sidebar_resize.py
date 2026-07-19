@@ -3,13 +3,16 @@
 #
 # Imports
 from typing import TYPE_CHECKING
+
 #
 # 3rd-Party Imports
 from loguru import logger as loguru_logger
 from textual.widgets import Button
+
 #
 # Local Imports
 from ...config import save_setting_to_cli_config
+
 #
 if TYPE_CHECKING:
     from ...app import TldwCli
@@ -18,14 +21,15 @@ if TYPE_CHECKING:
 #
 # Functions:
 
-async def handle_sidebar_shrink(app: 'TldwCli', event: Button.Pressed) -> None:
+
+async def handle_sidebar_shrink(app: "TldwCli", event: Button.Pressed) -> None:
     """Handle shrinking the right sidebar width."""
-    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger = getattr(app, "loguru_logger", loguru_logger)
     try:
         current_width = app.chat_right_sidebar_width
         new_width = max(15, current_width - 5)  # Minimum 15% width
         app.chat_right_sidebar_width = new_width
-        
+
         # Apply the new width to the sidebar
         try:
             sidebar = app.query_one("#chat-right-sidebar")
@@ -33,24 +37,24 @@ async def handle_sidebar_shrink(app: 'TldwCli', event: Button.Pressed) -> None:
         except Exception as query_error:
             logger.error(f"Error querying sidebar: {query_error}")
             raise
-        
+
         # Save the width preference
         save_setting_to_cli_config("chat_defaults", "right_sidebar_width", new_width)
-        
+
         logger.debug(f"Sidebar width decreased to {new_width}%")
     except Exception as e:
         logger.opt(exception=True).error(f"Error shrinking sidebar: {e}")
 
 
-async def handle_sidebar_expand(app: 'TldwCli', event: Button.Pressed) -> None:
+async def handle_sidebar_expand(app: "TldwCli", event: Button.Pressed) -> None:
     """Handle expanding the right sidebar width."""
-    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger = getattr(app, "loguru_logger", loguru_logger)
     logger.debug(f"handle_sidebar_expand called from file: {__file__}")
     try:
         current_width = app.chat_right_sidebar_width
         new_width = min(50, current_width + 5)  # Maximum 50% width
         app.chat_right_sidebar_width = new_width
-        
+
         # Apply the new width to the sidebar
         try:
             sidebar = app.query_one("#chat-right-sidebar")
@@ -60,12 +64,13 @@ async def handle_sidebar_expand(app: 'TldwCli', event: Button.Pressed) -> None:
             logger.error(f"Error type: {type(query_error)}")
             logger.error(f"Error args: {query_error.args}")
             import traceback
+
             logger.error(f"Full traceback:\n{traceback.format_exc()}")
             raise
-        
+
         # Save the width preference
         save_setting_to_cli_config("chat_defaults", "right_sidebar_width", new_width)
-        
+
         logger.debug(f"Sidebar width increased to {new_width}%")
     except Exception as e:
         logger.opt(exception=True).error(f"Error expanding sidebar: {e}")

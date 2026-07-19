@@ -55,10 +55,15 @@ def test_common_base_and_prefixed_openai_paths_map_to_models(endpoint, expected)
 
 
 def test_space_separated_provider_label_can_infer_openai_compatible_base_url():
-    assert supports_openai_compatible_model_discovery("Local LLM", "http://127.0.0.1:8000") is True
+    assert (
+        supports_openai_compatible_model_discovery("Local LLM", "http://127.0.0.1:8000")
+        is True
+    )
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "google", "cohere", "huggingface", "ollama"])
+@pytest.mark.parametrize(
+    "provider", ["anthropic", "google", "cohere", "huggingface", "ollama"]
+)
 def test_native_provider_base_urls_do_not_infer_openai_compatibility(provider):
     assert (
         supports_openai_compatible_model_discovery(provider, "https://api.example.test")
@@ -66,7 +71,9 @@ def test_native_provider_base_urls_do_not_infer_openai_compatibility(provider):
     )
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "google", "cohere", "huggingface", "ollama"])
+@pytest.mark.parametrize(
+    "provider", ["anthropic", "google", "cohere", "huggingface", "ollama"]
+)
 def test_native_provider_explicit_openai_compatible_paths_are_eligible(provider):
     assert (
         supports_openai_compatible_model_discovery(
@@ -169,9 +176,7 @@ def test_response_metadata_does_not_include_sensitive_headers():
         now_iso="2026-06-04T12:00:00Z",
     )
 
-    assert "authorization" not in {
-        key.lower() for key in models[0].metadata_raw_safe
-    }
+    assert "authorization" not in {key.lower() for key in models[0].metadata_raw_safe}
     assert "api_key" not in models[0].metadata_raw_safe
     assert "sessionToken" not in models[0].metadata_raw_safe
     assert "access_token" not in models[0].metadata_raw_safe["metadata"]

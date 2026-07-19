@@ -162,24 +162,30 @@ class ScheduledTasksDB(BaseDB):
             return None
 
         if isinstance(value, datetime):
-            dt = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+            dt = (
+                value
+                if value.tzinfo is not None
+                else value.replace(tzinfo=timezone.utc)
+            )
             return dt.astimezone(timezone.utc).isoformat()
 
         if isinstance(value, date):
-            return datetime(value.year, value.month, value.day, tzinfo=timezone.utc).isoformat()
+            return datetime(
+                value.year, value.month, value.day, tzinfo=timezone.utc
+            ).isoformat()
 
         if isinstance(value, str):
             try:
                 parsed = datetime.fromisoformat(value)
             except ValueError as exc:
-                raise ValueError(f"Invalid ISO-8601 datetime string: {value!r}") from exc
+                raise ValueError(
+                    f"Invalid ISO-8601 datetime string: {value!r}"
+                ) from exc
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=timezone.utc)
             return parsed.astimezone(timezone.utc).isoformat()
 
-        raise TypeError(
-            f"Expected datetime, date, or str, got {type(value).__name__}"
-        )
+        raise TypeError(f"Expected datetime, date, or str, got {type(value).__name__}")
 
     @classmethod
     def _row_to_dict(
@@ -228,7 +234,9 @@ class ScheduledTasksDB(BaseDB):
         """
         for key in kwargs:
             if key in cls._RESERVED_FIELDS:
-                raise ValueError(f"Field {key!r} is reserved and cannot be set via kwargs")
+                raise ValueError(
+                    f"Field {key!r} is reserved and cannot be set via kwargs"
+                )
             if key not in allowed_columns:
                 raise ValueError(f"Unknown {label} field: {key!r}")
 
@@ -236,9 +244,7 @@ class ScheduledTasksDB(BaseDB):
     # Reminder tasks
     # ------------------------------------------------------------------
 
-    def create_reminder_task(
-        self, owner_id: str, title: str, **kwargs: Any
-    ) -> str:
+    def create_reminder_task(self, owner_id: str, title: str, **kwargs: Any) -> str:
         """Create a reminder task and return its generated local UUID."""
         self._validate_kwargs(kwargs, self._REMINDER_TASK_COLUMNS, "reminder task")
 
@@ -282,7 +288,9 @@ class ScheduledTasksDB(BaseDB):
             cursor = conn.execute(
                 "SELECT * FROM reminder_tasks WHERE id = ?", (task_id,)
             )
-            return self._row_to_dict(cursor.fetchone(), json_fields=self._REMINDER_JSON_FIELDS)
+            return self._row_to_dict(
+                cursor.fetchone(), json_fields=self._REMINDER_JSON_FIELDS
+            )
 
     def get_reminder_task_by_server_id(
         self,
@@ -445,7 +453,9 @@ class ScheduledTasksDB(BaseDB):
             )
             conn.commit()
 
-        logger.debug(f"Created automation definition {definition_id} for owner {owner_id}")
+        logger.debug(
+            f"Created automation definition {definition_id} for owner {owner_id}"
+        )
         return definition_id
 
     def get_automation_definition(self, definition_id: str) -> Optional[dict[str, Any]]:
@@ -594,7 +604,9 @@ class ScheduledTasksDB(BaseDB):
             )
             conn.commit()
 
-        logger.debug(f"Created automation audit event {event_id} for definition {definition_id}")
+        logger.debug(
+            f"Created automation audit event {event_id} for definition {definition_id}"
+        )
         return event_id
 
     # ------------------------------------------------------------------
@@ -719,7 +731,7 @@ class ScheduledTasksDB(BaseDB):
             conn.execute(
                 f"""
                 INSERT INTO sync_state ({columns}) VALUES ({placeholders})
-                ON CONFLICT(owner_id) DO UPDATE SET {', '.join(updates)}
+                ON CONFLICT(owner_id) DO UPDATE SET {", ".join(updates)}
                 """,
                 list(fields.values()),
             )
@@ -745,7 +757,10 @@ class ScheduledTasksDB(BaseDB):
         for the same local id/primitive/owner are replaced.
         """
         stored_payload = dict(payload)
-        if "idempotency_key" not in stored_payload or not stored_payload["idempotency_key"]:
+        if (
+            "idempotency_key" not in stored_payload
+            or not stored_payload["idempotency_key"]
+        ):
             stored_payload["idempotency_key"] = str(uuid.uuid4())
 
         now = datetime.now(timezone.utc)

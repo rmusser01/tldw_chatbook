@@ -6,7 +6,10 @@ import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
-from tldw_chatbook.Chat.provider_readiness import get_provider_readiness, provider_config_key
+from tldw_chatbook.Chat.provider_readiness import (
+    get_provider_readiness,
+    provider_config_key,
+)
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import ModelDiscoveryCache
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     DiscoveredModel,
@@ -73,7 +76,9 @@ class LocalLLMProviderCatalogService:
         capability_resolver: CapabilityResolver | None = None,
         environ: Mapping[str, str] | None = None,
     ) -> None:
-        self.provider_catalog_loader = provider_catalog_loader or get_cli_providers_and_models
+        self.provider_catalog_loader = (
+            provider_catalog_loader or get_cli_providers_and_models
+        )
         self.local_provider_names = set(local_provider_names or LOCAL_PROVIDERS)
         self.default_provider = default_provider
         self.policy_enforcer = policy_enforcer
@@ -97,11 +102,17 @@ class LocalLLMProviderCatalogService:
         for provider, models in (catalog or {}).items():
             if not isinstance(provider, str) or not isinstance(models, list):
                 continue
-            valid_catalog[provider] = [str(model) for model in models if isinstance(model, str)]
+            valid_catalog[provider] = [
+                str(model) for model in models if isinstance(model, str)
+            ]
         return valid_catalog
 
     def _provider_type(self, provider_name: str) -> str:
-        return "local_runtime" if provider_name in self.local_provider_names else "remote_api"
+        return (
+            "local_runtime"
+            if provider_name in self.local_provider_names
+            else "remote_api"
+        )
 
     def _provider_record(self, provider_name: str, models: list[str]) -> dict[str, Any]:
         models_info = [self._model_record(provider_name, model) for model in models]
@@ -156,7 +167,9 @@ class LocalLLMProviderCatalogService:
         for configured_provider, configured_values in api_settings.items():
             if provider_config_key(str(configured_provider)) != provider_key:
                 continue
-            matches.append(configured_values if isinstance(configured_values, Mapping) else {})
+            matches.append(
+                configured_values if isinstance(configured_values, Mapping) else {}
+            )
         return tuple(matches)
 
     @classmethod
@@ -191,7 +204,9 @@ class LocalLLMProviderCatalogService:
         return stripped
 
     @classmethod
-    def _endpoint_from_provider_settings(cls, provider_settings: Mapping[str, Any]) -> str | None:
+    def _endpoint_from_provider_settings(
+        cls, provider_settings: Mapping[str, Any]
+    ) -> str | None:
         for endpoint_key in _ENDPOINT_KEYS:
             endpoint = cls._valid_text(provider_settings.get(endpoint_key))
             if endpoint:
@@ -205,16 +220,24 @@ class LocalLLMProviderCatalogService:
         saved_settings: Mapping[str, Any],
         staged_settings: Mapping[str, Any] | None,
     ) -> str | None:
-        staged_provider_settings = self._provider_settings_for_key(staged_settings, provider_key)
-        staged_endpoint = self._endpoint_from_provider_settings(staged_provider_settings)
+        staged_provider_settings = self._provider_settings_for_key(
+            staged_settings, provider_key
+        )
+        staged_endpoint = self._endpoint_from_provider_settings(
+            staged_provider_settings
+        )
         if staged_endpoint:
             return staged_endpoint
 
-        saved_provider_settings = self._provider_settings_for_key(saved_settings, provider_key)
+        saved_provider_settings = self._provider_settings_for_key(
+            saved_settings, provider_key
+        )
         saved_endpoint = self._endpoint_from_provider_settings(saved_provider_settings)
         return saved_endpoint or _DEFAULT_OPENAI_COMPATIBLE_ENDPOINTS.get(provider_key)
 
-    def _api_key_from_provider_settings(self, provider_settings: Mapping[str, Any]) -> str | None:
+    def _api_key_from_provider_settings(
+        self, provider_settings: Mapping[str, Any]
+    ) -> str | None:
         configured_key = self._valid_api_key(provider_settings.get("api_key"))
         if configured_key:
             return configured_key
@@ -232,17 +255,23 @@ class LocalLLMProviderCatalogService:
         saved_settings: Mapping[str, Any],
         staged_settings: Mapping[str, Any] | None,
     ) -> str | None:
-        staged_provider_settings = self._provider_settings_for_key(staged_settings, provider_key)
+        staged_provider_settings = self._provider_settings_for_key(
+            staged_settings, provider_key
+        )
         staged_key = self._api_key_from_provider_settings(staged_provider_settings)
         if staged_key:
             return staged_key
 
-        saved_provider_settings = self._provider_settings_for_key(saved_settings, provider_key)
+        saved_provider_settings = self._provider_settings_for_key(
+            saved_settings, provider_key
+        )
         saved_key = self._api_key_from_provider_settings(saved_provider_settings)
         if saved_key:
             return saved_key
 
-        readiness = get_provider_readiness(provider, saved_settings, environ=self.environ)
+        readiness = get_provider_readiness(
+            provider, saved_settings, environ=self.environ
+        )
         return readiness.api_key
 
     def _current_endpoint_fingerprint(
@@ -272,14 +301,20 @@ class LocalLLMProviderCatalogService:
         del include_deprecated
         self._enforce("llm.catalog.providers.list.local")
         catalog = self._catalog()
-        providers = [self._provider_record(provider, models) for provider, models in catalog.items()]
+        providers = [
+            self._provider_record(provider, models)
+            for provider, models in catalog.items()
+        ]
         return {
             "providers": providers,
-            "default_provider": self.default_provider or (providers[0]["name"] if providers else None),
+            "default_provider": self.default_provider
+            or (providers[0]["name"] if providers else None),
             "total_configured": len(providers),
         }
 
-    def get_provider(self, provider_name: str, *, include_deprecated: bool = False) -> dict[str, Any]:
+    def get_provider(
+        self, provider_name: str, *, include_deprecated: bool = False
+    ) -> dict[str, Any]:
         del include_deprecated
         self._enforce("llm.catalog.providers.detail.local")
         catalog = self._catalog()
@@ -318,7 +353,11 @@ class LocalLLMProviderCatalogService:
         self._enforce("llm.catalog.models.list.local")
         if not self._matches_filter("chat", model_type):
             return []
-        return [f"{provider}/{model}" for provider, models in self._catalog().items() for model in models]
+        return [
+            f"{provider}/{model}"
+            for provider, models in self._catalog().items()
+            for model in models
+        ]
 
     def get_model_metadata(
         self,
@@ -412,10 +451,9 @@ class LocalLLMProviderCatalogService:
                 ),
             )
         models_url = build_models_url(endpoint, provider_key)
-        if (
-            not supports_openai_compatible_model_discovery(provider_key, endpoint)
-            or not validate_url(models_url)
-        ):
+        if not supports_openai_compatible_model_discovery(
+            provider_key, endpoint
+        ) or not validate_url(models_url):
             return ModelDiscoveryResult(
                 provider=provider,
                 provider_list_key=provider_resolution.provider_list_key,
@@ -460,13 +498,18 @@ class LocalLLMProviderCatalogService:
         if provider is None:
             return self.discovery_cache.list()
         provider_resolution = resolve_provider_list_key(provider, self._catalog())
-        if provider_resolution.status != "resolved" or provider_resolution.provider_list_key is None:
+        if (
+            provider_resolution.status != "resolved"
+            or provider_resolution.provider_list_key is None
+        ):
             return ()
         current_endpoint = self._current_endpoint_fingerprint(
             provider_key=provider_resolution.normalized_provider,
             staged_settings=staged_settings,
         )
-        return self.discovery_cache.list(provider_resolution.provider_list_key, current_endpoint)
+        return self.discovery_cache.list(
+            provider_resolution.provider_list_key, current_endpoint
+        )
 
     def clear_discovered_models(self, *, provider: str | None = None) -> None:
         """Clear runtime-discovered models globally or for one provider."""
@@ -475,7 +518,10 @@ class LocalLLMProviderCatalogService:
             self.discovery_cache.clear()
             return
         provider_resolution = resolve_provider_list_key(provider, self._catalog())
-        if provider_resolution.status == "resolved" and provider_resolution.provider_list_key is not None:
+        if (
+            provider_resolution.status == "resolved"
+            and provider_resolution.provider_list_key is not None
+        ):
             self.discovery_cache.clear(provider_resolution.provider_list_key)
 
     def merge_saved_and_discovered_models(
@@ -488,7 +534,10 @@ class LocalLLMProviderCatalogService:
         self._enforce("llm.catalog.models.list.local")
         catalog = self._catalog()
         provider_resolution = resolve_provider_list_key(provider, catalog)
-        if provider_resolution.status != "resolved" or provider_resolution.provider_list_key is None:
+        if (
+            provider_resolution.status != "resolved"
+            or provider_resolution.provider_list_key is None
+        ):
             raise ValueError(f"Unknown or ambiguous local LLM provider: {provider}")
         provider_list_key = provider_resolution.provider_list_key
         current_endpoint = self._current_endpoint_fingerprint(
@@ -497,7 +546,9 @@ class LocalLLMProviderCatalogService:
         )
         return merge_saved_and_discovered_models(
             saved_model_ids=catalog.get(provider_list_key, []),
-            discovered_models=self.discovery_cache.list(provider_list_key, current_endpoint),
+            discovered_models=self.discovery_cache.list(
+                provider_list_key, current_endpoint
+            ),
             provider=provider_list_key,
             provider_list_key=provider_list_key,
             capability_resolver=self.capability_resolver,

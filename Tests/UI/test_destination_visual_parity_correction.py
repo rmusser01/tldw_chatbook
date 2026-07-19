@@ -28,7 +28,9 @@ from Tests.UI.test_library_shell import (
     _active_library_screen,
     _wait_for_library_shell,
 )
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
@@ -40,7 +42,10 @@ from tldw_chatbook.UI.Screens import (
     watchlists_collections_screen as wc_screen_module,
     workflows_screen as workflows_screen_module,
 )
-from tldw_chatbook.Widgets.destination_workbench import DestinationWorkbench, WorkbenchPane
+from tldw_chatbook.Widgets.destination_workbench import (
+    DestinationWorkbench,
+    WorkbenchPane,
+)
 
 
 def _region(widget):
@@ -111,16 +116,22 @@ def _assert_any_action_visible(
             return
         except AssertionError:
             continue
-    raise AssertionError(f"{context} has no visible action/recovery path from {selectors!r}")
+    raise AssertionError(
+        f"{context} has no visible action/recovery path from {selectors!r}"
+    )
 
 
-def _assert_marker_inside_container(screen, marker: str, container: str, *, context: str) -> None:
+def _assert_marker_inside_container(
+    screen, marker: str, container: str, *, context: str
+) -> None:
     marker_widget = screen.query_one(marker)
     container_region = screen.query_one(container).region
     assert marker_widget.region.x >= container_region.x, context
     assert marker_widget.region.y >= container_region.y, context
     assert marker_widget.region.x < container_region.x + container_region.width, context
-    assert marker_widget.region.y < container_region.y + container_region.height, context
+    assert marker_widget.region.y < container_region.y + container_region.height, (
+        context
+    )
 
 
 def _assert_any_marker_inside_container(
@@ -153,12 +164,16 @@ def _assert_ascii_workbench_contract(
     if strip is not None:
         _assert_strip_compact(screen, strip, max_height=strip_max_height)
     workbench_widget = screen.query_one(workbench)
-    assert workbench_widget.region.y <= start_by, f"{workbench} starts too low: {workbench_widget.region}"
+    assert workbench_widget.region.y <= start_by, (
+        f"{workbench} starts too low: {workbench_widget.region}"
+    )
     _assert_visible_in_viewport(workbench_widget, height=height, context=workbench)
     _assert_horizontal_panes(screen, panes)
     for selector in panes:
         pane = screen.query_one(selector)
-        assert pane.region.height >= min_pane_rows, f"{selector} is too short: {pane.region}"
+        assert pane.region.height >= min_pane_rows, (
+            f"{selector} is too short: {pane.region}"
+        )
         _assert_visible_in_viewport(pane, height=height, context=selector)
     if actions:
         _assert_any_action_visible(screen, actions, height=height, context=workbench)
@@ -178,7 +193,9 @@ def _visible_workbench_pane_titles(screen, workbench: str) -> list[str]:
     for widget in workbench_widget.query(Static):
         if not widget.display or not hasattr(widget, "renderable"):
             continue
-        if not any(str(class_name).endswith("-column-title") for class_name in widget.classes):
+        if not any(
+            str(class_name).endswith("-column-title") for class_name in widget.classes
+        ):
             continue
         renderable = widget.renderable
         titles.append(getattr(renderable, "plain", str(renderable)))
@@ -223,7 +240,9 @@ async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_defaul
         nav = home.query_one(MainNavigationBar)
         settings = nav.query_one("#nav-settings", Button)
         more = nav.query_one("#nav-overflow-hint")
-        _assert_no_horizontal_overlap(settings, more, context="More hint overlaps Settings nav item")
+        _assert_no_horizontal_overlap(
+            settings, more, context="More hint overlaps Settings nav item"
+        )
 
 
 @pytest.mark.asyncio
@@ -279,7 +298,9 @@ async def test_home_dashboard_regions_fit_default_viewport():
             "#home-canvas",
             "#home-details-body",
         ):
-            _assert_visible_in_viewport(home.query_one(selector), height=42, context=selector)
+            _assert_visible_in_viewport(
+                home.query_one(selector), height=42, context=selector
+            )
         _assert_any_action_visible(
             home,
             (
@@ -311,7 +332,9 @@ async def test_console_first_start_shows_left_rail_main_and_right_handle():
         transcript = console.query_one("#console-session-surface")
         composer = console.query_one("#console-native-composer")
 
-        assert workbench.region.y <= 12, f"Console workbench starts too low: {workbench.region}"
+        assert workbench.region.y <= 12, (
+            f"Console workbench starts too low: {workbench.region}"
+        )
         _assert_visible_in_viewport(workbench, height=42, context="Console workbench")
         assert _is_effectively_displayed(left_rail)
         assert _is_effectively_displayed(main_column)
@@ -322,8 +345,12 @@ async def test_console_first_start_shows_left_rail_main_and_right_handle():
         assert main_column.region.height >= 20
         assert right_handle.region.height >= 20
         _assert_visible_in_viewport(left_rail, height=42, context="Console left rail")
-        _assert_visible_in_viewport(main_column, height=42, context="Console main column")
-        _assert_visible_in_viewport(right_handle, height=42, context="Console right handle")
+        _assert_visible_in_viewport(
+            main_column, height=42, context="Console main column"
+        )
+        _assert_visible_in_viewport(
+            right_handle, height=42, context="Console right handle"
+        )
         assert console.query_one("#console-staged-context-tray")
         assert console.query_one("#console-workspace-context")
         _assert_visible_in_viewport(transcript, height=42, context="Console transcript")
@@ -347,8 +374,12 @@ async def test_library_shell_grid_is_visible_in_viewport():
         shell_grid = library.query_one("#library-shell-grid")
         rail = library.query_one("#library-rail")
         canvas = library.query_one("#library-canvas")
-        assert shell_grid.region.y <= 12, f"#library-shell-grid starts too low: {shell_grid.region}"
-        _assert_visible_in_viewport(shell_grid, height=42, context="#library-shell-grid")
+        assert shell_grid.region.y <= 12, (
+            f"#library-shell-grid starts too low: {shell_grid.region}"
+        )
+        _assert_visible_in_viewport(
+            shell_grid, height=42, context="#library-shell-grid"
+        )
         _assert_visible_in_viewport(rail, height=42, context="#library-rail")
         _assert_visible_in_viewport(canvas, height=42, context="#library-canvas")
         assert rail.region.x < canvas.region.x
@@ -516,9 +547,14 @@ async def test_library_source_snapshot_times_out_to_stable_error(monkeypatch):
     )
 
     start = time.perf_counter()
-    records, counts, total_known, error, recovery_state, study_counts = (
-        await screen._list_local_source_snapshot()
-    )
+    (
+        records,
+        counts,
+        total_known,
+        error,
+        recovery_state,
+        study_counts,
+    ) = await screen._list_local_source_snapshot()
     elapsed = time.perf_counter() - start
 
     assert records == {
@@ -534,12 +570,18 @@ async def test_library_source_snapshot_times_out_to_stable_error(monkeypatch):
     assert total_known == {"notes": True, "media": True, "conversations": True}
     assert error == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
     assert recovery_state is None
-    assert study_counts == {"study_decks": None, "flashcards_due": None, "quizzes": None}
+    assert study_counts == {
+        "study_decks": None,
+        "flashcards_due": None,
+        "quizzes": None,
+    }
     assert elapsed < 0.05
 
 
 @pytest.mark.asyncio
-async def test_library_source_snapshot_timeout_handles_blocking_async_services(monkeypatch):
+async def test_library_source_snapshot_timeout_handles_blocking_async_services(
+    monkeypatch,
+):
     class BlockingAsyncNotesService:
         async def list_notes(self, **_kwargs):
             time.sleep(0.2)
@@ -570,9 +612,14 @@ async def test_library_source_snapshot_timeout_handles_blocking_async_services(m
     )
 
     start = time.perf_counter()
-    records, counts, total_known, error, recovery_state, study_counts = (
-        await screen._list_local_source_snapshot()
-    )
+    (
+        records,
+        counts,
+        total_known,
+        error,
+        recovery_state,
+        study_counts,
+    ) = await screen._list_local_source_snapshot()
     elapsed = time.perf_counter() - start
 
     assert records == {
@@ -588,12 +635,18 @@ async def test_library_source_snapshot_timeout_handles_blocking_async_services(m
     assert total_known == {"notes": True, "media": True, "conversations": True}
     assert error == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
     assert recovery_state is None
-    assert study_counts == {"study_decks": None, "flashcards_due": None, "quizzes": None}
+    assert study_counts == {
+        "study_decks": None,
+        "flashcards_due": None,
+        "quizzes": None,
+    }
     assert elapsed < 0.05
 
 
 @pytest.mark.asyncio
-async def test_library_service_call_awaits_coroutine_functions_without_worker(monkeypatch):
+async def test_library_service_call_awaits_coroutine_functions_without_worker(
+    monkeypatch,
+):
     async def async_service_call():
         return "direct-result"
 
@@ -619,7 +672,11 @@ async def test_library_service_call_awaits_coroutine_functions_without_worker(mo
             # The run inspector is a section inside the right rail; the rail
             # itself is the third workbench pane.
             ("#console-left-rail", "#console-main-column", "#console-right-rail"),
-            ("#console-send-message", "#console-attach-context", "#console-save-chatbook"),
+            (
+                "#console-send-message",
+                "#console-attach-context",
+                "#console-save-chatbook",
+            ),
             ("#console-run-inspector-state",),
             "#console-run-inspector",
         ),
@@ -677,7 +734,11 @@ SOURCE_PREP_WORKBENCHES = {
     "artifacts": {
         "workbench": "#artifacts-workbench",
         "strip": "#artifacts-mode-strip",
-        "panes": ("#artifacts-list-pane", "#artifacts-detail-pane", "#artifacts-inspector-pane"),
+        "panes": (
+            "#artifacts-list-pane",
+            "#artifacts-detail-pane",
+            "#artifacts-inspector-pane",
+        ),
         "actions": (
             "#artifacts-open-chatbooks",
             "#artifacts-open-console",
@@ -695,7 +756,11 @@ SOURCE_PREP_WORKBENCHES = {
     "personas": {
         "workbench": "#personas-workbench",
         "strip": "#personas-mode-strip",
-        "panes": ("#personas-library-pane", "#personas-work-area", "#personas-inspector-pane"),
+        "panes": (
+            "#personas-library-pane",
+            "#personas-work-area",
+            "#personas-inspector-pane",
+        ),
         "actions": ("#personas-library-new", "#personas-attach-to-console"),
         "markers": ("#personas-library-empty", "#personas-library-count"),
         "marker_container": "#personas-library-pane",
@@ -703,8 +768,16 @@ SOURCE_PREP_WORKBENCHES = {
     "watchlists_collections": {
         "workbench": "#watchlists-workbench",
         "strip": "#watchlists-filter-strip",
-        "panes": ("#watchlists-list-pane", "#watchlists-detail-pane", "#watchlists-inspector-pane"),
-        "actions": ("#wc-open-watchlists", "#wc-attach-to-console", "#watchlists-follow-in-console"),
+        "panes": (
+            "#watchlists-list-pane",
+            "#watchlists-detail-pane",
+            "#watchlists-inspector-pane",
+        ),
+        "actions": (
+            "#wc-open-watchlists",
+            "#wc-attach-to-console",
+            "#watchlists-follow-in-console",
+        ),
         "markers": ("#wc-empty-state", "#wc-service-error", "#wc-loading-state"),
         "marker_container": "#watchlists-detail-pane",
     },
@@ -713,7 +786,11 @@ SOURCE_PREP_WORKBENCHES = {
         "strip": "#skills-mode-strip",
         "panes": ("#skills-list-pane", "#skills-detail-pane", "#skills-inspector-pane"),
         "actions": ("#skills-import-skill", "#skills-attach-to-console"),
-        "markers": ("#skills-empty-state", "#skills-service-error", "#skills-loading-state"),
+        "markers": (
+            "#skills-empty-state",
+            "#skills-service-error",
+            "#skills-loading-state",
+        ),
         "marker_container": "#skills-detail-pane",
     },
 }
@@ -721,7 +798,9 @@ SOURCE_PREP_WORKBENCHES = {
 
 @pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES.items())
 @pytest.mark.asyncio
-async def test_source_prep_destinations_use_list_detail_inspector_workbench(route, contract):
+async def test_source_prep_destinations_use_list_detail_inspector_workbench(
+    route, contract
+):
     app = _build_test_app()
     host = DestinationHarness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
@@ -745,7 +824,9 @@ async def test_source_prep_destinations_use_list_detail_inspector_workbench(rout
 
 @pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES.items())
 @pytest.mark.asyncio
-async def test_source_prep_default_empty_or_unavailable_states_preserve_workbench_geometry(route, contract):
+async def test_source_prep_default_empty_or_unavailable_states_preserve_workbench_geometry(
+    route, contract
+):
     app = _build_test_app()
     host = DestinationHarness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
@@ -798,26 +879,52 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
 @pytest.mark.parametrize(
     ("route", "workbench", "expected_titles"),
     (
-        ("artifacts", "#artifacts-workbench", ("Artifact List", "Artifact Preview", "Provenance")),
+        (
+            "artifacts",
+            "#artifacts-workbench",
+            ("Artifact List", "Artifact Preview", "Provenance"),
+        ),
         # The personas work area renders mode-driven section headers
         # (Character / Character Editor / Persona Profile) instead of a fixed
         # column title, so only the library and inspector panes carry
         # *-column-title statics.
         ("personas", "#personas-workbench", ("Library", "Inspector")),
-        ("schedules", "#schedules-workbench", ("Schedule Queue", "Run Detail", "Status Inspector")),
-        ("workflows", "#workflows-workbench", ("Procedure Library", "Run Detail", "Run Inspector")),
+        (
+            "schedules",
+            "#schedules-workbench",
+            ("Schedule Queue", "Run Detail", "Status Inspector"),
+        ),
+        (
+            "workflows",
+            "#workflows-workbench",
+            ("Procedure Library", "Run Detail", "Run Inspector"),
+        ),
         # With no runtime configured (the harness default), ACP's middle pane
         # is the Runtime Setup column rather than Session Detail.
-        ("acp", "#acp-workbench", ("Agents / Sessions", "Runtime Setup", "Compatibility / Actions")),
-        ("skills", "#skills-workbench", ("Skill Library", "Skill Detail", "Skill Inspector")),
+        (
+            "acp",
+            "#acp-workbench",
+            ("Agents / Sessions", "Runtime Setup", "Compatibility / Actions"),
+        ),
+        (
+            "skills",
+            "#skills-workbench",
+            ("Skill Library", "Skill Detail", "Skill Inspector"),
+        ),
         # Settings' Overview card title carries the column-title class.
-        ("settings", "#settings-workbench", ("Settings Sections", "Preference Detail", "Overview", "Scope Inspector")),
+        (
+            "settings",
+            "#settings-workbench",
+            ("Settings Sections", "Preference Detail", "Overview", "Scope Inspector"),
+        ),
         # The legacy ccp route/screen was retired; its workbench is the Personas
         # destination, covered by Tests/UI/test_personas_workbench.py.
     ),
 )
 @pytest.mark.asyncio
-async def test_destination_pane_titles_are_user_facing_not_ordinal(route, workbench, expected_titles):
+async def test_destination_pane_titles_are_user_facing_not_ordinal(
+    route, workbench, expected_titles
+):
     app = _build_test_app()
     host = DestinationHarness(app, route)
 
@@ -826,7 +933,9 @@ async def test_destination_pane_titles_are_user_facing_not_ordinal(route, workbe
         await _wait_for_selector(screen, pilot, workbench)
         visible_text = _visible_static_text(screen)
 
-        assert _visible_workbench_pane_titles(screen, workbench) == list(expected_titles)
+        assert _visible_workbench_pane_titles(screen, workbench) == list(
+            expected_titles
+        )
         assert "Column 1:" not in visible_text
         assert "Column 2:" not in visible_text
         assert "Column 3:" not in visible_text
@@ -943,7 +1052,11 @@ async def test_personas_workbench_exposes_approved_three_column_ia():
 
         _assert_horizontal_panes(
             screen,
-            ("#personas-library-pane", "#personas-work-area", "#personas-inspector-pane"),
+            (
+                "#personas-library-pane",
+                "#personas-work-area",
+                "#personas-inspector-pane",
+            ),
         )
         assert _visible_workbench_pane_titles(screen, "#personas-workbench") == [
             "Library",
@@ -973,10 +1086,7 @@ async def test_personas_workbench_separates_columns_without_legacy_dividers():
 
         for pane in (library_pane, work_area, inspector_pane):
             assert "destination-workbench-pane" in pane.classes
-        assert (
-            library_pane.region.x + library_pane.region.width
-            <= work_area.region.x
-        )
+        assert library_pane.region.x + library_pane.region.width <= work_area.region.x
         assert work_area.region.x + work_area.region.width <= inspector_pane.region.x
         workbench = screen.query_one("#personas-workbench")
         assert not list(workbench.query(".destination-pane-divider"))
@@ -1118,14 +1228,22 @@ async def test_source_prep_loading_states_preserve_workbench_geometry(
             "schedules",
             "#schedules-filter-strip",
             "#schedules-workbench",
-            ("#schedules-list-pane", "#schedules-detail-pane", "#schedules-inspector-pane"),
+            (
+                "#schedules-list-pane",
+                "#schedules-detail-pane",
+                "#schedules-inspector-pane",
+            ),
             ("#schedules-follow-in-console",),
         ),
         (
             "workflows",
             "#workflows-mode-strip",
             "#workflows-workbench",
-            ("#workflows-list-pane", "#workflows-detail-pane", "#workflows-inspector-pane"),
+            (
+                "#workflows-list-pane",
+                "#workflows-detail-pane",
+                "#workflows-inspector-pane",
+            ),
             ("#workflows-launch-in-console",),
         ),
     ],
@@ -1156,7 +1274,11 @@ async def test_operational_destinations_use_timing_or_procedure_workbench(
             "schedules",
             "#schedules-filter-strip",
             "#schedules-workbench",
-            ("#schedules-list-pane", "#schedules-detail-pane", "#schedules-inspector-pane"),
+            (
+                "#schedules-list-pane",
+                "#schedules-detail-pane",
+                "#schedules-inspector-pane",
+            ),
             ("#schedules-follow-in-console",),
             ("#schedules-empty-state", "#schedules-console-unavailable"),
             "#schedules-detail-pane",
@@ -1165,7 +1287,11 @@ async def test_operational_destinations_use_timing_or_procedure_workbench(
             "workflows",
             "#workflows-mode-strip",
             "#workflows-workbench",
-            ("#workflows-list-pane", "#workflows-detail-pane", "#workflows-inspector-pane"),
+            (
+                "#workflows-list-pane",
+                "#workflows-detail-pane",
+                "#workflows-inspector-pane",
+            ),
             ("#workflows-launch-in-console",),
             ("#workflows-console-unavailable",),
             "#workflows-detail-pane",
@@ -1420,7 +1546,11 @@ async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
             "settings",
             "#settings-category-strip",
             "#settings-workbench",
-            ("#settings-category-pane", "#settings-detail-pane", "#settings-impact-pane"),
+            (
+                "#settings-category-pane",
+                "#settings-detail-pane",
+                "#settings-impact-pane",
+            ),
             ("#settings-open-appearance",),
         ),
     ],
@@ -1460,7 +1590,11 @@ async def test_runtime_and_settings_destinations_use_pane_layouts(
             "settings",
             "#settings-category-strip",
             "#settings-workbench",
-            ("#settings-category-pane", "#settings-detail-pane", "#settings-impact-pane"),
+            (
+                "#settings-category-pane",
+                "#settings-detail-pane",
+                "#settings-impact-pane",
+            ),
             ("#settings-open-appearance",),
             ("#settings-boundary-note",),
             "#settings-impact-pane",
@@ -1577,14 +1711,22 @@ COMPACT_DESTINATION_CONTRACTS = {
         "workbench": "#home-triage-grid",
         "object": "#home-rail",
         "detail": "#home-canvas",
-        "actions": ("#home-primary-action", "#home-open-details", "#home-open-chatbook-details"),
+        "actions": (
+            "#home-primary-action",
+            "#home-open-details",
+            "#home-open-chatbook-details",
+        ),
     },
     "chat": {
         "identity": "#console-workbench-header",
         "workbench": "#console-workspace-grid",
         "object": "#console-left-rail",
         "detail": "#console-session-surface",
-        "actions": ("#console-send-message", "#console-attach-context", "#console-save-chatbook"),
+        "actions": (
+            "#console-send-message",
+            "#console-attach-context",
+            "#console-save-chatbook",
+        ),
     },
     "library": {
         # #library-title / #library-contract-grid / #library-source-browser
@@ -1692,13 +1834,16 @@ COMPACT_DESTINATION_CONTRACTS = {
 
 
 TOP_LEVEL_WORKBENCH_SELECTORS = {
-    route: contract["workbench"] for route, contract in COMPACT_DESTINATION_CONTRACTS.items()
+    route: contract["workbench"]
+    for route, contract in COMPACT_DESTINATION_CONTRACTS.items()
 }
 
 
 @pytest.mark.parametrize("route,contract", COMPACT_DESTINATION_CONTRACTS.items())
 @pytest.mark.asyncio
-async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_size(route, contract):
+async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_size(
+    route, contract
+):
     app = _build_test_app()
     if route == "home":
         host = HomeHarness(app)
@@ -1710,10 +1855,16 @@ async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, contract["workbench"])
         nav = screen.query_one(MainNavigationBar)
-        assert nav.region.y == 0, f"{route}: global nav is not docked at top: {nav.region}"
+        assert nav.region.y == 0, (
+            f"{route}: global nav is not docked at top: {nav.region}"
+        )
         assert nav.region.height <= 3, f"{route}: global nav is too tall: {nav.region}"
-        _assert_visible_in_viewport(nav, height=32, context=f"{route}:global-nav", viewport_width=100)
-        assert list(nav.query(Button)), f"{route}: global nav has no visible destination buttons"
+        _assert_visible_in_viewport(
+            nav, height=32, context=f"{route}:global-nav", viewport_width=100
+        )
+        assert list(nav.query(Button)), (
+            f"{route}: global nav has no visible destination buttons"
+        )
         for required in ("identity", "workbench", "object", "detail"):
             _assert_visible_in_viewport(
                 screen.query_one(contract[required]),
@@ -1731,8 +1882,18 @@ async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_
 
 
 VISIBLE_FOCUS_TARGETS = {
-    "home": {"home-primary-action", "home-open-details", "home-open-in-console", "home-open-chatbook-details"},
-    "chat": {"console-send-message", "console-attach-context", "console-save-chatbook", "console-run-library-rag"},
+    "home": {
+        "home-primary-action",
+        "home-open-details",
+        "home-open-in-console",
+        "home-open-chatbook-details",
+    },
+    "chat": {
+        "console-send-message",
+        "console-attach-context",
+        "console-save-chatbook",
+        "console-run-library-rag",
+    },
     # The retired #library-open-* buttons lived only in the never-mounted
     # #library-source-browser; the always-visible rail rows are the
     # surviving tab-focusable primary actions.
@@ -1749,7 +1910,11 @@ VISIBLE_FOCUS_TARGETS = {
         "artifacts-use-in-console",
     },
     "personas": {"personas-library-new", "personas-attach-to-console"},
-    "watchlists_collections": {"wc-open-watchlists", "wc-attach-to-console", "watchlists-follow-in-console"},
+    "watchlists_collections": {
+        "wc-open-watchlists",
+        "wc-attach-to-console",
+        "watchlists-follow-in-console",
+    },
     "schedules": {"schedules-follow-in-console"},
     "workflows": {"workflows-launch-in-console"},
     # #unified-mcp-action-run is retired with the `UnifiedMCPPanel` embed
@@ -1786,7 +1951,9 @@ async def test_tab_order_reaches_visible_primary_action(route, targets):
             for target in targets
             if list(screen.query(f"#{target}"))
         ]
-        enabled_targets = {button.id for button in target_buttons if button.id and not button.disabled}
+        enabled_targets = {
+            button.id for button in target_buttons if button.id and not button.disabled
+        }
         if not enabled_targets:
             _assert_any_action_visible(
                 screen,
@@ -1807,4 +1974,6 @@ async def test_tab_order_reaches_visible_primary_action(route, targets):
                     viewport_width=140,
                 )
                 return
-        pytest.fail(f"{route} did not focus a visible primary action from {sorted(enabled_targets)}")
+        pytest.fail(
+            f"{route} did not focus a visible primary action from {sorted(enabled_targets)}"
+        )

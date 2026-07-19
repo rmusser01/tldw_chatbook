@@ -4,7 +4,8 @@ from tldw_chatbook.Library.library_export_scope import ExportScope
 
 def test_toggle_add_remove():
     s = RowSelection("media")
-    s.toggle("1"); s.toggle("2")
+    s.toggle("1")
+    s.toggle("2")
     assert s.is_selected("1") and s.count == 2
     s.toggle("1")
     assert not s.is_selected("1") and s.count == 1
@@ -14,7 +15,7 @@ def test_toggle_add_remove():
 
 def test_select_all_and_clear():
     s = RowSelection("notes")
-    s.select_all(["a", "b", "", "c"])   # empties skipped
+    s.select_all(["a", "b", "", "c"])  # empties skipped
     assert s.ids == frozenset({"a", "b", "c"})
     s.clear()
     assert s.count == 0
@@ -23,7 +24,7 @@ def test_select_all_and_clear():
 def test_reconcile_drops_absent_ids():
     s = RowSelection("conversations")
     s.select_all(["a", "b", "c"])
-    s.reconcile(["b", "c", "d"])        # 'a' no longer rendered
+    s.reconcile(["b", "c", "d"])  # 'a' no longer rendered
     assert s.ids == frozenset({"b", "c"})
 
 

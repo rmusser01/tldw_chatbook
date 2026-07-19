@@ -81,9 +81,17 @@ class OutputsPanel(ScrollableContainer):
                 yield Label("Output Templates")
                 with Horizontal():
                     yield Input(placeholder="Query", id="outputs-template-query")
-                    yield Input("50", id="outputs-template-limit", validators=[Number()])
-                    yield Input("0", id="outputs-template-offset", validators=[Number()])
-                yield Input(placeholder="Template ID", id="outputs-template-id", validators=[Number()])
+                    yield Input(
+                        "50", id="outputs-template-limit", validators=[Number()]
+                    )
+                    yield Input(
+                        "0", id="outputs-template-offset", validators=[Number()]
+                    )
+                yield Input(
+                    placeholder="Template ID",
+                    id="outputs-template-id",
+                    validators=[Number()],
+                )
                 yield Input(placeholder="Template name", id="outputs-template-name")
                 template_type = Select(
                     [
@@ -103,20 +111,33 @@ class OutputsPanel(ScrollableContainer):
                 )
                 template_format.value = "md"
                 yield template_format
-                yield Input(placeholder="Description", id="outputs-template-description")
+                yield Input(
+                    placeholder="Description", id="outputs-template-description"
+                )
                 yield Checkbox("Default template", id="outputs-template-default")
                 yield TextArea("", id="outputs-template-body")
                 with Horizontal(classes="outputs-actions"):
                     yield Button("List Templates", id="outputs-list-templates-btn")
-                    yield Button("Create Template", variant="primary", id="outputs-create-template-btn")
+                    yield Button(
+                        "Create Template",
+                        variant="primary",
+                        id="outputs-create-template-btn",
+                    )
                     yield Button("Get Template", id="outputs-get-template-btn")
                     yield Button("Update Template", id="outputs-update-template-btn")
                     yield Button("Delete Template", id="outputs-delete-template-btn")
 
             with Container(classes="outputs-section"):
                 yield Label("Template Preview")
-                yield Input(placeholder="Preview template ID", id="outputs-preview-template-id", validators=[Number()])
-                yield Input(placeholder="Preview item IDs (comma separated)", id="outputs-preview-item-ids")
+                yield Input(
+                    placeholder="Preview template ID",
+                    id="outputs-preview-template-id",
+                    validators=[Number()],
+                )
+                yield Input(
+                    placeholder="Preview item IDs (comma separated)",
+                    id="outputs-preview-item-ids",
+                )
                 yield Input("50", id="outputs-preview-limit", validators=[Number()])
                 with Horizontal(classes="outputs-actions"):
                     yield Button("Preview Template", id="outputs-preview-template-btn")
@@ -126,10 +147,20 @@ class OutputsPanel(ScrollableContainer):
                 with Horizontal():
                     yield Input("1", id="outputs-artifact-page", validators=[Number()])
                     yield Input("50", id="outputs-artifact-size", validators=[Number()])
-                yield Input(placeholder="Run ID", id="outputs-artifact-run-id", validators=[Number()])
+                yield Input(
+                    placeholder="Run ID",
+                    id="outputs-artifact-run-id",
+                    validators=[Number()],
+                )
                 yield Input(placeholder="Type filter", id="outputs-artifact-type")
-                yield Input(placeholder="Workspace tag", id="outputs-artifact-workspace-tag")
-                yield Input(placeholder="Output ID", id="outputs-artifact-id", validators=[Number()])
+                yield Input(
+                    placeholder="Workspace tag", id="outputs-artifact-workspace-tag"
+                )
+                yield Input(
+                    placeholder="Output ID",
+                    id="outputs-artifact-id",
+                    validators=[Number()],
+                )
                 with Horizontal(classes="outputs-actions"):
                     yield Button("List Outputs", id="outputs-list-artifacts-btn")
                     yield Button("List Deleted", id="outputs-list-deleted-btn")
@@ -137,25 +168,50 @@ class OutputsPanel(ScrollableContainer):
 
             with Container(classes="outputs-section"):
                 yield Label("Render Output")
-                yield Input(placeholder="Create template ID", id="outputs-create-template-id", validators=[Number()])
-                yield Input(placeholder="Create item IDs (comma separated)", id="outputs-create-item-ids")
+                yield Input(
+                    placeholder="Create template ID",
+                    id="outputs-create-template-id",
+                    validators=[Number()],
+                )
+                yield Input(
+                    placeholder="Create item IDs (comma separated)",
+                    id="outputs-create-item-ids",
+                )
                 yield Input(placeholder="Title", id="outputs-create-title")
-                yield Input(placeholder="Workspace tag", id="outputs-create-workspace-tag")
+                yield Input(
+                    placeholder="Workspace tag", id="outputs-create-workspace-tag"
+                )
                 yield Checkbox("Ingest to media DB", id="outputs-create-ingest")
                 with Horizontal(classes="outputs-actions"):
-                    yield Button("Create Output", variant="primary", id="outputs-create-output-btn")
+                    yield Button(
+                        "Create Output",
+                        variant="primary",
+                        id="outputs-create-output-btn",
+                    )
 
             with Container(classes="outputs-section"):
                 yield Label("Mutate Output")
-                yield Input(placeholder="Update output ID", id="outputs-update-output-id", validators=[Number()])
+                yield Input(
+                    placeholder="Update output ID",
+                    id="outputs-update-output-id",
+                    validators=[Number()],
+                )
                 yield Input(placeholder="Update title", id="outputs-update-title")
                 update_format = Select(
-                    [("Keep Format", Select.BLANK), ("Markdown", "md"), ("HTML", "html")],
+                    [
+                        ("Keep Format", Select.BLANK),
+                        ("Markdown", "md"),
+                        ("HTML", "html"),
+                    ],
                     id="outputs-update-format",
                 )
                 update_format.value = Select.BLANK
                 yield update_format
-                yield Input(placeholder="Delete output ID", id="outputs-delete-output-id", validators=[Number()])
+                yield Input(
+                    placeholder="Delete output ID",
+                    id="outputs-delete-output-id",
+                    validators=[Number()],
+                )
                 yield Checkbox("Hard delete", id="outputs-delete-hard")
                 yield Checkbox("Delete file", id="outputs-delete-file")
                 with Horizontal(classes="outputs-actions"):
@@ -180,7 +236,9 @@ class OutputsPanel(ScrollableContainer):
                 or "local"
             )
         normalized_backend = str(runtime_backend or "local").strip().lower()
-        return normalized_backend if normalized_backend in {"local", "server"} else "local"
+        return (
+            normalized_backend if normalized_backend in {"local", "server"} else "local"
+        )
 
     def _show_server_ui(self, enabled: bool) -> None:
         self.query_one("#outputs-disabled", Static).display = not enabled
@@ -239,9 +297,13 @@ class OutputsPanel(ScrollableContainer):
         self._show_server_ui(enabled)
         self._set_controls_disabled(not enabled)
         if self.runtime_backend != "server":
-            self.query_one("#outputs-status", Static).update("Server Outputs require server mode.")
+            self.query_one("#outputs-status", Static).update(
+                "Server Outputs require server mode."
+            )
         elif self.scope_service is None:
-            self.query_one("#outputs-status", Static).update("Server Outputs service is unavailable.")
+            self.query_one("#outputs-status", Static).update(
+                "Server Outputs service is unavailable."
+            )
 
     def on_mount(self) -> None:
         self.run_worker(self.refresh_for_mode(), exclusive=True)
@@ -262,7 +324,9 @@ class OutputsPanel(ScrollableContainer):
             return None
         return self._clean_string(value)
 
-    def _int_input(self, selector: str, *, required: bool = True, default: int | None = None) -> int | None:
+    def _int_input(
+        self, selector: str, *, required: bool = True, default: int | None = None
+    ) -> int | None:
         raw_value = self._input_value(selector)
         if not raw_value:
             if required:
@@ -281,11 +345,17 @@ class OutputsPanel(ScrollableContainer):
                 values.append(int(cleaned))
         return values
 
-    def _render_payload(self, title: str, payload: Mapping[str, Any] | list[Any]) -> None:
+    def _render_payload(
+        self, title: str, payload: Mapping[str, Any] | list[Any]
+    ) -> None:
         formatted_payload = json.dumps(payload, indent=2, sort_keys=True, default=str)
-        self.query_one("#outputs-status", Static).update(f"{title}\n{formatted_payload}")
+        self.query_one("#outputs-status", Static).update(
+            f"{title}\n{formatted_payload}"
+        )
 
-    async def _run_operation(self, status_title: str, operation_name: str, **kwargs: Any) -> None:
+    async def _run_operation(
+        self, status_title: str, operation_name: str, **kwargs: Any
+    ) -> None:
         self.runtime_backend = self._current_runtime_backend()
         if self.runtime_backend != "server" or self.scope_service is None:
             self.notify("Server Outputs require server mode.", severity="warning")
@@ -295,7 +365,9 @@ class OutputsPanel(ScrollableContainer):
             result = await self._maybe_await(operation(mode="server", **kwargs))
             self._render_payload(status_title, result if result is not None else {})
         except Exception as exc:
-            logger.opt(exception=True).error(f"Server Outputs operation failed: {operation_name}: {exc}")
+            logger.opt(exception=True).error(
+                f"Server Outputs operation failed: {operation_name}: {exc}"
+            )
             self.query_one("#outputs-status", Static).update(f"Error: {exc}")
             self.notify(f"Server Outputs operation failed: {exc}", severity="error")
 
@@ -309,8 +381,12 @@ class OutputsPanel(ScrollableContainer):
             "Output Templates",
             "list_output_templates",
             q=self._input_value("#outputs-template-query") or None,
-            limit=self._int_input("#outputs-template-limit", default=50, required=False) or 50,
-            offset=self._int_input("#outputs-template-offset", default=0, required=False) or 0,
+            limit=self._int_input("#outputs-template-limit", default=50, required=False)
+            or 50,
+            offset=self._int_input(
+                "#outputs-template-offset", default=0, required=False
+            )
+            or 0,
         )
 
     async def create_output_template(self) -> None:
@@ -358,13 +434,18 @@ class OutputsPanel(ScrollableContainer):
             "preview_output_template",
             template_id=self._int_input("#outputs-preview-template-id"),
             item_ids=self._csv_ints("#outputs-preview-item-ids"),
-            limit=self._int_input("#outputs-preview-limit", default=50, required=False) or 50,
+            limit=self._int_input("#outputs-preview-limit", default=50, required=False)
+            or 50,
         )
 
     async def list_outputs(self) -> None:
         kwargs: dict[str, Any] = {
-            "page": self._int_input("#outputs-artifact-page", default=1, required=False) or 1,
-            "size": self._int_input("#outputs-artifact-size", default=50, required=False) or 50,
+            "page": self._int_input("#outputs-artifact-page", default=1, required=False)
+            or 1,
+            "size": self._int_input(
+                "#outputs-artifact-size", default=50, required=False
+            )
+            or 50,
         }
         run_id = self._int_input("#outputs-artifact-run-id", required=False)
         if run_id is not None:
@@ -381,8 +462,10 @@ class OutputsPanel(ScrollableContainer):
         await self._run_operation(
             "Deleted Output Artifacts",
             "list_deleted_outputs",
-            page=self._int_input("#outputs-artifact-page", default=1, required=False) or 1,
-            size=self._int_input("#outputs-artifact-size", default=50, required=False) or 50,
+            page=self._int_input("#outputs-artifact-page", default=1, required=False)
+            or 1,
+            size=self._int_input("#outputs-artifact-size", default=50, required=False)
+            or 50,
         )
 
     async def get_output(self) -> None:

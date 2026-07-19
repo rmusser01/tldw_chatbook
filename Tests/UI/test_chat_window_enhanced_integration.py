@@ -64,13 +64,19 @@ def chat_window_settings(monkeypatch):
     providers = {"openai": ["gpt-4.1"]}
 
     monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", get_setting)
-    monkeypatch.setattr("tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", get_setting)
-    monkeypatch.setattr("tldw_chatbook.Widgets.compact_model_bar.get_cli_setting", get_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", get_setting
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.compact_model_bar.get_cli_setting", get_setting
+    )
     monkeypatch.setattr(
         "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
         lambda: providers,
     )
-    monkeypatch.setattr("tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_setting", get_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_setting", get_setting
+    )
     monkeypatch.setattr(
         "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_providers_and_models",
         lambda: providers,
@@ -184,7 +190,9 @@ class TestChatWindowEnhancedIntegration:
             assert _textarea_text(chat_input) == ""
 
     @pytest.mark.asyncio
-    async def test_file_attachment_workflow_updates_session_state(self, chat_app, mock_chat_host):
+    async def test_file_attachment_workflow_updates_session_state(
+        self, chat_app, mock_chat_host
+    ):
         """Processed attachments update both the indicator and session attachment list."""
         async with chat_app.run_test() as pilot:
             chat_window = pilot.app.query_one(ChatWindowEnhanced)
@@ -201,7 +209,10 @@ class TestChatWindowEnhancedIntegration:
             chat_window.attachment_handler._handle_processed_file(processed_file)
             await pilot.pause(0.05)
 
-            assert mock_chat_host.chat_attached_files["default"][0]["path"] == "/tmp/test-brief.txt"
+            assert (
+                mock_chat_host.chat_attached_files["default"][0]["path"]
+                == "/tmp/test-brief.txt"
+            )
             assert "test-brief.txt" in _text(indicator)
 
     @pytest.mark.asyncio
@@ -213,7 +224,9 @@ class TestChatWindowEnhancedIntegration:
 
             chat_window.attachment_handler._handle_processed_file(object())
 
-            mock_chat_host.notify.assert_called_with("Invalid file data", severity="error")
+            mock_chat_host.notify.assert_called_with(
+                "Invalid file data", severity="error"
+            )
 
     @pytest.mark.asyncio
     async def test_cached_widget_references_are_reused(self, chat_app):
@@ -221,9 +234,15 @@ class TestChatWindowEnhancedIntegration:
         async with chat_app.run_test() as pilot:
             chat_window = pilot.app.query_one(ChatWindowEnhanced)
 
-            assert chat_window._get_send_button() is pilot.app.query_one("#send-stop-chat", Button)
-            assert chat_window._get_chat_input() is pilot.app.query_one("#chat-input", TextArea)
-            assert chat_window._get_task_cards() is pilot.app.query_one("#chat-task-surface", ChatTaskCards)
+            assert chat_window._get_send_button() is pilot.app.query_one(
+                "#send-stop-chat", Button
+            )
+            assert chat_window._get_chat_input() is pilot.app.query_one(
+                "#chat-input", TextArea
+            )
+            assert chat_window._get_task_cards() is pilot.app.query_one(
+                "#chat-task-surface", ChatTaskCards
+            )
 
 
 class TestChatWindowEnhancedAccessibility:

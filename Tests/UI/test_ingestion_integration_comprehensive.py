@@ -36,7 +36,9 @@ async def test_rebuilt_ingest_window_mounts_current_panels(
     mock_app_instance: MagicMock,
     widget_pilot,
 ) -> None:
-    async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+    async with await widget_pilot(
+        MediaIngestWindowRebuilt, app_instance=mock_app_instance
+    ) as pilot:
         window = pilot.app.test_widget
 
         assert isinstance(window.local_panel, LocalIngestionPanel)
@@ -50,14 +52,18 @@ async def test_processing_messages_update_window_state(
     mock_app_instance: MagicMock,
     widget_pilot,
 ) -> None:
-    async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+    async with await widget_pilot(
+        MediaIngestWindowRebuilt, app_instance=mock_app_instance
+    ) as pilot:
         window = pilot.app.test_widget
 
         window.post_message(ProcessingStarted(2))
         await pilot.pause(0.1)
         assert window.is_processing is True
 
-        window.post_message(ProcessingComplete([{"file": "demo.txt", "status": "success"}]))
+        window.post_message(
+            ProcessingComplete([{"file": "demo.txt", "status": "success"}])
+        )
         await pilot.pause(0.1)
         assert window.is_processing is False
 
@@ -71,7 +77,9 @@ async def test_local_processing_handles_multiple_selected_files(
     mock_app_instance: MagicMock,
     widget_pilot,
 ) -> None:
-    async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+    async with await widget_pilot(
+        MediaIngestWindowRebuilt, app_instance=mock_app_instance
+    ) as pilot:
         window = pilot.app.test_widget
         local_panel = window.local_panel
         local_panel.selected_files = [Path("demo-a.txt"), Path("demo-b.txt")]

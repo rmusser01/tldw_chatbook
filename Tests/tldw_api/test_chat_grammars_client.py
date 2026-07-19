@@ -55,7 +55,9 @@ async def test_chat_grammars_client_routes_crud_and_soft_delete(monkeypatch):
     )
     listed = await client.list_chat_grammars(include_archived=True, limit=25, offset=5)
     fetched = await client.get_chat_grammar("grammar-1", include_archived=True)
-    updated = await client.update_chat_grammar("grammar-1", ChatGrammarUpdate(name="Strict JSON", version=1))
+    updated = await client.update_chat_grammar(
+        "grammar-1", ChatGrammarUpdate(name="Strict JSON", version=1)
+    )
     deleted = await client.delete_chat_grammar("grammar-1", hard_delete=True)
 
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/grammars")
@@ -73,8 +75,14 @@ async def test_chat_grammars_client_routes_crud_and_soft_delete(monkeypatch):
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/grammars/grammar-1")
     assert mocked.await_args_list[2].kwargs["params"] == {"include_archived": True}
     assert mocked.await_args_list[3].args[:2] == ("PATCH", "/api/v1/grammars/grammar-1")
-    assert mocked.await_args_list[3].kwargs["json_data"] == {"version": 1, "name": "Strict JSON"}
-    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/grammars/grammar-1")
+    assert mocked.await_args_list[3].kwargs["json_data"] == {
+        "version": 1,
+        "name": "Strict JSON",
+    }
+    assert mocked.await_args_list[4].args[:2] == (
+        "DELETE",
+        "/api/v1/grammars/grammar-1",
+    )
     assert mocked.await_args_list[4].kwargs["params"] == {"hard_delete": True}
 
     assert isinstance(created, ChatGrammarResponse)

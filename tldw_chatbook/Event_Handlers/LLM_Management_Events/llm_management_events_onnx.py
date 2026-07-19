@@ -1,6 +1,7 @@
 # /tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events_onnx.py
 #
 from __future__ import annotations
+
 #
 # Imports
 import functools
@@ -11,14 +12,17 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional
+
 #
 # 3rd-Party Imports
 from textual.css.query import QueryError
 from textual.widgets import Input, RichLog, TextArea, Button
+
 #
 # Local Imports
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
+
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 # Import shared helpers
@@ -28,11 +32,16 @@ from .llm_management_events import _make_path_update_callback
 #
 # --- Worker-specific functions ---
 
-def _set_onnx_process_on_app(app_instance: "TldwCli", process: Optional[subprocess.Popen]):
+
+def _set_onnx_process_on_app(
+    app_instance: "TldwCli", process: Optional[subprocess.Popen]
+):
     """Helper to set/clear the ONNX process on the app instance from the worker thread."""
     app_instance.onnx_server_process = process
     if process and process.pid:
-        app_instance.loguru_logger.info(f"Stored ONNX process PID {process.pid} on app instance.")
+        app_instance.loguru_logger.info(
+            f"Stored ONNX process PID {process.pid} on app instance."
+        )
     else:
         app_instance.loguru_logger.info("Cleared ONNX process from app instance.")
 
@@ -43,15 +52,19 @@ def _update_onnx_log(app_instance: "TldwCli", message: str) -> None:
         log_widget = app_instance.query_one("#onnx-log-output", RichLog)
         log_widget.write(message)
     except QueryError:
-        app_instance.loguru_logger.error("Failed to query #onnx-log-output to write message.")
+        app_instance.loguru_logger.error(
+            "Failed to query #onnx-log-output to write message."
+        )
     except Exception as e:
-        app_instance.loguru_logger.opt(exception=True).error(f"Error writing to ONNX log: {e}")
+        app_instance.loguru_logger.opt(exception=True).error(
+            f"Error writing to ONNX log: {e}"
+        )
 
 
 def run_onnx_server_worker(app_instance: "TldwCli", command: List[str]) -> str | None:
     """Background worker to run a generic ONNX server script and stream its output."""
     logger = getattr(app_instance, "loguru_logger", _loguru_fallback_logger)
-    quoted_command = ' '.join(shlex.quote(c) for c in command)
+    quoted_command = " ".join(shlex.quote(c) for c in command)
     logger.info(f"ONNX WORKER starting with command: {quoted_command}")
 
     process: Optional[subprocess.Popen] = None
@@ -68,13 +81,15 @@ def run_onnx_server_worker(app_instance: "TldwCli", command: List[str]) -> str |
             universal_newlines=True,
             bufsize=1,
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-            env=env
+            env=env,
         )
         pid_str = str(process.pid) if process and process.pid else "UnknownPID"
         logger.info(f"ONNX WORKER: Subprocess launched, PID: {pid_str}")
 
         app_instance.call_from_thread(_set_onnx_process_on_app, app_instance, process)
-        app_instance.call_from_thread(_update_onnx_log, app_instance, f"[PID:{pid_str}] ONNX server starting...\n")
+        app_instance.call_from_thread(
+            _update_onnx_log, app_instance, f"[PID:{pid_str}] ONNX server starting...\n"
+        )
 
         if process.stdout:
             for line in iter(process.stdout.readline, ""):
@@ -83,25 +98,37 @@ def run_onnx_server_worker(app_instance: "TldwCli", command: List[str]) -> str |
 
         process.wait()
         exit_code = process.returncode if process.returncode is not None else -1
-        final_status_message = f"ONNX server (PID:{pid_str}) exited with code: {exit_code}."
+        final_status_message = (
+            f"ONNX server (PID:{pid_str}) exited with code: {exit_code}."
+        )
         logger.info(final_status_message)
-        app_instance.call_from_thread(_update_onnx_log, app_instance, f"\n--- {final_status_message} ---\n")
+        app_instance.call_from_thread(
+            _update_onnx_log, app_instance, f"\n--- {final_status_message} ---\n"
+        )
         return final_status_message
     except FileNotFoundError:
         msg = f"ERROR: Python interpreter or script not found. Command: {command[0]}"
         logger.error(msg)
-        app_instance.call_from_thread(_update_onnx_log, app_instance, f"[bold red]{msg}[/]\n")
+        app_instance.call_from_thread(
+            _update_onnx_log, app_instance, f"[bold red]{msg}[/]\n"
+        )
         raise
     except Exception as err:
         msg = f"CRITICAL ERROR in ONNX worker: {err} (Command: {quoted_command})"
         logger.opt(exception=True).error(msg)
-        app_instance.call_from_thread(_update_onnx_log, app_instance, f"[bold red]{msg}[/]\n")
+        app_instance.call_from_thread(
+            _update_onnx_log, app_instance, f"[bold red]{msg}[/]\n"
+        )
         raise
     finally:
-        logger.info(f"ONNX WORKER: Worker function for command '{quoted_command}' finishing.")
+        logger.info(
+            f"ONNX WORKER: Worker function for command '{quoted_command}' finishing."
+        )
         app_instance.call_from_thread(_set_onnx_process_on_app, app_instance, None)
         if process and process.poll() is None:
-            logger.warning(f"ONNX WORKER (PID:{pid_str}): Process still running in finally. Terminating.")
+            logger.warning(
+                f"ONNX WORKER (PID:{pid_str}): Process still running in finally. Terminating."
+            )
             process.terminate()
             try:
                 process.wait(timeout=2)
@@ -111,46 +138,57 @@ def run_onnx_server_worker(app_instance: "TldwCli", command: List[str]) -> str |
 
 # --- Event Handlers ---
 
-async def handle_onnx_browse_python_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+
+async def handle_onnx_browse_python_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     """Handles browse for Python executable for ONNX server."""
     await app.push_screen(
         FileOpen(
             location=str(Path.home()),
             title="Select Python executable",
-            context="onnx_models"
+            context="onnx_models",
         ),
-        callback=_make_path_update_callback(app, "onnx-python-path")
+        callback=_make_path_update_callback(app, "onnx-python-path"),
     )
 
 
-async def handle_onnx_browse_script_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_onnx_browse_script_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     """Handles browse for ONNX server script."""
-    filters = Filters(("Python Scripts (*.py)", lambda p: p.suffix.lower() == ".py"),
-                      ("All files (*.*)", lambda p: True))
+    filters = Filters(
+        ("Python Scripts (*.py)", lambda p: p.suffix.lower() == ".py"),
+        ("All files (*.*)", lambda p: True),
+    )
     await app.push_screen(
         FileOpen(
             location=str(Path.home()),
             title="Select ONNX server script",
             filters=filters,
-            context="onnx_models"
+            context="onnx_models",
         ),
-        callback=_make_path_update_callback(app, "onnx-script-path")
+        callback=_make_path_update_callback(app, "onnx-script-path"),
     )
 
 
-async def handle_onnx_browse_model_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_onnx_browse_model_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     """Handles browse for ONNX model file or directory."""
     await app.push_screen(
         FileOpen(
             location=str(Path.home()),
             title="Select ONNX Model Directory (select any file inside)",
-            context="onnx_models"
+            context="onnx_models",
         ),
-        callback=_make_path_update_callback(app, "onnx-model-path", is_directory=True)
+        callback=_make_path_update_callback(app, "onnx-model-path", is_directory=True),
     )
 
 
-async def handle_start_onnx_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_start_onnx_server_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     """Handles the 'Start ONNX Server' button press."""
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to start ONNX server.")
@@ -163,7 +201,9 @@ async def handle_start_onnx_server_button_pressed(app: "TldwCli", event: Button.
         model_path = app.query_one("#onnx-model-path", Input).value.strip()
         host = app.query_one("#onnx-host", Input).value.strip() or "127.0.0.1"
         port = app.query_one("#onnx-port", Input).value.strip() or "8004"
-        additional_args_str = app.query_one("#onnx-additional-args", TextArea).text.strip()
+        additional_args_str = app.query_one(
+            "#onnx-additional-args", TextArea
+        ).text.strip()
         log_output_widget = app.query_one("#onnx-log-output", RichLog)
 
         log_output_widget.clear()
@@ -179,12 +219,18 @@ async def handle_start_onnx_server_button_pressed(app: "TldwCli", event: Button.
             return
 
         command = [python_path, script_path]
-        if model_path: command.extend(["--model", model_path])
-        if host: command.extend(["--host", host])
-        if port: command.extend(["--port", port])
-        if additional_args_str: command.extend(shlex.split(additional_args_str))
+        if model_path:
+            command.extend(["--model", model_path])
+        if host:
+            command.extend(["--host", host])
+        if port:
+            command.extend(["--port", port])
+        if additional_args_str:
+            command.extend(shlex.split(additional_args_str))
 
-        log_output_widget.write(f"Executing: {' '.join(shlex.quote(c) for c in command)}\n")
+        log_output_widget.write(
+            f"Executing: {' '.join(shlex.quote(c) for c in command)}\n"
+        )
 
         worker_callable = functools.partial(run_onnx_server_worker, app, command)
         app.run_worker(
@@ -192,7 +238,7 @@ async def handle_start_onnx_server_button_pressed(app: "TldwCli", event: Button.
             group="onnx_server",
             description="Running ONNX server process",
             exclusive=True,
-            thread=True
+            thread=True,
         )
         app.notify("ONNX server starting…")
 
@@ -206,7 +252,9 @@ async def handle_start_onnx_server_button_pressed(app: "TldwCli", event: Button.
         app.notify(f"An unexpected error occurred: {e}", severity="error")
 
 
-async def handle_stop_onnx_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_stop_onnx_server_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     """Handles the 'Stop ONNX Server' button press."""
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to stop ONNX server.")
@@ -225,7 +273,9 @@ async def handle_stop_onnx_server_button_pressed(app: "TldwCli", event: Button.P
                 log_output_widget.write(f"ONNX server (PID: {pid}) stopped.")
                 app.notify("ONNX server stopped.")
             except subprocess.TimeoutExpired:
-                log_output_widget.write(f"ONNX server (PID: {pid}) did not stop gracefully. Killing...")
+                log_output_widget.write(
+                    f"ONNX server (PID: {pid}) did not stop gracefully. Killing..."
+                )
                 process_to_stop.kill()
                 process_to_stop.wait()
                 app.notify("ONNX server killed.", severity="warning")
@@ -233,7 +283,7 @@ async def handle_stop_onnx_server_button_pressed(app: "TldwCli", event: Button.P
             log_output_widget.write("ONNX server is not running.")
             app.notify("ONNX server is not running.", severity="warning")
 
-        if hasattr(app, 'onnx_server_process'):
+        if hasattr(app, "onnx_server_process"):
             app.onnx_server_process = None
 
     except QueryError as e:
@@ -244,6 +294,7 @@ async def handle_stop_onnx_server_button_pressed(app: "TldwCli", event: Button.P
         if log_output_widget:
             log_output_widget.write(f"An unexpected error occurred: {e}")
         app.notify(f"An unexpected error occurred: {e}", severity="error")
+
 
 # --- Button Handler Map ---
 ONNX_BUTTON_HANDLERS = {

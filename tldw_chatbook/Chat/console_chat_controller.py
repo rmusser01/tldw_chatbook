@@ -180,13 +180,20 @@ def describe_stream_failure(exc: BaseException) -> str:
     """
     detail = str(exc).strip()
     response = getattr(exc, "response", None)
-    status_code = getattr(response, "status_code", None) or getattr(exc, "status_code", None)
+    status_code = getattr(response, "status_code", None) or getattr(
+        exc, "status_code", None
+    )
     exc_name = type(exc).__name__
     lowered_name = exc_name.lower()
 
-    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) or "timeout" in lowered_name:
+    if (
+        isinstance(exc, (asyncio.TimeoutError, TimeoutError))
+        or "timeout" in lowered_name
+    ):
         summary = "request timed out waiting for the provider"
-    elif isinstance(exc, ConnectionRefusedError) or "connectrefused" in lowered_name.replace("_", ""):
+    elif isinstance(
+        exc, ConnectionRefusedError
+    ) or "connectrefused" in lowered_name.replace("_", ""):
         summary = "connection refused - is the provider server running?"
     elif isinstance(exc, ConnectionError) or "connect" in lowered_name:
         summary = "could not connect to the provider"
@@ -376,10 +383,16 @@ class ConsoleChatController:
         if self.store.workspace_context.has_policy_blocks:
             return self._block(session.id, self.store.workspace_context.recovery_copy)
 
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."))
-        resolution = await self.provider_gateway.resolve_for_send(self._provider_selection())
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+        )
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection()
+        )
         if not getattr(resolution, "ready", False):
-            visible_copy = self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
+            visible_copy = self._blocked_visible_copy(
+                getattr(resolution, "visible_copy", "")
+            )
             return self._block(session.id, visible_copy)
 
         self._maybe_auto_title_session(session, clean_draft)
@@ -402,10 +415,14 @@ class ConsoleChatController:
         if pendings:
             self.store.clear_pending_attachments(session.id)
         provider_messages = self._provider_messages_for_session(session.id)
-        provider_messages, refuse = await self._apply_skill_substitution(provider_messages)
+        provider_messages, refuse = await self._apply_skill_substitution(
+            provider_messages
+        )
         if refuse is not None:
             return self._block(session.id, refuse)
-        provider_messages = await self._apply_chat_dictionaries(provider_messages, session.id)
+        provider_messages = await self._apply_chat_dictionaries(
+            provider_messages, session.id
+        )
         # The accepted-hook fires only once the turn is confirmed to
         # actually proceed (Qodo finding 3, PR #636 bot review): it used to
         # fire right after the USER row was appended, BEFORE this skill
@@ -448,7 +465,9 @@ class ConsoleChatController:
         self._clear_terminal_run_state()
         return session
 
-    def _maybe_auto_title_session(self, session: ConsoleChatSession, draft: str) -> None:
+    def _maybe_auto_title_session(
+        self, session: ConsoleChatSession, draft: str
+    ) -> None:
         """Title a default-named session from its first accepted message."""
         if session.persisted_conversation_id is not None:
             return
@@ -690,7 +709,8 @@ class ConsoleChatController:
                     for name in unique_names:
                         decisions.setdefault(name, "deny")
                     self._record_cancelled_approval_decisions(
-                        cancelled_names, call_by_name,
+                        cancelled_names,
+                        call_by_name,
                     )
                     break
                 if time.monotonic() >= deadline:
@@ -757,8 +777,10 @@ class ConsoleChatController:
                 continue
             try:
                 record(
-                    call.server_key, call.tool_name,
-                    decision="denied", initiator="agent",
+                    call.server_key,
+                    call.tool_name,
+                    decision="denied",
+                    initiator="agent",
                     error="run stopped while approval pending",
                 )
             except Exception:  # noqa: BLE001 -- best-effort audit trail only
@@ -778,14 +800,22 @@ class ConsoleChatController:
             except Exception:  # noqa: BLE001 -- fail open to the documented default
                 pass
         try:
-            return float(get_cli_setting("mcp", "approval_timeout_seconds", _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS))
+            return float(
+                get_cli_setting(
+                    "mcp",
+                    "approval_timeout_seconds",
+                    _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS,
+                )
+            )
         except (TypeError, ValueError):
             return _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS
 
     # -- MCP provider registration (task-6) ----------------------------------
 
     def _publish_mcp_inspector_counts(
-        self, tool_count: int | None, not_connected_count: int | None,
+        self,
+        tool_count: int | None,
+        not_connected_count: int | None,
     ) -> None:
         """Publish this run's MCP catalog counts for the inspector's "MCP" row.
 
@@ -818,7 +848,9 @@ class ConsoleChatController:
 
     async def _compose_mcp_provider(
         self,
-    ) -> tuple[MCPToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None]:
+    ) -> tuple[
+        MCPToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
+    ]:
         """Build + compose THIS run's MCPToolProvider on the running main loop.
 
         MUST be awaited from an async caller with the real Textual main
@@ -855,7 +887,8 @@ class ConsoleChatController:
             kill_switch = service.get_kill_switch()
         except Exception:  # noqa: BLE001 -- fail closed to "no MCP this run"
             logger.opt(exception=True).warning(
-                "ConsoleChatController: get_kill_switch failed; skipping MCP this run")
+                "ConsoleChatController: get_kill_switch failed; skipping MCP this run"
+            )
             self._publish_mcp_inspector_counts(None, None)
             return None, None
         if kill_switch:
@@ -870,7 +903,8 @@ class ConsoleChatController:
             await provider.compose_catalog()
         except Exception:  # noqa: BLE001 -- a composition failure must not abort the send
             logger.opt(exception=True).warning(
-                "ConsoleChatController: MCP compose_catalog failed; skipping MCP this run")
+                "ConsoleChatController: MCP compose_catalog failed; skipping MCP this run"
+            )
             self._publish_mcp_inspector_counts(None, None)
             return None, None
         catalog = provider.list_catalog()
@@ -934,7 +968,10 @@ class ConsoleChatController:
             assistant_message_id,
             visible_copy="Response stopped.",
         )
-        if self._active_stream_task is not None and self._active_stream_task is not asyncio.current_task():
+        if (
+            self._active_stream_task is not None
+            and self._active_stream_task is not asyncio.current_task()
+        ):
             self._active_stream_task.cancel()
         return True
 
@@ -973,7 +1010,10 @@ class ConsoleChatController:
         except KeyError:
             return None
         for message in reversed(messages):
-            if message.role is ConsoleMessageRole.ASSISTANT and message.status == "streaming":
+            if (
+                message.role is ConsoleMessageRole.ASSISTANT
+                and message.status == "streaming"
+            ):
                 return message.id
         return None
 
@@ -996,9 +1036,13 @@ class ConsoleChatController:
             return self._block(session_id, "Only failed messages can be retried.")
 
         self._set_run_state(ConsoleRunState.retrying("Retrying failed response."))
-        resolution = await self.provider_gateway.resolve_for_send(self._provider_selection())
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection()
+        )
         if not getattr(resolution, "ready", False):
-            visible_copy = self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
+            visible_copy = self._blocked_visible_copy(
+                getattr(resolution, "visible_copy", "")
+            )
             return self._block(session_id, visible_copy)
 
         provider_messages = self._provider_messages_for_session(
@@ -1006,10 +1050,14 @@ class ConsoleChatController:
             before_message_id=message_id,
         )
         self._ensure_user_continuation_instruction(provider_messages)
-        provider_messages, refuse = await self._apply_skill_substitution(provider_messages)
+        provider_messages, refuse = await self._apply_skill_substitution(
+            provider_messages
+        )
         if refuse is not None:
             return self._block(session_id, refuse)
-        provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
+        provider_messages = await self._apply_chat_dictionaries(
+            provider_messages, session_id
+        )
         return await self._stream_assistant_response(
             resolution=resolution,
             provider_messages=provider_messages,
@@ -1028,22 +1076,36 @@ class ConsoleChatController:
             return ConsoleSubmitResult(False, False, "No active Console session.")
         message_session_id = self.store.session_id_for_message(message_id)
         if message_session_id != session_id:
-            visible_copy = "Open the original session before continuing from this message."
+            visible_copy = (
+                "Open the original session before continuing from this message."
+            )
             self._set_run_state(ConsoleRunState.blocked(visible_copy))
             return ConsoleSubmitResult(False, False, visible_copy)
 
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."))
-        resolution = await self.provider_gateway.resolve_for_send(self._provider_selection())
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+        )
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection()
+        )
         if not getattr(resolution, "ready", False):
-            visible_copy = self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
+            visible_copy = self._blocked_visible_copy(
+                getattr(resolution, "visible_copy", "")
+            )
             return self._block(session_id, visible_copy)
 
-        provider_messages = self._provider_messages_through_message(session_id, message_id)
+        provider_messages = self._provider_messages_through_message(
+            session_id, message_id
+        )
         self._ensure_user_continuation_instruction(provider_messages)
-        provider_messages, refuse = await self._apply_skill_substitution(provider_messages)
+        provider_messages, refuse = await self._apply_skill_substitution(
+            provider_messages
+        )
         if refuse is not None:
             return self._block(session_id, refuse)
-        provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
+        provider_messages = await self._apply_chat_dictionaries(
+            provider_messages, session_id
+        )
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -1067,16 +1129,24 @@ class ConsoleChatController:
             return ConsoleSubmitResult(False, False, "No active Console session.")
         message = self.store.get_message(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
-            return self._block(session_id, "Only assistant messages can be regenerated.")
+            return self._block(
+                session_id, "Only assistant messages can be regenerated."
+            )
         if self.store.session_id_for_message(message_id) != session_id:
             visible_copy = "Open the original session before regenerating this message."
             self._set_run_state(ConsoleRunState.blocked(visible_copy))
             return ConsoleSubmitResult(False, False, visible_copy)
 
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."))
-        resolution = await self.provider_gateway.resolve_for_send(self._provider_selection())
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+        )
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection()
+        )
         if not getattr(resolution, "ready", False):
-            visible_copy = self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
+            visible_copy = self._blocked_visible_copy(
+                getattr(resolution, "visible_copy", "")
+            )
             return self._block(session_id, visible_copy)
 
         provider_messages = self._provider_messages_for_session(
@@ -1084,10 +1154,14 @@ class ConsoleChatController:
             before_message_id=message_id,
         )
         self._ensure_user_continuation_instruction(provider_messages)
-        provider_messages, refuse = await self._apply_skill_substitution(provider_messages)
+        provider_messages, refuse = await self._apply_skill_substitution(
+            provider_messages
+        )
         if refuse is not None:
             return self._block(session_id, refuse)
-        provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
+        provider_messages = await self._apply_chat_dictionaries(
+            provider_messages, session_id
+        )
         return await self._stream_assistant_response(
             resolution=resolution,
             provider_messages=provider_messages,
@@ -1128,7 +1202,10 @@ class ConsoleChatController:
             and provider_messages[-1].get("role") == ConsoleMessageRole.ASSISTANT.value
         ):
             provider_messages.append(
-                {"role": ConsoleMessageRole.USER.value, "content": CONSOLE_CONTINUE_INSTRUCTION}
+                {
+                    "role": ConsoleMessageRole.USER.value,
+                    "content": CONSOLE_CONTINUE_INSTRUCTION,
+                }
             )
 
     async def _apply_skill_substitution(
@@ -1204,12 +1281,18 @@ class ConsoleChatController:
                 resolution.name, mode="local", args=args
             )
         except SkillTrustBlockedError as exc:
-            refuse = SKILL_UNTRUSTED_REFUSE.format(name=resolution.name, reason=exc.reason_code)
+            refuse = SKILL_UNTRUSTED_REFUSE.format(
+                name=resolution.name, reason=exc.reason_code
+            )
             return provider_messages, refuse
 
-        rendered = result.get("rendered_prompt", "") if isinstance(result, Mapping) else ""
+        rendered = (
+            result.get("rendered_prompt", "") if isinstance(result, Mapping) else ""
+        )
         rendered_message = {"role": ConsoleMessageRole.USER.value, "content": rendered}
-        execution_mode = result.get("execution_mode") if isinstance(result, Mapping) else None
+        execution_mode = (
+            result.get("execution_mode") if isinstance(result, Mapping) else None
+        )
         if execution_mode == "fork":
             leading = (
                 [provider_messages[0]]
@@ -1242,7 +1325,9 @@ class ConsoleChatController:
             return provider_messages
 
         session = next((s for s in self.store.sessions() if s.id == session_id), None)
-        conversation_id = session.persisted_conversation_id if session is not None else None
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
         if not conversation_id:
             return provider_messages
 
@@ -1261,7 +1346,9 @@ class ConsoleChatController:
 
         try:
             if isinstance(content, str):
-                new_content: Any = await asyncio.to_thread(applier, conversation_id, content)
+                new_content: Any = await asyncio.to_thread(
+                    applier, conversation_id, content
+                )
                 if new_content == content:
                     return provider_messages
             elif isinstance(content, list):
@@ -1273,7 +1360,9 @@ class ConsoleChatController:
                         and part.get("type") == "text"
                         and isinstance(part.get("text"), str)
                     ):
-                        new_text = await asyncio.to_thread(applier, conversation_id, part["text"])
+                        new_text = await asyncio.to_thread(
+                            applier, conversation_id, part["text"]
+                        )
                         if new_text != part["text"]:
                             changed = True
                             new_parts.append({**part, "text": new_text})
@@ -1306,7 +1395,9 @@ class ConsoleChatController:
         and `console_skill_resolver` deliberately stays unaware of trust/
         context shape (see its own module docstring).
         """
-        available = context.get("available_skills") if isinstance(context, Mapping) else None
+        available = (
+            context.get("available_skills") if isinstance(context, Mapping) else None
+        )
         return tuple(
             SkillCommandCandidate(
                 name=str(item.get("name")),
@@ -1320,7 +1411,9 @@ class ConsoleChatController:
         )
 
     @staticmethod
-    def _validated_draft(draft: str, *, allow_empty: bool = False) -> tuple[str, str | None]:
+    def _validated_draft(
+        draft: str, *, allow_empty: bool = False
+    ) -> tuple[str, str | None]:
         raw_draft = str(draft or "")
         if not raw_draft.strip():
             if allow_empty:
@@ -1407,11 +1500,15 @@ class ConsoleChatController:
         self._stop_requested = False
         if variant_mode:
             self.store.begin_variant_stream(assistant_message_id)
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response."))
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+        )
         retry_prepared = False
         emitted_content = False
         try:
-            async for chunk in self.provider_gateway.stream_chat(resolution, provider_messages):
+            async for chunk in self.provider_gateway.stream_chat(
+                resolution, provider_messages
+            ):
                 if not chunk:
                     continue
                 if self._stop_requested:
@@ -1532,7 +1629,9 @@ class ConsoleChatController:
         # thread observe a Stop correctly (task-227).
         cancel_event = threading.Event()
         self._active_cancel_event = cancel_event
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."))
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running.")
+        )
         try:
             session_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
@@ -1546,7 +1645,10 @@ class ConsoleChatController:
         # agent config carries it (composed with the operating prompt).
         session_system_prompt = ""
         agent_messages = list(provider_messages)
-        if agent_messages and agent_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value:
+        if (
+            agent_messages
+            and agent_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
+        ):
             session_system_prompt = str(agent_messages[0].get("content", ""))
             agent_messages = agent_messages[1:]
 
@@ -1602,7 +1704,8 @@ class ConsoleChatController:
             if self._stop_requested:
                 try:
                     stopped = self._mark_stream_stopped(
-                        assistant_message_id, visible_copy="Response stopped.")
+                        assistant_message_id, visible_copy="Response stopped."
+                    )
                 except KeyError:
                     return self._session_closed_result()
                 return ConsoleSubmitResult(True, True, stopped.content)
@@ -1648,8 +1751,12 @@ class ConsoleChatController:
         # independent of what status `mark_message_stopped` may have left
         # the message at (task-227 AC3 follow-up -- see the guard below).
         return self._finalize_agent_reply(
-            assistant_message_id, session_id, outcome, variant_mode=variant_mode,
-            cancel_event=cancel_event)
+            assistant_message_id,
+            session_id,
+            outcome,
+            variant_mode=variant_mode,
+            cancel_event=cancel_event,
+        )
 
     def _agent_conversation_id(self, session_id: str) -> str:
         """Return the durable id the run store is keyed by (persisted id when set)."""
@@ -1659,8 +1766,13 @@ class ConsoleChatController:
         return session_id
 
     def _finalize_agent_reply(
-        self, assistant_message_id: str, session_id: str, outcome: Any,
-        *, variant_mode: bool, cancel_event: threading.Event | None = None,
+        self,
+        assistant_message_id: str,
+        session_id: str,
+        outcome: Any,
+        *,
+        variant_mode: bool,
+        cancel_event: threading.Event | None = None,
     ) -> ConsoleSubmitResult:
         from tldw_chatbook.Agents.agent_models import RUN_CANCELLED, RUN_DONE
 
@@ -1690,7 +1802,9 @@ class ConsoleChatController:
         # prior status for a regenerate, "stopped" for a plain send) and
         # the variant base (already popped), so this is a benign no-op
         # read-back, never an error, in either case.
-        if current.status == "stopped" or (cancel_event is not None and cancel_event.is_set()):
+        if current.status == "stopped" or (
+            cancel_event is not None and cancel_event.is_set()
+        ):
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
             )
@@ -1699,7 +1813,8 @@ class ConsoleChatController:
         if outcome.status == RUN_CANCELLED:
             try:
                 stopped = self._mark_stream_stopped(
-                    assistant_message_id, visible_copy="Response stopped.")
+                    assistant_message_id, visible_copy="Response stopped."
+                )
             except KeyError:
                 return self._session_closed_result()
             return ConsoleSubmitResult(True, True, stopped.content)
@@ -1731,7 +1846,9 @@ class ConsoleChatController:
                 completed = self.store.mark_message_complete(assistant_message_id)
         except KeyError:
             return self._session_closed_result()
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete.")
+        )
         return ConsoleSubmitResult(True, True, completed.content)
 
     @staticmethod
@@ -1749,7 +1866,9 @@ class ConsoleChatController:
 
         reason = ""
         for step in reversed(getattr(outcome, "steps", None) or []):
-            if getattr(step, "kind", None) == STEP_ERROR and getattr(step, "summary", ""):
+            if getattr(step, "kind", None) == STEP_ERROR and getattr(
+                step, "summary", ""
+            ):
                 reason = step.summary
                 break
         if outcome.status == RUN_STUCK:
@@ -1824,7 +1943,11 @@ class ConsoleChatController:
                 break
             if message.role is not ConsoleMessageRole.USER:
                 continue
-            usable = [attachment for attachment in message.attachments if attachment.data is not None]
+            usable = [
+                attachment
+                for attachment in message.attachments
+                if attachment.data is not None
+            ]
             if not usable:
                 continue
             take = min(len(usable), budget)
@@ -1833,7 +1956,10 @@ class ConsoleChatController:
 
         payloads: list[dict[str, Any]] = []
         for message in session_messages:
-            if message.role not in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}:
+            if message.role not in {
+                ConsoleMessageRole.USER,
+                ConsoleMessageRole.ASSISTANT,
+            }:
                 continue
             if skip_failed and message.status == "failed":
                 continue
@@ -1848,7 +1974,9 @@ class ConsoleChatController:
                 # order up to the reserved count (oldest-attached first),
                 # not in reservation order.
                 usable = [
-                    attachment for attachment in message.attachments if attachment.data is not None
+                    attachment
+                    for attachment in message.attachments
+                    if attachment.data is not None
                 ]
                 parts: list[dict[str, Any]] = []
                 if text:
@@ -1865,7 +1993,9 @@ class ConsoleChatController:
                     # uses (see ``pending.mime_type or "image/png"`` above
                     # and ``ConsoleChatStore.append_message``).
                     parts.append(
-                        image_url_part(attachment.data, attachment.mime_type or "image/png")
+                        image_url_part(
+                            attachment.data, attachment.mime_type or "image/png"
+                        )
                     )
                 payloads.append({"role": message.role.value, "content": parts})
                 continue
@@ -1944,7 +2074,10 @@ class ConsoleChatController:
         if self._active_assistant_message_id is None:
             return False
         try:
-            return self.store.session_id_for_message(self._active_assistant_message_id) == session_id
+            return (
+                self.store.session_id_for_message(self._active_assistant_message_id)
+                == session_id
+            )
         except KeyError:
             return False
 

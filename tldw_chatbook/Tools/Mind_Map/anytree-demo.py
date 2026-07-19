@@ -2,6 +2,7 @@ from anytree import Node
 from textual.app import App, ComposeResult
 from textual.widgets import Tree, Input, Button
 
+
 class MindMapApp(App):
     def __init__(self):
         super().__init__()
@@ -52,6 +53,7 @@ class MindMapApp(App):
         for name in path:
             current = next(child for child in current.children if child.name == name)
         return current
+
 
 if __name__ == "__main__":
     MindMapApp().run()

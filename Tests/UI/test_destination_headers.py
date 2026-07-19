@@ -119,9 +119,13 @@ async def test_study_screen_mounts_destination_header_and_boxes_library():
 
         header = screen.query_one("#study-destination-header", DestinationHeader)
         assert header.has_class("ds-destination-header")
-        title = screen.query_one("#study-destination-header #workbench-header-title", Static)
+        title = screen.query_one(
+            "#study-destination-header #workbench-header-title", Static
+        )
         assert str(title.renderable) == "Study"
-        status = screen.query_one("#study-destination-header #workbench-header-status", Static)
+        status = screen.query_one(
+            "#study-destination-header #workbench-header-status", Static
+        )
         assert str(status.renderable) == "Ready"
 
         # Folded under Library: the nav boxes Library while the header names

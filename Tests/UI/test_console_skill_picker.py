@@ -27,7 +27,9 @@ from tldw_chatbook.Widgets.Console.console_skill_picker_modal import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-AGENTIC_TERMINAL = REPO_ROOT / "tldw_chatbook" / "css" / "components" / "_agentic_terminal.tcss"
+AGENTIC_TERMINAL = (
+    REPO_ROOT / "tldw_chatbook" / "css" / "components" / "_agentic_terminal.tcss"
+)
 BUNDLED_STYLESHEET = REPO_ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
 
 

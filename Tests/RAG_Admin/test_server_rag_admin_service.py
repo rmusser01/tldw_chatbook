@@ -114,7 +114,11 @@ class FakeClient:
 
     async def list_embedding_collections(self):
         self.calls.append(("list_embedding_collections",))
-        return [EmbeddingCollectionResponse(name="demo_collection", metadata={"provider": "openai"})]
+        return [
+            EmbeddingCollectionResponse(
+                name="demo_collection", metadata={"provider": "openai"}
+            )
+        ]
 
     async def create_embedding_collection(self, request_data):
         self.calls.append(("create_embedding_collection", request_data))
@@ -177,7 +181,14 @@ class FakeClient:
     async def search_media_embeddings(self, request_data):
         self.calls.append(("search_media_embeddings", request_data))
         return {
-            "results": [{"id": "chunk-1", "document": "alpha", "metadata": {"media_id": "7"}, "distance": 0.2}],
+            "results": [
+                {
+                    "id": "chunk-1",
+                    "document": "alpha",
+                    "metadata": {"media_id": "7"},
+                    "distance": 0.2,
+                }
+            ],
             "count": 1,
         }
 
@@ -193,7 +204,11 @@ class FakeClient:
         self.calls.append(("list_media_embedding_jobs", kwargs))
         return {
             "data": [{"uuid": "job-7", "status": "completed", "media_id": 7}],
-            "pagination": {"limit": kwargs.get("limit"), "offset": kwargs.get("offset"), "count": 1},
+            "pagination": {
+                "limit": kwargs.get("limit"),
+                "offset": kwargs.get("offset"),
+                "count": 1,
+            },
         }
 
 
@@ -202,7 +217,9 @@ async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
     client = FakeClient()
     service = ServerRAGAdminService(client=client)
 
-    listed = await service.list_templates(include_builtin=False, include_custom=True, tags=["rag"], user_id="u1")
+    listed = await service.list_templates(
+        include_builtin=False, include_custom=True, tags=["rag"], user_id="u1"
+    )
     created = await service.create_template(
         name="created",
         description="Created template",
@@ -260,11 +277,18 @@ async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
     )
     embedding_deleted = await service.delete_media_embeddings(7)
     embedding_job = await service.get_media_embedding_job("job-7")
-    embedding_jobs = await service.list_media_embedding_jobs(status="completed", limit=10, offset=5)
+    embedding_jobs = await service.list_media_embedding_jobs(
+        status="completed", limit=10, offset=5
+    )
 
     assert client.calls[0] == (
         "list_chunking_templates",
-        {"include_builtin": False, "include_custom": True, "tags": ["rag"], "user_id": "u1"},
+        {
+            "include_builtin": False,
+            "include_custom": True,
+            "tags": ["rag"],
+            "user_id": "u1",
+        },
     )
     assert isinstance(client.calls[1][1], ChunkingTemplateCreateRequest)
     assert client.calls[1][1].name == "created"
@@ -292,7 +316,10 @@ async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
     assert isinstance(client.calls[12][1], MediaEmbeddingsSearchRequest)
     assert client.calls[13] == ("delete_media_embeddings", 7)
     assert client.calls[14] == ("get_media_embedding_job", "job-7")
-    assert client.calls[15] == ("list_media_embedding_jobs", {"status": "completed", "limit": 10, "offset": 5})
+    assert client.calls[15] == (
+        "list_media_embedding_jobs",
+        {"status": "completed", "limit": 10, "offset": 5},
+    )
 
     assert listed[0]["name"] == "server-demo"
     assert created["name"] == "created"
@@ -319,7 +346,9 @@ async def test_server_rag_admin_service_enforces_policy_actions():
     policy = Mock()
     service = ServerRAGAdminService(client=client, policy_enforcer=policy)
 
-    await service.list_templates(include_builtin=False, include_custom=True, tags=["rag"], user_id="u1")
+    await service.list_templates(
+        include_builtin=False, include_custom=True, tags=["rag"], user_id="u1"
+    )
     await service.create_template(
         name="created",
         description="Created template",
@@ -346,7 +375,9 @@ async def test_server_rag_admin_service_enforces_policy_actions():
     await service.get_media_embedding_job("job-7")
     await service.list_media_embedding_jobs(status="completed")
 
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "rag.template.list.server",
         "rag.template.create.server",
         "rag.template.update.server",

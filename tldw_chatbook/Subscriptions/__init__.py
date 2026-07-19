@@ -55,6 +55,7 @@ try:  # noqa: SIM105
         KeywordExtractor,
         ContentSummarizer,
     )
+
     _CORE_AVAILABLE = True
 except ImportError:
     _CORE_AVAILABLE = False
@@ -62,6 +63,7 @@ except ImportError:
 # Optional briefing generation subsystem.
 try:  # noqa: SIM105
     from .briefing_generator import BriefingGenerator, BriefingSchedule  # noqa: F401
+
     _BRIEFING_AVAILABLE = True
 except ImportError:
     BriefingGenerator = None  # type: ignore[assignment,misc]
@@ -69,30 +71,36 @@ except ImportError:
     _BRIEFING_AVAILABLE = False
 
 __all__ = (
-    ([
-        # Monitoring
-        "FeedMonitor",
-        "URLMonitor",
-        "RateLimiter",
-        "CircuitBreaker",
-        "ContentExtractor",
-
-        # Security
-        "SecurityValidator",
-        "SSRFProtector",
-        "CredentialEncryptor",
-        "InputValidator",
-
-        # Content Processing
-        "ContentProcessor",
-        "KeywordExtractor",
-        "ContentSummarizer",
-    ] if _CORE_AVAILABLE else [])
-    + ([
-        # Briefing Generation
-        "BriefingGenerator",
-        "BriefingSchedule",
-    ] if _BRIEFING_AVAILABLE else [])
+    (
+        [
+            # Monitoring
+            "FeedMonitor",
+            "URLMonitor",
+            "RateLimiter",
+            "CircuitBreaker",
+            "ContentExtractor",
+            # Security
+            "SecurityValidator",
+            "SSRFProtector",
+            "CredentialEncryptor",
+            "InputValidator",
+            # Content Processing
+            "ContentProcessor",
+            "KeywordExtractor",
+            "ContentSummarizer",
+        ]
+        if _CORE_AVAILABLE
+        else []
+    )
+    + (
+        [
+            # Briefing Generation
+            "BriefingGenerator",
+            "BriefingSchedule",
+        ]
+        if _BRIEFING_AVAILABLE
+        else []
+    )
     + [
         # Watchlists
         "LocalWatchlistsService",
@@ -109,8 +117,8 @@ __all__ = (
 )
 
 # Version info
-__version__ = '1.0.0'
-__author__ = 'TLDW ChatBook Team'
+__version__ = "1.0.0"
+__author__ = "TLDW ChatBook Team"
 
 # Legacy scheduler symbols are loaded lazily so that importing the package does
 # not emit deprecation warnings for consumers that do not need them.
@@ -124,5 +132,6 @@ _DEPRECATED_SCHEDULER_SYMBOLS = {
 def __getattr__(name: str) -> Any:
     if name in _DEPRECATED_SCHEDULER_SYMBOLS:
         from . import scheduler
+
         return getattr(scheduler, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

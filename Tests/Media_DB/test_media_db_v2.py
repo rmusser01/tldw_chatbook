@@ -9,6 +9,7 @@ import sys
 import time
 import sqlite3
 from pathlib import Path
+
 #
 # --- Path Setup (Replaces conftest.py logic) ---
 # Add the project root to the Python path to allow importing the library.
@@ -30,9 +31,12 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
 # Helper Functions (for use in tests)
 #
 
+
 def get_log_count(db: Database, entity_uuid: str) -> int:
     """Helper to get sync log entries for assertions."""
-    cursor = db.execute_query("SELECT COUNT(*) FROM sync_log WHERE entity_uuid = ?", (entity_uuid,))
+    cursor = db.execute_query(
+        "SELECT COUNT(*) FROM sync_log WHERE entity_uuid = ?", (entity_uuid,)
+    )
     return cursor.fetchone()[0]
 
 
@@ -40,7 +44,7 @@ def get_latest_log(db: Database, entity_uuid: str):
     """Helper to get the most recent sync log for an entity."""
     cursor = db.execute_query(
         "SELECT * FROM sync_log WHERE entity_uuid = ? ORDER BY change_id DESC LIMIT 1",
-        (entity_uuid,)
+        (entity_uuid,),
     )
     row = cursor.fetchone()
     return dict(row) if row else None
@@ -48,14 +52,18 @@ def get_latest_log(db: Database, entity_uuid: str):
 
 def get_entity_version(db: Database, entity_table: str, uuid: str):
     """Helper to get the current version of an entity."""
-    cursor = db.execute_query(f"SELECT version FROM {entity_table} WHERE uuid = ?", (uuid,))
+    cursor = db.execute_query(
+        f"SELECT version FROM {entity_table} WHERE uuid = ?", (uuid,)
+    )
     row = cursor.fetchone()
-    return row['version'] if row else None
+    return row["version"] if row else None
 
 
 def get_document_version_count(db: Database, media_id: int) -> int:
     """Helper to count document versions for a media item."""
-    cursor = db.execute_query("SELECT COUNT(*) FROM DocumentVersions WHERE media_id = ?", (media_id,))
+    cursor = db.execute_query(
+        "SELECT COUNT(*) FROM DocumentVersions WHERE media_id = ?", (media_id,)
+    )
     return cursor.fetchone()[0]
 
 
@@ -69,6 +77,7 @@ def get_schema_version(db: Database) -> int:
 #
 # Pytest Fixtures (Moved from conftest.py)
 #
+
 
 @pytest.fixture(scope="function")
 def memory_db_factory():
@@ -118,16 +127,25 @@ def search_db(tmp_path_factory):
 
     # Add a predictable set of media items
     db.add_media_with_keywords(
-        title="Alpha One", content="Content about Python and programming.", media_type="article",
-        keywords=["python", "programming"], ingestion_date="2023-01-15T12:00:00Z"
+        title="Alpha One",
+        content="Content about Python and programming.",
+        media_type="article",
+        keywords=["python", "programming"],
+        ingestion_date="2023-01-15T12:00:00Z",
     )  # ID 1
     db.add_media_with_keywords(
-        title="Beta Two", content="A video about data science.", media_type="video",
-        keywords=["python", "data science"], ingestion_date="2023-02-20T12:00:00Z"
+        title="Beta Two",
+        content="A video about data science.",
+        media_type="video",
+        keywords=["python", "data science"],
+        ingestion_date="2023-02-20T12:00:00Z",
     )  # ID 2
     db.add_media_with_keywords(
-        title="Gamma Three (TRASH)", content="Old news.", media_type="article",
-        keywords=["news"], ingestion_date="2023-03-10T12:00:00Z"
+        title="Gamma Three (TRASH)",
+        content="Old news.",
+        media_type="article",
+        keywords=["news"],
+        ingestion_date="2023-03-10T12:00:00Z",
     )  # ID 3
     db.mark_as_trash(3)
 
@@ -140,6 +158,7 @@ def search_db(tmp_path_factory):
 # Test Classes
 #
 
+
 @pytest.mark.integration
 class TestDatabaseInitialization:
     def test_memory_db_creation(self, memory_db_factory):
@@ -147,7 +166,9 @@ class TestDatabaseInitialization:
         db = memory_db_factory("client_mem")
         assert db.is_memory_db
         assert db.client_id == "client_mem"
-        cursor = db.execute_query("SELECT name FROM sqlite_master WHERE type='table' AND name='Media'")
+        cursor = db.execute_query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='Media'"
+        )
         assert cursor.fetchone() is not None
         db.close_connection()
 
@@ -156,7 +177,9 @@ class TestDatabaseInitialization:
         assert not file_db.is_memory_db
         assert file_db.client_id == "file_client"
         assert os.path.exists(temp_db_path)
-        cursor = file_db.execute_query("SELECT name FROM sqlite_master WHERE type='table' AND name='Media'")
+        cursor = file_db.execute_query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='Media'"
+        )
         assert cursor.fetchone() is not None
         # file_db fixture handles closure
 
@@ -175,8 +198,10 @@ class TestDatabaseTransactions:
         keyword = "commit_test"
         with db.transaction():
             db.add_keyword(keyword)
-        cursor = db.execute_query("SELECT keyword FROM Keywords WHERE keyword = ?", (keyword,))
-        assert cursor.fetchone()['keyword'] == keyword
+        cursor = db.execute_query(
+            "SELECT keyword FROM Keywords WHERE keyword = ?", (keyword,)
+        )
+        assert cursor.fetchone()["keyword"] == keyword
 
     def test_transaction_rollback(self, memory_db_factory):
         db = memory_db_factory()
@@ -188,8 +213,13 @@ class TestDatabaseTransactions:
                 new_uuid = db._generate_uuid()
                 db.execute_query(
                     "INSERT INTO Keywords (keyword, uuid, last_modified, version, client_id, deleted) VALUES (?, ?, ?, 1, ?, 0)",
-                    (keyword, new_uuid, db._get_current_utc_timestamp_str(), db.client_id),
-                    commit=False
+                    (
+                        keyword,
+                        new_uuid,
+                        db._get_current_utc_timestamp_str(),
+                        db.client_id,
+                    ),
+                    commit=False,
                 )
                 cursor_inside = db.execute_query("SELECT COUNT(*) FROM Keywords")
                 assert cursor_inside.fetchone()[0] == initial_count + 1
@@ -229,14 +259,16 @@ class TestDatabaseCRUDAndSync:
         assert kw_id is not None
         assert kw_uuid is not None
 
-        cursor = db_instance.execute_query("SELECT * FROM Keywords WHERE id = ?", (kw_id,))
+        cursor = db_instance.execute_query(
+            "SELECT * FROM Keywords WHERE id = ?", (kw_id,)
+        )
         row = cursor.fetchone()
-        assert row['keyword'] == expected_keyword
-        assert row['uuid'] == kw_uuid
+        assert row["keyword"] == expected_keyword
+        assert row["uuid"] == kw_uuid
 
         log_entry = get_latest_log(db_instance, kw_uuid)
-        assert log_entry['operation'] == 'create'
-        assert log_entry['entity'] == 'Keywords'
+        assert log_entry["operation"] == "create"
+        assert log_entry["entity"] == "Keywords"
 
     def test_add_existing_keyword(self, db_instance):
         keyword = "existing"
@@ -256,14 +288,16 @@ class TestDatabaseCRUDAndSync:
 
         assert db_instance.soft_delete_keyword(keyword) is True
 
-        cursor = db_instance.execute_query("SELECT deleted, version FROM Keywords WHERE id = ?", (kw_id,))
+        cursor = db_instance.execute_query(
+            "SELECT deleted, version FROM Keywords WHERE id = ?", (kw_id,)
+        )
         row = cursor.fetchone()
-        assert row['deleted'] == 1
-        assert row['version'] == initial_version + 1
+        assert row["deleted"] == 1
+        assert row["version"] == initial_version + 1
 
         log_entry = get_latest_log(db_instance, kw_uuid)
-        assert log_entry['operation'] == 'delete'
-        assert log_entry['version'] == initial_version + 1
+        assert log_entry["operation"] == "delete"
+        assert log_entry["version"] == initial_version + 1
 
     def test_undelete_keyword(self, db_instance):
         keyword = "to_undelete"
@@ -274,14 +308,16 @@ class TestDatabaseCRUDAndSync:
         undelete_id, undelete_uuid = db_instance.add_keyword(keyword)
 
         assert undelete_id == kw_id
-        cursor = db_instance.execute_query("SELECT deleted, version FROM Keywords WHERE id = ?", (kw_id,))
+        cursor = db_instance.execute_query(
+            "SELECT deleted, version FROM Keywords WHERE id = ?", (kw_id,)
+        )
         row = cursor.fetchone()
-        assert row['deleted'] == 0
-        assert row['version'] == deleted_version + 1
+        assert row["deleted"] == 0
+        assert row["version"] == deleted_version + 1
 
         log_entry = get_latest_log(db_instance, kw_uuid)
-        assert log_entry['operation'] == 'update'
-        assert log_entry['version'] == deleted_version + 1
+        assert log_entry["operation"] == "update"
+        assert log_entry["version"] == deleted_version + 1
 
     def test_add_media_with_keywords_create(self, db_instance):
         title = "Test Media Create"
@@ -294,13 +330,15 @@ class TestDatabaseCRUDAndSync:
         assert media_id is not None
         assert f"Media '{title}' added." in msg
 
-        cursor = db_instance.execute_query("SELECT uuid, version FROM Media WHERE id = ?", (media_id,))
+        cursor = db_instance.execute_query(
+            "SELECT uuid, version FROM Media WHERE id = ?", (media_id,)
+        )
         media_row = cursor.fetchone()
-        assert media_row['uuid'] == media_uuid
-        assert media_row['version'] == 1
+        assert media_row["uuid"] == media_uuid
+        assert media_row["version"] == 1
 
         log_entry = get_latest_log(db_instance, media_uuid)
-        assert log_entry['operation'] == 'create'
+        assert log_entry["operation"] == "create"
 
     def test_add_media_with_keywords_update(self, db_instance):
         """Test updating a media item with new content, title, and keywords."""
@@ -319,12 +357,14 @@ class TestDatabaseCRUDAndSync:
         )
         assert "added" in msg1.lower(), f"Expected 'added' in message, got: {msg1}"
         initial_version = get_entity_version(db_instance, "Media", media_uuid)
-        assert initial_version == 1, f"Expected initial version 1, got {initial_version}"
+        assert initial_version == 1, (
+            f"Expected initial version 1, got {initial_version}"
+        )
 
         # Fetch the created media to get its URL (stable identifier)
         created_media = db_instance.get_media_by_id(media_id)
         assert created_media is not None, "Failed to retrieve created media item"
-        url_to_update = created_media['url']
+        url_to_update = created_media["url"]
 
         # Update the media item
         updated_id, updated_uuid, msg2 = db_instance.add_media_with_keywords(
@@ -333,7 +373,7 @@ class TestDatabaseCRUDAndSync:
             content=content2,
             keywords=keywords2,
             overwrite=True,
-            url=url_to_update
+            url=url_to_update,
         )
 
         # Verify update operation returned correct values
@@ -342,11 +382,15 @@ class TestDatabaseCRUDAndSync:
         assert "updated" in msg2.lower(), f"Expected 'updated' in message, got: {msg2}"
 
         # Verify content was updated
-        cursor = db_instance.execute_query("SELECT content, title, version FROM Media WHERE id = ?", (media_id,))
+        cursor = db_instance.execute_query(
+            "SELECT content, title, version FROM Media WHERE id = ?", (media_id,)
+        )
         media_row = cursor.fetchone()
-        assert media_row['content'] == content2, "Content was not updated"
-        assert media_row['title'] == title2, "Title was not updated"
-        assert media_row['version'] == initial_version + 1, f"Version not incremented, expected {initial_version + 1}, got {media_row['version']}"
+        assert media_row["content"] == content2, "Content was not updated"
+        assert media_row["title"] == title2, "Title was not updated"
+        assert media_row["version"] == initial_version + 1, (
+            f"Version not incremented, expected {initial_version + 1}, got {media_row['version']}"
+        )
 
         # Verify keywords were updated
         cursor = db_instance.execute_query(
@@ -355,33 +399,48 @@ class TestDatabaseCRUDAndSync:
             JOIN Keywords k ON mk.keyword_id = k.id
             WHERE mk.media_id = ?
             """,
-            (media_id,)
+            (media_id,),
         )
-        linked_keywords = [row['keyword'] for row in cursor.fetchall()]
-        assert set(kw.lower() for kw in linked_keywords) == set(kw.lower() for kw in keywords2), "Keywords were not updated correctly"
+        linked_keywords = [row["keyword"] for row in cursor.fetchall()]
+        assert set(kw.lower() for kw in linked_keywords) == set(
+            kw.lower() for kw in keywords2
+        ), "Keywords were not updated correctly"
 
         # Verify sync log was created for the update
         log_entry = get_latest_log(db_instance, media_uuid)
-        assert log_entry['operation'] == 'update', f"Expected 'update' operation, got {log_entry['operation']}"
-        assert log_entry['version'] == initial_version + 1, f"Log version mismatch: {log_entry['version']} vs {initial_version + 1}"
-        assert log_entry['entity'] == 'Media', f"Expected 'Media' entity, got {log_entry['entity']}"
+        assert log_entry["operation"] == "update", (
+            f"Expected 'update' operation, got {log_entry['operation']}"
+        )
+        assert log_entry["version"] == initial_version + 1, (
+            f"Log version mismatch: {log_entry['version']} vs {initial_version + 1}"
+        )
+        assert log_entry["entity"] == "Media", (
+            f"Expected 'Media' entity, got {log_entry['entity']}"
+        )
 
     def test_soft_delete_media_cascade(self, db_instance):
         media_id, media_uuid, _ = db_instance.add_media_with_keywords(
-            title="Cascade Test", content="Cascade content", keywords=["cascade1"], media_type="article"
+            title="Cascade Test",
+            content="Cascade content",
+            keywords=["cascade1"],
+            media_type="article",
         )
         media_version = get_entity_version(db_instance, "Media", media_uuid)
 
         assert db_instance.soft_delete_media(media_id, cascade=True) is True
 
-        cursor = db_instance.execute_query("SELECT deleted, version FROM Media WHERE id = ?", (media_id,))
-        assert dict(cursor.fetchone()) == {'deleted': 1, 'version': media_version + 1}
+        cursor = db_instance.execute_query(
+            "SELECT deleted, version FROM Media WHERE id = ?", (media_id,)
+        )
+        assert dict(cursor.fetchone()) == {"deleted": 1, "version": media_version + 1}
 
-        cursor = db_instance.execute_query("SELECT COUNT(*) FROM MediaKeywords WHERE media_id = ?", (media_id,))
+        cursor = db_instance.execute_query(
+            "SELECT COUNT(*) FROM MediaKeywords WHERE media_id = ?", (media_id,)
+        )
         assert cursor.fetchone()[0] == 0
 
         media_log = get_latest_log(db_instance, media_uuid)
-        assert media_log['operation'] == 'delete'
+        assert media_log["operation"] == "delete"
 
     def test_optimistic_locking_prevents_update_with_stale_version(self, db_instance):
         kw_id, kw_uuid = db_instance.add_keyword("conflict_test")
@@ -389,12 +448,14 @@ class TestDatabaseCRUDAndSync:
 
         db_instance.execute_query(
             "UPDATE Keywords SET version = ?, client_id = ? WHERE id = ?",
-            (original_version + 1, "external_client", kw_id), commit=True
+            (original_version + 1, "external_client", kw_id),
+            commit=True,
         )
 
         cursor = db_instance.execute_query(
             "UPDATE Keywords SET keyword='stale_update', version=?, client_id=? WHERE id=? AND version=?",
-            (original_version + 1, db_instance.client_id, kw_id, original_version), commit=True
+            (original_version + 1, db_instance.client_id, kw_id, original_version),
+            commit=True,
         )
         assert cursor.rowcount == 0
 
@@ -402,20 +463,26 @@ class TestDatabaseCRUDAndSync:
         kw_id, kw_uuid = db_instance.add_keyword("validation_test")
         current_version = get_entity_version(db_instance, "Keywords", kw_uuid)
 
-        with pytest.raises(sqlite3.IntegrityError, match="Version must increment by exactly 1"):
+        with pytest.raises(
+            sqlite3.IntegrityError, match="Version must increment by exactly 1"
+        ):
             db_instance.execute_query(
                 "UPDATE Keywords SET version = ? WHERE id = ?",
-                (current_version + 2, kw_id), commit=True
+                (current_version + 2, kw_id),
+                commit=True,
             )
 
     def test_client_id_validation_trigger(self, db_instance):
         kw_id, kw_uuid = db_instance.add_keyword("clientid_test")
         current_version = get_entity_version(db_instance, "Keywords", kw_uuid)
 
-        with pytest.raises(sqlite3.IntegrityError, match="Client ID cannot be NULL or empty"):
+        with pytest.raises(
+            sqlite3.IntegrityError, match="Client ID cannot be NULL or empty"
+        ):
             db_instance.execute_query(
                 "UPDATE Keywords SET version = ?, client_id = NULL WHERE id = ?",
-                (current_version + 1, kw_id), commit=True
+                (current_version + 1, kw_id),
+                commit=True,
             )
 
     def test_reading_progress_round_trip(self, db_instance):
@@ -455,7 +522,9 @@ class TestDatabaseCRUDAndSync:
             keywords=["reading", "delete"],
         )
 
-        db_instance.upsert_reading_progress(media_id, {"current_page": 2, "total_pages": 5})
+        db_instance.upsert_reading_progress(
+            media_id, {"current_page": 2, "total_pages": 5}
+        )
 
         assert db_instance.delete_reading_progress(media_id) is True
         assert db_instance.get_reading_progress(media_id) is None
@@ -478,9 +547,14 @@ class TestDatabaseCRUDAndSync:
             {"current_page": 7, "total_pages": 11, "view_mode": "single"},
         )
 
-        assert get_entity_version(db_instance, "Media", media_uuid) == media_version_before
+        assert (
+            get_entity_version(db_instance, "Media", media_uuid) == media_version_before
+        )
         assert get_log_count(db_instance, media_uuid) == sync_log_before
-        assert get_document_version_count(db_instance, media_id) == document_versions_before
+        assert (
+            get_document_version_count(db_instance, media_id)
+            == document_versions_before
+        )
 
     def test_reading_progress_reopens_through_versioned_migration(self, temp_db_path):
         first_db = Database(db_path=temp_db_path, client_id="schema_client")
@@ -545,9 +619,14 @@ class TestDatabaseCRUDAndSync:
         assert saved["media_id"] == media_id
         assert saved["is_read_it_later"] is True
         assert saved["saved_at"] is not None
-        assert db_instance.get_media_read_it_later_state(media_id)["is_read_it_later"] is True
+        assert (
+            db_instance.get_media_read_it_later_state(media_id)["is_read_it_later"]
+            is True
+        )
 
-    def test_soft_deleted_local_media_is_hidden_from_saved_view_by_default(self, db_instance):
+    def test_soft_deleted_local_media_is_hidden_from_saved_view_by_default(
+        self, db_instance
+    ):
         media_id, _, _ = db_instance.add_media_with_keywords(
             title="Reader",
             content="Hello",
@@ -560,7 +639,9 @@ class TestDatabaseCRUDAndSync:
         ids = db_instance.list_read_it_later_media_ids()
         assert media_id not in ids
 
-    def test_trashed_local_media_is_hidden_from_saved_view_by_default(self, db_instance):
+    def test_trashed_local_media_is_hidden_from_saved_view_by_default(
+        self, db_instance
+    ):
         media_id, _, _ = db_instance.add_media_with_keywords(
             title="Reader",
             content="Hello",
@@ -591,25 +672,25 @@ class TestSyncLogManagement:
     def test_get_sync_log_entries_all(self):
         logs = self.db.get_sync_log_entries()
         assert len(logs) == 4
-        assert logs[0]['change_id'] == 1
+        assert logs[0]["change_id"] == 1
 
     def test_get_sync_log_entries_since(self):
         logs = self.db.get_sync_log_entries(since_change_id=2)
         assert len(logs) == 2
-        assert logs[0]['change_id'] == 3
+        assert logs[0]["change_id"] == 3
 
     def test_get_sync_log_entries_limit(self):
         logs = self.db.get_sync_log_entries(limit=2)
         assert len(logs) == 2
-        assert logs[0]['change_id'] == 1
-        assert logs[1]['change_id'] == 2
+        assert logs[0]["change_id"] == 1
+        assert logs[1]["change_id"] == 2
 
     def test_delete_sync_log_entries_specific(self):
         initial_logs = self.db.get_sync_log_entries()
-        ids_to_delete = [initial_logs[1]['change_id'], initial_logs[2]['change_id']]
+        ids_to_delete = [initial_logs[1]["change_id"], initial_logs[2]["change_id"]]
         deleted_count = self.db.delete_sync_log_entries(ids_to_delete)
         assert deleted_count == 2
-        remaining_ids = {log['change_id'] for log in self.db.get_sync_log_entries()}
+        remaining_ids = {log["change_id"] for log in self.db.get_sync_log_entries()}
         assert remaining_ids == {1, 4}
 
     def test_delete_sync_log_entries_before(self):
@@ -617,7 +698,7 @@ class TestSyncLogManagement:
         assert deleted_count == 3
         remaining_logs = self.db.get_sync_log_entries()
         assert len(remaining_logs) == 1
-        assert remaining_logs[0]['change_id'] == 4
+        assert remaining_logs[0]["change_id"] == 4
 
     def test_delete_sync_log_entries_invalid_id(self):
         with pytest.raises(ValueError):
@@ -654,7 +735,9 @@ class TestGetAllActiveMediaIds:
         video_id, _, _ = db_instance.add_media_with_keywords(
             title="V1", content="video content", media_type="video"
         )
-        db_instance.add_media_with_keywords(title="A1", content="article content", media_type="article")
+        db_instance.add_media_with_keywords(
+            title="A1", content="article content", media_type="article"
+        )
 
         ids = db_instance.get_all_active_media_ids(media_type="video")
 
@@ -688,6 +771,7 @@ class TestGetAllActiveMediaIds:
 
     def test_empty_db_returns_empty_list(self, db_instance):
         assert db_instance.get_all_active_media_ids() == []
+
 
 #
 # End of test_media_db_v2.py

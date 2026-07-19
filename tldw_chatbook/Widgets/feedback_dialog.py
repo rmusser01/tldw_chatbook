@@ -20,7 +20,7 @@ from loguru import logger
 
 class FeedbackDialog(ModalScreen):
     """Dialog for adding optional comments to message feedback."""
-    
+
     # CSS for the dialog
     DEFAULT_CSS = """
     FeedbackDialog {
@@ -64,15 +64,17 @@ class FeedbackDialog(ModalScreen):
         width: 12;
     }
     """
-    
-    def __init__(self, 
-                 feedback_type: str,  # "1" for thumbs up, "2" for thumbs down
-                 existing_comment: Optional[str] = None,
-                 callback: Optional[Callable[[Optional[tuple[str, str]]], None]] = None,
-                 **kwargs):
+
+    def __init__(
+        self,
+        feedback_type: str,  # "1" for thumbs up, "2" for thumbs down
+        existing_comment: Optional[str] = None,
+        callback: Optional[Callable[[Optional[tuple[str, str]]], None]] = None,
+        **kwargs,
+    ):
         """
         Initialize the feedback dialog.
-        
+
         Args:
             feedback_type: "1" for thumbs up, "2" for thumbs down
             existing_comment: Existing comment if editing feedback
@@ -82,56 +84,56 @@ class FeedbackDialog(ModalScreen):
         self.feedback_type = feedback_type
         self.existing_comment = existing_comment or ""
         self.callback = callback
-        
+
     def compose(self) -> ComposeResult:
         """Compose the dialog UI."""
-        feedback_label = "👍 Thumbs Up" if self.feedback_type == "1" else "👎 Thumbs Down"
-        
+        feedback_label = (
+            "👍 Thumbs Up" if self.feedback_type == "1" else "👎 Thumbs Down"
+        )
+
         with Container(classes="config-dialog"):
             yield Label("Message Ranking Feedback", classes="dialog-title")
-            
+
             # Show which feedback type is selected
             yield Static(f"Feedback: {feedback_label}", classes="feedback-type-label")
-            
+
             # Comment area
             yield Label("Additional Comments (optional):")
             yield TextArea(
-                self.existing_comment,
-                id="comment-area",
-                classes="comment-area"
+                self.existing_comment, id="comment-area", classes="comment-area"
             )
-            
+
             # Buttons
             with Horizontal(classes="dialog-buttons"):
                 yield Button("Cancel", id="cancel-button", variant="error")
                 yield Button("Save", id="save-button", variant="primary")
-    
+
     @on(Button.Pressed, "#save-button")
     def handle_save(self):
         """Save the feedback with optional comment."""
         try:
             comment_widget = self.query_one("#comment-area", TextArea)
             comment = comment_widget.text.strip()
-            
+
             # Create the feedback string
             if comment:
                 feedback_str = f"{self.feedback_type};{comment}"
             else:
                 feedback_str = f"{self.feedback_type};"
-            
+
             logger.debug(f"Saving feedback: {feedback_str[:50]}...")
-            
+
             if self.callback:
                 self.callback((self.feedback_type, comment))
-            
+
             self.dismiss(True)
-            
+
         except Exception as e:
             logger.error(f"Error saving feedback: {e}")
             if self.callback:
                 self.callback(None)
             self.dismiss(False)
-    
+
     @on(Button.Pressed, "#cancel-button")
     def handle_cancel(self):
         """Cancel without saving."""
@@ -139,7 +141,7 @@ class FeedbackDialog(ModalScreen):
         if self.callback:
             self.callback(None)
         self.dismiss(False)
-    
+
     async def on_mount(self) -> None:
         """Focus the comment area when dialog opens."""
         try:

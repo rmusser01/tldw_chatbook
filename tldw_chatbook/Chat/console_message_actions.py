@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 
 
 ConsoleActionStatus = Literal[
@@ -84,7 +87,9 @@ class ConsoleMessageActionService:
         self.unavailable_save_reasons = dict(unavailable_save_reasons or {})
 
     @classmethod
-    def _base_actions_with(cls, inserted: tuple[tuple[str, str], ...]) -> list[tuple[str, str]]:
+    def _base_actions_with(
+        cls, inserted: tuple[tuple[str, str], ...]
+    ) -> list[tuple[str, str]]:
         """Return the base action row with extra actions inserted before regenerate."""
         actions: list[tuple[str, str]] = []
         for action_id, label in cls._COMPLETED_ACTIONS:
@@ -93,7 +98,9 @@ class ConsoleMessageActionService:
             actions.append((action_id, label))
         return actions
 
-    def available_actions(self, message: ConsoleChatMessage) -> list[ConsoleMessageAction]:
+    def available_actions(
+        self, message: ConsoleChatMessage
+    ) -> list[ConsoleMessageAction]:
         """Return canonical selected-message actions for a transcript message."""
         disabled_reason = self._disabled_reason(message)
         completed_actions = list(self._COMPLETED_ACTIONS)
@@ -108,14 +115,18 @@ class ConsoleMessageActionService:
         if message.status == "failed":
             return [
                 ConsoleMessageAction(action_id, label)
-                for action_id, label in self._base_actions_with(self._FAILED_RETRY_ACTIONS)
+                for action_id, label in self._base_actions_with(
+                    self._FAILED_RETRY_ACTIONS
+                )
             ]
         return [
             ConsoleMessageAction(
                 action_id=action_id,
                 label=label,
-                enabled=disabled_reason == "" and self._action_enabled(action_id, message),
-                disabled_reason=disabled_reason or self._action_disabled_reason(action_id, message),
+                enabled=disabled_reason == ""
+                and self._action_enabled(action_id, message),
+                disabled_reason=disabled_reason
+                or self._action_disabled_reason(action_id, message),
             )
             for action_id, label in completed_actions
         ]
@@ -129,7 +140,9 @@ class ConsoleMessageActionService:
         return " ".join(self.plain_action_labels(message))
 
     @classmethod
-    def expand_plain_action_labels(cls, actions: list[ConsoleMessageAction]) -> list[str]:
+    def expand_plain_action_labels(
+        cls, actions: list[ConsoleMessageAction]
+    ) -> list[str]:
         """Expand grouped UI actions into the labels shown in plain text."""
         labels: list[str] = []
         for action in actions:
@@ -139,7 +152,9 @@ class ConsoleMessageActionService:
                 labels.append(action.label)
         return labels
 
-    def save_as_destinations(self, message: ConsoleChatMessage) -> list[ConsoleSaveDestination]:
+    def save_as_destinations(
+        self, message: ConsoleChatMessage
+    ) -> list[ConsoleSaveDestination]:
         """Return Save as destinations, including explicit unavailable entries."""
         _ = message
         labels = ("Chatbook", "Note", "Media", "Prompt")
@@ -157,7 +172,9 @@ class ConsoleMessageActionService:
             )
         return destinations
 
-    def dispatch(self, action_id: str, message: ConsoleChatMessage) -> ConsoleActionResult:
+    def dispatch(
+        self, action_id: str, message: ConsoleChatMessage
+    ) -> ConsoleActionResult:
         """Dispatch a pure action result without touching UI or persistence."""
         if message.status in {"pending", "streaming"}:
             return ConsoleActionResult(
@@ -213,7 +230,10 @@ class ConsoleMessageActionService:
                 status="completed",
                 visible_copy="Selected response variant.",
             )
-        if action_id == "regenerate" and not ConsoleMessageActionService._is_assistant_message(message):
+        if (
+            action_id == "regenerate"
+            and not ConsoleMessageActionService._is_assistant_message(message)
+        ):
             return ConsoleActionResult(
                 action_id=action_id,
                 status="blocked",
@@ -274,9 +294,17 @@ class ConsoleMessageActionService:
 
     @staticmethod
     def _action_disabled_reason(action_id: str, message: ConsoleChatMessage) -> str:
-        if action_id == "regenerate" and not ConsoleMessageActionService._is_assistant_message(message):
+        if (
+            action_id == "regenerate"
+            and not ConsoleMessageActionService._is_assistant_message(message)
+        ):
             return "Only assistant messages can be regenerated."
-        if action_id in {"variant-previous", "variant-next"} and not ConsoleMessageActionService._variant_action_enabled(action_id, message):
+        if action_id in {
+            "variant-previous",
+            "variant-next",
+        } and not ConsoleMessageActionService._variant_action_enabled(
+            action_id, message
+        ):
             return "No response variant in that direction."
         return ""
 

@@ -289,7 +289,9 @@ def test_to_utc_iso_naive_datetime_assumed_utc(db: ScheduledTasksDB) -> None:
     assert db._to_utc_iso(naive) == naive.replace(tzinfo=timezone.utc).isoformat()
 
 
-def test_to_utc_iso_non_utc_aware_datetime_converted_to_utc(db: ScheduledTasksDB) -> None:
+def test_to_utc_iso_non_utc_aware_datetime_converted_to_utc(
+    db: ScheduledTasksDB,
+) -> None:
     eastern = datetime(2026, 7, 20, 10, 0, tzinfo=timezone(timedelta(hours=-4)))
     assert db._to_utc_iso(eastern) == _utc(2026, 7, 20, 14, 0).isoformat()
 
@@ -359,7 +361,9 @@ def test_create_and_get_automation_definition(db: ScheduledTasksDB) -> None:
     assert row["updated_at"]
 
 
-def test_create_automation_definition_defaults_none_lifecycle_health(db: ScheduledTasksDB) -> None:
+def test_create_automation_definition_defaults_none_lifecycle_health(
+    db: ScheduledTasksDB,
+) -> None:
     def_id = db.create_automation_definition(
         owner_id="local",
         family="recurring_question",
@@ -374,7 +378,9 @@ def test_create_automation_definition_defaults_none_lifecycle_health(db: Schedul
     assert row["health"] == "execution_unavailable"
 
 
-def test_create_automation_definition_rejects_unknown_kwargs(db: ScheduledTasksDB) -> None:
+def test_create_automation_definition_rejects_unknown_kwargs(
+    db: ScheduledTasksDB,
+) -> None:
     with pytest.raises(ValueError, match="Unknown automation definition field"):
         db.create_automation_definition(
             owner_id="local",
@@ -394,7 +400,9 @@ def test_create_automation_definition_rejects_reserved_id(db: ScheduledTasksDB) 
         )
 
 
-def test_update_automation_definition_rejects_unknown_kwargs(db: ScheduledTasksDB) -> None:
+def test_update_automation_definition_rejects_unknown_kwargs(
+    db: ScheduledTasksDB,
+) -> None:
     def_id = db.create_automation_definition(
         owner_id="local", family="recurring_question", name="Original"
     )
@@ -476,7 +484,9 @@ def test_update_automation_definition(db: ScheduledTasksDB) -> None:
     assert not_found is False
 
 
-def test_update_automation_definition_empty_kwargs_returns_false(db: ScheduledTasksDB) -> None:
+def test_update_automation_definition_empty_kwargs_returns_false(
+    db: ScheduledTasksDB,
+) -> None:
     def_id = db.create_automation_definition(
         owner_id="local", family="recurring_question", name="Original"
     )
@@ -539,7 +549,9 @@ def test_automation_audit_event_logging(db: ScheduledTasksDB) -> None:
     assert row["created_at"]
 
 
-def test_log_automation_audit_event_rejects_unknown_kwargs(db: ScheduledTasksDB) -> None:
+def test_log_automation_audit_event_rejects_unknown_kwargs(
+    db: ScheduledTasksDB,
+) -> None:
     def_id = db.create_automation_definition(
         owner_id="local", family="recurring_question", name="Audited"
     )

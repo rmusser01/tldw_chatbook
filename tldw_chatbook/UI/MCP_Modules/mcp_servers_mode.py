@@ -34,7 +34,9 @@ _MUTATIONS_GATED_TOOLTIP = "Requires team, org, or system-admin scope."
 # different source/table entirely), so the button is gated off there rather
 # than silently landing writes nobody looking at this screen would see.
 _IMPORT_GATED_TOOLTIP = "Import creates LOCAL server profiles — switch Source to Local."
-_IMPORT_LOCAL_TOOLTIP = "Import servers from a Claude-Desktop-style mcpServers JSON file or paste."
+_IMPORT_LOCAL_TOOLTIP = (
+    "Import servers from a Claude-Desktop-style mcpServers JSON file or paste."
+)
 
 _TABLE_COLUMNS = ("Name", "Transport", "Status", "Tools", "Auth", "Scope")
 # Task 11: the Local source never has a meaningful Scope (built-in is
@@ -220,9 +222,17 @@ class MCPServersMode(Vertical):
             # the sentence Static stays plain (`ds-status-badge` only).
             with Horizontal(id="mcp-overview-summary-row"):
                 yield Static(
-                    "", id="mcp-overview-summary-glyph", classes="ds-status-badge", markup=False,
+                    "",
+                    id="mcp-overview-summary-glyph",
+                    classes="ds-status-badge",
+                    markup=False,
                 )
-                yield Static("", id="mcp-overview-summary", classes="ds-status-badge", markup=False)
+                yield Static(
+                    "",
+                    id="mcp-overview-summary",
+                    classes="ds-status-badge",
+                    markup=False,
+                )
             table = DataTable(id="mcp-servers-table")
             table.cursor_type = "row"
             yield table
@@ -237,11 +247,16 @@ class MCPServersMode(Vertical):
                     tooltip="Return to the overview table.",
                 )
                 yield Static(
-                    "", id="mcp-detail-title", classes="destination-section", markup=False
+                    "",
+                    id="mcp-detail-title",
+                    classes="destination-section",
+                    markup=False,
                 )
             yield Horizontal(id="mcp-detail-toolbar", classes="ds-toolbar")
             with VerticalScroll(id="mcp-detail-scroll"):
-                yield Static("", id="mcp-detail-body", classes="ds-field-row", markup=False)
+                yield Static(
+                    "", id="mcp-detail-body", classes="ds-field-row", markup=False
+                )
                 yield Vertical(id="mcp-detail-builtin-toggles")
                 yield Button(
                     "Copy client config",
@@ -515,7 +530,9 @@ class MCPServersMode(Vertical):
         self._callout_keys = [snap.server_key for snap in visible]
         callout_widgets: list[Widget] = [
             Button(
-                escape_markup(f"{STATE_GLYPHS[snap.state]} {snap.label}: {snap.message}"),
+                escape_markup(
+                    f"{STATE_GLYPHS[snap.state]} {snap.label}: {snap.message}"
+                ),
                 id=f"mcp-callout-{index}",
                 classes="mcp-callout console-action-subdued",
                 compact=True,
@@ -773,7 +790,9 @@ class MCPServersMode(Vertical):
         if widgets:
             await container.mount_all(widgets)
 
-    def _detail_text(self, snapshot: ReadinessSnapshot, *, mutations_available: bool = False) -> str:
+    def _detail_text(
+        self, snapshot: ReadinessSnapshot, *, mutations_available: bool = False
+    ) -> str:
         detail = snapshot.detail or {}
         lines: list[str] = [snapshot.message, ""]
         if snapshot.source == "server" and isinstance(detail.get("raw"), dict):
@@ -792,7 +811,9 @@ class MCPServersMode(Vertical):
                 lines.append(_MUTATIONS_GATED_TOOLTIP)
         elif snapshot.source == "local":
             args = redact_args([str(a) for a in detail.get("args") or []])
-            lines.append(f"Command · {detail.get('command') or '—'} {' '.join(args)}".rstrip())
+            lines.append(
+                f"Command · {detail.get('command') or '—'} {' '.join(args)}".rstrip()
+            )
             placeholders = detail.get("env_placeholders") or {}
             missing = set(detail.get("missing_env") or [])
             for env_key, raw in placeholders.items():
@@ -809,7 +830,10 @@ class MCPServersMode(Vertical):
             discovery = detail.get("discovery_snapshot") or {}
             for kind in ("tools", "resources", "prompts"):
                 items = discovery.get(kind) or []
-                names = ", ".join(str(item.get("name") or item.get("uri") or "?") for item in items[:8])
+                names = ", ".join(
+                    str(item.get("name") or item.get("uri") or "?")
+                    for item in items[:8]
+                )
                 suffix = f": {names}" if names else ""
                 lines.append(f"{kind.title()} · {len(items)}{suffix}")
         elif snapshot.source == "server":
@@ -884,7 +908,9 @@ class MCPServersMode(Vertical):
             event.stop()
             snippet = ""
             if self._detail_snapshot is not None:
-                snippet = str((self._detail_snapshot.detail or {}).get("client_snippet") or "")
+                snippet = str(
+                    (self._detail_snapshot.detail or {}).get("client_snippet") or ""
+                )
             if snippet:
                 self.app.copy_to_clipboard(snippet)
                 self.app.notify("Client config copied to clipboard.")
@@ -905,7 +931,9 @@ class MCPServersMode(Vertical):
         if button_id == "mcp-detail-disconnect":
             event.stop()
             if self._detail_snapshot is not None:
-                self.post_message(self.DisconnectRequested(self._detail_snapshot.server_key))
+                self.post_message(
+                    self.DisconnectRequested(self._detail_snapshot.server_key)
+                )
             return
         if button_id == "mcp-detail-delete":
             event.stop()
@@ -922,5 +950,7 @@ class MCPServersMode(Vertical):
             self._delete_armed = False
             await self._rebuild_detail_toolbar()
             if self._detail_snapshot is not None:
-                self.post_message(self.DeleteConfirmed(self._detail_snapshot.server_key))
+                self.post_message(
+                    self.DeleteConfirmed(self._detail_snapshot.server_key)
+                )
             return

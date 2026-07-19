@@ -14,7 +14,12 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from ..Widgets.NewIngest import FilesSelected, ProcessingDashboard, SmartFileDropZone, UnifiedProcessor
+from ..Widgets.NewIngest import (
+    FilesSelected,
+    ProcessingDashboard,
+    SmartFileDropZone,
+    UnifiedProcessor,
+)
 
 
 class MediaTypeSelected(Message):

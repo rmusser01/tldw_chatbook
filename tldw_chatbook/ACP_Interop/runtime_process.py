@@ -77,7 +77,9 @@ class ACPRuntimeProcessConfig:
             command=_clean_text(value.get("command")),
             args=_coerce_args(value.get("args")),
             cwd=_clean_text(value.get("cwd")),
-            env=dict(value.get("env") or {}) if isinstance(value.get("env"), Mapping) else {},
+            env=dict(value.get("env") or {})
+            if isinstance(value.get("env"), Mapping)
+            else {},
             runtime_id=_clean_text(value.get("runtime_id"), "local-acp-runtime"),
             runtime_label=_clean_text(value.get("runtime_label"), "Local ACP Runtime"),
             runtime_version=_clean_text(value.get("runtime_version")),
@@ -110,7 +112,9 @@ class ACPRuntimeProcessResult:
 
     status: ACPRuntimeProcessStatus
     recovery: str
-    session_state: ACPRuntimeSessionState = field(default_factory=ACPRuntimeSessionState)
+    session_state: ACPRuntimeSessionState = field(
+        default_factory=ACPRuntimeSessionState
+    )
     return_code: int | None = None
 
 
@@ -133,14 +137,18 @@ class ACPRuntimeProcessManager:
         )
 
     @classmethod
-    def from_app_config(cls, app_config: Mapping[str, Any] | None) -> "ACPRuntimeProcessManager":
+    def from_app_config(
+        cls, app_config: Mapping[str, Any] | None
+    ) -> "ACPRuntimeProcessManager":
         """Build a manager from `app_config['acp']['runtime']` if present."""
         acp_config = app_config.get("acp") if isinstance(app_config, Mapping) else {}
         if not acp_config and isinstance(app_config, Mapping):
             raw_config = app_config.get("COMPREHENSIVE_CONFIG_RAW")
             if isinstance(raw_config, Mapping):
                 acp_config = raw_config.get("acp")
-        runtime_config = acp_config.get("runtime") if isinstance(acp_config, Mapping) else {}
+        runtime_config = (
+            acp_config.get("runtime") if isinstance(acp_config, Mapping) else {}
+        )
         return cls(config=ACPRuntimeProcessConfig.from_mapping(runtime_config))
 
     def snapshot(self) -> dict[str, Any]:
@@ -149,7 +157,9 @@ class ACPRuntimeProcessManager:
         return {
             "status": self._status.value,
             "runtime_id": self.config.runtime_id if self.config.is_configured else "",
-            "runtime_label": self.config.runtime_label if self.config.is_configured else "",
+            "runtime_label": self.config.runtime_label
+            if self.config.is_configured
+            else "",
             "runtime_version": self.config.runtime_version,
             "session_id": self._session_state.session_id,
             "session_title": self._session_state.session_title,
@@ -204,21 +214,23 @@ class ACPRuntimeProcessManager:
             self._status = ACPRuntimeProcessStatus.FAILED
             self._last_recovery = str(exc)
             self._session_state = self._base_session_state()
-            return ACPRuntimeProcessResult(self._status, self._last_recovery, self._session_state)
+            return ACPRuntimeProcessResult(
+                self._status, self._last_recovery, self._session_state
+            )
         except OSError as exc:
             self._status = ACPRuntimeProcessStatus.FAILED
             self._last_recovery = f"ACP runtime could not start: {exc}"
             self._session_state = self._base_session_state()
-            return ACPRuntimeProcessResult(self._status, self._last_recovery, self._session_state)
+            return ACPRuntimeProcessResult(
+                self._status, self._last_recovery, self._session_state
+            )
 
         deadline = time.monotonic() + max(0.05, self.config.startup_timeout_seconds)
         while time.monotonic() < deadline:
             return_code = self._process.poll()
             if return_code is not None:
                 self._status = ACPRuntimeProcessStatus.FAILED
-                self._last_recovery = (
-                    f"ACP runtime exited before it became ready with code {return_code}."
-                )
+                self._last_recovery = f"ACP runtime exited before it became ready with code {return_code}."
                 self._session_state = self._base_session_state()
                 return ACPRuntimeProcessResult(
                     self._status,
@@ -247,7 +259,9 @@ class ACPRuntimeProcessManager:
                 "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             },
         )
-        return ACPRuntimeProcessResult(self._status, self._last_recovery, self._session_state)
+        return ACPRuntimeProcessResult(
+            self._status, self._last_recovery, self._session_state
+        )
 
     def stop(self) -> ACPRuntimeProcessResult:
         """Stop the runtime process if it is running."""
@@ -282,7 +296,9 @@ class ACPRuntimeProcessManager:
             else self.config.disabled_reason
         )
         self._session_state = self._base_session_state()
-        return ACPRuntimeProcessResult(self._status, self._last_recovery, self._session_state)
+        return ACPRuntimeProcessResult(
+            self._status, self._last_recovery, self._session_state
+        )
 
     def _validated_cwd(self) -> str | None:
         if not self.config.cwd:
@@ -311,6 +327,10 @@ class ACPRuntimeProcessManager:
     def _base_session_state(self) -> ACPRuntimeSessionState:
         return ACPRuntimeSessionState(
             runtime_id=self.config.runtime_id if self.config.is_configured else "",
-            runtime_label=self.config.runtime_label if self.config.is_configured else "",
-            runtime_version=self.config.runtime_version if self.config.is_configured else "",
+            runtime_label=self.config.runtime_label
+            if self.config.is_configured
+            else "",
+            runtime_version=self.config.runtime_version
+            if self.config.is_configured
+            else "",
         )

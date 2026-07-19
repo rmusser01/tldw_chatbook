@@ -18,21 +18,21 @@ from unittest.mock import MagicMock, AsyncMock
 
 
 # Type variables for generic widget testing
-W = TypeVar('W', bound=Widget)
-A = TypeVar('A', bound=App)
+W = TypeVar("W", bound=Widget)
+A = TypeVar("A", bound=App)
 
 
 class WidgetTestApp(App[None]):
     """
     A simple test app for testing individual widgets.
-    
+
     This app provides a minimal container for testing widgets in isolation.
     """
-    
+
     def __init__(self, widget_class: Type[W], **widget_kwargs):
         """
         Initialize the test app with a widget class to test.
-        
+
         Args:
             widget_class: The widget class to instantiate
             **widget_kwargs: Arguments to pass to the widget constructor
@@ -41,7 +41,7 @@ class WidgetTestApp(App[None]):
         self.widget_class = widget_class
         self.widget_kwargs = widget_kwargs
         self.test_widget: Optional[W] = None
-    
+
     def compose(self) -> ComposeResult:
         """Compose the test widget."""
         self.test_widget = self.widget_class(**self.widget_kwargs)
@@ -52,17 +52,17 @@ class MultiWidgetTestApp(App[None]):
     """
     A test app for testing multiple widgets or complex layouts.
     """
-    
+
     def __init__(self, compose_func: Callable[[], ComposeResult]):
         """
         Initialize with a custom compose function.
-        
+
         Args:
             compose_func: A function that yields widgets for composition
         """
         super().__init__()
         self._compose_func = compose_func
-    
+
     def compose(self) -> ComposeResult:
         """Use the provided compose function."""
         yield from self._compose_func()
@@ -89,11 +89,12 @@ class AwaitableAsyncContextManager:
 
 # Pytest fixtures for common testing patterns
 
+
 @pytest_asyncio.fixture
 async def widget_pilot():
     """
     Fixture that provides a function to create a test app with a widget.
-    
+
     Usage:
         async def test_my_widget(widget_pilot):
             async with widget_pilot(MyWidget, param1="value") as pilot:
@@ -101,22 +102,22 @@ async def widget_pilot():
                 # Test widget behavior
     """
     created_apps = []
-    
+
     def _create_pilot(widget_class: Type[W], **widget_kwargs):
         app = WidgetTestApp(widget_class, **widget_kwargs)
         created_apps.append(app)
         return AwaitableAsyncContextManager(app.run_test())
-    
+
     yield _create_pilot
-    
+
     # Cleanup
     for app in created_apps:
-        if hasattr(app, '_driver') and app._driver:
+        if hasattr(app, "_driver") and app._driver:
             try:
                 # HeadlessDriver doesn't have stop method, but we can close the app
-                if hasattr(app._driver, 'stop'):
+                if hasattr(app._driver, "stop"):
                     await app._driver.stop()
-                elif hasattr(app, 'exit'):
+                elif hasattr(app, "exit"):
                     await app.exit()
             except Exception:
                 pass  # Ignore cleanup errors
@@ -126,29 +127,29 @@ async def widget_pilot():
 async def app_pilot():
     """
     Fixture for testing complete apps.
-    
+
     Usage:
         async def test_my_app(app_pilot):
             async with app_pilot(MyApp) as pilot:
                 # Test app behavior
     """
     created_apps = []
-    
+
     def _create_pilot(app_class: Type[A], **app_kwargs):
         app = app_class(**app_kwargs)
         created_apps.append(app)
         return AwaitableAsyncContextManager(app.run_test())
-    
+
     yield _create_pilot
-    
+
     # Cleanup
     for app in created_apps:
-        if hasattr(app, '_driver') and app._driver:
+        if hasattr(app, "_driver") and app._driver:
             try:
                 # HeadlessDriver doesn't have stop method, but we can close the app
-                if hasattr(app._driver, 'stop'):
+                if hasattr(app._driver, "stop"):
                     await app._driver.stop()
-                elif hasattr(app, 'exit'):
+                elif hasattr(app, "exit"):
                     await app.exit()
             except Exception:
                 pass  # Ignore cleanup errors
@@ -156,38 +157,45 @@ async def app_pilot():
 
 # Helper functions for common test operations
 
-async def wait_for_widget_mount(pilot: Pilot, widget_type: Type[W], timeout: float = 5.0) -> W:
+
+async def wait_for_widget_mount(
+    pilot: Pilot, widget_type: Type[W], timeout: float = 5.0
+) -> W:
     """
     Wait for a widget of a specific type to be mounted.
-    
+
     Args:
         pilot: The test pilot
         widget_type: The widget type to wait for
         timeout: Maximum time to wait in seconds
-    
+
     Returns:
         The mounted widget
-    
+
     Raises:
         TimeoutError: If widget doesn't mount within timeout
     """
+
     def check():
         try:
             return pilot.app.query_one(widget_type)
         except Exception:
             return None
-    
+
     widget = await pilot.wait_for(check, timeout=timeout)
     if widget is None:
-        raise TimeoutError(f"Widget {widget_type.__name__} not mounted within {timeout}s")
+        raise TimeoutError(
+            f"Widget {widget_type.__name__} not mounted within {timeout}s"
+        )
     return widget
 
 
-async def simulate_keypress(pilot: Pilot, key: str, shift: bool = False, 
-                          ctrl: bool = False, meta: bool = False):
+async def simulate_keypress(
+    pilot: Pilot, key: str, shift: bool = False, ctrl: bool = False, meta: bool = False
+):
     """
     Simulate a key press with modifiers.
-    
+
     Args:
         pilot: The test pilot
         key: The key to press
@@ -202,18 +210,18 @@ async def simulate_keypress(pilot: Pilot, key: str, shift: bool = False,
 async def get_widget_text(widget: Widget) -> str:
     """
     Get the text content of a widget.
-    
+
     Args:
         widget: The widget to get text from
-    
+
     Returns:
         The widget's text content
     """
-    if hasattr(widget, 'value'):
+    if hasattr(widget, "value"):
         return str(widget.value)
-    elif hasattr(widget, 'text'):
+    elif hasattr(widget, "text"):
         return str(widget.text)
-    elif hasattr(widget, 'renderable'):
+    elif hasattr(widget, "renderable"):
         return str(widget.renderable)
     else:
         return widget.render()
@@ -221,10 +229,11 @@ async def get_widget_text(widget: Widget) -> str:
 
 # Mock helpers for common Textual patterns
 
+
 def create_mock_app():
     """
     Create a mock Textual app with common attributes.
-    
+
     Returns:
         A MagicMock configured to simulate a Textual app
     """
@@ -238,18 +247,18 @@ def create_mock_app():
     app.call_from_thread = MagicMock()
     app.post_message = MagicMock()
     app.loguru_logger = MagicMock()
-    
+
     return app
 
 
 def create_mock_widget(widget_class: Type[W] = Widget, **attributes) -> MagicMock:
     """
     Create a mock widget with specified attributes.
-    
+
     Args:
         widget_class: The widget class to mock
         **attributes: Attributes to set on the mock
-    
+
     Returns:
         A configured mock widget
     """

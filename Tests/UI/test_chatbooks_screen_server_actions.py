@@ -3,7 +3,10 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
-from tldw_chatbook.UI.Chatbooks_Window_Improved import ChatbooksWindowImproved, EmptyStateWidget
+from tldw_chatbook.UI.Chatbooks_Window_Improved import (
+    ChatbooksWindowImproved,
+    EmptyStateWidget,
+)
 from tldw_chatbook.UI.Screens.chatbooks_screen import ChatbooksScreen
 
 
@@ -44,7 +47,9 @@ async def test_chatbooks_empty_state_explains_portable_context_and_escape(monkey
         await pilot.pause()
 
         empty_state = app.screen.query_one(EmptyStateWidget)
-        empty_text = "\n".join(str(widget.render()) for widget in empty_state.query(Static))
+        empty_text = "\n".join(
+            str(widget.render()) for widget in empty_state.query(Static)
+        )
         empty_buttons = [button.label.plain for button in empty_state.query(Button)]
 
         assert "portable knowledge packs" in empty_text

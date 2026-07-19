@@ -12,7 +12,9 @@ from Tests.UI.test_console_native_chat_flow import (
     _wait_for_text,
 )
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
@@ -31,7 +33,9 @@ def _real_prompt_scope_service(tmp_path):
     """Build a real ``PromptsDatabase`` + ``PromptScopeService`` (mirrors
     ``Tests/UI/test_library_prompts_canvas.py``'s helper of the same name)."""
     db = PromptsDatabase(tmp_path / "prompts.db", client_id="test-client")
-    service = PromptScopeService(local_service=ScopeLocalPromptService(db), server_service=None)
+    service = PromptScopeService(
+        local_service=ScopeLocalPromptService(db), server_service=None
+    )
     return db, service
 
 
@@ -57,7 +61,11 @@ def _system_message_contents(console) -> list[str]:
     if store.active_session_id is None:
         return []
     messages = store.messages_for_session(store.active_session_id)
-    return [message.content for message in messages if message.role is ConsoleMessageRole.SYSTEM]
+    return [
+        message.content
+        for message in messages
+        if message.role is ConsoleMessageRole.SYSTEM
+    ]
 
 
 async def _spy_submit_draft(console) -> AsyncMock:
@@ -302,11 +310,15 @@ async def test_console_prompt_command_unique_exact_name_replaces_draft(tmp_path)
         await pilot.pause(0.2)
 
         assert composer.draft_text() == "Please summarize the following text."
-        assert len(host.screen_stack) == baseline_depth, "no picker should have opened for a unique match"
+        assert len(host.screen_stack) == baseline_depth, (
+            "no picker should have opened for a unique match"
+        )
 
 
 @pytest.mark.asyncio
-async def test_console_prompt_command_large_user_prompt_collapses_to_paste_token(tmp_path):
+async def test_console_prompt_command_large_user_prompt_collapses_to_paste_token(
+    tmp_path,
+):
     """An oversized resolved body collapses to a paste token for DISPLAY,
     while the canonical (sent) draft text keeps the full body -- exactly
     like a real paste."""
@@ -428,10 +440,20 @@ async def test_console_prompt_command_ambiguous_exact_match_opens_picker(tmp_pat
     guessing, with the typed args prefilled into the picker's filter."""
     db, service = _real_prompt_scope_service(tmp_path)
     db.add_prompt(
-        name="Foo", author="", details="", system_prompt="", user_prompt="Upper body.", keywords=[]
+        name="Foo",
+        author="",
+        details="",
+        system_prompt="",
+        user_prompt="Upper body.",
+        keywords=[],
     )
     db.add_prompt(
-        name="foo", author="", details="", system_prompt="", user_prompt="Lower body.", keywords=[]
+        name="foo",
+        author="",
+        details="",
+        system_prompt="",
+        user_prompt="Lower body.",
+        keywords=[],
     )
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -448,7 +470,9 @@ async def test_console_prompt_command_ambiguous_exact_match_opens_picker(tmp_pat
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
 
-        assert len(host.screen_stack) == baseline_depth + 1, "the picker must have opened"
+        assert len(host.screen_stack) == baseline_depth + 1, (
+            "the picker must have opened"
+        )
         picker = host.screen_stack[-1]
         filter_input = picker.query_one(f"#{FILTER_INPUT_ID}", Input)
         assert filter_input.value == "Foo"
@@ -463,7 +487,12 @@ async def test_console_prompt_command_no_args_opens_picker_with_empty_query(tmp_
     picker to browse, rather than attempting a meaningless empty-name match."""
     db, service = _real_prompt_scope_service(tmp_path)
     db.add_prompt(
-        name="Summarize", author="", details="", system_prompt="", user_prompt="Body.", keywords=[]
+        name="Summarize",
+        author="",
+        details="",
+        system_prompt="",
+        user_prompt="Body.",
+        keywords=[],
     )
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -504,7 +533,12 @@ async def test_console_prompt_command_picker_uses_real_bound_search_and_selectio
         keywords=[],
     )
     db.add_prompt(
-        name="Sundial", author="", details="", system_prompt="", user_prompt="Sundial body.", keywords=[]
+        name="Sundial",
+        author="",
+        details="",
+        system_prompt="",
+        user_prompt="Sundial body.",
+        keywords=[],
     )
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -532,7 +566,9 @@ async def test_console_prompt_command_picker_uses_real_bound_search_and_selectio
         row.press()
         await pilot.pause(0.2)
 
-        assert len(host.screen_stack) == baseline_depth, "the picker must have dismissed"
+        assert len(host.screen_stack) == baseline_depth, (
+            "the picker must have dismissed"
+        )
         assert composer.draft_text() == "Summarize body."
 
 
@@ -542,10 +578,20 @@ async def test_console_prompt_command_picker_escape_leaves_draft_untouched(tmp_p
     composer draft."""
     db, service = _real_prompt_scope_service(tmp_path)
     db.add_prompt(
-        name="Foo", author="", details="", system_prompt="", user_prompt="Upper body.", keywords=[]
+        name="Foo",
+        author="",
+        details="",
+        system_prompt="",
+        user_prompt="Upper body.",
+        keywords=[],
     )
     db.add_prompt(
-        name="foo", author="", details="", system_prompt="", user_prompt="Lower body.", keywords=[]
+        name="foo",
+        author="",
+        details="",
+        system_prompt="",
+        user_prompt="Lower body.",
+        keywords=[],
     )
     app = _build_test_app()
     _configure_native_ready_console(app)

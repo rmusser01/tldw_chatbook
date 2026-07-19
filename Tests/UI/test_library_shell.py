@@ -93,11 +93,16 @@ def test_library_carries_forward_line_caps_at_three_and_counts_the_rest():
         ["Research Note", "Transcript A", "Planning Chat", "Design Doc", "Roadmap"]
     )
 
-    assert line == "Carries forward: Research Note, Transcript A, Planning Chat and 2 more."
+    assert (
+        line
+        == "Carries forward: Research Note, Transcript A, Planning Chat and 2 more."
+    )
 
 
 def test_library_carries_forward_line_escapes_markup_in_titles():
-    line = library_screen_module._library_carries_forward_line(["[bold]Unsafe[/bold] title"])
+    line = library_screen_module._library_carries_forward_line(
+        ["[bold]Unsafe[/bold] title"]
+    )
 
     assert line == r"Carries forward: \[bold]Unsafe\[/bold] title"
 
@@ -216,7 +221,9 @@ async def _wait_for_selector(screen, pilot, selector, *, attempts=120):
     )
 
 
-async def _wait_for_condition(pilot, predicate, *, timeout=15.0, message, interval=0.02) -> None:
+async def _wait_for_condition(
+    pilot, predicate, *, timeout=15.0, message, interval=0.02
+) -> None:
     """Await until ``predicate()`` is truthy, or raise once ``timeout`` wall-clock seconds elapse.
 
     A deadline (not a fixed iteration count) so the wait survives CPU contention
@@ -272,7 +279,9 @@ async def test__wait_for_condition_checks_predicate_before_raising() -> None:
     condition that is already satisfied returns even when the deadline has elapsed
     (guards against a false timeout when a pause overshoots the deadline)."""
     pilot = _FakePilot()
-    await _wait_for_condition(pilot, lambda: True, timeout=0.0, message="must not raise")
+    await _wait_for_condition(
+        pilot, lambda: True, timeout=0.0, message="must not raise"
+    )
     assert pilot.pause_calls == 0
 
 
@@ -280,7 +289,9 @@ async def test__wait_for_condition_checks_predicate_before_raising() -> None:
 async def test__wait_for_condition_raises_with_message_on_timeout() -> None:
     """A never-true predicate raises AssertionError carrying the given message on timeout."""
     with pytest.raises(AssertionError, match="boom"):
-        await _wait_for_condition(_FakePilot(), lambda: False, timeout=0.05, message="boom")
+        await _wait_for_condition(
+            _FakePilot(), lambda: False, timeout=0.05, message="boom"
+        )
 
 
 @pytest.mark.asyncio
@@ -288,7 +299,10 @@ async def test__wait_for_condition_evaluates_callable_message_at_raise() -> None
     """A callable message is evaluated at raise time (so dynamic diagnostics report the stuck state)."""
     with pytest.raises(AssertionError, match="dynamic 42"):
         await _wait_for_condition(
-            _FakePilot(), lambda: False, timeout=0.05, message=lambda: f"dynamic {6 * 7}"
+            _FakePilot(),
+            lambda: False,
+            timeout=0.05,
+            message=lambda: f"dynamic {6 * 7}",
         )
 
 
@@ -383,7 +397,9 @@ async def test_library_shell_browse_conversations_renders_canvas():
         first_label = str(rows[0].label)
         assert first_label.startswith("▸")
 
-        preview = str(screen.query_one("#library-conversation-preview-lines").renderable)
+        preview = str(
+            screen.query_one("#library-conversation-preview-lines").renderable
+        )
         assert "Messages:" in preview
         assert screen.query_one("#library-conversation-open-console")
 
@@ -497,7 +513,9 @@ async def test_library_shell_flashcards_row_renders_handoff_canvas():
         assert not screen.query("#library-study-handoff-wip")
 
         purpose = screen.query_one("#library-study-handoff-purpose", Static)
-        assert str(purpose.renderable) == "Generate or review cards from Library sources."
+        assert (
+            str(purpose.renderable) == "Generate or review cards from Library sources."
+        )
         visible = _visible_text(screen)
         assert "Flashcards handoff" not in visible
         assert "Primary action:" not in visible
@@ -540,7 +558,11 @@ async def test_library_shell_handoff_canvas_button_reads_continue_in_study():
         await _wait_for_library_shell(screen, pilot)
 
         for row_id, button_id, header in (
-            ("#library-row-create-flashcards", "#library-open-flashcards", "Flashcards"),
+            (
+                "#library-row-create-flashcards",
+                "#library-open-flashcards",
+                "Flashcards",
+            ),
             ("#library-row-create-study", "#library-open-study", "Study decks"),
             ("#library-row-create-quizzes", "#library-open-quizzes", "Quizzes"),
         ):
@@ -593,9 +615,7 @@ async def test_library_shell_rag_open_import_export_switches_canvas_and_selectio
         await _wait_for_selector(screen, pilot, "#library-rag-open-import-export")
 
         screen.query_one("#library-rag-open-import-export").press()
-        await _wait_for_selector(
-            screen, pilot, "#library-ingest-canvas"
-        )
+        await _wait_for_selector(screen, pilot, "#library-ingest-canvas")
 
         # The canvas now renders the real Ingest canvas, driven by the shell
         # selection rather than a bare _active_mode flip. The Import/Export
@@ -648,7 +668,12 @@ async def _wait_for_library_rag_query_ready(screen, pilot, query, *, attempts=15
     for _ in range(attempts):
         inputs = list(screen.query("#library-rag-query-input"))
         buttons = list(screen.query("#library-rag-run-query"))
-        if inputs and buttons and inputs[0].value == query and buttons[0].disabled is False:
+        if (
+            inputs
+            and buttons
+            and inputs[0].value == query
+            and buttons[0].disabled is False
+        ):
             await pilot.pause()
             return
         await pilot.pause(0.02)
@@ -819,7 +844,9 @@ async def test_library_shell_search_history_loads_from_cli_config_fallback(monke
 
 
 @pytest.mark.asyncio
-async def test_library_shell_search_history_prefers_app_config_over_cli_config(monkeypatch):
+async def test_library_shell_search_history_prefers_app_config_over_cli_config(
+    monkeypatch,
+):
     """Precedence: when ``app_config`` already carries a history list, the
     ``get_cli_setting`` fallback must never be consulted.
     """
@@ -832,7 +859,9 @@ async def test_library_shell_search_history_prefers_app_config_over_cli_config(m
             "get_cli_setting should not be called when app_config already has history"
         )
 
-    monkeypatch.setattr(library_screen_module, "get_cli_setting", raising_get_cli_setting)
+    monkeypatch.setattr(
+        library_screen_module, "get_cli_setting", raising_get_cli_setting
+    )
 
     host = LibraryHarness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -843,7 +872,9 @@ async def test_library_shell_search_history_prefers_app_config_over_cli_config(m
 
 
 @pytest.mark.asyncio
-async def test_library_shell_rail_preferences_loads_from_cli_config_fallback(monkeypatch):
+async def test_library_shell_rail_preferences_loads_from_cli_config_fallback(
+    monkeypatch,
+):
     """(C4) Same restart-persistence gap as search history: ``app_config``
     (from ``load_settings()``) can come back without a ``library`` section
     at all even when ``config.toml`` has persisted ``[library.rail_state]``
@@ -880,7 +911,9 @@ async def test_library_shell_rail_preferences_loads_from_cli_config_fallback(mon
 
 
 @pytest.mark.asyncio
-async def test_library_shell_rail_preferences_prefers_app_config_over_cli_config(monkeypatch):
+async def test_library_shell_rail_preferences_prefers_app_config_over_cli_config(
+    monkeypatch,
+):
     """Precedence: when ``app_config`` already carries rail-state sections,
     the ``get_cli_setting`` fallback must never be consulted.
     """
@@ -893,7 +926,9 @@ async def test_library_shell_rail_preferences_prefers_app_config_over_cli_config
             "get_cli_setting should not be called when app_config already has rail state"
         )
 
-    monkeypatch.setattr(library_screen_module, "get_cli_setting", raising_get_cli_setting)
+    monkeypatch.setattr(
+        library_screen_module, "get_cli_setting", raising_get_cli_setting
+    )
 
     host = LibraryHarness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -936,7 +971,9 @@ async def test_library_shell_search_history_row_reruns_query():
         await _wait_for_condition(
             pilot,
             lambda: _history_labels() == ["beta", "alpha"],
-            message=lambda: f"History rows never became [beta, alpha]: {_history_labels()}",
+            message=lambda: (
+                f"History rows never became [beta, alpha]: {_history_labels()}"
+            ),
         )
 
         # (C5a) History recording happens synchronously the instant Run is
@@ -997,7 +1034,9 @@ async def test_library_shell_search_history_row_reruns_query():
         # is observed -- bounded-poll instead of a single immediate assert.
         await _wait_for_condition(
             pilot,
-            lambda: screen.query_one("#library-rag-query-input", Input).value == "alpha",
+            lambda: (
+                screen.query_one("#library-rag-query-input", Input).value == "alpha"
+            ),
             message=lambda: (
                 "Query input never showed the re-run entry's text (still "
                 f"{screen.query_one('#library-rag-query-input', Input).value!r})."
@@ -1270,7 +1309,11 @@ async def test_library_shell_rail_search_submit_renders_every_result_row():
         # this fails for every row (nothing in the ancestor chain scrolls,
         # so ``scroll_visible()`` is a no-op and clipped content never
         # becomes visible no matter what).
-        titles = ("Tides research", "Ocean survey transcript", "Draft quarterly research digest")
+        titles = (
+            "Tides research",
+            "Ocean survey transcript",
+            "Draft quarterly research digest",
+        )
         for index, title in enumerate(titles):
             result_widget = screen.query_one(f"#library-rag-result-{index}")
             result_widget.scroll_visible(animate=False)
@@ -1515,7 +1558,9 @@ async def test_library_shell_rail_search_submit_aborts_on_note_conflict():
         notes_service = app.notes_scope_service
         _bump_note_version_externally(notes_service, "n-1")
 
-        screen.query_one("#library-note-body", TextArea).text = "kept text that must survive"
+        screen.query_one(
+            "#library-note-body", TextArea
+        ).text = "kept text that must survive"
         await pilot.pause()
 
         screen.query_one("#library-note-save").press()
@@ -1810,8 +1855,14 @@ async def test_library_shell_media_viewer_uses_destination_honest_labels():
         screen.query_one("#library-media-row-1").press()
         await _wait_for_selector(screen, pilot, "#library-media-use-in-chat")
 
-        assert str(screen.query_one("#library-media-open", Button).label) == "Open in Media manager"
-        assert str(screen.query_one("#library-media-use-in-chat", Button).label) == "Use in Console"
+        assert (
+            str(screen.query_one("#library-media-open", Button).label)
+            == "Open in Media manager"
+        )
+        assert (
+            str(screen.query_one("#library-media-use-in-chat", Button).label)
+            == "Use in Console"
+        )
 
 
 @pytest.mark.asyncio
@@ -1836,7 +1887,10 @@ async def test_library_shell_media_analysis_button_reads_add_when_no_analysis():
         screen.query_one("#library-media-row-1").press()
         await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
 
-        assert str(screen.query_one("#library-media-analysis-edit", Button).label) == "Add analysis"
+        assert (
+            str(screen.query_one("#library-media-analysis-edit", Button).label)
+            == "Add analysis"
+        )
 
 
 @pytest.mark.asyncio
@@ -1972,7 +2026,9 @@ async def test_library_shell_media_rail_reentry_resets_to_list():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_media_viewer_shows_loading_before_detail_loads(monkeypatch):
+async def test_library_shell_media_viewer_shows_loading_before_detail_loads(
+    monkeypatch,
+):
     """The viewer shows a loading line until ``_library_media_detail`` arrives."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
@@ -2076,8 +2132,13 @@ async def test_library_shell_media_edit_shows_prefilled_form():
         await _wait_for_selector(screen, pilot, "#library-media-edit-title")
 
         assert screen._library_media_editing is True
-        assert screen.query_one("#library-media-edit-title", Input).value == "Interview Recording"
-        assert screen.query_one("#library-media-edit-author", Input).value == "Jordan Lee"
+        assert (
+            screen.query_one("#library-media-edit-title", Input).value
+            == "Interview Recording"
+        )
+        assert (
+            screen.query_one("#library-media-edit-author", Input).value == "Jordan Lee"
+        )
         assert screen.query_one("#library-media-edit-url", Input).value == ""
         assert (
             screen.query_one("#library-media-edit-keywords", Input).value
@@ -2106,9 +2167,9 @@ async def test_library_shell_media_edit_save_persists_and_exits_edit_mode():
         screen.query_one("#library-media-edit").press()
         await _wait_for_selector(screen, pilot, "#library-media-edit-title")
 
-        screen.query_one("#library-media-edit-title", Input).value = (
-            "Interview Recording (Revised)"
-        )
+        screen.query_one(
+            "#library-media-edit-title", Input
+        ).value = "Interview Recording (Revised)"
 
         screen.query_one("#library-media-edit-save").press()
 
@@ -2208,7 +2269,9 @@ async def test_library_shell_media_edit_save_sanitizes_user_input():
             screen, pilot, "Clean<script>alert(1)</script>Title"
         )
 
-        sent_title = screen.app_instance.media_reading_scope_service.update_calls[-1]["title"]
+        sent_title = screen.app_instance.media_reading_scope_service.update_calls[-1][
+            "title"
+        ]
         assert "<script" not in sent_title.lower()
         assert "</script" not in sent_title.lower()
         # ...but the surrounding legitimate text is preserved.
@@ -2373,7 +2436,9 @@ async def test_library_shell_media_edit_cancel_discards():
         screen.query_one("#library-media-edit").press()
         await _wait_for_selector(screen, pilot, "#library-media-edit-title")
 
-        screen.query_one("#library-media-edit-title", Input).value = "Should not persist"
+        screen.query_one(
+            "#library-media-edit-title", Input
+        ).value = "Should not persist"
 
         screen.query_one("#library-media-edit-cancel").press()
         await pilot.pause()
@@ -2574,7 +2639,9 @@ async def test_library_shell_media_highlight_add_creates_and_renders_new_highlig
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
         screen.query_one("#library-media-row-1").press()
-        await _wait_for_selector(screen, pilot, "#library-media-highlight-add-collapsible")
+        await _wait_for_selector(
+            screen, pilot, "#library-media-highlight-add-collapsible"
+        )
 
         assert not screen.query(".library-media-highlight-delete")
 
@@ -2587,7 +2654,9 @@ async def test_library_shell_media_highlight_add_creates_and_renders_new_highlig
         collapsible.collapsed = False
         await pilot.pause()
 
-        screen.query_one("#library-media-highlight-quote", Input).value = "New highlight quote"
+        screen.query_one(
+            "#library-media-highlight-quote", Input
+        ).value = "New highlight quote"
         screen.query_one("#library-media-highlight-add").press()
 
         service = app.media_reading_scope_service
@@ -2664,7 +2733,10 @@ async def test_library_shell_media_read_later_saves_and_flips_button_label():
         screen.query_one("#library-media-row-1").press()
         await _wait_for_selector(screen, pilot, "#library-media-read-later")
 
-        assert str(screen.query_one("#library-media-read-later", Button).label) == "Read it later"
+        assert (
+            str(screen.query_one("#library-media-read-later", Button).label)
+            == "Read it later"
+        )
 
         screen.query_one("#library-media-read-later").press()
 
@@ -2680,7 +2752,10 @@ async def test_library_shell_media_read_later_saves_and_flips_button_label():
         await pilot.pause()
         await pilot.pause()
 
-        assert service.read_it_later_calls[-1] == {"action": "save", "media_id": "media-1"}
+        assert service.read_it_later_calls[-1] == {
+            "action": "save",
+            "media_id": "media-1",
+        }
         assert screen._library_media_detail["is_read_it_later"] is True
         assert (
             str(screen.query_one("#library-media-read-later", Button).label)
@@ -2725,9 +2800,15 @@ async def test_library_shell_media_read_later_removes_when_already_saved():
         await pilot.pause()
         await pilot.pause()
 
-        assert service.read_it_later_calls[-1] == {"action": "remove", "media_id": "media-1"}
+        assert service.read_it_later_calls[-1] == {
+            "action": "remove",
+            "media_id": "media-1",
+        }
         assert "is_read_it_later" not in screen._library_media_detail
-        assert str(screen.query_one("#library-media-read-later", Button).label) == "Read it later"
+        assert (
+            str(screen.query_one("#library-media-read-later", Button).label)
+            == "Read it later"
+        )
 
 
 @pytest.mark.asyncio
@@ -2756,7 +2837,9 @@ async def test_library_shell_media_viewer_shows_analysis_from_latest_version():
         screen.query_one("#library-media-row-1").press()
         await _wait_for_selector(screen, pilot, "#library-media-viewer-analysis-text")
 
-        analysis_text = str(screen.query_one("#library-media-viewer-analysis-text").renderable)
+        analysis_text = str(
+            screen.query_one("#library-media-viewer-analysis-text").renderable
+        )
         assert analysis_text == "Roadmap analysis"
 
 
@@ -2765,7 +2848,9 @@ async def test_library_shell_media_analysis_edit_shows_prefilled_textarea():
     """Pressing "Edit analysis" swaps the analysis text for a prefilled TextArea."""
     app = _build_test_app()
     media_items = _two_media_items()
-    media_items[0]["versions"] = [{"version_number": 1, "analysis_content": "Existing analysis"}]
+    media_items[0]["versions"] = [
+        {"version_number": 1, "analysis_content": "Existing analysis"}
+    ]
     _seed_conversations(app, _two_conversations(), media=media_items)
     host = LibraryHarness(app)
 
@@ -2793,7 +2878,9 @@ async def test_library_shell_media_analysis_save_persists_and_exits_edit_mode():
     """Saving the analysis edit form calls save_analysis_version and refreshes the viewer."""
     app = _build_test_app()
     media_items = _two_media_items()
-    media_items[0]["versions"] = [{"version_number": 1, "analysis_content": "Existing analysis"}]
+    media_items[0]["versions"] = [
+        {"version_number": 1, "analysis_content": "Existing analysis"}
+    ]
     _seed_conversations(app, _two_conversations(), media=media_items)
     host = LibraryHarness(app)
 
@@ -2809,9 +2896,9 @@ async def test_library_shell_media_analysis_save_persists_and_exits_edit_mode():
         screen.query_one("#library-media-analysis-edit").press()
         await _wait_for_selector(screen, pilot, "#library-media-analysis-edit-text")
 
-        screen.query_one("#library-media-analysis-edit-text", TextArea).text = (
-            "Revised analysis"
-        )
+        screen.query_one(
+            "#library-media-analysis-edit-text", TextArea
+        ).text = "Revised analysis"
 
         screen.query_one("#library-media-analysis-save").press()
 
@@ -2830,11 +2917,16 @@ async def test_library_shell_media_analysis_save_persists_and_exits_edit_mode():
         call = service.analysis_calls[-1]
         assert call["media_id"] == "media-1"
         assert call["analysis_content"] == "Revised analysis"
-        assert call["content"] == "Full transcript: the interview recording covers the quarterly roadmap."
+        assert (
+            call["content"]
+            == "Full transcript: the interview recording covers the quarterly roadmap."
+        )
 
         assert screen._library_media_editing_analysis is False
         assert not screen.query("#library-media-analysis-edit-text")
-        analysis_text = str(screen.query_one("#library-media-viewer-analysis-text").renderable)
+        analysis_text = str(
+            screen.query_one("#library-media-viewer-analysis-text").renderable
+        )
         assert analysis_text == "Revised analysis"
 
 
@@ -2843,7 +2935,9 @@ async def test_library_shell_media_analysis_cancel_discards():
     """Cancelling the analysis edit form discards changes without calling the service."""
     app = _build_test_app()
     media_items = _two_media_items()
-    media_items[0]["versions"] = [{"version_number": 1, "analysis_content": "Existing analysis"}]
+    media_items[0]["versions"] = [
+        {"version_number": 1, "analysis_content": "Existing analysis"}
+    ]
     _seed_conversations(app, _two_conversations(), media=media_items)
     host = LibraryHarness(app)
 
@@ -2859,7 +2953,9 @@ async def test_library_shell_media_analysis_cancel_discards():
         screen.query_one("#library-media-analysis-edit").press()
         await _wait_for_selector(screen, pilot, "#library-media-analysis-edit-text")
 
-        screen.query_one("#library-media-analysis-edit-text", TextArea).text = "Should not persist"
+        screen.query_one(
+            "#library-media-analysis-edit-text", TextArea
+        ).text = "Should not persist"
 
         screen.query_one("#library-media-analysis-cancel").press()
         await pilot.pause()
@@ -2867,7 +2963,9 @@ async def test_library_shell_media_analysis_cancel_discards():
 
         assert screen._library_media_editing_analysis is False
         assert not screen.query("#library-media-analysis-edit-text")
-        analysis_text = str(screen.query_one("#library-media-viewer-analysis-text").renderable)
+        analysis_text = str(
+            screen.query_one("#library-media-viewer-analysis-text").renderable
+        )
         assert analysis_text == "Existing analysis"
 
         service = app.media_reading_scope_service
@@ -2924,7 +3022,9 @@ async def _open_media_viewer_and_submit_content_search(screen, pilot, query):
 async def test_library_shell_media_content_search_no_query_hides_status_and_nav():
     """With no active search, only the search box renders -- no orphaned status/prev/next."""
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    _seed_conversations(
+        app, _two_conversations(), media=_media_item_with_multiline_content()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -2943,7 +3043,9 @@ async def test_library_shell_media_content_search_no_query_hides_status_and_nav(
 async def test_library_shell_media_content_search_shows_match_count():
     """Submitting a query shows the match count and starts at the first match."""
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    _seed_conversations(
+        app, _two_conversations(), media=_media_item_with_multiline_content()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -2952,7 +3054,9 @@ async def test_library_shell_media_content_search_shows_match_count():
 
         await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
 
-        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        status = str(
+            screen.query_one("#library-media-content-search-status").renderable
+        )
         assert status == "Match 1 of 2 matches"
         assert screen._library_media_content_query == "budget"
         assert screen._library_media_content_match_index == 0
@@ -2962,7 +3066,9 @@ async def test_library_shell_media_content_search_shows_match_count():
 async def test_library_shell_media_content_search_highlights_matches_in_body():
     """While searching, each query occurrence in the content body is styled."""
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    _seed_conversations(
+        app, _two_conversations(), media=_media_item_with_multiline_content()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -2986,7 +3092,9 @@ async def test_library_shell_media_content_search_highlights_matches_in_body():
 async def test_library_shell_media_content_search_one_mark_per_matching_line():
     """A line with two hits is one match and gets one mark (count == visible marks)."""
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), media=_media_item_with_two_hits_on_one_line())
+    _seed_conversations(
+        app, _two_conversations(), media=_media_item_with_two_hits_on_one_line()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -2996,7 +3104,9 @@ async def test_library_shell_media_content_search_one_mark_per_matching_line():
         await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
 
         # One matching line -> "Match 1 of 1", even though "budget" appears twice.
-        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        status = str(
+            screen.query_one("#library-media-content-search-status").renderable
+        )
         assert status == "Match 1 of 1 matches"
         # ...and exactly one styled mark in the body, so count == visible marks.
         content = screen.query_one("#library-media-viewer-content-text").renderable
@@ -3009,16 +3119,22 @@ async def test_library_shell_media_content_search_one_mark_per_matching_line():
 async def test_library_shell_media_content_search_no_matches_shows_status():
     """A query with no hits in the content shows a "No matches" status."""
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    _seed_conversations(
+        app, _two_conversations(), media=_media_item_with_multiline_content()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
-        await _open_media_viewer_and_submit_content_search(screen, pilot, "nonexistent-term")
+        await _open_media_viewer_and_submit_content_search(
+            screen, pilot, "nonexistent-term"
+        )
 
-        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        status = str(
+            screen.query_one("#library-media-content-search-status").renderable
+        )
         assert status == "No matches"
 
 
@@ -3026,7 +3142,9 @@ async def test_library_shell_media_content_search_no_matches_shows_status():
 async def test_library_shell_media_content_search_empty_query_hides_status_and_nav():
     """Submitting a blank query clears the query and hides the status/prev/next row."""
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    _seed_conversations(
+        app, _two_conversations(), media=_media_item_with_multiline_content()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -3051,7 +3169,9 @@ async def test_library_shell_media_content_search_empty_query_hides_status_and_n
 async def test_library_shell_media_content_search_next_prev_advances_match_index():
     """Next/Prev cycle the match index (wrapping) and update the status line."""
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    _seed_conversations(
+        app, _two_conversations(), media=_media_item_with_multiline_content()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -3066,7 +3186,9 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
         await pilot.pause()
 
         assert screen._library_media_content_match_index == 1
-        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        status = str(
+            screen.query_one("#library-media-content-search-status").renderable
+        )
         assert status == "Match 2 of 2 matches"
 
         # Next wraps back around to the first match.
@@ -3075,7 +3197,9 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
         await pilot.pause()
 
         assert screen._library_media_content_match_index == 0
-        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        status = str(
+            screen.query_one("#library-media-content-search-status").renderable
+        )
         assert status == "Match 1 of 2 matches"
 
         # Prev wraps backwards to the last match.
@@ -3084,7 +3208,9 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
         await pilot.pause()
 
         assert screen._library_media_content_match_index == 1
-        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        status = str(
+            screen.query_one("#library-media-content-search-status").renderable
+        )
         assert status == "Match 2 of 2 matches"
 
 
@@ -3092,7 +3218,9 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
 async def test_library_shell_media_content_search_resets_on_back():
     """Returning to the media list clears the in-content search state."""
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    _seed_conversations(
+        app, _two_conversations(), media=_media_item_with_multiline_content()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -3111,7 +3239,9 @@ async def test_library_shell_media_content_search_resets_on_back():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_media_canvas_shows_loading_before_snapshot_loads(monkeypatch):
+async def test_library_shell_media_canvas_shows_loading_before_snapshot_loads(
+    monkeypatch,
+):
     """Mirrors the conversations loading-gate contract for the media canvas."""
     app = _build_test_app()
     _seed_conversations(app, [])
@@ -3439,9 +3569,10 @@ async def test_library_shell_search_scope_strip_refresh_path_uses_shared_copy():
                 f"text: {_visible_text(screen)}"
             )
 
-        assert str(
-            screen.query_one("#library-rag-scope-summary", Static).renderable
-        ) == LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
+        assert (
+            str(screen.query_one("#library-rag-scope-summary", Static).renderable)
+            == LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
+        )
 
 
 @pytest.mark.asyncio
@@ -3882,7 +4013,9 @@ async def test_library_shell_snapshot_cache_is_isolated_from_live_record_mutatio
 
 
 @pytest.mark.asyncio
-async def test_library_shell_error_snapshot_is_not_cached_for_instant_apply(monkeypatch):
+async def test_library_shell_error_snapshot_is_not_cached_for_instant_apply(
+    monkeypatch,
+):
     """A failed/service-unavailable snapshot must NOT seed the app cache: it
     still applies to the current view (the error banner shows now, unchanged),
     but a return visit within TTL must do a normal fresh fetch instead of
@@ -4369,7 +4502,9 @@ async def test_library_shell_rail_scrolls_to_reveal_workspace_actions():
         for section in ("browse", "create", "ingest", "details"):
             body = screen.query_one(f"#library-rail-section-body-{section}")
             if body.styles.display == "none":
-                screen.query_one(f"#console-rail-section-toggle-library-{section}").press()
+                screen.query_one(
+                    f"#console-rail-section-toggle-library-{section}"
+                ).press()
                 await pilot.pause()
                 await pilot.pause()
 
@@ -4382,7 +4517,9 @@ async def test_library_shell_rail_scrolls_to_reveal_workspace_actions():
 
         for selector in ("#library-create-local-workspace", "#library-use-in-console"):
             button = screen.query_one(selector)
-            assert rail.region.y <= button.region.y < rail.region.y + rail.region.height, (
+            assert (
+                rail.region.y <= button.region.y < rail.region.y + rail.region.height
+            ), (
                 f"{selector} region {button.region} is not within the scrolled rail "
                 f"viewport {rail.region}"
             )
@@ -4529,10 +4666,20 @@ async def test_library_shell_media_use_in_chat_body_not_truncated_for_short_cont
 
 def _two_notes():
     return [
-        {"id": "n-1", "title": "Q3 retro", "content": "alpha budget line",
-         "last_modified": "2026-07-07T11:57:00+00:00", "version": 2},
-        {"id": "n-2", "title": "Reading list", "content": "bravo",
-         "last_modified": "2026-07-06T12:00:00+00:00", "version": 1},
+        {
+            "id": "n-1",
+            "title": "Q3 retro",
+            "content": "alpha budget line",
+            "last_modified": "2026-07-07T11:57:00+00:00",
+            "version": 2,
+        },
+        {
+            "id": "n-2",
+            "title": "Reading list",
+            "content": "bravo",
+            "last_modified": "2026-07-06T12:00:00+00:00",
+            "version": 1,
+        },
     ]
 
 
@@ -4865,7 +5012,13 @@ async def test_library_shell_create_rail_flashcards_due_count_reads_in_memory_db
     try:
         deck_id = db.create_deck("Biology")
         db.create_flashcard(
-            {"deck_id": deck_id, "front": "ATP", "back": "Energy", "tags": "", "type": "basic"}
+            {
+                "deck_id": deck_id,
+                "front": "ATP",
+                "back": "Energy",
+                "tags": "",
+                "type": "basic",
+            }
         )
         app.chachanotes_db = db
         app.study_scope_service = StudyScopeService(
@@ -4880,7 +5033,9 @@ async def test_library_shell_create_rail_flashcards_due_count_reads_in_memory_db
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
 
-            flashcards_button = screen.query_one("#library-row-create-flashcards", Button)
+            flashcards_button = screen.query_one(
+                "#library-row-create-flashcards", Button
+            )
             decks_label = str(screen.query_one("#library-row-create-study").label)
 
             assert "Flashcards due: 1" in str(flashcards_button.label)
@@ -4949,10 +5104,20 @@ async def test_library_shell_notes_list_renders_bracketed_titles_verbatim():
     list at mount (the search-history Button-label lesson)."""
     app = _build_test_app()
     notes = [
-        {"id": "n-1", "title": "[draft] Q3 plan [wip]", "content": "body",
-         "last_modified": "2026-07-07T11:57:00+00:00", "version": 1},
-        {"id": "n-2", "title": "[/wip] closing tag title", "content": "body",
-         "last_modified": "2026-07-06T12:00:00+00:00", "version": 1},
+        {
+            "id": "n-1",
+            "title": "[draft] Q3 plan [wip]",
+            "content": "body",
+            "last_modified": "2026-07-07T11:57:00+00:00",
+            "version": 1,
+        },
+        {
+            "id": "n-2",
+            "title": "[/wip] closing tag title",
+            "content": "body",
+            "last_modified": "2026-07-06T12:00:00+00:00",
+            "version": 1,
+        },
     ]
     _seed_conversations(app, _two_conversations(), notes=notes)
     host = LibraryHarness(app)
@@ -5004,7 +5169,8 @@ async def test_library_shell_notes_filter_queries_search_seam():
         box.focus()
         await pilot.pause()
         await pilot.press("enter")
-        await pilot.pause(); await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
         service = app.notes_scope_service
         assert service.search_calls[-1]["query"] == "retro"
         assert screen._library_notes_filter == "retro"
@@ -5051,7 +5217,9 @@ async def test_library_shell_notes_filter_clears_before_stale_response_lands():
     service = _GatedSearchLibraryNotesScopeService(_two_notes())
     app.notes_scope_service = service
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
-    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(_two_conversations())
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        _two_conversations()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -5311,7 +5479,13 @@ class _DelayedSaveLibraryNotesScopeService(StaticLibraryNotesScopeService):
     loop.
     """
 
-    def __init__(self, notes, *, delay: float = 0.15, release_event: threading.Event | None = None):
+    def __init__(
+        self,
+        notes,
+        *,
+        delay: float = 0.15,
+        release_event: threading.Event | None = None,
+    ):
         super().__init__(notes)
         self.delay = delay
         self.release_event = release_event
@@ -5320,7 +5494,9 @@ class _DelayedSaveLibraryNotesScopeService(StaticLibraryNotesScopeService):
     async def save_note(self, **kwargs):
         self.save_started.append(str(kwargs.get("note_id") or ""))
         if self.release_event is not None:
-            await asyncio.to_thread(self.release_event.wait, _GATED_RELEASE_TIMEOUT_SECONDS)
+            await asyncio.to_thread(
+                self.release_event.wait, _GATED_RELEASE_TIMEOUT_SECONDS
+            )
         else:
             await asyncio.sleep(self.delay)
         return await super().save_note(**kwargs)
@@ -5403,7 +5579,9 @@ async def test_library_shell_note_explicit_save_calls_seam_and_bumps_version():
                 break
             await pilot.pause(0.02)
         else:
-            raise AssertionError(f"Version never bumped (still {screen._library_note_version!r}).")
+            raise AssertionError(
+                f"Version never bumped (still {screen._library_note_version!r})."
+            )
 
         assert screen.query_one("#library-note-body", TextArea) is body_before_save
         meta = str(screen.query_one("#library-note-meta").renderable)
@@ -5446,7 +5624,9 @@ async def test_library_shell_note_save_patches_detail_title_and_content_for_late
         screen.query_one("#library-note-delete-cancel").press()
         await pilot.pause()
 
-        assert screen.query_one("#library-note-body", TextArea).text == "edited body text", (
+        assert (
+            screen.query_one("#library-note-body", TextArea).text == "edited body text"
+        ), (
             "A later recompose reverted the saved edit -- the detail mirror "
             "wasn't patched with the saved title/content."
         )
@@ -5550,7 +5730,9 @@ async def test_library_shell_note_autosave_fires_after_debounce(monkeypatch):
         await _wait_for_library_shell(screen, pilot)
         await _open_note_editor(screen, pilot)
 
-        screen.query_one("#library-note-body", TextArea).text = "alpha budget line, autosaved"
+        screen.query_one(
+            "#library-note-body", TextArea
+        ).text = "alpha budget line, autosaved"
         await pilot.pause()
 
         service = app.notes_scope_service
@@ -5559,7 +5741,9 @@ async def test_library_shell_note_autosave_fires_after_debounce(monkeypatch):
                 break
             await pilot.pause(0.02)
         else:
-            raise AssertionError("Autosave never called save_note without a Save press.")
+            raise AssertionError(
+                "Autosave never called save_note without a Save press."
+            )
 
         assert service.save_calls[-1]["content"] == "alpha budget line, autosaved"
 
@@ -5603,7 +5787,9 @@ async def test_library_flush_pending_work_saves_dirty_note_and_reports_conflicts
         # FAILED save leaves the edits only in this screen instance, so
         # discarding it would lose them. Force a genuine save failure
         # through the real seam and re-dirty the editor.
-        screen.query_one("#library-note-body", TextArea).text = "edit that must not be lost"
+        screen.query_one(
+            "#library-note-body", TextArea
+        ).text = "edit that must not be lost"
         await pilot.pause()
 
         async def _failing_save(**kwargs):
@@ -5736,7 +5922,9 @@ async def test_library_shell_note_flush_on_back_saves_before_view_switches():
     service = _DelayedSaveLibraryNotesScopeService(_two_notes())
     app.notes_scope_service = service
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
-    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(_two_conversations())
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        _two_conversations()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -5744,7 +5932,9 @@ async def test_library_shell_note_flush_on_back_saves_before_view_switches():
         await _wait_for_library_shell(screen, pilot)
         await _open_note_editor(screen, pilot)
 
-        screen.query_one("#library-note-body", TextArea).text = "alpha budget line, flushed"
+        screen.query_one(
+            "#library-note-body", TextArea
+        ).text = "alpha budget line, flushed"
         await pilot.pause()
 
         screen.query_one("#library-note-back").press()
@@ -5779,7 +5969,9 @@ async def test_library_shell_note_flush_on_rail_switch_saves_before_switching():
     service = _DelayedSaveLibraryNotesScopeService(_two_notes())
     app.notes_scope_service = service
     app.media_reading_scope_service = StaticLibraryMediaScopeService(_two_media_items())
-    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(_two_conversations())
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        _two_conversations()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -5787,7 +5979,9 @@ async def test_library_shell_note_flush_on_rail_switch_saves_before_switching():
         await _wait_for_library_shell(screen, pilot)
         await _open_note_editor(screen, pilot)
 
-        screen.query_one("#library-note-body", TextArea).text = "alpha budget line, rail-flushed"
+        screen.query_one(
+            "#library-note-body", TextArea
+        ).text = "alpha budget line, rail-flushed"
         await pilot.pause()
 
         screen.query_one("#library-row-browse-media").press()
@@ -5833,7 +6027,9 @@ async def test_library_shell_note_flush_on_notes_create_deeplink_saves_before_sw
     service = _DelayedSaveLibraryNotesScopeService(_two_notes())
     app.notes_scope_service = service
     app.media_reading_scope_service = StaticLibraryMediaScopeService(_two_media_items())
-    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(_two_conversations())
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        _two_conversations()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -5841,7 +6037,9 @@ async def test_library_shell_note_flush_on_notes_create_deeplink_saves_before_sw
         await _wait_for_library_shell(screen, pilot)
         await _open_note_editor(screen, pilot)
 
-        screen.query_one("#library-note-body", TextArea).text = "alpha budget line, deeplink-flushed"
+        screen.query_one(
+            "#library-note-body", TextArea
+        ).text = "alpha budget line, deeplink-flushed"
         await pilot.pause()
 
         screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_NOTES_CREATE: True})
@@ -5850,7 +6048,9 @@ async def test_library_shell_note_flush_on_notes_create_deeplink_saves_before_sw
                 break
             await pilot.pause(0.01)
         else:
-            raise AssertionError("notes_create deep link never triggered the flush save.")
+            raise AssertionError(
+                "notes_create deep link never triggered the flush save."
+            )
 
         # The save is still sleeping: the create view must not have applied yet.
         assert screen._library_selected_row_id == "browse-notes"
@@ -5860,10 +6060,14 @@ async def test_library_shell_note_flush_on_notes_create_deeplink_saves_before_sw
                 break
             await pilot.pause(0.02)
         else:
-            raise AssertionError("notes_create deep link never applied once the flush resolved.")
+            raise AssertionError(
+                "notes_create deep link never applied once the flush resolved."
+            )
 
         assert service.save_calls, "The flushed save never actually completed."
-        assert service.save_calls[-1]["content"] == "alpha budget line, deeplink-flushed"
+        assert (
+            service.save_calls[-1]["content"] == "alpha budget line, deeplink-flushed"
+        )
 
 
 @pytest.mark.asyncio
@@ -5887,10 +6091,14 @@ async def test_library_shell_flush_waits_for_inflight_autosave(monkeypatch):
     monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.05)
     app = _build_test_app()
     release_event = threading.Event()
-    service = _DelayedSaveLibraryNotesScopeService(_two_notes(), release_event=release_event)
+    service = _DelayedSaveLibraryNotesScopeService(
+        _two_notes(), release_event=release_event
+    )
     app.notes_scope_service = service
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
-    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(_two_conversations())
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        _two_conversations()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -5898,7 +6106,9 @@ async def test_library_shell_flush_waits_for_inflight_autosave(monkeypatch):
         await _wait_for_library_shell(screen, pilot)
         await _open_note_editor(screen, pilot)
 
-        screen.query_one("#library-note-body", TextArea).text = "alpha budget line, autosave-inflight"
+        screen.query_one(
+            "#library-note-body", TextArea
+        ).text = "alpha budget line, autosave-inflight"
         await pilot.pause()
 
         # Let the autosave debounce fire; its save_note blocks on
@@ -5965,7 +6175,9 @@ async def test_library_shell_note_save_result_after_switch_is_discarded():
     service = _DelayedSaveLibraryNotesScopeService(_two_notes())
     app.notes_scope_service = service
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
-    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(_two_conversations())
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        _two_conversations()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -6053,9 +6265,13 @@ async def test_library_shell_note_conflict_shows_overwrite_reload_and_keeps_user
         await _open_note_editor(screen, pilot)
 
         service = app.notes_scope_service
-        _bump_note_version_externally(service, "n-1")  # now stored at v3; screen still has v2
+        _bump_note_version_externally(
+            service, "n-1"
+        )  # now stored at v3; screen still has v2
 
-        screen.query_one("#library-note-body", TextArea).text = "kept text that must survive"
+        screen.query_one(
+            "#library-note-body", TextArea
+        ).text = "kept text that must survive"
         await pilot.pause()
 
         screen.query_one("#library-note-save").press()
@@ -6103,7 +6319,9 @@ async def test_library_shell_note_conflict_during_preview_reads_live_text():
         await _wait_for_selector(screen, pilot, "#library-note-preview-body")
         assert screen._library_note_preview is True
 
-        _bump_note_version_externally(service, "n-1")  # now stored at v3; screen still has v2
+        _bump_note_version_externally(
+            service, "n-1"
+        )  # now stored at v3; screen still has v2
 
         screen.query_one("#library-note-save").press()
         await _wait_for_condition(
@@ -6156,9 +6374,13 @@ async def test_library_shell_note_conflict_overwrite_resaves_with_fresh_version(
         await _open_note_editor(screen, pilot)
 
         service = app.notes_scope_service
-        _bump_note_version_externally(service, "n-1")  # now stored at v3; screen still has v2
+        _bump_note_version_externally(
+            service, "n-1"
+        )  # now stored at v3; screen still has v2
 
-        screen.query_one("#library-note-body", TextArea).text = "kept text that must survive"
+        screen.query_one(
+            "#library-note-body", TextArea
+        ).text = "kept text that must survive"
         await pilot.pause()
 
         screen.query_one("#library-note-save").press()
@@ -6168,7 +6390,9 @@ async def test_library_shell_note_conflict_overwrite_resaves_with_fresh_version(
             message="The version conflict was never reached.",
         )
 
-        (await _wait_for_selector(screen, pilot, "#library-note-conflict-overwrite")).press()
+        (
+            await _wait_for_selector(screen, pilot, "#library-note-conflict-overwrite")
+        ).press()
         await _wait_for_condition(
             pilot,
             lambda: screen._library_note_autosave_state == "saved",
@@ -6178,7 +6402,9 @@ async def test_library_shell_note_conflict_overwrite_resaves_with_fresh_version(
         assert not screen.query("#library-note-conflict-overwrite")
         stored = next(note for note in service.notes if note["id"] == "n-1")
         assert stored["content"] == "kept text that must survive"
-        assert stored["version"] == 4  # v2 -> externally bumped to v3 -> overwrite saves to v4
+        assert (
+            stored["version"] == 4
+        )  # v2 -> externally bumped to v3 -> overwrite saves to v4
         assert screen._library_note_version == 4
 
 
@@ -6211,7 +6437,9 @@ async def test_library_shell_note_conflict_reload_discards_local_edits():
             message="The version conflict was never reached.",
         )
 
-        (await _wait_for_selector(screen, pilot, "#library-note-conflict-reload")).press()
+        (
+            await _wait_for_selector(screen, pilot, "#library-note-conflict-reload")
+        ).press()
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -6222,8 +6450,13 @@ async def test_library_shell_note_conflict_reload_discards_local_edits():
         )
 
         assert not screen.query("#library-note-conflict-reload")
-        assert screen.query_one("#library-note-body", TextArea).text == "Server-side content"
-        assert screen.query_one("#library-note-title", Input).value == "Server-side title"
+        assert (
+            screen.query_one("#library-note-body", TextArea).text
+            == "Server-side content"
+        )
+        assert (
+            screen.query_one("#library-note-title", Input).value == "Server-side title"
+        )
 
 
 @pytest.mark.asyncio
@@ -6244,7 +6477,9 @@ async def test_library_shell_note_conflict_reload_falls_back_to_list_when_note_m
         await _open_note_editor(screen, pilot)
 
         service = app.notes_scope_service
-        _bump_note_version_externally(service, "n-1")  # now stored at v3; screen still has v2
+        _bump_note_version_externally(
+            service, "n-1"
+        )  # now stored at v3; screen still has v2
 
         screen.query_one("#library-note-body", TextArea).text = "kept text"
         await pilot.pause()
@@ -6260,7 +6495,9 @@ async def test_library_shell_note_conflict_reload_falls_back_to_list_when_note_m
         # Reload's silent re-fetch runs.
         _remove_note_externally(service, "n-1")
 
-        (await _wait_for_selector(screen, pilot, "#library-note-conflict-reload")).press()
+        (
+            await _wait_for_selector(screen, pilot, "#library-note-conflict-reload")
+        ).press()
         await _wait_for_condition(
             pilot,
             lambda: screen._library_notes_view == "list",
@@ -6294,7 +6531,9 @@ async def test_library_shell_note_conflict_overwrite_falls_back_to_list_when_not
         await _open_note_editor(screen, pilot)
 
         service = app.notes_scope_service
-        _bump_note_version_externally(service, "n-1")  # now stored at v3; screen still has v2
+        _bump_note_version_externally(
+            service, "n-1"
+        )  # now stored at v3; screen still has v2
 
         screen.query_one("#library-note-body", TextArea).text = "kept text"
         await pilot.pause()
@@ -6308,7 +6547,9 @@ async def test_library_shell_note_conflict_overwrite_falls_back_to_list_when_not
 
         _remove_note_externally(service, "n-1")
 
-        (await _wait_for_selector(screen, pilot, "#library-note-conflict-overwrite")).press()
+        (
+            await _wait_for_selector(screen, pilot, "#library-note-conflict-overwrite")
+        ).press()
         await _wait_for_condition(
             pilot,
             lambda: screen._library_notes_view == "list",
@@ -6542,7 +6783,9 @@ async def test_library_shell_note_delete_stale_version_rearms_the_editor():
                 break
             await pilot.pause(0.02)
         else:
-            raise AssertionError("Stale-version delete never returned to the normal action row.")
+            raise AssertionError(
+                "Stale-version delete never returned to the normal action row."
+            )
         await pilot.pause()
 
         assert screen._library_notes_view == "editor"
@@ -6657,9 +6900,7 @@ async def test_library_shell_opening_missing_note_falls_back_to_list():
         # (deleted elsewhere, or simply a stale/ghost row): the fake's
         # ``get_note_detail`` now resolves to ``None`` for "n-1".
         service = app.notes_scope_service
-        service.notes = tuple(
-            note for note in service.notes if note.get("id") != "n-1"
-        )
+        service.notes = tuple(note for note in service.notes if note.get("id") != "n-1")
 
         row_button.press()
 
@@ -6742,9 +6983,9 @@ async def test_library_shell_note_save_works_while_previewing():
         await _wait_for_library_shell(screen, pilot)
         await _open_note_editor(screen, pilot)
 
-        screen.query_one("#library-note-body", TextArea).text = (
-            "alpha budget line, edited while about to preview"
-        )
+        screen.query_one(
+            "#library-note-body", TextArea
+        ).text = "alpha budget line, edited while about to preview"
         await pilot.pause()
 
         screen.query_one("#library-note-preview").press()
@@ -6788,7 +7029,9 @@ async def test_library_shell_note_back_flushes_while_previewing():
     service = _DelayedSaveLibraryNotesScopeService(_two_notes())
     app.notes_scope_service = service
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
-    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(_two_conversations())
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        _two_conversations()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -6796,9 +7039,9 @@ async def test_library_shell_note_back_flushes_while_previewing():
         await _wait_for_library_shell(screen, pilot)
         await _open_note_editor(screen, pilot)
 
-        screen.query_one("#library-note-body", TextArea).text = (
-            "alpha budget line, edited then previewed then back"
-        )
+        screen.query_one(
+            "#library-note-body", TextArea
+        ).text = "alpha budget line, edited then previewed then back"
         await pilot.pause()
 
         screen.query_one("#library-note-preview").press()
@@ -6885,7 +7128,12 @@ async def test_library_shell_note_write_export_file_writes_expected_content(tmp_
 
         destination = tmp_path / "export.md"
         screen._write_library_note_export_file(
-            destination, "markdown", "Q3 retro", "alpha budget line", "alpha, beta", "n-1"
+            destination,
+            "markdown",
+            "Q3 retro",
+            "alpha budget line",
+            "alpha, beta",
+            "n-1",
         )
 
         written = destination.read_text(encoding="utf-8")
@@ -6898,7 +7146,9 @@ async def test_library_shell_note_write_export_file_writes_expected_content(tmp_
 
 
 @pytest.mark.asyncio
-async def test_library_shell_note_write_export_file_rejects_invalid_path(tmp_path, monkeypatch):
+async def test_library_shell_note_write_export_file_rejects_invalid_path(
+    tmp_path, monkeypatch
+):
     """A ``FileSave``-returned path that fails ``validate_path_simple``
     must be rejected with a quiet warning notice -- no write, no crash --
     rather than trusting the dialog's returned path unconditionally.
@@ -6920,7 +7170,12 @@ async def test_library_shell_note_write_export_file_rejects_invalid_path(tmp_pat
 
         destination = tmp_path / "export.md"
         screen._write_library_note_export_file(
-            destination, "markdown", "Q3 retro", "alpha budget line", "alpha, beta", "n-1"
+            destination,
+            "markdown",
+            "Q3 retro",
+            "alpha budget line",
+            "alpha, beta",
+            "n-1",
         )
 
         assert not destination.exists()
@@ -6959,7 +7214,7 @@ async def test_library_shell_note_copy_calls_clipboard_seam():
 
 @pytest.mark.asyncio
 async def test_library_shell_note_use_in_console_triggers_handoff():
-    """"Use in Console" stages the open note as Console context, mirroring
+    """ "Use in Console" stages the open note as Console context, mirroring
     the media viewer's "Use in Chat" handoff test.
     """
     app = _build_test_app()
@@ -7021,18 +7276,22 @@ def test_library_note_css_bounds_editor_body_and_mutes_meta():
     ``height: 1fr`` inside the scrolling Library canvas, and the meta line
     must use the same muted tone as the media viewer's.
     """
-    source_css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text(encoding="utf-8")
-    bundled_css = Path("tldw_chatbook/css/tldw_cli_modular.tcss").read_text(encoding="utf-8")
+    source_css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text(
+        encoding="utf-8"
+    )
+    bundled_css = Path("tldw_chatbook/css/tldw_cli_modular.tcss").read_text(
+        encoding="utf-8"
+    )
     for css in (source_css, bundled_css):
         assert "#library-note-body {" in css
-        body_block = css[css.index("#library-note-body {"):]
+        body_block = css[css.index("#library-note-body {") :]
         body_block = body_block[: body_block.index("}")]
         assert "height: auto;" in body_block
         assert "min-height: 12;" in body_block
         assert "max-height: 20;" in body_block
 
         assert "#library-note-meta {" in css
-        meta_block = css[css.index("#library-note-meta {"):]
+        meta_block = css[css.index("#library-note-meta {") :]
         meta_block = meta_block[: meta_block.index("}")]
         assert "color: $ds-text-muted;" in meta_block
 
@@ -7095,7 +7354,9 @@ async def test_library_shell_create_blank_note_lands_in_editor():
                 break
             await pilot.pause(0.02)
         else:
-            raise AssertionError("The notes snapshot/rail count never refreshed after create.")
+            raise AssertionError(
+                "The notes snapshot/rail count never refreshed after create."
+            )
         rail_label = str(screen.query_one("#library-row-browse-notes").label)
         assert "(3)" in rail_label
 
@@ -7210,7 +7471,9 @@ async def test_library_shell_import_note_lands_in_editor(tmp_path):
         assert call["content"] == "body from disk"
 
         assert screen._library_notes_view == "editor"
-        created_note = next(n for n in service.notes if n["title"] == "Imported from disk")
+        created_note = next(
+            n for n in service.notes if n["title"] == "Imported from disk"
+        )
         assert screen._selected_note_id == created_note["id"]
 
         for _ in range(150):
@@ -7218,7 +7481,9 @@ async def test_library_shell_import_note_lands_in_editor(tmp_path):
                 break
             await pilot.pause(0.02)
         else:
-            raise AssertionError("The notes snapshot/rail count never refreshed after import.")
+            raise AssertionError(
+                "The notes snapshot/rail count never refreshed after import."
+            )
 
 
 @pytest.mark.asyncio
@@ -7256,7 +7521,9 @@ async def test_library_shell_import_note_oversize_file_rejected(tmp_path, monkey
 
 
 @pytest.mark.asyncio
-async def test_library_shell_import_note_huge_file_rejected_without_reading(tmp_path, monkeypatch):
+async def test_library_shell_import_note_huge_file_rejected_without_reading(
+    tmp_path, monkeypatch
+):
     """A file whose on-disk SIZE already proves it exceeds the char cap
     (UTF-8 chars are at most 4 bytes, so ``st_size > 4 * cap`` guarantees
     over-cap) must be rejected before ``read_text`` is ever called -- the
@@ -7420,6 +7687,7 @@ def test_library_note_template_fields_malformed_placeholder_degrades_to_raw_text
 
 # ----- Notes sync panel --------------------------------------------------
 
+
 class _RecordingSyncResults:
     def __init__(self):
         self.created_notes = []
@@ -7449,16 +7717,27 @@ class _RecordingNotesSyncService:
         self.release_event = threading.Event()
         _RecordingNotesSyncService.instances.append(self)
 
-    async def sync_folder(self, *, root_folder, user_id, direction,
-                           conflict_resolution, progress_callback=None, extensions=None):
-        self.calls.append({
-            "root_folder": root_folder,
-            "user_id": user_id,
-            "direction": direction,
-            "conflict_resolution": conflict_resolution,
-        })
+    async def sync_folder(
+        self,
+        *,
+        root_folder,
+        user_id,
+        direction,
+        conflict_resolution,
+        progress_callback=None,
+        extensions=None,
+    ):
+        self.calls.append(
+            {
+                "root_folder": root_folder,
+                "user_id": user_id,
+                "direction": direction,
+                "conflict_resolution": conflict_resolution,
+            }
+        )
         if progress_callback is not None:
             from tldw_chatbook.Notes.sync_engine import SyncProgress
+
             progress_callback(SyncProgress(total_files=2, processed_files=1))
             self.progress_fired.set()
         # ``_run_library_service_call(..., isolate_in_worker=True)`` already
@@ -7559,6 +7838,7 @@ async def test_library_shell_notes_sync_direction_cycles_and_persists():
         await pilot.pause()
         assert screen._library_notes_sync_direction == "disk_to_db"
         from tldw_chatbook.config import get_cli_setting
+
         assert get_cli_setting("notes", "sync_direction", None) == "disk_to_db"
         button = screen.query_one("#library-notes-sync-direction", Button)
         assert "Disk" in str(button.label)
@@ -7580,6 +7860,7 @@ async def test_library_shell_notes_sync_conflict_cycles_and_persists():
         await pilot.pause()
         assert screen._library_notes_sync_conflict == "disk_wins"
         from tldw_chatbook.config import get_cli_setting
+
         assert get_cli_setting("notes", "sync_conflict_resolution", None) == "disk_wins"
 
         # A1: the cycle is 3 modes long with "ask" removed entirely -- one
@@ -7622,6 +7903,7 @@ async def test_library_shell_notes_sync_auto_toggle_flips_and_persists():
         assert screen._library_notes_sync_auto is True
         assert screen._library_notes_auto_sync_timer is not None
         from tldw_chatbook.config import get_cli_setting
+
         assert get_cli_setting("notes", "auto_sync", None) is True
         toggle = screen.query_one("#library-notes-sync-auto", Button)
         assert "auto-sync: every 5m ✓" in str(toggle.label)
@@ -7677,7 +7959,9 @@ async def test_library_shell_notes_sync_folder_typing_does_not_write_config(tmp_
 
 
 @pytest.mark.asyncio
-async def test_library_shell_notes_sync_run_persists_validated_folder(monkeypatch, tmp_path):
+async def test_library_shell_notes_sync_run_persists_validated_folder(
+    monkeypatch, tmp_path
+):
     """A validated Sync now run commits the (typed-but-unsubmitted) folder to
     config -- the other explicit commit point besides Enter/Browse -- so the
     folder a run actually used is always the one that persists.
@@ -7685,7 +7969,9 @@ async def test_library_shell_notes_sync_run_persists_validated_folder(monkeypatc
     from tldw_chatbook.Notes import sync_service as sync_service_module
 
     _RecordingNotesSyncService.instances.clear()
-    monkeypatch.setattr(sync_service_module, "NotesSyncService", _RecordingNotesSyncService)
+    monkeypatch.setattr(
+        sync_service_module, "NotesSyncService", _RecordingNotesSyncService
+    )
 
     app = _build_test_app()
     _prepare_library_notes_sync_app(app)
@@ -7707,7 +7993,10 @@ async def test_library_shell_notes_sync_run_persists_validated_folder(monkeypatc
 
         screen.query_one("#library-notes-sync-run").press()
         for _ in range(150):
-            if _RecordingNotesSyncService.instances and _RecordingNotesSyncService.instances[0].calls:
+            if (
+                _RecordingNotesSyncService.instances
+                and _RecordingNotesSyncService.instances[0].calls
+            ):
                 break
             await pilot.pause(0.02)
         else:
@@ -7740,7 +8029,9 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
     )
 
     _RecordingNotesSyncService.instances.clear()
-    monkeypatch.setattr(sync_service_module, "NotesSyncService", _RecordingNotesSyncService)
+    monkeypatch.setattr(
+        sync_service_module, "NotesSyncService", _RecordingNotesSyncService
+    )
 
     app = _build_test_app()
     _prepare_library_notes_sync_app(app)
@@ -7829,7 +8120,10 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
         status_widget_before = screen.query_one("#library-notes-sync-status", Static)
 
         for _ in range(150):
-            if _RecordingNotesSyncService.instances and _RecordingNotesSyncService.instances[0].calls:
+            if (
+                _RecordingNotesSyncService.instances
+                and _RecordingNotesSyncService.instances[0].calls
+            ):
                 break
             await pilot.pause(0.02)
         else:
@@ -7882,11 +8176,15 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
 
 
 @pytest.mark.asyncio
-async def test_library_shell_notes_sync_invalid_folder_notifies_quietly_no_run(monkeypatch):
+async def test_library_shell_notes_sync_invalid_folder_notifies_quietly_no_run(
+    monkeypatch,
+):
     from tldw_chatbook.Notes import sync_service as sync_service_module
 
     _RecordingNotesSyncService.instances.clear()
-    monkeypatch.setattr(sync_service_module, "NotesSyncService", _RecordingNotesSyncService)
+    monkeypatch.setattr(
+        sync_service_module, "NotesSyncService", _RecordingNotesSyncService
+    )
 
     app = _build_test_app()
     _prepare_library_notes_sync_app(app)
@@ -7908,7 +8206,10 @@ async def test_library_shell_notes_sync_invalid_folder_notifies_quietly_no_run(m
         await pilot.pause()
         await pilot.pause()
 
-        assert not _RecordingNotesSyncService.instances or not _RecordingNotesSyncService.instances[0].calls
+        assert (
+            not _RecordingNotesSyncService.instances
+            or not _RecordingNotesSyncService.instances[0].calls
+        )
         assert notifications
         assert notifications[-1][1].get("severity") == "warning"
 
@@ -7986,7 +8287,9 @@ async def test_library_shell_notes_sync_stale_direction_coerces_to_bidirectional
 
 
 @pytest.mark.asyncio
-async def test_library_shell_notes_sync_conflicts_get_honest_resolved_copy(monkeypatch, tmp_path):
+async def test_library_shell_notes_sync_conflicts_get_honest_resolved_copy(
+    monkeypatch, tmp_path
+):
     """A2/B1: the activity line for recorded conflicts must state the
     resolved policy (truthful: this panel never offers a review surface)
     and pluralize correctly."""
@@ -8005,8 +8308,16 @@ async def test_library_shell_notes_sync_conflicts_get_honest_resolved_copy(monke
         def __init__(self, notes_service, db):
             pass
 
-        async def sync_folder(self, *, root_folder, user_id, direction,
-                               conflict_resolution, progress_callback=None, extensions=None):
+        async def sync_folder(
+            self,
+            *,
+            root_folder,
+            user_id,
+            direction,
+            conflict_resolution,
+            progress_callback=None,
+            extensions=None,
+        ):
             return ("session-conflict", _ConflictResults())
 
     monkeypatch.setattr(sync_service_module, "NotesSyncService", _ConflictSyncService)
@@ -8027,7 +8338,10 @@ async def test_library_shell_notes_sync_conflicts_get_honest_resolved_copy(monke
 
         screen.query_one("#library-notes-sync-run").press()
         for _ in range(150):
-            if not screen._library_notes_sync_running and screen._library_notes_sync_status != "idle":
+            if (
+                not screen._library_notes_sync_running
+                and screen._library_notes_sync_status != "idle"
+            ):
                 break
             await pilot.pause(0.02)
         else:
@@ -8040,7 +8354,8 @@ async def test_library_shell_notes_sync_conflicts_get_honest_resolved_copy(monke
             for line in screen._library_notes_sync_activity
         ), screen._library_notes_sync_activity
         assert not any(
-            "recorded for review" in line for line in screen._library_notes_sync_activity
+            "recorded for review" in line
+            for line in screen._library_notes_sync_activity
         )
 
 
@@ -8088,7 +8403,10 @@ async def test_library_shell_search_result_open_note_lands_in_editor():
         screen.query_one("#library-rag-open-result-0").press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
         for _ in range(120):
-            if screen._selected_note_id == "n-1" and screen._library_notes_view == "editor":
+            if (
+                screen._selected_note_id == "n-1"
+                and screen._library_notes_view == "editor"
+            ):
                 break
             await pilot.pause(0.02)
         else:
@@ -8133,7 +8451,10 @@ async def test_library_shell_search_result_open_media_switches_to_viewer():
         screen.query_one("#library-rag-open-result-0").press()
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         for _ in range(120):
-            if screen._selected_media_id == "media-1" and screen._library_media_view == "viewer":
+            if (
+                screen._selected_media_id == "media-1"
+                and screen._library_media_view == "viewer"
+            ):
                 break
             await pilot.pause(0.02)
         else:
@@ -8163,7 +8484,9 @@ async def test_library_shell_search_result_open_prompt_lands_in_editor(tmp_path)
     # File-backed, not ":memory:": `_refresh_library_prompt_detail` isolates
     # its `get_prompt` call onto a worker thread, and an in-memory SQLite
     # connection is thread-local (same guard other Library seams use).
-    prompts_db = PromptsDatabase(tmp_path / "prompts.db", client_id="library-open-path-test")
+    prompts_db = PromptsDatabase(
+        tmp_path / "prompts.db", client_id="library-open-path-test"
+    )
     prompt_id, _uuid, _msg = prompts_db.add_prompt(
         name="Summarize",
         author="Alice",
@@ -8194,7 +8517,9 @@ async def test_library_shell_search_result_open_prompt_lands_in_editor(tmp_path)
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
-            await _run_library_search_and_wait_for_open_result(screen, pilot, "summarize")
+            await _run_library_search_and_wait_for_open_result(
+                screen, pilot, "summarize"
+            )
 
             screen.query_one("#library-rag-open-result-0").press()
             await _wait_for_selector(screen, pilot, "#library-prompt-name")
@@ -8255,7 +8580,9 @@ async def test_library_shell_search_result_open_conversation_fetches_missing_id(
                 screen._conversation_record_id(record, index)
                 for index, record in enumerate(screen._conversation_records())
             }
-            await _run_library_search_and_wait_for_open_result(screen, pilot, "snapshot")
+            await _run_library_search_and_wait_for_open_result(
+                screen, pilot, "snapshot"
+            )
 
             screen.query_one("#library-rag-open-result-0").press()
             for _ in range(150):
@@ -8263,7 +8590,9 @@ async def test_library_shell_search_result_open_conversation_fetches_missing_id(
                     break
                 await pilot.pause(0.02)
             else:
-                raise AssertionError("Open never fetched/selected the off-snapshot conversation.")
+                raise AssertionError(
+                    "Open never fetched/selected the off-snapshot conversation."
+                )
             await pilot.pause()
             await pilot.pause()
 
@@ -8426,7 +8755,9 @@ async def test_library_shell_ingest_canvas_happy_path_open_in_library(tmp_path):
                 break
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
-            raise AssertionError(f"Job never reached DONE: {harness.library_ingest_jobs.jobs()}")
+            raise AssertionError(
+                f"Job never reached DONE: {harness.library_ingest_jobs.jobs()}"
+            )
 
         screen.refresh(recompose=True)
         await pilot.pause()
@@ -8489,7 +8820,9 @@ async def test_library_shell_ingest_path_enter_submits_valid_form(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_library_shell_ingest_canvas_invalid_path_notifies_and_submits_nothing(tmp_path):
+async def test_library_shell_ingest_canvas_invalid_path_notifies_and_submits_nothing(
+    tmp_path,
+):
     """(b) An invalid path (rejected by validate_path_simple) is a quiet
     warning notice -- no job is ever submitted."""
     db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
@@ -8519,7 +8852,9 @@ async def test_library_shell_ingest_canvas_invalid_path_notifies_and_submits_not
 
 
 @pytest.mark.asyncio
-async def test_library_shell_ingest_canvas_failed_job_renders_retry_and_requeues(tmp_path):
+async def test_library_shell_ingest_canvas_failed_job_renders_retry_and_requeues(
+    tmp_path,
+):
     """(c) A failed (non-permanent) job renders a failed row with Retry;
     pressing Retry appends a fresh queued job and (L3b AB wave, B1)
     supersedes the original -- the queue shows exactly ONE row for the
@@ -8577,7 +8912,9 @@ async def test_library_shell_ingest_canvas_failed_job_renders_retry_and_requeues
 
 
 @pytest.mark.asyncio
-async def test_library_shell_ingest_canvas_permanent_failure_has_no_retry_button(tmp_path):
+async def test_library_shell_ingest_canvas_permanent_failure_has_no_retry_button(
+    tmp_path,
+):
     """(M4, fix batch F1b; F3 re-anchor) A missing-file failure is
     classified permanent inside the real parse worker (``run_parse_job``,
     driven here by the fake-pool seam) -- the canvas withholds Retry
@@ -8624,13 +8961,17 @@ async def test_library_shell_ingest_canvas_failed_row_actions_share_one_line(tmp
         job = harness.library_ingest_jobs.submit(source_path="/tmp/broken.pdf")
         harness.library_ingest_jobs.mark_parsing(job.job_id)
         harness.library_ingest_jobs.mark_writing(job.job_id)
-        harness.library_ingest_jobs.mark_failed(job.job_id, error="boom", permanent=False)
+        harness.library_ingest_jobs.mark_failed(
+            job.job_id, error="boom", permanent=False
+        )
 
         await _open_library_ingest_canvas(screen, pilot)
         await _wait_for_selector(screen, pilot, f"#library-ingest-retry-{job.job_id}")
 
         retry_button = screen.query_one(f"#library-ingest-retry-{job.job_id}", Button)
-        dismiss_button = screen.query_one(f"#library-ingest-dismiss-{job.job_id}", Button)
+        dismiss_button = screen.query_one(
+            f"#library-ingest-dismiss-{job.job_id}", Button
+        )
         assert retry_button.region.y == dismiss_button.region.y
         assert retry_button.parent is dismiss_button.parent
 
@@ -8669,7 +9010,9 @@ async def test_library_shell_ingest_canvas_submit_clears_path_and_title_keeps_me
         assert screen.query_one("#library-ingest-path", Input).value == ""
         assert screen.query_one("#library-ingest-title", Input).value == ""
         assert screen.query_one("#library-ingest-author", Input).value == "Jane Doe"
-        assert screen.query_one("#library-ingest-keywords", Input).value == "ocean, moon"
+        assert (
+            screen.query_one("#library-ingest-keywords", Input).value == "ocean, moon"
+        )
 
 
 @pytest.mark.asyncio
@@ -8758,7 +9101,9 @@ async def test_library_shell_ingest_canvas_dismiss_targets_correct_job_across_st
             raise AssertionError("Job never reached FAILED.")
 
         await _open_library_ingest_canvas(screen, pilot)
-        await _wait_for_selector(screen, pilot, f"#library-ingest-dismiss-{target_job.job_id}")
+        await _wait_for_selector(
+            screen, pilot, f"#library-ingest-dismiss-{target_job.job_id}"
+        )
         stale_dismiss_button = screen.query_one(
             f"#library-ingest-dismiss-{target_job.job_id}", Button
         )
@@ -8773,7 +9118,9 @@ async def test_library_shell_ingest_canvas_dismiss_targets_correct_job_across_st
         # ``submit_library_ingest_job``) so it stays QUEUED forever --
         # nothing ever claims it, so no background-thread timing is
         # involved.
-        newer_job = harness.library_ingest_jobs.submit(source_path=str(tmp_path / "newer.txt"))
+        newer_job = harness.library_ingest_jobs.submit(
+            source_path=str(tmp_path / "newer.txt")
+        )
         assert newer_job.job_id != target_job.job_id
         # Confirm the reorder actually happened underneath the frozen DOM.
         assert harness.library_ingest_jobs.jobs()[0].job_id == newer_job.job_id
@@ -8812,7 +9159,10 @@ async def test_library_shell_ingest_canvas_clear_finished_empties_done_and_faile
         done_job = harness.submit_library_ingest_job(source_path=str(source))
         for _ in range(_INGEST_POLL_ATTEMPTS):
             jobs = {j.job_id: j for j in harness.library_ingest_jobs.jobs()}
-            if jobs.get(done_job.job_id) and jobs[done_job.job_id].state == IngestJobState.DONE:
+            if (
+                jobs.get(done_job.job_id)
+                and jobs[done_job.job_id].state == IngestJobState.DONE
+            ):
                 break
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
@@ -8821,7 +9171,10 @@ async def test_library_shell_ingest_canvas_clear_finished_empties_done_and_faile
         failing_job = harness.submit_library_ingest_job(source_path=str(missing))
         for _ in range(_INGEST_POLL_ATTEMPTS):
             jobs = {j.job_id: j for j in harness.library_ingest_jobs.jobs()}
-            if jobs.get(failing_job.job_id) and jobs[failing_job.job_id].state == IngestJobState.FAILED:
+            if (
+                jobs.get(failing_job.job_id)
+                and jobs[failing_job.job_id].state == IngestJobState.FAILED
+            ):
                 break
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
@@ -8842,7 +9195,9 @@ async def test_library_shell_ingest_canvas_clear_finished_empties_done_and_faile
 
 
 @pytest.mark.asyncio
-async def test_library_shell_ingest_canvas_quiet_line_toggles_live_while_typing(tmp_path):
+async def test_library_shell_ingest_canvas_quiet_line_toggles_live_while_typing(
+    tmp_path,
+):
     """(A4 live-QA repro + task-185 stable-button fix)
     ``handle_library_ingest_path_changed`` deliberately avoids a full canvas
     recompose while typing (to preserve the Input's cursor position) -- it
@@ -8868,7 +9223,9 @@ async def test_library_shell_ingest_canvas_quiet_line_toggles_live_while_typing(
 
         # Still mounted (reserving its row so Start doesn't move) -- only
         # the text clears once the gate opens.
-        assert screen.query_one("#library-ingest-start-quiet-line", Static) is quiet_line
+        assert (
+            screen.query_one("#library-ingest-start-quiet-line", Static) is quiet_line
+        )
         assert str(quiet_line.renderable) == ""
         assert screen.query_one("#library-ingest-start", Button).disabled is False
 
@@ -8877,7 +9234,9 @@ async def test_library_shell_ingest_canvas_quiet_line_toggles_live_while_typing(
         screen.query_one("#library-ingest-path", Input).value = ""
         await pilot.pause()
 
-        assert screen.query_one("#library-ingest-start-quiet-line", Static) is quiet_line
+        assert (
+            screen.query_one("#library-ingest-start-quiet-line", Static) is quiet_line
+        )
         assert str(quiet_line.renderable) == "Enter a file path to start."
         assert screen.query_one("#library-ingest-start", Button).disabled is True
 
@@ -8901,7 +9260,9 @@ async def test_library_shell_ingest_canvas_db_unavailable_disables_start(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_library_shell_ingest_advanced_expand_survives_toggle_and_listener_recompose(tmp_path):
+async def test_library_shell_ingest_advanced_expand_survives_toggle_and_listener_recompose(
+    tmp_path,
+):
     """(F1, whole-branch review fix) The Advanced options collapsible must
     stay expanded across BOTH kinds of recompose the ingest canvas can hit
     while the panel is open: the analyze/chunk toggle handlers' own
@@ -8923,7 +9284,9 @@ async def test_library_shell_ingest_advanced_expand_survives_toggle_and_listener
         await _open_library_ingest_canvas(screen, pilot)
 
         # Starts collapsed.
-        assert screen.query_one("#library-ingest-advanced", Collapsible).collapsed is True
+        assert (
+            screen.query_one("#library-ingest-advanced", Collapsible).collapsed is True
+        )
 
         # Mirror a user click on the collapsible header (expand).
         screen.query_one("#library-ingest-advanced", Collapsible).collapsed = False
@@ -8938,7 +9301,9 @@ async def test_library_shell_ingest_advanced_expand_survives_toggle_and_listener
         screen.query_one("#library-ingest-analyze-toggle", Button).press()
         await _wait_for_selector(screen, pilot, "#library-ingest-advanced")
 
-        assert screen.query_one("#library-ingest-advanced", Collapsible).collapsed is False
+        assert (
+            screen.query_one("#library-ingest-advanced", Collapsible).collapsed is False
+        )
 
         # A registry-listener-driven recompose (job transition) must also
         # leave the panel expanded -- submit programmatically, exactly like
@@ -8950,10 +9315,14 @@ async def test_library_shell_ingest_advanced_expand_survives_toggle_and_listener
                 break
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
-            raise AssertionError(f"Job never reached DONE: {harness.library_ingest_jobs.jobs()}")
+            raise AssertionError(
+                f"Job never reached DONE: {harness.library_ingest_jobs.jobs()}"
+            )
         await pilot.pause()
 
-        assert screen.query_one("#library-ingest-advanced", Collapsible).collapsed is False
+        assert (
+            screen.query_one("#library-ingest-advanced", Collapsible).collapsed is False
+        )
 
 
 class _IngestCanvasWidgetHost(App):
@@ -9031,9 +9400,7 @@ async def test_library_ingest_canvas_chunk_size_input_labeled_and_disable_follow
     """(A6) The chunk-size Input gets a "Chunk size (words)" placeholder and
     is visually disabled whenever "Chunk content" is toggled off (submit
     already ignores it when disabled; this only adds the visual affordance)."""
-    off_state = build_library_ingest_state(
-        (), form=LibraryIngestFormState(chunk=False)
-    )
+    off_state = build_library_ingest_state((), form=LibraryIngestFormState(chunk=False))
     host = _IngestCanvasWidgetHost(off_state)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await pilot.pause()
@@ -9041,9 +9408,7 @@ async def test_library_ingest_canvas_chunk_size_input_labeled_and_disable_follow
         assert chunk_size_input.placeholder == "Chunk size (words)"
         assert chunk_size_input.disabled is True
 
-    on_state = build_library_ingest_state(
-        (), form=LibraryIngestFormState(chunk=True)
-    )
+    on_state = build_library_ingest_state((), form=LibraryIngestFormState(chunk=True))
     host2 = _IngestCanvasWidgetHost(on_state)
     async with host2.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await pilot.pause()
@@ -9197,7 +9562,9 @@ class _DummyReplacementScreen(Screen):
 
 
 @pytest.mark.asyncio
-async def test_library_shell_ingest_canvas_live_updates_without_manual_recompose(tmp_path):
+async def test_library_shell_ingest_canvas_live_updates_without_manual_recompose(
+    tmp_path,
+):
     """(a) With the ingest canvas open, a *programmatic* submit (calling
     the app seam directly, exactly like the queue-runner's own
     ``call_from_thread``-marshaled transitions, and unlike a button press
@@ -9254,7 +9621,9 @@ async def test_library_shell_ingest_canvas_live_updates_without_manual_recompose
 
 
 @pytest.mark.asyncio
-async def test_library_shell_ingest_canvas_registry_listener_removed_on_unmount(tmp_path):
+async def test_library_shell_ingest_canvas_registry_listener_removed_on_unmount(
+    tmp_path,
+):
     """(b) The registry listener registered in ``on_mount`` is removed in
     ``on_unmount``: replacing ``LibraryScreen`` on the stack (real
     unmount, not a suspend-only push) drops the registry's listener count
@@ -9433,7 +9802,9 @@ def test_library_shell_restore_state_degrades_editor_view_without_matching_id():
     assert notes_screen._selected_note_id == ""
 
     media_screen = LibraryScreen(app)
-    media_screen.restore_state({"library_media_view": "viewer", "selected_media_id": ""})
+    media_screen.restore_state(
+        {"library_media_view": "viewer", "selected_media_id": ""}
+    )
     assert media_screen._library_media_view == "list"
     assert media_screen._selected_media_id == ""
 
@@ -9650,7 +10021,9 @@ async def test_library_shell_restored_conversation_query_renders_on_first_paint(
         active_screen = _active_library_screen(host)
         await _wait_for_selector(active_screen, pilot, "#library-conversations-status")
 
-        status = str(active_screen.query_one("#library-conversations-status").renderable)
+        status = str(
+            active_screen.query_one("#library-conversations-status").renderable
+        )
         assert "quarterly" in status
         filter_box = active_screen.query_one("#library-conversations-filter", Input)
         assert filter_box.value == "quarterly"
@@ -9830,7 +10203,9 @@ async def test_library_shell_export_rail_row_opens_everything_scope_and_counts_l
     media_db = MediaDatabase(":memory:", client_id="export-pilot-everything-media")
     media_db.add_media_with_keywords(title="M1", content="c1", media_type="video")
     app.media_db = media_db
-    chachanotes_db = CharactersRAGDB(":memory:", client_id="export-pilot-everything-ccn")
+    chachanotes_db = CharactersRAGDB(
+        ":memory:", client_id="export-pilot-everything-ccn"
+    )
     chachanotes_db.add_conversation({"title": "Conv"})
     chachanotes_db.add_note("N1", "content")
     app.chachanotes_db = chachanotes_db
@@ -9871,7 +10246,9 @@ async def test_library_shell_media_export_action_carries_type_filter_into_scope(
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     app.media_db = MediaDatabase(":memory:", client_id="export-pilot-media-scope-media")
-    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-pilot-media-scope-ccn")
+    app.chachanotes_db = CharactersRAGDB(
+        ":memory:", client_id="export-pilot-media-scope-ccn"
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -9893,7 +10270,9 @@ async def test_library_shell_media_export_action_carries_type_filter_into_scope(
         await _wait_for_selector(screen, pilot, "#library-export-header")
 
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
-        assert screen._library_export_scope == ExportScope(kind="media", media_type=active_type)
+        assert screen._library_export_scope == ExportScope(
+            kind="media", media_type=active_type
+        )
 
 
 @pytest.mark.asyncio
@@ -9930,7 +10309,7 @@ async def test_library_shell_export_empty_scope_disables_export_and_shows_helper
 
 @pytest.mark.asyncio
 async def test_library_shell_export_choose_destination_pushes_file_save_dialog_with_sanitized_name():
-    """"Choose destination…" pushes a ``FileSave`` dialog pre-filled from the
+    """ "Choose destination…" pushes a ``FileSave`` dialog pre-filled from the
     export name field, mirroring ``_export_library_note``'s dialog flow."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -9962,7 +10341,9 @@ async def test_library_shell_export_choose_destination_pushes_file_save_dialog_w
 
 
 @pytest.mark.asyncio
-async def test_library_shell_export_destination_normalizes_missing_suffix_to_zip(tmp_path):
+async def test_library_shell_export_destination_normalizes_missing_suffix_to_zip(
+    tmp_path,
+):
     """A ``FileSave``-returned path with no ``.zip`` suffix (e.g. "foo") is
     normalized to "foo.zip" -- both in the stored form field and the
     rendered destination line -- BEFORE any overwrite check runs. Bypasses
@@ -9988,14 +10369,18 @@ async def test_library_shell_export_destination_normalizes_missing_suffix_to_zip
 
         expected = str(tmp_path / "foo.zip")
         assert screen._library_export_form["destination"] == expected
-        destination_line = str(screen.query_one("#library-export-destination-line").renderable)
+        destination_line = str(
+            screen.query_one("#library-export-destination-line").renderable
+        )
         assert destination_line == expected
         # The freshly-normalized path does not exist yet -- no overwrite line.
         assert not screen.query("#library-export-overwrite-line")
 
 
 @pytest.mark.asyncio
-async def test_library_shell_export_destination_existing_file_shows_overwrite_line(tmp_path):
+async def test_library_shell_export_destination_existing_file_shows_overwrite_line(
+    tmp_path,
+):
     """When the ``.zip``-normalized destination already exists on disk, the
     form shows an "Overwrites …" line naming the NORMALIZED file -- purely
     informational (Export stays enabled, not blocked) per the design
@@ -10018,7 +10403,9 @@ async def test_library_shell_export_destination_existing_file_shows_overwrite_li
         screen._apply_library_export_destination(existing)
         await pilot.pause()
 
-        overwrite_line = str(screen.query_one("#library-export-overwrite-line").renderable)
+        overwrite_line = str(
+            screen.query_one("#library-export-overwrite-line").renderable
+        )
         assert overwrite_line == "Overwrites already-there.zip"
 
 
@@ -10041,7 +10428,9 @@ async def test_library_shell_export_row_disabled_with_tooltip_in_server_mode():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
-        export_row = screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}", Button)
+        export_row = screen.query_one(
+            f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}", Button
+        )
         assert export_row.disabled is True
         assert export_row.tooltip == LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP
 
@@ -10062,7 +10451,9 @@ async def test_library_shell_section_export_action_refuses_in_server_mode():
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     app.media_db = MediaDatabase(":memory:", client_id="export-pilot-server-media")
-    app.chachanotes_db = CharactersRAGDB(":memory:", client_id="export-pilot-server-ccn")
+    app.chachanotes_db = CharactersRAGDB(
+        ":memory:", client_id="export-pilot-server-ccn"
+    )
     app.runtime_policy = SimpleNamespace(
         state=RuntimeSourceState(
             active_source="server", server_configured=True, active_server_id="srv-1"
@@ -10136,7 +10527,9 @@ async def test_library_shell_notes_export_action_opens_notes_scope():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_export_counts_worker_uses_real_thread_for_file_backed_dbs(tmp_path):
+async def test_library_shell_export_counts_worker_uses_real_thread_for_file_backed_dbs(
+    tmp_path,
+):
     """Both export DBs are real, FILE-backed (not ``:memory:``) here --
     unlike every other export pilot above, this exercises the actual
     ``@work(thread=True, exclusive=True, group="library_export_counts")``
@@ -10145,7 +10538,9 @@ async def test_library_shell_export_counts_worker_uses_real_thread_for_file_back
     in-memory connections)."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    media_db = MediaDatabase(tmp_path / "export-thread.db", client_id="export-pilot-thread-media")
+    media_db = MediaDatabase(
+        tmp_path / "export-thread.db", client_id="export-pilot-thread-media"
+    )
     media_db.add_media_with_keywords(title="M1", content="c1", media_type="article")
     app.media_db = media_db
     chachanotes_db = CharactersRAGDB(
@@ -10354,11 +10749,13 @@ class _FakeLibraryExportService:
         self._gate = gate
         self._create_error = create_error
 
-    async def export_chatbook(self, request_data, *, progress_callback=None, cancel_check=None):
+    async def export_chatbook(
+        self, request_data, *, progress_callback=None, cancel_check=None
+    ):
         if self._gate is not None:
-            assert self._gate.wait(
-                timeout=_GATED_RELEASE_TIMEOUT_SECONDS
-            ), "export gate never released"
+            assert self._gate.wait(timeout=_GATED_RELEASE_TIMEOUT_SECONDS), (
+                "export gate never released"
+            )
         self.export_calls.append(dict(request_data))
         result = dict(self._export_result)
         result.setdefault("path", request_data.get("output_path"))
@@ -10603,10 +11000,11 @@ async def test_library_shell_export_submit_failure_shows_escaped_error_and_reena
         error_widget = screen.query_one("#library-export-error-line", Static)
         assert error_widget.display is True
         assert (
-            str(error_widget.renderable)
-            == "Destination \\[bold]not\\[/bold] writable."
+            str(error_widget.renderable) == "Destination \\[bold]not\\[/bold] writable."
         )
-        assert screen._library_export_error == "Destination \\[bold]not\\[/bold] writable."
+        assert (
+            screen._library_export_error == "Destination \\[bold]not\\[/bold] writable."
+        )
         status_widget = screen.query_one("#library-export-status-line", Static)
         assert status_widget.display is False
         assert submit_after.disabled is False
@@ -10727,7 +11125,9 @@ async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_lat
 
         # The orphaned export genuinely completed -- still notified...
         assert len(notified) == 1
-        assert notified[0][0] == f"Exported chatbook to {tmp_path / 'orphaned_dest.zip'}"
+        assert (
+            notified[0][0] == f"Exported chatbook to {tmp_path / 'orphaned_dest.zip'}"
+        )
         # ...but the CURRENT (fresh, second) visit is completely
         # undisturbed: still not running, still no error/status, the
         # SAME submit button instance, still correctly disabled (no
@@ -10988,7 +11388,9 @@ async def test_library_shell_export_registry_failure_warns_it_wont_appear_in_art
         # above as a proxy for it.
         await _wait_for_condition(
             pilot,
-            lambda: screen.query_one("#library-export-submit", Button).disabled is False,
+            lambda: (
+                screen.query_one("#library-export-submit", Button).disabled is False
+            ),
             message=lambda: (
                 "Export submit button never re-enabled after the run completed "
                 f"(still disabled={screen.query_one('#library-export-submit', Button).disabled})."

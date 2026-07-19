@@ -118,7 +118,11 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         else:
             buttons = []
             for index, entry in enumerate(self._entries):
-                label = entry.title if not entry.subtitle else f"{entry.title}\n  {entry.subtitle}"
+                label = (
+                    entry.title
+                    if not entry.subtitle
+                    else f"{entry.title}\n  {entry.subtitle}"
+                )
                 button = Button(
                     label,
                     id=f"console-switcher-result-{index}",
@@ -204,6 +208,6 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         if not widget_id.startswith(prefix):
             return None
         try:
-            return int(widget_id[len(prefix):])
+            return int(widget_id[len(prefix) :])
         except ValueError:
             return None

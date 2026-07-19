@@ -35,9 +35,7 @@ def migrate(db):
     """
     with closing(db._get_connection()) as conn:
         conn.executescript(CREATE_SCHEMA_SQL)
-        conn.execute(
-            "INSERT OR IGNORE INTO schema_version (version) VALUES (?)", (1,)
-        )
+        conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (?)", (1,))
         conn.commit()
 
 

@@ -333,7 +333,15 @@ class MCPListEnvelope(MCPPayloadEnvelope):
         if isinstance(payload, list):
             items = list(payload)
         elif isinstance(payload, dict):
-            for key in ("items", "tools", "modules", "resources", "prompts", "catalogs", "data"):
+            for key in (
+                "items",
+                "tools",
+                "modules",
+                "resources",
+                "prompts",
+                "catalogs",
+                "data",
+            ):
                 value = payload.get(key)
                 if isinstance(value, list):
                     items = list(value)

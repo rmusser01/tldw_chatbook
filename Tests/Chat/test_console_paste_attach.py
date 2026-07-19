@@ -13,6 +13,7 @@ from tldw_chatbook.Chat.console_paste_attach import (
 
 # --- extract_dropped_path matrix ---
 
+
 def test_extracts_plain_absolute_path():
     result = extract_dropped_path("/Users/me/Pictures/photo.png")
     assert result == DroppedPaste(path="/Users/me/Pictures/photo.png", total_dropped=1)
@@ -68,6 +69,7 @@ def test_empty_and_whitespace_are_not_drops():
 
 # --- looks_attachable ---
 
+
 def test_looks_attachable_true_for_supported_existing_in_root(tmp_path):
     target = tmp_path / "photo.png"
     target.write_bytes(b"x")
@@ -88,6 +90,7 @@ def test_looks_attachable_false_for_missing_out_of_root_unsupported(tmp_path):
 
 
 # --- grab_clipboard_image kind mapping (ImageGrab monkeypatched) ---
+
 
 def _png_of(size=(8, 8)):
     return PILImage.new("RGB", size, (5, 5, 200))
@@ -122,9 +125,7 @@ def test_grab_maps_errors_to_unavailable(monkeypatch):
 
 
 def test_grab_encodes_cmyk_images_via_rgb_conversion(monkeypatch):
-    monkeypatch.setattr(
-        cpa, "_grabclipboard", lambda: PILImage.new("CMYK", (8, 8))
-    )
+    monkeypatch.setattr(cpa, "_grabclipboard", lambda: PILImage.new("CMYK", (8, 8)))
     grab = grab_clipboard_image()
     assert grab.kind == "image"
     assert grab.png_bytes is not None
@@ -145,6 +146,7 @@ def test_grab_maps_unencodable_image_to_unavailable(monkeypatch):
 
 # --- looks_attachable is case-insensitive on extension (PR #628 review) ---
 
+
 def test_looks_attachable_true_for_uppercase_extension(tmp_path):
     target = tmp_path / "PHOTO.PNG"
     target.write_bytes(b"x")
@@ -152,6 +154,7 @@ def test_looks_attachable_true_for_uppercase_extension(tmp_path):
 
 
 # --- Windows drive/UNC path recognition (platform-independent, PR #628 review) ---
+
 
 def test_extracts_windows_drive_path_backslash():
     result = extract_dropped_path(r"C:\Users\me\pic.png")

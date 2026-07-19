@@ -8,7 +8,7 @@ from tldw_chatbook.Widgets.splash_screen import SplashScreen
 
 class SplashTestApp(App):
     """Test app to display splash screen."""
-    
+
     CSS = """
     Screen {
         background: $background;
@@ -22,16 +22,16 @@ class SplashTestApp(App):
         color: $text;
     }
     """
-    
+
     def compose(self) -> ComposeResult:
         """Create app layout."""
         # Show splash screen with matrix effect (which should now fill terminal)
         yield SplashScreen(card_name="matrix", duration=10.0, show_progress=True)
         yield Label(
             "Test: Splash screen should fill entire terminal (except this info bar)",
-            id="test-info"
+            id="test-info",
         )
-    
+
     def on_mount(self) -> None:
         """Handle mount event."""
         self.title = "Splash Screen Full Terminal Test"

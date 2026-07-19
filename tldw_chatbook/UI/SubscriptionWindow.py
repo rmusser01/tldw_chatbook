@@ -12,27 +12,38 @@
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List, Tuple, Union, TYPE_CHECKING
 import json
+
 #
 # Third-Party Imports
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
 from textual.widgets import (
-    Button, Input, Select, Label, Static, ListView, ListItem, 
-    TextArea, Checkbox, TabbedContent, TabPane,
-    ProgressBar, Sparkline
+    Button,
+    Input,
+    Select,
+    Label,
+    Static,
+    ListView,
+    ListItem,
+    TextArea,
+    Checkbox,
+    TabbedContent,
+    TabPane,
+    ProgressBar,
+    Sparkline,
 )
 from textual.css.query import QueryError
 from textual.reactive import reactive
 from loguru import logger
+
 #
 # Local Imports
-from ..Widgets.form_components import (
-    FormField, FormFieldSet
-)
+from ..Widgets.form_components import FormField, FormFieldSet
 from ..Event_Handlers.subscription_events import (
-    SubscriptionCheckStarted, SubscriptionCheckComplete,
-    NewSubscriptionItems
+    SubscriptionCheckStarted,
+    SubscriptionCheckComplete,
+    NewSubscriptionItems,
 )
 from ..DB.Subscriptions_DB import SubscriptionsDB
 from ..Subscriptions.textual_scheduler_worker import SubscriptionSchedulerWorker
@@ -41,17 +52,24 @@ from ..Subscriptions.textual_scheduler_worker import SubscriptionSchedulerWorker
 try:
     from ..Subscriptions.briefing_generator import BriefingGenerator
     from ..Subscriptions.briefing_templates import BriefingTemplateManager
+
     BRIEFING_AVAILABLE = True
 except ImportError:
     BriefingGenerator = None
     BriefingTemplateManager = None
     BRIEFING_AVAILABLE = False
-    logger.warning("Briefing functionality unavailable - install with: pip install tldw_chatbook[subscriptions]")
+    logger.warning(
+        "Briefing functionality unavailable - install with: pip install tldw_chatbook[subscriptions]"
+    )
 from ..config import get_subscriptions_db_path
 from ..Constants import SUBSCRIPTION_TYPES, SUBSCRIPTION_UPDATE_FREQUENCIES
 from .SiteConfigSettings import SiteConfigSettings
 from .ScraperBuilderWindow import ScraperBuilderWindow
-from .Subscription_Modules import NotificationsInboxController, SubscriptionBackendController
+from .Subscription_Modules import (
+    NotificationsInboxController,
+    SubscriptionBackendController,
+)
+
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -81,7 +99,7 @@ SUBSCRIPTION_INITIAL_TABS = frozenset(
 
 class SubscriptionWindow(Container):
     """Main subscription management window."""
-    
+
     CSS = """
     SubscriptionWindow {
         background: $background;
@@ -192,11 +210,11 @@ class SubscriptionWindow(Container):
         background: $surface;
     }
     """
-    
-    def __init__(self, app_instance: 'TldwCli', *args, **kwargs):
+
+    def __init__(self, app_instance: "TldwCli", *args, **kwargs):
         """
         Initialize subscription window.
-        
+
         Args:
             app_instance: Reference to the main app
         """
@@ -209,10 +227,18 @@ class SubscriptionWindow(Container):
         self.scheduler_worker: Optional[SubscriptionSchedulerWorker] = None
         self.briefing_generator: Optional[BriefingGenerator] = None
         self.template_manager: Optional[BriefingTemplateManager] = None
-        self.notifications_store = getattr(app_instance, "client_notifications_db", None)
-        self.watchlist_scope_service = getattr(app_instance, "watchlist_scope_service", None)
-        self.server_notifications_scope_service = getattr(app_instance, "server_notifications_scope_service", None)
-        self.notification_dispatch_service = getattr(app_instance, "notification_dispatch_service", None)
+        self.notifications_store = getattr(
+            app_instance, "client_notifications_db", None
+        )
+        self.watchlist_scope_service = getattr(
+            app_instance, "watchlist_scope_service", None
+        )
+        self.server_notifications_scope_service = getattr(
+            app_instance, "server_notifications_scope_service", None
+        )
+        self.notification_dispatch_service = getattr(
+            app_instance, "notification_dispatch_service", None
+        )
         self.backend_controller = SubscriptionBackendController(
             window=self,
             app_instance=app_instance,
@@ -224,7 +250,7 @@ class SubscriptionWindow(Container):
             app_instance=app_instance,
             store=self.notifications_store,
         )
-        
+
         # State
         self.selected_subscription: Optional[Union[int, str]] = None
         self.selected_items: List[int] = []
@@ -238,14 +264,14 @@ class SubscriptionWindow(Container):
         self._selected_local_subscription_row: Optional[Dict[str, Any]] = None
         self.is_checking = reactive(False)
         self.check_progress = reactive(0.0)
-    
+
     def compose(self) -> ComposeResult:
         """Compose the subscription UI."""
         with TabbedContent(initial=self.initial_tab):
             # Subscriptions tab
             with TabPane("Subscriptions", id="subscriptions"):
                 yield from self._compose_subscriptions_tab()
-            
+
             # Review tab
             with TabPane("Review Items", id="review"):
                 yield from self._compose_review_tab()
@@ -268,15 +294,15 @@ class SubscriptionWindow(Container):
 
             with TabPane("Alert Rules", id="watchlist-alert-rules"):
                 yield from self._compose_watchlist_alert_rules_tab()
-            
+
             # Dashboard tab
             with TabPane("Dashboard", id="dashboard"):
                 yield from self._compose_dashboard_tab()
-            
+
             # Briefings tab
             with TabPane("Briefings", id="briefings"):
                 yield from self._compose_briefings_tab()
-            
+
             # Settings tab
             with TabPane("Settings", id="settings"):
                 yield from self._compose_settings_tab()
@@ -296,7 +322,7 @@ class SubscriptionWindow(Container):
         if hasattr(app_instance, "pending_subscription_watchlist_run_id"):
             delattr(app_instance, "pending_subscription_watchlist_run_id")
         return str(run_id) if run_id not in (None, "") else None
-    
+
     def _compose_subscriptions_tab(self) -> ComposeResult:
         """Compose subscriptions management tab."""
         with Horizontal():
@@ -304,123 +330,141 @@ class SubscriptionWindow(Container):
             with Vertical(classes="subscription-list-container"):
                 yield Label("Active Subscriptions")
                 yield ListView(id="subscription-list", classes="subscription-list")
-                
+
                 with Horizontal(classes="list-actions"):
-                    yield Button("Add New", id="add-subscription-btn", classes="action-button primary-button")
-                    yield Button("Edit", id="edit-subscription-btn", classes="action-button")
-                    yield Button("Delete", id="delete-subscription-btn", classes="action-button danger-button")
-                    yield Button("Restore", id="restore-subscription-btn", classes="action-button")
-                    yield Button("Scraper Builder", id="scraper-builder-btn", classes="action-button")
-            
+                    yield Button(
+                        "Add New",
+                        id="add-subscription-btn",
+                        classes="action-button primary-button",
+                    )
+                    yield Button(
+                        "Edit", id="edit-subscription-btn", classes="action-button"
+                    )
+                    yield Button(
+                        "Delete",
+                        id="delete-subscription-btn",
+                        classes="action-button danger-button",
+                    )
+                    yield Button(
+                        "Restore",
+                        id="restore-subscription-btn",
+                        classes="action-button",
+                    )
+                    yield Button(
+                        "Scraper Builder",
+                        id="scraper-builder-btn",
+                        classes="action-button",
+                    )
+
             # Right side - subscription form
             with ScrollableContainer(classes="subscription-form-container"):
                 yield from self._compose_subscription_form()
-    
+
     def _compose_subscription_form(self) -> ComposeResult:
         """Compose subscription add/edit form."""
         with Vertical(classes="subscription-form", id="subscription-form"):
             yield Label("Subscription Details", classes="form-header")
-            
+
             # Basic fields
             with FormFieldSet("Basic Information"):
                 yield FormField(
                     "Name",
                     Input(placeholder="My News Feed", id="sub-name"),
-                    required=True
+                    required=True,
                 )
-                
+
                 yield FormField(
                     "Type",
                     Select(
-                        [(t, t) for t in SUBSCRIPTION_TYPES],
-                        id="sub-type",
-                        value="rss"
+                        [(t, t) for t in SUBSCRIPTION_TYPES], id="sub-type", value="rss"
                     ),
-                    required=True
+                    required=True,
                 )
-                
+
                 yield FormField(
                     "URL/Source",
                     Input(placeholder="https://example.com/feed.xml", id="sub-url"),
-                    required=True
+                    required=True,
                 )
-                
-                yield FormField(
-                    "Description",
-                    TextArea(id="sub-description")
-                )
-            
+
+                yield FormField("Description", TextArea(id="sub-description"))
+
             # Organization
             with FormFieldSet("Organization"):
                 yield FormField(
                     "Tags",
-                    Input(placeholder="news, tech, updates (comma separated)", id="sub-tags")
+                    Input(
+                        placeholder="news, tech, updates (comma separated)",
+                        id="sub-tags",
+                    ),
                 )
-                
+
                 yield FormField(
-                    "Folder",
-                    Input(placeholder="News Feeds", id="sub-folder")
+                    "Folder", Input(placeholder="News Feeds", id="sub-folder")
                 )
-                
+
                 yield FormField(
                     "Priority",
                     Select(
                         [("High", "1"), ("Medium", "3"), ("Low", "5")],
                         id="sub-priority",
-                        value="3"
-                    )
+                        value="3",
+                    ),
                 )
-            
+
             # Schedule
             with FormFieldSet("Update Schedule"):
                 yield FormField(
                     "Check Frequency",
                     Select(
-                        [(k, str(v)) for k, v in SUBSCRIPTION_UPDATE_FREQUENCIES.items()],
+                        [
+                            (k, str(v))
+                            for k, v in SUBSCRIPTION_UPDATE_FREQUENCIES.items()
+                        ],
                         id="sub-frequency",
-                        value="3600"
-                    )
+                        value="3600",
+                    ),
                 )
-                
+
                 yield FormField(
-                    "Auto-ingest",
-                    Checkbox(id="sub-auto-ingest", value=False)
+                    "Auto-ingest", Checkbox(id="sub-auto-ingest", value=False)
                 )
-            
+
             # Advanced options
             with FormFieldSet("Advanced Options", collapsed=True):
                 yield FormField(
                     "Authentication",
                     Select(
-                        [("None", "none"), ("Basic Auth", "basic"), ("Bearer Token", "bearer")],
+                        [
+                            ("None", "none"),
+                            ("Basic Auth", "basic"),
+                            ("Bearer Token", "bearer"),
+                        ],
                         id="sub-auth-type",
-                        value="none"
-                    )
+                        value="none",
+                    ),
                 )
-                
-                yield FormField(
-                    "Custom Headers",
-                    TextArea(
-                        id="sub-headers"
-                    )
-                )
-                
+
+                yield FormField("Custom Headers", TextArea(id="sub-headers"))
+
                 yield FormField(
                     "Change Threshold (%)",
-                    Input(value="15", id="sub-change-threshold", type="number")
+                    Input(value="15", id="sub-change-threshold", type="number"),
                 )
-                
+
                 yield FormField(
                     "Rate Limit (req/min)",
-                    Input(value="60", id="sub-rate-limit", type="number")
+                    Input(value="60", id="sub-rate-limit", type="number"),
                 )
-            
+
             # Form actions
             with Horizontal(classes="form-actions"):
-                yield Button("Save", id="save-subscription-btn", classes="primary-button")
+                yield Button(
+                    "Save", id="save-subscription-btn", classes="primary-button"
+                )
                 yield Button("Cancel", id="cancel-subscription-btn")
                 yield Button("Test", id="test-subscription-btn")
-    
+
     def _compose_review_tab(self) -> ComposeResult:
         """Compose items review tab."""
         review_local_only = Static("", id="review-local-only-state")
@@ -431,25 +475,33 @@ class SubscriptionWindow(Container):
             # Action bar
             with Horizontal(classes="review-actions"):
                 yield Button("Check All", id="check-all-btn", classes="primary-button")
-                yield Button("Accept Selected", id="accept-items-btn", classes="action-button")
-                yield Button("Ignore Selected", id="ignore-items-btn", classes="action-button")
-                yield Button("Mark Reviewed", id="mark-reviewed-btn", classes="action-button")
+                yield Button(
+                    "Accept Selected", id="accept-items-btn", classes="action-button"
+                )
+                yield Button(
+                    "Ignore Selected", id="ignore-items-btn", classes="action-button"
+                )
+                yield Button(
+                    "Mark Reviewed", id="mark-reviewed-btn", classes="action-button"
+                )
                 yield Static("", id="items-count")
-            
+
             # Progress bar
             yield ProgressBar(id="check-progress", classes="progress-container")
-            
+
             # Items list
             with Horizontal():
                 # Items list
                 with Vertical(classes="items-list-container"):
                     yield Label("New Items")
                     yield ListView(id="items-review-list", classes="items-review-list")
-                
+
                 # Item preview
                 with Vertical(classes="item-preview-container"):
                     yield Label("Preview")
-                    yield TextArea(id="item-preview", classes="item-preview", read_only=True)
+                    yield TextArea(
+                        id="item-preview", classes="item-preview", read_only=True
+                    )
 
     def _compose_notifications_tab(self) -> ComposeResult:
         """Compose the client notifications inbox tab."""
@@ -475,8 +527,16 @@ class SubscriptionWindow(Container):
             )
             with Horizontal(classes="list-actions"):
                 yield Button("Refresh", id="refresh-server-reminders-btn")
-                yield Button("Save Reminder", id="save-server-reminder-btn", classes="primary-button")
-                yield Button("Delete Reminder", id="delete-server-reminder-btn", classes="danger-button")
+                yield Button(
+                    "Save Reminder",
+                    id="save-server-reminder-btn",
+                    classes="primary-button",
+                )
+                yield Button(
+                    "Delete Reminder",
+                    id="delete-server-reminder-btn",
+                    classes="danger-button",
+                )
 
     def _compose_server_feed_tab(self) -> ComposeResult:
         """Compose server notification feed controls."""
@@ -492,7 +552,9 @@ class SubscriptionWindow(Container):
                 yield Button("Mark Read", id="mark-server-notification-read-btn")
                 yield Button("Dismiss", id="dismiss-server-notification-btn")
                 yield Button("Snooze 30m", id="snooze-server-notification-btn")
-                yield Button("Cancel Snooze", id="cancel-server-notification-snooze-btn")
+                yield Button(
+                    "Cancel Snooze", id="cancel-server-notification-snooze-btn"
+                )
                 yield Button("Watch Feed", id="watch-server-feed-btn")
 
     def _compose_watchlist_jobs_tab(self) -> ComposeResult:
@@ -504,11 +566,18 @@ class SubscriptionWindow(Container):
             yield Label("Watchlist Jobs")
             yield ListView(id="watchlist-jobs-list", classes="subscription-list")
             yield Label("Job Payload (JSON)")
-            yield TextArea('{"name":"Daily Briefing","scope":{"sources":[]}}', id="watchlist-job-payload")
+            yield TextArea(
+                '{"name":"Daily Briefing","scope":{"sources":[]}}',
+                id="watchlist-job-payload",
+            )
             with Horizontal(classes="list-actions"):
                 yield Button("Refresh", id="refresh-watchlist-jobs-btn")
-                yield Button("Save Job", id="save-watchlist-job-btn", classes="primary-button")
-                yield Button("Delete Job", id="delete-watchlist-job-btn", classes="danger-button")
+                yield Button(
+                    "Save Job", id="save-watchlist-job-btn", classes="primary-button"
+                )
+                yield Button(
+                    "Delete Job", id="delete-watchlist-job-btn", classes="danger-button"
+                )
                 yield Button("Restore Job", id="restore-watchlist-job-btn")
                 yield Button("Run Now", id="trigger-watchlist-job-btn")
 
@@ -524,7 +593,9 @@ class SubscriptionWindow(Container):
             with Horizontal(classes="list-actions"):
                 yield Button("Refresh", id="refresh-watchlist-runs-btn")
                 yield Button("Load Detail", id="load-watchlist-run-detail-btn")
-                yield Button("Cancel Run", id="cancel-watchlist-run-btn", classes="danger-button")
+                yield Button(
+                    "Cancel Run", id="cancel-watchlist-run-btn", classes="danger-button"
+                )
 
     def _compose_watchlist_alert_rules_tab(self) -> ComposeResult:
         """Compose server watchlist alert-rule controls."""
@@ -535,12 +606,23 @@ class SubscriptionWindow(Container):
             yield Label("Watchlist Alert Rules")
             yield ListView(id="watchlist-alert-rules-list", classes="subscription-list")
             yield Label("Alert Rule Payload (JSON)")
-            yield TextArea('{"name":"No items","condition_type":"no_items"}', id="watchlist-alert-rule-payload")
+            yield TextArea(
+                '{"name":"No items","condition_type":"no_items"}',
+                id="watchlist-alert-rule-payload",
+            )
             with Horizontal(classes="list-actions"):
                 yield Button("Refresh", id="refresh-watchlist-alert-rules-btn")
-                yield Button("Save Rule", id="save-watchlist-alert-rule-btn", classes="primary-button")
-                yield Button("Delete Rule", id="delete-watchlist-alert-rule-btn", classes="danger-button")
-    
+                yield Button(
+                    "Save Rule",
+                    id="save-watchlist-alert-rule-btn",
+                    classes="primary-button",
+                )
+                yield Button(
+                    "Delete Rule",
+                    id="delete-watchlist-alert-rule-btn",
+                    classes="danger-button",
+                )
+
     def _compose_dashboard_tab(self) -> ComposeResult:
         """Compose monitoring dashboard tab."""
         with ScrollableContainer():
@@ -549,53 +631,47 @@ class SubscriptionWindow(Container):
                 with Container(classes="stat-card"):
                     yield Label("Active Subscriptions")
                     yield Static("0", id="stat-active", classes="stat-value")
-                
+
                 with Container(classes="stat-card"):
                     yield Label("Items Today")
                     yield Static("0", id="stat-items-today", classes="stat-value")
-                
+
                 with Container(classes="stat-card"):
                     yield Label("Last Check")
                     yield Static("Never", id="stat-last-check", classes="stat-value")
-                
+
                 with Container(classes="stat-card"):
                     yield Label("Error Rate")
                     yield Static("0%", id="stat-error-rate", classes="stat-value")
-            
+
             # Health alerts
             yield Container(id="health-alerts-container")
-            
+
             # Activity chart
             yield Label("Activity (Last 7 Days)")
-            yield Sparkline(
-                data=[0] * 7,
-                id="activity-chart"
-            )
-            
+            yield Sparkline(data=[0] * 7, id="activity-chart")
+
             # Recent activity log
             yield Label("Recent Activity")
-            yield TextArea(
-                id="activity-log",
-                read_only=True
-            )
-    
+            yield TextArea(id="activity-log", read_only=True)
+
     def _compose_briefings_tab(self) -> ComposeResult:
         """Compose briefings tab."""
         with Horizontal():
             # Left side - briefing controls
             with Vertical(classes="briefing-controls"):
                 yield Label("Generate Briefing")
-                
+
                 with FormFieldSet("Briefing Options"):
                     yield FormField(
                         "Name",
                         Input(
                             placeholder="Daily Digest",
                             id="briefing-name",
-                            value=f"Briefing {datetime.now().strftime('%Y-%m-%d')}"
-                        )
+                            value=f"Briefing {datetime.now().strftime('%Y-%m-%d')}",
+                        ),
                     )
-                    
+
                     yield FormField(
                         "Template",
                         Select(
@@ -604,12 +680,12 @@ class SubscriptionWindow(Container):
                                 ("Executive Summary", "executive_summary"),
                                 ("Technical Digest", "technical_digest"),
                                 ("News Briefing", "news_briefing"),
-                                ("Custom Template", "custom")
+                                ("Custom Template", "custom"),
                             ],
-                            value="news_briefing"
-                        )
+                            value="news_briefing",
+                        ),
                     )
-                    
+
                     yield FormField(
                         "Time Range",
                         Select(
@@ -618,12 +694,12 @@ class SubscriptionWindow(Container):
                                 ("Today", "today"),
                                 ("Yesterday", "yesterday"),
                                 ("Last 7 Days", "week"),
-                                ("Custom Range", "custom")
+                                ("Custom Range", "custom"),
                             ],
-                            value="today"
-                        )
+                            value="today",
+                        ),
                     )
-                    
+
                     yield FormField(
                         "Sources",
                         Select(
@@ -632,12 +708,12 @@ class SubscriptionWindow(Container):
                                 ("All Sources", "all"),
                                 ("High Priority Only", "high_priority"),
                                 ("Selected Sources", "selected"),
-                                ("By Tags", "tags")
+                                ("By Tags", "tags"),
                             ],
-                            value="all"
-                        )
+                            value="all",
+                        ),
                     )
-                    
+
                     yield FormField(
                         "Format",
                         Select(
@@ -646,21 +722,22 @@ class SubscriptionWindow(Container):
                                 ("Markdown", "markdown"),
                                 ("HTML", "html"),
                                 ("Plain Text", "text"),
-                                ("JSON", "json")
+                                ("JSON", "json"),
                             ],
-                            value="markdown"
-                        )
+                            value="markdown",
+                        ),
                     )
-                    
+
                     yield FormField(
-                        "Enhance with LLM",
-                        Checkbox(id="briefing-enhance", value=True)
+                        "Enhance with LLM", Checkbox(id="briefing-enhance", value=True)
                     )
-                
+
                 with Horizontal(classes="briefing-actions"):
-                    yield Button("Generate", id="generate-briefing-btn", classes="primary-button")
+                    yield Button(
+                        "Generate", id="generate-briefing-btn", classes="primary-button"
+                    )
                     yield Button("Save Template", id="save-template-btn")
-            
+
             # Right side - briefing preview
             with Vertical(classes="briefing-preview-container"):
                 yield Label("Preview")
@@ -668,12 +745,12 @@ class SubscriptionWindow(Container):
                     id="briefing-preview",
                     read_only=True,
                 )
-                
+
                 with Horizontal(classes="preview-actions"):
                     yield Button("Save to Notes", id="save-briefing-notes-btn")
                     yield Button("Export", id="export-briefing-btn")
                     yield Button("Copy", id="copy-briefing-btn")
-    
+
     def _compose_settings_tab(self) -> ComposeResult:
         """Compose settings tab."""
         with ScrollableContainer():
@@ -684,65 +761,69 @@ class SubscriptionWindow(Container):
                     yield Input(placeholder="Select file...", id="import-file-path")
                     yield Button("Browse", id="browse-import-btn")
                     yield Button("Import", id="import-subscriptions-btn")
-                
+
                 yield Label("Export subscriptions")
                 with Horizontal():
                     yield Select(
                         [("OPML", "opml"), ("JSON", "json")],
                         id="export-format",
-                        value="opml"
+                        value="opml",
                     )
                     yield Button("Export", id="export-subscriptions-btn")
-            
+
             # Scheduler settings
             with FormFieldSet("Scheduler Settings"):
                 yield FormField(
                     "Enable Background Checks",
-                    Checkbox(id="enable-scheduler", value=True)
+                    Checkbox(id="enable-scheduler", value=True),
                 )
-                
+
                 yield FormField(
                     "Check Interval (seconds)",
-                    Input(value="60", id="scheduler-interval", type="number")
+                    Input(value="60", id="scheduler-interval", type="number"),
                 )
-                
+
                 yield FormField(
                     "Max Concurrent Checks",
-                    Input(value="10", id="max-concurrent", type="number")
+                    Input(value="10", id="max-concurrent", type="number"),
                 )
-            
+
             # Database maintenance
             with FormFieldSet("Database Maintenance"):
                 yield Label("Clean up old items and optimize database")
-                
+
                 yield FormField(
                     "Delete items older than (days)",
-                    Input(value="30", id="cleanup-days", type="number")
+                    Input(value="30", id="cleanup-days", type="number"),
                 )
-                
+
                 with Horizontal():
                     yield Button("Clean Database", id="clean-db-btn")
                     yield Button("Optimize Database", id="optimize-db-btn")
-            
+
             # Site Configuration
             with FormFieldSet("Site Configuration"):
-                yield Label("Configure per-site settings like rate limits, authentication, and content extraction")
+                yield Label(
+                    "Configure per-site settings like rate limits, authentication, and content extraction"
+                )
                 yield SiteConfigSettings()
-    
+
     async def on_mount(self) -> None:
         """Initialize when window is mounted."""
         # Check if subscriptions dependencies are available
         from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
-        if not DEPENDENCIES_AVAILABLE.get('subscriptions', False):
+
+        if not DEPENDENCIES_AVAILABLE.get("subscriptions", False):
             from ..Utils.widget_helpers import alert_subscriptions_not_available
+
             # Show alert after a short delay to ensure UI is ready
             self.set_timer(0.1, lambda: alert_subscriptions_not_available(self))
-        
+
         try:
             # Initialize database
             db_path = get_subscriptions_db_path()
             self.db = SubscriptionsDB(db_path, self.client_id)
-            
+
             # Initialize components (if available)
             if BRIEFING_AVAILABLE:
                 self.briefing_generator = BriefingGenerator(self.db)
@@ -755,121 +836,127 @@ class SubscriptionWindow(Container):
             await self.refresh_dashboard()
             await self.load_briefing_templates()
             await self.refresh_notifications_inbox()
-            
+
             logger.info("Subscription window initialized")
-            
+
         except Exception as e:
             logger.error(f"Error initializing subscription window: {e}")
             self.notify(f"Initialization error: {str(e)}", severity="error")
-    
+
     async def refresh_subscription_list(self) -> None:
         """Refresh the subscription list."""
         try:
             if not self.db:
                 return
-            
+
             subscriptions = self.db.get_all_subscriptions(include_inactive=False)
             list_view = self.query_one("#subscription-list", ListView)
-            
+
             await list_view.clear()
-            
+
             for sub in subscriptions:
                 # Format subscription info
-                status_icon = "✓" if sub['is_active'] and not sub['is_paused'] else "⏸"
-                if sub['consecutive_failures'] > 3:
+                status_icon = "✓" if sub["is_active"] and not sub["is_paused"] else "⏸"
+                if sub["consecutive_failures"] > 3:
                     status_icon = "⚠️"
-                
+
                 label = f"{status_icon} {sub['name']} [{sub['type']}]"
-                if sub.get('folder'):
+                if sub.get("folder"):
                     label += f" 📁{sub['folder']}"
-                
+
                 item = ListItem(Static(label, classes="subscription-item"))
                 item.data = sub  # Store subscription data
                 await list_view.append(item)
-            
+
         except Exception as e:
             logger.error(f"Error refreshing subscription list: {e}")
-    
+
     async def refresh_dashboard(self) -> None:
         """Refresh dashboard statistics."""
         try:
             if not self.db:
                 return
-            
+
             # Get statistics
             stats = self.db.get_subscription_stats()
-            
+
             # Update stat cards
-            self.query_one("#stat-active", Static).update(str(stats.get('active_count', 0)))
-            self.query_one("#stat-items-today", Static).update(str(stats.get('items_today', 0)))
-            
+            self.query_one("#stat-active", Static).update(
+                str(stats.get("active_count", 0))
+            )
+            self.query_one("#stat-items-today", Static).update(
+                str(stats.get("items_today", 0))
+            )
+
             # Last check time
-            last_check = stats.get('last_check_time')
+            last_check = stats.get("last_check_time")
             if last_check:
                 last_check_str = datetime.fromisoformat(last_check).strftime("%H:%M")
             else:
                 last_check_str = "Never"
             self.query_one("#stat-last-check", Static).update(last_check_str)
-            
+
             # Error rate
-            error_rate = stats.get('error_rate', 0.0)
+            error_rate = stats.get("error_rate", 0.0)
             self.query_one("#stat-error-rate", Static).update(f"{error_rate:.1f}%")
-            
+
             # Update activity chart
-            activity_data = stats.get('activity_last_7_days', [0] * 7)
+            activity_data = stats.get("activity_last_7_days", [0] * 7)
             chart = self.query_one("#activity-chart", Sparkline)
             chart.data = activity_data
-            
+
             # Check for health alerts
             await self.check_health_alerts()
-            
+
         except Exception as e:
             logger.error(f"Error refreshing dashboard: {e}")
-    
+
     async def check_health_alerts(self) -> None:
         """Check for subscription health issues."""
         try:
             if not self.db:
                 return
-            
+
             failing = self.db.get_failing_subscriptions(threshold=3)
             alerts_container = self.query_one("#health-alerts-container")
-            
+
             # Clear existing alerts
             await alerts_container.remove_children()
-            
+
             if failing:
                 alert = Container(classes="health-alert")
                 alert_text = f"⚠️ {len(failing)} subscription(s) are failing:\n"
                 for sub in failing[:5]:
-                    alert_text += f"  • {sub['name']} - {sub['consecutive_failures']} failures\n"
+                    alert_text += (
+                        f"  • {sub['name']} - {sub['consecutive_failures']} failures\n"
+                    )
                 if len(failing) > 5:
                     alert_text += f"  ... and {len(failing) - 5} more"
-                
+
                 await alert.mount(Static(alert_text))
                 await alerts_container.mount(alert)
-                
+
         except Exception as e:
             logger.error(f"Error checking health alerts: {e}")
-    
+
     async def load_new_items(self) -> None:
         """Load new items for review."""
         try:
             if not self.db:
                 return
-            
+
             items = self.db.get_new_items(limit=100)
             list_view = self.query_one("#items-review-list", ListView)
-            
+
             await list_view.clear()
             self.selected_items.clear()
-            
+
             for item in items:
                 # Format item display
-                title = item.get('title', 'Untitled')
-                source = item.get('subscription_name', 'Unknown')
-                date = item.get('created_at', '')
-                
+                title = item.get("title", "Untitled")
+                source = item.get("subscription_name", "Unknown")
+                date = item.get("created_at", "")
+
                 if date:
                     try:
                         date_obj = datetime.fromisoformat(date)
@@ -878,31 +965,31 @@ class SubscriptionWindow(Container):
                         date_str = date
                 else:
                     date_str = ""
-                
+
                 label = f"□ {title}\n   {source} • {date_str}"
-                
+
                 list_item = ListItem(Static(label, classes="review-item"))
                 list_item.data = item
                 await list_view.append(list_item)
-            
+
             # Update count
             self.query_one("#items-count", Static).update(f"{len(items)} new items")
-            
+
         except Exception as e:
             logger.error(f"Error loading new items: {e}")
-    
+
     async def load_briefing_templates(self) -> None:
         """Load available briefing templates."""
         try:
             templates = self.template_manager.list_templates()
             self.query_one("#briefing-template", Select)
-            
+
             options = []
             for template in templates:
                 options.append((template.id, template.name))
-            
+
             # template_select.options = options  # Update options
-            
+
         except Exception as e:
             logger.error(f"Error loading briefing templates: {e}")
 
@@ -923,8 +1010,14 @@ class SubscriptionWindow(Container):
             "review": ("#review-local-only-state", "#review-main"),
             "watchlist-jobs": ("#watchlist-jobs-local-state", "#watchlist-jobs-main"),
             "watchlist-runs": ("#watchlist-runs-local-state", "#watchlist-runs-main"),
-            "watchlist-alert-rules": ("#watchlist-alert-rules-local-state", "#watchlist-alert-rules-main"),
-            "server-reminders": ("#server-reminders-local-state", "#server-reminders-main"),
+            "watchlist-alert-rules": (
+                "#watchlist-alert-rules-local-state",
+                "#watchlist-alert-rules-main",
+            ),
+            "server-reminders": (
+                "#server-reminders-local-state",
+                "#server-reminders-main",
+            ),
             "server-feed": ("#server-feed-local-state", "#server-feed-main"),
         }.get(tab_id, ("", ""))
 
@@ -986,7 +1079,9 @@ class SubscriptionWindow(Container):
         restored_selection = False
         await list_view.clear()
         for index, item in enumerate(items):
-            list_item = ListItem(Static(label_builder(item), classes="subscription-item"))
+            list_item = ListItem(
+                Static(label_builder(item), classes="subscription-item")
+            )
             list_item.data = item
             await list_view.append(list_item)
             item_id = self._normalized_control_plane_id(item, fallback_key, entity_kind)
@@ -1031,9 +1126,14 @@ class SubscriptionWindow(Container):
             detail = await self.backend_controller.get_watchlist_run_detail(run_id)
         except Exception as exc:
             logger.warning(f"Failed to load pending watchlist run detail: {exc}")
-            self.notify(f"Unable to load watchlist run details: {exc}", severity="warning")
+            self.notify(
+                f"Unable to load watchlist run details: {exc}", severity="warning"
+            )
             return
-        self._load_text_area("#watchlist-run-detail", json.dumps(detail, indent=2, sort_keys=True, default=str))
+        self._load_text_area(
+            "#watchlist-run-detail",
+            json.dumps(detail, indent=2, sort_keys=True, default=str),
+        )
 
     async def _render_watchlist_alert_rules(self, items: List[Dict[str, Any]]) -> None:
         await self._render_watchlist_record_list(
@@ -1102,7 +1202,9 @@ class SubscriptionWindow(Container):
             return data
 
         index = getattr(list_view, "index", None)
-        items = getattr(list_view, "children", None) or getattr(list_view, "items", None)
+        items = getattr(list_view, "children", None) or getattr(
+            list_view, "items", None
+        )
         if isinstance(index, int) and items is not None:
             try:
                 selected = list(items)[index]
@@ -1128,7 +1230,14 @@ class SubscriptionWindow(Container):
         source_id = selected.get("source_id")
         if source_id in (None, ""):
             return None
-        entity_kind = str(selected.get("entity_kind") or ("subscription" if self._runtime_backend() == "local" else "watchlist_source"))
+        entity_kind = str(
+            selected.get("entity_kind")
+            or (
+                "subscription"
+                if self._runtime_backend() == "local"
+                else "watchlist_source"
+            )
+        )
         return f"{self._runtime_backend()}:{entity_kind}:{source_id}"
 
     def _control_plane_selection_attr(self, selector: str) -> Optional[str]:
@@ -1151,7 +1260,9 @@ class SubscriptionWindow(Container):
     def _remember_control_plane_id(self, selector: str, item_id: Optional[str]) -> None:
         attr_name = self._control_plane_selection_attr(selector)
         if attr_name is not None:
-            setattr(self, attr_name, str(item_id) if item_id not in (None, "") else None)
+            setattr(
+                self, attr_name, str(item_id) if item_id not in (None, "") else None
+            )
 
     def _normalized_control_plane_id(
         self,
@@ -1167,7 +1278,9 @@ class SubscriptionWindow(Container):
             return None
         return f"{self._runtime_backend()}:{entity_kind}:{raw_id}"
 
-    def _active_normalized_id(self, selector: str, fallback_key: str, entity_kind: str) -> Optional[str]:
+    def _active_normalized_id(
+        self, selector: str, fallback_key: str, entity_kind: str
+    ) -> Optional[str]:
         selected = self._selected_list_item_data(selector)
         if not selected:
             return self._remembered_control_plane_id(selector)
@@ -1176,22 +1289,36 @@ class SubscriptionWindow(Container):
         return item_id
 
     def _active_watchlist_job_id(self) -> Optional[str]:
-        return self._active_normalized_id("#watchlist-jobs-list", "job_id", "watchlist_job")
+        return self._active_normalized_id(
+            "#watchlist-jobs-list", "job_id", "watchlist_job"
+        )
 
     def _active_watchlist_run_id(self) -> Optional[str]:
-        return self._active_normalized_id("#watchlist-runs-list", "run_id", "watchlist_run")
+        return self._active_normalized_id(
+            "#watchlist-runs-list", "run_id", "watchlist_run"
+        )
 
     def _active_watchlist_alert_rule_id(self) -> Optional[str]:
-        return self._active_normalized_id("#watchlist-alert-rules-list", "rule_id", "watchlist_alert_rule")
+        return self._active_normalized_id(
+            "#watchlist-alert-rules-list", "rule_id", "watchlist_alert_rule"
+        )
 
     def _active_server_reminder_id(self) -> Optional[str]:
-        return self._active_normalized_id("#server-reminders-list", "task_id", "reminder_task")
+        return self._active_normalized_id(
+            "#server-reminders-list", "task_id", "reminder_task"
+        )
 
     def _active_server_notification_id(self) -> Optional[str]:
-        return self._active_normalized_id("#server-feed-list", "notification_id", "notification")
+        return self._active_normalized_id(
+            "#server-feed-list", "notification_id", "notification"
+        )
 
     def _parse_tags_field(self) -> List[str]:
-        return [tag.strip() for tag in self.query_one("#sub-tags", Input).value.split(',') if tag.strip()]
+        return [
+            tag.strip()
+            for tag in self.query_one("#sub-tags", Input).value.split(",")
+            if tag.strip()
+        ]
 
     def _current_watch_item_context(self) -> Dict[str, Any]:
         current: Dict[str, Any] = {}
@@ -1222,7 +1349,8 @@ class SubscriptionWindow(Container):
 
     def _local_form_extras(self) -> Dict[str, Any]:
         extras: Dict[str, Any] = {
-            "description": self.query_one("#sub-description", TextArea).text.strip() or None,
+            "description": self.query_one("#sub-description", TextArea).text.strip()
+            or None,
             "folder": self.query_one("#sub-folder", Input).value.strip() or None,
             "priority": int(self.query_one("#sub-priority", Select).value),
             "check_frequency": int(self.query_one("#sub-frequency", Select).value),
@@ -1289,7 +1417,9 @@ class SubscriptionWindow(Container):
     async def refresh_backend_view(self) -> None:
         """Refresh the backend-aware subscription/watchlist shell."""
         runtime_backend = self._runtime_backend()
-        await self.backend_controller.refresh_backend_view(runtime_backend=runtime_backend)
+        await self.backend_controller.refresh_backend_view(
+            runtime_backend=runtime_backend
+        )
 
     async def stop_active_backend_workers(self) -> None:
         """Stop any backend-specific workers owned by the shell."""
@@ -1311,11 +1441,13 @@ class SubscriptionWindow(Container):
 
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
         """Refresh window state after a runtime backend switch."""
-        self.runtime_backend = str(runtime_backend or "local").strip().lower() or "local"
+        self.runtime_backend = (
+            str(runtime_backend or "local").strip().lower() or "local"
+        )
         await self.handle_add_subscription(None)
         await self.refresh_backend_view()
         await self.refresh_notifications_inbox()
-    
+
     @on(Button.Pressed, "#add-subscription-btn")
     async def handle_add_subscription(self, event: Button.Pressed) -> None:
         """Handle add subscription button."""
@@ -1335,19 +1467,19 @@ class SubscriptionWindow(Container):
         self._selected_watch_item = None
         self._selected_local_subscription_row = None
         self._clear_subscription_list_selection()
-        
+
         # Focus name field
         self.query_one("#sub-name", Input).focus()
-    
+
     @on(Button.Pressed, "#scraper-builder-btn")
     async def handle_scraper_builder(self, event: Button.Pressed) -> None:
         """Launch the visual scraper builder."""
         # Get current URL from form if available
         url = self.query_one("#sub-url", Input).value.strip()
-        
+
         # Launch scraper builder
         await self.app_instance.push_screen(ScraperBuilderWindow(url=url))
-    
+
     @on(Button.Pressed, "#save-subscription-btn")
     async def handle_save_subscription(self, event: Button.Pressed) -> None:
         """Handle save subscription."""
@@ -1357,11 +1489,11 @@ class SubscriptionWindow(Container):
             name = self.query_one("#sub-name", Input).value.strip()
             url = self.query_one("#sub-url", Input).value.strip()
             runtime_backend = self._runtime_backend()
-            
+
             if not name or not url:
                 self.notify("Name and URL are required", severity="warning")
                 return
-            
+
             if self.watchlist_scope_service is not None:
                 payload = self._watch_item_payload_from_form()
                 if runtime_backend == "local":
@@ -1375,7 +1507,9 @@ class SubscriptionWindow(Container):
                 self._selected_watch_item = dict(saved_item)
                 self.selected_subscription = saved_item.get("id")
                 self.notify(
-                    "Subscription updated" if payload.get("id") else "Subscription created",
+                    "Subscription updated"
+                    if payload.get("id")
+                    else "Subscription created",
                     severity="information",
                 )
                 await self.refresh_backend_view()
@@ -1383,25 +1517,27 @@ class SubscriptionWindow(Container):
 
             # Legacy fallback when the watchlist scope service is unavailable.
             sub_data = {
-                'name': name,
-                'type': self.query_one("#sub-type", Select).value,
-                'source': url,
-                'description': self.query_one("#sub-description", TextArea).text.strip(),
-                'tags': self._parse_tags_field(),
-                'folder': self.query_one("#sub-folder", Input).value.strip() or None,
-                'priority': int(self.query_one("#sub-priority", Select).value),
-                'check_frequency': int(self.query_one("#sub-frequency", Select).value),
-                'auto_ingest': self.query_one("#sub-auto-ingest", Checkbox).value,
+                "name": name,
+                "type": self.query_one("#sub-type", Select).value,
+                "source": url,
+                "description": self.query_one(
+                    "#sub-description", TextArea
+                ).text.strip(),
+                "tags": self._parse_tags_field(),
+                "folder": self.query_one("#sub-folder", Input).value.strip() or None,
+                "priority": int(self.query_one("#sub-priority", Select).value),
+                "check_frequency": int(self.query_one("#sub-frequency", Select).value),
+                "auto_ingest": self.query_one("#sub-auto-ingest", Checkbox).value,
             }
 
             auth_type = self.query_one("#sub-auth-type", Select).value
             if auth_type != "none":
-                sub_data['auth_config'] = {'type': auth_type}
+                sub_data["auth_config"] = {"type": auth_type}
 
             headers_text = self.query_one("#sub-headers", TextArea).text.strip()
             if headers_text:
                 try:
-                    sub_data['custom_headers'] = json.loads(headers_text)
+                    sub_data["custom_headers"] = json.loads(headers_text)
                 except json.JSONDecodeError:
                     self.notify("Invalid JSON in custom headers", severity="error")
                     return
@@ -1414,11 +1550,11 @@ class SubscriptionWindow(Container):
                 self.notify("Subscription created", severity="information")
 
             await self.refresh_subscription_list()
-            
+
         except Exception as e:
             logger.error(f"Error saving subscription: {e}")
             self.notify(f"Error: {str(e)}", severity="error")
-    
+
     @on(ListView.Selected, "#subscription-list")
     async def handle_subscription_selected(self, event: ListView.Selected) -> None:
         """Handle subscription selection."""
@@ -1426,40 +1562,64 @@ class SubscriptionWindow(Container):
             sub = dict(event.item.data)
             runtime_backend = self._runtime_backend()
             self._selected_watch_item = sub
-            self.selected_subscription = sub.get('id')
+            self.selected_subscription = sub.get("id")
             self._selected_local_subscription_row = None
 
             raw_local_row: Dict[str, Any] = {}
-            if runtime_backend == "local" and self.db is not None and sub.get("source_id") not in (None, ""):
+            if (
+                runtime_backend == "local"
+                and self.db is not None
+                and sub.get("source_id") not in (None, "")
+            ):
                 local_row = self.db.get_subscription(int(sub["source_id"]))
                 if isinstance(local_row, dict):
                     raw_local_row = dict(local_row)
                     self._selected_local_subscription_row = raw_local_row
-            
+
             # Load into form
-            self.query_one("#sub-name", Input).value = sub.get('title', sub.get('name', ''))
-            self.query_one("#sub-type", Select).value = sub.get('source_type', sub.get('type', 'rss'))
-            self.query_one("#sub-url", Input).value = sub.get('url', sub.get('source', ''))
-            self.query_one("#sub-description", TextArea).load_text(raw_local_row.get('description', ''))
-            
+            self.query_one("#sub-name", Input).value = sub.get(
+                "title", sub.get("name", "")
+            )
+            self.query_one("#sub-type", Select).value = sub.get(
+                "source_type", sub.get("type", "rss")
+            )
+            self.query_one("#sub-url", Input).value = sub.get(
+                "url", sub.get("source", "")
+            )
+            self.query_one("#sub-description", TextArea).load_text(
+                raw_local_row.get("description", "")
+            )
+
             # Tags
-            tags = raw_local_row.get('tags', sub.get('tags', []))
+            tags = raw_local_row.get("tags", sub.get("tags", []))
             if isinstance(tags, str):
                 stripped_tags = tags.strip()
                 if stripped_tags.startswith("["):
                     tags = json.loads(stripped_tags) if stripped_tags else []
                 else:
-                    tags = [tag.strip() for tag in stripped_tags.split(",") if tag.strip()]
-            self.query_one("#sub-tags", Input).value = ', '.join(tags)
-            
-            self.query_one("#sub-folder", Input).value = raw_local_row.get('folder', '')
-            self.query_one("#sub-priority", Select).value = str(raw_local_row.get('priority', 3))
-            self.query_one("#sub-frequency", Select).value = str(raw_local_row.get('check_frequency', 3600))
-            self.query_one("#sub-auto-ingest", Checkbox).value = bool(raw_local_row.get('auto_ingest', False))
+                    tags = [
+                        tag.strip() for tag in stripped_tags.split(",") if tag.strip()
+                    ]
+            self.query_one("#sub-tags", Input).value = ", ".join(tags)
 
-            auth_config = self._decode_json_mapping(raw_local_row.get('auth_config'))
-            self.query_one("#sub-auth-type", Select).value = auth_config.get("type", "none")
-            custom_headers = self._decode_json_mapping(raw_local_row.get('custom_headers'))
+            self.query_one("#sub-folder", Input).value = raw_local_row.get("folder", "")
+            self.query_one("#sub-priority", Select).value = str(
+                raw_local_row.get("priority", 3)
+            )
+            self.query_one("#sub-frequency", Select).value = str(
+                raw_local_row.get("check_frequency", 3600)
+            )
+            self.query_one("#sub-auto-ingest", Checkbox).value = bool(
+                raw_local_row.get("auto_ingest", False)
+            )
+
+            auth_config = self._decode_json_mapping(raw_local_row.get("auth_config"))
+            self.query_one("#sub-auth-type", Select).value = auth_config.get(
+                "type", "none"
+            )
+            custom_headers = self._decode_json_mapping(
+                raw_local_row.get("custom_headers")
+            )
             self.query_one("#sub-headers", TextArea).load_text(
                 json.dumps(custom_headers, indent=2) if custom_headers else ""
             )
@@ -1541,7 +1701,10 @@ class SubscriptionWindow(Container):
         if run_id is None:
             return
         detail = await self.backend_controller.get_watchlist_run_detail(run_id)
-        self._load_text_area("#watchlist-run-detail", json.dumps(detail, indent=2, sort_keys=True, default=str))
+        self._load_text_area(
+            "#watchlist-run-detail",
+            json.dumps(detail, indent=2, sort_keys=True, default=str),
+        )
 
     @on(Button.Pressed, "#cancel-watchlist-run-btn")
     async def handle_cancel_watchlist_run(self, event: Button.Pressed) -> None:
@@ -1637,11 +1800,15 @@ class SubscriptionWindow(Container):
         notification_id = self._active_server_notification_id()
         if notification_id is None:
             return
-        await self.backend_controller.snooze_server_notification(notification_id, minutes=30)
+        await self.backend_controller.snooze_server_notification(
+            notification_id, minutes=30
+        )
         await self.backend_controller.load_server_feed()
 
     @on(Button.Pressed, "#cancel-server-notification-snooze-btn")
-    async def handle_cancel_server_notification_snooze(self, event: Button.Pressed) -> None:
+    async def handle_cancel_server_notification_snooze(
+        self, event: Button.Pressed
+    ) -> None:
         del event
         notification_id = self._active_server_notification_id()
         if notification_id is None:
@@ -1649,7 +1816,9 @@ class SubscriptionWindow(Container):
         await self.backend_controller.cancel_server_notification_snooze(notification_id)
         await self.backend_controller.load_server_feed()
 
-    def _server_feed_item_from_event(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _server_feed_item_from_event(
+        self, event: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
         data = event.get("data") if isinstance(event, dict) else None
         if not isinstance(data, dict):
             return None
@@ -1677,13 +1846,20 @@ class SubscriptionWindow(Container):
         """Collect server notification stream events and render notification payloads."""
         events: List[Dict[str, Any]] = []
         rendered: List[Dict[str, Any]] = []
-        async for event in self.backend_controller.stream_server_feed_events(after=after):
-            event_data = dict(event) if isinstance(event, dict) else {"event": str(event)}
+        async for event in self.backend_controller.stream_server_feed_events(
+            after=after
+        ):
+            event_data = (
+                dict(event) if isinstance(event, dict) else {"event": str(event)}
+            )
             events.append(event_data)
             rendered_item = self._server_feed_item_from_event(event_data)
             if rendered_item is not None:
                 rendered.append(rendered_item)
-                self._load_text_area("#server-feed-detail", json.dumps(rendered_item, indent=2, sort_keys=True, default=str))
+                self._load_text_area(
+                    "#server-feed-detail",
+                    json.dumps(rendered_item, indent=2, sort_keys=True, default=str),
+                )
         if rendered:
             await self._render_server_feed(rendered)
         return events
@@ -1692,22 +1868,22 @@ class SubscriptionWindow(Container):
     async def handle_watch_server_feed(self, event: Button.Pressed) -> None:
         del event
         await self.watch_server_feed_events(after=0)
-    
+
     @on(Button.Pressed, "#check-all-btn")
     async def handle_check_all(self, event: Button.Pressed) -> None:
         """Handle check all subscriptions."""
         if self.is_checking:
             self.notify("Check already in progress", severity="warning")
             return
-        
+
         self.is_checking = True
         event.button.disabled = True
         event.button.label = "Checking..."
-        
+
         try:
             # Run check via worker
             await self.scheduler_worker.check_all_subscriptions()
-            
+
         except Exception as e:
             logger.error(f"Error checking subscriptions: {e}")
             self.notify(f"Check failed: {str(e)}", severity="error")
@@ -1735,7 +1911,7 @@ class SubscriptionWindow(Container):
             return
         await self.notifications_controller.dismiss(notification_id, is_dismissed=True)
         await self.refresh_notifications_inbox()
-    
+
     @on(Button.Pressed, "#generate-briefing-btn")
     async def handle_generate_briefing(self, event: Button.Pressed) -> None:
         """Handle briefing generation."""
@@ -1747,7 +1923,7 @@ class SubscriptionWindow(Container):
             sources = self.query_one("#briefing-sources", Select).value
             format = self.query_one("#briefing-format", Select).value
             self.query_one("#briefing-enhance", Checkbox).value
-            
+
             # Calculate time range
             now = datetime.now(timezone.utc)
             if time_range == "today":
@@ -1755,7 +1931,9 @@ class SubscriptionWindow(Container):
                 end_time = now
             elif time_range == "yesterday":
                 yesterday = now - timedelta(days=1)
-                start_time = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
+                start_time = yesterday.replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
                 end_time = yesterday.replace(hour=23, minute=59, second=59)
             elif time_range == "week":
                 start_time = now - timedelta(days=7)
@@ -1763,24 +1941,24 @@ class SubscriptionWindow(Container):
             else:
                 start_time = now - timedelta(days=1)
                 end_time = now
-            
+
             # Build source filter
             if sources == "high_priority":
                 pass
             elif sources == "selected" and self.selected_subscription:
                 pass
-            
+
             # Disable button
             event.button.disabled = True
             event.button.label = "Generating..."
-            
+
             # Generate briefing (would be async with aggregation engine)
             # For now, create a sample
             briefing_content = f"""# {name}
-*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}*
+*Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}*
 
 ## Executive Summary
-This briefing covers updates from {start_time.strftime('%Y-%m-%d')} to {end_time.strftime('%Y-%m-%d')}.
+This briefing covers updates from {start_time.strftime("%Y-%m-%d")} to {end_time.strftime("%Y-%m-%d")}.
 
 ## Key Updates
 - Sample update 1
@@ -1795,52 +1973,59 @@ Based on the analyzed content, consider the following actions:
 
 ---
 *This is a sample briefing. Full implementation pending.*"""
-            
+
             # Show preview
             self.query_one("#briefing-preview", TextArea).load_text(briefing_content)
-            
+
             # Store for saving
             self.current_briefing = {
-                'name': name,
-                'content': briefing_content,
-                'format': format,
-                'generated_at': datetime.now(timezone.utc).isoformat()
+                "name": name,
+                "content": briefing_content,
+                "format": format,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
             }
-            
+
             self.notify("Briefing generated", severity="information")
-            
+
         except Exception as e:
             logger.error(f"Error generating briefing: {e}")
             self.notify(f"Generation failed: {str(e)}", severity="error")
         finally:
             event.button.disabled = False
             event.button.label = "Generate"
-    
+
     # Event handlers from scheduler
-    async def on_subscription_check_started(self, event: SubscriptionCheckStarted) -> None:
+    async def on_subscription_check_started(
+        self, event: SubscriptionCheckStarted
+    ) -> None:
         """Handle subscription check started."""
         log_entry = f"[{datetime.now().strftime('%H:%M:%S')}] Checking {event.subscription_name or 'subscriptions'}..."
         await self.append_to_activity_log(log_entry)
-    
-    async def on_subscription_check_complete(self, event: SubscriptionCheckComplete) -> None:
+
+    async def on_subscription_check_complete(
+        self, event: SubscriptionCheckComplete
+    ) -> None:
         """Handle subscription check complete."""
         if event.success:
             log_entry = f"[{datetime.now().strftime('%H:%M:%S')}] ✓ {event.subscription_name}: {event.items_found} new items"
         else:
             log_entry = f"[{datetime.now().strftime('%H:%M:%S')}] ✗ {event.subscription_name}: {event.error}"
-        
+
         await self.append_to_activity_log(log_entry)
-        
+
         # Refresh if items found
         if event.items_found > 0:
             await self.load_new_items()
-    
+
     async def on_new_subscription_items(self, event: NewSubscriptionItems) -> None:
         """Handle new subscription items."""
-        self.notify(f"{event.count} new items from {event.subscription_name}", severity="information")
+        self.notify(
+            f"{event.count} new items from {event.subscription_name}",
+            severity="information",
+        )
         await self.load_new_items()
         await self.refresh_dashboard()
-    
+
     async def append_to_activity_log(self, entry: str) -> None:
         """Append entry to activity log."""
         try:
@@ -1848,8 +2033,8 @@ Based on the analyzed content, consider the following actions:
             current = log.text
             new_text = f"{entry}\n{current}"
             # Keep last 100 lines
-            lines = new_text.split('\n')[:100]
-            log.load_text('\n'.join(lines))
+            lines = new_text.split("\n")[:100]
+            log.load_text("\n".join(lines))
         except Exception:
             pass
 

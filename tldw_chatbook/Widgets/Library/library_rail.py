@@ -213,7 +213,9 @@ class LibraryRail(Vertical):
                 count_suffix = row.count_display or self._count_suffix(
                     row.count, row.count_known
                 )
-                section_hint = "opens screen" if row.target_kind == "screen" else "in Library"
+                section_hint = (
+                    "opens screen" if row.target_kind == "screen" else "in Library"
+                )
                 button = Button(
                     f"{marker} {_visible_row_title(row.title)}{count_suffix}"
                     f"\n    {section_hint}",
@@ -225,7 +227,11 @@ class LibraryRail(Vertical):
                 button.row_id = row.row_id
                 button.target_kind = row.target_kind
                 button.target_id = row.target_id
-                button.tooltip = row.disabled_tooltip if row.disabled and row.disabled_tooltip else row.title
+                button.tooltip = (
+                    row.disabled_tooltip
+                    if row.disabled and row.disabled_tooltip
+                    else row.title
+                )
                 button.set_class(selected, "library-rail-row-selected")
                 if row.count_emphasis:
                     button.add_class(f"library-rail-row-due-{row.count_emphasis}")

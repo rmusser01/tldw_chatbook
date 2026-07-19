@@ -6,6 +6,7 @@ RAG pipelines from TOML configuration files.
 """
 
 import sys
+
 if sys.version_info < (3, 11):
     import tomli as tomllib
 else:
@@ -24,6 +25,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events
 @dataclass
 class MiddlewareConfig:
     """Configuration for a middleware component."""
+
     name: str
     type: str  # before_search, after_search, error_handler
     enabled: bool = True
@@ -34,6 +36,7 @@ class MiddlewareConfig:
 @dataclass
 class PipelineConfig:
     """Configuration for a RAG pipeline."""
+
     id: str
     name: str
     description: str
@@ -51,21 +54,21 @@ class PipelineConfig:
 
 class PipelineLoader:
     """Loads and manages pipeline configurations from TOML files."""
-    
+
     def __init__(self, config_dir: Optional[Path] = None):
         self.config_dir = config_dir or Path(__file__).parent.parent / "Config_Files"
         self.pipelines: Dict[str, PipelineConfig] = {}
         self.middleware: Dict[str, MiddlewareConfig] = {}
         self.global_config: Dict[str, Any] = {}
         self._function_cache: Dict[str, Callable] = {}
-        
+
         # Map of built-in pipeline functions
         self._builtin_functions = {
             "perform_plain_rag_search": chat_rag_events.perform_plain_rag_search,
             "perform_full_rag_pipeline": chat_rag_events.perform_full_rag_pipeline,
             "perform_hybrid_rag_search": chat_rag_events.perform_hybrid_rag_search,
         }
-    
+
     def load_pipeline_config(self, config_file: Optional[Path] = None) -> None:
         """Load pipeline configurations from TOML file."""
         if config_file is None:
@@ -73,37 +76,48 @@ class PipelineLoader:
             user_config_dir = Path.home() / ".config" / "tldw_cli"
             user_config_file = user_config_dir / "rag_pipelines.toml"
             default_config_file = self.config_dir / "rag_pipelines.toml"
-            
+
             if user_config_file.exists():
                 config_file = user_config_file
-                logger.info(f"Loading pipeline config from user directory: {config_file}")
+                logger.info(
+                    f"Loading pipeline config from user directory: {config_file}"
+                )
             elif default_config_file.exists():
                 config_file = default_config_file
-                logger.info(f"Loading pipeline config from default location: {config_file}")
-                
+                logger.info(
+                    f"Loading pipeline config from default location: {config_file}"
+                )
+
                 # Copy default file to user directory if it doesn't exist
                 try:
                     user_config_dir.mkdir(parents=True, exist_ok=True)
                     import shutil
+
                     shutil.copy2(default_config_file, user_config_file)
-                    logger.info(f"Copied default pipeline config to user directory: {user_config_file}")
+                    logger.info(
+                        f"Copied default pipeline config to user directory: {user_config_file}"
+                    )
                 except Exception as e:
-                    logger.warning(f"Could not copy default pipeline config to user directory: {e}")
+                    logger.warning(
+                        f"Could not copy default pipeline config to user directory: {e}"
+                    )
             else:
-                logger.warning("Pipeline config file not found in user or default locations")
+                logger.warning(
+                    "Pipeline config file not found in user or default locations"
+                )
                 return
-        
+
         if not config_file.exists():
             logger.warning(f"Pipeline config file not found: {config_file}")
             return
-        
+
         try:
             with open(config_file, "rb") as f:
                 config_data = tomllib.load(f)
-            
+
             # Load global configuration
             self.global_config = config_data.get("global", {})
-            
+
             # Load middleware definitions
             middleware_configs = config_data.get("middleware", {})
             for mid_id, mid_config in middleware_configs.items():
@@ -112,9 +126,9 @@ class PipelineLoader:
                     type=mid_config.get("type", "before_search"),
                     enabled=mid_config.get("enabled", True),
                     description=mid_config.get("description", ""),
-                    config=mid_config.get("config", {})
+                    config=mid_config.get("config", {}),
                 )
-            
+
             # Load pipeline configurations
             pipeline_configs = config_data.get("pipelines", {})
             for pipeline_id, pipeline_config in pipeline_configs.items():
@@ -132,57 +146,67 @@ class PipelineLoader:
                         parameters=pipeline_config.get("parameters", {}),
                         middleware=pipeline_config.get("middleware", {}),
                         strategy=pipeline_config.get("strategy"),
-                        components=pipeline_config.get("components")
+                        components=pipeline_config.get("components"),
                     )
-            
-            logger.info(f"Loaded {len(self.pipelines)} pipelines and {len(self.middleware)} middleware from {config_file}")
-            
+
+            logger.info(
+                f"Loaded {len(self.pipelines)} pipelines and {len(self.middleware)} middleware from {config_file}"
+            )
+
         except Exception as e:
             logger.error(f"Failed to load pipeline config: {e}")
-    
-    def _validate_pipeline_config(self, pipeline_id: str, config: Dict[str, Any]) -> bool:
+
+    def _validate_pipeline_config(
+        self, pipeline_id: str, config: Dict[str, Any]
+    ) -> bool:
         """Validate a pipeline configuration."""
         required_fields = ["name", "description", "type"]
         valid_types = ["built-in", "custom", "composite", "wrapper", "functional"]
-        
+
         # Check required fields
         for field in required_fields:
             if field not in config:
-                logger.error(f"Pipeline '{pipeline_id}' missing required field: {field}")
+                logger.error(
+                    f"Pipeline '{pipeline_id}' missing required field: {field}"
+                )
                 return False
-        
+
         # Check valid type
         if config["type"] not in valid_types:
             logger.error(f"Pipeline '{pipeline_id}' has invalid type: {config['type']}")
             return False
-        
+
         # Check type-specific requirements
         if config["type"] == "built-in" and "function" not in config:
             logger.error(f"Built-in pipeline '{pipeline_id}' missing function")
             return False
-        
-        if config["type"] == "composite" and not (config.get("strategy") or config.get("components")):
-            logger.error(f"Composite pipeline '{pipeline_id}' missing strategy or components")
+
+        if config["type"] == "composite" and not (
+            config.get("strategy") or config.get("components")
+        ):
+            logger.error(
+                f"Composite pipeline '{pipeline_id}' missing strategy or components"
+            )
             return False
-        
+
         return True
-    
+
     def get_pipeline_function(self, pipeline_id: str) -> Optional[Callable]:
         """Get the executable function for a pipeline."""
         if pipeline_id not in self.pipelines:
             logger.error(f"Pipeline '{pipeline_id}' not found")
             return None
-        
+
         pipeline = self.pipelines[pipeline_id]
-        
+
         if not pipeline.enabled:
             logger.warning(f"Pipeline '{pipeline_id}' is disabled")
             return None
-        
+
         # Check cache
         if pipeline_id in self._function_cache:
             return self._function_cache[pipeline_id]
-        
+
         # Build function based on type
         if pipeline.type == "built-in":
             func = self._get_builtin_function(pipeline)
@@ -197,147 +221,167 @@ class PipelineLoader:
         else:
             logger.error(f"Unknown pipeline type: {pipeline.type}")
             return None
-        
+
         # Apply middleware if configured
         if pipeline.middleware:
             func = self._apply_middleware(func, pipeline)
-        
+
         # Cache the function
         self._function_cache[pipeline_id] = func
-        
+
         return func
-    
+
     def _get_builtin_function(self, pipeline: PipelineConfig) -> Optional[Callable]:
         """Get a built-in pipeline function."""
         if pipeline.function not in self._builtin_functions:
             logger.error(f"Built-in function '{pipeline.function}' not found")
             return None
-        
+
         base_func = self._builtin_functions[pipeline.function]
-        
+
         # Wrap to apply default parameters
         @wraps(base_func)
         async def wrapped_func(app, query, sources, **kwargs):
             # Merge default parameters
             merged_params = {**pipeline.parameters, **kwargs}
             return await base_func(app, query, sources, **merged_params)
-        
+
         return wrapped_func
-    
+
     def _create_custom_function(self, pipeline: PipelineConfig) -> Callable:
         """Create a custom pipeline function."""
-        
+
         async def custom_pipeline(app, query, sources, **kwargs):
             # Merge parameters
             params = {**pipeline.parameters, **kwargs}
-            
+
             # If based on another pipeline, use it
             if pipeline.base_pipeline:
                 base_func = self.get_pipeline_function(pipeline.base_pipeline)
                 if base_func:
                     return await base_func(app, query, sources, **params)
-            
+
             # Otherwise, use the profile-based approach
             if pipeline.profile:
                 from tldw_chatbook.RAG_Search.config_profiles import get_profile_manager
-                
+
                 manager = get_profile_manager()
                 profile_config = manager.get_profile(pipeline.profile)
-                
+
                 if profile_config:
                     # Apply profile configuration
                     # This would need integration with the RAG service
-                    logger.info(f"Using profile '{pipeline.profile}' for pipeline '{pipeline.id}'")
-                    
+                    logger.info(
+                        f"Using profile '{pipeline.profile}' for pipeline '{pipeline.id}'"
+                    )
+
                     # For now, default to semantic search with profile
-                    from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import perform_full_rag_pipeline
-                    return await perform_full_rag_pipeline(app, query, sources, **params)
-            
+                    from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+                        perform_full_rag_pipeline,
+                    )
+
+                    return await perform_full_rag_pipeline(
+                        app, query, sources, **params
+                    )
+
             # Fallback to basic search
-            logger.warning(f"Custom pipeline '{pipeline.id}' has no implementation, using default")
-            from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import perform_plain_rag_search
+            logger.warning(
+                f"Custom pipeline '{pipeline.id}' has no implementation, using default"
+            )
+            from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+                perform_plain_rag_search,
+            )
+
             return await perform_plain_rag_search(app, query, sources, **params)
-        
+
         return custom_pipeline
-    
+
     def _create_composite_function(self, pipeline: PipelineConfig) -> Callable:
         """Create a composite pipeline function."""
-        
+
         async def composite_pipeline(app, query, sources, **kwargs):
             params = {**pipeline.parameters, **kwargs}
-            
+
             # Strategy-based composite
             if pipeline.strategy:
                 strategy_type = pipeline.strategy.get("type")
-                
+
                 if strategy_type == "query_analysis":
                     # Analyze query and select pipeline
-                    selected_pipeline = self._select_pipeline_by_query(query, pipeline.strategy)
+                    selected_pipeline = self._select_pipeline_by_query(
+                        query, pipeline.strategy
+                    )
                     if selected_pipeline:
                         func = self.get_pipeline_function(selected_pipeline)
                         if func:
                             return await func(app, query, sources, **params)
-                
+
             # Component-based composite (ensemble)
             elif pipeline.components:
                 return await self._run_ensemble_pipeline(
                     app, query, sources, pipeline.components, **params
                 )
-            
+
             # Fallback
             logger.warning(f"Composite pipeline '{pipeline.id}' has no valid strategy")
-            from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import perform_hybrid_rag_search
+            from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+                perform_hybrid_rag_search,
+            )
+
             return await perform_hybrid_rag_search(app, query, sources, **params)
-        
+
         return composite_pipeline
-    
+
     def _create_wrapper_function(self, pipeline: PipelineConfig) -> Callable:
         """Create a wrapper pipeline function."""
         # Similar to custom, but specifically for wrapping other pipelines
         return self._create_custom_function(pipeline)
-    
-    def _create_functional_pipeline(self, pipeline: PipelineConfig) -> Optional[Callable]:
+
+    def _create_functional_pipeline(
+        self, pipeline: PipelineConfig
+    ) -> Optional[Callable]:
         """Create a functional pipeline using the simplified pipeline system."""
         from .pipeline_builder_simple import execute_pipeline
-        
+
         # For now, functional pipelines use the same structure as custom pipelines
         # In the future, we could parse the TOML steps into our format
         logger.info(f"Creating functional pipeline '{pipeline.id}'")
-        
+
         # Create a wrapper that executes the pipeline
         async def functional_pipeline_wrapper(app, query, sources, **kwargs):
             # Build config from pipeline
             config = {
-                'name': pipeline.name,
-                'parameters': {**pipeline.parameters, **kwargs},
-                'steps': []  # Would need to parse from TOML
+                "name": pipeline.name,
+                "parameters": {**pipeline.parameters, **kwargs},
+                "steps": [],  # Would need to parse from TOML
             }
-            
+
             # For now, map to built-in pipelines based on ID
-            if pipeline.id.endswith('_v2'):
+            if pipeline.id.endswith("_v2"):
                 base_id = pipeline.id[:-3]
-                if base_id in ['plain', 'semantic', 'hybrid']:
+                if base_id in ["plain", "semantic", "hybrid"]:
                     from .pipeline_builder_simple import BUILTIN_PIPELINES
+
                     if base_id in BUILTIN_PIPELINES:
                         config = BUILTIN_PIPELINES[base_id].copy()
-                        config['parameters'].update(pipeline.parameters)
-                        config['parameters'].update(kwargs)
+                        config["parameters"].update(pipeline.parameters)
+                        config["parameters"].update(kwargs)
                         return await execute_pipeline(config, app, query, sources)
-            
+
             # Fallback to base pipeline if specified
             if pipeline.base_pipeline:
                 base_func = self.get_pipeline_function(pipeline.base_pipeline)
                 if base_func:
-                    return await base_func(app, query, sources, **config['parameters'])
-            
+                    return await base_func(app, query, sources, **config["parameters"])
+
             logger.error(f"Cannot execute functional pipeline '{pipeline.id}'")
             return [], "Pipeline execution failed"
-        
+
         return functional_pipeline_wrapper
-    
+
     def _apply_middleware(self, func: Callable, pipeline: PipelineConfig) -> Callable:
         """Apply middleware to a pipeline function."""
-        
+
         @wraps(func)
         async def wrapped_with_middleware(app, query, sources, **kwargs):
             # Apply before_search middleware
@@ -347,76 +391,84 @@ class PipelineLoader:
                         query, kwargs = await self._apply_before_middleware(
                             mid_id, query, kwargs
                         )
-            
+
             try:
                 # Execute main function
                 results, context = await func(app, query, sources, **kwargs)
-                
+
                 # Apply after_search middleware
                 if "after" in pipeline.middleware:
                     for mid_id in pipeline.middleware["after"]:
-                        if mid_id in self.middleware and self.middleware[mid_id].enabled:
+                        if (
+                            mid_id in self.middleware
+                            and self.middleware[mid_id].enabled
+                        ):
                             results = await self._apply_after_middleware(
                                 mid_id, results
                             )
-                
+
                 return results, context
-                
+
             except Exception as e:
                 # Apply error_handler middleware
                 if "error" in pipeline.middleware:
                     for mid_id in pipeline.middleware["error"]:
-                        if mid_id in self.middleware and self.middleware[mid_id].enabled:
+                        if (
+                            mid_id in self.middleware
+                            and self.middleware[mid_id].enabled
+                        ):
                             fallback = await self._apply_error_middleware(mid_id, e)
                             if fallback:
                                 return fallback
                 raise
-        
+
         return wrapped_with_middleware
-    
+
     async def _apply_before_middleware(
         self, middleware_id: str, query: str, params: Dict[str, Any]
     ) -> Tuple[str, Dict[str, Any]]:
         """Apply before_search middleware."""
         middleware = self.middleware[middleware_id]
-        
+
         # Implement specific middleware logic based on ID
         if middleware_id == "query_expansion":
             # Example: expand query
             expanded_terms = await self._expand_query(query, middleware.config)
             if expanded_terms:
                 query = f"{query} {' '.join(expanded_terms)}"
-        
+
         elif middleware_id == "technical_term_detector":
             # Example: boost technical terms
             if "boost_factor" in middleware.config:
                 params["technical_boost"] = middleware.config["boost_factor"]
-        
+
         # Add more middleware implementations as needed
-        
+
         return query, params
-    
+
     async def _apply_after_middleware(
         self, middleware_id: str, results: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """Apply after_search middleware."""
         middleware = self.middleware[middleware_id]
-        
+
         # Implement specific middleware logic
         if middleware_id == "result_reranking":
             # Example: re-rank results
             # This would integrate with the re-ranking system
             pass
-        
+
         elif middleware_id == "citation_enhancement":
             # Example: enhance citations
             for result in results:
                 if "metadata" not in result:
                     result["metadata"] = {}
-                result["metadata"]["citation_format"] = middleware.config.get("format", "inline")
-        
+                result["metadata"]["citation_format"] = middleware.config.get(
+                    "format", "inline"
+                )
+
         return results
-    
+
     async def _apply_error_middleware(
         self, middleware_id: str, error: Exception
     ) -> Optional[Tuple[List[Dict[str, Any]], str]]:
@@ -424,97 +476,118 @@ class PipelineLoader:
         # Implement error recovery logic
         logger.error(f"Pipeline error handled by {middleware_id}: {error}")
         return None
-    
-    def _select_pipeline_by_query(self, query: str, strategy: Dict[str, Any]) -> Optional[str]:
+
+    def _select_pipeline_by_query(
+        self, query: str, strategy: Dict[str, Any]
+    ) -> Optional[str]:
         """Select a pipeline based on query analysis."""
         rules = strategy.get("rules", [])
-        
+
         for rule in rules:
             if "condition" in rule:
                 condition = rule["condition"]
-                
+
                 # Simple condition checks
                 if condition == "is_question" and query.strip().endswith("?"):
                     return rule.get("pipeline")
                 elif condition == "has_technical_terms":
-                    technical_terms = ["api", "function", "class", "error", "bug", "code"]
+                    technical_terms = [
+                        "api",
+                        "function",
+                        "class",
+                        "error",
+                        "bug",
+                        "code",
+                    ]
                     if any(term in query.lower() for term in technical_terms):
                         return rule.get("pipeline")
                 elif condition == "is_short_query" and len(query.split()) < 4:
                     return rule.get("pipeline")
-            
+
             elif rule.get("default"):
                 return rule.get("pipeline")
-        
+
         return None
-    
+
     async def _run_ensemble_pipeline(
         self, app, query, sources, components: Dict[str, Dict[str, Any]], **kwargs
     ) -> Tuple[List[Dict[str, Any]], str]:
         """Run an ensemble of pipelines."""
-        from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import format_results_for_llm
-        
+        from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+            format_results_for_llm,
+        )
+
         all_results = []
         tasks = []
-        
+
         # Create tasks for each component
         for component_id, component_config in components.items():
             if component_config.get("enabled", True):
                 func = self.get_pipeline_function(component_id)
                 if func:
                     weight = component_config.get("weight", 1.0)
-                    tasks.append((component_id, weight, func(app, query, sources, **kwargs)))
-        
+                    tasks.append(
+                        (component_id, weight, func(app, query, sources, **kwargs))
+                    )
+
         # Run all pipelines in parallel
         if tasks:
-            results = await asyncio.gather(*[task[2] for task in tasks], return_exceptions=True)
-            
+            results = await asyncio.gather(
+                *[task[2] for task in tasks], return_exceptions=True
+            )
+
             # Process results
             for (component_id, weight, _), result in zip(tasks, results):
                 if isinstance(result, Exception):
-                    logger.error(f"Ensemble component '{component_id}' failed: {result}")
+                    logger.error(
+                        f"Ensemble component '{component_id}' failed: {result}"
+                    )
                     continue
-                
+
                 component_results, _ = result
-                
+
                 # Apply weighting
                 for res in component_results:
                     res["_original_score"] = res.get("score", 0)
                     res["_source_pipeline"] = component_id
                     res["score"] = res["_original_score"] * weight
                     all_results.append(res)
-        
+
         # Merge and deduplicate
         final_results = self._merge_and_deduplicate(all_results)
-        
+
         # Sort by score and limit
         final_results.sort(key=lambda x: x.get("score", 0), reverse=True)
         top_k = kwargs.get("top_k", 10)
         final_results = final_results[:top_k]
-        
+
         # Format context
-        context = format_results_for_llm(final_results, kwargs.get("max_context_length", 10000))
-        
+        context = format_results_for_llm(
+            final_results, kwargs.get("max_context_length", 10000)
+        )
+
         return final_results, context
-    
-    def _merge_and_deduplicate(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+
+    def _merge_and_deduplicate(
+        self, results: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Merge and deduplicate results from multiple pipelines."""
         seen = {}
-        
+
         for result in results:
             # Create a unique key based on content
             key = result.get("content", "")[:200]  # Use first 200 chars as key
-            
+
             if key not in seen or result.get("score", 0) > seen[key].get("score", 0):
                 seen[key] = result
-        
+
         return list(seen.values())
-    
+
     async def _expand_query(self, query: str, config: Dict[str, Any]) -> List[str]:
         """Expand query with additional terms."""
         # This is a placeholder - implement actual query expansion
         return []
-    
+
     def list_pipelines(self) -> List[Dict[str, Any]]:
         """List all available pipelines."""
         return [
@@ -524,30 +597,30 @@ class PipelineLoader:
                 "description": pipeline.description,
                 "type": pipeline.type,
                 "enabled": pipeline.enabled,
-                "tags": pipeline.tags
+                "tags": pipeline.tags,
             }
             for pipeline_id, pipeline in self.pipelines.items()
         ]
-    
+
     def get_pipeline_config(self, pipeline_id: str) -> Optional[PipelineConfig]:
         """Get configuration for a specific pipeline."""
         return self.pipelines.get(pipeline_id)
-    
+
     def reload_configs(self) -> None:
         """Reload pipeline configurations from disk."""
         self.pipelines.clear()
         self.middleware.clear()
         self._function_cache.clear()
         self.load_pipeline_config()
-    
+
     def export_pipeline_config(self, pipeline_id: str, output_file: Path) -> bool:
         """Export a pipeline configuration to a TOML file."""
         if pipeline_id not in self.pipelines:
             logger.error(f"Pipeline '{pipeline_id}' not found")
             return False
-        
+
         pipeline = self.pipelines[pipeline_id]
-        
+
         config_data = {
             "pipelines": {
                 pipeline_id: {
@@ -556,15 +629,17 @@ class PipelineLoader:
                     "type": pipeline.type,
                     "enabled": pipeline.enabled,
                     "tags": pipeline.tags,
-                    "parameters": pipeline.parameters
+                    "parameters": pipeline.parameters,
                 }
             }
         }
-        
+
         if pipeline.function:
             config_data["pipelines"][pipeline_id]["function"] = pipeline.function
         if pipeline.base_pipeline:
-            config_data["pipelines"][pipeline_id]["base_pipeline"] = pipeline.base_pipeline
+            config_data["pipelines"][pipeline_id]["base_pipeline"] = (
+                pipeline.base_pipeline
+            )
         if pipeline.profile:
             config_data["pipelines"][pipeline_id]["profile"] = pipeline.profile
         if pipeline.middleware:
@@ -573,7 +648,7 @@ class PipelineLoader:
             config_data["pipelines"][pipeline_id]["strategy"] = pipeline.strategy
         if pipeline.components:
             config_data["pipelines"][pipeline_id]["components"] = pipeline.components
-        
+
         try:
             with open(output_file, "w") as f:
                 toml.dump(config_data, f)

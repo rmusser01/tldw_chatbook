@@ -27,4 +27,3 @@ def test_chatbook_creator_minimal_archive_creation():
 
         assert success, message
         assert out_path.exists() and out_path.stat().st_size > 0
-

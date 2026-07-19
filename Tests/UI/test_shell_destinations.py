@@ -145,5 +145,7 @@ def test_every_shell_destination_has_readable_purpose_and_mounted_route():
     for destination in SHELL_DESTINATION_ORDER:
         assert destination.purpose
         assert destination.tooltip
-        _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(destination.primary_route)
+        _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(
+            destination.primary_route
+        )
         assert screen_class is not None, destination.primary_route

@@ -18,12 +18,12 @@ pytestmark = pytest.mark.unit
 def test_core_imports_without_optional_deps():
     """Test that core modules can be imported without optional dependencies."""
     # Test core database functionality
-    
-    # Test core chat functionality  
-    
+
+    # Test core chat functionality
+
     # Test core utils
-    
+
     # Test config system
-    
+
     # All imports should succeed without errors
     assert True

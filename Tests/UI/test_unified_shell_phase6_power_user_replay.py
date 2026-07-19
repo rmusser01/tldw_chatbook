@@ -54,14 +54,20 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                ),
             )
             assert "Start in Console" in _screen_text(app)
 
             app.screen.query_one("#home-primary-action", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
             )
             console_text = _screen_text(app)
             assert "Live work sources" in console_text
@@ -72,7 +78,10 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             app.screen.query_one("#nav-library", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
+                lambda: (
+                    app.current_tab == "library"
+                    and app.screen.__class__.__name__ == "LibraryScreen"
+                ),
             )
             await _wait_until(
                 pilot,
@@ -95,19 +104,27 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             app.screen.query_one("#library-row-ingest-import-media", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "library"
-                and bool(app.screen.query("#library-ingest-canvas")),
+                lambda: (
+                    app.current_tab == "library"
+                    and bool(app.screen.query("#library-ingest-canvas"))
+                ),
             )
 
             app.screen.query_one("#nav-console", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
             )
             app.screen.query_one("#nav-library", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
+                lambda: (
+                    app.current_tab == "library"
+                    and app.screen.__class__.__name__ == "LibraryScreen"
+                ),
             )
             # Search/RAG is likewise an in-Library mode, reached via its
             # rail row rather than the retired #library-open-search chip.
@@ -131,7 +148,10 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             )
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
             )
             live_work_text = _screen_text(app)
             assert "Source: Watchlists" in live_work_text
@@ -144,15 +164,24 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             from tldw_chatbook.UI.Navigation import screen_registry
 
             subscriptions_route = screen_registry._SCREEN_ROUTES.get("subscriptions")
-            if subscriptions_route is not None and subscriptions_route.dependencies_available():
-                app.screen.query_one("#console-live-work-primary-action", Button).press()
+            if (
+                subscriptions_route is not None
+                and subscriptions_route.dependencies_available()
+            ):
+                app.screen.query_one(
+                    "#console-live-work-primary-action", Button
+                ).press()
                 await _wait_until(
                     pilot,
-                    lambda: app.current_tab == "subscriptions"
-                    and app.screen.__class__.__name__ == "SubscriptionScreen",
+                    lambda: (
+                        app.current_tab == "subscriptions"
+                        and app.screen.__class__.__name__ == "SubscriptionScreen"
+                    ),
                 )
                 subscription_window = app.screen.subscription_window
                 assert subscription_window is not None
                 assert subscription_window.initial_tab == "watchlist-runs"
-                assert subscription_window._selected_watchlist_run_id == "local:watchlist_run:91"
-
+                assert (
+                    subscription_window._selected_watchlist_run_id
+                    == "local:watchlist_run:91"
+                )

@@ -32,7 +32,11 @@ class LocalCharacterPersonaService:
         self.db = db
         self.conversations = ChatConversationService(db)
         self.world_books = WorldBookManager(db) if db is not None else None
-        self.persona_store_path = Path(persona_store_path).expanduser() if persona_store_path is not None else None
+        self.persona_store_path = (
+            Path(persona_store_path).expanduser()
+            if persona_store_path is not None
+            else None
+        )
         self._persona_profiles: list[dict[str, Any]] = []
         self._persona_exemplars: list[dict[str, Any]] = []
         self._character_exemplars: list[dict[str, Any]] = []
@@ -60,22 +64,31 @@ class LocalCharacterPersonaService:
         conversation_id = normalized.get("id")
         normalized.setdefault("backend", "local")
         if conversation_id is not None:
-            normalized.setdefault("record_id", f"local:character_chat_session:{conversation_id}")
+            normalized.setdefault(
+                "record_id", f"local:character_chat_session:{conversation_id}"
+            )
         return normalized
 
     @staticmethod
     def _is_ccp_session(record: Mapping[str, Any]) -> bool:
         assistant_kind = _clean_text(record.get("assistant_kind"))
         discovery_owner = _clean_text(record.get("discovery_owner"))
-        return assistant_kind in {"character", "persona"} or discovery_owner in {"ccp_character", "ccp_persona"}
+        return assistant_kind in {"character", "persona"} or discovery_owner in {
+            "ccp_character",
+            "ccp_persona",
+        }
 
     @staticmethod
-    def _expected_version(record: Mapping[str, Any], expected_version: int | None) -> int:
+    def _expected_version(
+        record: Mapping[str, Any], expected_version: int | None
+    ) -> int:
         if expected_version is not None:
             return int(expected_version)
         version = record.get("version")
         if version is None:
-            raise ValueError("expected_version is required when the local chat session has no version.")
+            raise ValueError(
+                "expected_version is required when the local chat session has no version."
+            )
         return int(version)
 
     @staticmethod
@@ -109,43 +122,59 @@ class LocalCharacterPersonaService:
         if not isinstance(profile_records, list):
             self._persona_profiles = []
             return
-        self._persona_profiles = [dict(item) for item in profile_records if isinstance(item, dict)]
-        self._persona_exemplars = [
-            dict(item)
-            for item in exemplar_records
-            if isinstance(item, dict)
-        ] if isinstance(exemplar_records, list) else []
-        self._character_exemplars = [
-            dict(item)
-            for item in character_exemplar_records
-            if isinstance(item, dict)
-        ] if isinstance(character_exemplar_records, list) else []
-        self._chat_settings = {
-            str(chat_id): dict(settings)
-            for chat_id, settings in chat_settings_records.items()
-            if isinstance(settings, dict)
-        } if isinstance(chat_settings_records, dict) else {}
-        self._chat_greeting_selections = {
-            str(chat_id): int(index)
-            for chat_id, index in chat_greeting_selections.items()
-            if isinstance(index, int)
-        } if isinstance(chat_greeting_selections, dict) else {}
-        self._chat_presets = [
-            dict(item)
-            for item in chat_preset_records
-            if isinstance(item, dict)
-        ] if isinstance(chat_preset_records, list) else []
-        self._character_memories = [
-            dict(item)
-            for item in character_memory_records
-            if isinstance(item, dict)
-        ] if isinstance(character_memory_records, list) else []
+        self._persona_profiles = [
+            dict(item) for item in profile_records if isinstance(item, dict)
+        ]
+        self._persona_exemplars = (
+            [dict(item) for item in exemplar_records if isinstance(item, dict)]
+            if isinstance(exemplar_records, list)
+            else []
+        )
+        self._character_exemplars = (
+            [
+                dict(item)
+                for item in character_exemplar_records
+                if isinstance(item, dict)
+            ]
+            if isinstance(character_exemplar_records, list)
+            else []
+        )
+        self._chat_settings = (
+            {
+                str(chat_id): dict(settings)
+                for chat_id, settings in chat_settings_records.items()
+                if isinstance(settings, dict)
+            }
+            if isinstance(chat_settings_records, dict)
+            else {}
+        )
+        self._chat_greeting_selections = (
+            {
+                str(chat_id): int(index)
+                for chat_id, index in chat_greeting_selections.items()
+                if isinstance(index, int)
+            }
+            if isinstance(chat_greeting_selections, dict)
+            else {}
+        )
+        self._chat_presets = (
+            [dict(item) for item in chat_preset_records if isinstance(item, dict)]
+            if isinstance(chat_preset_records, list)
+            else []
+        )
+        self._character_memories = (
+            [dict(item) for item in character_memory_records if isinstance(item, dict)]
+            if isinstance(character_memory_records, list)
+            else []
+        )
 
     def _persist_persona_profiles(self) -> None:
         if self.persona_store_path is None:
             return
         self.persona_store_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.persona_store_path.with_suffix(self.persona_store_path.suffix + ".tmp")
+        temp_path = self.persona_store_path.with_suffix(
+            self.persona_store_path.suffix + ".tmp"
+        )
         temp_path.write_text(
             json.dumps(
                 {
@@ -168,12 +197,16 @@ class LocalCharacterPersonaService:
     def _persona_profile_view(record: Mapping[str, Any]) -> dict[str, Any]:
         normalized = dict(record)
         normalized.setdefault("backend", "local")
-        normalized.setdefault("record_id", f"local:persona_profile:{normalized.get('id')}")
+        normalized.setdefault(
+            "record_id", f"local:persona_profile:{normalized.get('id')}"
+        )
         normalized["deleted"] = bool(normalized.get("deleted", False))
         normalized["version"] = int(normalized.get("version", 1) or 1)
         return normalized
 
-    def _find_persona_profile(self, persona_id: str, *, include_deleted: bool = False) -> dict[str, Any]:
+    def _find_persona_profile(
+        self, persona_id: str, *, include_deleted: bool = False
+    ) -> dict[str, Any]:
         normalized_id = str(persona_id)
         for record in self._persona_profiles:
             if str(record.get("id")) != normalized_id:
@@ -184,7 +217,9 @@ class LocalCharacterPersonaService:
         raise ValueError(f"local_persona_profile_not_found:{persona_id}")
 
     @staticmethod
-    def _check_profile_version(record: Mapping[str, Any], expected_version: int | None, persona_id: str) -> None:
+    def _check_profile_version(
+        record: Mapping[str, Any], expected_version: int | None, persona_id: str
+    ) -> None:
         if expected_version is None:
             return
         if int(record.get("version", 1) or 1) != int(expected_version):
@@ -250,7 +285,9 @@ class LocalCharacterPersonaService:
             if record.get("deleted") and not include_deleted:
                 break
             return record
-        raise ValueError(f"local_character_exemplar_not_found:{character_id}:{exemplar_id}")
+        raise ValueError(
+            f"local_character_exemplar_not_found:{character_id}:{exemplar_id}"
+        )
 
     def _require_character(self, character_id: int) -> None:
         if self.get_character(int(character_id)) is None:
@@ -279,7 +316,9 @@ class LocalCharacterPersonaService:
         normalized.setdefault("source", "local")
         return normalized
 
-    def _find_chat_preset(self, preset_id: str, *, include_deleted: bool = False) -> dict[str, Any]:
+    def _find_chat_preset(
+        self, preset_id: str, *, include_deleted: bool = False
+    ) -> dict[str, Any]:
         normalized_id = str(preset_id)
         for record in self._chat_presets:
             if str(record.get("preset_id")) != normalized_id:
@@ -327,7 +366,9 @@ class LocalCharacterPersonaService:
             raise ValueError(f"Local character chat session '{chat_id}' was not found.")
         return session
 
-    def _character_for_session(self, session: Mapping[str, Any]) -> dict[str, Any] | None:
+    def _character_for_session(
+        self, session: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
         character_id = session.get("character_id")
         if character_id is None:
             return None
@@ -352,7 +393,9 @@ class LocalCharacterPersonaService:
                 greetings.append(text)
         return greetings
 
-    def _chat_greeting_items(self, chat_id: str) -> tuple[dict[str, Any], list[dict[str, Any]], str | None]:
+    def _chat_greeting_items(
+        self, chat_id: str
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], str | None]:
         session = self._require_chat_session(chat_id)
         character = self._character_for_session(session)
         greetings = [
@@ -380,7 +423,9 @@ class LocalCharacterPersonaService:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import CharacterCreateRequest
 
-        payload = _model_payload(CharacterCreateRequest.model_validate(_model_payload(request_data)))
+        payload = _model_payload(
+            CharacterCreateRequest.model_validate(_model_payload(request_data))
+        )
         character_id = self._require_db().add_character_card(payload)
         record = self.get_character(int(character_id))
         if record is None:
@@ -398,30 +443,46 @@ class LocalCharacterPersonaService:
         from ..tldw_api.character_persona_schemas import CharacterUpdateRequest
 
         payload = _model_payload(
-            CharacterUpdateRequest.model_validate(_model_payload(request_data, exclude_none=False))
+            CharacterUpdateRequest.model_validate(
+                _model_payload(request_data, exclude_none=False)
+            )
         )
         payload = {key: value for key, value in payload.items() if value is not None}
-        updated = self._require_db().update_character_card(int(character_id), payload, int(expected_version))
+        updated = self._require_db().update_character_card(
+            int(character_id), payload, int(expected_version)
+        )
         if not updated:
             raise ValueError(f"Local character '{character_id}' could not be updated.")
         record = self.get_character(int(character_id))
         if record is None:
-            raise ValueError(f"Local character '{character_id}' could not be loaded after update.")
+            raise ValueError(
+                f"Local character '{character_id}' could not be loaded after update."
+            )
         return record
 
-    def delete_character(self, character_id: int, *, expected_version: int) -> dict[str, Any]:
-        deleted = self._require_db().soft_delete_character_card(int(character_id), int(expected_version))
+    def delete_character(
+        self, character_id: int, *, expected_version: int
+    ) -> dict[str, Any]:
+        deleted = self._require_db().soft_delete_character_card(
+            int(character_id), int(expected_version)
+        )
         if not deleted:
             raise ValueError(f"Local character '{character_id}' could not be deleted.")
         return {"deleted": True, "id": str(character_id)}
 
-    def restore_character(self, character_id: int, *, expected_version: int) -> dict[str, Any]:
-        restored = self._require_db().restore_character_card(int(character_id), int(expected_version))
+    def restore_character(
+        self, character_id: int, *, expected_version: int
+    ) -> dict[str, Any]:
+        restored = self._require_db().restore_character_card(
+            int(character_id), int(expected_version)
+        )
         if not restored:
             raise ValueError(f"Local character '{character_id}' could not be restored.")
         record = self.get_character(int(character_id))
         if record is None:
-            raise ValueError(f"Local character '{character_id}' could not be loaded after restore.")
+            raise ValueError(
+                f"Local character '{character_id}' could not be loaded after restore."
+            )
         return record
 
     @staticmethod
@@ -429,8 +490,12 @@ class LocalCharacterPersonaService:
         payload = _model_payload(request_data, exclude_none=False)
         return {key: value for key, value in payload.items() if value is not None}
 
-    def list_character_world_books(self, *, include_disabled: bool = False, **_: Any) -> dict[str, Any]:
-        items = self._require_world_book_manager().list_world_books(include_disabled=include_disabled)
+    def list_character_world_books(
+        self, *, include_disabled: bool = False, **_: Any
+    ) -> dict[str, Any]:
+        items = self._require_world_book_manager().list_world_books(
+            include_disabled=include_disabled
+        )
         return {"world_books": items, "total": len(items)}
 
     def get_character_world_book(self, world_book_id: int, **_: Any) -> dict[str, Any]:
@@ -439,7 +504,9 @@ class LocalCharacterPersonaService:
             raise ValueError(f"Local character world book '{world_book_id}' not found")
         return record
 
-    def create_character_world_book(self, request_data: Any, **_: Any) -> dict[str, Any]:
+    def create_character_world_book(
+        self, request_data: Any, **_: Any
+    ) -> dict[str, Any]:
         payload = self._world_book_payload(request_data)
         world_book_id = self._require_world_book_manager().create_world_book(
             name=payload.get("name"),
@@ -478,7 +545,9 @@ class LocalCharacterPersonaService:
             **update_fields,
         )
         if not updated:
-            raise ValueError(f"Local character world book '{world_book_id}' could not be updated.")
+            raise ValueError(
+                f"Local character world book '{world_book_id}' could not be updated."
+            )
         return self.get_character_world_book(world_book_id)
 
     def delete_character_world_book(
@@ -493,7 +562,9 @@ class LocalCharacterPersonaService:
             expected_version=expected_version,
         )
         if not deleted:
-            raise ValueError(f"Local character world book '{world_book_id}' could not be deleted.")
+            raise ValueError(
+                f"Local character world book '{world_book_id}' could not be deleted."
+            )
         return {"deleted": True, "id": str(world_book_id)}
 
     def _get_character_world_book_entry(self, entry_id: int) -> dict[str, Any] | None:
@@ -586,15 +657,25 @@ class LocalCharacterPersonaService:
             )
             if key in payload
         }
-        updated = self._require_world_book_manager().update_world_book_entry(int(entry_id), **update_fields)
+        updated = self._require_world_book_manager().update_world_book_entry(
+            int(entry_id), **update_fields
+        )
         if not updated:
-            raise ValueError(f"Local character world book entry '{entry_id}' could not be updated.")
+            raise ValueError(
+                f"Local character world book entry '{entry_id}' could not be updated."
+            )
         return self.get_character_world_book_entry(entry_id)
 
-    def delete_character_world_book_entry(self, entry_id: int, **_: Any) -> dict[str, Any]:
-        deleted = self._require_world_book_manager().delete_world_book_entry(int(entry_id))
+    def delete_character_world_book_entry(
+        self, entry_id: int, **_: Any
+    ) -> dict[str, Any]:
+        deleted = self._require_world_book_manager().delete_world_book_entry(
+            int(entry_id)
+        )
         if not deleted:
-            raise ValueError(f"Local character world book entry '{entry_id}' could not be deleted.")
+            raise ValueError(
+                f"Local character world book entry '{entry_id}' could not be deleted."
+            )
         return {"deleted": True, "id": str(entry_id)}
 
     def attach_character_world_book_to_session(
@@ -606,18 +687,34 @@ class LocalCharacterPersonaService:
     ) -> dict[str, Any]:
         payload = self._world_book_payload(request_data or {})
         priority = int(payload.get("priority", 0) or 0)
-        attached = self._require_world_book_manager().associate_world_book_with_conversation(
-            str(chat_id),
-            int(world_book_id),
-            priority=priority,
+        attached = (
+            self._require_world_book_manager().associate_world_book_with_conversation(
+                str(chat_id),
+                int(world_book_id),
+                priority=priority,
+            )
         )
         if not attached:
-            raise ValueError(f"Local character world book '{world_book_id}' could not be attached.")
-        return {"chat_id": str(chat_id), "world_book_id": int(world_book_id), "priority": priority}
+            raise ValueError(
+                f"Local character world book '{world_book_id}' could not be attached."
+            )
+        return {
+            "chat_id": str(chat_id),
+            "world_book_id": int(world_book_id),
+            "priority": priority,
+        }
 
-    def detach_character_world_book_from_session(self, chat_id: str, world_book_id: int, **_: Any) -> dict[str, Any]:
-        self._require_world_book_manager().disassociate_world_book_from_conversation(str(chat_id), int(world_book_id))
-        return {"deleted": True, "chat_id": str(chat_id), "world_book_id": int(world_book_id)}
+    def detach_character_world_book_from_session(
+        self, chat_id: str, world_book_id: int, **_: Any
+    ) -> dict[str, Any]:
+        self._require_world_book_manager().disassociate_world_book_from_conversation(
+            str(chat_id), int(world_book_id)
+        )
+        return {
+            "deleted": True,
+            "chat_id": str(chat_id),
+            "world_book_id": int(world_book_id),
+        }
 
     def list_session_world_books(
         self,
@@ -632,7 +729,9 @@ class LocalCharacterPersonaService:
         )
         return {"world_books": items, "total": len(items)}
 
-    def export_character_world_book(self, world_book_id: int, **_: Any) -> dict[str, Any]:
+    def export_character_world_book(
+        self, world_book_id: int, **_: Any
+    ) -> dict[str, Any]:
         return self._require_world_book_manager().export_world_book(int(world_book_id))
 
     def import_character_world_book(
@@ -662,7 +761,9 @@ class LocalCharacterPersonaService:
             if (include_deleted or not record.get("deleted", False))
             and (not active_only or bool(record.get("is_active", True)))
         ]
-        records = sorted(records, key=lambda item: item.get("created_at", ""), reverse=True)
+        records = sorted(
+            records, key=lambda item: item.get("created_at", ""), reverse=True
+        )
         return records[offset : offset + limit]
 
     def get_persona_profile(self, persona_id: str) -> dict[str, Any]:
@@ -672,9 +773,14 @@ class LocalCharacterPersonaService:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import PersonaProfileCreate
 
-        payload = _model_payload(PersonaProfileCreate.model_validate(_model_payload(request_data)))
+        payload = _model_payload(
+            PersonaProfileCreate.model_validate(_model_payload(request_data))
+        )
         persona_id = str(payload.get("id") or f"local-persona-{uuid.uuid4().hex}")
-        if any(str(record.get("id")) == persona_id and not record.get("deleted") for record in self._persona_profiles):
+        if any(
+            str(record.get("id")) == persona_id and not record.get("deleted")
+            for record in self._persona_profiles
+        ):
             raise ValueError(f"local_persona_profile_exists:{persona_id}")
         now = self._now()
         payload.update(
@@ -725,7 +831,9 @@ class LocalCharacterPersonaService:
         self._persist_persona_profiles()
         return {"status": "deleted", "persona_id": persona_id}
 
-    def restore_persona_profile(self, persona_id: str, expected_version: int) -> dict[str, Any]:
+    def restore_persona_profile(
+        self, persona_id: str, expected_version: int
+    ) -> dict[str, Any]:
         record = self._find_persona_profile(persona_id, include_deleted=True)
         self._check_profile_version(record, expected_version, persona_id)
         record["deleted"] = False
@@ -752,19 +860,29 @@ class LocalCharacterPersonaService:
             and (include_deleted or not record.get("deleted", False))
             and (include_disabled or bool(record.get("enabled", True)))
         ]
-        records = sorted(records, key=lambda item: (item.get("priority", 0), item.get("created_at", "")), reverse=True)
+        records = sorted(
+            records,
+            key=lambda item: (item.get("priority", 0), item.get("created_at", "")),
+            reverse=True,
+        )
         return records[offset : offset + limit]
 
     def get_persona_exemplar(self, persona_id: str, exemplar_id: str) -> dict[str, Any]:
         self._find_persona_profile(persona_id)
-        return self._persona_exemplar_view(self._find_persona_exemplar(persona_id, exemplar_id))
+        return self._persona_exemplar_view(
+            self._find_persona_exemplar(persona_id, exemplar_id)
+        )
 
-    def create_persona_exemplar(self, persona_id: str, request_data: Any) -> dict[str, Any]:
+    def create_persona_exemplar(
+        self, persona_id: str, request_data: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import PersonaExemplarCreate
 
         self._find_persona_profile(persona_id)
-        payload = _model_payload(PersonaExemplarCreate.model_validate(_model_payload(request_data)))
+        payload = _model_payload(
+            PersonaExemplarCreate.model_validate(_model_payload(request_data))
+        )
         exemplar_id = str(payload.get("id") or f"local-exemplar-{uuid.uuid4().hex}")
         if any(
             str(record.get("persona_id")) == str(persona_id)
@@ -772,7 +890,9 @@ class LocalCharacterPersonaService:
             and not record.get("deleted")
             for record in self._persona_exemplars
         ):
-            raise ValueError(f"local_persona_exemplar_exists:{persona_id}:{exemplar_id}")
+            raise ValueError(
+                f"local_persona_exemplar_exists:{persona_id}:{exemplar_id}"
+            )
         now = self._now()
         payload.update(
             {
@@ -789,13 +909,22 @@ class LocalCharacterPersonaService:
         self._persist_persona_profiles()
         return self._persona_exemplar_view(payload)
 
-    def import_persona_exemplars(self, persona_id: str, request_data: Any) -> dict[str, Any]:
+    def import_persona_exemplars(
+        self, persona_id: str, request_data: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api.character_persona_schemas import PersonaExemplarCreate, PersonaExemplarImportRequest
+        from ..tldw_api.character_persona_schemas import (
+            PersonaExemplarCreate,
+            PersonaExemplarImportRequest,
+        )
 
         self._find_persona_profile(persona_id)
-        request = PersonaExemplarImportRequest.model_validate(_model_payload(request_data))
-        lines = [line.strip() for line in request.transcript.splitlines() if line.strip()]
+        request = PersonaExemplarImportRequest.model_validate(
+            _model_payload(request_data)
+        )
+        lines = [
+            line.strip() for line in request.transcript.splitlines() if line.strip()
+        ]
         candidates = lines[: request.max_candidates] or [request.transcript.strip()]
         items = [
             self.create_persona_exemplar(
@@ -811,7 +940,9 @@ class LocalCharacterPersonaService:
         ]
         return {"persona_id": persona_id, "created": len(items), "items": items}
 
-    def update_persona_exemplar(self, persona_id: str, exemplar_id: str, request_data: Any) -> dict[str, Any]:
+    def update_persona_exemplar(
+        self, persona_id: str, exemplar_id: str, request_data: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import PersonaExemplarUpdate
 
@@ -825,13 +956,19 @@ class LocalCharacterPersonaService:
         self._persist_persona_profiles()
         return self._persona_exemplar_view(record)
 
-    def review_persona_exemplar(self, persona_id: str, exemplar_id: str, request_data: Any) -> dict[str, Any]:
+    def review_persona_exemplar(
+        self, persona_id: str, exemplar_id: str, request_data: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import PersonaExemplarReviewRequest
 
         self._find_persona_profile(persona_id)
-        record = self._find_persona_exemplar(persona_id, exemplar_id, include_deleted=True)
-        request = PersonaExemplarReviewRequest.model_validate(_model_payload(request_data))
+        record = self._find_persona_exemplar(
+            persona_id, exemplar_id, include_deleted=True
+        )
+        request = PersonaExemplarReviewRequest.model_validate(
+            _model_payload(request_data)
+        )
         record["enabled"] = request.action == "approve"
         if request.notes is not None:
             record["notes"] = request.notes
@@ -840,21 +977,31 @@ class LocalCharacterPersonaService:
         self._persist_persona_profiles()
         return self._persona_exemplar_view(record)
 
-    def delete_persona_exemplar(self, persona_id: str, exemplar_id: str) -> dict[str, Any]:
+    def delete_persona_exemplar(
+        self, persona_id: str, exemplar_id: str
+    ) -> dict[str, Any]:
         self._find_persona_profile(persona_id)
         record = self._find_persona_exemplar(persona_id, exemplar_id)
         record["deleted"] = True
         record["last_modified"] = self._now()
         record["version"] = int(record.get("version", 1) or 1) + 1
         self._persist_persona_profiles()
-        return {"status": "deleted", "persona_id": persona_id, "exemplar_id": exemplar_id}
+        return {
+            "status": "deleted",
+            "persona_id": persona_id,
+            "exemplar_id": exemplar_id,
+        }
 
-    def search_character_exemplars(self, character_id: int, request_data: Any) -> dict[str, Any]:
+    def search_character_exemplars(
+        self, character_id: int, request_data: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import CharacterExemplarSearchRequest
 
         self._require_character(character_id)
-        request = CharacterExemplarSearchRequest.model_validate(_model_payload(request_data))
+        request = CharacterExemplarSearchRequest.model_validate(
+            _model_payload(request_data)
+        )
         query = str(request.query or "").strip().lower()
         records = [
             self._character_exemplar_view(record)
@@ -863,7 +1010,11 @@ class LocalCharacterPersonaService:
             and not record.get("deleted", False)
         ]
         if query:
-            records = [record for record in records if query in str(record.get("text") or "").lower()]
+            records = [
+                record
+                for record in records
+                if query in str(record.get("text") or "").lower()
+            ]
         if request.filter.emotion is not None:
             records = [
                 record
@@ -874,7 +1025,8 @@ class LocalCharacterPersonaService:
             records = [
                 record
                 for record in records
-                if (record.get("labels") or {}).get("scenario") == request.filter.scenario
+                if (record.get("labels") or {}).get("scenario")
+                == request.filter.scenario
             ]
         total = len(records)
         page = records[request.offset : request.offset + request.limit]
@@ -889,15 +1041,21 @@ class LocalCharacterPersonaService:
     ) -> dict[str, Any]:
         self._require_character(character_id)
         return self._character_exemplar_view(
-            self._find_character_exemplar(character_id, exemplar_id, include_deleted=include_deleted)
+            self._find_character_exemplar(
+                character_id, exemplar_id, include_deleted=include_deleted
+            )
         )
 
-    def create_character_exemplar(self, character_id: int, request_data: Any) -> dict[str, Any]:
+    def create_character_exemplar(
+        self, character_id: int, request_data: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import CharacterExemplarCreate
 
         self._require_character(character_id)
-        payload = CharacterExemplarCreate.model_validate(_model_payload(request_data)).model_dump(
+        payload = CharacterExemplarCreate.model_validate(
+            _model_payload(request_data)
+        ).model_dump(
             mode="json",
             by_alias=True,
         )
@@ -916,13 +1074,17 @@ class LocalCharacterPersonaService:
         self._persist_persona_profiles()
         return self._character_exemplar_view(payload)
 
-    def update_character_exemplar(self, character_id: int, exemplar_id: str, request_data: Any) -> dict[str, Any]:
+    def update_character_exemplar(
+        self, character_id: int, exemplar_id: str, request_data: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import CharacterExemplarUpdate
 
         self._require_character(character_id)
         record = self._find_character_exemplar(character_id, exemplar_id)
-        payload = CharacterExemplarUpdate.model_validate(_model_payload(request_data)).model_dump(
+        payload = CharacterExemplarUpdate.model_validate(
+            _model_payload(request_data)
+        ).model_dump(
             mode="json",
             by_alias=True,
             exclude_none=True,
@@ -932,15 +1094,23 @@ class LocalCharacterPersonaService:
         self._persist_persona_profiles()
         return self._character_exemplar_view(record)
 
-    def delete_character_exemplar(self, character_id: int, exemplar_id: str) -> dict[str, Any]:
+    def delete_character_exemplar(
+        self, character_id: int, exemplar_id: str
+    ) -> dict[str, Any]:
         self._require_character(character_id)
         record = self._find_character_exemplar(character_id, exemplar_id)
         record["deleted"] = True
         record["updated_at"] = self._now()
         self._persist_persona_profiles()
-        return {"status": "deleted", "character_id": int(character_id), "exemplar_id": exemplar_id}
+        return {
+            "status": "deleted",
+            "character_id": int(character_id),
+            "exemplar_id": exemplar_id,
+        }
 
-    def select_character_exemplars_debug(self, character_id: int, request_data: Any) -> dict[str, Any]:
+    def select_character_exemplars_debug(
+        self, character_id: int, request_data: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import (
             CharacterExemplarSearchRequest,
@@ -948,7 +1118,9 @@ class LocalCharacterPersonaService:
         )
 
         self._require_character(character_id)
-        request = CharacterExemplarSelectionDebugRequest.model_validate(_model_payload(request_data))
+        request = CharacterExemplarSelectionDebugRequest.model_validate(
+            _model_payload(request_data)
+        )
         search_result = self.search_character_exemplars(
             character_id,
             CharacterExemplarSearchRequest(
@@ -963,20 +1135,31 @@ class LocalCharacterPersonaService:
             if int(record.get("character_id")) == int(character_id)
             and not record.get("deleted", False)
         ]
-        selected = selected[: max(1, min(len(selected), request.selection_config.budget_tokens))]
+        selected = selected[
+            : max(1, min(len(selected), request.selection_config.budget_tokens))
+        ]
         return {
             "selected": selected,
-            "coverage": {"selected_count": len(selected), "candidate_count": search_result["total"]},
+            "coverage": {
+                "selected_count": len(selected),
+                "candidate_count": search_result["total"],
+            },
             "scores": [],
         }
 
-    def create_character_chat_session(self, request_data: Any, **_: Any) -> dict[str, Any]:
+    def create_character_chat_session(
+        self, request_data: Any, **_: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import CharacterChatSessionCreate
 
-        payload = _model_payload(CharacterChatSessionCreate.model_validate(_model_payload(request_data)))
+        payload = _model_payload(
+            CharacterChatSessionCreate.model_validate(_model_payload(request_data))
+        )
         assistant_kind = payload.get("assistant_kind")
-        discovery_owner = "ccp_persona" if assistant_kind == "persona" else "ccp_character"
+        discovery_owner = (
+            "ccp_persona" if assistant_kind == "persona" else "ccp_character"
+        )
         conversation_id = self.conversations.create_conversation(
             title=payload.get("title"),
             character_id=payload.get("character_id"),
@@ -998,7 +1181,9 @@ class LocalCharacterPersonaService:
         )
         record = self.get_character_chat_session(conversation_id, include_deleted=True)
         if record is None:
-            raise ValueError("Created local character chat session could not be loaded.")
+            raise ValueError(
+                "Created local character chat session could not be loaded."
+            )
         return record
 
     def list_character_chat_sessions(
@@ -1038,7 +1223,10 @@ class LocalCharacterPersonaService:
                 continue
             if normalized_kind and item.get("assistant_kind") != normalized_kind:
                 continue
-            if normalized_assistant_id and str(item.get("assistant_id") or "") != normalized_assistant_id:
+            if (
+                normalized_assistant_id
+                and str(item.get("assistant_id") or "") != normalized_assistant_id
+            ):
                 continue
             session_record = self._session_record(item)
             if session_record is not None:
@@ -1060,8 +1248,12 @@ class LocalCharacterPersonaService:
     ) -> dict[str, Any] | None:
         record = self.conversations.get_conversation_metadata(chat_id)
         if record is None and include_deleted:
-            raw_record = self._require_db().get_conversation_by_id(chat_id, include_deleted=True)
-            record = self.conversations.normalize_conversation_row(raw_record, message_count=0)
+            raw_record = self._require_db().get_conversation_by_id(
+                chat_id, include_deleted=True
+            )
+            record = self.conversations.normalize_conversation_row(
+                raw_record, message_count=0
+            )
         if record is None or not self._is_ccp_session(record):
             return None
         return self._session_record(record)
@@ -1080,8 +1272,12 @@ class LocalCharacterPersonaService:
         current = self.get_character_chat_session(chat_id)
         if current is None:
             raise ValueError(f"Local character chat session '{chat_id}' was not found.")
-        payload = _model_payload(CharacterChatSessionUpdate.model_validate(_model_payload(request_data)))
-        update_payload = {key: value for key, value in payload.items() if value is not None}
+        payload = _model_payload(
+            CharacterChatSessionUpdate.model_validate(_model_payload(request_data))
+        )
+        update_payload = {
+            key: value for key, value in payload.items() if value is not None
+        }
         self.conversations.update_conversation_metadata(
             chat_id,
             update_payload,
@@ -1089,7 +1285,9 @@ class LocalCharacterPersonaService:
         )
         updated = self.get_character_chat_session(chat_id)
         if updated is None:
-            raise ValueError(f"Local character chat session '{chat_id}' could not be reloaded after update.")
+            raise ValueError(
+                f"Local character chat session '{chat_id}' could not be reloaded after update."
+            )
         return updated
 
     def delete_character_chat_session(
@@ -1126,7 +1324,9 @@ class LocalCharacterPersonaService:
         )
         restored = self.get_character_chat_session(chat_id)
         if restored is None:
-            raise ValueError(f"Local character chat session '{chat_id}' could not be reloaded after restore.")
+            raise ValueError(
+                f"Local character chat session '{chat_id}' could not be reloaded after restore."
+            )
         return restored
 
     def list_character_chat_messages(
@@ -1140,16 +1340,26 @@ class LocalCharacterPersonaService:
         self._require_chat_session(chat_id)
         messages = [
             self.conversations.normalize_message_row(message)
-            for message in self._require_db().get_messages_for_conversation(chat_id, limit=limit, offset=offset)
+            for message in self._require_db().get_messages_for_conversation(
+                chat_id, limit=limit, offset=offset
+            )
         ]
         messages = [message for message in messages if message is not None]
-        return {"messages": messages, "total": len(messages), "limit": limit, "offset": offset, "source": "local"}
+        return {
+            "messages": messages,
+            "total": len(messages),
+            "limit": limit,
+            "offset": offset,
+            "source": "local",
+        }
 
     def list_character_messages(self, chat_id: str, **kwargs: Any) -> dict[str, Any]:
         return self.list_character_chat_messages(chat_id, **kwargs)
 
     def get_character_chat_message(self, message_id: str, **_: Any) -> dict[str, Any]:
-        message = self.conversations.normalize_message_row(self._require_db().get_message_by_id(message_id))
+        message = self.conversations.normalize_message_row(
+            self._require_db().get_message_by_id(message_id)
+        )
         if message is None:
             raise ValueError(f"local_character_message_not_found:{message_id}")
         self._require_chat_session(str(message["conversation_id"]))
@@ -1158,7 +1368,9 @@ class LocalCharacterPersonaService:
     def get_character_message(self, message_id: str, **kwargs: Any) -> dict[str, Any]:
         return self.get_character_chat_message(message_id, **kwargs)
 
-    def create_character_chat_message(self, chat_id: str, request_data: Any, **_: Any) -> dict[str, Any]:
+    def create_character_chat_message(
+        self, chat_id: str, request_data: Any, **_: Any
+    ) -> dict[str, Any]:
         self._require_chat_session(chat_id)
         payload = _model_payload(request_data, exclude_none=False)
         role = payload.get("role") or payload.get("sender") or "user"
@@ -1173,7 +1385,9 @@ class LocalCharacterPersonaService:
         )
         return self.get_character_chat_message(str(message_id))
 
-    def create_character_message(self, chat_id: str, request_data: Any, **kwargs: Any) -> dict[str, Any]:
+    def create_character_message(
+        self, chat_id: str, request_data: Any, **kwargs: Any
+    ) -> dict[str, Any]:
         return self.create_character_chat_message(chat_id, request_data, **kwargs)
 
     def update_character_chat_message(
@@ -1188,18 +1402,31 @@ class LocalCharacterPersonaService:
         payload = {
             key: value
             for key, value in _model_payload(request_data, exclude_none=False).items()
-            if key in {"content", "ranking", "parent_message_id", "image_data", "image_mime_type"}
+            if key
+            in {
+                "content",
+                "ranking",
+                "parent_message_id",
+                "image_data",
+                "image_mime_type",
+            }
         }
         if not payload:
             payload = {"content": current.get("content", "")}
         self._require_db().update_message(
             message_id,
             payload,
-            expected_version=int(expected_version if expected_version is not None else current.get("version", 1)),
+            expected_version=int(
+                expected_version
+                if expected_version is not None
+                else current.get("version", 1)
+            ),
         )
         return self.get_character_chat_message(message_id)
 
-    def update_character_message(self, message_id: str, request_data: Any, **kwargs: Any) -> dict[str, Any]:
+    def update_character_message(
+        self, message_id: str, request_data: Any, **kwargs: Any
+    ) -> dict[str, Any]:
         return self.update_character_chat_message(message_id, request_data, **kwargs)
 
     def delete_character_chat_message(
@@ -1212,11 +1439,17 @@ class LocalCharacterPersonaService:
         current = self.get_character_chat_message(message_id)
         self._require_db().soft_delete_message(
             message_id,
-            expected_version=int(expected_version if expected_version is not None else current.get("version", 1)),
+            expected_version=int(
+                expected_version
+                if expected_version is not None
+                else current.get("version", 1)
+            ),
         )
         return {"status": "deleted", "message_id": message_id}
 
-    def delete_character_message(self, message_id: str, **kwargs: Any) -> dict[str, Any]:
+    def delete_character_message(
+        self, message_id: str, **kwargs: Any
+    ) -> dict[str, Any]:
         return self.delete_character_chat_message(message_id, **kwargs)
 
     def search_character_messages(
@@ -1235,9 +1468,17 @@ class LocalCharacterPersonaService:
             for message in page["messages"]
             if normalized_query in str(message.get("content") or "").lower()
         ]
-        return {"messages": messages, "total": len(messages), "limit": limit, "offset": offset, "source": "local"}
+        return {
+            "messages": messages,
+            "total": len(messages),
+            "limit": limit,
+            "offset": offset,
+            "source": "local",
+        }
 
-    def search_character_chat_messages(self, chat_id: str, query: str, **kwargs: Any) -> dict[str, Any]:
+    def search_character_chat_messages(
+        self, chat_id: str, query: str, **kwargs: Any
+    ) -> dict[str, Any]:
         return self.search_character_messages(chat_id, query, **kwargs)
 
     def export_chat_history(
@@ -1254,7 +1495,9 @@ class LocalCharacterPersonaService:
             raise ValueError(f"Local character chat session '{chat_id}' was not found.")
         messages = [
             self.conversations.normalize_message_row(message)
-            for message in self._require_db().get_messages_for_conversation(chat_id, limit=limit, offset=offset)
+            for message in self._require_db().get_messages_for_conversation(
+                chat_id, limit=limit, offset=offset
+            )
         ]
         messages = [message for message in messages if message is not None]
         normalized_format = str(format or "json").strip().lower()
@@ -1265,7 +1508,9 @@ class LocalCharacterPersonaService:
                 lines.extend([f"## {role}", "", str(message.get("content") or ""), ""])
             return "\n".join(lines).rstrip() + "\n"
         if normalized_format != "json":
-            raise ValueError("Local character chat export supports json and markdown formats.")
+            raise ValueError(
+                "Local character chat export supports json and markdown formats."
+            )
         return {
             "chat_id": chat_id,
             "format": "json",
@@ -1276,22 +1521,34 @@ class LocalCharacterPersonaService:
     def get_chat_settings(self, chat_id: str, **_: Any) -> dict[str, Any]:
         self._require_chat_session(chat_id)
         settings = dict(self._chat_settings.get(str(chat_id), {}))
-        return {"conversation_id": str(chat_id), "settings": settings, "source": "local"}
+        return {
+            "conversation_id": str(chat_id),
+            "settings": settings,
+            "source": "local",
+        }
 
-    def update_chat_settings(self, chat_id: str, request_data: Any, **_: Any) -> dict[str, Any]:
+    def update_chat_settings(
+        self, chat_id: str, request_data: Any, **_: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import ChatSettingsUpdate
 
         self._require_chat_session(chat_id)
-        request = ChatSettingsUpdate.model_validate(_model_payload(request_data, exclude_none=False))
+        request = ChatSettingsUpdate.model_validate(
+            _model_payload(request_data, exclude_none=False)
+        )
         self._chat_settings[str(chat_id)] = dict(request.settings)
         self._persist_persona_profiles()
         return self.get_chat_settings(chat_id)
 
-    def get_character_chat_settings(self, chat_id: str, **kwargs: Any) -> dict[str, Any]:
+    def get_character_chat_settings(
+        self, chat_id: str, **kwargs: Any
+    ) -> dict[str, Any]:
         return self.get_chat_settings(chat_id, **kwargs)
 
-    def update_character_chat_settings(self, chat_id: str, request_data: Any, **kwargs: Any) -> dict[str, Any]:
+    def update_character_chat_settings(
+        self, chat_id: str, request_data: Any, **kwargs: Any
+    ) -> dict[str, Any]:
         return self.update_chat_settings(chat_id, request_data, **kwargs)
 
     def list_character_memories(
@@ -1313,9 +1570,17 @@ class LocalCharacterPersonaService:
             and (include_archived or not record.get("archived"))
         ]
         page = filtered[offset : offset + limit]
-        return {"memories": page, "total": len(filtered), "limit": limit, "offset": offset, "source": "local"}
+        return {
+            "memories": page,
+            "total": len(filtered),
+            "limit": limit,
+            "offset": offset,
+            "source": "local",
+        }
 
-    def create_character_memory(self, character_id: str, request_data: Any, **_: Any) -> dict[str, Any]:
+    def create_character_memory(
+        self, character_id: str, request_data: Any, **_: Any
+    ) -> dict[str, Any]:
         self._require_character(int(character_id))
         payload = _model_payload(request_data, exclude_none=False)
         content = _clean_text(payload.get("content"))
@@ -1374,7 +1639,9 @@ class LocalCharacterPersonaService:
         self._persist_persona_profiles()
         return self._character_memory_view(record)
 
-    def delete_character_memory(self, character_id: str, memory_id: str, **_: Any) -> dict[str, Any]:
+    def delete_character_memory(
+        self, character_id: str, memory_id: str, **_: Any
+    ) -> dict[str, Any]:
         record = self._find_character_memory(character_id, memory_id)
         record["deleted"] = True
         record["version"] = int(record.get("version", 1) or 1) + 1
@@ -1382,20 +1649,25 @@ class LocalCharacterPersonaService:
         self._persist_persona_profiles()
         return {"deleted": True}
 
-    def extract_character_memories(self, character_id: str, request_data: Any, **_: Any) -> dict[str, Any]:
+    def extract_character_memories(
+        self, character_id: str, request_data: Any, **_: Any
+    ) -> dict[str, Any]:
         self._require_character(int(character_id))
         payload = _model_payload(request_data, exclude_none=False)
         chat_id = str(payload.get("chat_id") or "")
         if not chat_id:
             raise ValueError("local_character_memory_chat_id_required")
         limit = int(payload.get("message_limit") or 100)
-        messages = self._require_db().get_messages_for_conversation(chat_id, limit=limit, offset=0)
+        messages = self._require_db().get_messages_for_conversation(
+            chat_id, limit=limit, offset=0
+        )
         extracted: list[dict[str, Any]] = []
         skipped_duplicates = 0
         existing = {
             str(record.get("content") or "").strip().lower()
             for record in self._character_memories
-            if str(record.get("character_id")) == str(character_id) and not record.get("deleted")
+            if str(record.get("character_id")) == str(character_id)
+            and not record.get("deleted")
         }
         for message in messages:
             content = str(message.get("content") or "").strip()
@@ -1412,7 +1684,11 @@ class LocalCharacterPersonaService:
                 continue
             memory = self.create_character_memory(
                 character_id,
-                {"content": memory_content, "memory_type": "extracted", "metadata": {"chat_id": chat_id}},
+                {
+                    "content": memory_content,
+                    "memory_type": "extracted",
+                    "metadata": {"chat_id": chat_id},
+                },
             )
             existing.add(key)
             extracted.append(memory)
@@ -1423,7 +1699,9 @@ class LocalCharacterPersonaService:
             "source": "local",
         }
 
-    def export_lorebook_diagnostics(self, chat_id: str, **kwargs: Any) -> dict[str, Any]:
+    def export_lorebook_diagnostics(
+        self, chat_id: str, **kwargs: Any
+    ) -> dict[str, Any]:
         session = self._require_chat_session(chat_id)
         character = self._character_for_session(session)
         world_books = []
@@ -1449,7 +1727,9 @@ class LocalCharacterPersonaService:
         current_selection = self._chat_greeting_selections.get(str(chat_id))
         if current_selection is None and greetings:
             current_selection = 0
-        if current_selection is not None and not (0 <= current_selection < len(greetings)):
+        if current_selection is not None and not (
+            0 <= current_selection < len(greetings)
+        ):
             current_selection = 0 if greetings else None
         character = self._character_for_session(session)
         character_id = session.get("character_id")
@@ -1491,10 +1771,13 @@ class LocalCharacterPersonaService:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import PresetCreate
 
-        payload = PresetCreate.model_validate(_model_payload(request_data)).model_dump(mode="json")
+        payload = PresetCreate.model_validate(_model_payload(request_data)).model_dump(
+            mode="json"
+        )
         preset_id = str(payload["preset_id"])
         if preset_id == "default" or any(
-            str(record.get("preset_id")) == preset_id and not record.get("deleted", False)
+            str(record.get("preset_id")) == preset_id
+            and not record.get("deleted", False)
             for record in self._chat_presets
         ):
             raise ValueError(f"local_chat_preset_exists:{preset_id}")
@@ -1517,7 +1800,9 @@ class LocalCharacterPersonaService:
         if str(preset_id) == "default":
             raise ValueError("local_builtin_chat_preset_read_only:default")
         record = self._find_chat_preset(preset_id)
-        payload = PresetUpdate.model_validate(_model_payload(request_data, exclude_none=False)).model_dump(
+        payload = PresetUpdate.model_validate(
+            _model_payload(request_data, exclude_none=False)
+        ).model_dump(
             mode="json",
             exclude_none=True,
         )

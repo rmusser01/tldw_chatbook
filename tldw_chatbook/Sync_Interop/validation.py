@@ -20,7 +20,9 @@ def validate_response_dataset_identity(
     if response_dataset_id is None:
         raise ValueError(f"Sync v2 {response_label} dataset_id is required")
     if str(response_dataset_id) != dataset_id:
-        raise ValueError(f"Sync v2 {response_label} dataset_id must match requested dataset_id")
+        raise ValueError(
+            f"Sync v2 {response_label} dataset_id must match requested dataset_id"
+        )
 
 
 def validate_pulled_response_scope(
@@ -42,14 +44,22 @@ def validate_pulled_response_scope(
     seen_ids: set[str] = set()
     for envelope in envelopes:
         if envelope.dataset_id != dataset_id:
-            raise ValueError("pulled Sync v2 envelope dataset_id must match requested dataset_id")
+            raise ValueError(
+                "pulled Sync v2 envelope dataset_id must match requested dataset_id"
+            )
         if excluded_device_id is not None and envelope.device_id == excluded_device_id:
-            raise ValueError("pulled Sync v2 envelope from own device is not allowed in incremental sync")
+            raise ValueError(
+                "pulled Sync v2 envelope from own device is not allowed in incremental sync"
+            )
         if domain_set and str(envelope.domain) not in domain_set:
-            raise ValueError("pulled Sync v2 envelope domain must be included in requested domains")
+            raise ValueError(
+                "pulled Sync v2 envelope domain must be included in requested domains"
+            )
         response_id = str(envelope.client_envelope_id)
         if response_id in seen_ids:
-            raise ValueError("pulled Sync v2 response contained duplicate client_envelope_id")
+            raise ValueError(
+                "pulled Sync v2 response contained duplicate client_envelope_id"
+            )
         seen_ids.add(response_id)
 
 
@@ -83,15 +93,21 @@ def validate_push_response_scope(
         response_dataset_id=response_dataset_id,
         response_label="push response",
     )
-    submitted_ids = {str(client_envelope_id) for client_envelope_id in submitted_client_envelope_ids}
+    submitted_ids = {
+        str(client_envelope_id) for client_envelope_id in submitted_client_envelope_ids
+    }
     seen_ids: set[str] = set()
     for item in [*accepted, *rejected, *conflicts]:
         client_envelope_id = item.get("client_envelope_id")
         if not client_envelope_id or str(client_envelope_id) not in submitted_ids:
-            raise ValueError("Sync v2 push response referenced unknown client_envelope_id")
+            raise ValueError(
+                "Sync v2 push response referenced unknown client_envelope_id"
+            )
         response_id = str(client_envelope_id)
         if response_id in seen_ids:
-            raise ValueError("Sync v2 push response contained duplicate client_envelope_id")
+            raise ValueError(
+                "Sync v2 push response contained duplicate client_envelope_id"
+            )
         seen_ids.add(response_id)
     if seen_ids != submitted_ids:
         raise ValueError("Sync v2 push response omitted submitted client_envelope_id")
@@ -110,12 +126,20 @@ def validate_outgoing_envelope_scope(
     seen_ids: set[str] = set()
     for envelope in envelopes:
         if envelope.dataset_id != dataset_id:
-            raise ValueError("outgoing Sync v2 envelope dataset_id must match profile dataset_id")
+            raise ValueError(
+                "outgoing Sync v2 envelope dataset_id must match profile dataset_id"
+            )
         if envelope.device_id != device_id:
-            raise ValueError("outgoing Sync v2 envelope device_id must match profile device_id")
+            raise ValueError(
+                "outgoing Sync v2 envelope device_id must match profile device_id"
+            )
         if domain_set and str(envelope.domain) not in domain_set:
-            raise ValueError("outgoing Sync v2 envelope domain must be included in requested domains")
+            raise ValueError(
+                "outgoing Sync v2 envelope domain must be included in requested domains"
+            )
         outgoing_id = str(envelope.client_envelope_id)
         if outgoing_id in seen_ids:
-            raise ValueError("outgoing Sync v2 batch contained duplicate client_envelope_id")
+            raise ValueError(
+                "outgoing Sync v2 batch contained duplicate client_envelope_id"
+            )
         seen_ids.add(outgoing_id)

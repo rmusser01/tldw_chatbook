@@ -69,7 +69,9 @@ def normalize_prompt_record(record: Any, *, backend: str) -> dict[str, Any]:
     return normalized
 
 
-def normalize_prompt_list(payload: Any, *, backend: str, page: int = 1, per_page: int = 10) -> dict[str, Any]:
+def normalize_prompt_list(
+    payload: Any, *, backend: str, page: int = 1, per_page: int = 10
+) -> dict[str, Any]:
     """Normalize paginated prompt list responses from local DBs or the server API."""
     if isinstance(payload, tuple) and len(payload) == 4:
         items, total_pages, current_page, total_items = payload
@@ -113,8 +115,13 @@ def normalize_prompt_version_record(record: Any, *, backend: str) -> dict[str, A
     }
 
 
-def normalize_prompt_version_list(payload: Any, *, backend: str) -> list[dict[str, Any]]:
-    return [normalize_prompt_version_record(item, backend=backend) for item in list(payload or [])]
+def normalize_prompt_version_list(
+    payload: Any, *, backend: str
+) -> list[dict[str, Any]]:
+    return [
+        normalize_prompt_version_record(item, backend=backend)
+        for item in list(payload or [])
+    ]
 
 
 def normalize_prompt_collection_record(record: Any, *, backend: str) -> dict[str, Any]:
@@ -133,11 +140,16 @@ def normalize_prompt_collection_record(record: Any, *, backend: str) -> dict[str
     }
 
 
-def normalize_prompt_collection_list(payload: Any, *, backend: str, limit: int = 200, offset: int = 0) -> dict[str, Any]:
+def normalize_prompt_collection_list(
+    payload: Any, *, backend: str, limit: int = 200, offset: int = 0
+) -> dict[str, Any]:
     data = _to_plain_dict(payload)
     raw_items = data.get("collections", [])
     return {
-        "collections": [normalize_prompt_collection_record(item, backend=backend) for item in raw_items],
+        "collections": [
+            normalize_prompt_collection_record(item, backend=backend)
+            for item in raw_items
+        ],
         "limit": int(data.get("limit", limit) or limit),
         "offset": int(data.get("offset", offset) or offset),
         "total": int(data.get("total", len(raw_items)) or 0),

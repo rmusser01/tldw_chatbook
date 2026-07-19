@@ -93,7 +93,9 @@ class StudyScopeService:
 
     _ALLOWED_SCOPE_TYPES = {"global", "workspace"}
 
-    def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
+    def __init__(
+        self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None
+    ):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
@@ -117,7 +119,9 @@ class StudyScopeService:
             raise ValueError("Server study backend is unavailable.")
         return self.server_service
 
-    def _server_only_service(self, mode: StudyBackend | str | None, feature_label: str) -> Any:
+    def _server_only_service(
+        self, mode: StudyBackend | str | None, feature_label: str
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == StudyBackend.LOCAL:
             raise ValueError(f"{feature_label} are server-only in Chatbook.")
@@ -141,7 +145,9 @@ class StudyScopeService:
         return StudyScopeService._with_source("server", payload)
 
     @classmethod
-    def _with_template_record(cls, source: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def _with_template_record(
+        cls, source: str, payload: Mapping[str, Any]
+    ) -> dict[str, Any]:
         result = dict(cls._with_source(source, payload))
         result.setdefault("entity_kind", "flashcard_template")
         template_id = result.get("id")
@@ -150,7 +156,9 @@ class StudyScopeService:
         return result
 
     @classmethod
-    def _with_template_list(cls, source: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def _with_template_list(
+        cls, source: str, payload: Mapping[str, Any]
+    ) -> dict[str, Any]:
         result = dict(cls._with_source(source, payload))
         result.setdefault("entity_kind", "flashcard_template_list")
         result["items"] = [
@@ -173,7 +181,9 @@ class StudyScopeService:
         return cls._with_flashcard_list("server", payload)
 
     @classmethod
-    def _with_flashcard_list(cls, source: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def _with_flashcard_list(
+        cls, source: str, payload: Mapping[str, Any]
+    ) -> dict[str, Any]:
         result = dict(cls._with_server_source(payload))
         result["source"] = source
         result.setdefault("entity_kind", "study_flashcard_list")
@@ -189,7 +199,9 @@ class StudyScopeService:
         return cls._with_bulk_update("server", payload)
 
     @classmethod
-    def _with_bulk_update(cls, source: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def _with_bulk_update(
+        cls, source: str, payload: Mapping[str, Any]
+    ) -> dict[str, Any]:
         result = dict(cls._with_server_source(payload))
         result["source"] = source
         result.setdefault("entity_kind", "study_flashcard_bulk_update")
@@ -200,7 +212,9 @@ class StudyScopeService:
             normalized = dict(item)
             flashcard = normalized.get("flashcard")
             if isinstance(flashcard, Mapping):
-                normalized["flashcard"] = normalize_study_flashcard_record(source, flashcard)
+                normalized["flashcard"] = normalize_study_flashcard_record(
+                    source, flashcard
+                )
             normalized_results.append(normalized)
         result["results"] = normalized_results
         return result
@@ -239,7 +253,9 @@ class StudyScopeService:
         return f"study.flashcard.analytics.{action}.{mode.value}"
 
     @staticmethod
-    def _study_flashcard_review_sessions_action_id(mode: StudyBackend, action: str) -> str:
+    def _study_flashcard_review_sessions_action_id(
+        mode: StudyBackend, action: str
+    ) -> str:
         return f"study.flashcard.review_sessions.{action}.{mode.value}"
 
     @staticmethod
@@ -361,7 +377,10 @@ class StudyScopeService:
             return payload
         record = dict(payload)
         record.setdefault("backend", StudyBackend.SERVER.value)
-        if record.get("anchor_type") is not None and record.get("anchor_id") is not None:
+        if (
+            record.get("anchor_type") is not None
+            and record.get("anchor_id") is not None
+        ):
             record.setdefault(
                 "record_id",
                 f"server:study_suggestion_status:{record.get('anchor_type')}:{record.get('anchor_id')}",
@@ -382,7 +401,10 @@ class StudyScopeService:
                 payload=job,
                 source_id=job.get("id"),
             )
-        if record.get("snapshot_id") is not None and record.get("selection_fingerprint") is not None:
+        if (
+            record.get("snapshot_id") is not None
+            and record.get("selection_fingerprint") is not None
+        ):
             record.setdefault(
                 "record_id",
                 "server:study_suggestion_action:"
@@ -397,7 +419,9 @@ class StudyScopeService:
         card_id: str,
         payload: Any,
     ) -> dict[str, Any]:
-        record = dict(payload or {}) if isinstance(payload, Mapping) else {"tags": payload}
+        record = (
+            dict(payload or {}) if isinstance(payload, Mapping) else {"tags": payload}
+        )
         tags = record.get("tags")
         items = record.get("items")
         if tags is None and items is not None:
@@ -406,19 +430,23 @@ class StudyScopeService:
             if isinstance(tags, str):
                 normalized_tags = [item for item in tags.split() if item]
             else:
-                normalized_tags = [str(item).strip() for item in list(tags or []) if str(item).strip()]
+                normalized_tags = [
+                    str(item).strip() for item in list(tags or []) if str(item).strip()
+                ]
             record["tags"] = normalized_tags
             record.setdefault("items", normalized_tags)
             record.setdefault("count", len(normalized_tags))
         record.setdefault("source", backend.value)
         record.setdefault("entity_kind", "flashcard_tags")
         record.setdefault("uuid", card_id)
-        return StudyCompatRecord(self._with_backend_record(
-            backend=backend,
-            kind="study_flashcard_tags",
-            payload=record,
-            source_id=card_id,
-        ))
+        return StudyCompatRecord(
+            self._with_backend_record(
+                backend=backend,
+                kind="study_flashcard_tags",
+                payload=record,
+                source_id=card_id,
+            )
+        )
 
     def _normalize_tag_suggestions_payload(
         self,
@@ -427,16 +455,22 @@ class StudyScopeService:
         q: str | None,
         payload: Any,
     ) -> dict[str, Any]:
-        record = dict(payload or {}) if isinstance(payload, Mapping) else {"items": list(payload or [])}
+        record = (
+            dict(payload or {})
+            if isinstance(payload, Mapping)
+            else {"items": list(payload or [])}
+        )
         record.setdefault("source", backend.value)
         record.setdefault("entity_kind", "flashcard_tag_suggestions")
         source_id = str(q or "all").strip() or "all"
-        return StudyCompatRecord(self._with_backend_record(
-            backend=backend,
-            kind="study_flashcard_tag_suggestions",
-            payload=record,
-            source_id=source_id,
-        ))
+        return StudyCompatRecord(
+            self._with_backend_record(
+                backend=backend,
+                kind="study_flashcard_tag_suggestions",
+                payload=record,
+                source_id=source_id,
+            )
+        )
 
     def _normalize_analytics_payload(
         self,
@@ -446,7 +480,11 @@ class StudyScopeService:
         deck_id: Any = None,
         workspace_id: str | None = None,
     ) -> dict[str, Any]:
-        record = dict(payload or {}) if isinstance(payload, Mapping) else {"summary": payload}
+        record = (
+            dict(payload or {})
+            if isinstance(payload, Mapping)
+            else {"summary": payload}
+        )
         record.setdefault("source", backend.value)
         record.setdefault("entity_kind", "flashcard_analytics")
         if workspace_id:
@@ -514,7 +552,9 @@ class StudyScopeService:
                         backend=backend,
                         kind="study_flashcard_assistant_message",
                         payload=message,
-                        source_id=message.get("id") if isinstance(message, Mapping) else None,
+                        source_id=message.get("id")
+                        if isinstance(message, Mapping)
+                        else None,
                     )
                     for message in record[message_key]
                 ]
@@ -535,7 +575,11 @@ class StudyScopeService:
         backend: StudyBackend,
         payload: Any,
     ) -> dict[str, Any]:
-        record = dict(payload or {}) if isinstance(payload, Mapping) else {"flashcards": list(payload or [])}
+        record = (
+            dict(payload or {})
+            if isinstance(payload, Mapping)
+            else {"flashcards": list(payload or [])}
+        )
         return self._with_backend_record(
             backend=backend,
             kind="study_flashcard_generation",
@@ -549,7 +593,11 @@ class StudyScopeService:
         backend: StudyBackend,
         payload: Any,
     ) -> dict[str, Any]:
-        record = dict(payload or {}) if isinstance(payload, Mapping) else {"payload": payload}
+        record = (
+            dict(payload or {})
+            if isinstance(payload, Mapping)
+            else {"payload": payload}
+        )
         record.setdefault("source", backend.value)
         record.setdefault("entity_kind", "flashcard_template")
         return self._with_backend_record(
@@ -599,12 +647,14 @@ class StudyScopeService:
         source_id = record.get("asset_uuid") or record.get("uuid")
         record.setdefault("source", backend.value)
         record.setdefault("entity_kind", "flashcard_asset")
-        return StudyCompatRecord(self._with_backend_record(
-            backend=backend,
-            kind="study_flashcard_asset",
-            payload=record,
-            source_id=source_id,
-        ))
+        return StudyCompatRecord(
+            self._with_backend_record(
+                backend=backend,
+                kind="study_flashcard_asset",
+                payload=record,
+                source_id=source_id,
+            )
+        )
 
     def _normalize_asset_content_payload(
         self,
@@ -620,12 +670,14 @@ class StudyScopeService:
         record.setdefault("asset_uuid", asset_uuid)
         record.setdefault("source", backend.value)
         record.setdefault("entity_kind", "flashcard_asset_content")
-        return StudyCompatRecord(self._with_backend_record(
-            backend=backend,
-            kind="study_flashcard_asset_content",
-            payload=record,
-            source_id=asset_uuid,
-        ))
+        return StudyCompatRecord(
+            self._with_backend_record(
+                backend=backend,
+                kind="study_flashcard_asset_content",
+                payload=record,
+                source_id=asset_uuid,
+            )
+        )
 
     def _normalize_bulk_create_payload(
         self,
@@ -694,12 +746,14 @@ class StudyScopeService:
         record = dict(record)
         record.setdefault("source", backend.value)
         record.setdefault("entity_kind", "flashcard_import_preview")
-        return StudyCompatRecord(self._with_backend_record(
-            backend=backend,
-            kind="study_flashcard_import_preview",
-            payload=record,
-            source_id="transient",
-        ))
+        return StudyCompatRecord(
+            self._with_backend_record(
+                backend=backend,
+                kind="study_flashcard_import_preview",
+                payload=record,
+                source_id="transient",
+            )
+        )
 
     def _normalize_import_payload(
         self,
@@ -727,12 +781,14 @@ class StudyScopeService:
             record["items"] = normalized_items
         record.setdefault("source", backend.value)
         record.setdefault("entity_kind", "flashcard_import")
-        return StudyCompatRecord(self._with_backend_record(
-            backend=backend,
-            kind="study_flashcard_import",
-            payload=record,
-            source_id=import_kind,
-        ))
+        return StudyCompatRecord(
+            self._with_backend_record(
+                backend=backend,
+                kind="study_flashcard_import",
+                payload=record,
+                source_id=import_kind,
+            )
+        )
 
     def _normalize_export_payload(
         self,
@@ -746,12 +802,14 @@ class StudyScopeService:
         record = dict(record)
         record.setdefault("source", backend.value)
         record.setdefault("entity_kind", "flashcard_export")
-        return StudyCompatRecord(self._with_backend_record(
-            backend=backend,
-            kind="study_flashcard_export",
-            payload=record,
-            source_id="transient",
-        ))
+        return StudyCompatRecord(
+            self._with_backend_record(
+                backend=backend,
+                kind="study_flashcard_export",
+                payload=record,
+                source_id="transient",
+            )
+        )
 
     def list_unsupported_capabilities(
         self,
@@ -764,7 +822,9 @@ class StudyScopeService:
         return [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
 
     @classmethod
-    def _normalize_scope(cls, scope_type: str | None, workspace_id: str | None) -> tuple[str, str | None]:
+    def _normalize_scope(
+        cls, scope_type: str | None, workspace_id: str | None
+    ) -> tuple[str, str | None]:
         normalized_scope = str(scope_type or "global").strip().lower()
         if normalized_scope not in cls._ALLOWED_SCOPE_TYPES:
             raise ValueError(f"Invalid study scope_type: {scope_type}")
@@ -774,7 +834,9 @@ class StudyScopeService:
         return normalized_scope, normalized_workspace_id
 
     @staticmethod
-    def _filter_deck_scope(record: Mapping[str, Any], *, scope_type: str, workspace_id: str | None) -> bool:
+    def _filter_deck_scope(
+        record: Mapping[str, Any], *, scope_type: str, workspace_id: str | None
+    ) -> bool:
         record_workspace_id = record.get("workspace_id")
         if scope_type == "global":
             return record_workspace_id is None
@@ -792,7 +854,9 @@ class StudyScopeService:
         fetched_records: list[dict[str, Any]] = []
         page_offset = 0
         while True:
-            page = await self._maybe_await(service.list_decks(limit=page_size, offset=page_offset))
+            page = await self._maybe_await(
+                service.list_decks(limit=page_size, offset=page_offset)
+            )
             page_items = list(page or [])
             fetched_records.extend(page_items)
             if len(page_items) < page_size:
@@ -802,7 +866,9 @@ class StudyScopeService:
         normalized_records = [
             normalize_study_deck_record("server", record)
             for record in fetched_records
-            if self._filter_deck_scope(record, scope_type=scope_type, workspace_id=workspace_id)
+            if self._filter_deck_scope(
+                record, scope_type=scope_type, workspace_id=workspace_id
+            )
         ]
         return normalized_records
 
@@ -817,13 +883,17 @@ class StudyScopeService:
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._deck_action_id(normalized_mode, "list"))
-        normalized_scope_type, normalized_workspace_id = self._normalize_scope(scope_type, workspace_id)
+        normalized_scope_type, normalized_workspace_id = self._normalize_scope(
+            scope_type, workspace_id
+        )
         service = self._service_for_mode(normalized_mode)
 
         if normalized_mode == StudyBackend.LOCAL:
             if normalized_scope_type == "workspace":
                 raise ValueError("Workspace Study is unavailable in local mode")
-            records = await self._maybe_await(service.list_decks(limit=limit, offset=offset))
+            records = await self._maybe_await(
+                service.list_decks(limit=limit, offset=offset)
+            )
             return [
                 normalize_study_deck_record(normalized_mode.value, record)
                 for record in list(records or [])
@@ -871,14 +941,20 @@ class StudyScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._deck_action_id(normalized_mode, "list"))
         if normalized_mode == StudyBackend.LOCAL:
-            return int(await self._maybe_await(self._service_for_mode(normalized_mode).count_decks()))
+            return int(
+                await self._maybe_await(
+                    self._service_for_mode(normalized_mode).count_decks()
+                )
+            )
         # The server study backend does not expose a dedicated count-only
         # seam today (``list_decks``'s server branch pages through the full
         # deck collection to build normalized records). Rather than issuing
         # a full paginated fetch just to read a number, mirror the
         # unsupported-count contract established by
         # ``NotesScopeService.count_notes``.
-        raise ValueError("Server study deck counts are not supported; use list_decks for a scoped total.")
+        raise ValueError(
+            "Server study deck counts are not supported; use list_decks for a scoped total."
+        )
 
     async def count_due_flashcards(
         self,
@@ -901,10 +977,16 @@ class StudyScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._flashcard_action_id(normalized_mode, mutation=False))
         if normalized_mode == StudyBackend.LOCAL:
-            return int(await self._maybe_await(self._service_for_mode(normalized_mode).count_due_flashcards()))
+            return int(
+                await self._maybe_await(
+                    self._service_for_mode(normalized_mode).count_due_flashcards()
+                )
+            )
         # Mirror ``count_decks``'s unsupported-count contract: the server
         # study backend has no dedicated due-flashcard count seam.
-        raise ValueError("Server due-flashcard counts are not supported; use list_flashcards for a scoped total.")
+        raise ValueError(
+            "Server due-flashcard counts are not supported; use list_flashcards for a scoped total."
+        )
 
     async def create_deck(
         self,
@@ -918,14 +1000,21 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._deck_action_id(normalized_mode, "create"))
-        normalized_scope_type, normalized_workspace_id = self._normalize_scope(scope_type, workspace_id)
-        if normalized_mode == StudyBackend.LOCAL and normalized_scope_type == "workspace":
+        normalized_scope_type, normalized_workspace_id = self._normalize_scope(
+            scope_type, workspace_id
+        )
+        if (
+            normalized_mode == StudyBackend.LOCAL
+            and normalized_scope_type == "workspace"
+        ):
             raise ValueError("Workspace Study is unavailable in local mode")
         record = await self._maybe_await(
             self._service_for_mode(normalized_mode).create_deck(
                 name=name,
                 description=description,
-                workspace_id=normalized_workspace_id if normalized_scope_type == "workspace" else None,
+                workspace_id=normalized_workspace_id
+                if normalized_scope_type == "workspace"
+                else None,
                 scheduler_type=scheduler_type,
             )
         )
@@ -948,7 +1037,9 @@ class StudyScopeService:
         self._enforce_policy(self._deck_action_id(normalized_mode, "update"))
         service = self._service_for_mode(normalized_mode)
         if not hasattr(service, "update_deck"):
-            raise ValueError(f"Study deck update is unavailable in {normalized_mode.value} mode.")
+            raise ValueError(
+                f"Study deck update is unavailable in {normalized_mode.value} mode."
+            )
         record = await self._maybe_await(
             service.update_deck(
                 deck_id,
@@ -1047,9 +1138,13 @@ class StudyScopeService:
         tags: list[str],
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_tags_action_id(normalized_mode, "update"))
+        self._enforce_policy(
+            self._study_flashcard_tags_action_id(normalized_mode, "update")
+        )
         record = await self._maybe_await(
-            self._service_for_mode(normalized_mode).set_flashcard_tags(card_id, tags=tags)
+            self._service_for_mode(normalized_mode).set_flashcard_tags(
+                card_id, tags=tags
+            )
         )
         return normalize_study_flashcard_record(normalized_mode.value, record)
 
@@ -1060,11 +1155,15 @@ class StudyScopeService:
         card_id: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_tags_action_id(normalized_mode, "list"))
+        self._enforce_policy(
+            self._study_flashcard_tags_action_id(normalized_mode, "list")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).get_flashcard_tags(card_id)
         )
-        return self._normalize_tags_payload(backend=normalized_mode, card_id=card_id, payload=result)
+        return self._normalize_tags_payload(
+            backend=normalized_mode, card_id=card_id, payload=result
+        )
 
     async def list_flashcard_tag_suggestions(
         self,
@@ -1075,11 +1174,17 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard tag suggestions")
-        self._enforce_policy(self._study_flashcard_tags_action_id(normalized_mode, "list"))
-        result = await self._maybe_await(
-            self._service_for_mode(normalized_mode).list_flashcard_tag_suggestions(q=q, limit=limit)
+        self._enforce_policy(
+            self._study_flashcard_tags_action_id(normalized_mode, "list")
         )
-        return self._normalize_tag_suggestions_payload(backend=normalized_mode, q=q, payload=result)
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).list_flashcard_tag_suggestions(
+                q=q, limit=limit
+            )
+        )
+        return self._normalize_tag_suggestions_payload(
+            backend=normalized_mode, q=q, payload=result
+        )
 
     async def get_flashcard_analytics_summary(
         self,
@@ -1091,7 +1196,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard analytics")
-        self._enforce_policy(self._study_flashcard_analytics_action_id(normalized_mode, "observe"))
+        self._enforce_policy(
+            self._study_flashcard_analytics_action_id(normalized_mode, "observe")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).get_flashcard_analytics_summary(
                 deck_id=deck_id,
@@ -1117,7 +1224,9 @@ class StudyScopeService:
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard review sessions")
-        self._enforce_policy(self._study_flashcard_review_sessions_action_id(normalized_mode, "list"))
+        self._enforce_policy(
+            self._study_flashcard_review_sessions_action_id(normalized_mode, "list")
+        )
         records = await self._maybe_await(
             self._service_for_mode(normalized_mode).list_review_sessions(
                 deck_id=deck_id,
@@ -1126,7 +1235,9 @@ class StudyScopeService:
                 limit=limit,
             )
         )
-        return self._normalize_review_sessions_payload(backend=normalized_mode, records=records)
+        return self._normalize_review_sessions_payload(
+            backend=normalized_mode, records=records
+        )
 
     async def get_flashcard_assistant(
         self,
@@ -1136,11 +1247,15 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard assistant")
-        self._enforce_policy(self._study_flashcard_assistant_action_id(normalized_mode, "detail"))
+        self._enforce_policy(
+            self._study_flashcard_assistant_action_id(normalized_mode, "detail")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).get_flashcard_assistant(card_id)
         )
-        return self._normalize_assistant_payload(backend=normalized_mode, card_id=card_id, payload=result)
+        return self._normalize_assistant_payload(
+            backend=normalized_mode, card_id=card_id, payload=result
+        )
 
     async def respond_flashcard_assistant(
         self,
@@ -1156,7 +1271,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard assistant")
-        self._enforce_policy(self._study_flashcard_assistant_action_id(normalized_mode, "launch"))
+        self._enforce_policy(
+            self._study_flashcard_assistant_action_id(normalized_mode, "launch")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).respond_flashcard_assistant(
                 card_id,
@@ -1168,7 +1285,9 @@ class StudyScopeService:
                 expected_thread_version=expected_thread_version,
             )
         )
-        return self._normalize_assistant_payload(backend=normalized_mode, card_id=card_id, payload=result)
+        return self._normalize_assistant_payload(
+            backend=normalized_mode, card_id=card_id, payload=result
+        )
 
     async def generate_flashcards(
         self,
@@ -1184,7 +1303,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard generation")
-        self._enforce_policy(self._study_flashcard_generation_action_id(normalized_mode, "launch"))
+        self._enforce_policy(
+            self._study_flashcard_generation_action_id(normalized_mode, "launch")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).generate_flashcards(
                 text=text,
@@ -1196,7 +1317,9 @@ class StudyScopeService:
                 model=model,
             )
         )
-        return self._normalize_generation_payload(backend=normalized_mode, payload=result)
+        return self._normalize_generation_payload(
+            backend=normalized_mode, payload=result
+        )
 
     async def upload_flashcard_asset(
         self,
@@ -1206,7 +1329,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard asset upload")
-        self._enforce_policy(self._study_flashcard_asset_action_id(normalized_mode, "create"))
+        self._enforce_policy(
+            self._study_flashcard_asset_action_id(normalized_mode, "create")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).upload_flashcard_asset(file)
         )
@@ -1220,9 +1345,13 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard asset content")
-        self._enforce_policy(self._study_flashcard_asset_action_id(normalized_mode, "detail"))
+        self._enforce_policy(
+            self._study_flashcard_asset_action_id(normalized_mode, "detail")
+        )
         result = await self._maybe_await(
-            self._service_for_mode(normalized_mode).get_flashcard_asset_content(asset_uuid)
+            self._service_for_mode(normalized_mode).get_flashcard_asset_content(
+                asset_uuid
+            )
         )
         return self._normalize_asset_content_payload(
             backend=normalized_mode,
@@ -1237,11 +1366,15 @@ class StudyScopeService:
         cards: list[Mapping[str, Any]],
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_bulk_action_id(normalized_mode, "create"))
+        self._enforce_policy(
+            self._study_flashcard_bulk_action_id(normalized_mode, "create")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).create_flashcards_bulk(cards)
         )
-        return self._normalize_bulk_create_payload(backend=normalized_mode, payload=result)
+        return self._normalize_bulk_create_payload(
+            backend=normalized_mode, payload=result
+        )
 
     async def update_flashcards_bulk(
         self,
@@ -1250,11 +1383,15 @@ class StudyScopeService:
         updates: list[Mapping[str, Any]],
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_bulk_action_id(normalized_mode, "update"))
+        self._enforce_policy(
+            self._study_flashcard_bulk_action_id(normalized_mode, "update")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).update_flashcards_bulk(updates)
         )
-        return self._normalize_bulk_update_payload(backend=normalized_mode, payload=result)
+        return self._normalize_bulk_update_payload(
+            backend=normalized_mode, payload=result
+        )
 
     async def preview_structured_qa_import(
         self,
@@ -1267,7 +1404,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard import preview")
-        self._enforce_policy(self._study_flashcard_import_action_id(normalized_mode, "preview"))
+        self._enforce_policy(
+            self._study_flashcard_import_action_id(normalized_mode, "preview")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).preview_structured_qa_import(
                 content,
@@ -1276,7 +1415,9 @@ class StudyScopeService:
                 max_field_length=max_field_length,
             )
         )
-        return self._normalize_import_preview_payload(backend=normalized_mode, payload=result)
+        return self._normalize_import_preview_payload(
+            backend=normalized_mode, payload=result
+        )
 
     async def import_flashcards(
         self,
@@ -1291,7 +1432,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard import")
-        self._enforce_policy(self._study_flashcard_import_action_id(normalized_mode, "import"))
+        self._enforce_policy(
+            self._study_flashcard_import_action_id(normalized_mode, "import")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).import_flashcards(
                 content,
@@ -1318,7 +1461,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard JSON import")
-        self._enforce_policy(self._study_flashcard_import_action_id(normalized_mode, "import"))
+        self._enforce_policy(
+            self._study_flashcard_import_action_id(normalized_mode, "import")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).import_flashcards_json(
                 file,
@@ -1342,7 +1487,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard APKG import")
-        self._enforce_policy(self._study_flashcard_import_action_id(normalized_mode, "import"))
+        self._enforce_policy(
+            self._study_flashcard_import_action_id(normalized_mode, "import")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).import_flashcards_apkg(
                 file,
@@ -1373,7 +1520,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard export")
-        self._enforce_policy(self._study_flashcard_export_action_id(normalized_mode, "export"))
+        self._enforce_policy(
+            self._study_flashcard_export_action_id(normalized_mode, "export")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).export_flashcards(
                 deck_id=deck_id,
@@ -1404,7 +1553,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard templates")
-        self._enforce_policy(self._study_flashcard_template_action_id(normalized_mode, "create"))
+        self._enforce_policy(
+            self._study_flashcard_template_action_id(normalized_mode, "create")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).create_flashcard_template(
                 name=name,
@@ -1427,9 +1578,13 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard templates")
-        self._enforce_policy(self._study_flashcard_template_action_id(normalized_mode, "list"))
+        self._enforce_policy(
+            self._study_flashcard_template_action_id(normalized_mode, "list")
+        )
         result = await self._maybe_await(
-            self._service_for_mode(normalized_mode).list_flashcard_templates(limit=limit, offset=offset)
+            self._service_for_mode(normalized_mode).list_flashcard_templates(
+                limit=limit, offset=offset
+            )
         )
         return self._normalize_template_list_payload(
             backend=normalized_mode,
@@ -1446,7 +1601,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard templates")
-        self._enforce_policy(self._study_flashcard_template_action_id(normalized_mode, "detail"))
+        self._enforce_policy(
+            self._study_flashcard_template_action_id(normalized_mode, "detail")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).get_flashcard_template(template_id)
         )
@@ -1468,7 +1625,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard templates")
-        self._enforce_policy(self._study_flashcard_template_action_id(normalized_mode, "update"))
+        self._enforce_policy(
+            self._study_flashcard_template_action_id(normalized_mode, "update")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).update_flashcard_template(
                 template_id,
@@ -1493,7 +1652,9 @@ class StudyScopeService:
     ) -> bool:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard templates")
-        self._enforce_policy(self._study_flashcard_template_action_id(normalized_mode, "delete"))
+        self._enforce_policy(
+            self._study_flashcard_template_action_id(normalized_mode, "delete")
+        )
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).delete_flashcard_template(
                 template_id,
@@ -1535,9 +1696,13 @@ class StudyScopeService:
         self._enforce_policy(self._flashcard_action_id(normalized_mode, mutation=True))
         if normalized_mode == StudyBackend.SERVER:
             if expected_version is None:
-                raise ValueError("expected_version is required for server flashcard deletion.")
+                raise ValueError(
+                    "expected_version is required for server flashcard deletion."
+                )
             if expected_version < 1:
-                raise ValueError("expected_version must be >= 1 for server flashcard deletion.")
+                raise ValueError(
+                    "expected_version must be >= 1 for server flashcard deletion."
+                )
         kwargs: dict[str, Any] = {"expected_version": expected_version}
         if normalized_mode == StudyBackend.LOCAL:
             kwargs["hard_delete"] = hard_delete
@@ -1557,13 +1722,19 @@ class StudyScopeService:
         cards: list[Mapping[str, Any]] | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_bulk_action_id(normalized_mode, "update"))
+        self._enforce_policy(
+            self._study_flashcard_bulk_action_id(normalized_mode, "update")
+        )
         service = self._service_for_mode(normalized_mode)
         update_payload = updates if updates is not None else cards
         if update_payload is None:
             raise ValueError("updates or cards are required for flashcard bulk update.")
-        payload = await self._maybe_await(service.update_flashcards_bulk(update_payload))
-        return self._normalize_bulk_update_payload(backend=normalized_mode, payload=payload)
+        payload = await self._maybe_await(
+            service.update_flashcards_bulk(update_payload)
+        )
+        return self._normalize_bulk_update_payload(
+            backend=normalized_mode, payload=payload
+        )
 
     async def reset_flashcard_scheduling(
         self,
@@ -1576,7 +1747,9 @@ class StudyScopeService:
         self._enforce_policy(self._study_flashcard_action_id(normalized_mode, "update"))
         service = self._service_for_mode(normalized_mode)
         record = await self._maybe_await(
-            service.reset_flashcard_scheduling(card_id, expected_version=expected_version)
+            service.reset_flashcard_scheduling(
+                card_id, expected_version=expected_version
+            )
         )
         return normalize_study_flashcard_record(normalized_mode.value, record)
 
@@ -1588,11 +1761,19 @@ class StudyScopeService:
         tags: list[str],
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_tags_action_id(normalized_mode, "update"))
+        self._enforce_policy(
+            self._study_flashcard_tags_action_id(normalized_mode, "update")
+        )
         service = self._service_for_mode(normalized_mode)
-        normalized_tags = [str(tag).strip() for tag in list(tags or []) if str(tag).strip()]
-        record = await self._maybe_await(service.set_flashcard_tags(card_id, tags=normalized_tags))
-        normalized_record = normalize_study_flashcard_record(normalized_mode.value, record)
+        normalized_tags = [
+            str(tag).strip() for tag in list(tags or []) if str(tag).strip()
+        ]
+        record = await self._maybe_await(
+            service.set_flashcard_tags(card_id, tags=normalized_tags)
+        )
+        normalized_record = normalize_study_flashcard_record(
+            normalized_mode.value, record
+        )
         normalized_record["tags"] = normalized_tags
         return normalized_record
 
@@ -1603,10 +1784,14 @@ class StudyScopeService:
         card_id: str,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_tags_action_id(normalized_mode, "list"))
+        self._enforce_policy(
+            self._study_flashcard_tags_action_id(normalized_mode, "list")
+        )
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(service.get_flashcard_tags(card_id))
-        return self._normalize_tags_payload(backend=normalized_mode, card_id=card_id, payload=result)
+        return self._normalize_tags_payload(
+            backend=normalized_mode, card_id=card_id, payload=result
+        )
 
     async def list_flashcard_tag_suggestions(
         self,
@@ -1616,10 +1801,16 @@ class StudyScopeService:
         limit: int = 50,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_tags_action_id(normalized_mode, "list"))
+        self._enforce_policy(
+            self._study_flashcard_tags_action_id(normalized_mode, "list")
+        )
         service = self._service_for_mode(normalized_mode)
-        payload = await self._maybe_await(service.list_flashcard_tag_suggestions(q=q, limit=limit))
-        return self._normalize_tag_suggestions_payload(backend=normalized_mode, q=q, payload=payload)
+        payload = await self._maybe_await(
+            service.list_flashcard_tag_suggestions(q=q, limit=limit)
+        )
+        return self._normalize_tag_suggestions_payload(
+            backend=normalized_mode, q=q, payload=payload
+        )
 
     async def preview_structured_qa_import(
         self,
@@ -1631,7 +1822,9 @@ class StudyScopeService:
         max_field_length: int | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_import_action_id(normalized_mode, "preview"))
+        self._enforce_policy(
+            self._study_flashcard_import_action_id(normalized_mode, "preview")
+        )
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(
             service.preview_structured_qa_import(
@@ -1641,7 +1834,9 @@ class StudyScopeService:
                 max_field_length=max_field_length,
             )
         )
-        return self._normalize_import_preview_payload(backend=normalized_mode, payload=payload)
+        return self._normalize_import_preview_payload(
+            backend=normalized_mode, payload=payload
+        )
 
     async def import_flashcards_tsv(
         self,
@@ -1688,7 +1883,9 @@ class StudyScopeService:
         extended_header: bool = False,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_export_action_id(normalized_mode, "export"))
+        self._enforce_policy(
+            self._study_flashcard_export_action_id(normalized_mode, "export")
+        )
         service = self._service_for_mode(normalized_mode)
         legacy_record_response = format is not None
         requested_format = format or export_format
@@ -1714,7 +1911,9 @@ class StudyScopeService:
                     "content": payload,
                     "filename": f"flashcards.{requested_format}",
                 }
-            return self._normalize_export_payload(backend=normalized_mode, payload=record)
+            return self._normalize_export_payload(
+                backend=normalized_mode, payload=record
+            )
         return payload
 
     async def upload_flashcard_asset(
@@ -1725,12 +1924,18 @@ class StudyScopeService:
         file_path: Any = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_asset_action_id(normalized_mode, "create"))
+        self._enforce_policy(
+            self._study_flashcard_asset_action_id(normalized_mode, "create")
+        )
         service = self._service_for_mode(normalized_mode)
         upload_payload = file if file is not None else file_path
         if upload_payload is None:
-            raise ValueError("file or file_path is required for flashcard asset upload.")
-        payload = await self._maybe_await(service.upload_flashcard_asset(upload_payload))
+            raise ValueError(
+                "file or file_path is required for flashcard asset upload."
+            )
+        payload = await self._maybe_await(
+            service.upload_flashcard_asset(upload_payload)
+        )
         return self._normalize_asset_payload(backend=normalized_mode, payload=payload)
 
     async def get_flashcard_asset_content(
@@ -1740,9 +1945,13 @@ class StudyScopeService:
         asset_uuid: str,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_asset_action_id(normalized_mode, "detail"))
+        self._enforce_policy(
+            self._study_flashcard_asset_action_id(normalized_mode, "detail")
+        )
         service = self._service_for_mode(normalized_mode)
-        payload = await self._maybe_await(service.get_flashcard_asset_content(asset_uuid))
+        payload = await self._maybe_await(
+            service.get_flashcard_asset_content(asset_uuid)
+        )
         return self._normalize_asset_content_payload(
             backend=normalized_mode,
             asset_uuid=asset_uuid,
@@ -1782,7 +1991,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard import")
-        self._enforce_policy(self._study_flashcard_import_action_id(normalized_mode, "import"))
+        self._enforce_policy(
+            self._study_flashcard_import_action_id(normalized_mode, "import")
+        )
         service = self._service_for_mode(normalized_mode)
         import_payload = file if file is not None else file_path
         if import_payload is None:
@@ -1807,7 +2018,9 @@ class StudyScopeService:
         card_id: str,
     ) -> dict[str, Any]:
         service = self._server_only_service(mode, "Flashcard study assistant")
-        payload = await self._maybe_await(service.get_flashcard_study_assistant_context(card_id))
+        payload = await self._maybe_await(
+            service.get_flashcard_study_assistant_context(card_id)
+        )
         result = dict(self._with_server_source(payload or {}))
         result.setdefault("entity_kind", "flashcard_study_assistant_context")
         return result
@@ -1850,7 +2063,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_only(normalized_mode, "Flashcard analytics")
-        self._enforce_policy(self._study_flashcard_analytics_action_id(normalized_mode, "observe"))
+        self._enforce_policy(
+            self._study_flashcard_analytics_action_id(normalized_mode, "observe")
+        )
         payload = await self._maybe_await(
             self._service_for_mode(normalized_mode).get_flashcard_analytics_summary(
                 deck_id=deck_id,
@@ -1878,7 +2093,9 @@ class StudyScopeService:
         placeholder_definitions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_template_action_id(normalized_mode, "create"))
+        self._enforce_policy(
+            self._study_flashcard_template_action_id(normalized_mode, "create")
+        )
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(
             service.create_flashcard_template(
@@ -1891,7 +2108,9 @@ class StudyScopeService:
                 placeholder_definitions=placeholder_definitions,
             )
         )
-        return self._normalize_template_payload(backend=normalized_mode, payload=payload)
+        return self._normalize_template_payload(
+            backend=normalized_mode, payload=payload
+        )
 
     async def list_flashcard_templates(
         self,
@@ -1901,9 +2120,13 @@ class StudyScopeService:
         offset: int = 0,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_template_action_id(normalized_mode, "list"))
+        self._enforce_policy(
+            self._study_flashcard_template_action_id(normalized_mode, "list")
+        )
         service = self._service_for_mode(normalized_mode)
-        payload = await self._maybe_await(service.list_flashcard_templates(limit=limit, offset=offset))
+        payload = await self._maybe_await(
+            service.list_flashcard_templates(limit=limit, offset=offset)
+        )
         return self._normalize_template_list_payload(
             backend=normalized_mode,
             payload=payload,
@@ -1918,10 +2141,14 @@ class StudyScopeService:
         template_id: str | int,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_template_action_id(normalized_mode, "detail"))
+        self._enforce_policy(
+            self._study_flashcard_template_action_id(normalized_mode, "detail")
+        )
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(service.get_flashcard_template(template_id))
-        return self._normalize_template_payload(backend=normalized_mode, payload=payload)
+        return self._normalize_template_payload(
+            backend=normalized_mode, payload=payload
+        )
 
     async def update_flashcard_template(
         self,
@@ -1938,7 +2165,9 @@ class StudyScopeService:
         expected_version: int | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_template_action_id(normalized_mode, "update"))
+        self._enforce_policy(
+            self._study_flashcard_template_action_id(normalized_mode, "update")
+        )
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(
             service.update_flashcard_template(
@@ -1953,7 +2182,9 @@ class StudyScopeService:
                 expected_version=expected_version,
             )
         )
-        return self._normalize_template_payload(backend=normalized_mode, payload=payload)
+        return self._normalize_template_payload(
+            backend=normalized_mode, payload=payload
+        )
 
     async def delete_flashcard_template(
         self,
@@ -1963,10 +2194,14 @@ class StudyScopeService:
         expected_version: int,
     ) -> bool:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._study_flashcard_template_action_id(normalized_mode, "delete"))
+        self._enforce_policy(
+            self._study_flashcard_template_action_id(normalized_mode, "delete")
+        )
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            service.delete_flashcard_template(template_id, expected_version=expected_version)
+            service.delete_flashcard_template(
+                template_id, expected_version=expected_version
+            )
         )
         return self._coerce_delete_result(result)
 
@@ -2052,7 +2287,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         service = self._server_only_service(mode, "Study document prompts")
         self._enforce_policy("study.guides.launch.server")
-        result = await self._maybe_await(service.save_study_document_prompt_config(dict(payload)))
+        result = await self._maybe_await(
+            service.save_study_document_prompt_config(dict(payload))
+        )
         return dict(self._with_server_source(result or {}))
 
     async def get_study_document_prompt_config(
@@ -2063,7 +2300,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         service = self._server_only_service(mode, "Study document prompts")
         self._enforce_policy("study.guides.observe.server")
-        result = await self._maybe_await(service.get_study_document_prompt_config(document_type))
+        result = await self._maybe_await(
+            service.get_study_document_prompt_config(document_type)
+        )
         return dict(self._with_server_source(result or {}))
 
     async def bulk_generate_study_documents(
@@ -2074,7 +2313,9 @@ class StudyScopeService:
     ) -> dict[str, Any]:
         service = self._server_only_service(mode, "Study document generation")
         self._enforce_policy("study.guides.launch.server")
-        result = await self._maybe_await(service.bulk_generate_study_documents(dict(payload)))
+        result = await self._maybe_await(
+            service.bulk_generate_study_documents(dict(payload))
+        )
         return dict(self._with_server_source(result or {}))
 
     async def get_study_document_statistics(
@@ -2117,10 +2358,15 @@ class StudyScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._flashcard_action_id(normalized_mode, mutation=False))
         normalized_scope_type, _ = self._normalize_scope(scope_type, workspace_id)
-        if normalized_mode == StudyBackend.LOCAL and normalized_scope_type == "workspace":
+        if (
+            normalized_mode == StudyBackend.LOCAL
+            and normalized_scope_type == "workspace"
+        ):
             raise ValueError("Workspace Study is unavailable in local mode")
         payload = await self._maybe_await(
-            self._service_for_mode(normalized_mode).get_next_review_candidate(deck_id=deck_id)
+            self._service_for_mode(normalized_mode).get_next_review_candidate(
+                deck_id=deck_id
+            )
         )
         payload = dict(payload or {})
         return normalize_study_review_candidate(
@@ -2144,13 +2390,18 @@ class StudyScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._flashcard_action_id(normalized_mode, mutation=True))
         normalized_scope_type, _ = self._normalize_scope(scope_type, workspace_id)
-        if normalized_mode == StudyBackend.LOCAL and normalized_scope_type == "workspace":
+        if (
+            normalized_mode == StudyBackend.LOCAL
+            and normalized_scope_type == "workspace"
+        ):
             raise ValueError("Workspace Study is unavailable in local mode")
         service = self._service_for_mode(normalized_mode)
         kwargs = {"rating": rating}
         if normalized_mode == StudyBackend.SERVER and answer_time_ms is not None:
             kwargs["answer_time_ms"] = answer_time_ms
-        response = await self._maybe_await(service.submit_flashcard_review(card_id, **kwargs))
+        response = await self._maybe_await(
+            service.submit_flashcard_review(card_id, **kwargs)
+        )
         return merge_review_outcome_record(
             normalized_mode.value,
             current_card=current_card,
@@ -2169,7 +2420,10 @@ class StudyScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._flashcard_action_id(normalized_mode, mutation=True))
         normalized_scope_type, _ = self._normalize_scope(scope_type, workspace_id)
-        if normalized_mode == StudyBackend.LOCAL and normalized_scope_type == "workspace":
+        if (
+            normalized_mode == StudyBackend.LOCAL
+            and normalized_scope_type == "workspace"
+        ):
             raise ValueError("Workspace Study is unavailable in local mode")
         if normalized_mode == StudyBackend.LOCAL or review_session_id is None:
             return None
@@ -2286,7 +2540,9 @@ class StudyScopeService:
         self._require_server_only(normalized_mode, "Study suggestions")
         self._enforce_policy(self._study_suggestion_action_id("observe"))
         result = await self._maybe_await(
-            self._service_for_mode(normalized_mode).get_study_suggestion_snapshot(snapshot_id)
+            self._service_for_mode(normalized_mode).get_study_suggestion_snapshot(
+                snapshot_id
+            )
         )
         return self._normalize_study_suggestion_payload(result)
 

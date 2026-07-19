@@ -4,7 +4,9 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Select
 
-from tldw_chatbook.Media.media_reading_scope_service import ALLOWED_SERVER_CREATE_SOURCE_TYPES
+from tldw_chatbook.Media.media_reading_scope_service import (
+    ALLOWED_SERVER_CREATE_SOURCE_TYPES,
+)
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
 from tldw_chatbook.Widgets.Media.media_ingestion_source_panel import (
     ALLOWED_CREATE_SOURCE_TYPES,
@@ -152,7 +154,9 @@ async def test_ingestion_source_panel_upload_disabled_action_explains_non_archiv
         assert save_button.disabled is False
         assert save_button.tooltip is None
         assert upload_button.disabled is True
-        assert "only available for archive ingestion sources" in str(upload_button.tooltip)
+        assert "only available for archive ingestion sources" in str(
+            upload_button.tooltip
+        )
 
 
 @pytest.mark.asyncio
@@ -199,7 +203,9 @@ async def test_ingestion_source_panel_creates_allowed_server_source_and_refreshe
         assert ALLOWED_CREATE_SOURCE_TYPES == ALLOWED_SERVER_CREATE_SOURCE_TYPES
         assert source_type.value == "local_directory"
         source_type.value = "git_repository"
-        panel.query_one("#create-config-input", Input).value = '{"repo_url": "https://example.com/repo.git"}'
+        panel.query_one(
+            "#create-config-input", Input
+        ).value = '{"repo_url": "https://example.com/repo.git"}'
 
         await pilot.click("#create-source-btn")
         await pilot.pause(0.05)
@@ -213,7 +219,9 @@ async def test_ingestion_source_panel_creates_allowed_server_source_and_refreshe
         )
         assert scope_service.list_ingestion_sources.await_count == 2
         assert panel.selected_source == created_source
-        scope_service.list_ingestion_source_items.assert_awaited_with(mode="server", source_id="7")
+        scope_service.list_ingestion_source_items.assert_awaited_with(
+            mode="server", source_id="7"
+        )
 
 
 @pytest.mark.asyncio
@@ -231,7 +239,9 @@ async def test_ingestion_source_panel_does_not_dispatch_create_when_runtime_stat
         await pilot.pause(0.05)
 
         panel.query_one("#create-source-type", Select).value = "git_repository"
-        panel.query_one("#create-config-input", Input).value = '{"repo_url": "https://example.com/repo.git"}'
+        panel.query_one(
+            "#create-config-input", Input
+        ).value = '{"repo_url": "https://example.com/repo.git"}'
 
         app.media_runtime_state.runtime_backend = "local"
 

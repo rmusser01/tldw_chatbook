@@ -9,17 +9,18 @@ from ..base_effect import BaseEffect, register_effect
 @register_effect("hypno_swirl")
 class HypnoSwirlEffect(BaseEffect):
     """A hypnotic, swirling pattern."""
+
     def __init__(self, parent_widget: Any, title: str = "tldw", **kwargs):
         super().__init__(parent_widget, **kwargs)
-        self.width = kwargs.get('width', 80)
-        self.height = kwargs.get('height', 24)
+        self.width = kwargs.get("width", 80)
+        self.height = kwargs.get("height", 24)
         self.title = title
         self.time = 0
         self.chars = ".:*#@"
 
     def update(self) -> Optional[str]:
         self.time += 0.1
-        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        grid = [[" " for _ in range(self.width)] for _ in range(self.height)]
         styles = [[None for _ in range(self.width)] for _ in range(self.height)]
         center_x, center_y = self.width / 2, self.height / 2
 
@@ -36,5 +37,7 @@ class HypnoSwirlEffect(BaseEffect):
                     hue = int((angle * 180 / math.pi)) % 360
                     styles[y][x] = f"hsv({hue},1,1)"
 
-        self._add_centered_text(grid, styles, self.title, self.height // 2, 'bold black')
+        self._add_centered_text(
+            grid, styles, self.title, self.height // 2, "bold black"
+        )
         return self._grid_to_string(grid, styles)

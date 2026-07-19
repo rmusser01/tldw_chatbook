@@ -77,7 +77,9 @@ async def test_card_hides_empty_rows():
         card.show_persona({"id": "p-1", "name": "Archivist", "description": ""})
         await pilot.pause()
         assert pilot.app.query_one("#personas-card-name", Static).display is True
-        assert pilot.app.query_one("#personas-card-description", Static).display is False
+        assert (
+            pilot.app.query_one("#personas-card-description", Static).display is False
+        )
         assert (
             pilot.app.query_one("#personas-card-system-prompt", Static).display is False
         )
@@ -165,7 +167,9 @@ async def test_editor_save_posts_collected_data():
     received = []
 
     class CaptureApp(EditorOnlyApp):
-        def on_persona_profile_save_requested(self, message: PersonaProfileSaveRequested) -> None:
+        def on_persona_profile_save_requested(
+            self, message: PersonaProfileSaveRequested
+        ) -> None:
             received.append(message.data)
 
     app = CaptureApp()
@@ -183,7 +187,9 @@ async def test_editor_save_with_empty_name_blocks_and_shows_error():
     received = []
 
     class CaptureApp(EditorOnlyApp):
-        def on_persona_profile_save_requested(self, message: PersonaProfileSaveRequested) -> None:
+        def on_persona_profile_save_requested(
+            self, message: PersonaProfileSaveRequested
+        ) -> None:
             received.append(message.data)
 
     app = CaptureApp()

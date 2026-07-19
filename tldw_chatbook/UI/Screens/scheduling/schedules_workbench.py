@@ -54,7 +54,9 @@ class SchedulesWorkbench(BaseAppScreen):
         ("ctrl+s", "sync now"),
     )
 
-    def __init__(self, app_instance: "TldwCli", screen_name: str = "schedules", **kwargs):
+    def __init__(
+        self, app_instance: "TldwCli", screen_name: str = "schedules", **kwargs
+    ):
         super().__init__(app_instance, screen_name, **kwargs)
         self._scheduling_service = getattr(app_instance, "scheduling_service", None)
         self._tasks: list[ReminderTask | ScheduledTask] = []
@@ -137,7 +139,9 @@ class SchedulesWorkbench(BaseAppScreen):
         if rows:
             self._update_detail_for_index(0)
         else:
-            self.query_one("#scheduling-task-detail", TaskDetail).set_task(None, queue_empty=True)
+            self.query_one("#scheduling-task-detail", TaskDetail).set_task(
+                None, queue_empty=True
+            )
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
 
         await self._refresh_console_context()
@@ -210,7 +214,9 @@ class SchedulesWorkbench(BaseAppScreen):
                 "Failed to load Schedules Console launch context from local reading digest outputs.",
             )
             return None
-        items = output_listing.get("items") if isinstance(output_listing, Mapping) else None
+        items = (
+            output_listing.get("items") if isinstance(output_listing, Mapping) else None
+        )
         latest_output = next(iter(tuple(items or ())), None)
         if not isinstance(latest_output, Mapping):
             return None
@@ -227,14 +233,17 @@ class SchedulesWorkbench(BaseAppScreen):
             or latest_output.get("schedule_id")
             or ""
         ).strip()
-        title = str(latest_output.get("title") or schedule_name or "Reading digest output").strip()
+        title = str(
+            latest_output.get("title") or schedule_name or "Reading digest output"
+        ).strip()
         item_count = metadata.get("item_count", latest_output.get("item_count"))
         payload = {
             "target_id": f"local:reading_digest_output:{output_id}",
             "output_id": output_id,
             "schedule_id": latest_output.get("schedule_id"),
             "schedule_name": schedule_name or None,
-            "download_url": latest_output.get("download_url") or latest_output.get("storage_path"),
+            "download_url": latest_output.get("download_url")
+            or latest_output.get("storage_path"),
             "created_at": latest_output.get("created_at"),
             "item_count": item_count,
         }
@@ -308,7 +317,9 @@ class SchedulesWorkbench(BaseAppScreen):
             return
         target_id = self._latest_console_follow_item_id
         if target_id:
-            open_active_item_in_console = getattr(self.app_instance, "open_active_home_item_in_console", None)
+            open_active_item_in_console = getattr(
+                self.app_instance, "open_active_home_item_in_console", None
+            )
             if not callable(open_active_item_in_console):
                 self.app_instance.notify(
                     "Console follow is unavailable for Schedules in this runtime.",
@@ -323,7 +334,9 @@ class SchedulesWorkbench(BaseAppScreen):
 
         launch_kwargs = self._latest_console_launch_kwargs
         if launch_kwargs is not None:
-            open_in_console = getattr(self.app_instance, "open_console_for_live_work", None)
+            open_in_console = getattr(
+                self.app_instance, "open_console_for_live_work", None
+            )
             if not callable(open_in_console):
                 self.app_instance.notify(
                     "Console launch is unavailable for Schedules in this runtime.",

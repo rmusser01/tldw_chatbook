@@ -16,11 +16,7 @@ from hypothesis.stateful import RuleBasedStateMachine, rule, Bundle
 # Local Imports
 # Assuming Prompts_DB_v2.py is in a location Python can find.
 # For example, in the same directory or in a package.
-from tldw_chatbook.DB.Prompts_DB import (
-    PromptsDatabase,
-    DatabaseError,
-    ConflictError
-)
+from tldw_chatbook.DB.Prompts_DB import PromptsDatabase, DatabaseError, ConflictError
 
 ########################################################################################################################
 #
@@ -30,15 +26,13 @@ from tldw_chatbook.DB.Prompts_DB import (
 settings.register_profile(
     "db_friendly",
     deadline=1500,  # Increased deadline for potentially slow DB I/O
-    suppress_health_check=[
-        HealthCheck.too_slow,
-        HealthCheck.function_scoped_fixture
-    ]
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
 )
 settings.load_profile("db_friendly")
 
 
 # --- Fixtures ---
+
 
 @pytest.fixture
 def client_id():
@@ -80,7 +74,9 @@ st_optional_text = st.one_of(st.none(), st.text(max_size=500))
 def st_prompt_data(draw):
     """A composite strategy to generate a dictionary of prompt data."""
     # Generate keywords that are unique after normalization
-    keywords = draw(st.lists(st_required_text, max_size=5, unique_by=lambda s: s.strip().lower()))
+    keywords = draw(
+        st.lists(st_required_text, max_size=5, unique_by=lambda s: s.strip().lower())
+    )
 
     return {
         "name": draw(st_required_text),
@@ -98,6 +94,7 @@ st_bad_version_offset = st.integers().filter(lambda x: x != 1)
 
 # --- Test Classes ---
 
+
 class TestPromptProperties:
     """Property-based tests for core Prompt operations."""
 
@@ -109,7 +106,9 @@ class TestPromptProperties:
         """
         try:
             # Use overwrite=False to test the create path; ConflictError is a valid outcome.
-            prompt_id, prompt_uuid, _ = db_instance.add_prompt(**prompt_data, overwrite=False)
+            prompt_id, prompt_uuid, _ = db_instance.add_prompt(
+                **prompt_data, overwrite=False
+            )
         except ConflictError:
             return  # Hypothesis generated a name collision, which is not a failure.
 
@@ -129,13 +128,16 @@ class TestPromptProperties:
         assert not retrieved_prompt["deleted"]
 
         # Compare keywords, which are normalized by the database
-        expected_keywords = sorted([db_instance._normalize_keyword(k) for k in prompt_data["keywords"]])
+        expected_keywords = sorted(
+            [db_instance._normalize_keyword(k) for k in prompt_data["keywords"]]
+        )
         retrieved_keywords = sorted(retrieved_prompt["keywords"])
         assert retrieved_keywords == expected_keywords
 
     @given(initial_prompt=st_prompt_data(), update_payload=st_prompt_data())
-    def test_update_increments_version_and_changes_data(self, db_instance: PromptsDatabase, initial_prompt: dict,
-                                                        update_payload: dict):
+    def test_update_increments_version_and_changes_data(
+        self, db_instance: PromptsDatabase, initial_prompt: dict, update_payload: dict
+    ):
         """
         Property: A successful update must increment the version number by exactly 1
         and correctly apply the new data, including keywords.
@@ -158,16 +160,20 @@ class TestPromptProperties:
 
         updated_prompt = db_instance.fetch_prompt_details(prompt_id)
         assert updated_prompt is not None
-        assert updated_prompt['version'] == original_prompt['version'] + 1
+        assert updated_prompt["version"] == original_prompt["version"] + 1
 
         # Verify the payload was applied
-        assert updated_prompt['name'] == update_payload['name'].strip()
-        assert updated_prompt['author'] == update_payload['author']
-        expected_keywords = sorted([db_instance._normalize_keyword(k) for k in update_payload["keywords"]])
-        assert sorted(updated_prompt['keywords']) == expected_keywords
+        assert updated_prompt["name"] == update_payload["name"].strip()
+        assert updated_prompt["author"] == update_payload["author"]
+        expected_keywords = sorted(
+            [db_instance._normalize_keyword(k) for k in update_payload["keywords"]]
+        )
+        assert sorted(updated_prompt["keywords"]) == expected_keywords
 
     @given(prompt_data=st_prompt_data())
-    def test_soft_delete_makes_item_unfindable(self, db_instance: PromptsDatabase, prompt_data: dict):
+    def test_soft_delete_makes_item_unfindable(
+        self, db_instance: PromptsDatabase, prompt_data: dict
+    ):
         """
         Property: After soft-deleting a prompt, it should not be retrievable by
         default methods, but should exist in the DB with deleted=1.
@@ -186,17 +192,26 @@ class TestPromptProperties:
         assert db_instance.fetch_prompt_details(prompt_id) is None
 
         all_prompts, _, _, _ = db_instance.list_prompts()
-        assert prompt_id not in [p['id'] for p in all_prompts]
+        assert prompt_id not in [p["id"] for p in all_prompts]
 
         # Assert it CAN be found when explicitly requested
         deleted_record = db_instance.get_prompt_by_id(prompt_id, include_deleted=True)
         assert deleted_record is not None
-        assert deleted_record['deleted'] == 1
-        assert deleted_record['version'] == 2  # 1=create, 2=delete
+        assert deleted_record["deleted"] == 1
+        assert deleted_record["version"] == 2  # 1=create, 2=delete
 
-    @given(initial_prompt=st_prompt_data(), update_name=st_required_text, version_offset=st_bad_version_offset)
-    def test_update_with_stale_version_fails_via_trigger(self, db_instance: PromptsDatabase, initial_prompt: dict,
-                                                         update_name: str, version_offset: int):
+    @given(
+        initial_prompt=st_prompt_data(),
+        update_name=st_required_text,
+        version_offset=st_bad_version_offset,
+    )
+    def test_update_with_stale_version_fails_via_trigger(
+        self,
+        db_instance: PromptsDatabase,
+        initial_prompt: dict,
+        update_name: str,
+        version_offset: int,
+    ):
         """
         Property: Attempting a direct DB update with a version that does not increment
         by exactly 1 must be rejected by the database trigger.
@@ -213,8 +228,8 @@ class TestPromptProperties:
         with pytest.raises(DatabaseError) as excinfo:
             db_instance.execute_query(
                 "UPDATE Prompts SET name = ?, version = ? WHERE id = ?",
-                (update_name, original_prompt['version'] + version_offset, prompt_id),
-                commit=True
+                (update_name, original_prompt["version"] + version_offset, prompt_id),
+                commit=True,
             )
         assert "version must increment by exactly 1" in str(excinfo.value).lower()
 
@@ -223,7 +238,9 @@ class TestKeywordAndLinkingProperties:
     """Property-based tests for Keywords and their linking to Prompts."""
 
     @given(keyword_text=st_required_text)
-    def test_keyword_normalization_and_roundtrip(self, db_instance: PromptsDatabase, keyword_text: str):
+    def test_keyword_normalization_and_roundtrip(
+        self, db_instance: PromptsDatabase, keyword_text: str
+    ):
         """
         Property: Adding a keyword normalizes it (lowercase, stripped).
         Retrieving it returns the normalized version.
@@ -234,28 +251,34 @@ class TestKeywordAndLinkingProperties:
 
         retrieved_kw = db_instance.get_active_keyword_by_text(keyword_text)
         assert retrieved_kw is not None
-        assert retrieved_kw['keyword'] == db_instance._normalize_keyword(keyword_text)
+        assert retrieved_kw["keyword"] == db_instance._normalize_keyword(keyword_text)
 
     @given(keyword=st_required_text)
-    def test_add_keyword_is_idempotent_on_undelete(self, db_instance: PromptsDatabase, keyword: str):
+    def test_add_keyword_is_idempotent_on_undelete(
+        self, db_instance: PromptsDatabase, keyword: str
+    ):
         """
         Property: Adding a keyword that was previously soft-deleted should reactivate
         it (not create a new one), and its version should be correctly incremented.
         """
         # 1. Add for the first time
         kw_id_v1, _ = db_instance.add_keyword(keyword)
-        assert db_instance.get_prompt_by_id(kw_id_v1) is not None  # Using wrong get method in original code
+        assert (
+            db_instance.get_prompt_by_id(kw_id_v1) is not None
+        )  # Using wrong get method in original code
         kw_v1 = db_instance.get_active_keyword_by_text(keyword)
-        assert kw_v1['version'] == 1
+        assert kw_v1["version"] == 1
 
         # 2. Soft delete it
         success = db_instance.soft_delete_keyword(keyword)
         assert success is True
 
         # Check raw state
-        raw_kw = db_instance.execute_query("SELECT * FROM PromptKeywordsTable WHERE id=?", (kw_id_v1,)).fetchone()
-        assert raw_kw['deleted'] == 1
-        assert raw_kw['version'] == 2
+        raw_kw = db_instance.execute_query(
+            "SELECT * FROM PromptKeywordsTable WHERE id=?", (kw_id_v1,)
+        ).fetchone()
+        assert raw_kw["deleted"] == 1
+        assert raw_kw["version"] == 2
 
         # 3. Add it again (should trigger undelete)
         kw_id_v3, _ = db_instance.add_keyword(keyword)
@@ -265,16 +288,21 @@ class TestKeywordAndLinkingProperties:
 
         kw_v3 = db_instance.get_active_keyword_by_text(keyword)
         assert kw_v3 is not None
-        assert not db_instance.get_prompt_by_id(kw_v3['id'], include_deleted=True)['deleted']
+        assert not db_instance.get_prompt_by_id(kw_v3["id"], include_deleted=True)[
+            "deleted"
+        ]
         # The version should be 3 (1=create, 2=delete, 3=undelete/update)
-        assert kw_v3['version'] == 3
+        assert kw_v3["version"] == 3
 
     @given(
         prompt_data=st_prompt_data(),
-        new_keywords=st.lists(st_required_text, max_size=5, unique_by=lambda s: s.strip().lower())
+        new_keywords=st.lists(
+            st_required_text, max_size=5, unique_by=lambda s: s.strip().lower()
+        ),
     )
-    def test_update_keywords_for_prompt_links_and_unlinks(self, db_instance: PromptsDatabase, prompt_data: dict,
-                                                          new_keywords: list):
+    def test_update_keywords_for_prompt_links_and_unlinks(
+        self, db_instance: PromptsDatabase, prompt_data: dict, new_keywords: list
+    ):
         """
         Property: Updating keywords for a prompt correctly adds new links,
         removes old ones, and leaves unchanged ones alone.
@@ -285,28 +313,40 @@ class TestKeywordAndLinkingProperties:
             return
 
         # Initial state check
-        initial_expected_kws = sorted([db_instance._normalize_keyword(k) for k in prompt_data['keywords']])
-        assert sorted(db_instance.fetch_keywords_for_prompt(prompt_id)) == initial_expected_kws
+        initial_expected_kws = sorted(
+            [db_instance._normalize_keyword(k) for k in prompt_data["keywords"]]
+        )
+        assert (
+            sorted(db_instance.fetch_keywords_for_prompt(prompt_id))
+            == initial_expected_kws
+        )
 
         # Update the keywords
         db_instance.update_keywords_for_prompt(prompt_id, new_keywords)
 
         # Final state check
-        final_expected_kws = sorted([db_instance._normalize_keyword(k) for k in new_keywords])
-        assert sorted(db_instance.fetch_keywords_for_prompt(prompt_id)) == final_expected_kws
+        final_expected_kws = sorted(
+            [db_instance._normalize_keyword(k) for k in new_keywords]
+        )
+        assert (
+            sorted(db_instance.fetch_keywords_for_prompt(prompt_id))
+            == final_expected_kws
+        )
 
 
 class TestAdvancedProperties:
     """Tests for FTS, Sync Log, and other complex interactions."""
 
     @given(prompt_data=st_prompt_data())
-    def test_soft_deleted_item_is_not_in_fts(self, db_instance: PromptsDatabase, prompt_data: dict):
+    def test_soft_deleted_item_is_not_in_fts(
+        self, db_instance: PromptsDatabase, prompt_data: dict
+    ):
         """
         Property: Once a prompt is soft-deleted, it must not appear in FTS search results.
         """
         # Ensure the name has a unique, searchable term.
         unique_term = str(uuid.uuid4())
-        prompt_data['name'] = f"{prompt_data['name']} {unique_term}"
+        prompt_data["name"] = f"{prompt_data['name']} {unique_term}"
 
         try:
             prompt_id, _, _ = db_instance.add_prompt(**prompt_data)
@@ -316,7 +356,7 @@ class TestAdvancedProperties:
         # 1. Verify it IS searchable before deletion
         results_before, total_before = db_instance.search_prompts(unique_term)
         assert total_before == 1
-        assert results_before[0]['id'] == prompt_id
+        assert results_before[0]["id"] == prompt_id
 
         # 2. Soft-delete the prompt
         db_instance.soft_delete_prompt(prompt_id)
@@ -326,39 +366,58 @@ class TestAdvancedProperties:
         assert total_after == 0
 
     @given(prompt_data=st_prompt_data())
-    def test_add_creates_correct_sync_log_entries(self, db_instance: PromptsDatabase, prompt_data: dict):
+    def test_add_creates_correct_sync_log_entries(
+        self, db_instance: PromptsDatabase, prompt_data: dict
+    ):
         """
         Property: Adding a new prompt must create the correct 'create' and 'link'
         operations in the sync_log.
         """
-        latest_change_id_before = db_instance.get_sync_log_entries(limit=1)[-1][
-            'change_id'] if db_instance.get_sync_log_entries(limit=1) else 0
+        latest_change_id_before = (
+            db_instance.get_sync_log_entries(limit=1)[-1]["change_id"]
+            if db_instance.get_sync_log_entries(limit=1)
+            else 0
+        )
 
         try:
             prompt_id, prompt_uuid, _ = db_instance.add_prompt(**prompt_data)
         except ConflictError:
             return
 
-        new_logs = db_instance.get_sync_log_entries(since_change_id=latest_change_id_before)
+        new_logs = db_instance.get_sync_log_entries(
+            since_change_id=latest_change_id_before
+        )
 
         # Verify 'create' log for the prompt itself
-        prompt_create_logs = [log for log in new_logs if log['entity'] == 'Prompts' and log['operation'] == 'create']
+        prompt_create_logs = [
+            log
+            for log in new_logs
+            if log["entity"] == "Prompts" and log["operation"] == "create"
+        ]
         assert len(prompt_create_logs) == 1
-        assert prompt_create_logs[0]['entity_uuid'] == prompt_uuid
-        assert prompt_create_logs[0]['version'] == 1
+        assert prompt_create_logs[0]["entity_uuid"] == prompt_uuid
+        assert prompt_create_logs[0]["version"] == 1
 
         # Verify 'link' logs for the keywords
-        normalized_keywords = {db_instance._normalize_keyword(k) for k in prompt_data['keywords']}
-        link_logs = [log for log in new_logs if log['entity'] == 'PromptKeywordLinks' and log['operation'] == 'link']
+        normalized_keywords = {
+            db_instance._normalize_keyword(k) for k in prompt_data["keywords"]
+        }
+        link_logs = [
+            log
+            for log in new_logs
+            if log["entity"] == "PromptKeywordLinks" and log["operation"] == "link"
+        ]
         assert len(link_logs) == len(normalized_keywords)
 
         # The payload should contain the composite UUID of prompt_uuid + keyword_uuid
         for log in link_logs:
-            assert log['payload']['prompt_uuid'] == prompt_uuid
-            assert log['entity_uuid'].startswith(prompt_uuid)
+            assert log["payload"]["prompt_uuid"] == prompt_uuid
+            assert log["entity_uuid"].startswith(prompt_uuid)
 
     @given(prompt_data=st_prompt_data())
-    def test_delete_creates_correct_sync_log_entries(self, db_instance: PromptsDatabase, prompt_data: dict):
+    def test_delete_creates_correct_sync_log_entries(
+        self, db_instance: PromptsDatabase, prompt_data: dict
+    ):
         """
         Property: Soft-deleting a prompt must create a 'delete' log for the prompt
         and 'unlink' logs for all its keyword connections.
@@ -368,26 +427,37 @@ class TestAdvancedProperties:
         except ConflictError:
             return
 
-        num_keywords = len(prompt_data['keywords'])
-        latest_change_id_before = db_instance.get_sync_log_entries(limit=1)[-1]['change_id']
+        num_keywords = len(prompt_data["keywords"])
+        latest_change_id_before = db_instance.get_sync_log_entries(limit=1)[-1][
+            "change_id"
+        ]
 
         # Action: Soft delete
         db_instance.soft_delete_prompt(prompt_id)
 
-        new_logs = db_instance.get_sync_log_entries(since_change_id=latest_change_id_before)
+        new_logs = db_instance.get_sync_log_entries(
+            since_change_id=latest_change_id_before
+        )
 
         # Verify 'delete' log for the prompt
-        prompt_delete_logs = [log for log in new_logs if log['entity'] == 'Prompts' and log['operation'] == 'delete']
+        prompt_delete_logs = [
+            log
+            for log in new_logs
+            if log["entity"] == "Prompts" and log["operation"] == "delete"
+        ]
         assert len(prompt_delete_logs) == 1
-        assert prompt_delete_logs[0]['entity_uuid'] == prompt_uuid
-        assert prompt_delete_logs[0]['version'] == 2
+        assert prompt_delete_logs[0]["entity_uuid"] == prompt_uuid
+        assert prompt_delete_logs[0]["version"] == 2
 
         # Verify 'unlink' logs for the keywords
-        unlink_logs = [log for log in new_logs if
-                       log['entity'] == 'PromptKeywordLinks' and log['operation'] == 'unlink']
+        unlink_logs = [
+            log
+            for log in new_logs
+            if log["entity"] == "PromptKeywordLinks" and log["operation"] == "unlink"
+        ]
         assert len(unlink_logs) == num_keywords
         for log in unlink_logs:
-            assert log['payload']['prompt_uuid'] == prompt_uuid
+            assert log["payload"]["prompt_uuid"] == prompt_uuid
 
 
 class TestDataIntegrityAndConcurrency:
@@ -405,7 +475,9 @@ class TestDataIntegrityAndConcurrency:
         with pytest.raises(ConflictError):
             db_instance.add_prompt(**prompt_data, overwrite=False)
 
-    def test_update_prompt_to_conflicting_name_fails(self, db_instance: PromptsDatabase):
+    def test_update_prompt_to_conflicting_name_fails(
+        self, db_instance: PromptsDatabase
+    ):
         """
         Property: Updating a prompt's name to a name that is already used by
         another active prompt must raise a ConflictError.
@@ -439,12 +511,16 @@ class TestDataIntegrityAndConcurrency:
         # If threading.local is working, there should be 5 unique connection IDs.
         assert len(connection_ids) == 5
 
-    def test_wal_mode_allows_concurrent_reads_during_write_transaction(self, db_instance: PromptsDatabase):
+    def test_wal_mode_allows_concurrent_reads_during_write_transaction(
+        self, db_instance: PromptsDatabase
+    ):
         """
         Property: In WAL mode, one thread can read from the DB while another
         thread has an open write transaction.
         """
-        prompt_id, _, _ = db_instance.add_prompt(name="Concurrent Read Test", details="Original")
+        prompt_id, _, _ = db_instance.add_prompt(
+            name="Concurrent Read Test", details="Original"
+        )
 
         write_transaction_started = threading.Event()
         read_result = []
@@ -452,7 +528,9 @@ class TestDataIntegrityAndConcurrency:
         def writer_thread():
             # The update method opens its own transaction
             with db_instance.transaction():
-                db_instance.execute_query("UPDATE Prompts SET details = 'Updated' WHERE id = ?", (prompt_id,))
+                db_instance.execute_query(
+                    "UPDATE Prompts SET details = 'Updated' WHERE id = ?", (prompt_id,)
+                )
                 write_transaction_started.set()  # Signal that the transaction is open
                 time.sleep(0.2)  # Hold the transaction open
             # Transaction commits here
@@ -474,10 +552,13 @@ class TestDataIntegrityAndConcurrency:
         # The reader thread should have completed successfully and read the *original* state.
         assert len(read_result) == 1
         assert read_result[0] is not None
-        assert read_result[0]['details'] == "Original"  # It read the state before the writer committed.
+        assert (
+            read_result[0]["details"] == "Original"
+        )  # It read the state before the writer committed.
 
 
 # --- State Machine Tests ---
+
 
 class PromptLifecycleMachine(RuleBasedStateMachine):
     """
@@ -493,7 +574,7 @@ class PromptLifecycleMachine(RuleBasedStateMachine):
         self.prompt_name = None
         self.is_deleted = True
 
-    prompts = Bundle('prompts')
+    prompts = Bundle("prompts")
 
     @rule(target=prompts, data=st_prompt_data())
     def create_prompt(self, data):
@@ -508,13 +589,13 @@ class PromptLifecycleMachine(RuleBasedStateMachine):
             return
 
         self.prompt_id = new_id
-        self.prompt_name = data['name'].strip()
+        self.prompt_name = data["name"].strip()
         self.is_deleted = False
 
         retrieved = self.db.get_prompt_by_id(self.prompt_id)
         assert retrieved is not None
-        assert retrieved['name'] == self.prompt_name
-        assert retrieved['version'] == 1
+        assert retrieved["name"] == self.prompt_name
+        assert retrieved["version"] == 1
         return self.prompt_id
 
     @rule(prompt_id=prompts, update_data=st_prompt_data())
@@ -522,12 +603,14 @@ class PromptLifecycleMachine(RuleBasedStateMachine):
         if self.prompt_id is None or self.is_deleted:
             return
 
-        original_version = self.db.get_prompt_by_id(prompt_id, include_deleted=True)['version']
+        original_version = self.db.get_prompt_by_id(prompt_id, include_deleted=True)[
+            "version"
+        ]
 
         try:
             self.db.update_prompt_by_id(prompt_id, update_data)
             # If successful, update our internal state
-            self.prompt_name = update_data['name'].strip()
+            self.prompt_name = update_data["name"].strip()
         except ConflictError as e:
             # This is a valid outcome if the new name is taken.
             assert "already exists" in str(e)
@@ -536,15 +619,17 @@ class PromptLifecycleMachine(RuleBasedStateMachine):
 
         retrieved = self.db.get_prompt_by_id(self.prompt_id)
         assert retrieved is not None
-        assert retrieved['version'] == original_version + 1
-        assert retrieved['name'] == self.prompt_name
+        assert retrieved["version"] == original_version + 1
+        assert retrieved["name"] == self.prompt_name
 
     @rule(prompt_id=prompts)
     def soft_delete_prompt(self, prompt_id):
         if self.prompt_id is None or self.is_deleted:
             return
 
-        original_version = self.db.get_prompt_by_id(prompt_id, include_deleted=True)['version']
+        original_version = self.db.get_prompt_by_id(prompt_id, include_deleted=True)[
+            "version"
+        ]
 
         success = self.db.soft_delete_prompt(prompt_id)
         assert success
@@ -556,15 +641,14 @@ class PromptLifecycleMachine(RuleBasedStateMachine):
 
         # Verify its deleted state
         raw_record = self.db.get_prompt_by_id(self.prompt_id, include_deleted=True)
-        assert raw_record['deleted'] == 1
-        assert raw_record['version'] == original_version + 1
+        assert raw_record["deleted"] == 1
+        assert raw_record["version"] == original_version + 1
 
 
 # This is the actual test class that pytest discovers and runs.
 # It inherits the rules and provides the `db_instance` fixture.
 @settings(max_examples=50, stateful_step_count=20)
 class TestPromptLifecycleAsTest(PromptLifecycleMachine):
-
     @pytest.fixture(autouse=True)
     def inject_db(self, db_instance):
         """Injects the clean db_instance fixture into the state machine."""

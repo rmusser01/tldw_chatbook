@@ -61,7 +61,9 @@ READABLE_STATUS_LABELS = {
     "Recovered",
 }
 
-DESIGN_SYSTEM_SPEC = Path("Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md")
+DESIGN_SYSTEM_SPEC = Path(
+    "Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md"
+)
 DESIGN_SYSTEM_TCSS = Path("tldw_chatbook/css/components/_agentic_terminal.tcss")
 CORE_VARIABLES_TCSS = Path("tldw_chatbook/css/core/_variables.tcss")
 MAIN_TCSS = Path("tldw_chatbook/css/main.tcss")

@@ -20,11 +20,14 @@ from .base_dialog import ButtonLabel, FileSystemPickerScreen
 from .parts import DirectoryNavigation
 from .path_maker import MakePath
 
+
 ##############################################################################
 class SelectDirectory(FileSystemPickerScreen):
     """A directory selection dialog."""
 
-    DEFAULT_CSS = FileSystemPickerScreen.DEFAULT_CSS + """
+    DEFAULT_CSS = (
+        FileSystemPickerScreen.DEFAULT_CSS
+        + """
     SelectDirectory InputBar {
         Input { /* Style for the new path input */
             width: 2fr; /* Give it more space than buttons */
@@ -32,6 +35,7 @@ class SelectDirectory(FileSystemPickerScreen):
         }
     }
     """
+    )
 
     def __init__(
         self,
@@ -60,7 +64,7 @@ class SelectDirectory(FileSystemPickerScreen):
 
     def on_mount(self) -> None:
         """Configure the dialog once the DOM is ready."""
-        super().on_mount() # Call parent's on_mount
+        super().on_mount()  # Call parent's on_mount
         navigation = self.query_one(DirectoryNavigation)
         navigation.show_files = False
 
@@ -73,7 +77,9 @@ class SelectDirectory(FileSystemPickerScreen):
         yield Input(id="path_input", placeholder="Type path or select below")
 
     @on(DirectoryNavigation.Changed)
-    def _update_path_input_on_nav_change(self, event: DirectoryNavigation.Changed) -> None:
+    def _update_path_input_on_nav_change(
+        self, event: DirectoryNavigation.Changed
+    ) -> None:
         """Update the display of the current location in the Input widget.
 
         Args:
@@ -85,8 +91,10 @@ class SelectDirectory(FileSystemPickerScreen):
         # For now, the main path label is in FileSystemPickerScreen.
         # This handler is specific to SelectDirectory's path_input.
 
-        super()._on_directory_changed(event) # Call parent handler for main path label and error clearing
-        event.stop() # Stop event propagation if necessary, depending on desired interactions
+        super()._on_directory_changed(
+            event
+        )  # Call parent handler for main path label and error clearing
+        event.stop()  # Stop event propagation if necessary, depending on desired interactions
         path_input = self.query_one("#path_input", Input)
         path_input.value = str(event.control.location)
 
@@ -100,7 +108,9 @@ class SelectDirectory(FileSystemPickerScreen):
             # Attempt to resolve the path
             target_path = MakePath.of(path_value).expanduser().resolve()
             if target_path.is_dir():
-                dir_nav.location = target_path # This will trigger DirectoryNavigation.Changed
+                dir_nav.location = (
+                    target_path  # This will trigger DirectoryNavigation.Changed
+                )
                 # dir_nav.focus() # Optionally refocus directory navigation
             else:
                 self._set_error(f"Not a directory: {target_path.name}")
@@ -111,10 +121,9 @@ class SelectDirectory(FileSystemPickerScreen):
         except PermissionError:
             self._set_error(self.ERROR_PERMISSION_ERROR)
             self.query_one("#path_input", Input).focus()
-        except RuntimeError as e: # For MakePath.expanduser() issues
+        except RuntimeError as e:  # For MakePath.expanduser() issues
             self._set_error(str(e))
             self.query_one("#path_input", Input).focus()
-
 
     @on(Button.Pressed, "#select")
     def _select_directory(self, event: Button.Pressed) -> None:

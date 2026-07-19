@@ -98,7 +98,9 @@ def _seed_cross_workspace_library(app) -> None:
 
 
 @pytest.mark.asyncio
-async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cross_workspace_handoff() -> None:
+async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cross_workspace_handoff() -> (
+    None
+):
     app = _build_test_app()
     _seed_cross_workspace_library(app)
     host = DestinationHarness(app, "library")
@@ -122,11 +124,18 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         # and the policy-prose lines it used to sit above (global browse
         # rule, staging-scope rule, per-source visibility label) are gone —
         # the Handoff row below carries that signal on its own now.
-        active_workspace_row = screen.query_one("#library-workspaces-active-workspace", Static)
+        active_workspace_row = screen.query_one(
+            "#library-workspaces-active-workspace", Static
+        )
         assert active_workspace_row.renderable.plain == "Active · Workspace A"
-        assert "Stage only active-workspace sources into Console, RAG, or agents." not in visible
+        assert (
+            "Stage only active-workspace sources into Console, RAG, or agents."
+            not in visible
+        )
         assert "Workspace: Workspace A" not in visible
-        assert "Browse/search: all Library and Notes items remain visible" not in visible
+        assert (
+            "Browse/search: all Library and Notes items remain visible" not in visible
+        )
         # The Details body intentionally no longer renders a per-source
         # visibility/assignment table (it duplicated Browse ▸ Conversations).
         # Only the workspace summary + handoff count remain here.
@@ -142,7 +151,10 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         assert handoff_row.renderable.plain == "Handoff · 2 eligible, ● 2 blocked"
         assert "Collections: browse and organize; staging is read-only" not in visible
         assert "Import/Export: copy or reference sources" not in visible
-        assert "Workspace selection changes staging, not what you can browse or search" not in visible
+        assert (
+            "Workspace selection changes staging, not what you can browse or search"
+            not in visible
+        )
         # The retired blocked-state callout + "Next:" line are gone; the
         # Handoff row above is now the single source of that signal.
         assert not screen.query("#library-workspace-action-blocked")
@@ -177,30 +189,46 @@ async def test_library_workspaces_empty_state_keeps_recovery_copy_compact() -> N
         # are gone; the Active + Handoff rows below carry the same facts.
         assert "No workspace sources yet." not in visible
         assert "Browse/search still shows every Library and Notes item." not in visible
-        assert "Handoff unavailable until sources exist or are assigned here." not in visible
+        assert (
+            "Handoff unavailable until sources exist or are assigned here."
+            not in visible
+        )
         assert not screen.query("#library-workspaces-empty-title")
         assert not screen.query("#library-workspaces-empty-browse")
         assert not screen.query("#library-workspaces-empty-handoff")
         assert not screen.query("#library-workspaces-visibility")
-        active_workspace_row = screen.query_one("#library-workspaces-active-workspace", Static)
+        active_workspace_row = screen.query_one(
+            "#library-workspaces-active-workspace", Static
+        )
         assert active_workspace_row.renderable.plain == "Active · Local Default"
-        assert "Browse/search: all Library and Notes items remain visible" not in visible
+        assert (
+            "Browse/search: all Library and Notes items remain visible" not in visible
+        )
         handoff_row = screen.query_one("#library-workspaces-handoff", Static)
-        assert handoff_row.renderable.plain == "Handoff · unavailable until sources exist"
+        assert (
+            handoff_row.renderable.plain == "Handoff · unavailable until sources exist"
+        )
         # The retired blocked/fix callout is gone; the Handoff row above is
         # the only place this state renders now.
         assert not screen.query("#library-workspace-action-blocked")
         assert not screen.query("#library-workspace-action-next-step")
         assert "Blocked: no workspace sources" not in visible
         assert "Fix: import or assign sources to Local Default" not in visible
-        assert "No Library sources are available for workspace authority preview." not in visible
+        assert (
+            "No Library sources are available for workspace authority preview."
+            not in visible
+        )
         assert "Console/RAG handoff: local default source snapshot" not in visible
         assert "Source Workspace Visible Console/RAG" not in visible
         assert "Recovery" not in visible
-        assert "Fix: add Library sources or assign sources to Local Default" not in visible
+        assert (
+            "Fix: add Library sources or assign sources to Local Default" not in visible
+        )
         # The Import sources action is a real action and survives when there
         # are no workspace sources yet.
-        import_sources_button = screen.query_one("#library-workspace-import-sources", Button)
+        import_sources_button = screen.query_one(
+            "#library-workspace-import-sources", Button
+        )
         assert import_sources_button.disabled is False
 
 
@@ -226,7 +254,9 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
         assert active_workspace.name == "Workspace 1"
 
         visible = _visible_text(screen)
-        active_workspace_row = screen.query_one("#library-workspaces-active-workspace", Static)
+        active_workspace_row = screen.query_one(
+            "#library-workspaces-active-workspace", Static
+        )
         assert active_workspace_row.renderable.plain == "Active · Workspace 1"
         assert "Create local workspace" in visible
         assert "Server sync WIP · local only" in visible
@@ -245,7 +275,9 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
         # Collapse the other rail sections first so the Details body has the
         # most headroom at this terminal height.
         for section in ("browse", "create", "ingest"):
-            screen.query_one(f"#console-rail-section-toggle-library-{section}", Button).press()
+            screen.query_one(
+                f"#console-rail-section-toggle-library-{section}", Button
+            ).press()
             await pilot.pause()
         await _open_library_details(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
@@ -271,12 +303,16 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
         assert active_workspace.workspace_id == "workspace-local-1"
         assert active_workspace.name == "Workspace 1"
 
-        active_workspace_row = screen.query_one("#library-workspaces-active-workspace", Static)
+        active_workspace_row = screen.query_one(
+            "#library-workspaces-active-workspace", Static
+        )
         assert active_workspace_row.renderable.plain == "Active · Workspace 1"
 
 
 @pytest.mark.asyncio
-async def test_library_workspaces_create_skips_archived_local_workspace_identity() -> None:
+async def test_library_workspaces_create_skips_archived_local_workspace_identity() -> (
+    None
+):
     app = _build_test_app()
     service = app.workspace_registry_service
     service.create_workspace(
@@ -380,7 +416,9 @@ async def test_library_workspaces_refresh_reuses_depth_state_for_panel_and_actio
 
 
 @pytest.mark.asyncio
-async def test_library_details_section_renders_grouped_headers_and_drops_policy_prose() -> None:
+async def test_library_details_section_renders_grouped_headers_and_drops_policy_prose() -> (
+    None
+):
     """The Details section groups content under three bold headers and no
     longer restates the blocked-handoff state three different ways (a line +
     two bordered callouts + a "Next:" line)."""

@@ -65,7 +65,9 @@ async def test_server_mode_loads_source_detail_on_mount(
     mock_app_instance: MagicMock,
     widget_pilot,
 ) -> None:
-    async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+    async with await widget_pilot(
+        MediaIngestWindowRebuilt, app_instance=mock_app_instance
+    ) as pilot:
         window = pilot.app.test_widget
         await pilot.pause(0.4)
 
@@ -82,7 +84,9 @@ async def test_server_mode_save_sync_and_upload_use_scope_service(
     mock_scope_service: MagicMock,
     widget_pilot,
 ) -> None:
-    async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+    async with await widget_pilot(
+        MediaIngestWindowRebuilt, app_instance=mock_app_instance
+    ) as pilot:
         window = pilot.app.test_widget
         await pilot.pause(0.4)
 

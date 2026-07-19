@@ -5,8 +5,12 @@ from typing import Any, Callable, TYPE_CHECKING
 
 from loguru import logger
 
-from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer, classify_backend_exception
+from tldw_chatbook.runtime_policy.enforcement import (
+    ServicePolicyEnforcer,
+    classify_backend_exception,
+)
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api.mcp_unified_schemas import UnifiedMCPAccessContext
 
@@ -53,7 +57,9 @@ class ServerUnifiedMCPService:
             await client.get_status()
         except Exception as exc:
             status_error = exc
-            logger.debug("Unified MCP status probe failed for {}: {}", target.server_id, exc)
+            logger.debug(
+                "Unified MCP status probe failed for {}: {}", target.server_id, exc
+            )
 
         bootstrap = await self._bootstrap_access_context(client)
         effective_scope, effective_scope_ref = self._normalize_scope_selection(
@@ -67,7 +73,10 @@ class ServerUnifiedMCPService:
             selected_scope=effective_scope,
             selected_scope_ref=effective_scope_ref,
         )
-        section_capabilities, endpoint_capabilities = await self._probe_section_capabilities(
+        (
+            section_capabilities,
+            endpoint_capabilities,
+        ) = await self._probe_section_capabilities(
             client=client,
             access_context=api_access_context,
             overview_allowed=status_error is None,
@@ -109,7 +118,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.runtime.observe.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         cache_key = self._cache_key(
             section="overview",
@@ -146,7 +157,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.inventory.list.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         cache_key = self._cache_key(
             section="inventory",
@@ -186,7 +199,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.catalogs.list.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         cache_key = self._cache_key(
             section="catalogs",
@@ -231,7 +246,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.external_servers.list.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         client = self._client_for_target(target)
         owner_scope_type, owner_scope_id = self._external_owner_scope(access_context)
@@ -255,7 +272,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.governance.list.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         client = self._client_for_target(target)
         owner_scope_type, owner_scope_id = self._governance_owner_scope(access_context)
@@ -298,7 +317,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.list.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         cache_key = self._cache_key(
             section="advanced",
@@ -312,7 +333,9 @@ class ServerUnifiedMCPService:
 
         client = self._client_for_target(target)
         owner_scope_type, owner_scope_id = self._governance_owner_scope(access_context)
-        capability_scope_type, capability_scope_id = self._capability_mapping_owner_scope(access_context)
+        capability_scope_type, capability_scope_id = (
+            self._capability_mapping_owner_scope(access_context)
+        )
         tool_registry_summary = await client.get_tool_registry_summary()
         tool_registry_entries = await client.list_tool_registry_entries()
         tool_registry_modules = await client.list_tool_registry_modules()
@@ -360,7 +383,9 @@ class ServerUnifiedMCPService:
             "tool_registry_summary": self._envelope_payload(tool_registry_summary),
             "tool_registry_entries": self._response_items(tool_registry_entries),
             "tool_registry_modules": self._response_items(tool_registry_modules),
-            "capability_mappings": self._response_items(capability_mappings) if capability_mappings is not None else [],
+            "capability_mappings": self._response_items(capability_mappings)
+            if capability_mappings is not None
+            else [],
             "governance_packs": self._response_items(governance_packs),
             "governance_pack_trust_policy": (
                 self._envelope_payload(governance_pack_trust_policy)
@@ -369,8 +394,12 @@ class ServerUnifiedMCPService:
             ),
             "path_scope_objects": self._response_items(path_scope_objects),
             "workspace_set_objects": self._response_items(workspace_set_objects),
-            "shared_workspaces": self._response_items(shared_workspaces) if shared_workspaces is not None else [],
-            "governance_audit_findings": self._envelope_payload(governance_audit_findings),
+            "shared_workspaces": self._response_items(shared_workspaces)
+            if shared_workspaces is not None
+            else [],
+            "governance_audit_findings": self._envelope_payload(
+                governance_audit_findings
+            ),
             "cache_mode": "stale_allowed",
         }
         self._browse_cache[cache_key] = payload
@@ -384,11 +413,15 @@ class ServerUnifiedMCPService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api.mcp_unified_schemas import ScopedToolCatalogCreateRequest
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import (
+            ScopedToolCatalogCreateRequest,
+        )
 
         self._require_allowed(
             action_id="mcp.catalogs.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -418,11 +451,15 @@ class ServerUnifiedMCPService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api.mcp_unified_schemas import ScopedToolCatalogEntryCreateRequest
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import (
+            ScopedToolCatalogEntryCreateRequest,
+        )
 
         self._require_allowed(
             action_id="mcp.catalogs.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -453,7 +490,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.catalogs.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -484,7 +523,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.catalogs.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -514,11 +555,15 @@ class ServerUnifiedMCPService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api.mcp_unified_schemas import ExternalServerCreateRequest
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import (
+            ExternalServerCreateRequest,
+        )
 
         self._require_allowed(
             action_id="mcp.external_servers.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -535,7 +580,9 @@ class ServerUnifiedMCPService:
             merged_payload["owner_scope_type"] = owner_scope_type
         if owner_scope_id is not None:
             merged_payload["owner_scope_id"] = owner_scope_id
-        created = await client.create_external_server(ExternalServerCreateRequest(**merged_payload))
+        created = await client.create_external_server(
+            ExternalServerCreateRequest(**merged_payload)
+        )
         self.invalidate_cache(
             section="external_servers",
             server_id=target.server_id,
@@ -553,11 +600,15 @@ class ServerUnifiedMCPService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api.mcp_unified_schemas import ExternalServerUpdateRequest
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import (
+            ExternalServerUpdateRequest,
+        )
 
         self._require_allowed(
             action_id="mcp.external_servers.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -595,7 +646,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.external_servers.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -621,7 +674,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.external_servers.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -647,11 +702,15 @@ class ServerUnifiedMCPService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api.mcp_unified_schemas import ExternalServerAuthTemplateUpdateRequest
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import (
+            ExternalServerAuthTemplateUpdateRequest,
+        )
 
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -675,10 +734,14 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.credentials.list.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         client = self._client_for_target(target)
-        response = await client.list_external_server_credential_slots(server_id=server_id)
+        response = await client.list_external_server_credential_slots(
+            server_id=server_id
+        )
         return {
             "server_id": target.server_id,
             "selected_scope": access_context.selected_scope,
@@ -697,11 +760,15 @@ class ServerUnifiedMCPService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api.mcp_unified_schemas import ExternalServerCredentialSlotCreateRequest
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import (
+            ExternalServerCredentialSlotCreateRequest,
+        )
 
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -726,11 +793,15 @@ class ServerUnifiedMCPService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api.mcp_unified_schemas import ExternalServerCredentialSlotUpdateRequest
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import (
+            ExternalServerCredentialSlotUpdateRequest,
+        )
 
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -756,7 +827,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -764,7 +837,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        deleted = await client.delete_external_server_credential_slot(server_id=server_id, slot_name=slot_name)
+        deleted = await client.delete_external_server_credential_slot(
+            server_id=server_id, slot_name=slot_name
+        )
         self.invalidate_cache(section="external_servers", server_id=target.server_id)
         return self._envelope_payload(deleted)
 
@@ -782,7 +857,9 @@ class ServerUnifiedMCPService:
 
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -808,7 +885,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -816,7 +895,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        deleted = await client.clear_external_server_slot_secret(server_id=server_id, slot_name=slot_name)
+        deleted = await client.clear_external_server_slot_secret(
+            server_id=server_id, slot_name=slot_name
+        )
         self.invalidate_cache(section="external_servers", server_id=target.server_id)
         return self._envelope_payload(deleted)
 
@@ -828,11 +909,15 @@ class ServerUnifiedMCPService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api.mcp_unified_schemas import PermissionProfileCreateRequest
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import (
+            PermissionProfileCreateRequest,
+        )
 
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -841,7 +926,9 @@ class ServerUnifiedMCPService:
         )
         client = self._client_for_target(target)
         request_payload = self._strip_scope_fields(payload)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         created = await client.create_permission_profile(
             PermissionProfileCreateRequest(
                 **request_payload,
@@ -860,11 +947,15 @@ class ServerUnifiedMCPService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api.mcp_unified_schemas import PermissionProfileUpdateRequest
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import (
+            PermissionProfileUpdateRequest,
+        )
 
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -887,7 +978,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -906,11 +999,15 @@ class ServerUnifiedMCPService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api.mcp_unified_schemas import PolicyAssignmentCreateRequest
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import (
+            PolicyAssignmentCreateRequest,
+        )
 
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -919,7 +1016,9 @@ class ServerUnifiedMCPService:
         )
         client = self._client_for_target(target)
         request_payload = self._strip_scope_fields(payload)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         created = await client.create_policy_assignment(
             PolicyAssignmentCreateRequest(
                 **request_payload,
@@ -938,11 +1037,15 @@ class ServerUnifiedMCPService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api.mcp_unified_schemas import PolicyAssignmentUpdateRequest
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import (
+            PolicyAssignmentUpdateRequest,
+        )
 
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -965,7 +1068,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -985,10 +1090,14 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.governance.observe.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         client = self._client_for_target(target)
-        payload = await client.get_policy_assignment_override(assignment_id=assignment_id)
+        payload = await client.get_policy_assignment_override(
+            assignment_id=assignment_id
+        )
         return self._envelope_payload(payload)
 
     async def upsert_policy_assignment_override(
@@ -1000,11 +1109,15 @@ class ServerUnifiedMCPService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api.mcp_unified_schemas import PolicyOverrideUpsertRequest
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import (
+            PolicyOverrideUpsertRequest,
+        )
 
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -1027,7 +1140,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -1035,7 +1150,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"personal", "team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        deleted = await client.delete_policy_assignment_override(assignment_id=assignment_id)
+        deleted = await client.delete_policy_assignment_override(
+            assignment_id=assignment_id
+        )
         return self._envelope_payload(deleted)
 
     async def create_approval_policy(
@@ -1046,11 +1163,15 @@ class ServerUnifiedMCPService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api.mcp_unified_schemas import ApprovalPolicyCreateRequest
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import (
+            ApprovalPolicyCreateRequest,
+        )
 
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1059,7 +1180,9 @@ class ServerUnifiedMCPService:
         )
         client = self._client_for_target(target)
         request_payload = self._strip_scope_fields(payload)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         created = await client.create_approval_policy(
             ApprovalPolicyCreateRequest(
                 **request_payload,
@@ -1078,11 +1201,15 @@ class ServerUnifiedMCPService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api.mcp_unified_schemas import ApprovalPolicyUpdateRequest
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import (
+            ApprovalPolicyUpdateRequest,
+        )
 
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -1105,7 +1232,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -1113,7 +1242,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"personal", "team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        deleted = await client.delete_approval_policy(approval_policy_id=approval_policy_id)
+        deleted = await client.delete_approval_policy(
+            approval_policy_id=approval_policy_id
+        )
         return self._envelope_payload(deleted)
 
     async def create_approval_decision(
@@ -1124,11 +1255,15 @@ class ServerUnifiedMCPService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from tldw_chatbook.tldw_api.mcp_unified_schemas import ApprovalDecisionCreateRequest
+        from tldw_chatbook.tldw_api.mcp_unified_schemas import (
+            ApprovalDecisionCreateRequest,
+        )
 
         self._require_allowed(
             action_id="mcp.governance.approve.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         client = self._client_for_target(target)
         created = await client.create_approval_decision(
@@ -1148,7 +1283,9 @@ class ServerUnifiedMCPService:
 
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1157,7 +1294,9 @@ class ServerUnifiedMCPService:
         )
         client = self._client_for_target(target)
         request_payload = self._strip_scope_fields(payload)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         created = await client.create_acp_profile(
             ACPProfileCreateRequest(
                 **request_payload,
@@ -1180,7 +1319,9 @@ class ServerUnifiedMCPService:
 
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -1203,7 +1344,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -1223,10 +1366,14 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.effective_access.observe.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         client = self._client_for_target(target)
-        payload = await client.get_assignment_external_access(assignment_id=assignment_id)
+        payload = await client.get_assignment_external_access(
+            assignment_id=assignment_id
+        )
         return self._envelope_payload(payload)
 
     async def list_policy_assignment_workspaces(
@@ -1238,7 +1385,9 @@ class ServerUnifiedMCPService:
     ) -> list[dict[str, Any]]:
         self._require_allowed(
             action_id="mcp.governance.observe.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._assert_policy_assignment_visible_in_scope(
             target=target,
@@ -1246,7 +1395,9 @@ class ServerUnifiedMCPService:
             assignment_id=assignment_id,
         )
         client = self._client_for_target(target)
-        response = await client.list_policy_assignment_workspaces(assignment_id=assignment_id)
+        response = await client.list_policy_assignment_workspaces(
+            assignment_id=assignment_id
+        )
         return self._response_items(response)
 
     async def add_policy_assignment_workspace(
@@ -1259,7 +1410,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1288,7 +1441,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.governance.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1316,7 +1471,9 @@ class ServerUnifiedMCPService:
     ) -> list[dict[str, Any]]:
         self._require_allowed(
             action_id="mcp.credentials.list.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._assert_permission_profile_visible_in_scope(
             target=target,
@@ -1339,7 +1496,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1379,7 +1538,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1416,7 +1577,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.credentials.list.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._assert_permission_profile_visible_in_scope(
             target=target,
@@ -1440,7 +1603,9 @@ class ServerUnifiedMCPService:
     ) -> list[dict[str, Any]]:
         self._require_allowed(
             action_id="mcp.credentials.list.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._assert_policy_assignment_visible_in_scope(
             target=target,
@@ -1448,7 +1613,9 @@ class ServerUnifiedMCPService:
             assignment_id=assignment_id,
         )
         client = self._client_for_target(target)
-        response = await client.list_assignment_credential_bindings(assignment_id=assignment_id)
+        response = await client.list_assignment_credential_bindings(
+            assignment_id=assignment_id
+        )
         return self._response_items(response)
 
     async def upsert_assignment_credential_binding(
@@ -1463,7 +1630,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1503,7 +1672,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1540,7 +1711,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.credentials.list.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._assert_policy_assignment_visible_in_scope(
             target=target,
@@ -1568,7 +1741,9 @@ class ServerUnifiedMCPService:
 
         self._require_allowed(
             action_id="mcp.credentials.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -1592,11 +1767,15 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         self._require_system_admin_scope(access_context)
         client = self._client_for_target(target)
-        updated = await client.update_governance_pack_trust_policy(self._strip_scope_fields(payload))
+        updated = await client.update_governance_pack_trust_policy(
+            self._strip_scope_fields(payload)
+        )
         self.invalidate_cache(section="advanced", server_id=target.server_id)
         return self._envelope_payload(updated)
 
@@ -1609,7 +1788,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.trigger.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1617,7 +1798,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"personal", "team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         result = await client.dry_run_governance_pack(
             self._with_owner_scope(
                 payload,
@@ -1636,7 +1819,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.trigger.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         await self._revalidate_mutation_scope(
             target=target,
@@ -1656,7 +1841,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.trigger.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1664,7 +1851,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"personal", "team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         result = await client.dry_run_governance_pack_source(
             self._with_owner_scope(
                 payload,
@@ -1683,7 +1872,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.trigger.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1696,7 +1887,9 @@ class ServerUnifiedMCPService:
             governance_pack_id=governance_pack_id,
         )
         client = self._client_for_target(target)
-        result = await client.check_governance_pack_updates(governance_pack_id=governance_pack_id)
+        result = await client.check_governance_pack_updates(
+            governance_pack_id=governance_pack_id
+        )
         return self._envelope_payload(result)
 
     async def prepare_governance_pack_upgrade_candidate(
@@ -1708,7 +1901,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.trigger.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1721,7 +1916,9 @@ class ServerUnifiedMCPService:
             governance_pack_id=governance_pack_id,
         )
         client = self._client_for_target(target)
-        result = await client.prepare_governance_pack_upgrade_candidate(governance_pack_id=governance_pack_id)
+        result = await client.prepare_governance_pack_upgrade_candidate(
+            governance_pack_id=governance_pack_id
+        )
         return self._envelope_payload(result)
 
     async def dry_run_governance_pack_upgrade(
@@ -1733,7 +1930,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.trigger.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1743,10 +1942,14 @@ class ServerUnifiedMCPService:
         await self._assert_governance_pack_visible_in_scope(
             target=target,
             access_context=refreshed_context,
-            governance_pack_id=self._require_payload_field(payload, "source_governance_pack_id"),
+            governance_pack_id=self._require_payload_field(
+                payload, "source_governance_pack_id"
+            ),
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         result = await client.dry_run_governance_pack_upgrade(
             self._with_owner_scope(
                 payload,
@@ -1765,7 +1968,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.trigger.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1775,10 +1980,14 @@ class ServerUnifiedMCPService:
         await self._assert_governance_pack_visible_in_scope(
             target=target,
             access_context=refreshed_context,
-            governance_pack_id=self._require_payload_field(payload, "source_governance_pack_id"),
+            governance_pack_id=self._require_payload_field(
+                payload, "source_governance_pack_id"
+            ),
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         result = await client.dry_run_governance_pack_source_upgrade(
             self._with_owner_scope(
                 payload,
@@ -1797,7 +2006,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1805,7 +2016,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"personal", "team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         result = await client.import_governance_pack(
             self._with_owner_scope(
                 payload,
@@ -1825,7 +2038,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1833,7 +2048,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"personal", "team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         result = await client.import_governance_pack_source(
             self._with_owner_scope(
                 payload,
@@ -1853,7 +2070,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1863,10 +2082,14 @@ class ServerUnifiedMCPService:
         await self._assert_governance_pack_visible_in_scope(
             target=target,
             access_context=refreshed_context,
-            governance_pack_id=self._require_payload_field(payload, "source_governance_pack_id"),
+            governance_pack_id=self._require_payload_field(
+                payload, "source_governance_pack_id"
+            ),
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         result = await client.execute_governance_pack_source_upgrade(
             self._with_owner_scope(
                 payload,
@@ -1886,7 +2109,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1896,10 +2121,14 @@ class ServerUnifiedMCPService:
         await self._assert_governance_pack_visible_in_scope(
             target=target,
             access_context=refreshed_context,
-            governance_pack_id=self._require_payload_field(payload, "source_governance_pack_id"),
+            governance_pack_id=self._require_payload_field(
+                payload, "source_governance_pack_id"
+            ),
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         result = await client.execute_governance_pack_upgrade(
             self._with_owner_scope(
                 payload,
@@ -1919,7 +2148,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.observe.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1932,7 +2163,9 @@ class ServerUnifiedMCPService:
             governance_pack_id=governance_pack_id,
         )
         client = self._client_for_target(target)
-        result = await client.get_governance_pack_detail(governance_pack_id=governance_pack_id)
+        result = await client.get_governance_pack_detail(
+            governance_pack_id=governance_pack_id
+        )
         return self._envelope_payload(result)
 
     async def list_governance_pack_upgrade_history(
@@ -1944,7 +2177,9 @@ class ServerUnifiedMCPService:
     ) -> list[dict[str, Any]]:
         self._require_allowed(
             action_id="mcp.advanced.observe.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1957,7 +2192,9 @@ class ServerUnifiedMCPService:
             governance_pack_id=governance_pack_id,
         )
         client = self._client_for_target(target)
-        result = await client.list_governance_pack_upgrade_history(governance_pack_id=governance_pack_id)
+        result = await client.list_governance_pack_upgrade_history(
+            governance_pack_id=governance_pack_id
+        )
         return self._response_items(result)
 
     async def create_path_scope_object(
@@ -1969,7 +2206,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -1977,7 +2216,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"personal", "team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         request_payload = {
             **self._strip_scope_fields(payload),
             "owner_scope_type": owner_scope_type,
@@ -1996,7 +2237,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -2004,7 +2247,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._capability_mapping_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._capability_mapping_owner_scope(
+            refreshed_context
+        )
         preview = await client.preview_capability_mapping(
             self._with_owner_scope(
                 payload,
@@ -2023,7 +2268,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -2031,7 +2278,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._capability_mapping_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._capability_mapping_owner_scope(
+            refreshed_context
+        )
         created = await client.create_capability_mapping(
             self._with_owner_scope(
                 payload,
@@ -2052,7 +2301,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -2060,7 +2311,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._capability_mapping_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._capability_mapping_owner_scope(
+            refreshed_context
+        )
         await self._assert_advanced_object_visible_in_scope(
             object_id=capability_adapter_mapping_id,
             object_label="capability mapping",
@@ -2085,7 +2338,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -2093,7 +2348,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._capability_mapping_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._capability_mapping_owner_scope(
+            refreshed_context
+        )
         await self._assert_advanced_object_visible_in_scope(
             object_id=capability_adapter_mapping_id,
             object_label="capability mapping",
@@ -2118,7 +2375,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -2126,7 +2385,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"personal", "team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         await self._assert_advanced_object_visible_in_scope(
             object_id=path_scope_object_id,
             object_label="path scope object",
@@ -2151,7 +2412,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -2159,7 +2422,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"personal", "team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         await self._assert_advanced_object_visible_in_scope(
             object_id=path_scope_object_id,
             object_label="path scope object",
@@ -2168,7 +2433,9 @@ class ServerUnifiedMCPService:
                 owner_scope_id=owner_scope_id,
             ),
         )
-        deleted = await client.delete_path_scope_object(path_scope_object_id=path_scope_object_id)
+        deleted = await client.delete_path_scope_object(
+            path_scope_object_id=path_scope_object_id
+        )
         self.invalidate_cache(section="advanced", server_id=target.server_id)
         return self._envelope_payload(deleted)
 
@@ -2181,7 +2448,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -2189,7 +2458,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"personal", "team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         created = await client.create_workspace_set_object(
             self._with_owner_scope(
                 payload,
@@ -2210,7 +2481,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -2218,7 +2491,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"personal", "team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         await self._assert_advanced_object_visible_in_scope(
             object_id=workspace_set_object_id,
             object_label="workspace set",
@@ -2243,7 +2518,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -2251,7 +2528,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"personal", "team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         await self._assert_advanced_object_visible_in_scope(
             object_id=workspace_set_object_id,
             object_label="workspace set",
@@ -2260,7 +2539,9 @@ class ServerUnifiedMCPService:
                 owner_scope_id=owner_scope_id,
             ),
         )
-        deleted = await client.delete_workspace_set_object(workspace_set_object_id=workspace_set_object_id)
+        deleted = await client.delete_workspace_set_object(
+            workspace_set_object_id=workspace_set_object_id
+        )
         self.invalidate_cache(section="advanced", server_id=target.server_id)
         return self._envelope_payload(deleted)
 
@@ -2273,7 +2554,9 @@ class ServerUnifiedMCPService:
     ) -> list[dict[str, Any]]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -2281,7 +2564,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"personal", "team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         await self._assert_advanced_object_visible_in_scope(
             object_id=workspace_set_object_id,
             object_label="workspace set",
@@ -2290,7 +2575,9 @@ class ServerUnifiedMCPService:
                 owner_scope_id=owner_scope_id,
             ),
         )
-        members = await client.list_workspace_set_members(workspace_set_object_id=workspace_set_object_id)
+        members = await client.list_workspace_set_members(
+            workspace_set_object_id=workspace_set_object_id
+        )
         return self._response_items(members)
 
     async def add_workspace_set_member(
@@ -2303,7 +2590,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -2311,7 +2600,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"personal", "team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         await self._assert_advanced_object_visible_in_scope(
             object_id=workspace_set_object_id,
             object_label="workspace set",
@@ -2337,7 +2628,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -2345,7 +2638,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"personal", "team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._governance_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._governance_owner_scope(
+            refreshed_context
+        )
         await self._assert_advanced_object_visible_in_scope(
             object_id=workspace_set_object_id,
             object_label="workspace set",
@@ -2370,7 +2665,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -2378,7 +2675,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._shared_workspace_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._shared_workspace_owner_scope(
+            refreshed_context
+        )
         created = await client.create_shared_workspace(
             self._with_owner_scope(
                 payload,
@@ -2399,7 +2698,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -2407,7 +2708,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._shared_workspace_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._shared_workspace_owner_scope(
+            refreshed_context
+        )
         await self._assert_advanced_object_visible_in_scope(
             object_id=shared_workspace_id,
             object_label="shared workspace",
@@ -2432,7 +2735,9 @@ class ServerUnifiedMCPService:
     ) -> dict[str, Any]:
         self._require_allowed(
             action_id="mcp.advanced.configure.server",
-            runtime_state_override=self._runtime_state_for_target(target, access_context),
+            runtime_state_override=self._runtime_state_for_target(
+                target, access_context
+            ),
         )
         refreshed_context = await self._revalidate_mutation_scope(
             target=target,
@@ -2440,7 +2745,9 @@ class ServerUnifiedMCPService:
             allowed_scopes={"team", "org", "system_admin"},
         )
         client = self._client_for_target(target)
-        owner_scope_type, owner_scope_id = self._shared_workspace_owner_scope(refreshed_context)
+        owner_scope_type, owner_scope_id = self._shared_workspace_owner_scope(
+            refreshed_context
+        )
         await self._assert_advanced_object_visible_in_scope(
             object_id=shared_workspace_id,
             object_label="shared workspace",
@@ -2449,7 +2756,9 @@ class ServerUnifiedMCPService:
                 owner_scope_id=owner_scope_id,
             ),
         )
-        deleted = await client.delete_shared_workspace(shared_workspace_id=shared_workspace_id)
+        deleted = await client.delete_shared_workspace(
+            shared_workspace_id=shared_workspace_id
+        )
         self.invalidate_cache(section="advanced", server_id=target.server_id)
         return self._envelope_payload(deleted)
 
@@ -2484,7 +2793,9 @@ class ServerUnifiedMCPService:
                 continue
             if server_id is not None and key_server_id != server_id:
                 continue
-            if selected_scope is not None and key_scope != (selected_scope or "personal"):
+            if selected_scope is not None and key_scope != (
+                selected_scope or "personal"
+            ):
                 continue
             if selected_scope_ref is not None and key_scope_ref != selected_scope_ref:
                 continue
@@ -2537,7 +2848,9 @@ class ServerUnifiedMCPService:
                 await method(access_context=access_context)
             except Exception as exc:
                 endpoint_capabilities[endpoint_id] = False
-                logger.debug("Unified MCP endpoint probe {} failed: {}", endpoint_id, exc)
+                logger.debug(
+                    "Unified MCP endpoint probe {} failed: {}", endpoint_id, exc
+                )
                 return False
             endpoint_capabilities[endpoint_id] = True
             return True
@@ -2547,7 +2860,9 @@ class ServerUnifiedMCPService:
         inventory_prompts = await _probe("prompts.list", "list_prompts")
         catalogs = await _probe("catalogs.list", "list_visible_tool_catalogs")
         governance = await _probe("governance.list", "list_permission_profiles")
-        external_servers = await _probe("external_servers.list", "list_external_servers")
+        external_servers = await _probe(
+            "external_servers.list", "list_external_servers"
+        )
         advanced = await _probe("advanced.list", "get_tool_registry_summary")
         return (
             SectionCapabilityFlags(
@@ -2569,7 +2884,9 @@ class ServerUnifiedMCPService:
                 self._client_cache[target.server_id] = client
             return client
         if self.client is None:
-            raise ValueError("A Unified MCP server client or client_factory is required.")
+            raise ValueError(
+                "A Unified MCP server client or client_factory is required."
+            )
         return self.client
 
     def _normalize_scope_selection(
@@ -2582,7 +2899,11 @@ class ServerUnifiedMCPService:
         can_use_system_admin_scope: bool,
     ) -> tuple[str, str | None]:
         normalized_scope = str(selected_scope or "personal").strip() or "personal"
-        normalized_scope_ref = str(selected_scope_ref).strip() if selected_scope_ref not in (None, "") else None
+        normalized_scope_ref = (
+            str(selected_scope_ref).strip()
+            if selected_scope_ref not in (None, "")
+            else None
+        )
         valid_team_ids = {str(item) for item in manageable_team_ids}
         valid_org_ids = {str(item) for item in manageable_org_ids}
 
@@ -2686,13 +3007,19 @@ class ServerUnifiedMCPService:
     def _shared_workspace_owner_scope(
         access_context: ServerAccessContext,
     ) -> tuple[str, int | None]:
-        owner_scope_type, owner_scope_id = ServerUnifiedMCPService._governance_owner_scope(access_context)
+        owner_scope_type, owner_scope_id = (
+            ServerUnifiedMCPService._governance_owner_scope(access_context)
+        )
         if owner_scope_type == "user":
-            raise ValueError("Selected server scope is not valid for this advanced mutation.")
+            raise ValueError(
+                "Selected server scope is not valid for this advanced mutation."
+            )
         return owner_scope_type, owner_scope_id
 
     @staticmethod
-    def _effective_policy_scope_filters(access_context: ServerAccessContext) -> dict[str, int]:
+    def _effective_policy_scope_filters(
+        access_context: ServerAccessContext,
+    ) -> dict[str, int]:
         selected_scope = access_context.selected_scope or "personal"
         scope_ref = access_context.selected_scope_ref
         if selected_scope == "team" and scope_ref not in (None, ""):
@@ -2736,7 +3063,9 @@ class ServerUnifiedMCPService:
         for item in items:
             if isinstance(item, dict) and str(item.get("id")) == wanted_id:
                 return
-        raise ValueError(f"Selected server scope cannot manage the requested {object_label}.")
+        raise ValueError(
+            f"Selected server scope cannot manage the requested {object_label}."
+        )
 
     async def _assert_governance_pack_visible_in_scope(
         self,
@@ -2802,7 +3131,9 @@ class ServerUnifiedMCPService:
     @staticmethod
     def _require_system_admin_scope(access_context: ServerAccessContext) -> None:
         if (access_context.selected_scope or "personal") != "system_admin":
-            raise ValueError("Selected server scope is not valid for this advanced mutation.")
+            raise ValueError(
+                "Selected server scope is not valid for this advanced mutation."
+            )
 
     def _build_target_status(
         self,
@@ -2877,7 +3208,8 @@ class ServerUnifiedMCPService:
             server_configured=True,
             server_reachability=target_status.last_known_reachability or "reachable",
             server_auth_state=target_status.last_known_auth_state or "authenticated",
-            last_known_server_label=target_status.last_known_server_label or target.label,
+            last_known_server_label=target_status.last_known_server_label
+            or target.label,
         )
 
     def _require_allowed(

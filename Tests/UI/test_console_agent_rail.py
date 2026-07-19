@@ -1,4 +1,5 @@
 """Agent rail section + [N Sub-Agents] badge render via a real App (run_test)."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -10,12 +11,16 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_agent_bridge import (
-    AgentLiveSnapshot, AgentLiveStep, ConsoleAgentBridge, SubAgentSummary,
+    AgentLiveSnapshot,
+    AgentLiveStep,
+    ConsoleAgentBridge,
+    SubAgentSummary,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.conversation_browser_state import (
-    ConsoleConversationBrowserInputRow, build_console_conversation_browser_state,
+    ConsoleConversationBrowserInputRow,
+    build_console_conversation_browser_state,
 )
 
 
@@ -30,11 +35,18 @@ def _all_rows(state):
 
 def test_conversation_row_carries_badge_count_for_render():
     row = ConsoleConversationBrowserInputRow(
-        row_key="c1", conversation_id="c1", native_session_id=None, title="Alpha",
-        scope_type="global", workspace_id=None, workspace_label="",
-        updated_sort="2026-07-13T00:00:00Z")
+        row_key="c1",
+        conversation_id="c1",
+        native_session_id=None,
+        title="Alpha",
+        scope_type="global",
+        workspace_id=None,
+        workspace_label="",
+        updated_sort="2026-07-13T00:00:00Z",
+    )
     state = build_console_conversation_browser_state(
-        rows=[row], active_workspace_id=None, subagent_counts={"c1": 2})
+        rows=[row], active_workspace_id=None, subagent_counts={"c1": 2}
+    )
     assert _all_rows(state)[0].subagent_count == 2
 
 
@@ -42,6 +54,7 @@ def test_conversation_row_badge_label_is_escaped_and_present():
     from tldw_chatbook.Widgets.Console.console_workspace_context import (
         format_console_conversation_row_label,
     )
+
     label = format_console_conversation_row_label("Beta [x]", subagent_count=3)
     assert "3 Sub-Agents" in label
     assert "\\[x]" in label or "[x]" not in label.replace("Sub-Agents", "")
@@ -51,6 +64,7 @@ def test_no_badge_when_subagent_count_is_zero():
     from tldw_chatbook.Widgets.Console.console_workspace_context import (
         format_console_conversation_row_label,
     )
+
     label = format_console_conversation_row_label("Beta", subagent_count=0)
     assert "Sub-Agents" not in label
     assert label == "Beta"
@@ -67,6 +81,7 @@ def test_badge_renders_on_its_own_line_regardless_of_secondary_length():
     from tldw_chatbook.Widgets.Console.console_workspace_context import (
         format_console_conversation_row_label,
     )
+
     long_secondary = (
         "a-really-long-workspace-label-that-keeps-going - saved chat - 3h ago"
     )
@@ -88,6 +103,7 @@ def test_ellipsized_title_still_pairs_with_full_badge():
         ConsoleWorkspaceContextTray,
         format_console_conversation_row_label,
     )
+
     long_title = "A" * 40
     visible_title = ConsoleWorkspaceContextTray._conversation_visible_title(long_title)
     assert visible_title.endswith("...")
@@ -106,8 +122,12 @@ def test_short_title_without_badge_is_unchanged():
         ConsoleWorkspaceContextTray,
         format_console_conversation_row_label,
     )
+
     short_title = "Short title"
-    assert ConsoleWorkspaceContextTray._conversation_visible_title(short_title) == short_title
+    assert (
+        ConsoleWorkspaceContextTray._conversation_visible_title(short_title)
+        == short_title
+    )
 
     composed = f"  {short_title}\n  saved chat - 2m"
     label = format_console_conversation_row_label(composed, subagent_count=0)
@@ -121,6 +141,7 @@ def test_conversation_row_height_grows_only_when_badge_present():
     from tldw_chatbook.Widgets.Console.console_workspace_context import (
         ConsoleWorkspaceContextTray,
     )
+
     badge_button = ConsoleWorkspaceContextTray._conversation_button(
         "  Title\n  secondary",
         id="row-badge",
@@ -163,8 +184,10 @@ def test_resume_rederives_subagent_data_from_durable_run_store(tmp_path):
     db = AgentRunsDB(db_path, client_id="t")
     primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     sub_id = db.create_run(
-        conversation_id="conv-1", agent_kind="subagent",
-        task="research pricing", parent_run_id=primary_id,
+        conversation_id="conv-1",
+        agent_kind="subagent",
+        task="research pricing",
+        parent_run_id=primary_id,
     )
     db.set_status(sub_id, "done", result="done researching")
 
@@ -175,7 +198,8 @@ def test_resume_rederives_subagent_data_from_durable_run_store(tmp_path):
     # no in-memory live-snapshot state carried over.
     fresh_db = AgentRunsDB(db_path, client_id="t")
     fresh_bridge = ConsoleAgentBridge(
-        agent_runs_db=fresh_db, store=None, provider_gateway=None)
+        agent_runs_db=fresh_db, store=None, provider_gateway=None
+    )
 
     assert fresh_bridge.subagent_count("conv-1") == 1
     runs = fresh_bridge.subagent_runs("conv-1")
@@ -193,11 +217,13 @@ def test_resume_rederives_subagent_data_from_durable_run_store(tmp_path):
 # --- Finding A: batched sub-agent badge counts (one DB query, not one per
 # conversation row), gated so the poll tick doesn't refresh unconditionally. ---
 
+
 def test_bridge_subagent_counts_batches_in_one_db_call(tmp_path, monkeypatch):
     db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="t")
     parent = db.create_run(conversation_id="conv-1", agent_kind="primary")
-    db.create_run(conversation_id="conv-1", agent_kind="subagent",
-                  task="x", parent_run_id=parent)
+    db.create_run(
+        conversation_id="conv-1", agent_kind="subagent", task="x", parent_run_id=parent
+    )
     db.create_run(conversation_id="conv-2", agent_kind="primary")
 
     calls = []
@@ -212,12 +238,14 @@ def test_bridge_subagent_counts_batches_in_one_db_call(tmp_path, monkeypatch):
 
     counts = bridge.subagent_counts(["conv-1", "conv-2", "conv-3"])
 
-    assert counts == {"conv-1": 1}   # conv-2/conv-3 absent -- zero sub-agents
+    assert counts == {"conv-1": 1}  # conv-2/conv-3 absent -- zero sub-agents
     assert len(calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_subagent_counts_are_batched_and_gated_not_refreshed_every_tick(monkeypatch):
+async def test_subagent_counts_are_batched_and_gated_not_refreshed_every_tick(
+    monkeypatch,
+):
     """Finding A: the screen's badge-count refresh issues one batched DB
     call per row set (not N calls, one per row), and skips re-querying
     when neither the row set, an active run, nor cache age justify it."""
@@ -238,20 +266,27 @@ async def test_subagent_counts_are_batched_and_gated_not_refreshed_every_tick(mo
         bridge = _FakeBridge()
         rows = tuple(
             ConsoleConversationBrowserInputRow(
-                row_key=f"c{i}", conversation_id=f"c{i}", native_session_id=None,
-                title=f"Conv {i}", scope_type="global", workspace_id=None,
-                workspace_label="", updated_sort="2026-07-13T00:00:00Z")
+                row_key=f"c{i}",
+                conversation_id=f"c{i}",
+                native_session_id=None,
+                title=f"Conv {i}",
+                scope_type="global",
+                workspace_id=None,
+                workspace_label="",
+                updated_sort="2026-07-13T00:00:00Z",
+            )
             for i in range(5)
         )
 
         fake_time = {"t": 0.0}
         monkeypatch.setattr(
             "tldw_chatbook.UI.Screens.chat_screen.time.monotonic",
-            lambda: fake_time["t"])
+            lambda: fake_time["t"],
+        )
 
         counts = console._console_subagent_counts_for_rows(bridge, rows)
         assert counts == {f"c{i}": 2 for i in range(5)}
-        assert len(calls) == 1   # one batched call for 5 rows, not 5 calls
+        assert len(calls) == 1  # one batched call for 5 rows, not 5 calls
 
         # Same row set, no active run, within TTL: cache reused verbatim --
         # this is the "0.2s poll tick with nothing sub-agent related
@@ -278,7 +313,8 @@ async def test_subagent_counts_are_batched_and_gated_not_refreshed_every_tick(mo
         original_controller = console._console_chat_controller
         try:
             console._console_chat_controller = SimpleNamespace(
-                run_state=SimpleNamespace(status=ConsoleRunStatus.STREAMING))
+                run_state=SimpleNamespace(status=ConsoleRunStatus.STREAMING)
+            )
             console._console_subagent_counts_for_rows(bridge, rows[:2])
             assert len(calls) == 4
         finally:
@@ -289,11 +325,13 @@ async def test_subagent_counts_are_batched_and_gated_not_refreshed_every_tick(mo
 # -- escaping bracket text there produces literal backslashes, not markup
 # protection, so this text must stay raw. ---
 
+
 def test_summarize_step_does_not_escape_markup_brackets():
     from tldw_chatbook.Agents.agent_models import STEP_TOOL_RESULT, AgentStep
 
-    step = AgentStep(index=0, kind=STEP_TOOL_RESULT, tool_name="fetch_docs",
-                      result="fetch [docs] ok")
+    step = AgentStep(
+        index=0, kind=STEP_TOOL_RESULT, tool_name="fetch_docs", result="fetch [docs] ok"
+    )
     text = ConsoleAgentBridge._summarize(step)
     assert text == "fetch [docs] ok"
     assert "\\[" not in text
@@ -305,7 +343,7 @@ def test_spawn_subagent_summary_does_not_escape_markup_brackets(tmp_path):
     from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 
     def _fence(name, args):
-        return f'{FENCE_OPEN}\n{json.dumps({"name": name, "arguments": args})}\n```'
+        return f"{FENCE_OPEN}\n{json.dumps({'name': name, 'arguments': args})}\n```"
 
     scripts = [
         [_fence("spawn_subagent", {"task": "fetch [docs] and summarize"})],
@@ -332,14 +370,21 @@ def test_spawn_subagent_summary_does_not_escape_markup_brackets(tmp_path):
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
     assistant = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts))
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts)
+    )
     bridge.run_reply(
-        conversation_id="conv-1", session_id=session.id, resolution=object(),
-        assistant_message_id=assistant.id, model="test-model",
-        session_system_prompt="", agent_messages=[{"role": "user", "content": "hi"}],
-        should_cancel=lambda: False)
+        conversation_id="conv-1",
+        session_id=session.id,
+        resolution=object(),
+        assistant_message_id=assistant.id,
+        model="test-model",
+        session_system_prompt="",
+        agent_messages=[{"role": "user", "content": "hi"}],
+        should_cancel=lambda: False,
+    )
 
     snap = bridge.live_snapshot("conv-1")
     assert snap.subagents, "expected a recorded sub-agent summary"
@@ -360,7 +405,8 @@ async def test_agent_section_lines_render_brackets_literally_not_escaped():
         class _FakeBridge:
             def live_snapshot(self, conversation_id):
                 return AgentLiveSnapshot(
-                    status="running", step=1,
+                    status="running",
+                    step=1,
                     steps=(AgentLiveStep("tool_result", "fetch [docs] ok", "primary"),),
                     subagents=(SubAgentSummary("spawn [docs] task"),),
                 )
@@ -398,13 +444,17 @@ async def test_agent_section_falls_back_to_historical_snapshot_when_live_is_idle
 
         class _FakeBridge:
             def live_snapshot(self, conversation_id):
-                return AgentLiveSnapshot()   # idle -- simulates a fresh process
+                return AgentLiveSnapshot()  # idle -- simulates a fresh process
 
             def historical_snapshot(self, conversation_id):
                 return AgentLiveSnapshot(
-                    status="done", step=1,
-                    steps=(AgentLiveStep("model", "The capital of France is Paris.",
-                                          "primary"),),
+                    status="done",
+                    step=1,
+                    steps=(
+                        AgentLiveStep(
+                            "model", "The capital of France is Paris.", "primary"
+                        ),
+                    ),
                     subagents=(SubAgentSummary("research pricing", status="done"),),
                 )
 
@@ -453,7 +503,7 @@ async def test_agent_section_prefers_live_snapshot_over_historical_when_present(
         status_line, _steps, _subagents = console._console_agent_section_lines()
 
         assert status_line == "Agent: running · step 2"
-        assert calls == []   # historical_snapshot must not even be consulted
+        assert calls == []  # historical_snapshot must not even be consulted
 
 
 def test_resume_rederives_top_level_agent_summary_from_durable_run_store(tmp_path):
@@ -467,20 +517,35 @@ def test_resume_rederives_top_level_agent_summary_from_durable_run_store(tmp_pat
     db_path = tmp_path / "agent_runs.db"
     db = AgentRunsDB(db_path, client_id="t")
     primary_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
-    db.append_steps(primary_id, [
-        {"index": 0, "kind": "model", "summary": "final answer",
-         "tool_name": "", "args": None, "result": "", "created_at": ""},
-    ])
+    db.append_steps(
+        primary_id,
+        [
+            {
+                "index": 0,
+                "kind": "model",
+                "summary": "final answer",
+                "tool_name": "",
+                "args": None,
+                "result": "",
+                "created_at": "",
+            },
+        ],
+    )
     db.set_status(primary_id, "done", result="final answer")
     sub_id = db.create_run(
-        conversation_id="conv-1", agent_kind="subagent",
-        task="research pricing", parent_run_id=primary_id)
+        conversation_id="conv-1",
+        agent_kind="subagent",
+        task="research pricing",
+        parent_run_id=primary_id,
+    )
     db.set_status(sub_id, "done", result="done researching")
 
     # Simulate resume: a brand-new bridge/DB handle over the same file.
     fresh_bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(db_path, client_id="t"), store=None,
-        provider_gateway=None)
+        agent_runs_db=AgentRunsDB(db_path, client_id="t"),
+        store=None,
+        provider_gateway=None,
+    )
 
     assert fresh_bridge.live_snapshot("conv-1").status == "idle"
     historical = fresh_bridge.historical_snapshot("conv-1")
@@ -491,6 +556,7 @@ def test_resume_rederives_top_level_agent_summary_from_durable_run_store(tmp_pat
 # --- Finding C: a sub-agent drill-in is scoped to the conversation active
 # when the user drilled in -- switching conversations must drop back to
 # the overview instead of showing a foreign conversation's sub-agent. ---
+
 
 @pytest.mark.asyncio
 async def test_drilldown_falls_back_to_overview_after_conversation_switch():
@@ -506,13 +572,25 @@ async def test_drilldown_falls_back_to_overview_after_conversation_switch():
                 self.active_conversation_id = "conv-A"
 
             def subagent_runs(self, conversation_id):
-                return [{"id": "run-1", "conversation_id": "conv-A",
-                          "status": "done", "task": "t", "steps": []}]
+                return [
+                    {
+                        "id": "run-1",
+                        "conversation_id": "conv-A",
+                        "status": "done",
+                        "task": "t",
+                        "steps": [],
+                    }
+                ]
 
             def subagent_run(self, run_id):
                 if run_id == "run-1":
-                    return {"id": "run-1", "conversation_id": "conv-A",
-                            "status": "done", "task": "t", "steps": []}
+                    return {
+                        "id": "run-1",
+                        "conversation_id": "conv-A",
+                        "status": "done",
+                        "task": "t",
+                        "steps": [],
+                    }
                 return None
 
             def live_snapshot(self, conversation_id):
@@ -520,8 +598,9 @@ async def test_drilldown_falls_back_to_overview_after_conversation_switch():
 
         fake_bridge = _FakeBridge()
         console._console_agent_bridge = fake_bridge
-        console._current_console_rail_conversation_id = (
-            lambda: fake_bridge.active_conversation_id)
+        console._current_console_rail_conversation_id = lambda: (
+            fake_bridge.active_conversation_id
+        )
 
         # Drill into the (only) sub-agent run of conv-A.
         console._toggle_console_agent_drilldown_from_subagents_click()
@@ -553,8 +632,13 @@ async def test_drilldown_render_path_rejects_record_from_other_conversation():
 
         class _FakeBridge:
             def subagent_run(self, run_id):
-                return {"id": run_id, "conversation_id": "conv-other",
-                        "status": "done", "task": "t", "steps": []}
+                return {
+                    "id": run_id,
+                    "conversation_id": "conv-other",
+                    "status": "done",
+                    "task": "t",
+                    "steps": [],
+                }
 
             def subagent_runs(self, conversation_id):
                 return []
@@ -602,6 +686,7 @@ async def test_activate_native_console_session_clears_stale_drilldown():
 # --- Finding D: repeated clicks on the combined sub-agents rail line must
 # reach every sub-agent run, not just the newest one. ---
 
+
 @pytest.mark.asyncio
 async def test_subagents_click_cycles_through_every_run_then_overview():
     app = _build_test_app()
@@ -613,12 +698,27 @@ async def test_subagents_click_cycles_through_every_run_then_overview():
 
         class _FakeBridge:
             _RUNS = [
-                {"id": "run-newest", "conversation_id": "conv-A", "status": "done",
-                 "task": "t", "steps": []},
-                {"id": "run-mid", "conversation_id": "conv-A", "status": "done",
-                 "task": "t", "steps": []},
-                {"id": "run-oldest", "conversation_id": "conv-A", "status": "done",
-                 "task": "t", "steps": []},
+                {
+                    "id": "run-newest",
+                    "conversation_id": "conv-A",
+                    "status": "done",
+                    "task": "t",
+                    "steps": [],
+                },
+                {
+                    "id": "run-mid",
+                    "conversation_id": "conv-A",
+                    "status": "done",
+                    "task": "t",
+                    "steps": [],
+                },
+                {
+                    "id": "run-oldest",
+                    "conversation_id": "conv-A",
+                    "status": "done",
+                    "task": "t",
+                    "steps": [],
+                },
             ]
 
             def subagent_runs(self, conversation_id):
@@ -637,9 +737,13 @@ async def test_subagents_click_cycles_through_every_run_then_overview():
         for _ in range(5):
             console._toggle_console_agent_drilldown_from_subagents_click()
             clicked_sequence.append(console._console_agent_drilldown_run_id)
-            await pilot.pause()   # drain the background rail-sync worker
+            await pilot.pause()  # drain the background rail-sync worker
 
         # newest -> mid -> oldest -> overview -> newest again (wraps).
         assert clicked_sequence == [
-            "run-newest", "run-mid", "run-oldest", None, "run-newest",
+            "run-newest",
+            "run-mid",
+            "run-oldest",
+            None,
+            "run-newest",
         ]

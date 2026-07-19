@@ -13,7 +13,9 @@ from tldw_chatbook.runtime_policy.domain_edge_contracts import (
     get_remote_utility_local_parity,
 )
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
-from tldw_chatbook.runtime_policy.unsupported_capabilities import validate_unsupported_capability_report
+from tldw_chatbook.runtime_policy.unsupported_capabilities import (
+    validate_unsupported_capability_report,
+)
 from tldw_chatbook.UX_Interop.server_connection_contracts import (
     build_auth_failure_contract,
     build_capability_status_contract,
@@ -40,7 +42,9 @@ class ActiveServerStatusContract:
     server_label: str | None = None
 
     @classmethod
-    def from_runtime_state(cls, state: RuntimeSourceState) -> "ActiveServerStatusContract":
+    def from_runtime_state(
+        cls, state: RuntimeSourceState
+    ) -> "ActiveServerStatusContract":
         return cls(
             contract_id=CONTRACT_ID,
             contract_version=CONTRACT_VERSION,
@@ -99,7 +103,9 @@ class UnsupportedActionPresentationContract:
                         server_auth_state=state.server_auth_state,
                         operation_id=report.get("operation_id"),
                         report_scope=report.get("report_scope"),
-                        workspace_scope_id=_optional_str(report.get("workspace_scope_id")),
+                        workspace_scope_id=_optional_str(
+                            report.get("workspace_scope_id")
+                        ),
                     )
                 )
         return contracts
@@ -151,7 +157,9 @@ class SourceSelectorStateContract:
     source_options: tuple[dict[str, Any], ...]
 
     @classmethod
-    def from_runtime_state(cls, state: RuntimeSourceState) -> "SourceSelectorStateContract":
+    def from_runtime_state(
+        cls, state: RuntimeSourceState
+    ) -> "SourceSelectorStateContract":
         server_enabled, server_reason_code = _server_option_state(state)
         return cls(
             contract_id=CONTRACT_ID,
@@ -350,9 +358,15 @@ def build_server_parity_fixture_payloads() -> dict[str, dict[str, Any]]:
                 "server_refetch_required": True,
             },
         },
-        "local": ActiveServerStatusContract.from_runtime_state(local_state).to_payload(),
-        "source_selector": SourceSelectorStateContract.from_runtime_state(server_state).to_payload(),
-        "server": ActiveServerStatusContract.from_runtime_state(server_state).to_payload(),
+        "local": ActiveServerStatusContract.from_runtime_state(
+            local_state
+        ).to_payload(),
+        "source_selector": SourceSelectorStateContract.from_runtime_state(
+            server_state
+        ).to_payload(),
+        "server": ActiveServerStatusContract.from_runtime_state(
+            server_state
+        ).to_payload(),
         "sync_dry_run_report": {
             **sync_status_contract(
                 server_state,
@@ -368,9 +382,13 @@ def build_server_parity_fixture_payloads() -> dict[str, dict[str, Any]]:
         "translation_local_parity": {
             **_fixture_base_payload(server_state, source_owner="shared"),
             **get_domain_edge_contract("translation").as_matrix_entry(),
-            "local_parity": get_remote_utility_local_parity("translation").as_matrix_entry(),
+            "local_parity": get_remote_utility_local_parity(
+                "translation"
+            ).as_matrix_entry(),
         },
-        "unavailable_server": SourceSelectorStateContract.from_runtime_state(unavailable_state).to_payload(),
+        "unavailable_server": SourceSelectorStateContract.from_runtime_state(
+            unavailable_state
+        ).to_payload(),
         "unsupported_action": UnsupportedActionPresentationContract.from_runtime_state_and_reports(
             server_state,
             unsupported_report,
@@ -410,12 +428,16 @@ def build_server_parity_handoff_packet(
     """
 
     active_profile = _server_profile_id(state)
-    normalized_unsupported_reports = validate_unsupported_capability_report(unsupported_reports)
+    normalized_unsupported_reports = validate_unsupported_capability_report(
+        unsupported_reports
+    )
     workspace_contracts = tuple(
         workspace_isolation_contract(
             state,
             workspace_scope_id=workspace_scope_id,
-            action_id="notes.list.workspace" if state.active_source != "server" else "notes.list.server",
+            action_id="notes.list.workspace"
+            if state.active_source != "server"
+            else "notes.list.server",
         ).to_payload()
         for workspace_scope_id in workspace_scope_ids
     )
@@ -430,8 +452,12 @@ def build_server_parity_handoff_packet(
             "ui_must_not_read_service_internals": True,
         },
         "sections": {
-            "active_server": ActiveServerStatusContract.from_runtime_state(state).to_payload(),
-            "source_selector": SourceSelectorStateContract.from_runtime_state(state).to_payload(),
+            "active_server": ActiveServerStatusContract.from_runtime_state(
+                state
+            ).to_payload(),
+            "source_selector": SourceSelectorStateContract.from_runtime_state(
+                state
+            ).to_payload(),
             "capability_status": build_capability_status_contract(
                 active_server_id=active_profile,
                 reachability=state.server_reachability,
@@ -484,7 +510,9 @@ def _payload(contract: Any) -> dict[str, Any]:
     return asdict(contract)
 
 
-def _fixture_base_payload(state: RuntimeSourceState, *, source_owner: SourceOwner) -> dict[str, Any]:
+def _fixture_base_payload(
+    state: RuntimeSourceState, *, source_owner: SourceOwner
+) -> dict[str, Any]:
     return {
         "contract_id": CONTRACT_ID,
         "contract_version": CONTRACT_VERSION,

@@ -44,7 +44,9 @@ class TestMediaIngestWindowRebuilt:
         widget_pilot,
     ) -> None:
         """The rebuilt ingest window should mount local, source, and results panels."""
-        async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            MediaIngestWindowRebuilt, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
 
             assert isinstance(window.local_panel, LocalIngestionPanel)
@@ -61,7 +63,9 @@ class TestMediaIngestWindowRebuilt:
         widget_pilot,
     ) -> None:
         """The local ingestion tab should expose the current rebuilt control set."""
-        async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            MediaIngestWindowRebuilt, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
             local_panel = window.local_panel
 
@@ -83,7 +87,9 @@ class TestMediaIngestWindowRebuilt:
         widget_pilot,
     ) -> None:
         """Without a server runtime backend, the source panel should stay in its disabled state."""
-        async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            MediaIngestWindowRebuilt, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
             source_panel = window.source_panel
             await pilot.pause()
@@ -93,7 +99,9 @@ class TestMediaIngestWindowRebuilt:
             save_button = source_panel.query_one("#save-source-btn", Button)
             upload_button = source_panel.query_one("#upload-archive-btn", Button)
 
-            assert "Server ingestion sources require server mode." in str(detail.render())
+            assert "Server ingestion sources require server mode." in str(
+                detail.render()
+            )
             assert sync_button.disabled is True
             assert save_button.disabled is True
             assert upload_button.disabled is True
@@ -105,9 +113,13 @@ class TestMediaIngestWindowRebuilt:
         widget_pilot,
     ) -> None:
         """Server-mode source creation should default to a valid source type."""
-        mock_app_instance.media_runtime_state = SimpleNamespace(runtime_backend="server")
+        mock_app_instance.media_runtime_state = SimpleNamespace(
+            runtime_backend="server"
+        )
 
-        async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            MediaIngestWindowRebuilt, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
             await pilot.pause()
 
@@ -124,7 +136,9 @@ class TestMediaIngestWindowRebuilt:
         widget_pilot,
     ) -> None:
         """Processing selected files should execute ingestion and reset the local panel state."""
-        async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            MediaIngestWindowRebuilt, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
             local_panel = window.local_panel
 
@@ -155,7 +169,9 @@ class TestMediaIngestWindowRebuilt:
         widget_pilot,
     ) -> None:
         """The threaded worker should receive captured form state, not query widgets from the worker."""
-        async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            MediaIngestWindowRebuilt, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
             local_panel = window.local_panel
 

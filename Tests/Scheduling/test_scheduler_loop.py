@@ -38,6 +38,7 @@ def _create_reminder(database, title, next_run_at, **kwargs):
 # SchedulerLoop tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_scheduler_triggers_due_reminder(db):
     _create_reminder(db, "Test", "2026-01-01T00:00:00+00:00")
@@ -68,9 +69,7 @@ async def test_scheduler_does_not_trigger_future_reminder(db):
 
 @pytest.mark.asyncio
 async def test_scheduler_ignores_disabled_reminder(db):
-    _create_reminder(
-        db, "Disabled", "2026-01-01T00:00:00+00:00", enabled=False
-    )
+    _create_reminder(db, "Disabled", "2026-01-01T00:00:00+00:00", enabled=False)
     handler = AsyncMock()
     loop = SchedulerLoop(
         db,
@@ -175,6 +174,7 @@ async def test_scheduler_periodically_reloads_queue(db):
 # PriorityQueue tests
 # ---------------------------------------------------------------------------
 
+
 def test_queue_loads_and_sorts_due_reminders(db):
     _create_reminder(db, "B", "2026-01-01T00:00:02+00:00")
     _create_reminder(db, "A", "2026-01-01T00:00:01+00:00")
@@ -205,7 +205,10 @@ def test_queue_push_maintains_order(db):
     queue.push({"title": "Early", "next_run_at": "2026-01-01T00:00:01+00:00"})
     queue.push({"title": "Mid", "next_run_at": "2026-01-01T00:00:01.5+00:00"})
 
-    titles = [item["title"] for item in queue.pop_due(datetime(2026, 1, 2, tzinfo=timezone.utc))]
+    titles = [
+        item["title"]
+        for item in queue.pop_due(datetime(2026, 1, 2, tzinfo=timezone.utc))
+    ]
     assert titles == ["Early", "Mid", "Late"]
 
 
@@ -264,15 +267,17 @@ async def test_tick_dispatches_reminder_by_default_type(db):
 
 @pytest.mark.asyncio
 async def test_tick_dispatches_watchlist_job(db):
-    projection = _FakeWatchlistProjection([
-        ScheduledTask(
-            id="watchlist:42",
-            title="My Feed",
-            type="watchlist_job",
-            status=TaskStatus.WAITING,
-            next_run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        ),
-    ])
+    projection = _FakeWatchlistProjection(
+        [
+            ScheduledTask(
+                id="watchlist:42",
+                title="My Feed",
+                type="watchlist_job",
+                status=TaskStatus.WAITING,
+                next_run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ),
+        ]
+    )
     reminder_handler = AsyncMock()
     watchlist_handler = AsyncMock()
     loop = SchedulerLoop(
@@ -293,15 +298,17 @@ async def test_tick_dispatches_watchlist_job(db):
 
 @pytest.mark.asyncio
 async def test_tick_skips_unregistered_task_type(db):
-    projection = _FakeWatchlistProjection([
-        ScheduledTask(
-            id="watchlist:7",
-            title="Unknown",
-            type="unknown_job",
-            status=TaskStatus.WAITING,
-            next_run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        ),
-    ])
+    projection = _FakeWatchlistProjection(
+        [
+            ScheduledTask(
+                id="watchlist:7",
+                title="Unknown",
+                type="unknown_job",
+                status=TaskStatus.WAITING,
+                next_run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ),
+        ]
+    )
     watchlist_handler = AsyncMock()
     loop = SchedulerLoop(
         db,
@@ -338,22 +345,24 @@ async def test_tick_logs_handler_exception_with_task_type(db):
 
 
 def test_queue_loads_watchlist_projection(db):
-    projection = _FakeWatchlistProjection([
-        ScheduledTask(
-            id="watchlist:1",
-            title="Feed A",
-            type="watchlist_job",
-            status=TaskStatus.WAITING,
-            next_run_at=datetime(2026, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
-        ),
-        ScheduledTask(
-            id="watchlist:2",
-            title="Feed B",
-            type="watchlist_job",
-            status=TaskStatus.WAITING,
-            next_run_at=datetime(2026, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
-        ),
-    ])
+    projection = _FakeWatchlistProjection(
+        [
+            ScheduledTask(
+                id="watchlist:1",
+                title="Feed A",
+                type="watchlist_job",
+                status=TaskStatus.WAITING,
+                next_run_at=datetime(2026, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+            ),
+            ScheduledTask(
+                id="watchlist:2",
+                title="Feed B",
+                type="watchlist_job",
+                status=TaskStatus.WAITING,
+                next_run_at=datetime(2026, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
+            ),
+        ]
+    )
     queue = PriorityQueue(db, watchlist_projection=projection)
     queue.load()
 
@@ -366,22 +375,24 @@ def test_queue_loads_watchlist_projection(db):
 
 
 def test_queue_ignores_watchlist_jobs_without_next_run(db):
-    projection = _FakeWatchlistProjection([
-        ScheduledTask(
-            id="watchlist:1",
-            title="Has Run",
-            type="watchlist_job",
-            status=TaskStatus.WAITING,
-            next_run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        ),
-        ScheduledTask(
-            id="watchlist:2",
-            title="No Run",
-            type="watchlist_job",
-            status=TaskStatus.WAITING,
-            next_run_at=None,
-        ),
-    ])
+    projection = _FakeWatchlistProjection(
+        [
+            ScheduledTask(
+                id="watchlist:1",
+                title="Has Run",
+                type="watchlist_job",
+                status=TaskStatus.WAITING,
+                next_run_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ),
+            ScheduledTask(
+                id="watchlist:2",
+                title="No Run",
+                type="watchlist_job",
+                status=TaskStatus.WAITING,
+                next_run_at=None,
+            ),
+        ]
+    )
     queue = PriorityQueue(db, watchlist_projection=projection)
     queue.load()
 

@@ -9,7 +9,11 @@ from textual.widgets import Button, Static
 from textual.message import Message
 from textual import on
 
-from .shell_destinations import SHELL_DESTINATION_ORDER, get_shell_destination, resolve_shell_route
+from .shell_destinations import (
+    SHELL_DESTINATION_ORDER,
+    get_shell_destination,
+    resolve_shell_route,
+)
 
 if TYPE_CHECKING:
     pass
@@ -39,8 +43,10 @@ def nav_button_label(index: int, label: str) -> str:
 
 class NavigateToScreen(Message):
     """Message to request navigation to a specific screen."""
-    
-    def __init__(self, screen_name: str, screen_context: dict[str, object] | None = None):
+
+    def __init__(
+        self, screen_name: str, screen_context: dict[str, object] | None = None
+    ):
         super().__init__()
         self.screen_name = screen_name
         self.screen_context = dict(screen_context or {})
@@ -178,7 +184,9 @@ class MainNavigationBar(Container):
                 yield button
         # Docked outside the scrollable strip so the hint stays visible at the
         # right edge exactly when the destinations overflow.
-        overflow_hint = Static("More: Ctrl+P", id="nav-overflow-hint", classes="nav-overflow-hint")
+        overflow_hint = Static(
+            "More: Ctrl+P", id="nav-overflow-hint", classes="nav-overflow-hint"
+        )
         overflow_hint.tooltip = "Open command palette"
         yield overflow_hint
 
@@ -190,7 +198,9 @@ class MainNavigationBar(Container):
         """Bring the active destination's button into the strip's visible scroll window."""
         try:
             strip = self.query_one("#nav-destination-strip", Horizontal)
-            button = strip.query_one(f"#nav-{self.active_destination_id}", NavigationButton)
+            button = strip.query_one(
+                f"#nav-{self.active_destination_id}", NavigationButton
+            )
         except Exception:
             return
         try:
@@ -227,11 +237,11 @@ class MainNavigationBar(Container):
         button_id = button.id
         if not button_id:
             return False
-        
+
         destination_id = button_id.replace("nav-", "")
         destination = get_shell_destination(destination_id)
         screen_name = destination.primary_route
-        
+
         # A destination-owned subroute may highlight the same top-level destination;
         # clicking the destination should still return to its primary route.
         if (
@@ -239,7 +249,7 @@ class MainNavigationBar(Container):
             and screen_name == self.active_route
         ):
             return False
-        
+
         # Update active state
         for nav_button in self.query(".nav-button"):
             nav_button.remove_class("is-active")
@@ -248,9 +258,9 @@ class MainNavigationBar(Container):
         self.active_route = screen_name
         self.active_screen = self.active_destination_id
         self.call_after_refresh(self._scroll_active_destination_into_view)
-        
+
         # Post navigation message to app
         self.post_message(NavigateToScreen(screen_name))
-        
+
         logger.info(f"Navigation requested to screen: {screen_name}")
         return True

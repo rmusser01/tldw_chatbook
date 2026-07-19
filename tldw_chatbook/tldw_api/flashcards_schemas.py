@@ -17,7 +17,9 @@ DeckSchedulerType = Literal["sm2_plus", "fsrs"]
 ReviewSelectionReason = Literal["learning_due", "review_due", "new", "none"]
 QueueState = Literal["new", "learning", "review", "relearning", "suspended"]
 FlashcardTemplateModelType = Literal["basic", "basic_reverse", "cloze"]
-FlashcardTemplateFieldTarget = Literal["front_template", "back_template", "notes_template", "extra_template"]
+FlashcardTemplateFieldTarget = Literal[
+    "front_template", "back_template", "notes_template", "extra_template"
+]
 
 
 class FlashcardDeckCreateRequest(BaseModel):
@@ -65,7 +67,9 @@ class FlashcardCreateRequest(BaseModel):
     notes: Optional[str] = None
     extra: Optional[str] = None
     is_cloze: Optional[bool] = False
-    tags: Optional[list[str]] = Field(None, description="List of tags; stored as JSON array")
+    tags: Optional[list[str]] = Field(
+        None, description="List of tags; stored as JSON array"
+    )
     source_ref_type: Optional[Literal["media", "message", "note", "manual"]] = "manual"
     source_ref_id: Optional[str] = None
     model_type: Optional[Literal["basic", "basic_reverse", "cloze"]] = None
@@ -140,7 +144,11 @@ class FlashcardResponse(BaseModel):
                 parsed = json.loads(tags_json)
             except Exception:
                 parsed = []
-            data["tags"] = [str(item) for item in parsed if item is not None] if isinstance(parsed, list) else []
+            data["tags"] = (
+                [str(item) for item in parsed if item is not None]
+                if isinstance(parsed, list)
+                else []
+            )
         else:
             data["tags"] = []
         return data
@@ -302,7 +310,9 @@ class FlashcardsImportResponse(BaseModel):
     errors: list[FlashcardsImportError] = Field(default_factory=list)
 
 
-StudyAssistantAction = Literal["explain", "mnemonic", "follow_up", "fact_check", "freeform"]
+StudyAssistantAction = Literal[
+    "explain", "mnemonic", "follow_up", "fact_check", "freeform"
+]
 
 
 class StudyAssistantThreadSummary(BaseModel):
@@ -404,7 +414,9 @@ class StudyPackSourceSelection(BaseModel):
 
     source_type: StudyPackSourceType
     source_id: str = Field(..., min_length=1)
-    label: Optional[str] = Field(default=None, validation_alias=AliasChoices("label", "source_title"))
+    label: Optional[str] = Field(
+        default=None, validation_alias=AliasChoices("label", "source_title")
+    )
     excerpt_text: Optional[str] = None
     locator: dict[str, Any] = Field(default_factory=dict)
 
@@ -532,7 +544,9 @@ class FlashcardDeepDiveTarget(BaseModel):
     source_type: StudyPackSourceType
     source_id: str
     citation_ordinal: Optional[int] = Field(default=None, ge=0)
-    route_kind: Optional[Literal["exact_locator", "workspace_route", "citation_only"]] = None
+    route_kind: Optional[
+        Literal["exact_locator", "workspace_route", "citation_only"]
+    ] = None
     route: Optional[str] = None
     available: bool = True
     fallback_reason: Optional[str] = None
@@ -708,7 +722,9 @@ class StudyAssistantThreadSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-StudyAssistantAction = Literal["explain", "mnemonic", "follow_up", "fact_check", "freeform"]
+StudyAssistantAction = Literal[
+    "explain", "mnemonic", "follow_up", "fact_check", "freeform"
+]
 
 
 class StudyAssistantMessage(BaseModel):
@@ -766,7 +782,9 @@ class StudyAssistantContextResponse(BaseModel):
     messages: list[StudyAssistantMessage] = Field(default_factory=list)
     context_snapshot: dict[str, Any] = Field(default_factory=dict)
     available_actions: list[StudyAssistantAction] = Field(default_factory=list)
-    citations: list[FlashcardCitationResponse | dict[str, Any]] = Field(default_factory=list)
+    citations: list[FlashcardCitationResponse | dict[str, Any]] = Field(
+        default_factory=list
+    )
     primary_citation: Optional[FlashcardCitationResponse | dict[str, Any]] = None
     deep_dive_target: Optional[FlashcardDeepDiveTarget] = None
     study_pack: Optional[StudyPackSummaryResponse] = None
@@ -785,7 +803,9 @@ class StudyAssistantRespondResponse(BaseModel):
 
 
 FlashcardTemplateModelType = Literal["basic", "basic_reverse", "cloze"]
-FlashcardTemplateFieldTarget = Literal["front_template", "back_template", "notes_template", "extra_template"]
+FlashcardTemplateFieldTarget = Literal[
+    "front_template", "back_template", "notes_template", "extra_template"
+]
 
 
 class FlashcardTemplatePlaceholderDefinition(BaseModel):
@@ -804,7 +824,9 @@ class FlashcardTemplateCreateRequest(BaseModel):
     back_template: Optional[str] = None
     notes_template: Optional[str] = None
     extra_template: Optional[str] = None
-    placeholder_definitions: list[FlashcardTemplatePlaceholderDefinition] = Field(default_factory=list)
+    placeholder_definitions: list[FlashcardTemplatePlaceholderDefinition] = Field(
+        default_factory=list
+    )
 
 
 class FlashcardTemplateUpdateRequest(BaseModel):
@@ -814,7 +836,9 @@ class FlashcardTemplateUpdateRequest(BaseModel):
     back_template: Optional[str] = None
     notes_template: Optional[str] = None
     extra_template: Optional[str] = None
-    placeholder_definitions: Optional[list[FlashcardTemplatePlaceholderDefinition]] = None
+    placeholder_definitions: Optional[list[FlashcardTemplatePlaceholderDefinition]] = (
+        None
+    )
     expected_version: Optional[int] = Field(None, ge=1)
 
 
@@ -826,7 +850,9 @@ class FlashcardTemplateResponse(BaseModel):
     back_template: Optional[str] = None
     notes_template: Optional[str] = None
     extra_template: Optional[str] = None
-    placeholder_definitions: list[FlashcardTemplatePlaceholderDefinition] = Field(default_factory=list)
+    placeholder_definitions: list[FlashcardTemplatePlaceholderDefinition] = Field(
+        default_factory=list
+    )
     created_at: Optional[str] = None
     last_modified: Optional[str] = None
     deleted: bool

@@ -26,15 +26,23 @@ ResearchFollowUpUnresolvedQuestion = Annotated[
 class ResearchFollowUpOutlineItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(..., min_length=1, max_length=MAX_RESEARCH_FOLLOW_UP_OUTLINE_TITLE_LENGTH)
-    focus_area: str | None = Field(default=None, min_length=1, max_length=MAX_RESEARCH_FOLLOW_UP_FOCUS_AREA_LENGTH)
+    title: str = Field(
+        ..., min_length=1, max_length=MAX_RESEARCH_FOLLOW_UP_OUTLINE_TITLE_LENGTH
+    )
+    focus_area: str | None = Field(
+        default=None, min_length=1, max_length=MAX_RESEARCH_FOLLOW_UP_FOCUS_AREA_LENGTH
+    )
 
 
 class ResearchFollowUpClaimItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    claim_id: str = Field(..., min_length=1, max_length=MAX_RESEARCH_FOLLOW_UP_CLAIM_ID_LENGTH)
-    text: str = Field(..., min_length=1, max_length=MAX_RESEARCH_FOLLOW_UP_CLAIM_TEXT_LENGTH)
+    claim_id: str = Field(
+        ..., min_length=1, max_length=MAX_RESEARCH_FOLLOW_UP_CLAIM_ID_LENGTH
+    )
+    text: str = Field(
+        ..., min_length=1, max_length=MAX_RESEARCH_FOLLOW_UP_CLAIM_TEXT_LENGTH
+    )
 
 
 class ResearchFollowUpVerificationSummary(BaseModel):
@@ -54,9 +62,15 @@ class ResearchFollowUpSourceTrustSummary(BaseModel):
 class ResearchRunFollowUpBackground(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    question: str = Field(..., min_length=1, max_length=MAX_RESEARCH_FOLLOW_UP_QUESTION_LENGTH)
-    outline: list[ResearchFollowUpOutlineItem] = Field(default_factory=list, max_length=MAX_RESEARCH_FOLLOW_UP_OUTLINE_ITEMS)
-    key_claims: list[ResearchFollowUpClaimItem] = Field(default_factory=list, max_length=MAX_RESEARCH_FOLLOW_UP_KEY_CLAIMS)
+    question: str = Field(
+        ..., min_length=1, max_length=MAX_RESEARCH_FOLLOW_UP_QUESTION_LENGTH
+    )
+    outline: list[ResearchFollowUpOutlineItem] = Field(
+        default_factory=list, max_length=MAX_RESEARCH_FOLLOW_UP_OUTLINE_ITEMS
+    )
+    key_claims: list[ResearchFollowUpClaimItem] = Field(
+        default_factory=list, max_length=MAX_RESEARCH_FOLLOW_UP_KEY_CLAIMS
+    )
     unresolved_questions: list[ResearchFollowUpUnresolvedQuestion] = Field(
         default_factory=list,
         max_length=MAX_RESEARCH_FOLLOW_UP_UNRESOLVED_QUESTIONS,
@@ -68,7 +82,9 @@ class ResearchRunFollowUpBackground(BaseModel):
 class ResearchRunFollowUpCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    question: str = Field(..., min_length=1, max_length=MAX_RESEARCH_FOLLOW_UP_QUESTION_LENGTH)
+    question: str = Field(
+        ..., min_length=1, max_length=MAX_RESEARCH_FOLLOW_UP_QUESTION_LENGTH
+    )
     background: ResearchRunFollowUpBackground | None = None
 
 

@@ -52,9 +52,12 @@ async def test_update_rows_renders_rows_and_count():
         await pilot.pause()
         items = pilot.app.query(".personas-library-row")
         assert len(items) == 2
-        assert "is-unsaved" in pilot.app.query_one(
-            "#personas-library-row-character-2", ListItem
-        ).classes
+        assert (
+            "is-unsaved"
+            in pilot.app.query_one(
+                "#personas-library-row-character-2", ListItem
+            ).classes
+        )
         count = pilot.app.query_one("#personas-library-count", Static)
         assert "2 characters" in str(count.renderable)
 
@@ -79,7 +82,9 @@ async def test_row_press_posts_persona_entity_selected():
 
     class CaptureApp(LibraryPaneApp):
         def on_persona_entity_selected(self, message: PersonaEntitySelected) -> None:
-            received.append((message.entity_kind, message.entity_id, message.entity_name))
+            received.append(
+                (message.entity_kind, message.entity_id, message.entity_name)
+            )
 
     app = CaptureApp()
     async with app.run_test() as pilot:
@@ -133,8 +138,18 @@ async def test_mark_active_row_applies_is_active_to_selected_only():
         )
         await pilot.pause()
         pane.mark_active_row("character", "2")
-        assert "is-active" in pilot.app.query_one("#personas-library-row-character-2", ListItem).classes
-        assert "is-active" not in pilot.app.query_one("#personas-library-row-character-1", ListItem).classes
+        assert (
+            "is-active"
+            in pilot.app.query_one(
+                "#personas-library-row-character-2", ListItem
+            ).classes
+        )
+        assert (
+            "is-active"
+            not in pilot.app.query_one(
+                "#personas-library-row-character-1", ListItem
+            ).classes
+        )
         # The list highlight follows the active row for keyboard continuity.
         list_view = pilot.app.query_one("#personas-library-rows", ListView)
         assert list_view.index == 1
@@ -227,7 +242,9 @@ async def test_arrow_navigation_and_enter_selects():
 
     class CaptureApp(LibraryPaneApp):
         def on_persona_entity_selected(self, message: PersonaEntitySelected) -> None:
-            received.append((message.entity_kind, message.entity_id, message.entity_name))
+            received.append(
+                (message.entity_kind, message.entity_id, message.entity_name)
+            )
 
     app = CaptureApp()
     async with app.run_test() as pilot:

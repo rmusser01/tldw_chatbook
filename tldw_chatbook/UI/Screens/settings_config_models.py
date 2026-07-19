@@ -50,7 +50,9 @@ class SettingsValidationResult:
             object.__setattr__(
                 self,
                 "state",
-                SettingsValidationState.VALID if self.valid else SettingsValidationState.INVALID,
+                SettingsValidationState.VALID
+                if self.valid
+                else SettingsValidationState.INVALID,
             )
 
 

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+
 if TYPE_CHECKING:
     from ..tldw_api import TLDWAPIClient
 
@@ -59,13 +60,17 @@ class ServerRuntimeService:
             return self.client
         if self.client_provider is not None:
             return self.client_provider.build_client()
-        raise ValueError("TLDW API client is required for server runtime/config operations.")
+        raise ValueError(
+            "TLDW API client is required for server runtime/config operations."
+        )
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -74,10 +79,14 @@ class ServerRuntimeService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server runtime/config action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server runtime/config action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -127,7 +136,9 @@ class ServerRuntimeService:
         self._enforce("server.runtime.config.list.server")
         return self._dump(await self._require_client().get_tokenizer_config())
 
-    async def update_tokenizer_config(self, *, mode: str, divisor: int = 4) -> dict[str, Any]:
+    async def update_tokenizer_config(
+        self, *, mode: str, divisor: int = 4
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import TokenizerUpdateRequest
 
@@ -143,7 +154,9 @@ class ServerRuntimeService:
         self._enforce("server.runtime.providers.list.server")
         return self._dump(await self._require_client().list_config_providers())
 
-    async def validate_provider_key(self, *, provider: str, api_key: str | None = None) -> dict[str, Any]:
+    async def validate_provider_key(
+        self, *, provider: str, api_key: str | None = None
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import ProviderValidateRequest
 

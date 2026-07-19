@@ -4,6 +4,7 @@ Stores the last server-acknowledged revision/hash/cursor per object so the build
 can fill base_object_revision/base_object_hash on updates and tombstones, and the
 applier can recognise already-applied envelopes.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -44,7 +45,9 @@ class NotesMirror:
             return db_path
         path = Path(db_path)
         if any(part == ".." for part in path.parts):
-            raise ValueError("NotesMirror db_path cannot contain parent directory traversal")
+            raise ValueError(
+                "NotesMirror db_path cannot contain parent directory traversal"
+            )
         return validate_path_simple(path)
 
     def record(

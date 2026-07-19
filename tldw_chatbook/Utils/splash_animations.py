@@ -1,7 +1,7 @@
 # splash_animations.py
 # This file has been refactored into a modular structure.
 # All splash screen effects have been moved to Utils/Splash_Screens/
-# 
+#
 # The effects are now organized by category:
 # - classic/       Classic and basic effects (matrix rain, glitch, typewriter, etc.)
 # - environmental/ Nature and environment effects (starfield, raindrops, fire, etc.)
@@ -22,5 +22,5 @@
 # For backward compatibility, you can import the base class:
 
 # Import common constants
-ESCAPED_OPEN_BRACKET = r'\['
-ESCAPED_CLOSE_BRACKET = r'\]'
+ESCAPED_OPEN_BRACKET = r"\["
+ESCAPED_CLOSE_BRACKET = r"\]"

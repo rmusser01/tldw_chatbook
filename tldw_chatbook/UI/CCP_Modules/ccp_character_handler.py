@@ -68,8 +68,7 @@ def fetch_all_characters() -> List[Dict[str, Any]]:
     characters = fetch_character_names()
     if isinstance(characters, dict):
         return [
-            {"id": str(char_id), "name": name}
-            for char_id, name in characters.items()
+            {"id": str(char_id), "name": name} for char_id, name in characters.items()
         ]
 
     return [
@@ -89,7 +88,9 @@ def fetch_character_by_id(character_id: CharacterId) -> Dict[str, Any]:
 
 def create_character(data: Dict[str, Any]) -> CharacterId:
     """Compatibility helper for character creation."""
-    return _default_character_db().add_character_card(_normalize_character_payload(data))
+    return _default_character_db().add_character_card(
+        _normalize_character_payload(data)
+    )
 
 
 def update_character(character_id: CharacterId, data: Dict[str, Any]) -> bool:
@@ -150,10 +151,10 @@ def import_character_card(file_path: str) -> Any:
 
 class CCPCharacterHandler:
     """Handles all character-related operations for the Personas screen."""
-    
+
     def __init__(self, window: "PersonasScreen"):
         """Initialize the character handler.
-        
+
         Args:
             window: Reference to the parent Personas screen
         """
@@ -163,7 +164,7 @@ class CCPCharacterHandler:
         self.current_character_data: Dict[str, Any] = {}
         self.character_list: List[Dict[str, Any]] = []
         self.pending_image_data: Optional[str] = None
-        
+
         logger.debug("CCPCharacterHandler initialized")
 
     def _current_mode(self) -> str:
@@ -196,19 +197,29 @@ class CCPCharacterHandler:
         """Resolve the active chat identifier for chat-scoped execution helpers."""
         candidates = (
             chat_id,
-            getattr(getattr(self.window, "state", None), "selected_conversation_id", None),
-            getattr(getattr(self.window, "conversation_handler", None), "current_conversation_id", None),
+            getattr(
+                getattr(self.window, "state", None), "selected_conversation_id", None
+            ),
+            getattr(
+                getattr(self.window, "conversation_handler", None),
+                "current_conversation_id",
+                None,
+            ),
         )
         for candidate in candidates:
             if candidate not in {None, ""}:
                 return str(candidate)
         raise ValueError("Select a conversation first.")
 
-    async def list_chat_greetings(self, chat_id: Optional[str] = None) -> Dict[str, Any]:
+    async def list_chat_greetings(
+        self, chat_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """List server chat greetings for the active CCP conversation."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "list_chat_greetings"):
-            self._notify("Chat greeting execution support is not available in the current backend.")
+            self._notify(
+                "Chat greeting execution support is not available in the current backend."
+            )
             return {}
 
         try:
@@ -225,11 +236,15 @@ class CCPCharacterHandler:
             self._notify("Failed to load chat greetings.", severity="error")
             return {}
 
-    async def select_chat_greeting(self, index: int, chat_id: Optional[str] = None) -> Dict[str, Any]:
+    async def select_chat_greeting(
+        self, index: int, chat_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Select a greeting for the active CCP conversation."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "select_chat_greeting"):
-            self._notify("Chat greeting execution support is not available in the current backend.")
+            self._notify(
+                "Chat greeting execution support is not available in the current backend."
+            )
             return {}
 
         try:
@@ -251,7 +266,9 @@ class CCPCharacterHandler:
         """List server chat prompt presets available to CCP execution."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "list_chat_presets"):
-            self._notify("Chat preset execution support is not available in the current backend.")
+            self._notify(
+                "Chat preset execution support is not available in the current backend."
+            )
             return {}
 
         try:
@@ -269,11 +286,15 @@ class CCPCharacterHandler:
         """Create a server chat prompt preset through the shared scope service."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "create_chat_preset"):
-            self._notify("Chat preset execution support is not available in the current backend.")
+            self._notify(
+                "Chat preset execution support is not available in the current backend."
+            )
             return {}
 
         try:
-            return await service.create_chat_preset(request_data, mode=self._current_mode())
+            return await service.create_chat_preset(
+                request_data, mode=self._current_mode()
+            )
         except ValueError as exc:
             logger.warning("Chat preset creation unavailable: {}", exc)
             self._notify(str(exc))
@@ -283,11 +304,15 @@ class CCPCharacterHandler:
             self._notify("Failed to create chat preset.", severity="error")
             return {}
 
-    async def update_chat_preset(self, preset_id: str, request_data: Any) -> Dict[str, Any]:
+    async def update_chat_preset(
+        self, preset_id: str, request_data: Any
+    ) -> Dict[str, Any]:
         """Update a server chat prompt preset through the shared scope service."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "update_chat_preset"):
-            self._notify("Chat preset execution support is not available in the current backend.")
+            self._notify(
+                "Chat preset execution support is not available in the current backend."
+            )
             return {}
 
         try:
@@ -309,11 +334,15 @@ class CCPCharacterHandler:
         """Delete a server chat prompt preset through the shared scope service."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "delete_chat_preset"):
-            self._notify("Chat preset execution support is not available in the current backend.")
+            self._notify(
+                "Chat preset execution support is not available in the current backend."
+            )
             return {}
 
         try:
-            return await service.delete_chat_preset(preset_id, mode=self._current_mode())
+            return await service.delete_chat_preset(
+                preset_id, mode=self._current_mode()
+            )
         except ValueError as exc:
             logger.warning("Chat preset delete unavailable: {}", exc)
             self._notify(str(exc))
@@ -322,151 +351,191 @@ class CCPCharacterHandler:
             logger.opt(exception=True).error("Error deleting chat preset")
             self._notify("Failed to delete chat preset.", severity="error")
             return {}
-    
+
     async def refresh_character_list(self) -> None:
         """Refresh the character select dropdown."""
         try:
             self.character_list = fetch_all_characters()
-            options = [(char.get("name", "Unnamed"), str(char.get("id"))) for char in self.character_list]
+            options = [
+                (char.get("name", "Unnamed"), str(char.get("id")))
+                for char in self.character_list
+            ]
 
             try:
-                character_select = self.window.query_one("#conv-char-character-select", Select)
+                character_select = self.window.query_one(
+                    "#conv-char-character-select", Select
+                )
                 character_select.set_options(options)
             except Exception:
-                logger.debug("Legacy character Select not mounted; using destination-native list.")
+                logger.debug(
+                    "Legacy character Select not mounted; using destination-native list."
+                )
 
-            refresh_destination_list = getattr(self.window, "refresh_character_library_list", None)
+            refresh_destination_list = getattr(
+                self.window, "refresh_character_library_list", None
+            )
             if callable(refresh_destination_list):
                 await refresh_destination_list(self.character_list)
 
             logger.info(f"Refreshed character list with {len(options)} characters")
-            
+
         except Exception as e:
             logger.opt(exception=True).error(f"Error refreshing character list: {e}")
-    
+
     async def handle_load_character(self) -> None:
         """Load the selected character."""
         try:
-            character_select = self.window.query_one("#conv-char-character-select", Select)
-            
+            character_select = self.window.query_one(
+                "#conv-char-character-select", Select
+            )
+
             if character_select.value:
                 character_id = str(character_select.value)
                 await self.load_character(character_id)
             else:
                 logger.warning("No character selected to load")
-                
+
         except Exception as e:
             logger.opt(exception=True).error(f"Error loading selected character: {e}")
-    
+
     async def load_character(self, character_id: CharacterId) -> None:
         """Load a character and display the card (async wrapper).
-        
+
         Args:
             character_id: The ID of the character to load
         """
         logger.info(f"Starting character load for {character_id}")
-        
+
         # Run the sync database operation in a worker thread
         self.window.run_worker(
             partial(self._load_character_sync, character_id),
             thread=True,
             exclusive=True,
-            name=f"load_character_{character_id}"
+            name=f"load_character_{character_id}",
         )
-    
+
     def _load_character_sync(self, character_id: CharacterId) -> None:
         """Sync method to load character data in a worker thread.
-        
+
         Args:
             character_id: The ID of the character to load
         """
         logger.info(f"Loading character {character_id}")
-        
+
         try:
             card_data = fetch_character_by_id(character_id)
-            
+
             if card_data:
                 self.current_character_id = character_id
                 self.current_character_data = card_data
-                
+
                 # Post messages from worker thread using call_from_thread
                 self._call_from_thread(
                     self.window.post_message,
-                    CharacterMessage.Loaded(character_id, card_data)
+                    CharacterMessage.Loaded(character_id, card_data),
                 )
-                
+
                 # Switch view to show character card
                 self._call_from_thread(
                     self.window.post_message,
-                    ViewChangeMessage.Requested("character_card", {"character_id": character_id})
+                    ViewChangeMessage.Requested(
+                        "character_card", {"character_id": character_id}
+                    ),
                 )
-                
+
                 # Update UI on main thread
                 self._call_from_thread(self._display_character_card)
-                
+
                 logger.info(f"Character {character_id} loaded successfully")
             else:
                 logger.error(f"Failed to load character {character_id}")
-                
+
         except Exception as e:
-            logger.opt(exception=True).error(f"Error loading character {character_id}: {e}")
-    
+            logger.opt(exception=True).error(
+                f"Error loading character {character_id}: {e}"
+            )
+
     def _display_character_card(self) -> None:
         """Display character card in the UI."""
         try:
             if not self.current_character_data:
                 return
-            
+
             data = self.current_character_data
 
             try:
                 card_widget = self.window.query_one("#ccp-character-card-view")
                 if hasattr(card_widget, "load_character"):
                     card_widget.load_character(data)
-                    logger.debug(f"Displayed character card for {data.get('name', 'Unknown')}")
+                    logger.debug(
+                        f"Displayed character card for {data.get('name', 'Unknown')}"
+                    )
                     return
             except Exception as e:
                 logger.warning(f"Could not use character card widget loader: {e}")
-            
+
             # Update all the character card display fields
             self._update_field("#ccp-card-name-display", data.get("name", "N/A"))
-            self._update_textarea("#ccp-card-description-display", data.get("description", ""))
-            self._update_textarea("#ccp-card-personality-display", data.get("personality", ""))
-            self._update_textarea("#ccp-card-scenario-display", data.get("scenario", ""))
-            self._update_textarea("#ccp-card-first-message-display", data.get("first_message", ""))
-            
+            self._update_textarea(
+                "#ccp-card-description-display", data.get("description", "")
+            )
+            self._update_textarea(
+                "#ccp-card-personality-display", data.get("personality", "")
+            )
+            self._update_textarea(
+                "#ccp-card-scenario-display", data.get("scenario", "")
+            )
+            self._update_textarea(
+                "#ccp-card-first-message-display", data.get("first_message", "")
+            )
+
             # V2 fields
-            self._update_textarea("#ccp-card-creator-notes-display", data.get("creator_notes", ""))
-            self._update_textarea("#ccp-card-system-prompt-display", data.get("system_prompt", ""))
-            self._update_textarea("#ccp-card-post-history-instructions-display", 
-                                data.get("post_history_instructions", ""))
-            
+            self._update_textarea(
+                "#ccp-card-creator-notes-display", data.get("creator_notes", "")
+            )
+            self._update_textarea(
+                "#ccp-card-system-prompt-display", data.get("system_prompt", "")
+            )
+            self._update_textarea(
+                "#ccp-card-post-history-instructions-display",
+                data.get("post_history_instructions", ""),
+            )
+
             # Handle alternate greetings
             alternate_greetings = data.get("alternate_greetings", [])
             if alternate_greetings:
                 greetings_text = "\n".join(alternate_greetings)
-                self._update_textarea("#ccp-card-alternate-greetings-display", greetings_text)
-            
+                self._update_textarea(
+                    "#ccp-card-alternate-greetings-display", greetings_text
+                )
+
             # Handle tags
             tags = data.get("tags", [])
-            self._update_field("#ccp-card-tags-display", ", ".join(tags) if tags else "None")
-            
+            self._update_field(
+                "#ccp-card-tags-display", ", ".join(tags) if tags else "None"
+            )
+
             # Other metadata
             self._update_field("#ccp-card-creator-display", data.get("creator", "N/A"))
-            self._update_field("#ccp-card-version-display", data.get("character_version", "N/A"))
-            
+            self._update_field(
+                "#ccp-card-version-display", data.get("character_version", "N/A")
+            )
+
             # Keywords
             keywords = data.get("keywords", [])
-            self._update_field("#ccp-card-keywords-display", ", ".join(keywords) if keywords else "None")
-            
+            self._update_field(
+                "#ccp-card-keywords-display",
+                ", ".join(keywords) if keywords else "None",
+            )
+
             # Handle image display
             self._display_character_image(data)
-            
+
             logger.debug(f"Displayed character card for {data.get('name', 'Unknown')}")
-            
+
         except Exception as e:
             logger.opt(exception=True).error(f"Error displaying character card: {e}")
-    
+
     def _update_field(self, selector: str, value: str) -> None:
         """Update a Static field."""
         try:
@@ -474,7 +543,7 @@ class CCPCharacterHandler:
             widget.update(value)
         except Exception as e:
             logger.warning(f"Could not update field {selector}: {e}")
-    
+
     def _update_textarea(self, selector: str, value: str) -> None:
         """Update a TextArea field."""
         try:
@@ -482,12 +551,14 @@ class CCPCharacterHandler:
             widget.text = value
         except Exception as e:
             logger.warning(f"Could not update textarea {selector}: {e}")
-    
+
     def _display_character_image(self, data: Dict[str, Any]) -> None:
         """Display character image if available."""
         try:
-            image_placeholder = self.window.query_one("#ccp-card-image-placeholder", Static)
-            
+            image_placeholder = self.window.query_one(
+                "#ccp-card-image-placeholder", Static
+            )
+
             # Check for base64 image data
             if data.get("image"):
                 # In a real implementation, we'd render the image
@@ -498,29 +569,32 @@ class CCPCharacterHandler:
                 image_placeholder.update(f"🔗 Avatar: {data['avatar'][:50]}...")
             else:
                 image_placeholder.update("No image")
-                
+
         except Exception as e:
             logger.warning(f"Could not display character image: {e}")
-    
+
     async def handle_edit_character(self) -> None:
         """Switch to character editor view."""
         if not self.current_character_data:
             logger.warning("No character loaded to edit")
             return
-        
+
         try:
             # Switch view to editor
             self.window.post_message(
-                ViewChangeMessage.Requested("character_editor", 
-                                          {"character_id": self.current_character_id})
+                ViewChangeMessage.Requested(
+                    "character_editor", {"character_id": self.current_character_id}
+                )
             )
-            
+
             # Populate editor fields
             self._populate_editor_fields()
-            
+
         except Exception as e:
-            logger.opt(exception=True).error(f"Error switching to character editor: {e}")
-    
+            logger.opt(exception=True).error(
+                f"Error switching to character editor: {e}"
+            )
+
     def _populate_editor_fields(self) -> None:
         """Populate the character editor fields with current data."""
         try:
@@ -533,43 +607,67 @@ class CCPCharacterHandler:
                     return
             except Exception as e:
                 logger.warning(f"Could not use character editor widget loader: {e}")
-            
+
             # Basic fields
             self._set_input_value("#ccp-editor-char-name-input", data.get("name", ""))
-            self._set_textarea_value("#ccp-editor-char-description-textarea", data.get("description", ""))
-            self._set_textarea_value("#ccp-editor-char-personality-textarea", data.get("personality", ""))
-            self._set_textarea_value("#ccp-editor-char-scenario-textarea", data.get("scenario", ""))
-            self._set_textarea_value("#ccp-editor-char-first-message-textarea", data.get("first_message", ""))
-            
+            self._set_textarea_value(
+                "#ccp-editor-char-description-textarea", data.get("description", "")
+            )
+            self._set_textarea_value(
+                "#ccp-editor-char-personality-textarea", data.get("personality", "")
+            )
+            self._set_textarea_value(
+                "#ccp-editor-char-scenario-textarea", data.get("scenario", "")
+            )
+            self._set_textarea_value(
+                "#ccp-editor-char-first-message-textarea", data.get("first_message", "")
+            )
+
             # Keywords
             keywords = data.get("keywords", [])
-            self._set_textarea_value("#ccp-editor-char-keywords-textarea", ", ".join(keywords))
-            
+            self._set_textarea_value(
+                "#ccp-editor-char-keywords-textarea", ", ".join(keywords)
+            )
+
             # V2 fields
-            self._set_textarea_value("#ccp-editor-char-creator-notes-textarea", data.get("creator_notes", ""))
-            self._set_textarea_value("#ccp-editor-char-system-prompt-textarea", data.get("system_prompt", ""))
-            self._set_textarea_value("#ccp-editor-char-post-history-instructions-textarea", 
-                                   data.get("post_history_instructions", ""))
-            
+            self._set_textarea_value(
+                "#ccp-editor-char-creator-notes-textarea", data.get("creator_notes", "")
+            )
+            self._set_textarea_value(
+                "#ccp-editor-char-system-prompt-textarea", data.get("system_prompt", "")
+            )
+            self._set_textarea_value(
+                "#ccp-editor-char-post-history-instructions-textarea",
+                data.get("post_history_instructions", ""),
+            )
+
             # Alternate greetings
             alternate_greetings = data.get("alternate_greetings", [])
-            self._set_textarea_value("#ccp-editor-char-alternate-greetings-textarea", 
-                                   "\n".join(alternate_greetings))
-            
+            self._set_textarea_value(
+                "#ccp-editor-char-alternate-greetings-textarea",
+                "\n".join(alternate_greetings),
+            )
+
             # Tags
             tags = data.get("tags", [])
             self._set_input_value("#ccp-editor-char-tags-input", ", ".join(tags))
-            
+
             # Metadata
-            self._set_input_value("#ccp-editor-char-creator-input", data.get("creator", ""))
-            self._set_input_value("#ccp-editor-char-version-input", data.get("character_version", ""))
-            
+            self._set_input_value(
+                "#ccp-editor-char-creator-input", data.get("creator", "")
+            )
+            self._set_input_value(
+                "#ccp-editor-char-version-input", data.get("character_version", "")
+            )
+
             # Avatar URL
-            self._set_input_value("#ccp-editor-char-avatar-input", data.get("avatar", ""))
-            
+            self._set_input_value(
+                "#ccp-editor-char-avatar-input", data.get("avatar", "")
+            )
+
         except Exception as e:
             logger.opt(exception=True).error(f"Error populating editor fields: {e}")
-    
+
     def _set_input_value(self, selector: str, value: str) -> None:
         """Set an Input widget's value."""
         try:
@@ -577,7 +675,7 @@ class CCPCharacterHandler:
             widget.value = value
         except Exception as e:
             logger.warning(f"Could not set input {selector}: {e}")
-    
+
     def _set_textarea_value(self, selector: str, value: str) -> None:
         """Set a TextArea widget's value."""
         try:
@@ -585,7 +683,7 @@ class CCPCharacterHandler:
             widget.text = value
         except Exception as e:
             logger.warning(f"Could not set textarea {selector}: {e}")
-    
+
     async def handle_save_character(self) -> None:
         """Save the character from editor."""
         try:
@@ -599,11 +697,14 @@ class CCPCharacterHandler:
     async def save_character_data(self, character_data: Dict[str, Any]) -> None:
         """Save character data from the current editor widget."""
         try:
-            
             if self.current_character_id:
                 # Update existing character
                 self.window.run_worker(
-                    partial(self._update_character, self.current_character_id, character_data),
+                    partial(
+                        self._update_character,
+                        self.current_character_id,
+                        character_data,
+                    ),
                     thread=True,
                     exclusive=True,
                     name=f"update_character_{self.current_character_id}",
@@ -616,62 +717,96 @@ class CCPCharacterHandler:
                     exclusive=True,
                     name="create_character",
                 )
-                
+
         except Exception as e:
             logger.opt(exception=True).error(f"Error saving character: {e}")
-    
+
     def _gather_editor_data(self) -> Dict[str, Any]:
         """Gather all data from the editor fields."""
         data = {}
-        
+
         try:
             try:
                 editor_widget = self.window.query_one("#ccp-character-editor-view")
                 if hasattr(editor_widget, "get_character_data"):
                     return editor_widget.get_character_data()
             except Exception as e:
-                logger.warning(f"Could not gather data from character editor widget: {e}")
+                logger.warning(
+                    f"Could not gather data from character editor widget: {e}"
+                )
 
             # Basic fields
-            data["name"] = self.window.query_one("#ccp-editor-char-name-input", Input).value
-            data["description"] = self.window.query_one("#ccp-editor-char-description-textarea", TextArea).text
-            data["personality"] = self.window.query_one("#ccp-editor-char-personality-textarea", TextArea).text
-            data["scenario"] = self.window.query_one("#ccp-editor-char-scenario-textarea", TextArea).text
-            data["first_message"] = self.window.query_one("#ccp-editor-char-first-message-textarea", TextArea).text
-            
+            data["name"] = self.window.query_one(
+                "#ccp-editor-char-name-input", Input
+            ).value
+            data["description"] = self.window.query_one(
+                "#ccp-editor-char-description-textarea", TextArea
+            ).text
+            data["personality"] = self.window.query_one(
+                "#ccp-editor-char-personality-textarea", TextArea
+            ).text
+            data["scenario"] = self.window.query_one(
+                "#ccp-editor-char-scenario-textarea", TextArea
+            ).text
+            data["first_message"] = self.window.query_one(
+                "#ccp-editor-char-first-message-textarea", TextArea
+            ).text
+
             # Keywords
-            keywords_text = self.window.query_one("#ccp-editor-char-keywords-textarea", TextArea).text
-            data["keywords"] = [k.strip() for k in keywords_text.split(",") if k.strip()]
-            
+            keywords_text = self.window.query_one(
+                "#ccp-editor-char-keywords-textarea", TextArea
+            ).text
+            data["keywords"] = [
+                k.strip() for k in keywords_text.split(",") if k.strip()
+            ]
+
             # V2 fields
-            data["creator_notes"] = self.window.query_one("#ccp-editor-char-creator-notes-textarea", TextArea).text
-            data["system_prompt"] = self.window.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text
-            data["post_history_instructions"] = self.window.query_one("#ccp-editor-char-post-history-instructions-textarea", TextArea).text
-            
+            data["creator_notes"] = self.window.query_one(
+                "#ccp-editor-char-creator-notes-textarea", TextArea
+            ).text
+            data["system_prompt"] = self.window.query_one(
+                "#ccp-editor-char-system-prompt-textarea", TextArea
+            ).text
+            data["post_history_instructions"] = self.window.query_one(
+                "#ccp-editor-char-post-history-instructions-textarea", TextArea
+            ).text
+
             # Alternate greetings
-            greetings_text = self.window.query_one("#ccp-editor-char-alternate-greetings-textarea", TextArea).text
-            data["alternate_greetings"] = [g.strip() for g in greetings_text.split("\n") if g.strip()]
-            
+            greetings_text = self.window.query_one(
+                "#ccp-editor-char-alternate-greetings-textarea", TextArea
+            ).text
+            data["alternate_greetings"] = [
+                g.strip() for g in greetings_text.split("\n") if g.strip()
+            ]
+
             # Tags
-            tags_text = self.window.query_one("#ccp-editor-char-tags-input", Input).value
+            tags_text = self.window.query_one(
+                "#ccp-editor-char-tags-input", Input
+            ).value
             data["tags"] = [t.strip() for t in tags_text.split(",") if t.strip()]
-            
+
             # Metadata
-            data["creator"] = self.window.query_one("#ccp-editor-char-creator-input", Input).value
-            data["character_version"] = self.window.query_one("#ccp-editor-char-version-input", Input).value
-            
+            data["creator"] = self.window.query_one(
+                "#ccp-editor-char-creator-input", Input
+            ).value
+            data["character_version"] = self.window.query_one(
+                "#ccp-editor-char-version-input", Input
+            ).value
+
             # Avatar URL
-            data["avatar"] = self.window.query_one("#ccp-editor-char-avatar-input", Input).value
-            
+            data["avatar"] = self.window.query_one(
+                "#ccp-editor-char-avatar-input", Input
+            ).value
+
             # Include pending image data if available
             if self.pending_image_data:
                 data["image"] = self.pending_image_data
-            
+
         except Exception as e:
             logger.opt(exception=True).error(f"Error gathering editor data: {e}")
-        
+
         return data
-    
+
     def _update_character(
         self,
         character_id: Union[CharacterId, Dict[str, Any]],
@@ -688,185 +823,189 @@ class CCPCharacterHandler:
 
         try:
             success = update_character(character_id, data)
-            
+
             if success:
                 logger.info(f"Updated character {character_id}")
                 updated_data = dict(self.current_character_data)
                 updated_data.update(data)
                 self.current_character_data = updated_data
-                
+
                 # Post update message from worker thread
                 self._call_from_thread(
                     self.window.post_message,
-                    CharacterMessage.Updated(character_id, updated_data)
+                    CharacterMessage.Updated(character_id, updated_data),
                 )
-                
+
                 # Refresh the character list on main thread
                 self._call_from_thread(self.refresh_character_list)
             else:
                 logger.error(f"Failed to update character {character_id}")
-                
+
         except Exception as e:
             logger.opt(exception=True).error(f"Error updating character: {e}")
-    
+
     def _create_character(self, data: Dict[str, Any]) -> None:
         """Create a new character (sync worker method)."""
         try:
             character_id = create_character(data)
-            
+
             if character_id:
                 logger.info(f"Created new character with ID {character_id}")
-                
+
                 # Post creation message from worker thread
                 self._call_from_thread(
                     self.window.post_message,
-                    CharacterMessage.Created(character_id, data.get("name", ""), data)
+                    CharacterMessage.Created(character_id, data.get("name", ""), data),
                 )
-                
+
                 # Refresh the character list on main thread
                 self._call_from_thread(self.refresh_character_list)
-                
+
                 # Set as current character
                 self.current_character_id = character_id
                 self.current_character_data = data
             else:
                 logger.error("Failed to create new character")
-                
+
         except Exception as e:
             logger.opt(exception=True).error(f"Error creating character: {e}")
-    
+
     async def handle_delete_character(self) -> None:
         """Delete the current character."""
         if not self.current_character_id:
             logger.warning("No character selected to delete")
             return
-        
+
         try:
             from ...Character_Chat.Character_Chat_Lib import delete_character_card
-            
+
             success = delete_character_card(self.current_character_id)
-            
+
             if success:
                 logger.info(f"Deleted character {self.current_character_id}")
-                
+
                 # Post deletion message
                 self.window.post_message(
                     CharacterMessage.Deleted(self.current_character_id)
                 )
-                
+
                 # Clear current character
                 self.current_character_id = None
                 self.current_character_data = {}
-                
+
                 # Refresh the character list
                 await self.refresh_character_list()
-                
+
                 # Switch view back to main
-                self.window.post_message(
-                    ViewChangeMessage.Requested("conversations")
-                )
+                self.window.post_message(ViewChangeMessage.Requested("conversations"))
             else:
                 logger.error(f"Failed to delete character {self.current_character_id}")
-                
+
         except Exception as e:
             logger.opt(exception=True).error(f"Error deleting character: {e}")
-    
+
     async def handle_import(self) -> None:
         """Handle import request - prompts for file selection."""
         from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
-        
+
         try:
             # Create filters for character card files
             # Filters need callable testers; glob strings crash the picker.
             filters = Filters(
-                ("Character Cards", lambda p: p.suffix.lower() in (".json", ".png", ".yaml", ".yml")),
+                (
+                    "Character Cards",
+                    lambda p: p.suffix.lower() in (".json", ".png", ".yaml", ".yml"),
+                ),
                 ("JSON Files", lambda p: p.suffix.lower() == ".json"),
-                ("PNG Files (with embedded data)", lambda p: p.suffix.lower() == ".png"),
+                (
+                    "PNG Files (with embedded data)",
+                    lambda p: p.suffix.lower() == ".png",
+                ),
                 ("YAML Files", lambda p: p.suffix.lower() in (".yaml", ".yml")),
                 ("All Files", lambda p: True),
             )
-            
+
             # Create and show the file picker
             picker = EnhancedFileOpen(
                 title="Import Character Card",
                 filters=filters,
-                context="character_import"
+                context="character_import",
             )
-            
+
             # Push the file picker screen
             file_path = await self.window.app.push_screen(picker, wait_for_dismiss=True)
-            
+
             if file_path:
                 await self.handle_import_character(str(file_path))
         except Exception as e:
             logger.error(f"Error showing file picker: {e}")
-    
+
     async def handle_import_character(self, file_path: str) -> None:
         """Import a character card from file.
-        
+
         Args:
             file_path: Path to the character card file
         """
         try:
             character_id = import_character_card(file_path)
-            
+
             if character_id:
                 logger.info(f"Imported character from {file_path}")
-                
+
                 # Refresh the character list
                 await self.refresh_character_list()
-                
+
                 # Load the imported character
                 await self.load_character(character_id)
             else:
                 logger.error(f"Failed to import character from {file_path}")
-                
+
         except Exception as e:
             logger.opt(exception=True).error(f"Error importing character: {e}")
-    
+
     async def handle_export_character(self) -> None:
         """Export the current character."""
         if not self.current_character_id:
             logger.warning("No character selected to export")
             return
-        
+
         try:
             from ...Character_Chat.ccv3_parser import export_character_card_json
-            
+
             # Generate export filename
             name = self.current_character_data.get("name", "character")
             safe_name = "".join(c for c in name if c.isalnum() or c in " -_").rstrip()
             file_path = f"exports/{safe_name}_card.json"
-            
+
             # Export the character card
             success = export_character_card_json(self.current_character_id, file_path)
-            
+
             if success:
                 logger.info(f"Exported character to {file_path}")
                 # Could show a notification here
             else:
                 logger.error(f"Failed to export character {self.current_character_id}")
-                
+
         except Exception as e:
             logger.opt(exception=True).error(f"Error exporting character: {e}")
-    
+
     async def handle_generate_field(self, field_name: str) -> None:
         """Generate a character field using AI.
-        
+
         Args:
             field_name: Name of the field to generate
         """
         try:
             # Gather context for generation
             context = self._gather_editor_data()
-            
+
             # Post message to trigger generation
             self.window.post_message(
                 CharacterMessage.GenerateFieldRequested(field_name, context)
             )
-            
+
             # The actual generation would be handled by the app or a dedicated AI handler
             logger.info(f"Requested AI generation for field: {field_name}")
-            
+
         except Exception as e:
             logger.opt(exception=True).error(f"Error requesting field generation: {e}")

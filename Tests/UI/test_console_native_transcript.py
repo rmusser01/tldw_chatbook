@@ -30,8 +30,12 @@ class TranscriptHarness(App):
         transcript = ConsoleTranscript(id="console-native-transcript")
         transcript.set_messages(
             [
-                ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hello", id="m1"),
-                ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer", id="m2"),
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER, content="hello", id="m1"
+                ),
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.ASSISTANT, content="answer", id="m2"
+                ),
             ]
         )
         yield transcript
@@ -48,9 +52,13 @@ class MutableTranscriptHarness(App):
 
 
 class SaveAsModalHarness(App):
-    def __init__(self, destinations: list[ConsoleSaveDestination] | None = None) -> None:
+    def __init__(
+        self, destinations: list[ConsoleSaveDestination] | None = None
+    ) -> None:
         super().__init__()
-        self.destinations = save_as_modal_destinations() if destinations is None else destinations
+        self.destinations = (
+            save_as_modal_destinations() if destinations is None else destinations
+        )
         self.selected_destination: str | None = None
 
     def on_mount(self) -> None:
@@ -110,7 +118,9 @@ def test_console_transcript_widget_rules_are_long_enough_to_clip_full_width():
 async def test_console_transcript_append_preserves_existing_message_rows():
     app = MutableTranscriptHarness()
     messages = [
-        ConsoleChatMessage(role=ConsoleMessageRole.USER, content=f"message {index}", id=f"m{index}")
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.USER, content=f"message {index}", id=f"m{index}"
+        )
         for index in range(12)
     ]
 
@@ -122,27 +132,38 @@ async def test_console_transcript_append_preserves_existing_message_rows():
 
         transcript.set_messages(
             messages
-            + [ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="new answer", id="m-new")]
+            + [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.ASSISTANT, content="new answer", id="m-new"
+                )
+            ]
         )
         await transcript.refresh_messages()
         after_counts = transcript.row_build_counts()
 
     for message in messages:
-        assert after_counts[f"message:{message.id}"] == before_counts[f"message:{message.id}"]
+        assert (
+            after_counts[f"message:{message.id}"]
+            == before_counts[f"message:{message.id}"]
+        )
     assert after_counts["message:m-new"] == 1
 
 
 @pytest.mark.asyncio
 async def test_console_transcript_streaming_update_preserves_unrelated_message_rows():
     app = MutableTranscriptHarness()
-    user = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="prompt", id="m-user")
+    user = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="prompt", id="m-user"
+    )
     assistant = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT,
         content="partial",
         id="m-assistant",
         status="streaming",
     )
-    trailing = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="next", id="m-next")
+    trailing = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="next", id="m-next"
+    )
 
     async with app.run_test(size=(100, 32)):
         transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
@@ -167,8 +188,12 @@ async def test_console_transcript_selection_update_preserves_message_rows():
     app = MutableTranscriptHarness()
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="prompt", id="m-user"),
-        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer", id="m-assistant"),
-        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="followup", id="m-followup"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="answer", id="m-assistant"
+        ),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.USER, content="followup", id="m-followup"
+        ),
     ]
 
     async with app.run_test(size=(100, 32)):
@@ -185,7 +210,10 @@ async def test_console_transcript_selection_update_preserves_message_rows():
         after_counts = transcript.row_build_counts()
 
     for message in messages:
-        assert after_counts[f"message:{message.id}"] == before_counts[f"message:{message.id}"]
+        assert (
+            after_counts[f"message:{message.id}"]
+            == before_counts[f"message:{message.id}"]
+        )
     assert "actions:m-user" not in transcript.row_render_signatures()
     assert "actions:m-assistant" in transcript.row_render_signatures()
 
@@ -193,8 +221,12 @@ async def test_console_transcript_selection_update_preserves_message_rows():
 @pytest.mark.asyncio
 async def test_console_transcript_removes_build_counts_for_stale_rows():
     app = MutableTranscriptHarness()
-    removed = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="remove me", id="m-removed")
-    kept = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="keep me", id="m-kept")
+    removed = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="remove me", id="m-removed"
+    )
+    kept = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="keep me", id="m-kept"
+    )
 
     async with app.run_test(size=(100, 32)):
         transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
@@ -247,12 +279,16 @@ async def test_console_transcript_empty_state_accepts_setup_copy():
         await pilot.pause()
 
         empty_state = transcript.query_one(".console-transcript-empty-state", Static)
-        empty_text = getattr(empty_state.renderable, "plain", str(empty_state.renderable))
+        empty_text = getattr(
+            empty_state.renderable, "plain", str(empty_state.renderable)
+        )
         assert empty_text == "Choose a model in Console Settings to start chatting."
 
 
 def test_console_transcript_selected_message_shows_action_row():
-    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1")
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1"
+    )
     transcript = ConsoleTranscript()
     transcript.set_messages([message])
     transcript.select_message("m1")
@@ -264,7 +300,9 @@ def test_console_transcript_selected_message_shows_action_row():
 
 
 def test_console_user_message_regenerate_action_is_disabled_and_blocks_dispatch():
-    message = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="prompt", id="m1")
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="prompt", id="m1"
+    )
     service = ConsoleMessageActionService()
 
     regenerate = next(
@@ -281,7 +319,9 @@ def test_console_user_message_regenerate_action_is_disabled_and_blocks_dispatch(
 
 
 def test_console_transcript_selected_message_does_not_apply_inline_border_geometry():
-    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1")
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1"
+    )
     widget = ConsoleTranscriptMessage(message, selected=True)
 
     assert widget.has_class("console-transcript-message-selected")
@@ -299,7 +339,9 @@ def test_console_transcript_selected_message_does_not_apply_inline_border_geomet
 
 
 def test_console_transcript_action_row_stays_within_terminal_width_budget():
-    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1")
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1"
+    )
     transcript = ConsoleTranscript()
     transcript.set_messages([message])
     transcript.select_message("m1")
@@ -315,7 +357,9 @@ def test_console_transcript_action_row_stays_within_terminal_width_budget():
 
 
 def test_console_transcript_selected_message_explains_icon_actions():
-    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1")
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1"
+    )
     transcript = ConsoleTranscript()
     transcript.set_messages([message])
     transcript.select_message("m1")
@@ -327,7 +371,9 @@ def test_console_transcript_selected_message_explains_icon_actions():
 
 
 def test_console_transcript_variant_navigation_changes_displayed_content():
-    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="first", id="m1")
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="first", id="m1"
+    )
     message.variants = ConsoleVariantSet.from_contents(
         turn_id="turn-1",
         contents=["first", "second"],
@@ -348,7 +394,9 @@ def test_console_transcript_variant_navigation_changes_displayed_content():
 
 
 def test_console_transcript_variant_action_row_stays_within_terminal_width_budget():
-    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="first", id="m1")
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="first", id="m1"
+    )
     message.variants = ConsoleVariantSet.from_contents(
         turn_id="turn-1",
         contents=["first", "second"],
@@ -514,8 +562,12 @@ async def test_save_as_modal_available_destination_is_clickable_control():
     )
 
     async with app.run_test(size=(100, 30)) as pilot:
-        await _wait_for_selector(app.screen, pilot, "#console-save-as-destination-chatbook")
-        destination_button = app.screen.query_one("#console-save-as-destination-chatbook", Button)
+        await _wait_for_selector(
+            app.screen, pilot, "#console-save-as-destination-chatbook"
+        )
+        destination_button = app.screen.query_one(
+            "#console-save-as-destination-chatbook", Button
+        )
         text = _visible_text(app.screen)
 
         assert destination_button.disabled is False
@@ -565,7 +617,9 @@ async def test_console_tab_reaches_major_console_screen_regions():
     and Tab is free to reach the workbench regions during normal use.
     """
     app = _build_test_app()
-    app.app_config.setdefault("console", {})["onboarding"] = {"first_send_completed": True}
+    app.app_config.setdefault("console", {})["onboarding"] = {
+        "first_send_completed": True
+    }
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -703,9 +757,15 @@ def test_multi_attachment_message_renders_chip_per_attachment():
         content="three pics",
     )
     message.attachments = (
-        MessageAttachment(data=b"1", mime_type="image/png", display_name="a.png", position=0),
-        MessageAttachment(data=b"22", mime_type="image/jpeg", display_name="b.jpg", position=1),
-        MessageAttachment(data=None, mime_type="image/png", display_name="", position=2),
+        MessageAttachment(
+            data=b"1", mime_type="image/png", display_name="a.png", position=0
+        ),
+        MessageAttachment(
+            data=b"22", mime_type="image/jpeg", display_name="b.jpg", position=1
+        ),
+        MessageAttachment(
+            data=None, mime_type="image/png", display_name="", position=2
+        ),
     )
     message.image_data = b"1"
     message.image_mime_type = "image/png"
@@ -869,7 +929,9 @@ def test_toggle_image_view_action_offered_and_dispatched_for_image_messages():
 def _cache_test_messages(count: int) -> list[ConsoleChatMessage]:
     return [
         ConsoleChatMessage(
-            role=ConsoleMessageRole.USER if index % 2 == 0 else ConsoleMessageRole.ASSISTANT,
+            role=ConsoleMessageRole.USER
+            if index % 2 == 0
+            else ConsoleMessageRole.ASSISTANT,
             content=f"message body {index}",
             id=f"m{index}",
         )
@@ -914,7 +976,9 @@ async def test_transcript_signature_derivation_is_o_changed_messages():
 async def test_transcript_signature_cache_miss_on_equal_length_edit():
     """The cache must key on content, never on content length alone."""
     app = MutableTranscriptHarness()
-    message = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="aaaa", id="m-edit")
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="aaaa", id="m-edit"
+    )
 
     async with app.run_test(size=(100, 32)):
         transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
@@ -980,8 +1044,7 @@ async def test_transcript_signature_cache_survives_reorder():
 
         assert transcript.message_signature_compute_counts() == baseline
         rendered_ids = [
-            widget.message_id
-            for widget in transcript.query(ConsoleTranscriptMessage)
+            widget.message_id for widget in transcript.query(ConsoleTranscriptMessage)
         ]
 
     assert rendered_ids == ["m2", "m0", "m3", "m1"]
@@ -991,7 +1054,9 @@ async def test_transcript_signature_cache_survives_reorder():
 async def test_transcript_signature_cache_survives_variant_switch():
     """Switching variants re-derives only that message and shows the variant."""
     app = MutableTranscriptHarness()
-    plain = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="prompt", id="m-plain")
+    plain = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="prompt", id="m-plain"
+    )
     varied = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT, content="first answer", id="m-varied"
     )

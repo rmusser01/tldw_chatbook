@@ -26,8 +26,12 @@ class ChatTaskCards(Container):
         # unchanged.
         calls = approval.get("calls") if isinstance(approval, dict) else None
         if calls:
-            approval_card.set_batch(calls, timeout_seconds=approval.get("timeout_seconds", 0.0))
+            approval_card.set_batch(
+                calls, timeout_seconds=approval.get("timeout_seconds", 0.0)
+            )
         else:
             approval_card.set_approval(approval)
         resume_panel.set_resume_state(task_state)
-        self.display = task_state.has_pending_approval() or task_state.has_resume_content()
+        self.display = (
+            task_state.has_pending_approval() or task_state.has_resume_content()
+        )

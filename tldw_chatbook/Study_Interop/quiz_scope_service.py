@@ -119,7 +119,9 @@ class QuizScopeService:
         return f"quiz.question.detail.{backend.value}"
 
     @classmethod
-    def _normalize_scope(self, scope_type: Optional[str], workspace_id: Optional[str]) -> tuple[str, Optional[str]]:
+    def _normalize_scope(
+        self, scope_type: Optional[str], workspace_id: Optional[str]
+    ) -> tuple[str, Optional[str]]:
         normalized_scope = str(scope_type or "global").strip().lower()
         if normalized_scope not in self._ALLOWED_SCOPE_TYPES:
             raise ValueError(f"Invalid quiz scope_type: {scope_type}")
@@ -129,7 +131,9 @@ class QuizScopeService:
         return normalized_scope, normalized_workspace_id
 
     @staticmethod
-    def _filter_quiz_scope(record: Mapping[str, Any], *, scope_type: str, workspace_id: Optional[str]) -> bool:
+    def _filter_quiz_scope(
+        record: Mapping[str, Any], *, scope_type: str, workspace_id: Optional[str]
+    ) -> bool:
         record_workspace_id = record.get("workspace_id")
         if scope_type == "global":
             return record_workspace_id is None
@@ -148,7 +152,9 @@ class QuizScopeService:
         fetched_records: list[dict[str, Any]] = []
         page_offset = 0
         while True:
-            response = await self._maybe_await(service.list_quizzes(q=q, limit=page_size, offset=page_offset))
+            response = await self._maybe_await(
+                service.list_quizzes(q=q, limit=page_size, offset=page_offset)
+            )
             page_items = self._items_from_list_response(response)
             fetched_records.extend(page_items)
             if len(page_items) < page_size:
@@ -158,7 +164,9 @@ class QuizScopeService:
         return [
             normalize_quiz_record("server", record)
             for record in fetched_records
-            if self._filter_quiz_scope(record, scope_type=scope_type, workspace_id=workspace_id)
+            if self._filter_quiz_scope(
+                record, scope_type=scope_type, workspace_id=workspace_id
+            )
         ]
 
     async def list_quizzes(
@@ -175,12 +183,16 @@ class QuizScopeService:
         self._enforce_policy(self._quiz_action_id(backend, "list"))
         service = self._service_for(backend)
         normalized_q = str(q or "").strip() or None
-        normalized_scope_type, normalized_workspace_id = self._normalize_scope(scope_type, workspace_id)
+        normalized_scope_type, normalized_workspace_id = self._normalize_scope(
+            scope_type, workspace_id
+        )
 
         if backend is QuizBackend.LOCAL:
             if normalized_scope_type == "workspace":
                 raise ValueError("Workspace Study is unavailable in local mode")
-            records = await self._maybe_await(service.list_quizzes(q=normalized_q, limit=limit, offset=offset))
+            records = await self._maybe_await(
+                service.list_quizzes(q=normalized_q, limit=limit, offset=offset)
+            )
             items = self._items_from_list_response(records)
             return [normalize_quiz_record(backend.value, record) for record in items]
 
@@ -218,14 +230,18 @@ class QuizScopeService:
         backend = self._resolve_backend(mode)
         self._enforce_policy(self._quiz_action_id(backend, "list"))
         if backend is QuizBackend.LOCAL:
-            return int(await self._maybe_await(self._service_for(backend).count_quizzes()))
+            return int(
+                await self._maybe_await(self._service_for(backend).count_quizzes())
+            )
         # The server quiz backend does not expose a dedicated count-only
         # seam today (``list_quizzes``'s server branch pages through the
         # full quiz collection to build normalized records). Rather than
         # issuing a full paginated fetch just to read a number, mirror the
         # unsupported-count contract established by
         # ``NotesScopeService.count_notes``.
-        raise ValueError("Server quiz counts are not supported; use list_quizzes for a scoped total.")
+        raise ValueError(
+            "Server quiz counts are not supported; use list_quizzes for a scoped total."
+        )
 
     async def create_quiz(
         self,
@@ -241,7 +257,9 @@ class QuizScopeService:
         backend = self._resolve_backend(mode)
         self._enforce_policy(self._quiz_action_id(backend, "create"))
         service = self._service_for(backend)
-        normalized_scope_type, normalized_workspace_id = self._normalize_scope(scope_type, workspace_id)
+        normalized_scope_type, normalized_workspace_id = self._normalize_scope(
+            scope_type, workspace_id
+        )
         if backend is QuizBackend.LOCAL and normalized_scope_type == "workspace":
             raise ValueError("Workspace Study is unavailable in local mode")
         result = await self._maybe_await(
@@ -250,7 +268,9 @@ class QuizScopeService:
                 description=description,
                 time_limit_seconds=time_limit_seconds,
                 passing_score=passing_score,
-                workspace_id=normalized_workspace_id if normalized_scope_type == "workspace" else None,
+                workspace_id=normalized_workspace_id
+                if normalized_scope_type == "workspace"
+                else None,
             )
         )
         return normalize_quiz_record(backend.value, result)
@@ -301,7 +321,9 @@ class QuizScopeService:
             )
         )
         items = self._items_from_list_response(records)
-        return [normalize_quiz_question_record(backend.value, record) for record in items]
+        return [
+            normalize_quiz_question_record(backend.value, record) for record in items
+        ]
 
     async def create_question(
         self,
@@ -371,7 +393,9 @@ class QuizScopeService:
         if backend is QuizBackend.LOCAL and normalized_scope_type == "workspace":
             raise ValueError("Workspace Study is unavailable in local mode")
         service = self._service_for(backend)
-        result = await self._maybe_await(service.submit_attempt(attempt_id, answers=answers))
+        result = await self._maybe_await(
+            service.submit_attempt(attempt_id, answers=answers)
+        )
         return normalize_quiz_attempt_record(backend.value, result)
 
     async def list_attempts(
@@ -390,9 +414,13 @@ class QuizScopeService:
         if backend is QuizBackend.LOCAL and normalized_scope_type == "workspace":
             raise ValueError("Workspace Study is unavailable in local mode")
         service = self._service_for(backend)
-        records = await self._maybe_await(service.list_attempts(quiz_id=quiz_id, limit=limit, offset=offset))
+        records = await self._maybe_await(
+            service.list_attempts(quiz_id=quiz_id, limit=limit, offset=offset)
+        )
         items = self._items_from_list_response(records)
-        return [normalize_quiz_attempt_record(backend.value, record) for record in items]
+        return [
+            normalize_quiz_attempt_record(backend.value, record) for record in items
+        ]
 
     async def get_attempt(
         self,

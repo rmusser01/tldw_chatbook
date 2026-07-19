@@ -107,7 +107,9 @@ class FakeWritingScopeService:
         }
         self.projects = {
             "local": [self.entities["project"]],
-            "server": [SimpleNamespace(id="server-project", title="Server Draft", version=2)],
+            "server": [
+                SimpleNamespace(id="server-project", title="Server Draft", version=2)
+            ],
         }
         self.structure = {
             "project": self.entities["project"],
@@ -127,9 +129,13 @@ class FakeWritingScopeService:
             ],
             "unassigned_chapters": [
                 {
-                    "chapter": SimpleNamespace(id="chapter-loose", title="Loose Chapter", version=1),
+                    "chapter": SimpleNamespace(
+                        id="chapter-loose", title="Loose Chapter", version=1
+                    ),
                     "scenes": [
-                        SimpleNamespace(id="scene-loose", title="Loose Scene", version=1),
+                        SimpleNamespace(
+                            id="scene-loose", title="Loose Scene", version=1
+                        ),
                     ],
                 }
             ],
@@ -147,10 +153,34 @@ class FakeWritingScopeService:
             )
         ]
         self.trash_entries = [
-            SimpleNamespace(source="local", entity_kind="project", entity_id="local-project", project_id="local-project", title="Local Draft"),
-            SimpleNamespace(source="local", entity_kind="manuscript", entity_id="manuscript-1", project_id="local-project", title="Book One"),
-            SimpleNamespace(source="local", entity_kind="chapter", entity_id="chapter-1", project_id="local-project", title="Chapter One"),
-            SimpleNamespace(source="local", entity_kind="scene", entity_id="scene-1", project_id="local-project", title="Opening Scene"),
+            SimpleNamespace(
+                source="local",
+                entity_kind="project",
+                entity_id="local-project",
+                project_id="local-project",
+                title="Local Draft",
+            ),
+            SimpleNamespace(
+                source="local",
+                entity_kind="manuscript",
+                entity_id="manuscript-1",
+                project_id="local-project",
+                title="Book One",
+            ),
+            SimpleNamespace(
+                source="local",
+                entity_kind="chapter",
+                entity_id="chapter-1",
+                project_id="local-project",
+                title="Chapter One",
+            ),
+            SimpleNamespace(
+                source="local",
+                entity_kind="scene",
+                entity_id="scene-1",
+                project_id="local-project",
+                title="Opening Scene",
+            ),
         ]
 
     async def list_projects(self, *, mode, **_kwargs):
@@ -167,14 +197,20 @@ class FakeWritingScopeService:
 
     async def create_project(self, *, mode, **payload):
         self.calls.append(("create_project", mode, dict(payload)))
-        return SimpleNamespace(id="server-project-new", title=payload["title"], version=1)
+        return SimpleNamespace(
+            id="server-project-new", title=payload["title"], version=1
+        )
 
     async def create_manuscript(self, project_id, *, mode, **payload):
         self.calls.append(("create_manuscript", mode, project_id, dict(payload)))
-        return SimpleNamespace(id="part-new", project_id=project_id, title=payload["title"], version=1)
+        return SimpleNamespace(
+            id="part-new", project_id=project_id, title=payload["title"], version=1
+        )
 
     async def create_chapter(self, project_id, *, mode, manuscript_id=None, **payload):
-        self.calls.append(("create_chapter", mode, project_id, manuscript_id, dict(payload)))
+        self.calls.append(
+            ("create_chapter", mode, project_id, manuscript_id, dict(payload))
+        )
         return SimpleNamespace(
             id="chapter-new",
             project_id=project_id,
@@ -183,8 +219,12 @@ class FakeWritingScopeService:
             version=1,
         )
 
-    async def create_scene(self, project_id, *, mode, chapter_id=None, manuscript_id=None, **payload):
-        self.calls.append(("create_scene", mode, project_id, chapter_id, manuscript_id, dict(payload)))
+    async def create_scene(
+        self, project_id, *, mode, chapter_id=None, manuscript_id=None, **payload
+    ):
+        self.calls.append(
+            ("create_scene", mode, project_id, chapter_id, manuscript_id, dict(payload))
+        )
         return SimpleNamespace(
             id="scene-new",
             project_id=project_id,
@@ -212,19 +252,27 @@ class FakeWritingScopeService:
         return self.entities["scene"]
 
     async def update_project(self, entity_id, payload, expected_version, *, mode):
-        self.calls.append(("update_project", mode, entity_id, dict(payload), expected_version))
+        self.calls.append(
+            ("update_project", mode, entity_id, dict(payload), expected_version)
+        )
         return self.entities["project"]
 
     async def update_manuscript(self, entity_id, payload, expected_version, *, mode):
-        self.calls.append(("update_manuscript", mode, entity_id, dict(payload), expected_version))
+        self.calls.append(
+            ("update_manuscript", mode, entity_id, dict(payload), expected_version)
+        )
         return self.entities["manuscript"]
 
     async def update_chapter(self, entity_id, payload, expected_version, *, mode):
-        self.calls.append(("update_chapter", mode, entity_id, dict(payload), expected_version))
+        self.calls.append(
+            ("update_chapter", mode, entity_id, dict(payload), expected_version)
+        )
         return self.entities["chapter"]
 
     async def update_scene(self, entity_id, payload, expected_version, *, mode):
-        self.calls.append(("update_scene", mode, entity_id, dict(payload), expected_version))
+        self.calls.append(
+            ("update_scene", mode, entity_id, dict(payload), expected_version)
+        )
         return self.entities["scene"]
 
     async def delete_project(self, entity_id, *, mode, expected_version=None):
@@ -243,37 +291,119 @@ class FakeWritingScopeService:
         self.calls.append(("delete_scene", mode, entity_id, expected_version))
         return SimpleNamespace(id=entity_id, deleted=True)
 
-    async def assign_chapter(self, entity_id, manuscript_id, *, mode, expected_version=None, sort_order=None):
-        self.calls.append(("assign_chapter", mode, entity_id, manuscript_id, expected_version, sort_order))
+    async def assign_chapter(
+        self, entity_id, manuscript_id, *, mode, expected_version=None, sort_order=None
+    ):
+        self.calls.append(
+            (
+                "assign_chapter",
+                mode,
+                entity_id,
+                manuscript_id,
+                expected_version,
+                sort_order,
+            )
+        )
         return self.entities["chapter"]
 
     async def reorder_items(self, project_id, entity_type, items, *, mode):
         self.calls.append(("reorder_items", mode, project_id, entity_type, list(items)))
         return list(items)
 
-    async def move_scene(self, scene_id, manuscript_id, chapter_id, *, mode, expected_version=None, sort_order=None):
-        self.calls.append(("move_scene", mode, scene_id, manuscript_id, chapter_id, expected_version, sort_order))
+    async def move_scene(
+        self,
+        scene_id,
+        manuscript_id,
+        chapter_id,
+        *,
+        mode,
+        expected_version=None,
+        sort_order=None,
+    ):
+        self.calls.append(
+            (
+                "move_scene",
+                mode,
+                scene_id,
+                manuscript_id,
+                chapter_id,
+                expected_version,
+                sort_order,
+            )
+        )
         return self.entities["scene"]
 
     async def search_project(self, project_id, query, *, mode, limit=20):
         self.calls.append(("search_project", mode, project_id, query, limit))
         return [{"source": mode, "id": "scene-1", "title": "Opening Scene"}]
 
-    async def autosave_scene(self, entity_id, *, mode, body_markdown, expected_version=None):
-        self.calls.append(("autosave_scene", mode, entity_id, body_markdown, expected_version))
+    async def autosave_scene(
+        self, entity_id, *, mode, body_markdown, expected_version=None
+    ):
+        self.calls.append(
+            ("autosave_scene", mode, entity_id, body_markdown, expected_version)
+        )
         self.entities["scene"].body_markdown = body_markdown
         return self.entities["scene"]
 
-    async def create_version(self, entity_kind, entity_id, *, mode, snapshot=None, body_markdown=None, label=None):
-        self.calls.append(("create_version", mode, entity_kind, entity_id, snapshot, body_markdown, label))
+    async def create_version(
+        self,
+        entity_kind,
+        entity_id,
+        *,
+        mode,
+        snapshot=None,
+        body_markdown=None,
+        label=None,
+    ):
+        self.calls.append(
+            (
+                "create_version",
+                mode,
+                entity_kind,
+                entity_id,
+                snapshot,
+                body_markdown,
+                label,
+            )
+        )
         return self.versions[0]
 
-    async def list_versions(self, entity_kind, entity_id, *, mode, include_deleted=False, limit=100, offset=0):
-        self.calls.append(("list_versions", mode, entity_kind, entity_id, include_deleted, limit, offset))
+    async def list_versions(
+        self,
+        entity_kind,
+        entity_id,
+        *,
+        mode,
+        include_deleted=False,
+        limit=100,
+        offset=0,
+    ):
+        self.calls.append(
+            (
+                "list_versions",
+                mode,
+                entity_kind,
+                entity_id,
+                include_deleted,
+                limit,
+                offset,
+            )
+        )
         return list(self.versions)
 
-    async def restore_version_to_working_state(self, version_id, *, mode, entity_kind="scene", expected_version=None):
-        self.calls.append(("restore_version_to_working_state", mode, version_id, entity_kind, expected_version))
+    async def restore_version_to_working_state(
+        self, version_id, *, mode, entity_kind="scene", expected_version=None
+    ):
+        self.calls.append(
+            (
+                "restore_version_to_working_state",
+                mode,
+                version_id,
+                entity_kind,
+                expected_version,
+            )
+        )
         self.entities[entity_kind].body_markdown = "Draft A"
         return self.entities[entity_kind]
 
@@ -283,22 +413,30 @@ class FakeWritingScopeService:
 
     async def restore_project(self, entity_id, *, mode, expected_version=None):
         self.calls.append(("restore_project", mode, entity_id, expected_version))
-        self.trash_entries = [entry for entry in self.trash_entries if entry.entity_id != entity_id]
+        self.trash_entries = [
+            entry for entry in self.trash_entries if entry.entity_id != entity_id
+        ]
         return self.entities["project"]
 
     async def restore_manuscript(self, entity_id, *, mode, expected_version=None):
         self.calls.append(("restore_manuscript", mode, entity_id, expected_version))
-        self.trash_entries = [entry for entry in self.trash_entries if entry.entity_id != entity_id]
+        self.trash_entries = [
+            entry for entry in self.trash_entries if entry.entity_id != entity_id
+        ]
         return self.entities["manuscript"]
 
     async def restore_chapter(self, entity_id, *, mode, expected_version=None):
         self.calls.append(("restore_chapter", mode, entity_id, expected_version))
-        self.trash_entries = [entry for entry in self.trash_entries if entry.entity_id != entity_id]
+        self.trash_entries = [
+            entry for entry in self.trash_entries if entry.entity_id != entity_id
+        ]
         return self.entities["chapter"]
 
     async def restore_scene(self, entity_id, *, mode, expected_version=None):
         self.calls.append(("restore_scene", mode, entity_id, expected_version))
-        self.trash_entries = [entry for entry in self.trash_entries if entry.entity_id != entity_id]
+        self.trash_entries = [
+            entry for entry in self.trash_entries if entry.entity_id != entity_id
+        ]
         return self.entities["scene"]
 
     def get_capability(self, **kwargs):
@@ -307,13 +445,26 @@ class FakeWritingScopeService:
         entity_kind = kwargs.get("entity_kind")
         parent_kind = kwargs.get("parent_kind")
         if mode == "server" and action == "create_version":
-            return SimpleNamespace(supported=False, reason=REASON_VERSION_HISTORY, metadata=kwargs)
+            return SimpleNamespace(
+                supported=False, reason=REASON_VERSION_HISTORY, metadata=kwargs
+            )
         if mode == "server" and action == "restore_deleted":
-            return SimpleNamespace(supported=False, reason=REASON_TRASH_RESTORE, metadata=kwargs)
+            return SimpleNamespace(
+                supported=False, reason=REASON_TRASH_RESTORE, metadata=kwargs
+            )
         if mode == "server" and action == "reparent" and entity_kind == "scene":
-            return SimpleNamespace(supported=False, reason=REASON_SCENE_REPARENT, metadata=kwargs)
-        if mode == "server" and action in {"create", "move"} and entity_kind == "scene" and parent_kind == "manuscript":
-            return SimpleNamespace(supported=False, reason=REASON_DIRECT_MANUSCRIPT_SCENE, metadata=kwargs)
+            return SimpleNamespace(
+                supported=False, reason=REASON_SCENE_REPARENT, metadata=kwargs
+            )
+        if (
+            mode == "server"
+            and action in {"create", "move"}
+            and entity_kind == "scene"
+            and parent_kind == "manuscript"
+        ):
+            return SimpleNamespace(
+                supported=False, reason=REASON_DIRECT_MANUSCRIPT_SCENE, metadata=kwargs
+            )
         return SimpleNamespace(supported=True, reason=None, metadata=kwargs)
 
 
@@ -454,9 +605,27 @@ async def test_controller_autosaves_container_metadata_without_body_fields():
         expected_version=1,
     )
 
-    assert ("update_project", "local", "local-project", {"title": "Project Revised"}, 1) in scope.calls
-    assert ("update_manuscript", "local", "manuscript-1", {"title": "Book Revised"}, 1) in scope.calls
-    assert ("update_chapter", "local", "chapter-1", {"title": "Chapter Revised"}, 1) in scope.calls
+    assert (
+        "update_project",
+        "local",
+        "local-project",
+        {"title": "Project Revised"},
+        1,
+    ) in scope.calls
+    assert (
+        "update_manuscript",
+        "local",
+        "manuscript-1",
+        {"title": "Book Revised"},
+        1,
+    ) in scope.calls
+    assert (
+        "update_chapter",
+        "local",
+        "chapter-1",
+        {"title": "Chapter Revised"},
+        1,
+    ) in scope.calls
 
 
 def test_detail_panel_enables_body_editor_only_for_scenes():
@@ -464,14 +633,24 @@ def test_detail_panel_enables_body_editor_only_for_scenes():
     panel = _writing_window(scope).detail_panel
 
     panel.load_entity(
-        {"source": "local", "kind": "scene", "id": "scene-1", "project_id": "local-project"},
+        {
+            "source": "local",
+            "kind": "scene",
+            "id": "scene-1",
+            "project_id": "local-project",
+        },
         scope.entities["scene"],
     )
     assert panel.body_editor_enabled is True
     assert panel.detail_text == "Draft A"
 
     panel.load_entity(
-        {"source": "local", "kind": "chapter", "id": "chapter-1", "project_id": "local-project"},
+        {
+            "source": "local",
+            "kind": "chapter",
+            "id": "chapter-1",
+            "project_id": "local-project",
+        },
         scope.entities["chapter"],
     )
     assert panel.body_editor_enabled is False
@@ -479,7 +658,12 @@ def test_detail_panel_enables_body_editor_only_for_scenes():
     assert "Chapter synopsis" in panel.detail_text
 
     panel.load_entity(
-        {"source": "local", "kind": "manuscript", "id": "manuscript-1", "project_id": "local-project"},
+        {
+            "source": "local",
+            "kind": "manuscript",
+            "id": "manuscript-1",
+            "project_id": "local-project",
+        },
         scope.entities["manuscript"],
     )
     assert panel.body_editor_enabled is False
@@ -493,13 +677,23 @@ def test_detail_panel_local_versions_are_available_only_for_non_project_entities
 
     for kind in ("manuscript", "chapter", "scene"):
         panel.load_entity(
-            {"source": "local", "kind": kind, "id": scope.entities[kind].id, "project_id": "local-project"},
+            {
+                "source": "local",
+                "kind": kind,
+                "id": scope.entities[kind].id,
+                "project_id": "local-project",
+            },
             scope.entities[kind],
         )
         assert panel.create_version_enabled is True
 
     panel.load_entity(
-        {"source": "local", "kind": "project", "id": "local-project", "project_id": "local-project"},
+        {
+            "source": "local",
+            "kind": "project",
+            "id": "local-project",
+            "project_id": "local-project",
+        },
         scope.entities["project"],
     )
     assert panel.create_version_enabled is False
@@ -521,7 +715,12 @@ def test_detail_panel_non_entity_selection_clears_editable_entity_state():
     panel = _writing_window(scope).detail_panel
 
     panel.load_entity(
-        {"source": "local", "kind": "scene", "id": "scene-1", "project_id": "local-project"},
+        {
+            "source": "local",
+            "kind": "scene",
+            "id": "scene-1",
+            "project_id": "local-project",
+        },
         scope.entities["scene"],
     )
     panel.set_versions(scope.versions)
@@ -547,7 +746,13 @@ async def test_window_restore_local_version_updates_working_state_and_detail():
     window = _writing_window(scope)
 
     await window.load_entity_detail(
-        {"source": "local", "kind": "scene", "id": "scene-1", "project_id": "local-project", "version": 2}
+        {
+            "source": "local",
+            "kind": "scene",
+            "id": "scene-1",
+            "project_id": "local-project",
+            "version": 2,
+        }
     )
     restored = await window.restore_selected_version("version-1")
 
@@ -586,14 +791,25 @@ async def test_server_project_create_update_delete_routes_scope_methods():
 
     await window.create_project({"title": "Server Project"})
     await window.load_entity_detail(
-        {"source": "server", "kind": "project", "id": "local-project", "project_id": "local-project"}
+        {
+            "source": "server",
+            "kind": "project",
+            "id": "local-project",
+            "project_id": "local-project",
+        }
     )
     update_payload = window.detail_panel.current_payload()
     await window.autosave_selected_entity()
     await window.delete_selected_entity()
 
     assert ("create_project", "server", {"title": "Server Project"}) in scope.calls
-    assert ("update_project", "server", "local-project", update_payload, 1) in scope.calls
+    assert (
+        "update_project",
+        "server",
+        "local-project",
+        update_payload,
+        1,
+    ) in scope.calls
     assert ("delete_project", "server", "local-project", 1) in scope.calls
 
 
@@ -625,7 +841,12 @@ async def test_server_child_create_and_chapter_assignment_route_through_scope_me
         sort_order=10,
     )
 
-    assert ("create_manuscript", "server", "local-project", {"title": "Part Two"}) in scope.calls
+    assert (
+        "create_manuscript",
+        "server",
+        "local-project",
+        {"title": "Part Two"},
+    ) in scope.calls
     assert (
         "create_chapter",
         "server",
@@ -691,14 +912,25 @@ async def test_server_versions_and_trash_are_disabled_with_visible_reasons():
     window.current_source = "server"
 
     await window.load_entity_detail(
-        {"source": "server", "kind": "scene", "id": "scene-1", "project_id": "local-project"}
+        {
+            "source": "server",
+            "kind": "scene",
+            "id": "scene-1",
+            "project_id": "local-project",
+        }
     )
     trash_entries = await window.load_trash("local-project")
 
     assert window.detail_panel.create_version_enabled is False
-    assert window.detail_panel.unsupported_reasons["create_version"] == REASON_VERSION_HISTORY
+    assert (
+        window.detail_panel.unsupported_reasons["create_version"]
+        == REASON_VERSION_HISTORY
+    )
     assert trash_entries == []
-    assert window.detail_panel.unsupported_reasons["restore_deleted"] == REASON_TRASH_RESTORE
+    assert (
+        window.detail_panel.unsupported_reasons["restore_deleted"]
+        == REASON_TRASH_RESTORE
+    )
     assert REASON_TRASH_RESTORE in window.status_message
 
 
@@ -709,11 +941,19 @@ async def test_server_version_reason_survives_autosave_refresh():
     window.current_source = "server"
 
     await window.load_entity_detail(
-        {"source": "server", "kind": "scene", "id": "scene-1", "project_id": "local-project"}
+        {
+            "source": "server",
+            "kind": "scene",
+            "id": "scene-1",
+            "project_id": "local-project",
+        }
     )
     await window.autosave_selected_entity()
 
-    assert window.detail_panel.unsupported_reasons["create_version"] == REASON_VERSION_HISTORY
+    assert (
+        window.detail_panel.unsupported_reasons["create_version"]
+        == REASON_VERSION_HISTORY
+    )
 
 
 @pytest.mark.asyncio
@@ -735,8 +975,12 @@ async def test_controller_reorder_move_and_search_are_source_specific():
         expected_version=1,
         sort_order=3,
     )
-    local_results = await controller.search_project("local", "local-project", "Opening", limit=5)
-    server_results = await controller.search_project("server", "local-project", "Opening", limit=5)
+    local_results = await controller.search_project(
+        "local", "local-project", "Opening", limit=5
+    )
+    server_results = await controller.search_project(
+        "server", "local-project", "Opening", limit=5
+    )
 
     assert (
         "reorder_items",
@@ -746,8 +990,12 @@ async def test_controller_reorder_move_and_search_are_source_specific():
         [{"id": "scene-1", "sort_order": 2, "version": 1}],
     ) in scope.calls
     assert ("move_scene", "local", "scene-1", "manuscript-1", None, 1, 3) in scope.calls
-    assert local_results == [{"source": "local", "id": "scene-1", "title": "Opening Scene"}]
-    assert server_results == [{"source": "server", "id": "scene-1", "title": "Opening Scene"}]
+    assert local_results == [
+        {"source": "local", "id": "scene-1", "title": "Opening Scene"}
+    ]
+    assert server_results == [
+        {"source": "server", "id": "scene-1", "title": "Opening Scene"}
+    ]
     assert ("search_project", "local", "local-project", "Opening", 5) in scope.calls
     assert ("search_project", "server", "local-project", "Opening", 5) in scope.calls
 
@@ -774,7 +1022,9 @@ async def test_mounted_project_list_renders_and_selects_project():
         assert len(project_list.children) == 1
         assert getattr(project_list.children[0], "project_id") == "local-project"
 
-        await window._handle_project_selected(SimpleNamespace(item=project_list.children[0]))
+        await window._handle_project_selected(
+            SimpleNamespace(item=project_list.children[0])
+        )
 
     assert ("get_project_structure", "local", "local-project") in scope.calls
     assert window.outline_tree.labels[0] == "Local Draft"

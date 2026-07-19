@@ -4,11 +4,14 @@
 # Imports
 import os
 import time
+
 #
 # Third-Party Imports
 #
 # Local Imports
 from tldw_chatbook.Third_Party.aider.repomap import RepoMap
+
+
 #
 ########################################################################################################################
 #
@@ -94,9 +97,25 @@ class CodeContextManager:
             for file in files:
                 abs_fpath = os.path.join(root, file)
                 # Filter out some common non-code files (can be improved)
-                if not any(abs_fpath.endswith(ext) for ext in
-                           [".py", ".js", ".ts", ".java", ".c", ".cpp", ".h", ".hpp", ".rs", ".go", ".md"]):
-                    if self.aider_repo_map.get_rel_fname(abs_fpath).startswith('.'):  # hidden files
+                if not any(
+                    abs_fpath.endswith(ext)
+                    for ext in [
+                        ".py",
+                        ".js",
+                        ".ts",
+                        ".java",
+                        ".c",
+                        ".cpp",
+                        ".h",
+                        ".hpp",
+                        ".rs",
+                        ".go",
+                        ".md",
+                    ]
+                ):
+                    if self.aider_repo_map.get_rel_fname(abs_fpath).startswith(
+                        "."
+                    ):  # hidden files
                         continue
                     # Check if language can be determined by Aider, crude filter for now
                     if not self.aider_repo_map.filename_to_lang(abs_fpath):
@@ -109,7 +128,9 @@ class CodeContextManager:
         for abs_fpath in all_repo_files:
             processed_files += 1
             if processed_files % 100 == 0 and self.verbose:
-                self.io.tool_output(f"Scanned {processed_files}/{len(all_repo_files)} files for index...")
+                self.io.tool_output(
+                    f"Scanned {processed_files}/{len(all_repo_files)} files for index..."
+                )
 
             rel_fpath = self.aider_repo_map.get_rel_fname(abs_fpath)
             try:
@@ -120,8 +141,11 @@ class CodeContextManager:
                 continue
 
             # Check cache
-            if not force_rescan and rel_fpath in self.file_index and self.file_index[rel_fpath][
-                "mtime"] == current_mtime:
+            if (
+                not force_rescan
+                and rel_fpath in self.file_index
+                and self.file_index[rel_fpath]["mtime"] == current_mtime
+            ):
                 # Use cached tags if mtime hasn't changed
                 tags = self.file_index[rel_fpath]["tags"]
                 error_msg = self.file_index[rel_fpath]["error"]
@@ -135,7 +159,7 @@ class CodeContextManager:
                         "abs_fpath": abs_fpath,
                         "tags": tags,
                         "mtime": current_mtime,
-                        "error": None
+                        "error": None,
                     }
                     updated_files += 1
                 except Exception as e:
@@ -145,31 +169,39 @@ class CodeContextManager:
                         "abs_fpath": abs_fpath,
                         "tags": [],
                         "mtime": current_mtime,
-                        "error": str(e)
+                        "error": str(e),
                     }
-                    if self.verbose: self.io.tool_warning(error_msg)
+                    if self.verbose:
+                        self.io.tool_warning(error_msg)
 
             # Prepare a summary for display (e.g., class and function definitions)
             tags_summary = []
             if tags:
                 for tag_obj in tags:
-                    if tag_obj.kind == "def":  # We are interested in definitions for tree view
+                    if (
+                        tag_obj.kind == "def"
+                    ):  # We are interested in definitions for tree view
                         # Tag(rel_fname, fname, line, name, kind)
-                        tags_summary.append(f"{tag_obj.kind}: {tag_obj.name} (L{tag_obj.line + 1})")
+                        tags_summary.append(
+                            f"{tag_obj.kind}: {tag_obj.name} (L{tag_obj.line + 1})"
+                        )
 
             display_index[rel_fpath] = {
                 "abs_fpath": abs_fpath,
                 "tags_summary": sorted(list(set(tags_summary))),  # Unique, sorted
-                "error": error_msg
+                "error": error_msg,
             }
 
         self.last_index_time = current_scan_time
         self.io.tool_output(
-            f"File index refreshed. {updated_files} files updated/added. Total {len(display_index)} files.")
+            f"File index refreshed. {updated_files} files updated/added. Total {len(display_index)} files."
+        )
         return display_index
 
     # --- Goal 2: Generating Context in Aider's Way ---
-    def get_aider_context(self, chat_files, other_files, mentioned_fnames=None, mentioned_idents=None):
+    def get_aider_context(
+        self, chat_files, other_files, mentioned_fnames=None, mentioned_idents=None
+    ):
         """
         Generates a context string using Aider's RepoMap logic.
 
@@ -183,8 +215,10 @@ class CodeContextManager:
             str: The context string generated by Aider's RepoMap, or None.
         """
         if self.verbose:
-            self.io.tool_output(f"Generating Aider-style context for {len(chat_files)} chat files"
-                                f" and {len(other_files)} other files.")
+            self.io.tool_output(
+                f"Generating Aider-style context for {len(chat_files)} chat files"
+                f" and {len(other_files)} other files."
+            )
 
         # Aider's RepoMap methods generally expect absolute paths for chat_fnames and other_fnames
         # and it handles the rel_path conversion internally.
@@ -209,7 +243,9 @@ class CodeContextManager:
         )
 
     # --- Goal 3: Generating Context via Simple Concatenation ---
-    def get_simple_concatenated_context(self, selected_abs_fpaths, include_headers=True, max_total_size_mb=None):
+    def get_simple_concatenated_context(
+        self, selected_abs_fpaths, include_headers=True, max_total_size_mb=None
+    ):
         """
         Concatenates the full content of selected files with demarcations.
 
@@ -222,31 +258,43 @@ class CodeContextManager:
             str: The concatenated content.
         """
         if self.verbose:
-            self.io.tool_output(f"Generating simple concatenated context for {len(selected_abs_fpaths)} files.")
+            self.io.tool_output(
+                f"Generating simple concatenated context for {len(selected_abs_fpaths)} files."
+            )
 
         output_parts = []
         current_size_bytes = 0
-        limit_bytes = (max_total_size_mb * 1024 * 1024) if max_total_size_mb else float('inf')
+        limit_bytes = (
+            (max_total_size_mb * 1024 * 1024) if max_total_size_mb else float("inf")
+        )
         files_included_count = 0
 
         for abs_fpath in selected_abs_fpaths:
             rel_fpath = self.aider_repo_map.get_rel_fname(abs_fpath)
             try:
                 file_size = os.path.getsize(abs_fpath)
-                if current_size_bytes + file_size > limit_bytes and max_total_size_mb is not None:
+                if (
+                    current_size_bytes + file_size > limit_bytes
+                    and max_total_size_mb is not None
+                ):
                     self.io.tool_warning(
-                        f"Warning: Reached size limit of {max_total_size_mb}MB. Skipping remaining files.")
+                        f"Warning: Reached size limit of {max_total_size_mb}MB. Skipping remaining files."
+                    )
                     break
 
                 content = self.io.read_text(abs_fpath)
                 if content is None:
-                    output_parts.append(f"--- ERROR READING FILE: {rel_fpath} ---\n[Content not available]\n\n")
+                    output_parts.append(
+                        f"--- ERROR READING FILE: {rel_fpath} ---\n[Content not available]\n\n"
+                    )
                     continue
 
                 if include_headers:
                     header = f"--- BEGIN FILE: {rel_fpath} ---\n"
                     # Optionally, add some basic info from our index
-                    if rel_fpath in self.file_index and self.file_index[rel_fpath].get("tags"):
+                    if rel_fpath in self.file_index and self.file_index[rel_fpath].get(
+                        "tags"
+                    ):
                         defs = [
                             tag.name
                             for tag in self.file_index[rel_fpath]["tags"]
@@ -259,7 +307,7 @@ class CodeContextManager:
 
                 output_parts.append(content)
                 # Ensure a newline after content if it doesn't have one, before the end marker
-                if not content.endswith('\n'):
+                if not content.endswith("\n"):
                     output_parts.append("\n")
 
                 if include_headers:
@@ -267,17 +315,22 @@ class CodeContextManager:
                 else:
                     output_parts.append("\n\n")  # Just add some separation
 
-                current_size_bytes += len(content.encode('utf-8'))  # More accurate size based on content read
+                current_size_bytes += len(
+                    content.encode("utf-8")
+                )  # More accurate size based on content read
                 files_included_count += 1
 
             except FileNotFoundError:
                 output_parts.append(f"--- FILE NOT FOUND: {rel_fpath} ---\n\n")
             except Exception as e:
-                output_parts.append(f"--- ERROR PROCESSING FILE {rel_fpath}: {e} ---\n\n")
+                output_parts.append(
+                    f"--- ERROR PROCESSING FILE {rel_fpath}: {e} ---\n\n"
+                )
 
         if self.verbose:
             self.io.tool_output(
-                f"Concatenated {files_included_count} files. Total size: {current_size_bytes / (1024 * 1024):.2f} MB")
+                f"Concatenated {files_included_count} files. Total size: {current_size_bytes / (1024 * 1024):.2f} MB"
+            )
         return "".join(output_parts)
 
     # --- Utility related to Aider's RepoMap if needed for TUI ---
@@ -294,10 +347,11 @@ class CodeContextManager:
         # self.aider_repo_map.map_mul_no_files = new_val
 
     def clear_aider_map_cache(self):
-        """ Clears the cache used by Aider's get_ranked_tags_map. """
+        """Clears the cache used by Aider's get_ranked_tags_map."""
         self.aider_repo_map.map_cache = {}
         self.aider_repo_map.last_map = None
         self.io.tool_output("Aider RepoMap internal cache cleared.")
+
 
 #
 # End of code_mapper.py

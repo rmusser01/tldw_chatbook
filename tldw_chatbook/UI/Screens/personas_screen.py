@@ -32,8 +32,12 @@ from ...Utils.paths import get_user_data_dir
 from ...Widgets.Console.console_rail_handle import ConsoleRailHandle
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
-from ...Widgets.Persona_Widgets.persona_profile_card_widget import PersonaProfileCardWidget
-from ...Widgets.Persona_Widgets.persona_profile_editor_widget import PersonaProfileEditorWidget
+from ...Widgets.Persona_Widgets.persona_profile_card_widget import (
+    PersonaProfileCardWidget,
+)
+from ...Widgets.Persona_Widgets.persona_profile_editor_widget import (
+    PersonaProfileEditorWidget,
+)
 from ...Widgets.Persona_Widgets.personas_character_card_widget import (
     PersonasCharacterCardWidget,
 )
@@ -50,7 +54,10 @@ from ...Widgets.Persona_Widgets.personas_conversation_transcript_widget import (
     PersonasConversationTranscriptWidget,
 )
 from ...Widgets.Persona_Widgets.personas_inspector_pane import PersonasInspectorPane
-from ...Widgets.Persona_Widgets.personas_library_pane import LibraryRow, PersonasLibraryPane
+from ...Widgets.Persona_Widgets.personas_library_pane import (
+    LibraryRow,
+    PersonasLibraryPane,
+)
 from ...Widgets.Persona_Widgets.personas_messages import (
     PersonaActionRequested,
     PersonaEntitySelected,
@@ -103,8 +110,14 @@ from ...Widgets.Persona_Widgets.personas_lore_tryit import (
     PersonasLoreTryItWidget,
 )
 from ...Widgets.Persona_Widgets.personas_preview_pane import PersonasPreviewPane
-from ...Widgets.Persona_Widgets.personas_state import MODE_LABELS, PersonasWorkbenchState
-from ...Widgets.workbench_focus import WorkbenchPaneTarget, focus_relative_workbench_pane
+from ...Widgets.Persona_Widgets.personas_state import (
+    MODE_LABELS,
+    PersonasWorkbenchState,
+)
+from ...Widgets.workbench_focus import (
+    WorkbenchPaneTarget,
+    focus_relative_workbench_pane,
+)
 from ..CCP_Modules import ccp_character_handler
 from ..CCP_Modules.ccp_character_handler import CCPCharacterHandler
 from ..CCP_Modules.ccp_enhanced_handlers import setup_ccp_enhancements
@@ -195,7 +208,9 @@ class PersonasScreen(BaseAppScreen):
     # unsaved-changes dialog prompts before anything is discarded).
     BINDINGS = [
         *BaseAppScreen.BINDINGS,
-        Binding("f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True),
+        Binding(
+            "f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True
+        ),
         Binding(
             "shift+f6",
             "focus_previous_workbench_pane",
@@ -220,8 +235,12 @@ class PersonasScreen(BaseAppScreen):
         ],
         # [ / ] cycle the mode strip. They are printable keys, so text widgets
         # consume them as input first; they only act from list/button focus.
-        Binding("left_square_bracket", "personas_mode_cycle(-1)", "Prev mode", show=False),
-        Binding("right_square_bracket", "personas_mode_cycle(1)", "Next mode", show=False),
+        Binding(
+            "left_square_bracket", "personas_mode_cycle(-1)", "Prev mode", show=False
+        ),
+        Binding(
+            "right_square_bracket", "personas_mode_cycle(1)", "Next mode", show=False
+        ),
     ]
     _WORKBENCH_FOCUS_TARGETS = (
         WorkbenchPaneTarget(
@@ -458,8 +477,12 @@ class PersonasScreen(BaseAppScreen):
                 id="personas-status-row",
                 classes="destination-status-row",
             )
-            with DestinationModeStrip(id="personas-mode-strip", classes="destination-mode-strip"):
-                yield Static("Modes:", id="personas-mode-label", classes="destination-section")
+            with DestinationModeStrip(
+                id="personas-mode-strip", classes="destination-mode-strip"
+            ):
+                yield Static(
+                    "Modes:", id="personas-mode-label", classes="destination-section"
+                )
                 for mode in MODE_CHIP_ORDER:
                     classes = "personas-mode-chip"
                     if mode == self.state.active_mode:
@@ -473,7 +496,9 @@ class PersonasScreen(BaseAppScreen):
                         classes=classes,
                         tooltip=self._mode_descriptor_text(mode),
                     )
-            with Horizontal(id="personas-workbench", classes="ds-panel destination-workbench"):
+            with Horizontal(
+                id="personas-workbench", classes="ds-panel destination-workbench"
+            ):
                 library_handle = ConsoleRailHandle(
                     label="Library",
                     button_id="personas-library-rail-open",
@@ -496,7 +521,9 @@ class PersonasScreen(BaseAppScreen):
                     library_pane.display = False
                 yield library_pane
 
-                with Vertical(id="personas-work-area", classes="destination-workbench-pane"):
+                with Vertical(
+                    id="personas-work-area", classes="destination-workbench-pane"
+                ):
                     with Container(id="personas-detail-stack"):
                         yield PersonasCharacterCardWidget()
                         yield PersonasCharacterEditorWidget()
@@ -504,7 +531,9 @@ class PersonasScreen(BaseAppScreen):
                         yield PersonaProfileCardWidget()
                         yield PersonaProfileEditorWidget()
                         with Horizontal(id="personas-conversation-actions"):
-                            yield Button("Back to card", id="personas-conversation-back")
+                            yield Button(
+                                "Back to card", id="personas-conversation-back"
+                            )
                             yield Button(
                                 "Continue in Console",
                                 id="personas-conversation-continue-console",
@@ -513,10 +542,15 @@ class PersonasScreen(BaseAppScreen):
                                 "Open in Library",
                                 id="personas-conversation-open-library",
                             )
-                        yield PersonasDictionaryDetailWidget(id="personas-dictionary-detail")
+                        yield PersonasDictionaryDetailWidget(
+                            id="personas-dictionary-detail"
+                        )
                         yield PersonasLoreDetailWidget(id="personas-lore-detail")
                         yield PersonasConversationTranscriptWidget()
-                        yield Static(self._mode_placeholder_text("prompts"), id="personas-mode-placeholder")
+                        yield Static(
+                            self._mode_placeholder_text("prompts"),
+                            id="personas-mode-placeholder",
+                        )
                     yield PersonasPreviewPane(id="personas-preview-pane")
                     tryit = PersonasDictionaryTryItWidget(id="personas-dict-tryit")
                     tryit.display = False
@@ -590,7 +624,9 @@ class PersonasScreen(BaseAppScreen):
             "#personas-inspector-pane",
         ):
             try:
-                self.query_one(pane_id).set_class(compact, "personas-workbench-compact-pane")
+                self.query_one(pane_id).set_class(
+                    compact, "personas-workbench-compact-pane"
+                )
             except QueryError:
                 continue
 
@@ -604,25 +640,29 @@ class PersonasScreen(BaseAppScreen):
             self.query_one("#personas-library-pane").display = library_open
             self.query_one("#personas-library-rail-handle").display = not library_open
             self.query_one("#personas-inspector-pane").display = inspector_open
-            self.query_one("#personas-inspector-rail-handle").display = not inspector_open
+            self.query_one(
+                "#personas-inspector-rail-handle"
+            ).display = not inspector_open
         except QueryError:
             return
 
     def _sync_personas_rail_tooltips(self) -> None:
         """Set Personas-specific collapsed rail tooltips on shared handles."""
         try:
-            self.query_one("#personas-library-rail-open", Button).tooltip = (
-                "Open Library rail"
-            )
-            self.query_one("#personas-inspector-rail-open", Button).tooltip = (
-                "Open Inspector rail"
-            )
+            self.query_one(
+                "#personas-library-rail-open", Button
+            ).tooltip = "Open Library rail"
+            self.query_one(
+                "#personas-inspector-rail-open", Button
+            ).tooltip = "Open Inspector rail"
         except QueryError:
             return
 
     # ===== Library rendering =====
 
-    async def refresh_character_library_list(self, characters: list[dict] | None) -> None:
+    async def refresh_character_library_list(
+        self, characters: list[dict] | None
+    ) -> None:
         """Destination-native hook called by ``CCPCharacterHandler``."""
         self._characters = [dict(record) for record in (characters or [])]
         self._update_status_row()
@@ -632,7 +672,9 @@ class PersonasScreen(BaseAppScreen):
             await self._render_library_rows()
         except Exception:
             # Tolerate refreshes that race screen teardown.
-            logger.opt(exception=True).warning("Could not render the character library rows.")
+            logger.opt(exception=True).warning(
+                "Could not render the character library rows."
+            )
 
     @staticmethod
     def _build_library_rows(records: list[dict], kind: str) -> tuple[LibraryRow, ...]:
@@ -676,7 +718,9 @@ class PersonasScreen(BaseAppScreen):
         ):
             return
 
-        query = expected_query if expected_query is not None else self.state.search_query
+        query = (
+            expected_query if expected_query is not None else self.state.search_query
+        )
         total = len(self._characters)
         filtered_total_unbounded = False
         if query:
@@ -693,7 +737,11 @@ class PersonasScreen(BaseAppScreen):
             else:
                 # Small library: filter in-memory, case-insensitively on name.
                 q_lower = query.lower()
-                matched = [r for r in self._characters if q_lower in str(r.get("name") or "").lower()]
+                matched = [
+                    r
+                    for r in self._characters
+                    if q_lower in str(r.get("name") or "").lower()
+                ]
             filtered = True
         else:
             matched = self._characters
@@ -718,7 +766,10 @@ class PersonasScreen(BaseAppScreen):
                 filtered=filtered,
                 filtered_total_unbounded=filtered_total_unbounded,
             )
-            if self.state.selected_entity_kind == "character" and self.state.selected_entity_id:
+            if (
+                self.state.selected_entity_kind == "character"
+                and self.state.selected_entity_id
+            ):
                 library.mark_active_row("character", self.state.selected_entity_id)
 
     def _character_record(self, item_id: str | None) -> dict | None:
@@ -732,10 +783,10 @@ class PersonasScreen(BaseAppScreen):
     def _profile_list_recovery_state(self, exc: Exception) -> DestinationRecoveryState:
         """Build recovery copy when persona profile listing is unavailable."""
 
-        reason = str(exc).strip() or "The current backend did not return persona profiles."
-        disabled_tooltip = (
-            f"{reason} Retry Personas or use Characters until persona profiles are available."
+        reason = (
+            str(exc).strip() or "The current backend did not return persona profiles."
         )
+        disabled_tooltip = f"{reason} Retry Personas or use Characters until persona profiles are available."
         return DestinationRecoveryState(
             status_label="Persona profiles unavailable",
             unavailable_what="Browse persona profiles in Personas",
@@ -757,7 +808,9 @@ class PersonasScreen(BaseAppScreen):
                 raise_on_unavailable=True
             )
         except Exception as exc:
-            logger.opt(exception=True).warning("Could not refresh the persona profile list.")
+            logger.opt(exception=True).warning(
+                "Could not refresh the persona profile list."
+            )
             self._profile_lookup_recovery_state = self._profile_list_recovery_state(exc)
             profiles = []
         else:
@@ -771,7 +824,9 @@ class PersonasScreen(BaseAppScreen):
             await self._render_profile_rows()
         except Exception:
             # Tolerate refreshes that race screen teardown.
-            logger.opt(exception=True).warning("Could not render the persona profile rows.")
+            logger.opt(exception=True).warning(
+                "Could not render the persona profile rows."
+            )
 
     async def _render_profile_rows(
         self,
@@ -785,11 +840,15 @@ class PersonasScreen(BaseAppScreen):
         ):
             return
 
-        query = expected_query if expected_query is not None else self.state.search_query
+        query = (
+            expected_query if expected_query is not None else self.state.search_query
+        )
         total = len(self._profiles)
         if query:
             q_lower = query.lower()
-            matched = [r for r in self._profiles if q_lower in str(r.get("name") or "").lower()]
+            matched = [
+                r for r in self._profiles if q_lower in str(r.get("name") or "").lower()
+            ]
             filtered = True
         else:
             matched = self._profiles
@@ -817,8 +876,13 @@ class PersonasScreen(BaseAppScreen):
                     else "personas-library-recovery"
                 ),
             )
-            if self.state.selected_entity_kind == "persona_profile" and self.state.selected_entity_id:
-                library.mark_active_row("persona_profile", self.state.selected_entity_id)
+            if (
+                self.state.selected_entity_kind == "persona_profile"
+                and self.state.selected_entity_id
+            ):
+                library.mark_active_row(
+                    "persona_profile", self.state.selected_entity_id
+                )
 
     @on(PersonaSearchChanged)
     def _handle_search_changed(self, message: PersonaSearchChanged) -> None:
@@ -865,7 +929,9 @@ class PersonasScreen(BaseAppScreen):
                     expected_mode=mode,
                 )
             except Exception:
-                logger.opt(exception=True).warning("Could not re-render character rows after search.")
+                logger.opt(exception=True).warning(
+                    "Could not re-render character rows after search."
+                )
         elif mode == "personas":
             try:
                 await self._render_profile_rows(
@@ -873,17 +939,23 @@ class PersonasScreen(BaseAppScreen):
                     expected_mode=mode,
                 )
             except Exception:
-                logger.opt(exception=True).warning("Could not re-render profile rows after search.")
+                logger.opt(exception=True).warning(
+                    "Could not re-render profile rows after search."
+                )
         elif mode == "dictionaries":
             try:
                 await self._render_dictionary_rows(query=query)
             except Exception:
-                logger.opt(exception=True).warning("Could not re-render dictionary rows after search.")
+                logger.opt(exception=True).warning(
+                    "Could not re-render dictionary rows after search."
+                )
         elif mode == "lore":
             try:
                 await self._render_lore_rows(query=query)
             except Exception:
-                logger.opt(exception=True).warning("Could not re-render lore rows after search.")
+                logger.opt(exception=True).warning(
+                    "Could not re-render lore rows after search."
+                )
 
     def _profile_record(self, item_id: str | None) -> dict | None:
         if item_id is None:
@@ -952,26 +1024,39 @@ class PersonasScreen(BaseAppScreen):
         service = self._dictionary_scope_service()
         if service is None:
             await library.update_rows(
-                (), total=0, noun="dictionaries",
+                (),
+                total=0,
+                noun="dictionaries",
                 recovery_copy="Dictionaries are unavailable: the service is not configured.",
             )
             return
         try:
-            response = await service.list_dictionaries(mode="local", include_inactive=True)
+            response = await service.list_dictionaries(
+                mode="local", include_inactive=True
+            )
             records = list(response.get("dictionaries") or [])
         except Exception:
             logger.opt(exception=True).warning("Could not list chat dictionaries.")
             await library.update_rows(
-                (), total=0, noun="dictionaries",
+                (),
+                total=0,
+                noun="dictionaries",
                 recovery_copy="Dictionaries could not be loaded.\nSwitch modes and back to retry.",
             )
             return
         self._dictionaries_cache = records
         needle = query.strip().lower()
-        visible = [r for r in records if needle in str(r.get("name", "")).lower()] if needle else records
+        visible = (
+            [r for r in records if needle in str(r.get("name", "")).lower()]
+            if needle
+            else records
+        )
         rows = tuple(self._dictionary_row(r) for r in visible)
         await library.update_rows(
-            rows, total=len(records), noun="dictionaries", filtered=bool(needle),
+            rows,
+            total=len(records),
+            noun="dictionaries",
+            filtered=bool(needle),
         )
 
     def _lore_manager(self) -> Any:
@@ -1006,25 +1091,38 @@ class PersonasScreen(BaseAppScreen):
         manager = self._lore_manager()
         if manager is None:
             await library.update_rows(
-                (), total=0, noun="lore books",
+                (),
+                total=0,
+                noun="lore books",
                 recovery_copy="Lore is unavailable: the database is not configured.",
             )
             return
         try:
-            records = await asyncio.to_thread(self._list_world_books_with_counts, manager)
+            records = await asyncio.to_thread(
+                self._list_world_books_with_counts, manager
+            )
         except Exception:
             logger.opt(exception=True).warning("Could not list lore books.")
             await library.update_rows(
-                (), total=0, noun="lore books",
+                (),
+                total=0,
+                noun="lore books",
                 recovery_copy="Lore books could not be loaded.\nSwitch modes and back to retry.",
             )
             return
         self._lore_books_cache = records
         needle = query.strip().lower()
-        visible = [r for r in records if needle in str(r.get("name", "")).lower()] if needle else records
+        visible = (
+            [r for r in records if needle in str(r.get("name", "")).lower()]
+            if needle
+            else records
+        )
         rows = tuple(self._lore_row(r) for r in visible)
         await library.update_rows(
-            rows, total=len(records), noun="lore books", filtered=bool(needle),
+            rows,
+            total=len(records),
+            noun="lore books",
+            filtered=bool(needle),
         )
 
     # ===== Mode switching =====
@@ -1077,7 +1175,9 @@ class PersonasScreen(BaseAppScreen):
                 chip_mode == mode, "is-active"
             )
         self.query_one("#personas-status-row", Static).update(self._status_row_text())
-        self.query_one("#personas-purpose", Static).update(self._mode_descriptor_text(mode))
+        self.query_one("#personas-purpose", Static).update(
+            self._mode_descriptor_text(mode)
+        )
         library = self.query_one(PersonasLibraryPane)
         library.set_mode(mode)
         is_dictionaries = mode == "dictionaries"
@@ -1110,8 +1210,12 @@ class PersonasScreen(BaseAppScreen):
             await self._render_lore_rows()
             self._show_center(None)
         else:
-            await library.update_rows((), total=0, noun=MODE_LABELS.get(mode, mode).lower())
-            self.query_one("#personas-mode-placeholder", Static).update(self._mode_placeholder_text(mode))
+            await library.update_rows(
+                (), total=0, noun=MODE_LABELS.get(mode, mode).lower()
+            )
+            self.query_one("#personas-mode-placeholder", Static).update(
+                self._mode_placeholder_text(mode)
+            )
             self._show_center("#personas-mode-placeholder")
 
     def _header_subtitle_text(self) -> str:
@@ -1167,9 +1271,13 @@ class PersonasScreen(BaseAppScreen):
     def _update_status_row(self) -> None:
         """Refresh the status row text; tolerate refreshes racing teardown."""
         try:
-            self.query_one("#personas-status-row", Static).update(self._status_row_text())
+            self.query_one("#personas-status-row", Static).update(
+                self._status_row_text()
+            )
         except Exception:
-            logger.opt(exception=True).debug("Could not update the personas status row.")
+            logger.opt(exception=True).debug(
+                "Could not update the personas status row."
+            )
 
     # ===== Selection =====
 
@@ -1237,12 +1345,16 @@ class PersonasScreen(BaseAppScreen):
             entity_name=entity_name,
         )
         self._edit_mode = "view"
-        self.query_one(PersonasLibraryPane).mark_active_row("persona_profile", entity_id)
+        self.query_one(PersonasLibraryPane).mark_active_row(
+            "persona_profile", entity_id
+        )
         record = await self._fetch_profile_record(entity_id)
         self.query_one(PersonaProfileCardWidget).show_persona(record)
         self._show_center("#ccp-persona-card-view")
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=entity_name, kind="persona_profile", authority="Local")
+        inspector.show_selection(
+            name=entity_name, kind="persona_profile", authority="Local"
+        )
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
@@ -1261,13 +1373,17 @@ class PersonasScreen(BaseAppScreen):
         try:
             record = await service.get_dictionary(int(entity_id), mode="local")
         except Exception as exc:
-            logger.opt(exception=True).warning(f"Could not load dictionary {entity_id}.")
+            logger.opt(exception=True).warning(
+                f"Could not load dictionary {entity_id}."
+            )
             self._notify(f"Could not load dictionary: {exc}", "error")
             return
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
         raw_version = record.get("version")
-        self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
+        self._selected_dictionary_version = (
+            int(raw_version) if raw_version is not None else None
+        )
         self.state.select_entity(
             entity_kind="dictionary", entity_id=entity_id, entity_name=entity_name
         )
@@ -1277,7 +1393,9 @@ class PersonasScreen(BaseAppScreen):
         try:
             stats = await service.get_statistics(int(entity_id), mode="local")
         except Exception:
-            logger.opt(exception=True).warning(f"Could not load dictionary {entity_id} statistics.")
+            logger.opt(exception=True).warning(
+                f"Could not load dictionary {entity_id} statistics."
+            )
         detail.load_statistics(stats, list(record.get("entries") or []))
         self._show_center("#personas-dictionary-detail")
         library = self.query_one(PersonasLibraryPane)
@@ -1294,7 +1412,9 @@ class PersonasScreen(BaseAppScreen):
         await self._refresh_dictionary_attachments()
 
     @staticmethod
-    def _load_lore_book_and_entries(manager: Any, book_id: int) -> tuple[dict | None, list[dict]]:
+    def _load_lore_book_and_entries(
+        manager: Any, book_id: int
+    ) -> tuple[dict | None, list[dict]]:
         """Sync helper run off-thread: the book record plus its entries in one hop."""
         record = manager.get_world_book(book_id)
         if record is None:
@@ -1306,7 +1426,9 @@ class PersonasScreen(BaseAppScreen):
         """Load one lore/world book into the center detail; inspector shows the selection."""
         manager = self._lore_manager()
         if manager is None:
-            self._notify("Lore is not configured: the database is unavailable.", "error")
+            self._notify(
+                "Lore is not configured: the database is unavailable.", "error"
+            )
             return
         try:
             record, entries = await asyncio.to_thread(
@@ -1322,7 +1444,9 @@ class PersonasScreen(BaseAppScreen):
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
         raw_version = record.get("version")
-        self._selected_lore_book_version = int(raw_version) if raw_version is not None else None
+        self._selected_lore_book_version = (
+            int(raw_version) if raw_version is not None else None
+        )
         self._selected_lore_book = record
         self._selected_lore_entries = entries
         self.state.select_entity(
@@ -1357,11 +1481,17 @@ class PersonasScreen(BaseAppScreen):
         try:
             stats = await service.get_statistics(int(entity_id), mode="local")
         except Exception:
-            logger.opt(exception=True).warning("Could not refresh dictionary statistics.")
-        self.query_one(PersonasDictionaryDetailWidget).load_statistics(stats, list(record.get("entries") or []))
+            logger.opt(exception=True).warning(
+                "Could not refresh dictionary statistics."
+            )
+        self.query_one(PersonasDictionaryDetailWidget).load_statistics(
+            stats, list(record.get("entries") or [])
+        )
 
     @on(DictionarySettingsEdited)
-    def _handle_dictionary_settings_edited(self, message: DictionarySettingsEdited) -> None:
+    def _handle_dictionary_settings_edited(
+        self, message: DictionarySettingsEdited
+    ) -> None:
         message.stop()
         if self.state.selected_entity_kind != "dictionary":
             return
@@ -1371,9 +1501,14 @@ class PersonasScreen(BaseAppScreen):
             self._sync_inspector_console_actions()
 
     @on(DictionarySettingsSaveRequested)
-    async def _handle_dictionary_settings_save(self, message: DictionarySettingsSaveRequested) -> None:
+    async def _handle_dictionary_settings_save(
+        self, message: DictionarySettingsSaveRequested
+    ) -> None:
         message.stop()
-        if self.state.selected_entity_kind != "dictionary" or not self.state.selected_entity_id:
+        if (
+            self.state.selected_entity_kind != "dictionary"
+            or not self.state.selected_entity_id
+        ):
             return
         detail = self.query_one(PersonasDictionaryDetailWidget)
         payload = dict(message.payload)
@@ -1387,7 +1522,9 @@ class PersonasScreen(BaseAppScreen):
         entity_id = self.state.selected_entity_id
         try:
             record = await service.update_dictionary(
-                int(entity_id), payload, mode="local",
+                int(entity_id),
+                payload,
+                mode="local",
                 expected_version=self._selected_dictionary_version,
             )
         except ConflictError:
@@ -1396,11 +1533,15 @@ class PersonasScreen(BaseAppScreen):
             )
             return
         except Exception as exc:
-            logger.opt(exception=True).warning(f"Could not save dictionary {entity_id}.")
+            logger.opt(exception=True).warning(
+                f"Could not save dictionary {entity_id}."
+            )
             detail.set_status(f"Save failed: {exc}")
             return
         raw_version = record.get("version")
-        self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
+        self._selected_dictionary_version = (
+            int(raw_version) if raw_version is not None else None
+        )
         self.state.has_unsaved_changes = False
         self.state.selected_entity_name = str(record.get("name") or "")
         self.query_one(PersonasInspectorPane).show_selection(
@@ -1421,14 +1562,21 @@ class PersonasScreen(BaseAppScreen):
     )
 
     @on(DictionaryExportRequested)
-    async def _handle_dictionary_export(self, message: DictionaryExportRequested) -> None:
+    async def _handle_dictionary_export(
+        self, message: DictionaryExportRequested
+    ) -> None:
         message.stop()
-        if self.state.selected_entity_kind != "dictionary" or not self.state.selected_entity_id:
+        if (
+            self.state.selected_entity_kind != "dictionary"
+            or not self.state.selected_entity_id
+        ):
             return
         if self._io_dialog_active:
             return
         self._io_dialog_active = True
-        self.run_worker(self._dictionary_export_worker(message.fmt), group="personas-io")
+        self.run_worker(
+            self._dictionary_export_worker(message.fmt), group="personas-io"
+        )
 
     async def _confirm_lossy_markdown_export(self) -> bool:
         """True when the user accepted the lossy-markdown warning."""
@@ -1444,7 +1592,9 @@ class PersonasScreen(BaseAppScreen):
         try:
             return bool(await self.app.push_screen_wait(dialog))
         except Exception:
-            logger.opt(exception=True).warning("Could not show the lossy-export dialog.")
+            logger.opt(exception=True).warning(
+                "Could not show the lossy-export dialog."
+            )
             return False
 
     async def _dictionary_export_worker(self, fmt: str) -> None:
@@ -1468,11 +1618,15 @@ class PersonasScreen(BaseAppScreen):
                     body = json.dumps(response, indent=2, ensure_ascii=False)
                     extension = "json"
                 else:
-                    response = await service.export_markdown(int(entity_id), mode="local")
+                    response = await service.export_markdown(
+                        int(entity_id), mode="local"
+                    )
                     body = str(response.get("content") or "")
                     extension = "md"
             except Exception as exc:
-                logger.opt(exception=True).warning(f"Could not export dictionary {entity_id}.")
+                logger.opt(exception=True).warning(
+                    f"Could not export dictionary {entity_id}."
+                )
                 detail.set_status(f"Export failed: {exc}")
                 return
             name = str(self.state.selected_entity_name or "dictionary")
@@ -1494,7 +1648,9 @@ class PersonasScreen(BaseAppScreen):
                 return
             detail.set_status(f"Exported to {target}")
         except Exception as exc:
-            logger.opt(exception=True).error(f"Unexpected error exporting dictionary {fmt!r}.")
+            logger.opt(exception=True).error(
+                f"Unexpected error exporting dictionary {fmt!r}."
+            )
             self._notify(f"Export failed: {exc}", "error")
         finally:
             self._io_dialog_active = False
@@ -1509,23 +1665,33 @@ class PersonasScreen(BaseAppScreen):
         """
         entity_id = self.state.selected_entity_id
         service = self._dictionary_scope_service()
-        if service is None or self.state.selected_entity_kind != "dictionary" or not entity_id:
+        if (
+            service is None
+            or self.state.selected_entity_kind != "dictionary"
+            or not entity_id
+        ):
             return False
         detail = self.query_one(PersonasDictionaryDetailWidget)
         try:
             record = await service.get_dictionary(int(entity_id), mode="local")
         except Exception as exc:
-            logger.opt(exception=True).warning(f"Could not reload dictionary {entity_id} entries.")
+            logger.opt(exception=True).warning(
+                f"Could not reload dictionary {entity_id} entries."
+            )
             detail.set_status(f"Reload failed: {exc}")
             return False
         raw_version = record.get("version")
-        self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
+        self._selected_dictionary_version = (
+            int(raw_version) if raw_version is not None else None
+        )
         detail.update_entries(list(record.get("entries") or []))
         stats = None
         try:
             stats = await service.get_statistics(int(entity_id), mode="local")
         except Exception:
-            logger.opt(exception=True).warning(f"Could not load dictionary {entity_id} statistics.")
+            logger.opt(exception=True).warning(
+                f"Could not load dictionary {entity_id} statistics."
+            )
         detail.load_statistics(stats, list(record.get("entries") or []))
         await self._render_dictionary_rows(query=self.state.search_query)
         self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
@@ -1536,13 +1702,19 @@ class PersonasScreen(BaseAppScreen):
         """Feed the Versions tab for the selected dictionary (best-effort)."""
         entity_id = self.state.selected_entity_id
         service = self._dictionary_scope_service()
-        if service is None or self.state.selected_entity_kind != "dictionary" or not entity_id:
+        if (
+            service is None
+            or self.state.selected_entity_kind != "dictionary"
+            or not entity_id
+        ):
             return
         detail = self.query_one(PersonasDictionaryDetailWidget)
         try:
             response = await service.list_versions(int(entity_id), mode="local")
         except Exception:
-            logger.opt(exception=True).warning(f"Could not list dictionary {entity_id} versions.")
+            logger.opt(exception=True).warning(
+                f"Could not list dictionary {entity_id} versions."
+            )
             detail.load_versions([])
             return
         detail.load_versions(list(response.get("versions") or []))
@@ -1551,21 +1723,34 @@ class PersonasScreen(BaseAppScreen):
         """Re-feed the Attachments tab for the selected dictionary (best-effort)."""
         entity_id = self.state.selected_entity_id
         service = self._dictionary_scope_service()
-        if service is None or self.state.selected_entity_kind != "dictionary" or not entity_id:
+        if (
+            service is None
+            or self.state.selected_entity_kind != "dictionary"
+            or not entity_id
+        ):
             return
         detail = self.query_one(PersonasDictionaryDetailWidget)
         try:
-            response = await service.list_dictionary_conversations(int(entity_id), mode="local")
+            response = await service.list_dictionary_conversations(
+                int(entity_id), mode="local"
+            )
         except Exception:
-            logger.opt(exception=True).warning(f"Could not list conversations for dictionary {entity_id}.")
+            logger.opt(exception=True).warning(
+                f"Could not list conversations for dictionary {entity_id}."
+            )
             detail.load_attachments([])
             return
         detail.load_attachments(list(response.get("conversations") or []))
 
     @on(DictionaryAttachRequested)
-    async def _handle_dictionary_attach(self, message: DictionaryAttachRequested) -> None:
+    async def _handle_dictionary_attach(
+        self, message: DictionaryAttachRequested
+    ) -> None:
         message.stop()
-        if self.state.selected_entity_kind != "dictionary" or not self.state.selected_entity_id:
+        if (
+            self.state.selected_entity_kind != "dictionary"
+            or not self.state.selected_entity_id
+        ):
             return
         if self._io_dialog_active:
             return
@@ -1582,10 +1767,15 @@ class PersonasScreen(BaseAppScreen):
             try:
                 convs = await asyncio.to_thread(self._list_attachable_conversations)
             except Exception as exc:
-                logger.opt(exception=True).warning("Could not load conversations for the attach picker.")
+                logger.opt(exception=True).warning(
+                    "Could not load conversations for the attach picker."
+                )
                 detail.set_status(f"Attach failed: {exc}")
                 return
-            from ...Widgets.Persona_Widgets.dictionary_attach_picker import DictionaryAttachPicker
+            from ...Widgets.Persona_Widgets.dictionary_attach_picker import (
+                DictionaryAttachPicker,
+            )
+
             try:
                 picked = await self.app.push_screen_wait(DictionaryAttachPicker(convs))
             except Exception:
@@ -1594,12 +1784,18 @@ class PersonasScreen(BaseAppScreen):
             if not picked:
                 return
             try:
-                await service.attach_to_conversation(int(entity_id), str(picked), mode="local")
+                await service.attach_to_conversation(
+                    int(entity_id), str(picked), mode="local"
+                )
             except ConflictError:
-                detail.set_status("Attach failed: the conversation changed since it was loaded. Try again.")
+                detail.set_status(
+                    "Attach failed: the conversation changed since it was loaded. Try again."
+                )
                 return
             except Exception as exc:
-                logger.opt(exception=True).warning(f"Could not attach dictionary {entity_id}.")
+                logger.opt(exception=True).warning(
+                    f"Could not attach dictionary {entity_id}."
+                )
                 detail.set_status(f"Attach failed: {exc}")
                 return
             await self._refresh_dictionary_attachments()
@@ -1614,17 +1810,26 @@ class PersonasScreen(BaseAppScreen):
         # search_conversations_page(query, *, limit=50, offset=0, ...) always
         # returns a (rows, total, elapsed_seconds) tuple; unwrap defensively
         # in case a future/alternate DB implementation returns a bare list.
-        page = db.search_conversations_page(query="", scope_type="all", limit=200, offset=0)
+        page = db.search_conversations_page(
+            query="", scope_type="all", limit=200, offset=0
+        )
         results = page[0] if isinstance(page, tuple) else page
         rows = []
         for conv in results or []:
             if conv.get("id") is None:
                 continue
-            rows.append({"conversation_id": str(conv.get("id")), "title": str(conv.get("title") or "(untitled)")})
+            rows.append(
+                {
+                    "conversation_id": str(conv.get("id")),
+                    "title": str(conv.get("title") or "(untitled)"),
+                }
+            )
         return rows
 
     @on(DictionaryDetachRequested)
-    async def _handle_dictionary_detach(self, message: DictionaryDetachRequested) -> None:
+    async def _handle_dictionary_detach(
+        self, message: DictionaryDetachRequested
+    ) -> None:
         message.stop()
         entity_id = self.state.selected_entity_id
         service = self._dictionary_scope_service()
@@ -1632,9 +1837,13 @@ class PersonasScreen(BaseAppScreen):
             return
         detail = self.query_one(PersonasDictionaryDetailWidget)
         try:
-            await service.detach_from_conversation(int(entity_id), str(message.conversation_id), mode="local")
+            await service.detach_from_conversation(
+                int(entity_id), str(message.conversation_id), mode="local"
+            )
         except Exception as exc:
-            logger.opt(exception=True).warning(f"Could not detach dictionary {entity_id}.")
+            logger.opt(exception=True).warning(
+                f"Could not detach dictionary {entity_id}."
+            )
             detail.set_status(f"Detach failed: {exc}")
             return
         await self._refresh_dictionary_attachments()
@@ -1645,21 +1854,34 @@ class PersonasScreen(BaseAppScreen):
         """Re-feed the character dictionaries panel (best-effort)."""
         entity_id = self.state.selected_entity_id
         service = self._dictionary_scope_service()
-        if service is None or self.state.selected_entity_kind != "character" or not entity_id:
+        if (
+            service is None
+            or self.state.selected_entity_kind != "character"
+            or not entity_id
+        ):
             return
         panel = self.query_one(PersonasCharacterDictionariesWidget)
         try:
-            response = await service.list_character_dictionaries(int(entity_id), mode="local")
+            response = await service.list_character_dictionaries(
+                int(entity_id), mode="local"
+            )
         except Exception:
-            logger.opt(exception=True).warning(f"Could not list dictionaries for character {entity_id}.")
+            logger.opt(exception=True).warning(
+                f"Could not list dictionaries for character {entity_id}."
+            )
             panel.load_character_dictionaries([])
             return
         panel.load_character_dictionaries(list(response.get("dictionaries") or []))
 
     @on(CharacterDictionaryAttachRequested)
-    async def _handle_character_dictionary_attach(self, message: CharacterDictionaryAttachRequested) -> None:
+    async def _handle_character_dictionary_attach(
+        self, message: CharacterDictionaryAttachRequested
+    ) -> None:
         message.stop()
-        if self.state.selected_entity_kind != "character" or not self.state.selected_entity_id:
+        if (
+            self.state.selected_entity_kind != "character"
+            or not self.state.selected_entity_id
+        ):
             return
         if self._io_dialog_active:
             return
@@ -1674,24 +1896,35 @@ class PersonasScreen(BaseAppScreen):
                 return
             char_id = int(entity_id)
             try:
-                dicts = await asyncio.to_thread(self._list_attachable_dictionaries, char_id)
+                dicts = await asyncio.to_thread(
+                    self._list_attachable_dictionaries, char_id
+                )
             except Exception:
-                logger.opt(exception=True).warning("Could not load dictionaries for the attach picker.")
+                logger.opt(exception=True).warning(
+                    "Could not load dictionaries for the attach picker."
+                )
                 return
             try:
                 picked = await self.app.push_screen_wait(DictionaryPicker(dicts))
             except Exception:
-                logger.opt(exception=True).warning("Could not show the dictionary picker.")
+                logger.opt(exception=True).warning(
+                    "Could not show the dictionary picker."
+                )
                 return
             if not picked:
                 return
             try:
                 await service.attach_to_character(int(picked), char_id, mode="local")
             except ConflictError:
-                self._notify("Attach failed: the character changed since it was loaded. Try again.", "warning")
+                self._notify(
+                    "Attach failed: the character changed since it was loaded. Try again.",
+                    "warning",
+                )
                 return
             except Exception:
-                logger.opt(exception=True).warning(f"Could not attach dictionary to character {char_id}.")
+                logger.opt(exception=True).warning(
+                    f"Could not attach dictionary to character {char_id}."
+                )
                 return
             await self._refresh_character_dictionaries()
             await self._sync_character_editor_dictionaries(char_id)
@@ -1704,12 +1937,15 @@ class PersonasScreen(BaseAppScreen):
         if db is None:
             return []
         from ...Character_Chat import Chat_Dictionary_Lib as cdl
+
         attached = set()
         record = db.get_character_card_by_id(int(character_id))
         for block in cdl.load_character_dictionaries(record):
             attached.add(block.get("name"))
         rows = []
-        for d in cdl.list_chat_dictionaries(db, limit=1000, include_disabled=True) or []:
+        for d in (
+            cdl.list_chat_dictionaries(db, limit=1000, include_disabled=True) or []
+        ):
             name = d.get("name")
             did = d.get("id")
             if name in attached:
@@ -1723,40 +1959,63 @@ class PersonasScreen(BaseAppScreen):
         if db is None:
             return
         try:
-            record = await asyncio.to_thread(db.get_character_card_by_id, int(character_id))
+            record = await asyncio.to_thread(
+                db.get_character_card_by_id, int(character_id)
+            )
         except Exception:
             return
         if not record:
             return
-        ext = record.get("extensions") if isinstance(record.get("extensions"), dict) else {}
+        ext = (
+            record.get("extensions")
+            if isinstance(record.get("extensions"), dict)
+            else {}
+        )
         try:
             editor = self.query_one(PersonasCharacterEditorWidget)
         except Exception:
             return
         if int(editor._character_data.get("id") or 0) == int(character_id):
-            editor.sync_attached_dictionaries(ext.get("chat_dictionaries") or [], record.get("version"))
+            editor.sync_attached_dictionaries(
+                ext.get("chat_dictionaries") or [], record.get("version")
+            )
 
     @on(CharacterDictionaryDetachRequested)
-    async def _handle_character_dictionary_detach(self, message: CharacterDictionaryDetachRequested) -> None:
+    async def _handle_character_dictionary_detach(
+        self, message: CharacterDictionaryDetachRequested
+    ) -> None:
         message.stop()
         entity_id = self.state.selected_entity_id
         service = self._dictionary_scope_service()
-        if service is None or self.state.selected_entity_kind != "character" or not entity_id:
+        if (
+            service is None
+            or self.state.selected_entity_kind != "character"
+            or not entity_id
+        ):
             return
         char_id = int(entity_id)
         try:
-            await service.detach_from_character(char_id, str(message.dictionary_name), mode="local")
+            await service.detach_from_character(
+                char_id, str(message.dictionary_name), mode="local"
+            )
         except ConflictError:
-            self._notify("Detach failed: the character changed since it was loaded. Try again.", "warning")
+            self._notify(
+                "Detach failed: the character changed since it was loaded. Try again.",
+                "warning",
+            )
             return
         except Exception:
-            logger.opt(exception=True).warning(f"Could not detach dictionary from character {char_id}.")
+            logger.opt(exception=True).warning(
+                f"Could not detach dictionary from character {char_id}."
+            )
             return
         await self._refresh_character_dictionaries()
         await self._sync_character_editor_dictionaries(char_id)
 
     @on(DictionaryVersionViewRequested)
-    async def _handle_dictionary_version_view(self, message: DictionaryVersionViewRequested) -> None:
+    async def _handle_dictionary_version_view(
+        self, message: DictionaryVersionViewRequested
+    ) -> None:
         message.stop()
         entity_id = self.state.selected_entity_id
         service = self._dictionary_scope_service()
@@ -1764,20 +2023,28 @@ class PersonasScreen(BaseAppScreen):
             return
         detail = self.query_one(PersonasDictionaryDetailWidget)
         try:
-            record = await service.get_version(int(entity_id), message.revision, mode="local")
+            record = await service.get_version(
+                int(entity_id), message.revision, mode="local"
+            )
         except Exception as exc:
-            logger.opt(exception=True).warning(f"Could not load version {message.revision}.")
+            logger.opt(exception=True).warning(
+                f"Could not load version {message.revision}."
+            )
             detail.set_status(f"Could not load version: {exc}")
             return
         detail.show_version_snapshot(record)
 
     @on(DictionaryVersionRevertRequested)
-    async def _handle_dictionary_version_revert(self, message: DictionaryVersionRevertRequested) -> None:
+    async def _handle_dictionary_version_revert(
+        self, message: DictionaryVersionRevertRequested
+    ) -> None:
         message.stop()
         if self._io_dialog_active:
             return
         self._io_dialog_active = True
-        self.run_worker(self._dictionary_revert_worker(message.revision), group="personas-io")
+        self.run_worker(
+            self._dictionary_revert_worker(message.revision), group="personas-io"
+        )
 
     async def _confirm_dictionary_revert(self, revision: int) -> bool:
         """True when the user confirmed the revert (worker context required)."""
@@ -1790,7 +2057,9 @@ class PersonasScreen(BaseAppScreen):
         try:
             return bool(await self.app.push_screen_wait(dialog))
         except Exception:
-            logger.opt(exception=True).warning("Could not show the revert confirmation dialog.")
+            logger.opt(exception=True).warning(
+                "Could not show the revert confirmation dialog."
+            )
             return False
 
     async def _dictionary_revert_worker(self, revision: int) -> None:
@@ -1808,21 +2077,29 @@ class PersonasScreen(BaseAppScreen):
                 return
             detail = self.query_one(PersonasDictionaryDetailWidget)
             try:
-                record = await service.revert_version(int(entity_id), revision, mode="local")
+                record = await service.revert_version(
+                    int(entity_id), revision, mode="local"
+                )
             except ConflictError:
                 detail.set_status(
                     "Revert failed: the dictionary changed since it was loaded. Reselect and try again."
                 )
                 return
             except Exception as exc:
-                logger.opt(exception=True).warning(f"Could not revert to revision {revision}.")
+                logger.opt(exception=True).warning(
+                    f"Could not revert to revision {revision}."
+                )
                 detail.set_status(f"Revert failed: {exc}")
                 return
             raw_version = record.get("version")
-            self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
+            self._selected_dictionary_version = (
+                int(raw_version) if raw_version is not None else None
+            )
             self.state.selected_entity_name = str(record.get("name") or "")
             self.query_one(PersonasInspectorPane).show_selection(
-                name=self.state.selected_entity_name, kind="dictionary", authority="Local"
+                name=self.state.selected_entity_name,
+                kind="dictionary",
+                authority="Local",
             )
             detail.load_dictionary(record)
             await self._refresh_dictionary_statistics(record)
@@ -1834,12 +2111,16 @@ class PersonasScreen(BaseAppScreen):
             # The revert call itself is already guarded above; this covers the
             # post-revert refresh steps (widget/state updates, row re-render),
             # which were previously unguarded and could crash the app.
-            logger.opt(exception=True).error(f"Unexpected error reverting to revision {revision}.")
+            logger.opt(exception=True).error(
+                f"Unexpected error reverting to revision {revision}."
+            )
             self._notify(f"Revert failed: {exc}", "error")
         finally:
             self._io_dialog_active = False
 
-    async def _run_dictionary_entry_op(self, op: Callable[[Any], Awaitable[Any]], failure: str) -> None:
+    async def _run_dictionary_entry_op(
+        self, op: Callable[[Any], Awaitable[Any]], failure: str
+    ) -> None:
         """One guarded service mutation + the mandatory entries reload."""
         service = self._dictionary_scope_service()
         detail = self.query_one(PersonasDictionaryDetailWidget)
@@ -1862,26 +2143,36 @@ class PersonasScreen(BaseAppScreen):
         # blanking it here would silently hide that failure from the user.
 
     @on(DictionaryEntryAddRequested)
-    async def _handle_dictionary_entry_add(self, message: DictionaryEntryAddRequested) -> None:
+    async def _handle_dictionary_entry_add(
+        self, message: DictionaryEntryAddRequested
+    ) -> None:
         message.stop()
         entity_id = self.state.selected_entity_id
         if not entity_id:
             return
         await self._run_dictionary_entry_op(
-            lambda service: service.add_entry(int(entity_id), message.payload, mode="local"),
+            lambda service: service.add_entry(
+                int(entity_id), message.payload, mode="local"
+            ),
             "Could not add the entry",
         )
 
     @on(DictionaryEntryUpdateRequested)
-    async def _handle_dictionary_entry_update(self, message: DictionaryEntryUpdateRequested) -> None:
+    async def _handle_dictionary_entry_update(
+        self, message: DictionaryEntryUpdateRequested
+    ) -> None:
         message.stop()
         await self._run_dictionary_entry_op(
-            lambda service: service.update_entry(message.entry_id, message.payload, mode="local"),
+            lambda service: service.update_entry(
+                message.entry_id, message.payload, mode="local"
+            ),
             "Could not update the entry",
         )
 
     @on(DictionaryEntryDeleteRequested)
-    async def _handle_dictionary_entry_delete(self, message: DictionaryEntryDeleteRequested) -> None:
+    async def _handle_dictionary_entry_delete(
+        self, message: DictionaryEntryDeleteRequested
+    ) -> None:
         message.stop()
         await self._run_dictionary_entry_op(
             lambda service: service.delete_entry(message.entry_id, mode="local"),
@@ -1889,7 +2180,9 @@ class PersonasScreen(BaseAppScreen):
         )
 
     @on(DictionaryEntriesReorderRequested)
-    async def _handle_dictionary_entries_reorder(self, message: DictionaryEntriesReorderRequested) -> None:
+    async def _handle_dictionary_entries_reorder(
+        self, message: DictionaryEntriesReorderRequested
+    ) -> None:
         message.stop()
         entity_id = self.state.selected_entity_id
         if not entity_id:
@@ -1902,25 +2195,38 @@ class PersonasScreen(BaseAppScreen):
         )
 
     @on(DictionaryTryItRunRequested)
-    async def _handle_dictionary_tryit_run(self, message: DictionaryTryItRunRequested) -> None:
+    async def _handle_dictionary_tryit_run(
+        self, message: DictionaryTryItRunRequested
+    ) -> None:
         message.stop()
         tryit = self.query_one(PersonasDictionaryTryItWidget)
         entity_id = self.state.selected_entity_id
         service = self._dictionary_scope_service()
-        if service is None or self.state.selected_entity_kind != "dictionary" or not entity_id:
+        if (
+            service is None
+            or self.state.selected_entity_kind != "dictionary"
+            or not entity_id
+        ):
             tryit.show_error("Select a dictionary first.")
             return
         record = next(
-            (r for r in self._dictionaries_cache if str(r.get("id")) == str(entity_id)), None
+            (r for r in self._dictionaries_cache if str(r.get("id")) == str(entity_id)),
+            None,
         )
         token_budget = int((record or {}).get("max_tokens") or 1000)
         try:
             response = await service.process_text(
-                {"text": message.text, "dictionary_id": int(entity_id), "token_budget": token_budget},
+                {
+                    "text": message.text,
+                    "dictionary_id": int(entity_id),
+                    "token_budget": token_budget,
+                },
                 mode="local",
             )
         except Exception as exc:
-            logger.opt(exception=True).warning(f"Try-it preview failed for dictionary {entity_id}.")
+            logger.opt(exception=True).warning(
+                f"Try-it preview failed for dictionary {entity_id}."
+            )
             tryit.show_error(f"Couldn't run the preview: {exc}")
             return
         tryit.render_result(
@@ -1941,13 +2247,21 @@ class PersonasScreen(BaseAppScreen):
         """
         entity_id = self.state.selected_entity_id
         manager = self._lore_manager()
-        if manager is None or self.state.selected_entity_kind != "lore" or not entity_id:
+        if (
+            manager is None
+            or self.state.selected_entity_kind != "lore"
+            or not entity_id
+        ):
             return False
         detail = self.query_one(PersonasLoreDetailWidget)
         try:
-            entries = await asyncio.to_thread(manager.get_world_book_entries, int(entity_id))
+            entries = await asyncio.to_thread(
+                manager.get_world_book_entries, int(entity_id)
+            )
         except Exception as exc:
-            logger.opt(exception=True).warning(f"Could not reload lore book {entity_id} entries.")
+            logger.opt(exception=True).warning(
+                f"Could not reload lore book {entity_id} entries."
+            )
             detail.set_status(f"Reload failed: {exc}")
             return False
         self._selected_lore_entries = entries
@@ -1956,7 +2270,9 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasLibraryPane).mark_active_row("lore", entity_id)
         return True
 
-    async def _run_lore_entry_op(self, op: Callable[[Any], Awaitable[Any]], failure: str) -> None:
+    async def _run_lore_entry_op(
+        self, op: Callable[[Any], Awaitable[Any]], failure: str
+    ) -> None:
         """One guarded manager mutation (off-thread) + the mandatory entries reload."""
         manager = self._lore_manager()
         detail = self.query_one(PersonasLoreDetailWidget)
@@ -2003,7 +2319,9 @@ class PersonasScreen(BaseAppScreen):
         )
 
     @on(LoreEntryUpdateRequested)
-    async def _handle_lore_entry_update(self, message: LoreEntryUpdateRequested) -> None:
+    async def _handle_lore_entry_update(
+        self, message: LoreEntryUpdateRequested
+    ) -> None:
         message.stop()
         payload = message.payload
         await self._run_lore_entry_op(
@@ -2014,15 +2332,21 @@ class PersonasScreen(BaseAppScreen):
         )
 
     @on(LoreEntryDeleteRequested)
-    async def _handle_lore_entry_delete(self, message: LoreEntryDeleteRequested) -> None:
+    async def _handle_lore_entry_delete(
+        self, message: LoreEntryDeleteRequested
+    ) -> None:
         message.stop()
         await self._run_lore_entry_op(
-            lambda manager: asyncio.to_thread(manager.delete_world_book_entry, int(message.entry_id)),
+            lambda manager: asyncio.to_thread(
+                manager.delete_world_book_entry, int(message.entry_id)
+            ),
             "Could not delete the entry",
         )
 
     @on(LoreEntriesReorderRequested)
-    async def _handle_lore_entries_reorder(self, message: LoreEntriesReorderRequested) -> None:
+    async def _handle_lore_entries_reorder(
+        self, message: LoreEntriesReorderRequested
+    ) -> None:
         message.stop()
         entity_id = self.state.selected_entity_id
         if not entity_id:
@@ -2032,15 +2356,22 @@ class PersonasScreen(BaseAppScreen):
         async def _op(manager: Any) -> None:
             for index, entry_id in enumerate(entry_ids):
                 await asyncio.to_thread(
-                    manager.update_world_book_entry, int(entry_id), insertion_order=index
+                    manager.update_world_book_entry,
+                    int(entry_id),
+                    insertion_order=index,
                 )
 
         await self._run_lore_entry_op(_op, "Could not reorder entries")
 
     @on(LoreBookSettingsSaveRequested)
-    async def _handle_lore_settings_save(self, message: LoreBookSettingsSaveRequested) -> None:
+    async def _handle_lore_settings_save(
+        self, message: LoreBookSettingsSaveRequested
+    ) -> None:
         message.stop()
-        if self.state.selected_entity_kind != "lore" or not self.state.selected_entity_id:
+        if (
+            self.state.selected_entity_kind != "lore"
+            or not self.state.selected_entity_id
+        ):
             return
         detail = self.query_one(PersonasLoreDetailWidget)
         payload = dict(message.payload)
@@ -2049,7 +2380,9 @@ class PersonasScreen(BaseAppScreen):
             return
         manager = self._lore_manager()
         if manager is None:
-            self._notify("Lore is not configured: the database is unavailable.", "error")
+            self._notify(
+                "Lore is not configured: the database is unavailable.", "error"
+            )
             return
         entity_id = self.state.selected_entity_id
         try:
@@ -2083,11 +2416,15 @@ class PersonasScreen(BaseAppScreen):
         try:
             record = await asyncio.to_thread(manager.get_world_book, int(entity_id))
         except Exception:
-            logger.opt(exception=True).warning(f"Could not reload lore book {entity_id} after save.")
+            logger.opt(exception=True).warning(
+                f"Could not reload lore book {entity_id} after save."
+            )
             record = None
         if record is not None:
             raw_version = record.get("version")
-            self._selected_lore_book_version = int(raw_version) if raw_version is not None else None
+            self._selected_lore_book_version = (
+                int(raw_version) if raw_version is not None else None
+            )
             self._selected_lore_book = record
             self.state.selected_entity_name = str(record.get("name") or "")
             self.query_one(PersonasInspectorPane).show_selection(
@@ -2102,7 +2439,10 @@ class PersonasScreen(BaseAppScreen):
     @on(LoreBookExportRequested)
     async def _handle_lore_export(self, message: LoreBookExportRequested) -> None:
         message.stop()
-        if self.state.selected_entity_kind != "lore" or not self.state.selected_entity_id:
+        if (
+            self.state.selected_entity_kind != "lore"
+            or not self.state.selected_entity_id
+        ):
             return
         if self._io_dialog_active:
             return
@@ -2119,13 +2459,19 @@ class PersonasScreen(BaseAppScreen):
             if manager is None or not entity_id:
                 return
             try:
-                data = await asyncio.to_thread(manager.export_world_book, int(entity_id))
+                data = await asyncio.to_thread(
+                    manager.export_world_book, int(entity_id)
+                )
             except Exception as exc:
-                logger.opt(exception=True).warning(f"Could not export world book {entity_id}.")
+                logger.opt(exception=True).warning(
+                    f"Could not export world book {entity_id}."
+                )
                 self._notify(f"Export failed: {exc}", "error")
                 return
             raw_name = str(data.get("name") or "world_book")
-            safe_name = "".join(c for c in raw_name if c.isalnum() or c in " -_").rstrip()
+            safe_name = "".join(
+                c for c in raw_name if c.isalnum() or c in " -_"
+            ).rstrip()
             default_filename = f"{safe_name or 'world_book'}.json"
             picker = EnhancedFileSave(
                 title="Export World Book",
@@ -2139,7 +2485,9 @@ class PersonasScreen(BaseAppScreen):
             try:
                 target = await self.app.push_screen_wait(picker)
             except Exception:
-                logger.opt(exception=True).warning("Could not show the export file dialog.")
+                logger.opt(exception=True).warning(
+                    "Could not show the export file dialog."
+                )
                 return
             if not target:
                 return
@@ -2147,7 +2495,9 @@ class PersonasScreen(BaseAppScreen):
             try:
                 validated = validate_path_simple(str(target))
             except (ValueError, OSError) as exc:
-                logger.opt(exception=True).warning(f"Rejected world-book export path {target}.")
+                logger.opt(exception=True).warning(
+                    f"Rejected world-book export path {target}."
+                )
                 self._notify(f"Export failed: {exc}", "error")
                 return
             # Atomic write: temp file + replace, so an interruption can't leave a
@@ -2157,7 +2507,9 @@ class PersonasScreen(BaseAppScreen):
                 await asyncio.to_thread(temp.write_text, body, "utf-8")
                 await asyncio.to_thread(temp.replace, validated)
             except OSError as exc:
-                logger.opt(exception=True).warning(f"Could not write world-book export to {validated}.")
+                logger.opt(exception=True).warning(
+                    f"Could not write world-book export to {validated}."
+                )
                 try:
                     temp.unlink(missing_ok=True)
                 except OSError:
@@ -2176,7 +2528,10 @@ class PersonasScreen(BaseAppScreen):
     @on(LoreBookEnableToggled)
     async def _handle_lore_enable_toggled(self, message: LoreBookEnableToggled) -> None:
         message.stop()
-        if self.state.selected_entity_kind != "lore" or not self.state.selected_entity_id:
+        if (
+            self.state.selected_entity_kind != "lore"
+            or not self.state.selected_entity_id
+        ):
             return
         manager = self._lore_manager()
         if manager is None:
@@ -2184,9 +2539,13 @@ class PersonasScreen(BaseAppScreen):
         entity_id = self.state.selected_entity_id
         detail = self.query_one(PersonasLoreDetailWidget)
         try:
-            await asyncio.to_thread(manager.update_world_book, int(entity_id), enabled=message.enabled)
+            await asyncio.to_thread(
+                manager.update_world_book, int(entity_id), enabled=message.enabled
+            )
         except Exception as exc:
-            logger.opt(exception=True).warning(f"Could not toggle lore book {entity_id}.")
+            logger.opt(exception=True).warning(
+                f"Could not toggle lore book {entity_id}."
+            )
             self._notify(f"Toggle failed: {exc}", "error")
             # Revert the switch to the last-known-good value.
             detail.apply_enabled(not message.enabled)
@@ -2198,11 +2557,15 @@ class PersonasScreen(BaseAppScreen):
         try:
             record = await asyncio.to_thread(manager.get_world_book, int(entity_id))
         except Exception:
-            logger.opt(exception=True).warning(f"Could not reload lore book {entity_id} after toggle.")
+            logger.opt(exception=True).warning(
+                f"Could not reload lore book {entity_id} after toggle."
+            )
             record = None
         if record is not None:
             raw_version = record.get("version")
-            self._selected_lore_book_version = int(raw_version) if raw_version is not None else None
+            self._selected_lore_book_version = (
+                int(raw_version) if raw_version is not None else None
+            )
             self._selected_lore_book = record
         elif self._selected_lore_book is not None:
             self._selected_lore_book["enabled"] = bool(message.enabled)
@@ -2231,7 +2594,9 @@ class PersonasScreen(BaseAppScreen):
                 self._run_lore_scan, book, message.text, history
             )
         except Exception as exc:
-            logger.opt(exception=True).warning(f"Try-it preview failed for lore book {entity_id}.")
+            logger.opt(exception=True).warning(
+                f"Try-it preview failed for lore book {entity_id}."
+            )
             tryit.show_error(f"Couldn't run the preview: {exc}")
             return
         tryit.render_result(result.get("injections") or {}, diagnostics.to_dict())
@@ -2251,7 +2616,9 @@ class PersonasScreen(BaseAppScreen):
         return ccp_character_handler._default_character_db()
 
     @on(ConversationRowSelected)
-    async def _handle_conversation_row_selected(self, message: ConversationRowSelected) -> None:
+    async def _handle_conversation_row_selected(
+        self, message: ConversationRowSelected
+    ) -> None:
         message.stop()
         if (
             self.state.active_mode != "characters"
@@ -2470,7 +2837,9 @@ class PersonasScreen(BaseAppScreen):
         self.preview.handle_reset()
 
     @on(PreviewOpenInConsoleRequested)
-    def _handle_preview_open_console(self, message: PreviewOpenInConsoleRequested) -> None:
+    def _handle_preview_open_console(
+        self, message: PreviewOpenInConsoleRequested
+    ) -> None:
         message.stop()
         self.preview.open_in_console()
 
@@ -2566,10 +2935,14 @@ class PersonasScreen(BaseAppScreen):
             self._notify(f"Create failed: {exc}", "error")
             return
         await self._render_dictionary_rows(query="")
-        await self._select_dictionary(str(record.get("id")), str(record.get("name") or name))
+        await self._select_dictionary(
+            str(record.get("id")), str(record.get("name") or name)
+        )
         # Land the user in Settings to rename immediately.
         try:
-            self.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            self.query_one(
+                "#personas-dict-tabs", TabbedContent
+            ).active = "personas-dict-tab-settings"
             self.query_one("#personas-dict-name", Input).focus()
         except QueryError:
             pass
@@ -2577,13 +2950,19 @@ class PersonasScreen(BaseAppScreen):
     async def _duplicate_selected_dictionary(self) -> None:
         service = self._dictionary_scope_service()
         entity_id = self.state.selected_entity_id
-        if service is None or self.state.selected_entity_kind != "dictionary" or not entity_id:
+        if (
+            service is None
+            or self.state.selected_entity_kind != "dictionary"
+            or not entity_id
+        ):
             self._notify("Select a dictionary to duplicate.", "warning")
             return
         try:
             source = await service.get_dictionary(int(entity_id), mode="local")
         except Exception as exc:
-            logger.opt(exception=True).warning(f"Could not load dictionary {entity_id} to duplicate.")
+            logger.opt(exception=True).warning(
+                f"Could not load dictionary {entity_id} to duplicate."
+            )
             self._notify(f"Duplicate failed: {exc}", "error")
             return
         base = f"{source.get('name') or 'Dictionary'} (copy)"
@@ -2631,13 +3010,17 @@ class PersonasScreen(BaseAppScreen):
                     int(record["id"]), {"strategy": source_strategy}, mode="local"
                 )
             except Exception as exc:
-                logger.opt(exception=True).warning("Could not copy the strategy onto the duplicate.")
+                logger.opt(exception=True).warning(
+                    "Could not copy the strategy onto the duplicate."
+                )
                 self._notify(
                     f"Duplicated, but the strategy could not be copied ({exc}). Set it in Settings.",
                     "warning",
                 )
         await self._render_dictionary_rows(query="")
-        await self._select_dictionary(str(record.get("id")), str(record.get("name") or name))
+        await self._select_dictionary(
+            str(record.get("id")), str(record.get("name") or name)
+        )
 
     def _unique_lore_name(self, base: str) -> str:
         """Disambiguate against the loaded list (world_books.name is UNIQUE)."""
@@ -2652,7 +3035,9 @@ class PersonasScreen(BaseAppScreen):
     async def _begin_create_lore(self) -> None:
         manager = self._lore_manager()
         if manager is None:
-            self._notify("Lore is not configured: the database is unavailable.", "error")
+            self._notify(
+                "Lore is not configured: the database is unavailable.", "error"
+            )
             return
         name = self._unique_lore_name("Untitled world book")
         try:
@@ -2668,7 +3053,9 @@ class PersonasScreen(BaseAppScreen):
         await self._select_lore_entry(str(book_id), name)
         # Land the user in Settings to rename immediately.
         try:
-            self.query_one("#personas-lore-tabs", TabbedContent).active = "personas-lore-tab-settings"
+            self.query_one(
+                "#personas-lore-tabs", TabbedContent
+            ).active = "personas-lore-tab-settings"
             self.query_one("#personas-lore-name", Input).focus()
         except QueryError:
             pass
@@ -2676,13 +3063,19 @@ class PersonasScreen(BaseAppScreen):
     async def _duplicate_selected_lore(self) -> None:
         manager = self._lore_manager()
         entity_id = self.state.selected_entity_id
-        if manager is None or self.state.selected_entity_kind != "lore" or not entity_id:
+        if (
+            manager is None
+            or self.state.selected_entity_kind != "lore"
+            or not entity_id
+        ):
             self._notify("Select a lore book to duplicate.", "warning")
             return
         try:
             source = await asyncio.to_thread(manager.export_world_book, int(entity_id))
         except Exception as exc:
-            logger.opt(exception=True).warning(f"Could not load lore book {entity_id} to duplicate.")
+            logger.opt(exception=True).warning(
+                f"Could not load lore book {entity_id} to duplicate."
+            )
             self._notify(f"Duplicate failed: {exc}", "error")
             return
         base = f"{source.get('name') or 'World book'} (copy)"
@@ -2693,7 +3086,9 @@ class PersonasScreen(BaseAppScreen):
             name = f"{source.get('name') or 'World book'} (copy {suffix})"
             suffix += 1
         try:
-            new_id = await asyncio.to_thread(manager.import_world_book, source, name_override=name)
+            new_id = await asyncio.to_thread(
+                manager.import_world_book, source, name_override=name
+            )
         except ConflictError:
             self._notify("A lore book with that name already exists.", "error")
             return
@@ -2710,7 +3105,8 @@ class PersonasScreen(BaseAppScreen):
         if service is None:
             return
         record = next(
-            (r for r in self._dictionaries_cache if str(r.get("id")) == str(entity_id)), None
+            (r for r in self._dictionaries_cache if str(r.get("id")) == str(entity_id)),
+            None,
         )
         if record is None:
             return
@@ -2723,13 +3119,17 @@ class PersonasScreen(BaseAppScreen):
                 int(entity_id), {"enabled": target}, mode="local"
             )
         except Exception as exc:
-            logger.opt(exception=True).warning(f"Could not toggle dictionary {entity_id}.")
+            logger.opt(exception=True).warning(
+                f"Could not toggle dictionary {entity_id}."
+            )
             self._notify(f"Toggle failed: {exc}", "error")
             return
         is_selected = str(self.state.selected_entity_id) == str(entity_id)
         if is_selected:
             raw_version = updated.get("version")
-            self._selected_dictionary_version = int(raw_version) if raw_version is not None else None
+            self._selected_dictionary_version = (
+                int(raw_version) if raw_version is not None else None
+            )
             self.query_one(PersonasDictionaryDetailWidget).apply_enabled(
                 bool(updated.get("enabled", updated.get("is_active", True)))
             )
@@ -2743,10 +3143,14 @@ class PersonasScreen(BaseAppScreen):
             library.highlight_row("dictionary", entity_id)
 
     @on(EditPersonaRequested)
-    async def _handle_persona_edit_requested(self, message: EditPersonaRequested) -> None:
+    async def _handle_persona_edit_requested(
+        self, message: EditPersonaRequested
+    ) -> None:
         message.stop()
         if str(message.persona_id) != (self.state.selected_entity_id or ""):
-            self._notify("Selection out of sync; reselect the persona profile.", "warning")
+            self._notify(
+                "Selection out of sync; reselect the persona profile.", "warning"
+            )
             return
         record = await self._fetch_profile_record(str(message.persona_id))
         self._edit_mode = "edit"
@@ -2876,7 +3280,9 @@ class PersonasScreen(BaseAppScreen):
     async def _stage_character_avatar_from_path(self, path: str) -> None:
         session_token = self._character_editor_session_token()
         if session_token is None:
-            self._notify("Open a character editor before uploading an avatar.", "warning")
+            self._notify(
+                "Open a character editor before uploading an avatar.", "warning"
+            )
             return
         try:
             image_data = await asyncio.to_thread(self._read_avatar_image_bytes, path)
@@ -2884,7 +3290,9 @@ class PersonasScreen(BaseAppScreen):
             self._notify(str(exc), "error")
             return
         except OSError as exc:
-            logger.opt(exception=True).error(f"Error reading avatar image from {path}: {exc}")
+            logger.opt(exception=True).error(
+                f"Error reading avatar image from {path}: {exc}"
+            )
             self._notify(f"Avatar upload failed: {exc}", "error")
             return
         if self._character_editor_session_token() != session_token:
@@ -2923,10 +3331,14 @@ class PersonasScreen(BaseAppScreen):
     ) -> None:
         message.stop()
         if not self._character_editor_is_active():
-            self._notify("Open a character editor before uploading an avatar.", "warning")
+            self._notify(
+                "Open a character editor before uploading an avatar.", "warning"
+            )
             return
         if self._io_dialog_active:
-            logger.debug("Import/export dialog already active; ignoring avatar upload request.")
+            logger.debug(
+                "Import/export dialog already active; ignoring avatar upload request."
+            )
             return
         self._io_dialog_active = True
         self.run_worker(self._avatar_upload_dialog_worker(), group="personas-io")
@@ -2952,7 +3364,9 @@ class PersonasScreen(BaseAppScreen):
             try:
                 file_path = await self.app.push_screen_wait(picker)
             except Exception:
-                logger.opt(exception=True).warning("Could not show the avatar upload file dialog.")
+                logger.opt(exception=True).warning(
+                    "Could not show the avatar upload file dialog."
+                )
                 return
             if file_path:
                 await self._stage_character_avatar_from_path(str(file_path))
@@ -2962,7 +3376,9 @@ class PersonasScreen(BaseAppScreen):
     async def _open_import_dialog(self) -> None:
         """Continuation for the guarded import action: launch the dialog worker."""
         if self._io_dialog_active:
-            logger.debug("Import/export dialog already active; ignoring import request.")
+            logger.debug(
+                "Import/export dialog already active; ignoring import request."
+            )
             return
         self._io_dialog_active = True
         self.run_worker(self._import_dialog_worker(), group="personas-io")
@@ -2978,15 +3394,19 @@ class PersonasScreen(BaseAppScreen):
                 filters=Filters(
                     (
                         "Character Cards",
-                        lambda p: p.suffix.lower()
-                        in (".json", ".md", ".markdown", ".png"),
+                        lambda p: (
+                            p.suffix.lower() in (".json", ".md", ".markdown", ".png")
+                        ),
                     ),
                     ("JSON Files", lambda p: p.suffix.lower() == ".json"),
                     (
                         "Markdown Files",
                         lambda p: p.suffix.lower() in (".md", ".markdown"),
                     ),
-                    ("PNG Files (with embedded data)", lambda p: p.suffix.lower() == ".png"),
+                    (
+                        "PNG Files (with embedded data)",
+                        lambda p: p.suffix.lower() == ".png",
+                    ),
                     ("All Files", lambda p: True),
                 ),
                 context="character_import",
@@ -2994,7 +3414,9 @@ class PersonasScreen(BaseAppScreen):
             try:
                 file_path = await self.app.push_screen_wait(picker)
             except Exception:
-                logger.opt(exception=True).warning("Could not show the import file dialog.")
+                logger.opt(exception=True).warning(
+                    "Could not show the import file dialog."
+                )
                 return
             if file_path:
                 await self._import_character_from_path(str(file_path))
@@ -3012,7 +3434,9 @@ class PersonasScreen(BaseAppScreen):
                 ccp_character_handler.import_character_card, path
             )
         except Exception as exc:
-            logger.opt(exception=True).error(f"Error importing character card from {path}: {exc}")
+            logger.opt(exception=True).error(
+                f"Error importing character card from {path}: {exc}"
+            )
             self._notify(f"Import failed: {exc}", "error")
             return
         if imported_id is None:
@@ -3048,7 +3472,9 @@ class PersonasScreen(BaseAppScreen):
     async def _open_lore_import_dialog(self) -> None:
         """Continuation for the guarded lore-import action."""
         if self._io_dialog_active:
-            logger.debug("Import/export dialog already active; ignoring import request.")
+            logger.debug(
+                "Import/export dialog already active; ignoring import request."
+            )
             return
         self._io_dialog_active = True
         self.run_worker(self._lore_import_dialog_worker(), group="personas-io")
@@ -3069,12 +3495,16 @@ class PersonasScreen(BaseAppScreen):
             try:
                 file_path = await self.app.push_screen_wait(picker)
             except Exception:
-                logger.opt(exception=True).warning("Could not show the world-book import dialog.")
+                logger.opt(exception=True).warning(
+                    "Could not show the world-book import dialog."
+                )
                 return
             if file_path:
                 await self._import_world_book_from_path(str(file_path))
         except Exception as exc:
-            logger.opt(exception=True).error("Unexpected error in the world-book import worker.")
+            logger.opt(exception=True).error(
+                "Unexpected error in the world-book import worker."
+            )
             self._notify(f"Import failed: {exc}", "error")
         finally:
             self._io_dialog_active = False
@@ -3087,12 +3517,16 @@ class PersonasScreen(BaseAppScreen):
         """
         manager = self._lore_manager()
         if manager is None:
-            self._notify("Lore is not configured: the database is unavailable.", "error")
+            self._notify(
+                "Lore is not configured: the database is unavailable.", "error"
+            )
             return
         try:
             source = validate_path_simple(path, require_exists=True)
         except (ValueError, OSError) as exc:
-            logger.opt(exception=True).warning(f"Rejected world-book import path {path}.")
+            logger.opt(exception=True).warning(
+                f"Rejected world-book import path {path}."
+            )
             self._notify(f"Import failed: {exc}", "error")
             return
         try:
@@ -3109,7 +3543,9 @@ class PersonasScreen(BaseAppScreen):
         try:
             text = await asyncio.to_thread(source.read_text, "utf-8")
         except (OSError, UnicodeDecodeError) as exc:
-            logger.opt(exception=True).warning(f"Could not read world-book file {path}.")
+            logger.opt(exception=True).warning(
+                f"Could not read world-book file {path}."
+            )
             self._notify(f"Import failed: {exc}", "error")
             return
         try:
@@ -3125,7 +3561,9 @@ class PersonasScreen(BaseAppScreen):
         base = str(data.get("name") or "Imported world book")
         name = self._unique_lore_name(base)
         try:
-            new_id = await asyncio.to_thread(manager.import_world_book, data, name_override=name)
+            new_id = await asyncio.to_thread(
+                manager.import_world_book, data, name_override=name
+            )
         except ConflictError:
             self._notify("A lore book with that name already exists.", "error")
             return
@@ -3144,7 +3582,9 @@ class PersonasScreen(BaseAppScreen):
     async def _open_dictionary_import_dialog(self) -> None:
         """Continuation for the guarded dictionaries-import action."""
         if self._io_dialog_active:
-            logger.debug("Import/export dialog already active; ignoring import request.")
+            logger.debug(
+                "Import/export dialog already active; ignoring import request."
+            )
             return
         self._io_dialog_active = True
         self.run_worker(self._dictionary_import_dialog_worker(), group="personas-io")
@@ -3157,9 +3597,15 @@ class PersonasScreen(BaseAppScreen):
             picker = EnhancedFileOpen(
                 title="Import Dictionary",
                 filters=Filters(
-                    ("Dictionaries", lambda p: p.suffix.lower() in (".json", ".md", ".markdown")),
+                    (
+                        "Dictionaries",
+                        lambda p: p.suffix.lower() in (".json", ".md", ".markdown"),
+                    ),
                     ("JSON Files", lambda p: p.suffix.lower() == ".json"),
-                    ("Markdown Files", lambda p: p.suffix.lower() in (".md", ".markdown")),
+                    (
+                        "Markdown Files",
+                        lambda p: p.suffix.lower() in (".md", ".markdown"),
+                    ),
                     ("All Files", lambda p: True),
                 ),
                 context="dictionary_import",
@@ -3167,12 +3613,16 @@ class PersonasScreen(BaseAppScreen):
             try:
                 file_path = await self.app.push_screen_wait(picker)
             except Exception:
-                logger.opt(exception=True).warning("Could not show the dictionary import dialog.")
+                logger.opt(exception=True).warning(
+                    "Could not show the dictionary import dialog."
+                )
                 return
             if file_path:
                 await self._import_dictionary_from_path(str(file_path))
         except Exception as exc:
-            logger.opt(exception=True).error("Unexpected error in the dictionary import worker.")
+            logger.opt(exception=True).error(
+                "Unexpected error in the dictionary import worker."
+            )
             self._notify(f"Import failed: {exc}", "error")
         finally:
             self._io_dialog_active = False
@@ -3191,7 +3641,9 @@ class PersonasScreen(BaseAppScreen):
         try:
             source = validate_path_simple(path, require_exists=True)
         except (ValueError, OSError) as exc:
-            logger.opt(exception=True).warning(f"Rejected dictionary import path {path}.")
+            logger.opt(exception=True).warning(
+                f"Rejected dictionary import path {path}."
+            )
             self._notify(f"Import failed: {exc}", "error")
             return
         try:
@@ -3218,20 +3670,30 @@ class PersonasScreen(BaseAppScreen):
             except (json.JSONDecodeError, RecursionError, ValueError) as exc:
                 self._notify(f"Import failed: not valid JSON ({exc})", "error")
                 return
-            raw = parsed.get("data") if isinstance(parsed, dict) and "data" in parsed else parsed
+            raw = (
+                parsed.get("data")
+                if isinstance(parsed, dict) and "data" in parsed
+                else parsed
+            )
             if not isinstance(raw, dict):
-                self._notify("Import failed: JSON must be a dictionary object.", "error")
+                self._notify(
+                    "Import failed: JSON must be a dictionary object.", "error"
+                )
                 return
             data = dict(raw)
             request = {"data": data}
+
             def _rename(new_name: str) -> None:
-                data["name"] = new_name          # data.name WINS - mutate it
+                data["name"] = new_name  # data.name WINS - mutate it
+
             base_name = str(data.get("name") or "Imported Dictionary")
             importer = service.import_json
         elif suffix in (".md", ".markdown"):
             request = {"name": source.stem, "content": text}  # name REQUIRED
+
             def _rename(new_name: str) -> None:
                 request["name"] = new_name
+
             base_name = source.stem
             importer = service.import_markdown
         else:
@@ -3255,10 +3717,16 @@ class PersonasScreen(BaseAppScreen):
             return
         record = None
         try:
-            record = await service.get_dictionary(int(result["dictionary_id"]), mode="local")
+            record = await service.get_dictionary(
+                int(result["dictionary_id"]), mode="local"
+            )
         except Exception:
-            logger.opt(exception=True).warning("Imported dictionary could not be reloaded.")
-            self._notify("Import succeeded, but the dictionary could not be reloaded.", "warning")
+            logger.opt(exception=True).warning(
+                "Imported dictionary could not be reloaded."
+            )
+            self._notify(
+                "Import succeeded, but the dictionary could not be reloaded.", "warning"
+            )
             return
         if self.state.active_mode != "dictionaries":
             # The user navigated away while the import ran; don't yank them back.
@@ -3268,7 +3736,9 @@ class PersonasScreen(BaseAppScreen):
             )
             return
         await self._render_dictionary_rows(query="")
-        await self._select_dictionary(str(record.get("id")), str(record.get("name") or ""))
+        await self._select_dictionary(
+            str(record.get("id")), str(record.get("name") or "")
+        )
 
     @on(Button.Pressed, "#personas-export-json")
     async def _handle_export_json_pressed(self, event: Button.Pressed) -> None:
@@ -3283,7 +3753,10 @@ class PersonasScreen(BaseAppScreen):
     def _open_export_dialog(self, fmt: str) -> None:
         """Validate the selection and launch the save-dialog worker."""
         kind = self.state.selected_entity_kind
-        if not self.state.selected_entity_id or kind not in ("character", "persona_profile"):
+        if not self.state.selected_entity_id or kind not in (
+            "character",
+            "persona_profile",
+        ):
             # The inspector disables these buttons without a saved selection;
             # this is a defensive re-check.
             self._notify("Select a saved item before exporting.", "warning")
@@ -3292,7 +3765,9 @@ class PersonasScreen(BaseAppScreen):
             self._notify("PNG export is only available for characters.", "warning")
             return
         if self._io_dialog_active:
-            logger.debug("Import/export dialog already active; ignoring export request.")
+            logger.debug(
+                "Import/export dialog already active; ignoring export request."
+            )
             return
         self._io_dialog_active = True
         self.run_worker(self._export_dialog_worker(fmt), group="personas-io")
@@ -3325,7 +3800,9 @@ class PersonasScreen(BaseAppScreen):
             try:
                 target_path = await self.app.push_screen_wait(picker)
             except Exception:
-                logger.opt(exception=True).warning("Could not show the export file dialog.")
+                logger.opt(exception=True).warning(
+                    "Could not show the export file dialog."
+                )
                 return
             if target_path:
                 await self._export_selected_character(str(target_path), fmt=fmt)
@@ -3352,7 +3829,9 @@ class PersonasScreen(BaseAppScreen):
                     )
             elif kind == "persona_profile":
                 if fmt != "json":
-                    self._notify("PNG export is only available for characters.", "warning")
+                    self._notify(
+                        "PNG export is only available for characters.", "warning"
+                    )
                     return
                 record = await self._fetch_profile_record(str(entity_id))
                 content = json.dumps(record, indent=2, ensure_ascii=False, default=str)
@@ -3426,7 +3905,12 @@ class PersonasScreen(BaseAppScreen):
         """Validate the selection and launch the delete-confirm dialog worker."""
         kind = self.state.selected_entity_kind
         entity_id = str(self.state.selected_entity_id or "")
-        if not entity_id or kind not in ("character", "persona_profile", "dictionary", "lore"):
+        if not entity_id or kind not in (
+            "character",
+            "persona_profile",
+            "dictionary",
+            "lore",
+        ):
             # The inspector disables Delete without a selection; defensive.
             self._notify("Select a saved item before deleting.", "warning")
             return
@@ -3441,7 +3925,8 @@ class PersonasScreen(BaseAppScreen):
             version: int | None = int(record.get("version") or 1)
         elif kind == "dictionary":
             record = next(
-                (r for r in self._dictionaries_cache if str(r.get("id")) == entity_id), None
+                (r for r in self._dictionaries_cache if str(r.get("id")) == entity_id),
+                None,
             )
             if record is None:
                 self._notify("Dictionary data is not loaded yet.", "warning")
@@ -3450,7 +3935,8 @@ class PersonasScreen(BaseAppScreen):
             version = int(raw_version) if raw_version is not None else None
         elif kind == "lore":
             record = next(
-                (r for r in self._lore_books_cache if str(r.get("id")) == entity_id), None
+                (r for r in self._lore_books_cache if str(r.get("id")) == entity_id),
+                None,
             )
             if record is None:
                 self._notify("Lore book data is not loaded yet.", "warning")
@@ -3496,7 +3982,9 @@ class PersonasScreen(BaseAppScreen):
             )
             return False
 
-    async def _delete_entity(self, kind: str, entity_id: str, version: int | None) -> None:
+    async def _delete_entity(
+        self, kind: str, entity_id: str, version: int | None
+    ) -> None:
         """Perform the confirmed delete, then clean up selection-coupled state."""
         conflict_copy = (
             "Delete failed: the {noun} changed since it was loaded. "
@@ -3509,11 +3997,15 @@ class PersonasScreen(BaseAppScreen):
                     ccp_character_handler.delete_character, entity_id, int(version or 1)
                 )
             except ConflictError:
-                logger.warning(f"Optimistic-lock conflict deleting character {entity_id}.")
+                logger.warning(
+                    f"Optimistic-lock conflict deleting character {entity_id}."
+                )
                 self._notify(conflict_copy.format(noun="character"), "error")
                 return
             except Exception as exc:
-                logger.opt(exception=True).error(f"Error deleting character {entity_id}: {exc}")
+                logger.opt(exception=True).error(
+                    f"Error deleting character {entity_id}: {exc}"
+                )
                 self._notify(f"Delete failed: {exc}", "error")
                 return
             if not ok:
@@ -3537,7 +4029,9 @@ class PersonasScreen(BaseAppScreen):
                 self._notify(conflict_copy.format(noun="dictionary"), "error")
                 return
             except Exception as exc:
-                logger.opt(exception=True).error(f"Error deleting dictionary {entity_id}: {exc}")
+                logger.opt(exception=True).error(
+                    f"Error deleting dictionary {entity_id}: {exc}"
+                )
                 self._notify(f"Delete failed: {exc}", "error")
                 return
             self.state.clear_selection()
@@ -3545,7 +4039,9 @@ class PersonasScreen(BaseAppScreen):
             self._selected_dictionary_version = None
             self.query_one(PersonasDictionaryDetailWidget).clear()
             self._show_center(None)
-            self.query_one(PersonasDictionaryTryItWidget).set_ready(False, "Select a dictionary to preview substitutions.")
+            self.query_one(PersonasDictionaryTryItWidget).set_ready(
+                False, "Select a dictionary to preview substitutions."
+            )
             await self.query_one(PersonasInspectorPane).clear_selection()
             await self._render_dictionary_rows(query=self.state.search_query)
             self._update_title()
@@ -3557,7 +4053,9 @@ class PersonasScreen(BaseAppScreen):
             # so mode/selection cannot change beneath this synchronous branch.
             manager = self._lore_manager()
             if manager is None:
-                self._notify("Lore is not configured: the database is unavailable.", "error")
+                self._notify(
+                    "Lore is not configured: the database is unavailable.", "error"
+                )
                 return
             try:
                 ok = await asyncio.to_thread(
@@ -3567,7 +4065,9 @@ class PersonasScreen(BaseAppScreen):
                 self._notify(conflict_copy.format(noun="lore book"), "error")
                 return
             except Exception as exc:
-                logger.opt(exception=True).error(f"Error deleting lore book {entity_id}: {exc}")
+                logger.opt(exception=True).error(
+                    f"Error deleting lore book {entity_id}: {exc}"
+                )
                 self._notify(f"Delete failed: {exc}", "error")
                 return
             if not ok:
@@ -3580,16 +4080,22 @@ class PersonasScreen(BaseAppScreen):
             self._selected_lore_entries = []
             self.query_one(PersonasLoreDetailWidget).clear()
             self._show_center(None)
-            self.query_one(PersonasLoreTryItWidget).set_ready(False, "Select a lore book to preview injections.")
+            self.query_one(PersonasLoreTryItWidget).set_ready(
+                False, "Select a lore book to preview injections."
+            )
             await self.query_one(PersonasInspectorPane).clear_selection()
             await self._render_lore_rows(query=self.state.search_query)
             self._update_title()
             self._update_status_row()
             return
         else:
-            service = getattr(self.app_instance, "character_persona_scope_service", None)
+            service = getattr(
+                self.app_instance, "character_persona_scope_service", None
+            )
             if service is None or not hasattr(service, "delete_persona_profile"):
-                self._notify("Delete failed: persona profiles are unavailable.", "error")
+                self._notify(
+                    "Delete failed: persona profiles are unavailable.", "error"
+                )
                 return
             try:
                 await service.delete_persona_profile(
@@ -3599,7 +4105,8 @@ class PersonasScreen(BaseAppScreen):
                 )
             except Exception as exc:
                 logger.opt(exception=True).error(
-                    f"Error deleting persona profile {entity_id}: {exc}")
+                    f"Error deleting persona profile {entity_id}: {exc}"
+                )
                 # The local backend signals optimistic-lock loss with a
                 # `..._version_conflict:` ValueError marker; map it onto the
                 # same recovery copy the character path uses.
@@ -3635,7 +4142,9 @@ class PersonasScreen(BaseAppScreen):
             try:
                 await self.character_handler.refresh_character_list()
             except Exception:
-                logger.opt(exception=True).warning("Could not refresh characters after a delete.")
+                logger.opt(exception=True).warning(
+                    "Could not refresh characters after a delete."
+                )
         else:
             self._refresh_profile_rows_worker()
         if not stale:
@@ -3671,12 +4180,17 @@ class PersonasScreen(BaseAppScreen):
             return
         # Snapshot UI-thread state here; the background persistence call must
         # not read mutable screen state.
-        self._save_character_worker(data, self.state.selected_entity_id, self._edit_mode)
+        self._save_character_worker(
+            data, self.state.selected_entity_id, self._edit_mode
+        )
 
     @work(exclusive=True, group="personas-save")
-    async def _save_character_worker(self, data: dict, selected_id: str | None, edit_mode: str) -> None:
+    async def _save_character_worker(
+        self, data: dict, selected_id: str | None, edit_mode: str
+    ) -> None:
         """Persist via the legacy module-level helpers off the UI thread."""
         try:
+
             def persist_character() -> str:
                 if edit_mode == "create" or not selected_id:
                     created_id = ccp_character_handler.create_character(data)
@@ -3694,7 +4208,9 @@ class PersonasScreen(BaseAppScreen):
             return
         await self._after_character_save(saved_id, str(data.get("name") or ""))
 
-    async def _after_character_save(self, saved_id: str, submitted_name: str = "") -> None:
+    async def _after_character_save(
+        self, saved_id: str, submitted_name: str = ""
+    ) -> None:
         if not self.is_mounted or self.state.active_mode != "characters":
             # The save completed after the user left the screen or switched
             # modes; refresh the cached list but leave the selection,
@@ -3702,7 +4218,9 @@ class PersonasScreen(BaseAppScreen):
             try:
                 await self.character_handler.refresh_character_list()
             except Exception:
-                logger.opt(exception=True).warning("Could not refresh characters after a late save.")
+                logger.opt(exception=True).warning(
+                    "Could not refresh characters after a late save."
+                )
             return
         self._character_editor_generation += 1
         self._edit_mode = "view"
@@ -3710,7 +4228,9 @@ class PersonasScreen(BaseAppScreen):
         await self.character_handler.refresh_character_list()
         record = self._character_record(saved_id)
         name = str((record or {}).get("name") or submitted_name or "Saved character")
-        self.state.select_entity(entity_kind="character", entity_id=saved_id, entity_name=name)
+        self.state.select_entity(
+            entity_kind="character", entity_id=saved_id, entity_name=name
+        )
         self.state.has_unsaved_changes = False
         inspector = self.query_one(PersonasInspectorPane)
         inspector.show_selection(name=name, kind="character", authority="Local")
@@ -3726,7 +4246,9 @@ class PersonasScreen(BaseAppScreen):
         self._notify("Character saved.", severity="information")
 
     @on(PersonaProfileSaveRequested)
-    async def _handle_profile_save_requested(self, message: PersonaProfileSaveRequested) -> None:
+    async def _handle_profile_save_requested(
+        self, message: PersonaProfileSaveRequested
+    ) -> None:
         """Persist a persona profile through the async scope service.
 
         The editor validates before posting (its inline
@@ -3800,7 +4322,9 @@ class PersonasScreen(BaseAppScreen):
                 raise_on_unavailable=True
             )
         except Exception as exc:
-            logger.opt(exception=True).warning("Could not refresh persona profiles after a save.")
+            logger.opt(exception=True).warning(
+                "Could not refresh persona profiles after a save."
+            )
             self._profile_lookup_recovery_state = self._profile_list_recovery_state(exc)
             profiles = []
         else:
@@ -3858,7 +4382,9 @@ class PersonasScreen(BaseAppScreen):
         self.call_after_refresh(self._focus_library_list)
 
     @on(PersonaProfileEditCancelled)
-    async def _handle_profile_edit_cancelled(self, message: PersonaProfileEditCancelled) -> None:
+    async def _handle_profile_edit_cancelled(
+        self, message: PersonaProfileEditCancelled
+    ) -> None:
         message.stop()
 
         async def _finish() -> None:
@@ -3906,7 +4432,10 @@ class PersonasScreen(BaseAppScreen):
         except Exception:
             dict_panel = None
         if dict_panel is not None:
-            dict_panel.display = visible_id in ("#ccp-character-card-view", "#ccp-character-editor-view")
+            dict_panel.display = visible_id in (
+                "#ccp-character-card-view",
+                "#ccp-character-editor-view",
+            )
         # The conversation actions row is chrome shown alongside (not instead
         # of) the read-only conversation view.
         try:
@@ -3935,7 +4464,9 @@ class PersonasScreen(BaseAppScreen):
         self._guard_active = True
         self.run_worker(self._confirm_then_run(continuation), group="personas-guard")
 
-    async def _confirm_then_run(self, continuation: Callable[[], Awaitable[None]]) -> None:
+    async def _confirm_then_run(
+        self, continuation: Callable[[], Awaitable[None]]
+    ) -> None:
         try:
             if not await self._confirm_discard_unsaved():
                 return
@@ -3963,7 +4494,9 @@ class PersonasScreen(BaseAppScreen):
         try:
             return bool(await self.app.push_screen_wait(dialog))
         except Exception:
-            logger.opt(exception=True).warning("Could not show unsaved-changes dialog; keeping edits.")
+            logger.opt(exception=True).warning(
+                "Could not show unsaved-changes dialog; keeping edits."
+            )
             return False
 
     def _notify(self, message: str, severity: str = "warning") -> None:

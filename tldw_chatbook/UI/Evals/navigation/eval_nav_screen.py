@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 @dataclass
 class NavigationCard:
     """Data for a navigation card."""
+
     id: str
     title: str
     icon: str
@@ -193,7 +194,7 @@ class EvalNavigationScreen(Screen):
     }
     """
 
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+    def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.last_evaluation = None
@@ -206,7 +207,7 @@ class EvalNavigationScreen(Screen):
                 icon="⚡",
                 description="Run a single local evaluation\nwith one model and task",
                 shortcut="Press [1]",
-                color="success"
+                color="success",
             ),
             NavigationCard(
                 id="comparison",
@@ -214,7 +215,7 @@ class EvalNavigationScreen(Screen):
                 icon="⚖️",
                 description="Compare multiple models\non the same task",
                 shortcut="Press [2]",
-                color="warning"
+                color="warning",
             ),
             NavigationCard(
                 id="batch_eval",
@@ -222,7 +223,7 @@ class EvalNavigationScreen(Screen):
                 icon="📦",
                 description="Queue and run multiple\nevaluations in sequence",
                 shortcut="Press [3]",
-                color="error"
+                color="error",
             ),
             NavigationCard(
                 id="results",
@@ -230,7 +231,7 @@ class EvalNavigationScreen(Screen):
                 icon="📊",
                 description="Browse, search and export\nevaluation results",
                 shortcut="Press [4]",
-                color="primary"
+                color="primary",
             ),
             NavigationCard(
                 id="tasks",
@@ -238,7 +239,7 @@ class EvalNavigationScreen(Screen):
                 icon="📋",
                 description="Browse evaluation definitions,\ndatasets and recent runs",
                 shortcut="Press [5]",
-                color="secondary"
+                color="secondary",
             ),
             NavigationCard(
                 id="models",
@@ -246,7 +247,7 @@ class EvalNavigationScreen(Screen):
                 icon="🤖",
                 description="Configure and test\nmodel connections",
                 shortcut="Press [6]",
-                color="accent"
+                color="accent",
             ),
         ]
 
@@ -267,17 +268,26 @@ class EvalNavigationScreen(Screen):
         with Container(classes="status-bar"):
             yield Static("Ready", id="status-text", classes="status-text")
             with Container(classes="quick-actions"):
-                yield Button("⚙️ Settings", id="settings-btn", classes="quick-action", variant="default")
-                yield Button("❓ Help", id="help-btn", classes="quick-action", variant="default")
+                yield Button(
+                    "⚙️ Settings",
+                    id="settings-btn",
+                    classes="quick-action",
+                    variant="default",
+                )
+                yield Button(
+                    "❓ Help", id="help-btn", classes="quick-action", variant="default"
+                )
 
     def _create_card(self, card: NavigationCard) -> Button:
         """Create a navigation card widget."""
         # Create button with card content
-        card_content = f"{card.icon}\n\n{card.title}\n\n{card.description}\n\n{card.shortcut}"
+        card_content = (
+            f"{card.icon}\n\n{card.title}\n\n{card.description}\n\n{card.shortcut}"
+        )
         button = Button(
             card_content,
             id=f"card-{card.id}",
-            classes=f"nav-card nav-card-button {card.id}"
+            classes=f"nav-card nav-card-button {card.id}",
         )
         return button
 
@@ -338,7 +348,9 @@ class EvalNavigationScreen(Screen):
         ]
 
         if self.app_instance:
-            self.app_instance.notify("\n".join(shortcuts), title="Shortcuts", timeout=10)
+            self.app_instance.notify(
+                "\n".join(shortcuts), title="Shortcuts", timeout=10
+            )
 
         self._update_status("Shortcuts displayed")
 
@@ -348,11 +360,15 @@ class EvalNavigationScreen(Screen):
             self._update_status("Re-running last evaluation...")
             # TODO: Implement re-run logic
             if self.app_instance:
-                self.app_instance.notify("Re-running last evaluation", severity="information")
+                self.app_instance.notify(
+                    "Re-running last evaluation", severity="information"
+                )
         else:
             self._update_status("No previous evaluation to run")
             if self.app_instance:
-                self.app_instance.notify("No previous evaluation to run", severity="warning")
+                self.app_instance.notify(
+                    "No previous evaluation to run", severity="warning"
+                )
 
     def _navigate_to(self, screen_id: str) -> None:
         """Navigate to a specific evaluation screen."""
@@ -366,7 +382,7 @@ class EvalNavigationScreen(Screen):
         if self.app_instance:
             self.app_instance.notify(
                 f"Opening {screen_id.replace('_', ' ').title()} screen",
-                severity="information"
+                severity="information",
             )
 
     def _update_status(self, message: str) -> None:

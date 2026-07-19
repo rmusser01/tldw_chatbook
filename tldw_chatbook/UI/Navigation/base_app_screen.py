@@ -33,7 +33,7 @@ class BaseAppScreen(Screen):
     }
     """
 
-    def __init__(self, app_instance: 'TldwCli', screen_name: str, **kwargs):
+    def __init__(self, app_instance: "TldwCli", screen_name: str, **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.screen_name = screen_name
@@ -82,8 +82,12 @@ class BaseAppScreen(Screen):
             try:
                 self.app.capture_mouse(None)
             except Exception:
-                logger.debug("Mouse-capture release before recompose skipped.", exc_info=True)
-        return super().refresh(*regions, repaint=repaint, layout=layout, recompose=recompose)
+                logger.debug(
+                    "Mouse-capture release before recompose skipped.", exc_info=True
+                )
+        return super().refresh(
+            *regions, repaint=repaint, layout=layout, recompose=recompose
+        )
 
     def compose(self) -> ComposeResult:
         """Compose the screen with navigation bar and content."""
@@ -125,14 +129,12 @@ class BaseAppScreen(Screen):
                 source=registration[0], shortcuts=registration[1]
             )
         yield footer
-    
+
     def compose_content(self) -> ComposeResult:
         """Override in subclasses to provide screen-specific content."""
         yield Container()  # Default empty container
 
-    def register_footer_shortcuts(
-        self, *, source: str, shortcuts: tuple
-    ) -> None:
+    def register_footer_shortcuts(self, *, source: str, shortcuts: tuple) -> None:
         """Register a workbench shortcut set with this screen's footer.
 
         The registration is persisted on the screen so it survives a
@@ -182,16 +184,16 @@ class BaseAppScreen(Screen):
         """Save the current state of the screen."""
         # Override in subclasses to save specific state
         return self.state_data
-    
+
     def restore_state(self, state: Dict[str, Any]) -> None:
         """Restore a previously saved state."""
         # Override in subclasses to restore specific state
         self.state_data = state
-    
+
     def on_mount(self) -> None:
         """Called when the screen is mounted."""
         logger.info(f"Screen {self.screen_name} mounted")
-    
+
     def on_unmount(self) -> None:
         """Called when the screen is unmounted."""
         logger.info(f"Screen {self.screen_name} unmounted")

@@ -18,7 +18,9 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     _visible_text,
 )
 
-from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
+from tldw_chatbook.Chat.chat_conversation_scope_service import (
+    ChatConversationScopeService,
+)
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
@@ -95,7 +97,9 @@ def test_console_workspace_conversation_title_preserves_duplicate_suffix():
 
 def test_console_workspace_status_row_empty_value_uses_unavailable():
     """Status labels ending in a colon should not repeat the label as the value."""
-    assert ConsoleWorkspaceDetailsTray._split_status_row("Authority: ", "Authority") == (
+    assert ConsoleWorkspaceDetailsTray._split_status_row(
+        "Authority: ", "Authority"
+    ) == (
         "Authority",
         "unavailable",
     )
@@ -174,7 +178,9 @@ class _ReadyResolutionGateway:
         return SimpleNamespace(
             provider=selection.provider,
             base_url=selection.base_url or "",
-            model=selection.explicit_model or selection.configured_model or "test-model",
+            model=selection.explicit_model
+            or selection.configured_model
+            or "test-model",
             ready=True,
             visible_copy="",
         )
@@ -346,7 +352,9 @@ class SearchableConversationService(StaticConversationTreeService):
         for conversation_id, tree in self.trees.items():
             conversation = tree.get("conversation", {})
             title = str(conversation.get("title") or "")
-            conversation_workspace_id = str(conversation.get("workspace_id") or "").strip()
+            conversation_workspace_id = str(
+                conversation.get("workspace_id") or ""
+            ).strip()
             conversation_scope = str(conversation.get("scope_type") or "").strip()
             if scope_type == "global":
                 if conversation_scope != "global" and conversation_workspace_id:
@@ -427,7 +435,9 @@ class SlowFirstSearchableConversationService(SearchableConversationService):
         for conversation_id, tree in self.trees.items():
             conversation = tree.get("conversation", {})
             title = str(conversation.get("title") or "")
-            conversation_workspace_id = str(conversation.get("workspace_id") or "").strip()
+            conversation_workspace_id = str(
+                conversation.get("workspace_id") or ""
+            ).strip()
             conversation_scope = str(conversation.get("scope_type") or "").strip()
             if scope_type == "global":
                 if conversation_scope != "global" and conversation_workspace_id:
@@ -469,7 +479,9 @@ class SyncSearchableConversationService(SearchableConversationService):
         for conversation_id, tree in self.trees.items():
             conversation = tree.get("conversation", {})
             title = str(conversation.get("title") or "")
-            conversation_workspace_id = str(conversation.get("workspace_id") or "").strip()
+            conversation_workspace_id = str(
+                conversation.get("workspace_id") or ""
+            ).strip()
             conversation_scope = str(conversation.get("scope_type") or "").strip()
             if scope_type == "global":
                 if conversation_scope != "global" and conversation_workspace_id:
@@ -526,7 +538,9 @@ class NoModeSyncSearchableConversationService(SearchableConversationService):
         for conversation_id, tree in self.trees.items():
             conversation = tree.get("conversation", {})
             title = str(conversation.get("title") or "")
-            conversation_workspace_id = str(conversation.get("workspace_id") or "").strip()
+            conversation_workspace_id = str(
+                conversation.get("workspace_id") or ""
+            ).strip()
             conversation_scope = str(conversation.get("scope_type") or "").strip()
             if normalized_scope_type == "global":
                 if conversation_scope != "global" and conversation_workspace_id:
@@ -534,7 +548,10 @@ class NoModeSyncSearchableConversationService(SearchableConversationService):
             elif normalized_scope_type == "workspace":
                 if conversation_workspace_id != normalized_workspace_id:
                     continue
-            elif normalized_workspace_id and conversation_workspace_id != normalized_workspace_id:
+            elif (
+                normalized_workspace_id
+                and conversation_workspace_id != normalized_workspace_id
+            ):
                 continue
             if normalized_query and normalized_query not in title.lower():
                 continue
@@ -591,7 +608,9 @@ async def _wait_for_text(screen, pilot, expected: str, *, attempts: int = 80) ->
         if expected in _visible_text(screen):
             return
         await pilot.pause(0.05)
-    raise AssertionError(f"Text not found: {expected!r}. Visible text: {_visible_text(screen)!r}")
+    raise AssertionError(
+        f"Text not found: {expected!r}. Visible text: {_visible_text(screen)!r}"
+    )
 
 
 async def _wait_for_focus(app, pilot, widget, *, attempts: int = 40) -> None:
@@ -653,7 +672,11 @@ async def _open_console_inspector_rail(console: ChatScreen, pilot) -> None:
     await _wait_for_selector(console, pilot, "#console-run-inspector-state")
     for _ in range(40):
         inspector = console.query_one("#console-run-inspector-state")
-        if inspector.display and inspector.region.width > 0 and inspector.region.height > 0:
+        if (
+            inspector.display
+            and inspector.region.width > 0
+            and inspector.region.height > 0
+        ):
             return
         await pilot.pause(0.05)
     inspector = console.query_one("#console-run-inspector-state")
@@ -725,7 +748,11 @@ def _console_workspace_conversation_row_id_for_session(console, session_id: str)
         if getattr(row, "conversation_id", None) == target_conversation_id:
             return str(row.id)
     rows = [
-        (getattr(row, "id", ""), getattr(row, "conversation_id", None), _widget_text(row))
+        (
+            getattr(row, "id", ""),
+            getattr(row, "conversation_id", None),
+            _widget_text(row),
+        )
         for row in console.query(".console-workspace-conversation-row")
     ]
     raise AssertionError(
@@ -794,12 +821,15 @@ async def _click_console_workspace_conversation_for_id(
             return row_id
         await pilot.pause(0.05)
     rows = [
-        (getattr(row, "id", ""), getattr(row, "conversation_id", None), _widget_text(row))
+        (
+            getattr(row, "id", ""),
+            getattr(row, "conversation_id", None),
+            _widget_text(row),
+        )
         for row in console.query(".console-workspace-conversation-row")
     ]
     raise AssertionError(
-        f"Workspace conversation row for {conversation_id!r} not found. "
-        f"Rows: {rows!r}"
+        f"Workspace conversation row for {conversation_id!r} not found. Rows: {rows!r}"
     )
 
 
@@ -828,8 +858,7 @@ async def _click_console_workspace_conversation_for_row_key(
         for row in console.query(".console-workspace-conversation-row")
     ]
     raise AssertionError(
-        f"Workspace conversation row key {row_key!r} not found. "
-        f"Rows: {rows!r}"
+        f"Workspace conversation row key {row_key!r} not found. Rows: {rows!r}"
     )
 
 
@@ -879,9 +908,8 @@ async def _wait_for_console_screen(host: ConsoleHarness, console, pilot) -> None
 
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
     for _ in range(40):
-        if (
-            host.screen_stack
-            and host.screen_stack[-1].query("#console-workspace-switcher-modal")
+        if host.screen_stack and host.screen_stack[-1].query(
+            "#console-workspace-switcher-modal"
         ):
             await pilot.pause()
             return host.screen_stack[-1]
@@ -902,7 +930,9 @@ def _select_llamacpp_console(console: ChatScreen) -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_native_generic_provider_send_renders_completed_message(monkeypatch):
+async def test_console_native_generic_provider_send_renders_completed_message(
+    monkeypatch,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {}
@@ -933,11 +963,16 @@ async def test_console_native_generic_provider_send_renders_completed_message(mo
         assert captured_kwargs
         assert captured_kwargs[-1]["api_endpoint"] == "openai"
         assert captured_kwargs[-1]["api_key"] == DUMMY_OPENAI_API_KEY
-        assert console._ensure_console_chat_controller().run_state.status is ConsoleRunStatus.COMPLETED
+        assert (
+            console._ensure_console_chat_controller().run_state.status
+            is ConsoleRunStatus.COMPLETED
+        )
         store = console._ensure_console_chat_store()
         messages = store.messages_for_session(store.active_session_id)
         assistant_messages = [
-            message for message in messages if message.role is ConsoleMessageRole.ASSISTANT
+            message
+            for message in messages
+            if message.role is ConsoleMessageRole.ASSISTANT
         ]
         assert assistant_messages[-1].status == "complete"
 
@@ -1136,7 +1171,9 @@ async def test_console_native_blocked_send_preserves_composer_text_and_shows_rec
         (None, "http://127.0.0.1:9099"),
     ),
 )
-def test_console_llamacpp_base_url_normalizes_openai_compatible_endpoints(raw_url, expected):
+def test_console_llamacpp_base_url_normalizes_openai_compatible_endpoints(
+    raw_url, expected
+):
     screen = ChatScreen(_build_test_app())
 
     assert screen._normalize_llamacpp_base_url(raw_url) == expected
@@ -1440,7 +1477,10 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
         assert send_button.has_class("console-send-blocked")
         await console.handle_console_send_message(Button.Pressed(send_button))
         await pilot.pause(0.1)
-        assert console._ensure_console_chat_controller().run_state.status.value == "streaming"
+        assert (
+            console._ensure_console_chat_controller().run_state.status.value
+            == "streaming"
+        )
 
         console.query_one("#console-stop-generation", Button).press()
         await _wait_for_text(console, pilot, "stopped")
@@ -1464,7 +1504,10 @@ async def test_console_streaming_chunks_render_after_slow_provider_validation():
 
         console.query_one("#console-send-message", Button).press()
         await asyncio.wait_for(gateway.validation_started.wait(), timeout=1)
-        assert console._ensure_console_chat_controller().run_state.status is ConsoleRunStatus.VALIDATING
+        assert (
+            console._ensure_console_chat_controller().run_state.status
+            is ConsoleRunStatus.VALIDATING
+        )
         console._sync_console_control_bar()
         send_button = console.query_one("#console-send-message", Button)
         stop_button = console.query_one("#console-stop-generation", Button)
@@ -1567,7 +1610,9 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
-    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("hel", "lo"))
+    app.console_provider_gateway_factory = lambda: CapturingGateway(
+        chunks=("hel", "lo")
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -1593,7 +1638,9 @@ async def test_console_chat_lifecycle_state_survives_screen_recreation_return():
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
-    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("assistant return",))
+    app.console_provider_gateway_factory = lambda: CapturingGateway(
+        chunks=("assistant return",)
+    )
     saved_state: dict | None = None
     first_session_id: str | None = None
     second_session_id: str | None = None
@@ -1620,7 +1667,9 @@ async def test_console_chat_lifecycle_state_survives_screen_recreation_return():
             pilot,
             first_session_id,
         )
-        await _wait_for_selector(console, pilot, f"#console-session-tab-{second_session_id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-session-tab-{second_session_id}"
+        )
         composer.load_draft("draft before return")
         await console._sync_native_console_chat_ui()
 
@@ -1634,7 +1683,9 @@ async def test_console_chat_lifecycle_state_survives_screen_recreation_return():
     async with restored_host.run_test(size=(160, 48)) as pilot:
         console = restored_host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        await _wait_for_selector(console, pilot, f"#console-session-tab-{second_session_id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-session-tab-{second_session_id}"
+        )
         await _wait_for_text(console, pilot, "draft before return")
 
         store = console._ensure_console_chat_store()
@@ -1651,7 +1702,9 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
-    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("accepted",))
+    app.console_provider_gateway_factory = lambda: CapturingGateway(
+        chunks=("accepted",)
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -1693,7 +1746,9 @@ async def test_console_send_after_workspace_switch_persists_to_selected_workspac
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
-    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("accepted",))
+    app.console_provider_gateway_factory = lambda: CapturingGateway(
+        chunks=("accepted",)
+    )
     service = app.workspace_registry_service
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
     service.create_workspace(workspace_id="ws-b", name="Workspace B")
@@ -1737,7 +1792,9 @@ async def test_console_send_after_workspace_switch_persists_to_selected_workspac
         workspace_a_conversations = service.list_workspace_conversations("ws-a")
         workspace_b_conversations = service.list_workspace_conversations("ws-b")
         assert workspace_a_conversations == ()
-        assert [row.title for row in workspace_b_conversations] == [active_session.title]
+        assert [row.title for row in workspace_b_conversations] == [
+            active_session.title
+        ]
 
 
 @pytest.mark.asyncio
@@ -1769,7 +1826,9 @@ async def test_console_workspace_switch_refreshes_visible_session_tabs():
 
         active_session = store.switch_session(store.active_session_id)
         assert active_session.workspace_id == "ws-b"
-        await _wait_for_selector(console, pilot, f"#console-session-tab-{active_session.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-session-tab-{active_session.id}"
+        )
         assert "Workspace B Chat" in _visible_text(console)
 
 
@@ -1823,7 +1882,9 @@ async def test_console_workspace_switch_refresh_is_not_dropped_during_inflight_s
         release_first_sync.set()
         await first_sync_task
 
-        await _wait_for_selector(console, pilot, f"#console-session-tab-{active_session.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-session-tab-{active_session.id}"
+        )
         assert "Workspace B Chat" in _visible_text(console)
 
 
@@ -1890,12 +1951,19 @@ async def test_console_unsupported_provider_block_renders_one_normalized_system_
         await _wait_for_text(console, pilot, "Provider blocked")
 
         messages = store.messages_for_session(store.active_session_id)
-        system_messages = [message.content for message in messages if message.role is ConsoleMessageRole.SYSTEM]
+        system_messages = [
+            message.content
+            for message in messages
+            if message.role is ConsoleMessageRole.SYSTEM
+        ]
         assert system_messages == [
             "Provider blocked: 'wip_provider' is not available in Console yet. "
             "Choose a supported provider."
         ]
-        assert console._ensure_console_chat_controller().run_state.visible_copy == system_messages[0]
+        assert (
+            console._ensure_console_chat_controller().run_state.visible_copy
+            == system_messages[0]
+        )
 
 
 @pytest.mark.asyncio
@@ -1911,7 +1979,9 @@ async def test_console_add_api_key_recovery_targets_provider_settings_category()
         session = store.ensure_session()
         store.replace_session_settings(
             session.id,
-            ConsoleSessionSettings(provider="huggingface", model="meta-llama/test-model"),
+            ConsoleSessionSettings(
+                provider="huggingface", model="meta-llama/test-model"
+            ),
         )
         await console._sync_native_console_chat_ui()
         # The shared Workbench recovery banner stays hidden now — the setup
@@ -1944,7 +2014,9 @@ async def test_console_add_api_key_recovery_tolerates_missing_session_settings()
         session = store.ensure_session()
         store.replace_session_settings(
             session.id,
-            ConsoleSessionSettings(provider="huggingface", model="meta-llama/test-model"),
+            ConsoleSessionSettings(
+                provider="huggingface", model="meta-llama/test-model"
+            ),
         )
         await console._sync_native_console_chat_ui()
         # The shared Workbench recovery banner stays hidden now — the setup
@@ -1988,7 +2060,9 @@ async def test_console_assistant_message_click_exposes_selected_actions():
         await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
 
         await pilot.click(f"#console-message-{message.id}")
-        await _wait_for_selector(console, pilot, f"#console-message-action-regenerate-{message.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-regenerate-{message.id}"
+        )
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         assert transcript.selected_message_id == message.id
@@ -2043,7 +2117,9 @@ async def test_console_selected_message_copy_action_uses_app_clipboard():
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-copy-{message.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-copy-{message.id}"
+        )
 
         await pilot.click(f"#console-message-action-copy-{message.id}")
         await pilot.pause()
@@ -2107,7 +2183,9 @@ async def test_console_clicking_rendered_message_shows_action_row():
         await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
 
         await pilot.click(f"#console-message-{message.id}")
-        await _wait_for_selector(console, pilot, f"#console-message-action-copy-{message.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-copy-{message.id}"
+        )
 
 
 @pytest.mark.asyncio
@@ -2133,7 +2211,9 @@ async def test_console_selected_message_copy_action_works_from_keyboard():
         await _wait_for_focus(console.app, pilot, transcript)
         await pilot.press("down")
         await pilot.press("enter")
-        await _wait_for_selector(console, pilot, f"#console-message-action-copy-{message.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-copy-{message.id}"
+        )
 
         copy_selector = f"console-message-action-copy-{message.id}"
         for _ in range(16):
@@ -2142,7 +2222,9 @@ async def test_console_selected_message_copy_action_works_from_keyboard():
                 break
             await pilot.press("tab")
         else:
-            raise AssertionError("Keyboard focus did not reach the selected-message Copy action")
+            raise AssertionError(
+                "Keyboard focus did not reach the selected-message Copy action"
+            )
 
         await pilot.press("enter")
         await pilot.pause()
@@ -2234,22 +2316,32 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-delete-{message.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-delete-{message.id}"
+        )
 
         transcript.focus_action(message.id, "delete")
-        delete_button = console.query_one(f"#console-message-action-delete-{message.id}", Button)
+        delete_button = console.query_one(
+            f"#console-message-action-delete-{message.id}", Button
+        )
         await _wait_for_focus(console.app, pilot, delete_button)
 
         await pilot.press("tab")
-        copy_button = console.query_one(f"#console-message-action-copy-{message.id}", Button)
+        copy_button = console.query_one(
+            f"#console-message-action-copy-{message.id}", Button
+        )
         await _wait_for_focus(console.app, pilot, copy_button)
 
         await pilot.press("tab")
-        edit_button = console.query_one(f"#console-message-action-edit-{message.id}", Button)
+        edit_button = console.query_one(
+            f"#console-message-action-edit-{message.id}", Button
+        )
         await _wait_for_focus(console.app, pilot, edit_button)
 
         await pilot.press("tab")
-        save_as_button = console.query_one(f"#console-message-action-save-as-{message.id}", Button)
+        save_as_button = console.query_one(
+            f"#console-message-action-save-as-{message.id}", Button
+        )
         await _wait_for_focus(console.app, pilot, save_as_button)
 
         await pilot.press("enter")
@@ -2344,7 +2436,9 @@ async def test_console_blocked_empty_transcript_shows_setup_card_steps():
 @pytest.mark.asyncio
 async def test_console_first_send_flag_switches_empty_state_to_quiet():
     app = _build_test_app()
-    app.app_config.setdefault("console", {})["onboarding"] = {"first_send_completed": True}
+    app.app_config.setdefault("console", {})["onboarding"] = {
+        "first_send_completed": True
+    }
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
@@ -2363,7 +2457,9 @@ async def test_console_accepted_send_records_first_send_flag():
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
-    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("accepted",))
+    app.console_provider_gateway_factory = lambda: CapturingGateway(
+        chunks=("accepted",)
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -2404,7 +2500,9 @@ async def test_console_failed_send_does_not_record_first_send_flag():
         onboarding = app.app_config.get("console", {})
         if isinstance(onboarding, dict):
             onboarding = onboarding.get("onboarding", {})
-        assert not (isinstance(onboarding, dict) and onboarding.get("first_send_completed"))
+        assert not (
+            isinstance(onboarding, dict) and onboarding.get("first_send_completed")
+        )
         assert console._console_first_send_completed() is False
 
         # The provider error must not be stored as assistant message content.
@@ -2414,7 +2512,9 @@ async def test_console_failed_send_does_not_record_first_send_flag():
             for message in store.messages_for_session(store.active_session_id)
             if message.role is ConsoleMessageRole.ASSISTANT
         ]
-        assert all("Provider stream failed" not in content for content in assistant_contents)
+        assert all(
+            "Provider stream failed" not in content for content in assistant_contents
+        )
 
 
 @pytest.mark.asyncio
@@ -2423,7 +2523,9 @@ async def test_console_accepted_send_clears_composer_before_run_end():
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
-    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("accepted",))
+    app.console_provider_gateway_factory = lambda: CapturingGateway(
+        chunks=("accepted",)
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -2474,21 +2576,30 @@ async def test_console_workspace_authority_rows_are_structured_for_scanning():
         console = host.screen_stack[-1]
         await _open_console_context_rail(console, pilot)
 
-        assert _static_plain_text(
-            console.query_one("#console-workspace-authority-label", Static)
-        ) == "Storage"
+        assert (
+            _static_plain_text(
+                console.query_one("#console-workspace-authority-label", Static)
+            )
+            == "Storage"
+        )
         assert "local" in _static_plain_text(
             console.query_one("#console-workspace-authority-value", Static)
         )
-        assert _static_plain_text(
-            console.query_one("#console-workspace-runtime-label", Static)
-        ) == "File tools"
+        assert (
+            _static_plain_text(
+                console.query_one("#console-workspace-runtime-label", Static)
+            )
+            == "File tools"
+        )
         assert "Off in Default workspace" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
         )
-        assert _static_plain_text(
-            console.query_one("#console-workspace-handoff-label", Static)
-        ) == "Handoff"
+        assert (
+            _static_plain_text(
+                console.query_one("#console-workspace-handoff-label", Static)
+            )
+            == "Handoff"
+        )
         assert "Not configured" in _static_plain_text(
             console.query_one("#console-workspace-handoff-value", Static)
         )
@@ -2504,7 +2615,9 @@ async def test_console_inspector_setup_state_explains_blocked_send_without_selec
         console = host.screen_stack[-1]
         await _open_console_inspector_rail(console, pilot)
 
-        inspector_text = _visible_text(console.query_one("#console-run-inspector-state"))
+        inspector_text = _visible_text(
+            console.query_one("#console-run-inspector-state")
+        )
         assert "Setup" in inspector_text
         assert "Blocked impact" in inspector_text
         assert CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL in inspector_text
@@ -2557,10 +2670,18 @@ async def test_console_selected_message_updates_inspector_action_guidance():
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(console, pilot, "#console-inspector-selected-message")
 
-        inspector_text = _visible_text(console.query_one("#console-run-inspector-state"))
+        inspector_text = _visible_text(
+            console.query_one("#console-run-inspector-state")
+        )
         assert "Selected message: Assistant message" in inspector_text
-        assert "Message actions: Copy, Edit, Save as..., Regenerate, Continue, Feedback, Delete" in inspector_text
-        assert "Keyboard: Tab/Shift+Tab cycle actions; Enter activates; Esc clears selection" in inspector_text
+        assert (
+            "Message actions: Copy, Edit, Save as..., Regenerate, Continue, Feedback, Delete"
+            in inspector_text
+        )
+        assert (
+            "Keyboard: Tab/Shift+Tab cycle actions; Enter activates; Esc clears selection"
+            in inspector_text
+        )
         assert "Variants: 2 variants, showing 2/2" in inspector_text
         assert "Excerpt: second assistant variant" in inspector_text
 
@@ -2585,7 +2706,9 @@ async def test_console_selected_message_feedback_action_records_rating():
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-feedback-up-{message.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-feedback-up-{message.id}"
+        )
 
         await pilot.click(f"#console-message-action-feedback-up-{message.id}")
         await pilot.pause()
@@ -2616,22 +2739,31 @@ async def test_console_selected_message_delete_action_removes_message_from_trans
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-delete-{message.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-delete-{message.id}"
+        )
 
         await pilot.click(f"#console-message-action-delete-{message.id}")
         await pilot.pause()
 
         assert store.messages_for_session(session.id) == [message]
         assert console._last_console_action.action_id == "delete"
-        assert console._last_console_action.visible_copy == "Press Delete again to remove this message."
+        assert (
+            console._last_console_action.visible_copy
+            == "Press Delete again to remove this message."
+        )
 
-        delete_button = console.query_one(f"#console-message-action-delete-{message.id}", Button)
+        delete_button = console.query_one(
+            f"#console-message-action-delete-{message.id}", Button
+        )
         delete_button.press()
         await pilot.pause()
 
     assert store.messages_for_session(session.id) == []
     assert console._last_console_action.action_id == "delete"
-    assert console._last_console_action.visible_copy == "Deleted message from transcript."
+    assert (
+        console._last_console_action.visible_copy == "Deleted message from transcript."
+    )
 
 
 @pytest.mark.asyncio
@@ -2659,19 +2791,28 @@ async def test_console_delete_confirmation_resets_when_selection_changes():
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(first_message.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-delete-{first_message.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-delete-{first_message.id}"
+        )
 
         await pilot.click(f"#console-message-action-delete-{first_message.id}")
         await pilot.pause()
-        assert console._last_console_action.visible_copy == "Press Delete again to remove this message."
+        assert (
+            console._last_console_action.visible_copy
+            == "Press Delete again to remove this message."
+        )
 
         transcript.select_message(second_message.id)
         await pilot.pause()
         transcript.select_message(first_message.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-delete-{first_message.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-delete-{first_message.id}"
+        )
 
-        delete_button = console.query_one(f"#console-message-action-delete-{first_message.id}", Button)
+        delete_button = console.query_one(
+            f"#console-message-action-delete-{first_message.id}", Button
+        )
         delete_button.press()
         await pilot.pause()
 
@@ -2680,7 +2821,10 @@ async def test_console_delete_confirmation_resets_when_selection_changes():
         second_message.id,
     ]
     assert console._last_console_action.action_id == "delete"
-    assert console._last_console_action.visible_copy == "Press Delete again to remove this message."
+    assert (
+        console._last_console_action.visible_copy
+        == "Press Delete again to remove this message."
+    )
 
 
 @pytest.mark.asyncio
@@ -2703,10 +2847,14 @@ async def test_console_selected_message_edit_action_opens_modal_and_saves_conten
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-edit-{message.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-edit-{message.id}"
+        )
 
         await pilot.click(f"#console-message-action-edit-{message.id}")
-        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-edit-message-modal")
+        await _wait_for_selector(
+            host.screen_stack[-1], pilot, "#console-edit-message-modal"
+        )
         edit_modal = host.screen_stack[-1]
         assert "Editing existing transcript message" in _static_plain_text(
             edit_modal.query_one("#console-edit-message-context", Static)
@@ -2743,10 +2891,14 @@ async def test_console_selected_message_edit_action_cancel_preserves_content():
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-edit-{message.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-edit-{message.id}"
+        )
 
         await pilot.click(f"#console-message-action-edit-{message.id}")
-        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-edit-message-modal")
+        await _wait_for_selector(
+            host.screen_stack[-1], pilot, "#console-edit-message-modal"
+        )
         edit_modal = host.screen_stack[-1]
         editor = edit_modal.query_one("#console-edit-message-body", TextArea)
         editor.text = "discard this"
@@ -2776,24 +2928,33 @@ async def test_console_selected_message_edit_action_blank_save_stays_open_with_e
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-edit-{message.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-edit-{message.id}"
+        )
 
         await pilot.click(f"#console-message-action-edit-{message.id}")
-        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-edit-message-modal")
+        await _wait_for_selector(
+            host.screen_stack[-1], pilot, "#console-edit-message-modal"
+        )
         edit_modal = host.screen_stack[-1]
         editor = edit_modal.query_one("#console-edit-message-body", TextArea)
         editor.text = "   "
         await pilot.click("#console-edit-message-save")
         await _wait_for_selector(edit_modal, pilot, "#console-edit-message-error")
 
-        assert "cannot be blank" in _static_plain_text(
-            edit_modal.query_one("#console-edit-message-error", Static)
-        ).lower()
+        assert (
+            "cannot be blank"
+            in _static_plain_text(
+                edit_modal.query_one("#console-edit-message-error", Static)
+            ).lower()
+        )
         assert store.get_message(message.id).content == "answer"
 
 
 @pytest.mark.asyncio
-async def test_console_sync_skips_transcript_refresh_when_messages_unchanged(monkeypatch):
+async def test_console_sync_skips_transcript_refresh_when_messages_unchanged(
+    monkeypatch,
+):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2852,7 +3013,9 @@ async def test_console_selected_message_save_as_action_opens_modal():
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-save-as-{message.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-save-as-{message.id}"
+        )
 
         await pilot.click(f"#console-message-action-save-as-{message.id}")
         await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-modal")
@@ -2886,7 +3049,9 @@ async def _open_save_as_modal_for_message(host, pilot, console, role, content):
     transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
     transcript.select_message(message.id)
     await console._sync_native_console_chat_ui()
-    await _wait_for_selector(console, pilot, f"#console-message-action-save-as-{message.id}")
+    await _wait_for_selector(
+        console, pilot, f"#console-message-action-save-as-{message.id}"
+    )
 
     await pilot.click(f"#console-message-action-save-as-{message.id}")
     await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-modal")
@@ -2939,7 +3104,9 @@ async def test_console_save_as_modal_gates_chatbook_for_user_messages_with_hones
         gated_copy = _static_plain_text(
             save_as_modal.query_one("#console-save-as-unavailable-chatbook", Static)
         )
-        assert "Only assistant responses can be saved as Chatbook artifacts." in gated_copy
+        assert (
+            "Only assistant responses can be saved as Chatbook artifacts." in gated_copy
+        )
         assert "WIP" not in gated_copy
         assert "No Save as destinations are wired" not in _visible_text(save_as_modal)
 
@@ -2958,7 +3125,10 @@ def test_console_save_as_destinations_gate_on_runtime_services_and_role():
     gated = screen._console_save_as_destinations(user)
     chatbook = next(d for d in gated if d.label == "Chatbook")
     assert chatbook.available is False
-    assert chatbook.reason == "Only assistant responses can be saved as Chatbook artifacts."
+    assert (
+        chatbook.reason
+        == "Only assistant responses can be saved as Chatbook artifacts."
+    )
     assert [d.label for d in gated if d.available] == ["Note", "Media", "Prompt"]
 
     app.notes_scope_service = None
@@ -2971,7 +3141,10 @@ def test_console_save_as_destinations_gate_on_runtime_services_and_role():
     assert reasons["Note"] == "Notes service is not ready in this session."
     assert reasons["Media"] == "Media library is not ready in this session."
     assert reasons["Prompt"] == "Prompts service is not ready in this session."
-    assert reasons["Chatbook"] == "Chatbook artifacts service is not ready in this session."
+    assert (
+        reasons["Chatbook"]
+        == "Chatbook artifacts service is not ready in this session."
+    )
     assert all("WIP" not in reason for reason in reasons.values())
 
 
@@ -2979,7 +3152,13 @@ def test_console_save_as_destinations_gate_on_runtime_services_and_role():
 async def test_console_selected_message_save_as_note_creates_note_from_message():
     app = _build_test_app()
     app.notes_scope_service = SimpleNamespace(
-        save_note=AsyncMock(return_value={"id": "note-1", "title": "Console message", "content": "answer"})
+        save_note=AsyncMock(
+            return_value={
+                "id": "note-1",
+                "title": "Console message",
+                "content": "answer",
+            }
+        )
     )
     host = ConsoleHarness(app)
 
@@ -2989,7 +3168,9 @@ async def test_console_selected_message_save_as_note_creates_note_from_message()
         message, _modal = await _open_save_as_modal_for_message(
             host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
         )
-        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-note")
+        await _wait_for_selector(
+            host.screen_stack[-1], pilot, "#console-save-as-destination-note"
+        )
         await pilot.click("#console-save-as-destination-note")
         await pilot.pause()
 
@@ -3023,7 +3204,9 @@ async def test_console_selected_message_save_as_media_adds_plaintext_media():
         message, _modal = await _open_save_as_modal_for_message(
             host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
         )
-        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-media")
+        await _wait_for_selector(
+            host.screen_stack[-1], pilot, "#console-save-as-destination-media"
+        )
         await pilot.click("#console-save-as-destination-media")
         await pilot.pause()
 
@@ -3051,7 +3234,9 @@ async def test_console_selected_message_save_as_prompt_persists_prompt():
         message, _modal = await _open_save_as_modal_for_message(
             host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
         )
-        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-prompt")
+        await _wait_for_selector(
+            host.screen_stack[-1], pilot, "#console-save-as-destination-prompt"
+        )
         await pilot.click("#console-save-as-destination-prompt")
         await pilot.pause()
 
@@ -3091,7 +3276,9 @@ async def test_console_save_as_prompt_retries_with_suffix_on_name_conflict():
         _message, _modal = await _open_save_as_modal_for_message(
             host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
         )
-        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-prompt")
+        await _wait_for_selector(
+            host.screen_stack[-1], pilot, "#console-save-as-destination-prompt"
+        )
         await pilot.click("#console-save-as-destination-prompt")
         await pilot.pause()
 
@@ -3112,7 +3299,9 @@ async def test_console_selected_message_save_as_chatbook_registers_console_artif
         message, _modal = await _open_save_as_modal_for_message(
             host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
         )
-        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-chatbook")
+        await _wait_for_selector(
+            host.screen_stack[-1], pilot, "#console-save-as-destination-chatbook"
+        )
         await pilot.click("#console-save-as-destination-chatbook")
         await pilot.pause()
 
@@ -3127,7 +3316,10 @@ async def test_console_selected_message_save_as_chatbook_registers_console_artif
     assert metadata["content"] == "answer"
     assert metadata["message_id"] == message.id
     assert console._last_console_action.action_id == "save-as-chatbook"
-    assert console._last_console_action.visible_copy == "Saved message as Chatbook artifact."
+    assert (
+        console._last_console_action.visible_copy
+        == "Saved message as Chatbook artifact."
+    )
 
 
 @pytest.mark.asyncio
@@ -3147,7 +3339,9 @@ async def test_console_save_as_media_failure_notifies_without_crashing():
         message, _modal = await _open_save_as_modal_for_message(
             host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
         )
-        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-media")
+        await _wait_for_selector(
+            host.screen_stack[-1], pilot, "#console-save-as-destination-media"
+        )
         await pilot.click("#console-save-as-destination-media")
         await pilot.pause()
 
@@ -3189,13 +3383,18 @@ async def test_console_failed_stream_renders_inline_retry_and_recovers():
         failed = next(
             message
             for message in reversed(store.messages_for_session(store.active_session_id))
-            if message.role is ConsoleMessageRole.ASSISTANT and message.status == "failed"
+            if message.role is ConsoleMessageRole.ASSISTANT
+            and message.status == "failed"
         )
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(failed.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-retry-{failed.id}")
-        retry_button = console.query_one(f"#console-message-action-retry-{failed.id}", Button)
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-retry-{failed.id}"
+        )
+        retry_button = console.query_one(
+            f"#console-message-action-retry-{failed.id}", Button
+        )
         assert str(retry_button.label) == "Try"
         assert retry_button.tooltip == "Retry the failed response."
 
@@ -3210,7 +3409,9 @@ async def test_console_continue_action_streams_new_message_from_selected_turn():
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
-    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("hel", "lo"))
+    app.console_provider_gateway_factory = lambda: CapturingGateway(
+        chunks=("hel", "lo")
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -3229,7 +3430,9 @@ async def test_console_continue_action_streams_new_message_from_selected_turn():
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(source.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-continue-{source.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-continue-{source.id}"
+        )
 
         await pilot.click(f"#console-message-action-continue-{source.id}")
         await _wait_for_text(console, pilot, "hello")
@@ -3247,7 +3450,9 @@ async def test_console_regenerate_action_streams_selected_variant():
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
-    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("hel", "lo"))
+    app.console_provider_gateway_factory = lambda: CapturingGateway(
+        chunks=("hel", "lo")
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -3266,7 +3471,9 @@ async def test_console_regenerate_action_streams_selected_variant():
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(source.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-regenerate-{source.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-regenerate-{source.id}"
+        )
 
         await pilot.click(f"#console-message-action-regenerate-{source.id}")
         await _wait_for_text(console, pilot, "hello")
@@ -3297,26 +3504,44 @@ async def test_console_regenerated_message_variant_controls_cycle_visible_conten
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(source.id)
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-variant-previous-{source.id}")
-        await _wait_for_selector(console, pilot, f"#console-message-action-variant-next-{source.id}")
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-variant-previous-{source.id}"
+        )
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-variant-next-{source.id}"
+        )
 
-        previous_button = console.query_one(f"#console-message-action-variant-previous-{source.id}", Button)
-        next_button = console.query_one(f"#console-message-action-variant-next-{source.id}", Button)
+        previous_button = console.query_one(
+            f"#console-message-action-variant-previous-{source.id}", Button
+        )
+        next_button = console.query_one(
+            f"#console-message-action-variant-next-{source.id}", Button
+        )
         assert previous_button.disabled is False
         assert next_button.disabled is True
-        assert "updated answer" in _static_plain_text(console.query_one(f"#console-message-{source.id}", Static))
+        assert "updated answer" in _static_plain_text(
+            console.query_one(f"#console-message-{source.id}", Static)
+        )
 
         await pilot.click(f"#console-message-action-variant-previous-{source.id}")
         await _wait_for_text(console, pilot, "seed")
-        previous_button = console.query_one(f"#console-message-action-variant-previous-{source.id}", Button)
-        next_button = console.query_one(f"#console-message-action-variant-next-{source.id}", Button)
+        previous_button = console.query_one(
+            f"#console-message-action-variant-previous-{source.id}", Button
+        )
+        next_button = console.query_one(
+            f"#console-message-action-variant-next-{source.id}", Button
+        )
         assert previous_button.disabled is True
         assert next_button.disabled is False
 
         await pilot.click(f"#console-message-action-variant-next-{source.id}")
         await _wait_for_text(console, pilot, "updated answer")
-        previous_button = console.query_one(f"#console-message-action-variant-previous-{source.id}", Button)
-        next_button = console.query_one(f"#console-message-action-variant-next-{source.id}", Button)
+        previous_button = console.query_one(
+            f"#console-message-action-variant-previous-{source.id}", Button
+        )
+        next_button = console.query_one(
+            f"#console-message-action-variant-next-{source.id}", Button
+        )
         assert previous_button.disabled is False
         assert next_button.disabled is True
 
@@ -3456,7 +3681,9 @@ def _browser_group_toggle(console, group_id: str) -> Button:
         for button in console.query(Button)
         if str(getattr(button, "id", "")).startswith("console-conversation-browser")
     ]
-    raise AssertionError(f"Browser group toggle {group_id!r} not found. Groups: {groups!r}")
+    raise AssertionError(
+        f"Browser group toggle {group_id!r} not found. Groups: {groups!r}"
+    )
 
 
 def _browser_star_button(console, conversation_id: str) -> Button:
@@ -3467,7 +3694,9 @@ def _browser_star_button(console, conversation_id: str) -> Button:
         (getattr(button, "id", None), getattr(button, "conversation_id", None))
         for button in console.query(".console-conversation-star")
     ]
-    raise AssertionError(f"Star button for {conversation_id!r} not found. Stars: {stars!r}")
+    raise AssertionError(
+        f"Star button for {conversation_id!r} not found. Stars: {stars!r}"
+    )
 
 
 async def _wait_for_browser_conversation_row(console, pilot, conversation_id: str):
@@ -3521,7 +3750,9 @@ async def test_console_conversation_browser_lists_all_workspace_groups():
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         store = console._ensure_console_chat_store()
         default_session = store.create_session(
             title="Global chat",
@@ -3540,7 +3771,12 @@ async def test_console_conversation_browser_lists_all_workspace_groups():
         assert "Storage" in visible_text
         assert "Server handoff" in visible_text
         assert len(console.query("#console-workspace-conversations-toggle")) == 0
-        assert len(console.query("#console-conversation-browser-section-toggle-workspaces")) == 1
+        assert (
+            len(
+                console.query("#console-conversation-browser-section-toggle-workspaces")
+            )
+            == 1
+        )
         assert any(
             getattr(button, "group_id", None) == "workspace:ws-a"
             for button in console.query(".console-workspace-conversations-toggle")
@@ -3570,14 +3806,21 @@ async def test_console_conversation_browser_search_filters_all_groups():
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         await pilot.click("#console-workspace-conversation-search")
         search = console.query_one("#console-workspace-conversation-search", Input)
         search.value = "needle"
-        console.on_console_workspace_conversation_search_changed(_InputChangedEvent("needle"))
+        console.on_console_workspace_conversation_search_changed(
+            _InputChangedEvent("needle")
+        )
         for _ in range(40):
             row_texts = _console_workspace_conversation_texts(console)
-            if any(getattr(row, "conversation_id", None) == "needle-b" for row in console.query(".console-workspace-conversation-row")):
+            if any(
+                getattr(row, "conversation_id", None) == "needle-b"
+                for row in console.query(".console-workspace-conversation-row")
+            ):
                 break
             await pilot.pause(0.05)
         else:
@@ -3603,7 +3846,9 @@ async def test_console_browser_selecting_non_default_workspace_native_session_sw
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         store = console._ensure_console_chat_store()
         first = store.ensure_session(title="Workspace A Chat", workspace_id="ws-a")
         second = store.create_session(title="Workspace B Chat", workspace_id="ws-b")
@@ -3667,7 +3912,9 @@ async def test_console_browser_selecting_non_default_workspace_persisted_row_swi
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         store = console._ensure_console_chat_store()
 
         await _click_console_workspace_conversation_for_id(
@@ -3728,7 +3975,9 @@ async def test_console_browser_selecting_duplicate_membership_row_ignores_other_
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         store = console._ensure_console_chat_store()
         open_ws_a = store.ensure_session(title="Shared open chat", workspace_id="ws-a")
         open_ws_a.persisted_conversation_id = "shared-open-chat"
@@ -3778,7 +4027,10 @@ async def test_console_browser_selecting_duplicate_membership_row_ignores_other_
             and _widget_text(row).startswith("▸ ")
         ]
         assert len(selected_shared_rows) == 1
-        assert getattr(selected_shared_rows[0], "native_session_id", None) == active_session.id
+        assert (
+            getattr(selected_shared_rows[0], "native_session_id", None)
+            == active_session.id
+        )
         selected_native_rows = [
             row
             for row in console._native_console_browser_rows("shared-open-chat")
@@ -3810,7 +4062,9 @@ async def test_console_browser_selecting_default_native_session_switches_to_defa
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         store = console._ensure_console_chat_store()
         first = store.ensure_session(title="Workspace A Chat", workspace_id="ws-a")
         second = store.create_session(
@@ -3837,9 +4091,12 @@ async def test_console_browser_selecting_default_native_session_switches_to_defa
         assert active is not None
         assert active.workspace_id == DEFAULT_WORKSPACE_ID
         assert store.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
-        assert _static_plain_text(
-            console.query_one("#console-workspace-runtime-label", Static)
-        ) == "File tools"
+        assert (
+            _static_plain_text(
+                console.query_one("#console-workspace-runtime-label", Static)
+            )
+            == "File tools"
+        )
         assert "Off in Default workspace" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
         )
@@ -3880,7 +4137,9 @@ async def test_console_browser_selecting_default_persisted_row_switches_to_defau
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         store = console._ensure_console_chat_store()
 
         await _click_console_workspace_conversation_for_id(
@@ -3900,9 +4159,12 @@ async def test_console_browser_selecting_default_persisted_row_switches_to_defau
         assert active.workspace_id == DEFAULT_WORKSPACE_ID
         assert store.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
         assert session.workspace_id == DEFAULT_WORKSPACE_ID
-        assert _static_plain_text(
-            console.query_one("#console-workspace-runtime-label", Static)
-        ) == "File tools"
+        assert (
+            _static_plain_text(
+                console.query_one("#console-workspace-runtime-label", Static)
+            )
+            == "File tools"
+        )
         assert "Off in Default workspace" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
         )
@@ -3938,7 +4200,9 @@ async def test_console_browser_selecting_global_persisted_row_preserves_active_w
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         store = console._ensure_console_chat_store()
         before = service.get_active_workspace()
         assert before is not None
@@ -3988,7 +4252,9 @@ async def test_console_conversation_browser_search_counts_only_matching_local_ro
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         await _set_console_conversation_browser_search(console, pilot, "needle")
 
         for _ in range(80):
@@ -4034,7 +4300,9 @@ async def test_console_conversation_browser_keeps_multi_workspace_memberships():
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
 
         rows = [
             row
@@ -4048,14 +4316,8 @@ async def test_console_conversation_browser_keeps_multi_workspace_memberships():
         ]
 
         assert len(rows) == 2
-        assert {
-            getattr(row, "workspace_id", None)
-            for row in rows
-        } == {"ws-a", "ws-b"}
-        assert {
-            getattr(row, "row_key", None)
-            for row in rows
-        } == {
+        assert {getattr(row, "workspace_id", None) for row in rows} == {"ws-a", "ws-b"}
+        assert {getattr(row, "row_key", None) for row in rows} == {
             "workspace:ws-a:conversation:shared-conversation",
             "workspace:ws-b:conversation:shared-conversation",
         }
@@ -4095,14 +4357,15 @@ async def test_console_conversation_browser_dedupes_membership_and_persisted_sam
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
 
         rows = [
             row
             for row in console.query(".console-workspace-conversation-row")
             if (
-                getattr(row, "conversation_id", None)
-                == "same-workspace-conversation"
+                getattr(row, "conversation_id", None) == "same-workspace-conversation"
                 and getattr(row, "workspace_id", None) == "ws-a"
             )
         ]
@@ -4154,7 +4417,9 @@ async def test_console_conversation_browser_search_ignores_stale_results():
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         console._console_conversation_browser_query = "alpha"
         console._console_conversation_browser_search_token += 1
         stale_token = console._console_conversation_browser_search_token
@@ -4197,7 +4462,9 @@ async def test_console_conversation_browser_group_collapse_persists_locally():
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         assert "Collapse Target" in _visible_text(console)
 
         _browser_group_toggle(console, "workspace:ws-a").press()
@@ -4236,7 +4503,9 @@ async def test_console_conversation_browser_workspaces_section_collapse_persists
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         assert any(
             "Section Collapse" in text
             for text in _console_workspace_conversation_texts(console)
@@ -4279,7 +4548,9 @@ async def test_console_conversation_browser_starred_section_updates_from_row_act
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         _browser_star_button(console, "star-target").press()
         await pilot.pause(0.1)
 
@@ -4311,7 +4582,9 @@ async def test_console_conversation_browser_keeps_starred_row_in_normal_group():
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         rows = [
             _widget_text(row)
             for row in console.query(".console-workspace-conversation-row")
@@ -4337,7 +4610,9 @@ async def test_console_conversation_browser_marks_unavailable_keeps_browsing_ena
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
 
         visible_text = _visible_text(console)
         assert "Starred" in visible_text
@@ -4380,7 +4655,9 @@ async def test_console_conversation_browser_default_includes_sync_persisted_rows
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         global_row = await _wait_for_browser_conversation_row(
             console,
             pilot,
@@ -4452,7 +4729,9 @@ async def test_console_conversation_browser_default_prefers_sync_local_service()
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
 
         global_row = await _wait_for_browser_conversation_row(
             console,
@@ -4521,7 +4800,9 @@ async def test_console_conversation_browser_default_omits_mode_for_local_service
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
 
         global_row = await _wait_for_browser_conversation_row(
             console,
@@ -4574,7 +4855,9 @@ async def test_console_conversation_browser_search_omits_mode_for_local_service(
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         await _set_console_conversation_browser_search(console, pilot, "needle")
 
         global_row = await _wait_for_browser_conversation_row(
@@ -4625,7 +4908,9 @@ async def test_console_conversation_browser_long_list_keeps_readiness_rows_reach
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         # Storage/Server-handoff readiness rows now live in the collapsible
         # Details section beneath the conversation browser; expand it.
         if not console._current_console_rail_state().details_open:
@@ -4665,7 +4950,9 @@ async def test_console_new_chat_tab_appears_in_workspace_conversation_rail():
         first.persisted_conversation_id = "persisted-chat-1"
         await console._sync_native_console_chat_ui()
 
-        assert any("Chat 1" in text for text in _console_workspace_conversation_texts(console))
+        assert any(
+            "Chat 1" in text for text in _console_workspace_conversation_texts(console)
+        )
 
         await pilot.click("#console-new-chat-tab")
         second = store.active_session_id
@@ -4776,16 +5063,24 @@ async def test_console_workspace_conversation_search_selection_keeps_query_activ
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         await _set_console_conversation_browser_search(console, pilot, "alpha")
-        await _wait_for_workspace_conversation_text(console, pilot, "Select Alpha", selected=False)
+        await _wait_for_workspace_conversation_text(
+            console, pilot, "Select Alpha", selected=False
+        )
 
-        await _click_console_workspace_conversation_for_id(console, pilot, "select-alpha")
+        await _click_console_workspace_conversation_for_id(
+            console, pilot, "select-alpha"
+        )
 
         await _wait_for_text(console, pilot, "selected alpha prompt")
         search = console.query_one("#console-workspace-conversation-search", Input)
         assert search.value == "alpha"
-        assert "Select Alpha" in _static_plain_text(console.query_one("#console-workspace-selected-conversation", Static))
+        assert "Select Alpha" in _static_plain_text(
+            console.query_one("#console-workspace-selected-conversation", Static)
+        )
 
 
 @pytest.mark.asyncio
@@ -4827,7 +5122,9 @@ async def test_console_workspace_conversation_search_blank_selection_keeps_compo
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         await _wait_for_workspace_conversation_text(
             console,
             pilot,
@@ -4872,9 +5169,13 @@ async def test_console_workspace_conversation_search_selection_invalidates_pendi
         first.workspace_id = second_session.workspace_id
         await console._sync_native_console_chat_ui()
 
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         await _set_console_conversation_browser_search(console, pilot, "alpha")
-        await _wait_for_workspace_conversation_text(console, pilot, "Slow Alpha", selected=False)
+        await _wait_for_workspace_conversation_text(
+            console, pilot, "Slow Alpha", selected=False
+        )
         for _ in range(40):
             if app.chat_conversation_scope_service.started.is_set():
                 break
@@ -4909,12 +5210,16 @@ async def test_console_workspace_switch_clears_conversation_search_and_restores_
     app = _build_test_app()
     service = app.workspace_registry_service
     workspace_a = service.get_active_workspace()
-    workspace_b = service.create_workspace(workspace_id="ws-search-reset", name="Search Reset")
+    workspace_b = service.create_workspace(
+        workspace_id="ws-search-reset", name="Search Reset"
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         await _set_console_conversation_browser_search(console, pilot, "alpha")
         _browser_group_toggle(console, "section:chats").press()
         await pilot.pause(0.1)
@@ -4924,7 +5229,10 @@ async def test_console_workspace_switch_clears_conversation_search_and_restores_
         console._sync_console_workspace_context()
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversation-search")) == 1
-        assert console.query_one("#console-workspace-conversation-search", Input).value == "alpha"
+        assert (
+            console.query_one("#console-workspace-conversation-search", Input).value
+            == "alpha"
+        )
 
         service.set_active_workspace(workspace_a.workspace_id)
         console._sync_console_workspace_context()
@@ -5031,9 +5339,8 @@ async def test_console_workspace_conversation_search_blank_query_clears_error_ca
         console.query_one("#console-workspace-conversation-search", Input)
         await _set_console_conversation_browser_search(console, pilot, "")
 
-        assert (
-            "Workspace conversation search is unavailable."
-            not in _visible_text(console)
+        assert "Workspace conversation search is unavailable." not in _visible_text(
+            console
         )
         assert console._console_workspace_conversation_search_rows == ()
         assert console._console_workspace_conversation_search_total is None
@@ -5084,7 +5391,9 @@ async def test_console_workspace_conversation_search_filters_all_workspace_membe
     app = _build_test_app()
     service = app.workspace_registry_service
     active_workspace = service.get_active_workspace()
-    other_workspace = service.create_workspace(workspace_id="ws-other-search", name="Other Search")
+    other_workspace = service.create_workspace(
+        workspace_id="ws-other-search", name="Other Search"
+    )
     service.link_membership(
         active_workspace.workspace_id,
         item_type="conversation",
@@ -5103,11 +5412,15 @@ async def test_console_workspace_conversation_search_filters_all_workspace_membe
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
 
         await _set_console_conversation_browser_search(console, pilot, "alpha")
         await _wait_for_text(console, pilot, "matches")
-        await _wait_for_workspace_conversation_text(console, pilot, "Alpha membership", selected=False)
+        await _wait_for_workspace_conversation_text(
+            console, pilot, "Alpha membership", selected=False
+        )
         row_texts = _console_workspace_conversation_texts(console)
         assert any("Alpha membership" in text for text in row_texts)
         assert any(
@@ -5128,7 +5441,9 @@ async def test_console_workspace_conversation_search_uses_current_workspace_cont
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         store = console._ensure_console_chat_store()
         assert store.workspace_context.active_workspace_id == "ws-search-a"
 
@@ -5278,20 +5593,28 @@ async def test_console_workspace_rail_new_conversation_creates_default_workspace
             selected=True,
         )
         assert any(text.startswith("▸ ") and "Chat 2" in text for text in row_texts)
-        assert _static_plain_text(
-            console.query_one("#console-workspace-runtime-label", Static)
-        ) == "File tools"
+        assert (
+            _static_plain_text(
+                console.query_one("#console-workspace-runtime-label", Static)
+            )
+            == "File tools"
+        )
         assert "Off in Default workspace" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
         )
-        assert _static_plain_text(
-            console.query_one("#console-workspace-server-readiness-label", Static)
-        ) == "Server handoff"
+        assert (
+            _static_plain_text(
+                console.query_one("#console-workspace-server-readiness-label", Static)
+            )
+            == "Server handoff"
+        )
         assert "Not configured" in _static_plain_text(
             console.query_one("#console-workspace-server-readiness-value", Static)
         )
         visible_text = _visible_text(console)
-        assert "Workspace conversation creation lands in a later slice" not in visible_text
+        assert (
+            "Workspace conversation creation lands in a later slice" not in visible_text
+        )
 
 
 @pytest.mark.asyncio
@@ -5325,10 +5648,7 @@ async def test_console_workspace_rail_new_conversation_stays_scoped_to_active_wo
             active_title,
             selected=True,
         )
-        assert any(
-            text.startswith("▸ ") and active_title in text
-            for text in row_texts
-        )
+        assert any(text.startswith("▸ ") and active_title in text for text in row_texts)
 
         console.query_one("#console-change-workspace", Button).press()
         modal_screen = await _wait_for_workspace_switcher_modal(host, pilot)
@@ -5370,7 +5690,9 @@ async def test_console_workspace_conversation_row_switches_native_session():
             "Chat 1",
             selected=False,
         )
-        await _click_console_workspace_conversation_for_session(console, pilot, store, first.id)
+        await _click_console_workspace_conversation_for_session(
+            console, pilot, store, first.id
+        )
 
         assert store.active_session_id == first.id
         row_texts = await _wait_for_workspace_conversation_text(
@@ -5462,7 +5784,10 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
             "Saved research chat",
             selected=True,
         )
-        assert any(text.startswith("▸ ") and "Saved research chat" in text for text in row_texts)
+        assert any(
+            text.startswith("▸ ") and "Saved research chat" in text
+            for text in row_texts
+        )
         selected_row = _workspace_conversation_row_by_id(console, "persisted-chat-1")
         assert selected_row is not None
         selected_row_label = str(selected_row.label)
@@ -5542,7 +5867,9 @@ async def test_console_workspace_conversation_resume_restores_system_prompt():
         )
         store = console._ensure_console_chat_store()
         active_session = store.switch_session(store.active_session_id)
-        assert active_session.persisted_conversation_id == "persisted-chat-system-prompt"
+        assert (
+            active_session.persisted_conversation_id == "persisted-chat-system-prompt"
+        )
         assert active_session.settings is not None
         assert active_session.settings.system_prompt == "Answer only in French."
 
@@ -5609,12 +5936,10 @@ async def test_console_workspace_conversation_resume_uses_persisted_workspace():
         active_session = store.switch_session(store.active_session_id)
         assert active_session.workspace_id == target_workspace.workspace_id
         assert (
-            store.workspace_context.active_workspace_id
-            == target_workspace.workspace_id
+            store.workspace_context.active_workspace_id == target_workspace.workspace_id
         )
         assert (
-            service.get_active_workspace().workspace_id
-            == target_workspace.workspace_id
+            service.get_active_workspace().workspace_id == target_workspace.workspace_id
         )
         row_texts = await _wait_for_workspace_conversation_text(
             console,
@@ -5787,7 +6112,9 @@ async def test_console_workspace_conversation_search_keeps_selected_global_nativ
         session.workspace_id = CONSOLE_GLOBAL_WORKSPACE_ID
         await console._sync_native_console_chat_ui()
 
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         console.query_one("#console-workspace-conversation-search", Input).focus()
         await _set_console_conversation_browser_search(console, pilot, "global")
         await _wait_for_text(console, pilot, "1 match")
@@ -5799,8 +6126,7 @@ async def test_console_workspace_conversation_search_keeps_selected_global_nativ
         )
 
         assert any(
-            text.startswith("▸ ") and "Global Search Chat" in text
-            for text in row_texts
+            text.startswith("▸ ") and "Global Search Chat" in text for text in row_texts
         )
 
 
@@ -5928,7 +6254,9 @@ async def test_console_native_tab_title_has_stable_visible_label_region():
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
-        store.rename_session(session.id, "Planning session with a long descriptive name")
+        store.rename_session(
+            session.id, "Planning session with a long descriptive name"
+        )
         await console._sync_native_console_chat_ui()
 
         tab_selector = f"#console-session-tab-{session.id}"
@@ -6053,15 +6381,21 @@ async def test_console_close_tab_with_messages_shows_confirmation():
             if any(isinstance(s, ConfirmationDialog) for s in host.screen_stack):
                 break
 
-        dialog_screens = [s for s in host.screen_stack if isinstance(s, ConfirmationDialog)]
-        assert len(dialog_screens) == 1, "confirmation dialog should appear for tab with messages"
+        dialog_screens = [
+            s for s in host.screen_stack if isinstance(s, ConfirmationDialog)
+        ]
+        assert len(dialog_screens) == 1, (
+            "confirmation dialog should appear for tab with messages"
+        )
         assert session.id in {s.id for s in store.sessions()}, "session not closed yet"
 
         await pilot.click("#confirm-button")
         for _ in range(10):
             await pilot.pause()
 
-        assert session.id not in {s.id for s in store.sessions()}, "session closed after confirm"
+        assert session.id not in {s.id for s in store.sessions()}, (
+            "session closed after confirm"
+        )
 
 
 def test_native_console_state_serializes_plain_string_message_role():
@@ -6157,7 +6491,10 @@ def test_native_console_state_round_trip_preserves_session_system_prompt():
 
     payload = screen._serialize_native_console_state()
     assert payload is not None
-    assert payload["sessions"][0]["settings"]["system_prompt"] == "Be terse and cite sources."
+    assert (
+        payload["sessions"][0]["settings"]["system_prompt"]
+        == "Be terse and cite sources."
+    )
 
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
@@ -6325,6 +6662,7 @@ async def test_console_attachment_worker_stages_image_and_inlines_text(tmp_path)
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         import tldw_chatbook.Chat.attachment_core as attachment_core
+
         # Test files live in tmp_path, outside $HOME — widen the safety root.
         original = attachment_core.load_processed_file
 
@@ -6449,16 +6787,27 @@ def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
     )
     runs_db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="t")
     primary_id = runs_db.create_run(conversation_id="conv-x", agent_kind="primary")
-    runs_db.append_steps(primary_id, [
-        {"index": 0, "kind": "tool_result", "tool_name": "calculator",
-         "result": "42", "summary": "", "args": None, "created_at": ""},
-    ])
+    runs_db.append_steps(
+        primary_id,
+        [
+            {
+                "index": 0,
+                "kind": "tool_result",
+                "tool_name": "calculator",
+                "result": "42",
+                "summary": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
     runs_db.set_status(primary_id, "done", result="It is 42.")
 
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="what is 6*7"),
         ConsoleChatMessage(
-            role=ConsoleMessageRole.ASSISTANT, content="It is 42.", status="complete"),
+            role=ConsoleMessageRole.ASSISTANT, content="It is 42.", status="complete"
+        ),
     ]
 
     resumed = screen._inject_resume_agent_markers(messages, "conv-x")
@@ -6510,9 +6859,11 @@ async def test_save_console_message_image_writes_file(tmp_path, monkeypatch):
         await _wait_for_selector(console, pilot, "#console-native-composer")
         monkeypatch.setattr(
             "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
-            lambda section, key, default=None: str(tmp_path)
-            if (section, key) == ("chat.images", "save_location")
-            else default,
+            lambda section, key, default=None: (
+                str(tmp_path)
+                if (section, key) == ("chat.images", "save_location")
+                else default
+            ),
         )
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
@@ -6532,7 +6883,9 @@ async def test_save_console_message_image_writes_file(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_save_console_message_image_disambiguates_filename_collision(tmp_path, monkeypatch):
+async def test_save_console_message_image_disambiguates_filename_collision(
+    tmp_path, monkeypatch
+):
     """Verify the save-image worker never silently overwrites a prior save."""
     import datetime as datetime_module
 
@@ -6549,9 +6902,11 @@ async def test_save_console_message_image_disambiguates_filename_collision(tmp_p
         await _wait_for_selector(console, pilot, "#console-native-composer")
         monkeypatch.setattr(
             "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
-            lambda section, key, default=None: str(tmp_path)
-            if (section, key) == ("chat.images", "save_location")
-            else default,
+            lambda section, key, default=None: (
+                str(tmp_path)
+                if (section, key) == ("chat.images", "save_location")
+                else default
+            ),
         )
         # The save-image worker imports `datetime.datetime` locally on each
         # call, so freezing the clock here forces both saves below to compute
@@ -6598,7 +6953,10 @@ def test_rehydrate_console_message_image_refetches_bytes_from_db():
     )
     screen.app_instance.chachanotes_db = Mock(
         get_message_by_id=Mock(
-            return_value={"image_data": b"\x89PNG-bytes", "image_mime_type": "image/png"}
+            return_value={
+                "image_data": b"\x89PNG-bytes",
+                "image_mime_type": "image/png",
+            }
         )
     )
 
@@ -6606,7 +6964,9 @@ def test_rehydrate_console_message_image_refetches_bytes_from_db():
 
     assert message.image_data == b"\x89PNG-bytes"
     assert message.image_mime_type == "image/png"
-    screen.app_instance.chachanotes_db.get_message_by_id.assert_called_once_with("msg-123")
+    screen.app_instance.chachanotes_db.get_message_by_id.assert_called_once_with(
+        "msg-123"
+    )
 
 
 def test_rehydrate_console_message_image_degrades_gracefully_on_db_failure():
@@ -6635,7 +6995,10 @@ def test_restore_native_console_state_rehydrates_image_bytes_end_to_end():
     screen = ChatScreen(_build_test_app())
     screen.app_instance.chachanotes_db = Mock(
         get_message_by_id=Mock(
-            return_value={"image_data": b"\x89PNG-bytes", "image_mime_type": "image/png"}
+            return_value={
+                "image_data": b"\x89PNG-bytes",
+                "image_mime_type": "image/png",
+            }
         )
     )
     payload = {
@@ -6714,7 +7077,9 @@ async def test_clear_attachment_button_resyncs_composer_blocked_state(monkeypatc
 
         assert store.pending_attachment(session.id) is None
         assert composer._send_blocked is False
-        assert not send_button.tooltip or "can't accept images" not in send_button.tooltip
+        assert (
+            not send_button.tooltip or "can't accept images" not in send_button.tooltip
+        )
 
 
 @pytest.mark.asyncio
@@ -6853,7 +7218,7 @@ def test_console_image_prep_bounded_to_cache_capacity_avoids_churn():
     assert set(specs) == set(most_recent_ids)
 
     # The older, out-of-window messages were never touched by prep.
-    older_ids = [m.id for m in messages[: -IMAGE_CACHE_MAX_ENTRIES]]
+    older_ids = [m.id for m in messages[:-IMAGE_CACHE_MAX_ENTRIES]]
     assert older_ids  # sanity: the test actually exceeds cache capacity
     for older_id in older_ids:
         assert cache.get_pil(older_id) is None
@@ -7148,7 +7513,9 @@ async def test_staging_appends_and_caps_at_five(tmp_path, monkeypatch):
 
         await console._process_console_attachment(str(paths[5]))
         assert len(store.pending_attachments(store.active_session_id)) == 5
-        assert any("Attachment limit reached (5 per message)." in n for n in notifications)
+        assert any(
+            "Attachment limit reached (5 per message)." in n for n in notifications
+        )
 
 
 @pytest.mark.asyncio
@@ -7164,9 +7531,11 @@ async def test_save_image_saves_all_attachments(tmp_path, monkeypatch):
         await _wait_for_selector(console, pilot, "#console-native-composer")
         monkeypatch.setattr(
             "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
-            lambda section, key, default=None: str(tmp_path)
-            if (section, key) == ("chat.images", "save_location")
-            else default,
+            lambda section, key, default=None: (
+                str(tmp_path)
+                if (section, key) == ("chat.images", "save_location")
+                else default
+            ),
         )
         monkeypatch.setattr(
             console.app_instance,
@@ -7180,9 +7549,24 @@ async def test_save_image_saves_all_attachments(tmp_path, monkeypatch):
             role=ConsoleMessageRole.USER,
             content="three",
             attachments=(
-                MessageAttachment(data=b"img-0", mime_type="image/png", display_name="a.png", position=0),
-                MessageAttachment(data=b"img-1", mime_type="image/png", display_name="b.png", position=1),
-                MessageAttachment(data=b"img-2", mime_type="image/jpeg", display_name="c.jpg", position=2),
+                MessageAttachment(
+                    data=b"img-0",
+                    mime_type="image/png",
+                    display_name="a.png",
+                    position=0,
+                ),
+                MessageAttachment(
+                    data=b"img-1",
+                    mime_type="image/png",
+                    display_name="b.png",
+                    position=1,
+                ),
+                MessageAttachment(
+                    data=b"img-2",
+                    mime_type="image/jpeg",
+                    display_name="c.jpg",
+                    position=2,
+                ),
             ),
         )
 
@@ -7200,7 +7584,10 @@ def test_console_message_serialization_round_trips_multi_attachment_labels():
     that test covers the single-attachment (scalar-only) shape, this one
     covers the `attachment_labels` list a 2+ attachment message carries.
     """
-    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, MessageAttachment
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        MessageAttachment,
+    )
 
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.USER,
@@ -7209,8 +7596,18 @@ def test_console_message_serialization_round_trips_multi_attachment_labels():
         image_mime_type="image/png",
         attachment_label="a.png",
         attachments=(
-            MessageAttachment(data=b"\x89PNG-a", mime_type="image/png", display_name="a.png", position=0),
-            MessageAttachment(data=b"\x89PNG-b", mime_type="image/png", display_name="b.png", position=1),
+            MessageAttachment(
+                data=b"\x89PNG-a",
+                mime_type="image/png",
+                display_name="a.png",
+                position=0,
+            ),
+            MessageAttachment(
+                data=b"\x89PNG-b",
+                mime_type="image/png",
+                display_name="b.png",
+                position=1,
+            ),
         ),
     )
 

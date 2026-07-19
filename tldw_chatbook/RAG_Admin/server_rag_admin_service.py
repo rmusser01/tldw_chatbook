@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+
 if TYPE_CHECKING:
     from ..tldw_api import (
         MediaEmbeddingsBatchRequest,
@@ -61,13 +62,17 @@ class ServerRAGAdminService:
             return self.client
         if self.client_provider is not None:
             return self.client_provider.build_client()
-        raise ValueError("TLDW API client is required for server retrieval-admin operations.")
+        raise ValueError(
+            "TLDW API client is required for server retrieval-admin operations."
+        )
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -76,11 +81,14 @@ class ServerRAGAdminService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
                     user_message=getattr(decision, "user_message", None)
                     or "Server retrieval-admin action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -126,7 +134,9 @@ class ServerRAGAdminService:
 
     async def get_template(self, template_name: str) -> dict[str, Any]:
         self._enforce(self._template_action_id("detail"))
-        return self._dump_model(await self._require_client().get_chunking_template(template_name))
+        return self._dump_model(
+            await self._require_client().get_chunking_template(template_name)
+        )
 
     async def create_template(
         self,
@@ -148,7 +158,9 @@ class ServerRAGAdminService:
             tags=list(tags or []),
             user_id=user_id,
         )
-        return self._dump_model(await self._require_client().create_chunking_template(request))
+        return self._dump_model(
+            await self._require_client().create_chunking_template(request)
+        )
 
     async def update_template(
         self,
@@ -168,12 +180,18 @@ class ServerRAGAdminService:
             tags=list(tags) if tags is not None else None,
         )
         return self._dump_model(
-            await self._require_client().update_chunking_template(template_name, request)
+            await self._require_client().update_chunking_template(
+                template_name, request
+            )
         )
 
-    async def delete_template(self, template_name: str, *, hard_delete: bool = False) -> None:
+    async def delete_template(
+        self, template_name: str, *, hard_delete: bool = False
+    ) -> None:
         self._enforce(self._template_action_id("delete"))
-        await self._require_client().delete_chunking_template(template_name, hard_delete=hard_delete)
+        await self._require_client().delete_chunking_template(
+            template_name, hard_delete=hard_delete
+        )
 
     async def apply_template(
         self,
@@ -190,7 +208,9 @@ class ServerRAGAdminService:
         request = ChunkingTemplateApplyRequest(
             template_name=template_name,
             text=text,
-            override_options=dict(override_options) if override_options is not None else None,
+            override_options=dict(override_options)
+            if override_options is not None
+            else None,
         )
         return self._dump_model(
             await self._require_client().apply_chunking_template(
@@ -201,11 +221,17 @@ class ServerRAGAdminService:
 
     async def get_template_diagnostics(self) -> dict[str, Any]:
         self._enforce(self._admin_action_id("observe"))
-        return self._dump_model(await self._require_client().get_chunking_template_diagnostics())
-
-    async def validate_template_config(self, template_config: Mapping[str, Any]) -> dict[str, Any]:
         return self._dump_model(
-            await self._require_client().validate_chunking_template(dict(template_config))
+            await self._require_client().get_chunking_template_diagnostics()
+        )
+
+    async def validate_template_config(
+        self, template_config: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        return self._dump_model(
+            await self._require_client().validate_chunking_template(
+                dict(template_config)
+            )
         )
 
     async def match_templates(
@@ -244,11 +270,15 @@ class ServerRAGAdminService:
             save=save,
             classifier=dict(classifier) if classifier is not None else None,
         )
-        return self._dump_model(await self._require_client().learn_chunking_template(request))
+        return self._dump_model(
+            await self._require_client().learn_chunking_template(request)
+        )
 
     async def list_collections(self) -> list[dict[str, Any]]:
         self._enforce(self._admin_action_id("list"))
-        return self._dump_model(await self._require_client().list_embedding_collections())
+        return self._dump_model(
+            await self._require_client().list_embedding_collections()
+        )
 
     async def create_collection(
         self,
@@ -268,11 +298,15 @@ class ServerRAGAdminService:
             embedding_model=embedding_model,
             provider=provider,
         )
-        return self._dump_model(await self._require_client().create_embedding_collection(request))
+        return self._dump_model(
+            await self._require_client().create_embedding_collection(request)
+        )
 
     async def get_collection_detail(self, collection_name: str) -> dict[str, Any]:
         self._enforce(self._admin_action_id("observe"))
-        return self._dump_model(await self._require_client().get_embedding_collection_stats(collection_name))
+        return self._dump_model(
+            await self._require_client().get_embedding_collection_stats(collection_name)
+        )
 
     async def delete_collection(self, collection_name: str) -> None:
         self._enforce(self._admin_action_id("configure"))
@@ -301,11 +335,15 @@ class ServerRAGAdminService:
             force_regenerate_embeddings=force_regenerate_embeddings,
             **options,
         )
-        return self._dump_model(await self._require_client().reprocess_media(int(media_id), request))
+        return self._dump_model(
+            await self._require_client().reprocess_media(int(media_id), request)
+        )
 
     async def get_media_embeddings_status(self, media_id: Any) -> dict[str, Any]:
         self._enforce(self._media_embeddings_action_id("status"))
-        return self._dump_model(await self._require_client().get_media_embeddings_status(int(media_id)))
+        return self._dump_model(
+            await self._require_client().get_media_embeddings_status(int(media_id))
+        )
 
     async def generate_media_embeddings(
         self,
@@ -332,7 +370,9 @@ class ServerRAGAdminService:
             priority=priority,
         )
         return self._dump_model(
-            await self._require_client().generate_media_embeddings(int(media_id), request)
+            await self._require_client().generate_media_embeddings(
+                int(media_id), request
+            )
         )
 
     async def generate_media_embeddings_batch(
@@ -360,7 +400,9 @@ class ServerRAGAdminService:
             force_regenerate=force_regenerate,
             priority=priority,
         )
-        return self._dump_model(await self._require_client().generate_media_embeddings_batch(request))
+        return self._dump_model(
+            await self._require_client().generate_media_embeddings_batch(request)
+        )
 
     async def search_media_embeddings(
         self,
@@ -387,15 +429,21 @@ class ServerRAGAdminService:
             embedding_provider=embedding_provider,
             filters=dict(filters) if filters is not None else None,
         )
-        return self._dump_model(await self._require_client().search_media_embeddings(request))
+        return self._dump_model(
+            await self._require_client().search_media_embeddings(request)
+        )
 
     async def delete_media_embeddings(self, media_id: Any) -> dict[str, Any]:
         self._enforce(self._media_embeddings_action_id("delete"))
-        return self._dump_model(await self._require_client().delete_media_embeddings(int(media_id)))
+        return self._dump_model(
+            await self._require_client().delete_media_embeddings(int(media_id))
+        )
 
     async def get_media_embedding_job(self, job_id: str) -> dict[str, Any]:
         self._enforce(self._media_embedding_jobs_action_id("detail"))
-        return self._dump_model(await self._require_client().get_media_embedding_job(str(job_id)))
+        return self._dump_model(
+            await self._require_client().get_media_embedding_job(str(job_id))
+        )
 
     async def list_media_embedding_jobs(
         self,

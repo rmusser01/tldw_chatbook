@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+
 if TYPE_CHECKING:
     from ..tldw_api import (
         PersonaProfileCreate,
@@ -58,13 +59,17 @@ class ServerCharacterPersonaService:
             return self.client
         if self.client_provider is not None:
             return self.client_provider.build_client()
-        raise ValueError("TLDW API client is required for server character and persona operations.")
+        raise ValueError(
+            "TLDW API client is required for server character and persona operations."
+        )
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -73,11 +78,14 @@ class ServerCharacterPersonaService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
                     user_message=getattr(decision, "user_message", None)
                     or "Server character/persona action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -120,10 +128,14 @@ class ServerCharacterPersonaService:
         client = self._require_client()
         return await client.create_character(request_data)
 
-    async def update_character(self, character_id: int, request_data: Any, expected_version: int) -> Any:
+    async def update_character(
+        self, character_id: int, request_data: Any, expected_version: int
+    ) -> Any:
         self._enforce(self._persona_action_id("update"))
         client = self._require_client()
-        return await client.update_character(character_id, request_data, expected_version)
+        return await client.update_character(
+            character_id, request_data, expected_version
+        )
 
     async def delete_character(self, character_id: int, expected_version: int) -> Any:
         self._enforce(self._persona_action_id("delete"))
@@ -175,15 +187,23 @@ class ServerCharacterPersonaService:
             expected_version=expected_version,
         )
 
-    async def delete_persona_profile(self, persona_id: str, expected_version: Optional[int] = None) -> Any:
+    async def delete_persona_profile(
+        self, persona_id: str, expected_version: Optional[int] = None
+    ) -> Any:
         self._enforce(self._persona_action_id("delete"))
         client = self._require_client()
-        return await client.delete_persona_profile(persona_id, expected_version=expected_version)
+        return await client.delete_persona_profile(
+            persona_id, expected_version=expected_version
+        )
 
-    async def restore_persona_profile(self, persona_id: str, expected_version: int) -> Any:
+    async def restore_persona_profile(
+        self, persona_id: str, expected_version: int
+    ) -> Any:
         self._enforce(self._persona_action_id("update"))
         client = self._require_client()
-        return await client.restore_persona_profile(persona_id, expected_version=expected_version)
+        return await client.restore_persona_profile(
+            persona_id, expected_version=expected_version
+        )
 
     async def list_persona_archetypes(self) -> Any:
         self._enforce(self._archetype_action_id("list"))
@@ -220,15 +240,23 @@ class ServerCharacterPersonaService:
         client = self._require_client()
         return await client.import_persona_exemplars(persona_id, request_data)
 
-    async def update_persona_exemplar(self, persona_id: str, exemplar_id: str, request_data: Any) -> Any:
+    async def update_persona_exemplar(
+        self, persona_id: str, exemplar_id: str, request_data: Any
+    ) -> Any:
         self._enforce(self._persona_action_id("update"))
         client = self._require_client()
-        return await client.update_persona_exemplar(persona_id, exemplar_id, request_data)
+        return await client.update_persona_exemplar(
+            persona_id, exemplar_id, request_data
+        )
 
-    async def review_persona_exemplar(self, persona_id: str, exemplar_id: str, request_data: Any) -> Any:
+    async def review_persona_exemplar(
+        self, persona_id: str, exemplar_id: str, request_data: Any
+    ) -> Any:
         self._enforce(self._persona_action_id("update"))
         client = self._require_client()
-        return await client.review_persona_exemplar(persona_id, exemplar_id, request_data)
+        return await client.review_persona_exemplar(
+            persona_id, exemplar_id, request_data
+        )
 
     async def delete_persona_exemplar(self, persona_id: str, exemplar_id: str) -> Any:
         self._enforce(self._persona_action_id("delete"))
@@ -240,27 +268,39 @@ class ServerCharacterPersonaService:
         client = self._require_client()
         return await client.get_character_exemplar(character_id, exemplar_id)
 
-    async def create_character_exemplar(self, character_id: int, request_data: Any) -> Any:
+    async def create_character_exemplar(
+        self, character_id: int, request_data: Any
+    ) -> Any:
         self._enforce(self._persona_action_id("create"))
         client = self._require_client()
         return await client.create_character_exemplar(character_id, request_data)
 
-    async def update_character_exemplar(self, character_id: int, exemplar_id: str, request_data: Any) -> Any:
+    async def update_character_exemplar(
+        self, character_id: int, exemplar_id: str, request_data: Any
+    ) -> Any:
         self._enforce(self._persona_action_id("update"))
         client = self._require_client()
-        return await client.update_character_exemplar(character_id, exemplar_id, request_data)
+        return await client.update_character_exemplar(
+            character_id, exemplar_id, request_data
+        )
 
-    async def delete_character_exemplar(self, character_id: int, exemplar_id: str) -> Any:
+    async def delete_character_exemplar(
+        self, character_id: int, exemplar_id: str
+    ) -> Any:
         self._enforce(self._persona_action_id("delete"))
         client = self._require_client()
         return await client.delete_character_exemplar(character_id, exemplar_id)
 
-    async def search_character_exemplars(self, character_id: int, request_data: Any) -> Any:
+    async def search_character_exemplars(
+        self, character_id: int, request_data: Any
+    ) -> Any:
         self._enforce(self._persona_action_id("list"))
         client = self._require_client()
         return await client.search_character_exemplars(character_id, request_data)
 
-    async def select_character_exemplars_debug(self, character_id: int, request_data: Any) -> Any:
+    async def select_character_exemplars_debug(
+        self, character_id: int, request_data: Any
+    ) -> Any:
         self._enforce(self._persona_action_id("list"))
         client = self._require_client()
         return await client.select_character_exemplars_debug(character_id, request_data)
@@ -285,7 +325,9 @@ class ServerCharacterPersonaService:
         client = self._require_client()
         return await client.create_preset(request_data)
 
-    async def update_chat_preset(self, preset_id: str, request_data: PresetUpdate) -> Any:
+    async def update_chat_preset(
+        self, preset_id: str, request_data: PresetUpdate
+    ) -> Any:
         self._enforce(self._persona_action_id("update"))
         client = self._require_client()
         return await client.update_preset(preset_id, request_data)
@@ -295,7 +337,9 @@ class ServerCharacterPersonaService:
         client = self._require_client()
         return await client.delete_preset(preset_id)
 
-    async def create_character_chat_session(self, request_data: Any, **kwargs: Any) -> Any:
+    async def create_character_chat_session(
+        self, request_data: Any, **kwargs: Any
+    ) -> Any:
         self._enforce(self._session_action_id("create"))
         client = self._require_client()
         return await client.create_character_chat_session(request_data, **kwargs)
@@ -310,10 +354,14 @@ class ServerCharacterPersonaService:
         client = self._require_client()
         return await client.get_character_chat_session(chat_id, **kwargs)
 
-    async def update_character_chat_session(self, chat_id: str, request_data: Any, **kwargs: Any) -> Any:
+    async def update_character_chat_session(
+        self, chat_id: str, request_data: Any, **kwargs: Any
+    ) -> Any:
         self._enforce(self._session_action_id("update"))
         client = self._require_client()
-        return await client.update_character_chat_session(chat_id, request_data, **kwargs)
+        return await client.update_character_chat_session(
+            chat_id, request_data, **kwargs
+        )
 
     async def delete_character_chat_session(self, chat_id: str, **kwargs: Any) -> Any:
         self._enforce(self._session_action_id("delete"))
@@ -335,12 +383,16 @@ class ServerCharacterPersonaService:
         client = self._require_client()
         return await client.get_character_message(message_id, **kwargs)
 
-    async def create_character_message(self, chat_id: str, request_data: Any, **kwargs: Any) -> Any:
+    async def create_character_message(
+        self, chat_id: str, request_data: Any, **kwargs: Any
+    ) -> Any:
         self._enforce(self._message_action_id("create"))
         client = self._require_client()
         return await client.create_character_message(chat_id, request_data, **kwargs)
 
-    async def update_character_message(self, message_id: str, request_data: Any, **kwargs: Any) -> Any:
+    async def update_character_message(
+        self, message_id: str, request_data: Any, **kwargs: Any
+    ) -> Any:
         self._enforce(self._message_action_id("update"))
         client = self._require_client()
         return await client.update_character_message(message_id, request_data, **kwargs)
@@ -350,7 +402,9 @@ class ServerCharacterPersonaService:
         client = self._require_client()
         return await client.delete_character_message(message_id, **kwargs)
 
-    async def search_character_messages(self, chat_id: str, query: str, **kwargs: Any) -> Any:
+    async def search_character_messages(
+        self, chat_id: str, query: str, **kwargs: Any
+    ) -> Any:
         self._enforce(self._message_action_id("list"))
         client = self._require_client()
         return await client.search_character_messages(chat_id, query, **kwargs)
@@ -360,7 +414,9 @@ class ServerCharacterPersonaService:
         client = self._require_client()
         return await client.get_chat_settings(chat_id, **kwargs)
 
-    async def update_chat_settings(self, chat_id: str, request_data: Any, **kwargs: Any) -> Any:
+    async def update_chat_settings(
+        self, chat_id: str, request_data: Any, **kwargs: Any
+    ) -> Any:
         self._enforce(self._session_action_id("update"))
         client = self._require_client()
         return await client.update_chat_settings(chat_id, request_data, **kwargs)

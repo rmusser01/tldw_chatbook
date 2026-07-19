@@ -54,7 +54,9 @@ class WebClipperScopeService:
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: WebClipperBackend | str | None) -> WebClipperBackend:
+    def _normalize_mode(
+        self, mode: WebClipperBackend | str | None
+    ) -> WebClipperBackend:
         if mode is None:
             return WebClipperBackend.SERVER
         if isinstance(mode, WebClipperBackend):
@@ -66,7 +68,9 @@ class WebClipperScopeService:
 
     def _require_server_service(self, mode: WebClipperBackend) -> Any:
         if mode == WebClipperBackend.LOCAL:
-            raise ValueError("Web clipper is a server-only capability; switch to server mode to capture clips.")
+            raise ValueError(
+                "Web clipper is a server-only capability; switch to server mode to capture clips."
+            )
         if self.server_service is None:
             raise ValueError("Server web-clipper backend is unavailable.")
         return self.server_service
@@ -95,7 +99,10 @@ class WebClipperScopeService:
         clip_id = payload.get("clip_id")
         enrichment_type = payload.get("enrichment_type")
         if clip_id is not None and enrichment_type is not None:
-            payload.setdefault("record_id", f"{mode.value}:web_clip_enrichment:{clip_id}:{enrichment_type}")
+            payload.setdefault(
+                "record_id",
+                f"{mode.value}:web_clip_enrichment:{clip_id}:{enrichment_type}",
+            )
         elif clip_id is not None:
             payload.setdefault("record_id", f"{mode.value}:web_clip:{clip_id}")
         return payload
@@ -122,10 +129,14 @@ class WebClipperScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy(self._action_id(action))
-        result = await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
+        result = await self._maybe_await(
+            getattr(service, method_name)(*args, **(kwargs or {}))
+        )
         return self._normalize_response(normalized_mode, result)
 
-    async def save_clip(self, *, mode: WebClipperBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def save_clip(
+        self, *, mode: WebClipperBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action="capture",
@@ -133,7 +144,9 @@ class WebClipperScopeService:
             kwargs=kwargs,
         )
 
-    async def get_status(self, clip_id: str, *, mode: WebClipperBackend | str | None = None) -> dict[str, Any]:
+    async def get_status(
+        self, clip_id: str, *, mode: WebClipperBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action="status",

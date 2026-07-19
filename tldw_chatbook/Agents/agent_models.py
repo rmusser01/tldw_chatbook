@@ -3,6 +3,7 @@
 No Textual, app, DB, or I/O imports — see the vertical-slice spec
 (Docs/superpowers/specs/2026-07-12-agent-runtime-vertical-slice-design.md).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -14,7 +15,8 @@ RUN_STUCK = "stuck"
 RUN_CANCELLED = "cancelled"
 RUN_SUPERSEDED = "superseded"
 TERMINAL_RUN_STATUSES = frozenset(
-    {RUN_DONE, RUN_ERROR, RUN_STUCK, RUN_CANCELLED, RUN_SUPERSEDED})
+    {RUN_DONE, RUN_ERROR, RUN_STUCK, RUN_CANCELLED, RUN_SUPERSEDED}
+)
 
 AGENT_KIND_PRIMARY = "primary"
 AGENT_KIND_SUBAGENT = "subagent"
@@ -28,8 +30,7 @@ STEP_ERROR = "error"
 SPAWN_TOOL_NAME = "spawn_subagent"
 FIND_TOOLS_NAME = "find_tools"
 LOAD_TOOLS_NAME = "load_tools"
-RUNTIME_TOOL_NAMES = frozenset(
-    {SPAWN_TOOL_NAME, FIND_TOOLS_NAME, LOAD_TOOLS_NAME})
+RUNTIME_TOOL_NAMES = frozenset({SPAWN_TOOL_NAME, FIND_TOOLS_NAME, LOAD_TOOLS_NAME})
 
 DIRECT_DISCLOSE_THRESHOLD = 8
 LOOP_DETECTION_N = 3
@@ -139,9 +140,7 @@ class RunOutcome:
     subagents_spawned: int = 0
 
 
-def clamp_child_budget(
-    child: RunBudget, parent_remaining_seconds: float
-) -> RunBudget:
+def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> RunBudget:
     """Clamp a sub-agent's budget so it cannot outlive its parent.
 
     Wall-clock is clamped to the parent's remainder (floored at 1s);
@@ -151,7 +150,8 @@ def clamp_child_budget(
     return RunBudget(
         max_steps=child.max_steps,
         max_wall_seconds=min(
-            child.max_wall_seconds, max(parent_remaining_seconds, 1.0)),
+            child.max_wall_seconds, max(parent_remaining_seconds, 1.0)
+        ),
         max_subagents=0,
         max_active_tools=child.max_active_tools,
         max_subagent_result_chars=child.max_subagent_result_chars,

@@ -34,10 +34,14 @@ from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EVIDENCE = Path("Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-6-empty-error-setup-states.md")
+EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-6-empty-error-setup-states.md"
+)
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 PHASE_1_README = Path("Docs/superpowers/qa/product-maturity/phase-1/README.md")
-TASK = Path("backlog/tasks/task-8.6 - Product-Maturity-Phase-1.6-Empty-Error-Setup-State-Coverage.md")
+TASK = Path(
+    "backlog/tasks/task-8.6 - Product-Maturity-Phase-1.6-Empty-Error-Setup-State-Coverage.md"
+)
 LOCAL_PATH_PREFIXES = (
     "/Users/",
     "/home/",
@@ -74,7 +78,9 @@ def _text(path: Path) -> str:
 
 def _assert_no_local_path_prefixes(text: str) -> None:
     leaked_prefixes = [prefix for prefix in LOCAL_PATH_PREFIXES if prefix in text]
-    assert not leaked_prefixes, f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    assert not leaked_prefixes, (
+        f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    )
 
 
 def _test_cli_setting(section: str, key: str, default=None):
@@ -101,10 +107,7 @@ def _prepare_clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
         monkeypatch.setenv(env_var, str(path))
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[chat_defaults]\n"
-        'provider = "OpenAI"\n'
-        'model = "gpt-4o"\n'
-        "enable_tabs = false\n",
+        '[chat_defaults]\nprovider = "OpenAI"\nmodel = "gpt-4o"\nenable_tabs = false\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
@@ -144,7 +147,9 @@ async def _wait_until(
         await asyncio.sleep(interval_seconds)
     if condition():
         return
-    raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s for {context}")
+    raise AssertionError(
+        f"condition was not met within {timeout_seconds:.1f}s for {context}"
+    )
 
 
 @pytest.mark.asyncio
@@ -156,12 +161,18 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
 
     with (
         patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting),
-        patch("tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", side_effect=_test_chat_window_setting),
+        patch(
+            "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting",
+            side_effect=_test_chat_window_setting,
+        ),
     ):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                ),
                 context="home initial setup state",
             )
 
@@ -173,7 +184,10 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             await app.handle_screen_navigation(NavigateToScreen("chat"))
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
                 context="console setup route",
             )
             # In a clean run the default model may be preselected, but the
@@ -181,8 +195,10 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             # recovery/control surfaces.
             await _wait_until(
                 pilot,
-                lambda: "Choose model" in _screen_text(app)
-                or "Open Settings" in _screen_text(app),
+                lambda: (
+                    "Choose model" in _screen_text(app)
+                    or "Open Settings" in _screen_text(app)
+                ),
                 context="console provider setup controls",
             )
             assert (
@@ -205,7 +221,10 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             await app.handle_screen_navigation(NavigateToScreen("acp"))
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "acp" and app.screen.__class__.__name__ == "ACPScreen",
+                lambda: (
+                    app.current_tab == "acp"
+                    and app.screen.__class__.__name__ == "ACPScreen"
+                ),
                 context="acp runtime blocker",
             )
             acp_text = _screen_text(app)
@@ -215,7 +234,10 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             assert "Next: Configure ACP runtime setup in ACP before launch." in acp_text
             assert "Owner: ACP runtime." in acp_text
             assert acp_launch.disabled is True
-            assert "Configure an ACP-compatible runtime in ACP before launching an ACP agent." in str(acp_launch.tooltip)
+            assert (
+                "Configure an ACP-compatible runtime in ACP before launching an ACP agent."
+                in str(acp_launch.tooltip)
+            )
 
 
 @pytest.mark.asyncio
@@ -224,7 +246,9 @@ async def test_optional_dependency_missing_state_exposes_owner_and_setup_action(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(search_rag_module, "get_user_data_dir", lambda: tmp_path)
-    monkeypatch.setitem(search_rag_module.DEPENDENCIES_AVAILABLE, "embeddings_rag", False)
+    monkeypatch.setitem(
+        search_rag_module.DEPENDENCIES_AVAILABLE, "embeddings_rag", False
+    )
     monkeypatch.setattr(
         "tldw_chatbook.Utils.widget_helpers.alert_embeddings_not_available",
         lambda widget: None,
@@ -251,7 +275,9 @@ async def test_optional_dependency_missing_state_exposes_owner_and_setup_action(
         assert search_input.disabled is True
         assert search_button.disabled is True
         assert 'pip install -e ".[embeddings_rag]"' in str(search_button.tooltip)
-        assert 'pip install "tldw_chatbook[embeddings_rag]"' in str(search_button.tooltip)
+        assert 'pip install "tldw_chatbook[embeddings_rag]"' in str(
+            search_button.tooltip
+        )
 
 
 @pytest.mark.parametrize(

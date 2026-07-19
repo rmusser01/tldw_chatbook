@@ -89,7 +89,9 @@ class TestMediaWindowV88:
         widget_pilot,
     ) -> None:
         """The compatibility export should mount the current v2 media shell."""
-        async with await widget_pilot(MediaWindowV88, app_instance=mock_app_instance, id="test-media-window") as pilot:
+        async with await widget_pilot(
+            MediaWindowV88, app_instance=mock_app_instance, id="test-media-window"
+        ) as pilot:
             window = pilot.app.test_widget
 
             assert isinstance(window.nav_panel, MediaNavigationPanel)
@@ -108,7 +110,9 @@ class TestMediaWindowV88:
         widget_pilot,
     ) -> None:
         """Navigation and search controls should match the current component contract."""
-        async with await widget_pilot(MediaWindowV88, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            MediaWindowV88, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
 
             assert window.nav_panel.query_one("#media-nav-all-media", Button)
@@ -127,7 +131,9 @@ class TestMediaWindowV88:
         widget_pilot,
     ) -> None:
         """Selecting a media type should execute the shared seam search and populate the list."""
-        async with await widget_pilot(MediaWindowV88, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            MediaWindowV88, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
 
             window.activate_media_type("all-media", "All Media")
@@ -150,7 +156,9 @@ class TestMediaWindowV88:
         widget_pilot,
     ) -> None:
         """Search requests should propagate the active query and keyword filters to the seam."""
-        async with await widget_pilot(MediaWindowV88, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            MediaWindowV88, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
             window.activate_media_type("all-media", "All Media")
             await pilot.pause()
@@ -172,7 +180,9 @@ class TestMediaWindowV88:
         widget_pilot,
     ) -> None:
         """The viewer should switch cleanly between metadata view and edit states."""
-        async with await widget_pilot(MediaWindowV88, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            MediaWindowV88, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
             viewer = window.viewer_panel
 
@@ -207,7 +217,9 @@ class TestMediaWindowV88:
         widget_pilot,
     ) -> None:
         """Selecting a list row should load the normalized detail record into the viewer."""
-        async with await widget_pilot(MediaWindowV88, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            MediaWindowV88, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
             window.activate_media_type("all-media", "All Media")
             await pilot.pause()
@@ -229,7 +241,9 @@ class TestMediaWindowV88:
         widget_pilot,
     ) -> None:
         """Pagination should keep the active search term and keyword filter instead of clearing them."""
-        async with await widget_pilot(MediaWindowV88, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            MediaWindowV88, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
             window.activate_media_type("all-media", "All Media")
             await pilot.pause()

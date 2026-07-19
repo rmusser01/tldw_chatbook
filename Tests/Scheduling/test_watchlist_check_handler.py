@@ -53,11 +53,14 @@ def handler():
 
 @pytest.fixture
 def metrics_patch():
-    with patch(
-        "tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler.log_counter"
-    ) as counter, patch(
-        "tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler.log_histogram"
-    ) as histogram:
+    with (
+        patch(
+            "tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler.log_counter"
+        ) as counter,
+        patch(
+            "tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler.log_histogram"
+        ) as histogram,
+    ):
         yield counter, histogram
 
 
@@ -256,11 +259,14 @@ async def test_handler_is_callable(handler):
 @pytest.mark.asyncio
 async def test_default_monitors_are_constructed():
     db = MagicMock()
-    with patch(
-        "tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler.FeedMonitor"
-    ) as feed_cls, patch(
-        "tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler.URLMonitor"
-    ) as url_cls:
+    with (
+        patch(
+            "tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler.FeedMonitor"
+        ) as feed_cls,
+        patch(
+            "tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler.URLMonitor"
+        ) as url_cls,
+    ):
         handler = WatchlistCheckHandler(subscriptions_db=db)
         assert handler.feed_monitor is feed_cls.return_value
         assert handler.url_monitor is url_cls.return_value

@@ -7,7 +7,12 @@ from textual.app import App
 from textual.widgets import Button, DataTable, Static
 
 from tldw_chatbook.Scheduling.events import DeleteTaskRequested
-from tldw_chatbook.Scheduling.models import ReminderTask, ScheduledTask, ScheduleKind, TaskStatus
+from tldw_chatbook.Scheduling.models import (
+    ReminderTask,
+    ScheduledTask,
+    ScheduleKind,
+    TaskStatus,
+)
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.scheduling.task_detail import (
     TaskDetail,
@@ -162,7 +167,9 @@ async def test_task_inspector_renders_metadata():
         table.cursor_coordinate = (0, 0)
         await pilot.pause()
 
-        inspector = pilot.app.screen.query_one("#scheduling-task-inspector", TaskInspector)
+        inspector = pilot.app.screen.query_one(
+            "#scheduling-task-inspector", TaskInspector
+        )
         sync = inspector.query_one("#scheduling-inspector-sync", Static)
         last_run = inspector.query_one("#scheduling-inspector-last-run", Static)
         owner = inspector.query_one("#scheduling-inspector-owner", Static)
@@ -325,7 +332,9 @@ async def test_inspector_shows_distinct_metadata():
         table.cursor_coordinate = (0, 0)
         await pilot.pause()
 
-        inspector = pilot.app.screen.query_one("#scheduling-task-inspector", TaskInspector)
+        inspector = pilot.app.screen.query_one(
+            "#scheduling-task-inspector", TaskInspector
+        )
         sync = inspector.query_one("#scheduling-inspector-sync", Static)
         last_run = inspector.query_one("#scheduling-inspector-last-run", Static)
         owner = inspector.query_one("#scheduling-inspector-owner", Static)
@@ -338,6 +347,7 @@ async def test_inspector_shows_distinct_metadata():
 @pytest.mark.asyncio
 async def test_conflict_card_shows_for_conflict_status():
     """The inspector conflict card renders when the task status is CONFLICT."""
+
     class ConflictMockSchedulingService:
         async def list_reminders(self):
             return [
@@ -364,7 +374,9 @@ async def test_conflict_card_shows_for_conflict_status():
         table.cursor_coordinate = (0, 0)
         await pilot.pause()
 
-        inspector = pilot.app.screen.query_one("#scheduling-task-inspector", TaskInspector)
+        inspector = pilot.app.screen.query_one(
+            "#scheduling-task-inspector", TaskInspector
+        )
         conflict_card = inspector.query_one("#scheduling-conflict-card")
         conflict_text = inspector.query_one("#scheduling-conflict-text", Static)
 
@@ -380,10 +392,14 @@ async def test_follow_console_ignored_when_disabled():
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
 
-        follow_button = pilot.app.screen.query_one("#schedules-follow-in-console", Button)
+        follow_button = pilot.app.screen.query_one(
+            "#schedules-follow-in-console", Button
+        )
         follow_button.disabled = True
         # Directly invoke the handler as if a press event fired on the disabled button.
-        pilot.app.screen.follow_latest_schedule_run_in_console(Button.Pressed(follow_button))
+        pilot.app.screen.follow_latest_schedule_run_in_console(
+            Button.Pressed(follow_button)
+        )
         await pilot.pause()
 
         assert pilot.app.screen is not None
@@ -452,7 +468,9 @@ async def test_inspector_shows_read_only_projection_for_watchlist():
         pilot.app.screen._update_detail_for_index(1)
         await pilot.pause()
 
-        inspector = pilot.app.screen.query_one("#scheduling-task-inspector", TaskInspector)
+        inspector = pilot.app.screen.query_one(
+            "#scheduling-task-inspector", TaskInspector
+        )
         sync = inspector.query_one("#scheduling-inspector-sync", Static)
         last_run = inspector.query_one("#scheduling-inspector-last-run", Static)
         owner = inspector.query_one("#scheduling-inspector-owner", Static)
@@ -465,7 +483,10 @@ async def test_inspector_shows_read_only_projection_for_watchlist():
 def test_humanize_cron_daily_pattern():
     """A standard daily cron pattern is summarized as 'Daily at HH:MM UTC'."""
     assert _humanize_cron("0 9 * * *") == "Daily at 09:00 UTC"
-    assert _humanize_cron("30 14 * * *", timezone="America/New_York") == "Daily at 14:30 America/New_York"
+    assert (
+        _humanize_cron("30 14 * * *", timezone="America/New_York")
+        == "Daily at 14:30 America/New_York"
+    )
 
 
 def test_status_badge_classes_use_dedicated_css():
@@ -525,7 +546,6 @@ async def test_load_tasks_service_error_clears_stale_rows():
             "#scheduling-task-detail-empty-state", Static
         )
         assert "No scheduled tasks yet" in empty_state.visual.plain
-
 
 
 class RecordingMockSchedulingService:

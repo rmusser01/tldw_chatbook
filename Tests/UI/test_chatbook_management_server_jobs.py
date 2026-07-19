@@ -4,7 +4,9 @@ from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.widgets import Button, DataTable
 
-from tldw_chatbook.UI.ChatbookExportManagementWindow import ChatbookExportManagementWindow
+from tldw_chatbook.UI.ChatbookExportManagementWindow import (
+    ChatbookExportManagementWindow,
+)
 from tldw_chatbook.UI.Chatbooks_Window_Improved import ChatbooksWindowImproved
 
 
@@ -17,7 +19,9 @@ async def test_management_window_lists_server_jobs_from_app_state(monkeypatch):
         self._update_list_count()
         self._update_status()
 
-    monkeypatch.setattr(ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh)
+    monkeypatch.setattr(
+        ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh
+    )
 
     class ManagementApp(App):
         def __init__(self):
@@ -102,7 +106,9 @@ async def test_management_window_lists_live_remote_server_jobs(monkeypatch):
                 "total": 1,
             }
 
-    monkeypatch.setattr(ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh)
+    monkeypatch.setattr(
+        ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh
+    )
 
     class ManagementApp(App):
         def __init__(self):
@@ -123,11 +129,19 @@ async def test_management_window_lists_live_remote_server_jobs(monkeypatch):
 
         assert table.row_count == 2
         assert ["export", "completed", "100%", "Remote Export", "server"] in rows
-        assert ["import", "in_progress", "40%", "remote-import.chatbook.zip", "server"] in rows
+        assert [
+            "import",
+            "in_progress",
+            "40%",
+            "remote-import.chatbook.zip",
+            "server",
+        ] in rows
 
 
 @pytest.mark.asyncio
-async def test_management_window_prefers_app_server_chatbook_service_for_live_jobs(monkeypatch):
+async def test_management_window_prefers_app_server_chatbook_service_for_live_jobs(
+    monkeypatch,
+):
     async def no_refresh(self):
         self.chatbook_files = []
         self.chatbook_count = 0
@@ -158,10 +172,14 @@ async def test_management_window_prefers_app_server_chatbook_service_for_live_jo
             self.calls.append(("list_import_jobs", limit, offset))
             return {"jobs": [], "total": 0}
 
-    monkeypatch.setattr(ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh)
+    monkeypatch.setattr(
+        ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh
+    )
     monkeypatch.setattr(
         "tldw_chatbook.UI.ChatbookExportManagementWindow.build_server_chatbook_service_from_config",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("config helper should not be used")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("config helper should not be used")
+        ),
         raising=False,
     )
 
@@ -250,7 +268,9 @@ async def test_management_window_remote_job_actions_call_server(monkeypatch, tmp
             Path(destination_path).write_bytes(b"zip")
             return Path(destination_path)
 
-    monkeypatch.setattr(ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh)
+    monkeypatch.setattr(
+        ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh
+    )
 
     class ManagementApp(App):
         def __init__(self):
@@ -293,28 +313,36 @@ async def test_management_window_remote_job_actions_call_server(monkeypatch, tmp
 
         window.chatbooks_dir = tmp_path
         await window._download_selected_server_export()
-        assert actions[-1] == ("download_export", "remote-export-1", "Remote Export.chatbook.zip")
+        assert actions[-1] == (
+            "download_export",
+            "remote-export-1",
+            "Remote Export.chatbook.zip",
+        )
         assert (tmp_path / "Remote Export.chatbook.zip").read_bytes() == b"zip"
 
         await window._remove_selected_server_job()
         assert actions[-1] == ("remove_export", "remote-export-1")
 
-        window._select_server_job_record({
-            "source": "server",
-            "job_type": "export",
-            "job_id": "failed-export",
-            "status": "failed",
-        })
+        window._select_server_job_record(
+            {
+                "source": "server",
+                "job_type": "export",
+                "job_id": "failed-export",
+                "status": "failed",
+            }
+        )
         assert cancel_button.disabled is True
         assert download_button.disabled is True
         assert remove_button.disabled is False
 
-        window._select_server_job_record({
-            "source": "local",
-            "job_type": "export",
-            "job_id": "local-job",
-            "status": "in_progress",
-        })
+        window._select_server_job_record(
+            {
+                "source": "local",
+                "job_type": "export",
+                "job_id": "local-job",
+                "status": "in_progress",
+            }
+        )
         assert cancel_button.disabled is True
         assert download_button.disabled is True
         assert remove_button.disabled is True

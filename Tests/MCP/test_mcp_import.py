@@ -9,8 +9,17 @@ from tldw_chatbook.MCP.mcp_import import parse_mcp_servers_json
 
 
 def test_parses_command_args_env_and_placeholder_passthrough():
-    text = json.dumps({"mcpServers": {"docs": {
-        "command": "npx", "args": ["-y", "pkg"], "env": {"WORKSPACE": "$HOME"}}}})
+    text = json.dumps(
+        {
+            "mcpServers": {
+                "docs": {
+                    "command": "npx",
+                    "args": ["-y", "pkg"],
+                    "env": {"WORKSPACE": "$HOME"},
+                }
+            }
+        }
+    )
     [candidate] = parse_mcp_servers_json(text)
     assert candidate.profile_id == "docs"
     assert candidate.args == ["-y", "pkg"]
@@ -19,8 +28,13 @@ def test_parses_command_args_env_and_placeholder_passthrough():
 
 
 def test_secret_shaped_literal_becomes_placeholder_with_warning():
-    text = json.dumps({"mcpServers": {"web": {
-        "command": "npx", "env": {"API_KEY": "sk-live-123456"}}}})
+    text = json.dumps(
+        {
+            "mcpServers": {
+                "web": {"command": "npx", "env": {"API_KEY": "sk-live-123456"}}
+            }
+        }
+    )
     [candidate] = parse_mcp_servers_json(text)
     assert candidate.env_placeholders == {"API_KEY": "$API_KEY"}
     assert candidate.env_literals == {}
@@ -28,7 +42,9 @@ def test_secret_shaped_literal_becomes_placeholder_with_warning():
 
 
 def test_safe_literal_survives_and_overwrite_warning():
-    text = json.dumps({"mcpServers": {"docs": {"command": "npx", "env": {"DEBUG": "true"}}}})
+    text = json.dumps(
+        {"mcpServers": {"docs": {"command": "npx", "env": {"DEBUG": "true"}}}}
+    )
     [candidate] = parse_mcp_servers_json(text, existing_ids={"docs"})
     assert candidate.env_literals == {"DEBUG": "true"}
     assert any("overwrite" in w for w in candidate.warnings)
@@ -45,4 +61,9 @@ def test_to_payload_uses_exact_store_keys():
     text = json.dumps({"mcpServers": {"docs": {"command": "npx"}}})
     [candidate] = parse_mcp_servers_json(text)
     assert set(candidate.to_payload()) == {
-        "profile_id", "command", "args", "env_placeholders", "env_literals"}
+        "profile_id",
+        "command",
+        "args",
+        "env_placeholders",
+        "env_literals",
+    }

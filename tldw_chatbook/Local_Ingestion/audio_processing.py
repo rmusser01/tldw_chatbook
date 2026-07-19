@@ -4,6 +4,7 @@ Local audio processing module for tldw_chatbook.
 Handles audio file processing, transcription, chunking, and analysis.
 Adapted from server implementation for local use.
 """
+
 #
 import json
 import os
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, Callable
 from urllib.parse import urlparse
 from loguru import logger
+
 #
 # External imports
 import requests
@@ -23,17 +25,21 @@ import requests
 # Optional numpy import
 try:
     import numpy as np
+
     NUMPY_AVAILABLE = True
 except ImportError:
     NUMPY_AVAILABLE = False
     np = None
-    logger.warning("numpy not available. Some audio processing features will be limited.")
+    logger.warning(
+        "numpy not available. Some audio processing features will be limited."
+    )
 #
 # Local imports
 from ..config import get_media_ingestion_defaults, get_cli_setting
 from ..Chat.Chat_Functions import chat_api_call
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..Utils.text import sanitize_filename
+
 # NOTE: `ChunkingService` (RAG_Search.chunking_service) is intentionally NOT
 # imported at module level -- it transitively pulls in nltk (via
 # Chunking.Chunk_Lib) and should only load when a LocalAudioProcessor is
@@ -43,197 +49,216 @@ from ..Utils.text import sanitize_filename
 # Optional imports
 try:
     import yt_dlp
+
     YT_DLP_AVAILABLE = True
 except ImportError:
     YT_DLP_AVAILABLE = False
     logger.warning("yt-dlp not available. YouTube/URL downloading will be disabled.")
+
+
 #
 # Using loguru logger imported above
 ################################################################################################################################
 class AudioProcessingError(Exception):
     """Base exception for audio processing errors."""
+
     pass
+
 
 class AudioDownloadError(AudioProcessingError):
     """Raised when audio download fails."""
+
     pass
+
 
 class AudioTranscriptionError(AudioProcessingError):
     """Raised when audio transcription fails."""
+
     pass
 
 
 class LocalAudioProcessor:
     """Handles local audio processing including download, transcription, and analysis."""
-    
+
     def __init__(self, media_db: Optional[MediaDatabase] = None):
         """
         Initialize the audio processor.
-        
+
         Args:
             media_db: Optional MediaDatabase instance for storage
         """
         from ..RAG_Search.chunking_service import ChunkingService
+
         self.media_db = media_db
         self.config = get_media_ingestion_defaults("audio")
         self.chunking_service = ChunkingService()
         self._cancelled = False  # Flag to track cancellation
-        
+
         # Get configuration settings
-        self.max_file_size_mb = get_cli_setting('media_processing.max_audio_file_size_mb', 500)
+        self.max_file_size_mb = get_cli_setting(
+            "media_processing.max_audio_file_size_mb", 500
+        )
         if self.max_file_size_mb is None:
             self.max_file_size_mb = 500
         self.max_file_size = self.max_file_size_mb * 1024 * 1024
-    
+
     def cancel(self):
         """Cancel the current processing operation."""
         logger.info("Cancellation requested for audio processing")
         self._cancelled = True
-        
+
         # Clean up transcription service if it exists
-        if hasattr(self, 'transcription_service') and self.transcription_service:
-            if hasattr(self.transcription_service, 'cleanup'):
+        if hasattr(self, "transcription_service") and self.transcription_service:
+            if hasattr(self.transcription_service, "cleanup"):
                 logger.info("Cleaning up transcription service resources")
                 self.transcription_service.cleanup()
-    
+
     def is_cancelled(self) -> bool:
         """Check if processing has been cancelled."""
         return self._cancelled
-    
+
     def reset_cancellation(self):
         """Reset the cancellation flag."""
         self._cancelled = False
-        
-    def download_audio_file(self, url: str, target_dir: str, 
-                          use_cookies: bool = False, 
-                          cookies: Optional[Dict] = None) -> str:
+
+    def download_audio_file(
+        self,
+        url: str,
+        target_dir: str,
+        use_cookies: bool = False,
+        cookies: Optional[Dict] = None,
+    ) -> str:
         """
         Download an audio file from a URL.
-        
+
         Args:
             url: URL to download from
             target_dir: Directory to save the file
             use_cookies: Whether to use cookies for download
             cookies: Cookie dict if use_cookies is True
-            
+
         Returns:
             Path to downloaded file
-            
+
         Raises:
             AudioDownloadError: If download fails
         """
         try:
             logger.info(f"Downloading audio from: {url}")
-            
+
             headers = {}
             if use_cookies and cookies:
                 if isinstance(cookies, str):
                     cookie_dict = json.loads(cookies)
                 else:
                     cookie_dict = cookies
-                headers['Cookie'] = '; '.join([f'{k}={v}' for k, v in cookie_dict.items()])
-            
+                headers["Cookie"] = "; ".join(
+                    [f"{k}={v}" for k, v in cookie_dict.items()]
+                )
+
             response = requests.get(url, headers=headers, stream=True, timeout=120)
             response.raise_for_status()
-            
+
             # Check file size
-            file_size = int(response.headers.get('content-length', 0))
+            file_size = int(response.headers.get("content-length", 0))
             if file_size > self.max_file_size:
                 raise AudioDownloadError(
-                    f"File size ({file_size / (1024*1024):.2f} MB) exceeds limit"
+                    f"File size ({file_size / (1024 * 1024):.2f} MB) exceeds limit"
                 )
-            
+
             # Determine filename
             filename = self._get_filename_from_response(response, url)
             save_path = Path(target_dir) / filename
             save_path.parent.mkdir(parents=True, exist_ok=True)
-            
+
             # Download file
-            with open(save_path, 'wb') as f:
+            with open(save_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
-            
+
             logger.info(f"Downloaded audio file: {save_path}")
             return str(save_path)
-            
+
         except requests.RequestException as e:
             raise AudioDownloadError(f"Download failed: {str(e)}") from e
         except Exception as e:
             raise AudioDownloadError(f"Unexpected error: {str(e)}") from e
-    
-    def download_youtube_audio(self, url: str, output_dir: str, 
-                              start_time: Optional[str] = None, 
-                              end_time: Optional[str] = None) -> Optional[str]:
+
+    def download_youtube_audio(
+        self,
+        url: str,
+        output_dir: str,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+    ) -> Optional[str]:
         """
         Download audio from YouTube using yt-dlp.
-        
+
         Args:
             url: YouTube URL
             output_dir: Directory to save audio
-            
+
         Returns:
             Path to downloaded audio file or None if failed
         """
         if not YT_DLP_AVAILABLE:
             raise AudioDownloadError("yt-dlp is not installed")
-        
+
         try:
             # Configure yt-dlp
             ydl_opts = {
-                'format': 'bestaudio[ext=m4a]/bestaudio/best',
-                'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
-                'quiet': True,
-                'no_warnings': True,
-                'extract_audio': True,
-                'audio_format': 'mp3',
-                'audio_quality': 192,
+                "format": "bestaudio[ext=m4a]/bestaudio/best",
+                "outtmpl": os.path.join(output_dir, "%(title)s.%(ext)s"),
+                "quiet": True,
+                "no_warnings": True,
+                "extract_audio": True,
+                "audio_format": "mp3",
+                "audio_quality": 192,
             }
-            
+
             # Add time range options if specified
             if start_time or end_time:
                 # yt-dlp uses postprocessor args for time ranges
                 postprocessor_args = []
                 if start_time:
-                    postprocessor_args.extend(['-ss', start_time])
+                    postprocessor_args.extend(["-ss", start_time])
                 if end_time:
                     if start_time:
-                        postprocessor_args.extend(['-to', end_time])
+                        postprocessor_args.extend(["-to", end_time])
                     else:
-                        postprocessor_args.extend(['-t', end_time])
-                
-                ydl_opts['postprocessor_args'] = {
-                    'ffmpeg': postprocessor_args
-                }
-            
+                        postprocessor_args.extend(["-t", end_time])
+
+                ydl_opts["postprocessor_args"] = {"ffmpeg": postprocessor_args}
+
             # Add ffmpeg location if specified in config
-            ffmpeg_path = get_cli_setting('media_processing.ffmpeg_path')
+            ffmpeg_path = get_cli_setting("media_processing.ffmpeg_path")
             if ffmpeg_path:
-                ydl_opts['ffmpeg_location'] = ffmpeg_path
-            
+                ydl_opts["ffmpeg_location"] = ffmpeg_path
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
                 # yt-dlp might change extension after conversion
-                audio_path = filename.rsplit('.', 1)[0] + '.mp3'
-                
+                audio_path = filename.rsplit(".", 1)[0] + ".mp3"
+
                 if os.path.exists(audio_path):
                     return audio_path
                 elif os.path.exists(filename):
                     return filename
                 else:
                     raise AudioDownloadError("Downloaded file not found")
-                    
+
         except Exception as e:
             logger.error(f"YouTube download error: {str(e)}")
             raise AudioDownloadError(f"YouTube download failed: {str(e)}") from e
-    
+
     def process_audio_files(
         self,
         inputs: List[str],
         transcription_provider: str = "faster-whisper",
         transcription_model: str = "base",
-        transcription_language: Optional[str] = 'en',
+        transcription_language: Optional[str] = "en",
         translation_target_language: Optional[str] = None,
         perform_chunking: bool = True,
         chunk_method: Optional[str] = None,
@@ -259,32 +284,34 @@ class LocalAudioProcessor:
         custom_title: Optional[str] = None,
         author: Optional[str] = None,
         temp_dir: Optional[str] = None,
-        transcription_progress_callback: Optional[Callable[[float, str, Optional[Dict]], None]] = None
+        transcription_progress_callback: Optional[
+            Callable[[float, str, Optional[Dict]], None]
+        ] = None,
     ) -> Dict[str, Any]:
         """
         Process multiple audio inputs (URLs or local files).
-        
+
         Returns:
             Dict with processing results
         """
         results = []
         errors = []
-        
+
         with tempfile.TemporaryDirectory(prefix="audio_proc_") as default_temp:
             processing_dir = temp_dir or default_temp
-            
+
             for input_item in inputs:
                 # Check for cancellation before processing each file
                 if self.is_cancelled():
                     logger.info("Processing cancelled by user")
                     if transcription_progress_callback:
                         transcription_progress_callback(
-                            0, 
+                            0,
                             "Processing cancelled. Already processed files have been saved.",
-                            {"cancelled": True}
+                            {"cancelled": True},
                         )
                     break
-                
+
                 try:
                     result = self._process_single_audio(
                         input_item=input_item,
@@ -315,78 +342,82 @@ class LocalAudioProcessor:
                         cookies=cookies,
                         custom_title=custom_title,
                         author=author,
-                        transcription_progress_callback=transcription_progress_callback
+                        transcription_progress_callback=transcription_progress_callback,
                     )
                     results.append(result)
-                    
+
                 except Exception as e:
                     logger.error(f"Error processing {input_item}: {str(e)}")
                     error_result = {
                         "status": "Error",
                         "input_ref": input_item,
                         "error": str(e),
-                        "media_type": "audio"
+                        "media_type": "audio",
                     }
                     results.append(error_result)
                     errors.append(str(e))
-        
+
         # Calculate summary statistics
         processed_count = sum(1 for r in results if r.get("status") == "Success")
         errors_count = sum(1 for r in results if r.get("status") == "Error")
-        
+
         return {
             "processed_count": processed_count,
             "errors_count": errors_count,
             "errors": errors,
-            "results": results
+            "results": results,
         }
-    
+
     def _process_single_audio(
         self,
         input_item: str,
         processing_dir: str,
         transcription_progress_callback=None,
         media_type: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """Process a single audio file or URL."""
-        
+
         # Check if this is being called from video processing with an original URL
-        original_url = kwargs.pop('original_url', None)
-        
+        original_url = kwargs.pop("original_url", None)
+
         result = {
             "status": "Pending",
             "input_ref": original_url or input_item,  # Use original URL if provided
             "processing_source": input_item,
             "media_type": media_type or "audio",
-            "metadata": {"title": kwargs.get("custom_title"), "author": kwargs.get("author")},
+            "metadata": {
+                "title": kwargs.get("custom_title"),
+                "author": kwargs.get("author"),
+            },
             "content": None,
             "segments": None,
             "chunks": None,
             "analysis": None,
             "analysis_details": {},
             "error": None,
-            "warnings": []
+            "warnings": [],
         }
-        
+
         try:
             # Determine if input is URL or local file
-            is_url = urlparse(input_item).scheme in ('http', 'https')
-            
+            is_url = urlparse(input_item).scheme in ("http", "https")
+
             if is_url:
                 # Download the file
-                if 'youtube.com' in input_item or 'youtu.be' in input_item:
+                if "youtube.com" in input_item or "youtu.be" in input_item:
                     audio_path = self.download_youtube_audio(
-                        input_item, 
+                        input_item,
                         processing_dir,
                         kwargs.get("start_time"),
-                        kwargs.get("end_time")
+                        kwargs.get("end_time"),
                     )
                 else:
                     audio_path = self.download_audio_file(
-                        input_item, processing_dir, 
+                        input_item,
+                        processing_dir,
                         kwargs.get("use_cookies", False),
-                        kwargs.get("cookies")
+                        kwargs.get("cookies"),
                     )
                 # Don't overwrite processing_source for URLs - keep the original URL
             else:
@@ -394,36 +425,41 @@ class LocalAudioProcessor:
                 if not os.path.exists(input_item):
                     raise FileNotFoundError(f"File not found: {input_item}")
                 audio_path = input_item
-            
+
             # Extract time range if specified
             # Note: For YouTube URLs, we should skip this as yt-dlp already handles it
             start_time = kwargs.get("start_time")
             end_time = kwargs.get("end_time")
-            youtube_url = is_url and ('youtube.com' in input_item or 'youtu.be' in input_item)
-            
+            youtube_url = is_url and (
+                "youtube.com" in input_item or "youtu.be" in input_item
+            )
+
             if (start_time or end_time) and not youtube_url:
-                logger.info(f"Extracting time range: start={start_time}, end={end_time}")
-                audio_path = self._extract_time_range(
-                    audio_path, 
-                    processing_dir,
-                    start_time,
-                    end_time
+                logger.info(
+                    f"Extracting time range: start={start_time}, end={end_time}"
                 )
-            
+                audio_path = self._extract_time_range(
+                    audio_path, processing_dir, start_time, end_time
+                )
+
             # Update metadata
             if not result["metadata"]["title"]:
                 result["metadata"]["title"] = Path(audio_path).stem
-            
+
             # Transcribe audio
             provider = kwargs.get("transcription_provider", None)
             model = kwargs.get("transcription_model", None)
             language = kwargs.get("transcription_language", None)
-            
-            logger.info(f"[AUDIO] Starting transcription: provider={provider}, model={model}, language={language}")
+
+            logger.info(
+                f"[AUDIO] Starting transcription: provider={provider}, model={model}, language={language}"
+            )
             logger.info(f"[AUDIO] Transcription audio file: {audio_path}")
-            logger.info(f"[AUDIO] Audio file size: {Path(audio_path).stat().st_size / 1024 / 1024:.2f} MB")
+            logger.info(
+                f"[AUDIO] Audio file size: {Path(audio_path).stat().st_size / 1024 / 1024:.2f} MB"
+            )
             logger.info(f"[AUDIO] Audio file exists: {os.path.exists(audio_path)}")
-            
+
             transcription_start = time.time()
             try:
                 logger.info("[AUDIO] Calling _transcribe_audio()")
@@ -435,51 +471,72 @@ class LocalAudioProcessor:
                     target_lang=kwargs.get("translation_target_language"),
                     vad_filter=kwargs.get("vad_use", False),
                     diarize=kwargs.get("diarize", False),
-                    progress_callback=transcription_progress_callback
+                    progress_callback=transcription_progress_callback,
                 )
                 logger.info("[AUDIO] _transcribe_audio() returned successfully")
             except Exception as e:
-                logger.opt(exception=True).error(f"[AUDIO] Transcription failed: {type(e).__name__}: {str(e)}")
+                logger.opt(exception=True).error(
+                    f"[AUDIO] Transcription failed: {type(e).__name__}: {str(e)}"
+                )
                 raise
-            
+
             transcription_time = time.time() - transcription_start
-            logger.info(f"[AUDIO] Transcription completed in {transcription_time:.2f} seconds")
-            
+            logger.info(
+                f"[AUDIO] Transcription completed in {transcription_time:.2f} seconds"
+            )
+
             # Log detailed transcription results
             if transcription_result:
-                logger.info(f"[AUDIO] Transcription result keys: {list(transcription_result.keys())}")
-                logger.info(f"[AUDIO] Transcription text length: {len(transcription_result.get('text', ''))} characters")
-                logger.info(f"[AUDIO] Number of segments: {len(transcription_result.get('segments', []))}")
-                
+                logger.info(
+                    f"[AUDIO] Transcription result keys: {list(transcription_result.keys())}"
+                )
+                logger.info(
+                    f"[AUDIO] Transcription text length: {len(transcription_result.get('text', ''))} characters"
+                )
+                logger.info(
+                    f"[AUDIO] Number of segments: {len(transcription_result.get('segments', []))}"
+                )
+
                 if not transcription_result.get("text"):
                     logger.warning("[AUDIO] Transcription returned empty text!")
                 else:
-                    logger.info(f"[AUDIO] First 100 chars of transcription: {transcription_result['text'][:100]}...")
+                    logger.info(
+                        f"[AUDIO] First 100 chars of transcription: {transcription_result['text'][:100]}..."
+                    )
             else:
                 logger.error("[AUDIO] Transcription result is None!")
-            
+
             result["segments"] = transcription_result.get("segments", [])
             result["content"] = transcription_result.get("text", "")
-            
-            logger.info(f"[AUDIO] Final result content length: {len(result['content'])} chars, segments: {len(result['segments'])}")
-            
+
+            logger.info(
+                f"[AUDIO] Final result content length: {len(result['content'])} chars, segments: {len(result['segments'])}"
+            )
+
             # Perform chunking if requested
             if kwargs.get("perform_chunking") and result["content"]:
                 chunk_method = kwargs.get("chunk_method", "sentences")
-                logger.info(f"Starting text chunking: method={chunk_method}, max_size={kwargs.get('max_chunk_size', 500)}")
-                
+                logger.info(
+                    f"Starting text chunking: method={chunk_method}, max_size={kwargs.get('max_chunk_size', 500)}"
+                )
+
                 chunks = self._chunk_text(
                     result["content"],
                     method=chunk_method,
                     max_size=kwargs.get("max_chunk_size", 500),
                     overlap=kwargs.get("chunk_overlap", 200),
-                    language=kwargs.get("chunk_language") or kwargs.get("transcription_language", "en")
+                    language=kwargs.get("chunk_language")
+                    or kwargs.get("transcription_language", "en"),
                 )
                 result["chunks"] = chunks
                 logger.debug(f"Chunking completed: {len(chunks)} chunks created")
-            
+
             # Perform analysis if requested
-            if kwargs.get("perform_analysis") and kwargs.get("api_name") and result["content"]:
+            if (
+                kwargs.get("perform_analysis")
+                and kwargs.get("api_name")
+                and result["content"]
+            ):
                 analysis = self._analyze_content(
                     content=result["content"],
                     chunks=result.get("chunks"),
@@ -487,71 +544,79 @@ class LocalAudioProcessor:
                     api_key=kwargs.get("api_key"),
                     custom_prompt=kwargs.get("custom_prompt"),
                     system_prompt=kwargs.get("system_prompt"),
-                    summarize_recursively=kwargs.get("summarize_recursively", False)
+                    summarize_recursively=kwargs.get("summarize_recursively", False),
                 )
                 result["analysis"] = analysis
                 result["analysis_details"] = {
                     "api_name": kwargs["api_name"],
                     "custom_prompt": kwargs.get("custom_prompt"),
-                    "recursive": kwargs.get("summarize_recursively", False)
+                    "recursive": kwargs.get("summarize_recursively", False),
                 }
-            
+
             # Store in database if available
             if self.media_db and result["content"]:
                 db_result = self._store_in_database(result)
                 result["db_id"] = db_result.get("id")
                 result["db_message"] = db_result.get("message", "Stored successfully")
-            
+
             result["status"] = "Success" if not result["warnings"] else "Warning"
-            
+
             # Handle keep_original option - move audio file to Downloads folder
             if kwargs.get("keep_original", False) and is_url:
                 try:
                     # Get user's Downloads folder
                     downloads_dir = Path.home() / "Downloads"
                     downloads_dir.mkdir(exist_ok=True)
-                    
+
                     # Generate a unique filename if needed
                     audio_filename = Path(audio_path).name
                     dest_path = downloads_dir / audio_filename
-                    
+
                     # Handle filename conflicts
                     if dest_path.exists():
                         base_name = dest_path.stem
                         extension = dest_path.suffix
                         counter = 1
                         while dest_path.exists():
-                            dest_path = downloads_dir / f"{base_name}_{counter}{extension}"
+                            dest_path = (
+                                downloads_dir / f"{base_name}_{counter}{extension}"
+                            )
                             counter += 1
-                    
+
                     # Move the file
                     shutil.move(audio_path, str(dest_path))
                     logger.info(f"Moved audio file to: {dest_path}")
                     result["saved_audio_path"] = str(dest_path)
-                    result["warnings"].append(f"Audio file saved to Downloads folder: {dest_path.name}")
+                    result["warnings"].append(
+                        f"Audio file saved to Downloads folder: {dest_path.name}"
+                    )
                 except Exception as e:
                     logger.error(f"Failed to move audio file to Downloads: {str(e)}")
                     result["warnings"].append(f"Could not save audio file: {str(e)}")
-            
+
         except Exception as e:
             logger.opt(exception=True).error(f"Error processing audio: {str(e)}")
             result["status"] = "Error"
             result["error"] = str(e)
-        
+
         return result
-    
-    def _transcribe_audio(self, audio_path: str, progress_callback=None, **kwargs) -> Dict[str, Any]:
+
+    def _transcribe_audio(
+        self, audio_path: str, progress_callback=None, **kwargs
+    ) -> Dict[str, Any]:
         """
         Transcribe audio using available transcription service.
-        
+
         Args:
             audio_path: Path to audio file
             progress_callback: Optional callback for progress updates
             **kwargs: Additional transcription parameters
         """
         logger.info(f"[AUDIO] _transcribe_audio called with audio_path: {audio_path}")
-        logger.info(f"[AUDIO] Transcription kwargs: provider={kwargs.get('provider')}, model={kwargs.get('model')}, language={kwargs.get('language')}")
-        
+        logger.info(
+            f"[AUDIO] Transcription kwargs: provider={kwargs.get('provider')}, model={kwargs.get('model')}, language={kwargs.get('language')}"
+        )
+
         # Wrap progress callback to check for cancellation
         def cancellable_progress_callback(progress, message, data=None):
             if self.is_cancelled():
@@ -560,65 +625,83 @@ class LocalAudioProcessor:
             if progress_callback:
                 logger.debug(f"[AUDIO] Progress update: {progress}% - {message}")
                 progress_callback(progress, message, data)
-        
+
         # Import transcription service when available
         try:
             logger.info("[AUDIO] Importing TranscriptionService")
             from .transcription_service import TranscriptionService
+
             service = TranscriptionService()
             logger.info("[AUDIO] TranscriptionService imported successfully")
-            
+
             logger.info("[AUDIO] Calling TranscriptionService.transcribe()")
-            result = service.transcribe(audio_path, progress_callback=cancellable_progress_callback, **kwargs)
+            result = service.transcribe(
+                audio_path, progress_callback=cancellable_progress_callback, **kwargs
+            )
             logger.info("[AUDIO] TranscriptionService.transcribe() completed")
-            
+
             if result:
-                logger.info(f"[AUDIO] Transcription service returned: text_length={len(result.get('text', ''))}, segments={len(result.get('segments', []))}")
+                logger.info(
+                    f"[AUDIO] Transcription service returned: text_length={len(result.get('text', ''))}, segments={len(result.get('segments', []))}"
+                )
             else:
                 logger.error("[AUDIO] Transcription service returned None")
-            
+
             return result
         except ImportError as e:
             # Fallback for testing
             logger.error(f"[AUDIO] Failed to import TranscriptionService: {str(e)}")
-            logger.warning("[AUDIO] Transcription service not available, using placeholder")
+            logger.warning(
+                "[AUDIO] Transcription service not available, using placeholder"
+            )
             return {
                 "text": f"[Placeholder transcription for {Path(audio_path).name}]",
                 "segments": [
                     {
                         "start": 0.0,
                         "end": 5.0,
-                        "text": "This is a placeholder transcription."
+                        "text": "This is a placeholder transcription.",
                     }
-                ]
+                ],
             }
-    
-    def _chunk_text(self, text: str, method: str = "sentences", 
-                   max_size: int = 500, overlap: int = 200,
-                   language: str = "en") -> List[Dict[str, Any]]:
+
+    def _chunk_text(
+        self,
+        text: str,
+        method: str = "sentences",
+        max_size: int = 500,
+        overlap: int = 200,
+        language: str = "en",
+    ) -> List[Dict[str, Any]]:
         """Chunk text using the chunking service."""
         chunk_options = {
             "method": method,
             "max_size": max_size,
             "overlap": overlap,
-            "language": language
+            "language": language,
         }
-        
+
         chunks = self.chunking_service.chunk_text(text, chunk_options)
         return [{"text": chunk, "metadata": {"method": method}} for chunk in chunks]
-    
-    def _analyze_content(self, content: str, chunks: Optional[List[Dict]], 
-                        api_name: str, api_key: Optional[str],
-                        custom_prompt: Optional[str], system_prompt: Optional[str],
-                        summarize_recursively: bool = False) -> str:
+
+    def _analyze_content(
+        self,
+        content: str,
+        chunks: Optional[List[Dict]],
+        api_name: str,
+        api_key: Optional[str],
+        custom_prompt: Optional[str],
+        system_prompt: Optional[str],
+        summarize_recursively: bool = False,
+    ) -> str:
         """Analyze/summarize content using LLM."""
-        
+
         # Prepare prompt
         if custom_prompt:
             custom_prompt + "\n\n" + content
         else:
             pass
-        
+
         # If chunking and recursive summarization
         if chunks and summarize_recursively and len(chunks) > 1:
             # Summarize each chunk first
@@ -627,30 +710,28 @@ class LocalAudioProcessor:
                 chunk_text = chunk.get("text", "")
                 if chunk_text:
                     chunk_prompt = f"Summarize this section:\n\n{chunk_text}"
-                    messages_payload = [
-                        {"role": "user", "content": chunk_prompt}
-                    ]
+                    messages_payload = [{"role": "user", "content": chunk_prompt}]
                     summary = chat_api_call(
                         api_endpoint=api_name,
                         messages_payload=messages_payload,
                         api_key=api_key,
                         temp=0.7,
-                        system_message=system_prompt
+                        system_message=system_prompt,
                     )
                     chunk_summaries.append(summary)
-            
+
             # Then summarize the summaries
             combined = "\n\n".join(chunk_summaries)
-            final_prompt = f"Combine and summarize these section summaries:\n\n{combined}"
-            messages_payload = [
-                {"role": "user", "content": final_prompt}
-            ]
+            final_prompt = (
+                f"Combine and summarize these section summaries:\n\n{combined}"
+            )
+            messages_payload = [{"role": "user", "content": final_prompt}]
             return chat_api_call(
                 api_endpoint=api_name,
                 messages_payload=messages_payload,
                 api_key=api_key,
                 temp=0.7,
-                system_message=system_prompt
+                system_message=system_prompt,
             )
         else:
             # Direct summarization
@@ -663,14 +744,14 @@ class LocalAudioProcessor:
                 messages_payload=messages_payload,
                 api_key=api_key,
                 temp=0.7,
-                system_message=system_prompt
+                system_message=system_prompt,
             )
-    
+
     def _store_in_database(self, result: Dict[str, Any]) -> Dict[str, Any]:
         """Store processing results in the media database."""
         if not self.media_db:
             return {"message": "No database available"}
-        
+
         try:
             # Prepare media data - store transcription in content field
             media_data = {
@@ -680,12 +761,12 @@ class LocalAudioProcessor:
                 "content": result.get("content", ""),  # Store transcription
                 "author": result["metadata"].get("author", "Unknown"),
                 "ingestion_date": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "analysis_content": result.get("analysis")  # Store analysis separately
+                "analysis_content": result.get("analysis"),  # Store analysis separately
             }
-            
+
             # Add media entry with analysis
             media_id, _, _ = self.media_db.add_media_with_keywords(**media_data)
-            
+
             # Store chunks if available
             if result.get("chunks"):
                 # Prepare chunks in the format expected by add_media_chunks_in_batches
@@ -695,115 +776,127 @@ class LocalAudioProcessor:
                     # Calculate start and end indices based on chunk position
                     # This is approximate since we don't have exact character positions
                     text_length = len(chunk_text)
-                    start_index = sum(len(c.get("text", "")) for c in result["chunks"][:i])
+                    start_index = sum(
+                        len(c.get("text", "")) for c in result["chunks"][:i]
+                    )
                     end_index = start_index + text_length
-                    
-                    chunks_to_add.append({
-                        'text': chunk_text,
-                        'start_index': start_index,
-                        'end_index': end_index
-                    })
-                
+
+                    chunks_to_add.append(
+                        {
+                            "text": chunk_text,
+                            "start_index": start_index,
+                            "end_index": end_index,
+                        }
+                    )
+
                 # Use batch insert method
                 self.media_db.add_media_chunks_in_batches(
-                    media_id=media_id,
-                    chunks_to_add=chunks_to_add
+                    media_id=media_id, chunks_to_add=chunks_to_add
                 )
-            
+
             return {"id": media_id, "message": "Stored successfully"}
-            
+
         except Exception as e:
             logger.error(f"Database storage error: {str(e)}")
             return {"message": f"Storage failed: {str(e)}"}
-    
+
     def _get_filename_from_response(self, response: requests.Response, url: str) -> str:
         """Extract filename from response headers or URL."""
-        content_disposition = response.headers.get('content-disposition')
+        content_disposition = response.headers.get("content-disposition")
         if content_disposition:
-            parts = content_disposition.split('filename=')
+            parts = content_disposition.split("filename=")
             if len(parts) > 1:
-                filename = parts[1].strip('"\' ')
+                filename = parts[1].strip("\"' ")
                 if filename:
                     return sanitize_filename(filename)
-        
+
         # Fallback to URL path
         path = Path(urlparse(url).path)
         if path.name:
             return sanitize_filename(path.name)
-        
+
         # Generate unique filename
         return f"audio_{uuid.uuid4().hex[:8]}.mp3"
-    
-    def _extract_time_range(self, audio_path: str, output_dir: str, 
-                           start_time: Optional[str] = None, 
-                           end_time: Optional[str] = None) -> str:
+
+    def _extract_time_range(
+        self,
+        audio_path: str,
+        output_dir: str,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+    ) -> str:
         """
         Extract a time range from an audio file using ffmpeg.
-        
+
         Args:
             audio_path: Path to input audio file
             output_dir: Directory to save the extracted audio
             start_time: Start time in format HH:MM:SS or seconds
             end_time: End time in format HH:MM:SS or seconds
-            
+
         Returns:
             Path to the extracted audio file
         """
         # Find ffmpeg
         import shutil
-        ffmpeg_cmd = shutil.which('ffmpeg')
+
+        ffmpeg_cmd = shutil.which("ffmpeg")
         if not ffmpeg_cmd:
             # Try common locations
-            for cmd in ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg']:
+            for cmd in [
+                "/usr/bin/ffmpeg",
+                "/usr/local/bin/ffmpeg",
+                "/opt/homebrew/bin/ffmpeg",
+            ]:
                 if os.path.exists(cmd):
                     ffmpeg_cmd = cmd
                     break
-        
+
         if not ffmpeg_cmd:
             logger.warning("ffmpeg not found, skipping time range extraction")
             return audio_path
-        
+
         # Generate output filename
         base_name = Path(audio_path).stem
-        suffix = f"_trim_{start_time or '0'}_{end_time or 'end'}".replace(':', '-')
+        suffix = f"_trim_{start_time or '0'}_{end_time or 'end'}".replace(":", "-")
         output_path = os.path.join(output_dir, f"{base_name}{suffix}.mp3")
-        
+
         # Build ffmpeg command
-        command = [ffmpeg_cmd, '-i', audio_path]
-        
+        command = [ffmpeg_cmd, "-i", audio_path]
+
         # Add start time if specified
         if start_time:
-            command.extend(['-ss', start_time])
-        
+            command.extend(["-ss", start_time])
+
         # Add duration if end time is specified
         if end_time:
             if start_time:
                 # Calculate duration from start to end
                 # This is a simplified approach - ideally we'd parse the times properly
-                command.extend(['-to', end_time])
+                command.extend(["-to", end_time])
             else:
-                command.extend(['-t', end_time])
-        
+                command.extend(["-t", end_time])
+
         # Output options
-        command.extend([
-            '-acodec', 'libmp3lame',
-            '-ab', '192k',
-            '-ar', '44100',
-            '-y',  # Overwrite
-            output_path
-        ])
-        
+        command.extend(
+            [
+                "-acodec",
+                "libmp3lame",
+                "-ab",
+                "192k",
+                "-ar",
+                "44100",
+                "-y",  # Overwrite
+                output_path,
+            ]
+        )
+
         try:
             logger.debug(f"Running ffmpeg command: {' '.join(command)}")
-            subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                check=True
-            )
+            subprocess.run(command, capture_output=True, text=True, check=True)
             logger.info(f"Extracted time range to: {output_path}")
             return output_path
-            
+
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to extract time range: {e.stderr}")
             logger.warning("Continuing with full audio file")
@@ -815,6 +908,7 @@ def process_audio_files(**kwargs) -> Dict[str, Any]:
     """Process audio files using LocalAudioProcessor."""
     processor = LocalAudioProcessor()
     return processor.process_audio_files(**kwargs)
+
 
 #
 # End of audio_processing.py

@@ -154,7 +154,10 @@ class PersonasLibraryPane(Vertical):
             import_button.tooltip = "Import a world book (JSON)."
         else:
             import_button.tooltip = "Import a character card (PNG or JSON)."
-        self.query_one("#personas-library-duplicate", Button).display = mode in ("dictionaries", "lore")
+        self.query_one("#personas-library-duplicate", Button).display = mode in (
+            "dictionaries",
+            "lore",
+        )
 
     async def update_rows(
         self,
@@ -277,7 +280,9 @@ class PersonasLibraryPane(Vertical):
                 list_view.index = index
                 return
 
-    def set_row_unsaved(self, kind: str | None, item_id: str | None, unsaved: bool) -> None:
+    def set_row_unsaved(
+        self, kind: str | None, item_id: str | None, unsaved: bool
+    ) -> None:
         """Toggle the ``.is-unsaved`` badge without rebuilding the rows.
 
         Only one row (the active editing session's) may carry the badge, so

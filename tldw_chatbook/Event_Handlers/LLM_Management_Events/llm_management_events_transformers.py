@@ -25,20 +25,24 @@ if TYPE_CHECKING:
     # textual_fspicker is imported dynamically in the handler
 
 # Import shared helpers if needed
-from .llm_management_events import \
-    _make_path_update_callback  # _stream_process, stream_worker_output_to_log (not used by download worker directly)
+from .llm_management_events import (
+    _make_path_update_callback,
+)  # _stream_process, stream_worker_output_to_log (not used by download worker directly)
 
 
 # --- Worker function for model download (can be similar to the existing one) ---
-async def run_transformers_model_download_worker(app_instance: "TldwCli", command: List[str],
-                                                 models_base_dir_for_cwd: str) -> str:
+async def run_transformers_model_download_worker(
+    app_instance: "TldwCli", command: List[str], models_base_dir_for_cwd: str
+) -> str:
     logger = getattr(app_instance, "loguru_logger", _loguru_fallback_logger)
-    quoted_command = ' '.join(shlex.quote(c) for c in command)
+    quoted_command = " ".join(shlex.quote(c) for c in command)
     # The actual target download path is part of the command (--local-dir)
     logger.info(f"Transformers Download WORKER starting: {quoted_command}")
 
     process: Optional[subprocess.Popen] = None
-    final_status_message = f"Transformers Download WORKER: Default status for {quoted_command}"
+    final_status_message = (
+        f"Transformers Download WORKER: Default status for {quoted_command}"
+    )
     pid_str = "N/A"
 
     try:
@@ -46,7 +50,9 @@ async def run_transformers_model_download_worker(app_instance: "TldwCli", comman
         # We might want to run huggingface-cli from a neutral directory or models_base_dir_for_cwd
         # if --local-dir is relative, but since we make it absolute, cwd is less critical.
         # For consistency, let's use models_base_dir_for_cwd if provided and valid.
-        cwd_to_use = models_base_dir_for_cwd if Path(models_base_dir_for_cwd).is_dir() else None
+        cwd_to_use = (
+            models_base_dir_for_cwd if Path(models_base_dir_for_cwd).is_dir() else None
+        )
 
         process = subprocess.Popen(
             command,
@@ -55,65 +61,95 @@ async def run_transformers_model_download_worker(app_instance: "TldwCli", comman
             text=True,
             universal_newlines=True,
             bufsize=1,
-            cwd=cwd_to_use
+            cwd=cwd_to_use,
         )
         pid_str = str(process.pid) if process and process.pid else "UnknownPID"
-        logger.info(f"Transformers Download WORKER: Subprocess launched, PID: {pid_str}")
-        app_instance.call_from_thread(app_instance._update_transformers_log, f"[PID:{pid_str}] Download starting...\n")
+        logger.info(
+            f"Transformers Download WORKER: Subprocess launched, PID: {pid_str}"
+        )
+        app_instance.call_from_thread(
+            app_instance._update_transformers_log,
+            f"[PID:{pid_str}] Download starting...\n",
+        )
 
         # communicate() waits for termination
-        stdout_data, stderr_data = process.communicate(timeout=600)  # 10 min timeout for download
+        stdout_data, stderr_data = process.communicate(
+            timeout=600
+        )  # 10 min timeout for download
 
         logger.info(
-            f"Transformers Download WORKER: communicate() completed. PID {pid_str}, Exit Code: {process.returncode}")
+            f"Transformers Download WORKER: communicate() completed. PID {pid_str}, Exit Code: {process.returncode}"
+        )
 
         if stdout_data:
             logger.info(f"Transformers Download WORKER STDOUT:\n{stdout_data.strip()}")
-            app_instance.call_from_thread(app_instance._update_transformers_log,
-                                          f"--- STDOUT (PID:{pid_str}) ---\n{stdout_data.strip()}\n")
+            app_instance.call_from_thread(
+                app_instance._update_transformers_log,
+                f"--- STDOUT (PID:{pid_str}) ---\n{stdout_data.strip()}\n",
+            )
         if stderr_data:
             logger.error(f"Transformers Download WORKER STDERR:\n{stderr_data.strip()}")
-            app_instance.call_from_thread(app_instance._update_transformers_log,
-                                          f"--- STDERR (PID:{pid_str}) ---\n[bold red]{stderr_data.strip()}[/]\n")
+            app_instance.call_from_thread(
+                app_instance._update_transformers_log,
+                f"--- STDERR (PID:{pid_str}) ---\n[bold red]{stderr_data.strip()}[/]\n",
+            )
 
         if process.returncode != 0:
             final_status_message = f"Model download (PID:{pid_str}) failed with code: {process.returncode}."
-            if stderr_data: final_status_message += f"\nSTDERR: {stderr_data.strip()}"
+            if stderr_data:
+                final_status_message += f"\nSTDERR: {stderr_data.strip()}"
         else:
             final_status_message = f"Model download (PID:{pid_str}) completed successfully (code: {process.returncode}). Model should be in target --local-dir."
 
-        app_instance.call_from_thread(app_instance._update_transformers_log, f"{final_status_message}\n")
+        app_instance.call_from_thread(
+            app_instance._update_transformers_log, f"{final_status_message}\n"
+        )
         return final_status_message
 
     except FileNotFoundError:
         msg = "ERROR: huggingface-cli not found. Please ensure it's installed and in PATH."
         logger.error(msg)
-        app_instance.call_from_thread(app_instance._update_transformers_log, f"[bold red]{msg}[/]\n")
+        app_instance.call_from_thread(
+            app_instance._update_transformers_log, f"[bold red]{msg}[/]\n"
+        )
         raise
     except subprocess.TimeoutExpired:
         msg = f"ERROR: Model download (PID:{pid_str}) timed out after 600s."
         logger.error(msg)
-        if process: process.kill()
-        app_instance.call_from_thread(app_instance._update_transformers_log, f"[bold red]{msg}[/]\n")
+        if process:
+            process.kill()
+        app_instance.call_from_thread(
+            app_instance._update_transformers_log, f"[bold red]{msg}[/]\n"
+        )
         raise RuntimeError(msg)  # Make worker fail
     except Exception as err:
         msg = f"CRITICAL ERROR in Transformers Download worker: {err} (Command: {quoted_command})"
         logger.opt(exception=True).error(msg)
-        app_instance.call_from_thread(app_instance._update_transformers_log, f"[bold red]{msg}[/]\n")
+        app_instance.call_from_thread(
+            app_instance._update_transformers_log, f"[bold red]{msg}[/]\n"
+        )
         raise
     finally:
-        logger.info(f"Transformers Download WORKER: Worker for '{quoted_command}' finishing.")
+        logger.info(
+            f"Transformers Download WORKER: Worker for '{quoted_command}' finishing."
+        )
         if process and process.poll() is None:
-            logger.warning(f"Transformers Download WORKER (PID:{pid_str}): Process still running in finally. Killing.")
+            logger.warning(
+                f"Transformers Download WORKER (PID:{pid_str}): Process still running in finally. Killing."
+            )
             process.kill()
 
 
-async def handle_transformers_list_local_models_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_transformers_list_local_models_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("Transformers list local models button pressed.")
 
     models_dir_input: Input = app.query_one("#transformers-models-dir-path", Input)
-    models_list_widget: RichLog = app.query_one("#transformers-local-models-list", RichLog)
+    models_list_widget: RichLog = app.query_one(
+        "#transformers-local-models-list", RichLog
+    )
     log_output_widget: RichLog = app.query_one("#transformers-log-output", RichLog)
 
     models_dir_str = models_dir_input.value.strip()
@@ -163,30 +199,44 @@ async def handle_transformers_list_local_models_button_pressed(app: "TldwCli", e
                     parts = list(relative_to_scan_root.parts)
                     if parts and parts[0].startswith("models--"):
                         name_part = parts[0].replace("models--", "")
-                        display_name = name_part.replace("--", "/", 1)  # Replace only first --
+                        display_name = name_part.replace(
+                            "--", "/", 1
+                        )  # Replace only first --
                     else:  # Assume a flatter structure or direct model name as folder
                         display_name = str(relative_to_scan_root)
-                except ValueError:  # Not a subpath, models_path itself might be the model_root_dir
+                except (
+                    ValueError
+                ):  # Not a subpath, models_path itself might be the model_root_dir
                     if model_root_dir == models_path:
                         display_name = models_path.name
                     else:  # Some other structure
                         display_name = model_root_dir.name  # Best guess
 
                 # Check for actual model files
-                has_weights = (model_root_dir / "pytorch_model.bin").exists() or \
-                              (model_root_dir / "model.safetensors").exists() or \
-                              (model_root_dir / "tf_model.h5").exists()
+                has_weights = (
+                    (model_root_dir / "pytorch_model.bin").exists()
+                    or (model_root_dir / "model.safetensors").exists()
+                    or (model_root_dir / "tf_model.h5").exists()
+                )
 
                 if has_weights:
                     count += 1
-                    found_models_display.append(f"[green]{display_name}[/] ([dim]at {model_root_dir}[/dim])")
+                    found_models_display.append(
+                        f"[green]{display_name}[/] ([dim]at {model_root_dir}[/dim])"
+                    )
 
         if found_models_display:
             models_list_widget.write("\n".join(found_models_display))
-            app.notify(f"Found {count} potential local models (based on config.json and weights).")
+            app.notify(
+                f"Found {count} potential local models (based on config.json and weights)."
+            )
         else:
-            models_list_widget.write("No model directories found with config.json and model weights.")
-            app.notify("No local models found with this scan method.", severity="information")
+            models_list_widget.write(
+                "No model directories found with config.json and model weights."
+            )
+            app.notify(
+                "No local models found with this scan method.", severity="information"
+            )
         log_output_widget.write("Local model scan complete.\n")
 
     except Exception as e:
@@ -215,13 +265,23 @@ async def handle_transformers_download_model_button_pressed(app: "TldwCli") -> N
 
     if not models_dir_str:
         # Default to HF cache if not specified, but warn user.
-        if HUGGINGFACE_HUB_AVAILABLE and hf_constants and Path(hf_constants.HF_HUB_CACHE).is_dir():
+        if (
+            HUGGINGFACE_HUB_AVAILABLE
+            and hf_constants
+            and Path(hf_constants.HF_HUB_CACHE).is_dir()
+        ):
             models_dir_str = str(hf_constants.HF_HUB_CACHE)
-            app.notify(f"No local directory set, will download to Hugging Face cache: {models_dir_str}",
-                       severity="warning", timeout=7)
+            app.notify(
+                f"No local directory set, will download to Hugging Face cache: {models_dir_str}",
+                severity="warning",
+                timeout=7,
+            )
             models_dir_input.value = models_dir_str  # Update UI
         else:
-            app.notify("Local models directory must be set to specify download location.", severity="error")
+            app.notify(
+                "Local models directory must be set to specify download location.",
+                severity="error",
+            )
             models_dir_input.focus()
             return
 
@@ -237,15 +297,20 @@ async def handle_transformers_download_model_button_pressed(app: "TldwCli") -> N
     target_model_specific_dir = Path(models_dir_str) / safe_repo_id_subdir
 
     log_output_widget.write(
-        f"Attempting to download '{repo_id}' (rev: {revision or 'latest'}) to '{target_model_specific_dir}'...\n")
-    target_model_specific_dir.mkdir(parents=True, exist_ok=True)  # Ensure target dir exists
+        f"Attempting to download '{repo_id}' (rev: {revision or 'latest'}) to '{target_model_specific_dir}'...\n"
+    )
+    target_model_specific_dir.mkdir(
+        parents=True, exist_ok=True
+    )  # Ensure target dir exists
 
     command = [
         "huggingface-cli",
         "download",
         repo_id,
-        "--local-dir", str(target_model_specific_dir),
-        "--local-dir-use-symlinks", "False"  # Usually want actual files for local management
+        "--local-dir",
+        str(target_model_specific_dir),
+        "--local-dir-use-symlinks",
+        "False",  # Usually want actual files for local management
     ]
     if revision:
         command.extend(["--revision", revision])
@@ -263,14 +328,21 @@ async def handle_transformers_download_model_button_pressed(app: "TldwCli") -> N
     app.notify(f"Starting download for {repo_id}...")
 
 
-async def handle_transformers_browse_models_dir_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_transformers_browse_models_dir_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Transformers browse models directory button pressed.")
 
     try:
-        from textual_fspicker import FileOpen, Filters  # Ensure it's imported for runtime
+        from textual_fspicker import (
+            FileOpen,
+            Filters,
+        )  # Ensure it's imported for runtime
     except ImportError:
-        app.notify("File picker utility (textual-fspicker) not available.", severity="error")
+        app.notify(
+            "File picker utility (textual-fspicker) not available.", severity="error"
+        )
         logger.error("textual_fspicker not found for Transformers model dir browsing.")
         return
 
@@ -283,12 +355,16 @@ async def handle_transformers_browse_models_dir_button_pressed(app: "TldwCli", e
             hf_cache_dir = Path(hf_constants.HF_HUB_CACHE)
             if hf_cache_dir.is_dir():
                 default_loc_str = str(hf_cache_dir)
-            elif hf_cache_dir.parent.is_dir():  # Try one level up, e.g. ~/.cache/huggingface
+            elif (
+                hf_cache_dir.parent.is_dir()
+            ):  # Try one level up, e.g. ~/.cache/huggingface
                 default_loc_str = str(hf_cache_dir.parent)
         except Exception:  # pylint: disable=broad-except
             pass
 
-    logger.debug(f"Transformers browse models dir: starting location '{default_loc_str}'")
+    logger.debug(
+        f"Transformers browse models dir: starting location '{default_loc_str}'"
+    )
 
     await app.push_screen(
         FileOpen(

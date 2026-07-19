@@ -131,12 +131,20 @@ def test_prompt_db_migrates_v1_database_for_structured_fields(tmp_path):
     try:
         cursor = db.get_connection().execute("PRAGMA table_info(Prompts)")
         columns = {row["name"] for row in cursor.fetchall()}
-        assert {"prompt_format", "prompt_schema_version", "prompt_definition"}.issubset(columns)
+        assert {"prompt_format", "prompt_schema_version", "prompt_definition"}.issubset(
+            columns
+        )
 
-        version = db.get_connection().execute("SELECT version FROM schema_version").fetchone()["version"]
+        version = (
+            db.get_connection()
+            .execute("SELECT version FROM schema_version")
+            .fetchone()["version"]
+        )
         assert version == db._CURRENT_SCHEMA_VERSION
 
-        prompt = db.fetch_prompt_details("00000000-0000-4000-8000-000000000001", include_deleted=True)
+        prompt = db.fetch_prompt_details(
+            "00000000-0000-4000-8000-000000000001", include_deleted=True
+        )
         assert prompt["name"] == "Existing Prompt"
         assert prompt["prompt_format"] == "legacy"
         assert prompt["prompt_schema_version"] is None

@@ -48,9 +48,7 @@ class PriorityQueue:
         if now is None:
             self._items = self.db.list_reminder_tasks(enabled=True)
             # Filter out tasks without a next run time and sort by it.
-            self._items = [
-                item for item in self._items if item.get("next_run_at")
-            ]
+            self._items = [item for item in self._items if item.get("next_run_at")]
         else:
             self._items = self.db.reminders_due_before(now)
 

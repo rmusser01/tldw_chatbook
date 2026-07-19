@@ -5,6 +5,7 @@ This is the plugin seam: MCP (task-201) and Skills (task-200) register as
 providers here — the runtime never changes. May import tool_executor
 (wrapping it is this module's job); no UI/DB imports.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -14,8 +15,14 @@ from typing import Iterable, Mapping, Protocol
 from tldw_chatbook.Tools.tool_executor import CalculatorTool, DateTimeTool
 
 from .agent_models import (
-    DIRECT_DISCLOSE_THRESHOLD, FIND_TOOLS_NAME, LOAD_TOOLS_NAME,
-    RunBudget, SPAWN_TOOL_NAME, ToolCatalogEntry, ToolResult, ToolSchema,
+    DIRECT_DISCLOSE_THRESHOLD,
+    FIND_TOOLS_NAME,
+    LOAD_TOOLS_NAME,
+    RunBudget,
+    SPAWN_TOOL_NAME,
+    ToolCatalogEntry,
+    ToolResult,
+    ToolSchema,
 )
 
 SPAWN_TOOL_SCHEMA = ToolSchema(
@@ -23,12 +30,16 @@ SPAWN_TOOL_SCHEMA = ToolSchema(
     name=SPAWN_TOOL_NAME,
     description=(
         "Delegate a self-contained task to an isolated sub-agent. It sees "
-        "only the task text you pass, works on it, and returns a result."),
+        "only the task text you pass, works on it, and returns a result."
+    ),
     parameters={
         "type": "object",
-        "properties": {"task": {
-            "type": "string",
-            "description": "Complete, self-contained task description."}},
+        "properties": {
+            "task": {
+                "type": "string",
+                "description": "Complete, self-contained task description.",
+            }
+        },
         "required": ["task"],
     },
 )
@@ -50,8 +61,7 @@ LOAD_TOOLS_SCHEMA = ToolSchema(
     description="Load full schemas for catalog ids so you can call them.",
     parameters={
         "type": "object",
-        "properties": {"ids": {"type": "array",
-                               "items": {"type": "string"}}},
+        "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
         "required": ["ids"],
     },
 )
@@ -80,18 +90,24 @@ class BuiltinToolProvider:
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         return [
-            ToolCatalogEntry(id=self._tool_id(t.name), name=t.name,
-                             one_line_description=t.description,
-                             source=self.SOURCE)
+            ToolCatalogEntry(
+                id=self._tool_id(t.name),
+                name=t.name,
+                one_line_description=t.description,
+                source=self.SOURCE,
+            )
             for t in self._tools.values()
         ]
 
     def load_schema(self, tool_id: str) -> ToolSchema:
         name = tool_id.split(":", 1)[1]
         tool = self._tools[name]
-        return ToolSchema(id=tool_id, name=tool.name,
-                          description=tool.description,
-                          parameters=tool.parameters)
+        return ToolSchema(
+            id=tool_id,
+            name=tool.name,
+            description=tool.description,
+            parameters=tool.parameters,
+        )
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         name = tool_id.split(":", 1)[1]
@@ -112,7 +128,8 @@ class BuiltinToolProvider:
 
 
 def intersect_skill_tools(
-    skill_allowed_tools: list[str] | None, builtin_names: Iterable[str],
+    skill_allowed_tools: list[str] | None,
+    builtin_names: Iterable[str],
 ) -> tuple[str, ...]:
     """A skill's `allowed_tools` narrows the runtime builtin set; never grants.
 
@@ -176,9 +193,12 @@ class SkillToolProvider:
             `SOURCE` (`"skill"`).
         """
         return [
-            ToolCatalogEntry(id=self._tool_id(e["name"]), name=e["name"],
-                             one_line_description=e["description"],
-                             source=self.SOURCE)
+            ToolCatalogEntry(
+                id=self._tool_id(e["name"]),
+                name=e["name"],
+                one_line_description=e["description"],
+                source=self.SOURCE,
+            )
             for e in self._entries
         ]
 
@@ -206,7 +226,9 @@ class SkillToolProvider:
         entry = next(e for e in self._entries if e["name"] == name)
         hint = entry.get("argument_hint") or entry["description"]
         return ToolSchema(
-            id=tool_id, name=name, description=entry["description"],
+            id=tool_id,
+            name=name,
+            description=entry["description"],
             parameters={
                 "type": "object",
                 "properties": {"args": {"type": "string", "description": hint}},
@@ -230,7 +252,8 @@ class SkillToolProvider:
         """
         raise RuntimeError(
             "SkillToolProvider.invoke must not be called; skills route "
-            "through the run-scoped spawn executor")
+            "through the run-scoped spawn executor"
+        )
 
 
 class ToolCatalogRegistry:
@@ -279,9 +302,11 @@ class ToolCatalogRegistry:
         needle = query.strip().lower()
         if not needle:
             return []
-        return [e for e in self.list_catalog()
-                if needle in e.name.lower()
-                or needle in e.one_line_description.lower()]
+        return [
+            e
+            for e in self.list_catalog()
+            if needle in e.name.lower() or needle in e.one_line_description.lower()
+        ]
 
     def _build_owner_cache(self) -> tuple[dict[str, ToolProvider], dict[str, str]]:
         owner: dict[str, ToolProvider] = {}
@@ -339,8 +364,7 @@ class ToolCatalogRegistry:
             # reachable via a same-lookup race. It stays as insurance
             # against a future change to the cache-building code, and never
             # lets a `None` owner surface as an AttributeError.
-            return ToolResult(
-                ok=False, error=f"Tool provider not found for: {name}")
+            return ToolResult(ok=False, error=f"Tool provider not found for: {name}")
         return provider.invoke(tool_id, args)
 
 

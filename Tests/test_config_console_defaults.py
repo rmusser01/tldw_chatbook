@@ -46,13 +46,26 @@ def test_config_template_keeps_cloud_provider_streaming_opt_in():
     template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
     api_settings = template["api_settings"]
 
-    for provider in ("openai", "anthropic", "google", "mistralai", "openrouter", "groq"):
+    for provider in (
+        "openai",
+        "anthropic",
+        "google",
+        "mistralai",
+        "openrouter",
+        "groq",
+    ):
         assert api_settings[provider]["streaming"] is False, provider
 
 
 def test_console_large_paste_collapse_defaults_enabled():
-    assert config_module.DEFAULT_CONFIG_FROM_TOML["console"]["collapse_large_pastes"] is True
-    assert config_module.DEFAULT_CONFIG_FROM_TOML["console"]["paste_collapse_threshold"] == 50
+    assert (
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"]["collapse_large_pastes"]
+        is True
+    )
+    assert (
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"]["paste_collapse_threshold"]
+        == 50
+    )
 
 
 def test_console_background_effect_defaults_disabled():
@@ -153,7 +166,7 @@ def test_save_setting_respects_tldw_config_path_override(tmp_path, monkeypatch):
     default_config = tmp_path / "default" / "config.toml"
     override_config.parent.mkdir()
     override_config.write_text(
-        '[console]\ncollapse_large_pastes = true\n',
+        "[console]\ncollapse_large_pastes = true\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(override_config))

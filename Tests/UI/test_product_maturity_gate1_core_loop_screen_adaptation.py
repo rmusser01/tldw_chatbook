@@ -29,10 +29,14 @@ EVIDENCE = Path(
     "Docs/superpowers/qa/product-maturity/phase-3/"
     "2026-05-06-gate-1-core-product-loop-screen-adaptation.md"
 )
-AUDIT = Path("Docs/superpowers/specs/2026-05-06-screen-design-adaptation-audit-design.md")
+AUDIT = Path(
+    "Docs/superpowers/specs/2026-05-06-screen-design-adaptation-audit-design.md"
+)
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 PHASE_3_README = Path("Docs/superpowers/qa/product-maturity/phase-3/README.md")
-TASK_10 = Path("backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md")
+TASK_10 = Path(
+    "backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md"
+)
 TASK_10_5 = Path(
     "backlog/tasks/task-10.5 - Product-Maturity-Phase-3.5-Core-Product-Loop-Screen-Adaptation.md"
 )
@@ -61,7 +65,9 @@ def _visible_text(screen) -> str:
     return " ".join([*static_text, *button_text])
 
 
-async def _wait_for_visible_text(screen, pilot, expected: str, *, timeout: float = 4.0) -> None:
+async def _wait_for_visible_text(
+    screen, pilot, expected: str, *, timeout: float = 4.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if expected in _visible_text(screen):
@@ -71,7 +77,9 @@ async def _wait_for_visible_text(screen, pilot, expected: str, *, timeout: float
     if expected in _visible_text(screen):
         await pilot.pause()
         return
-    raise AssertionError(f"Timed out waiting for {expected!r}. Visible text: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Timed out waiting for {expected!r}. Visible text: {_visible_text(screen)}"
+    )
 
 
 class ConsoleHarness(App[None]):
@@ -157,7 +165,9 @@ async def test_home_selected_item_matches_prioritized_details_control():
             ),
         ),
     )
-    app.open_active_home_item_details = lambda **kwargs: setattr(app, "last_home_details_kwargs", kwargs)
+    app.open_active_home_item_details = lambda **kwargs: setattr(
+        app, "last_home_details_kwargs", kwargs
+    )
     host = HomeHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -256,9 +266,10 @@ async def test_library_core_loop_modes_are_actionable_without_leaving_library():
         # Same screen instance, same rail + canvas shell -- the mode row
         # recomposed the canvas body in place rather than pushing a screen.
         assert _active_destination_screen(host) is screen
-        assert screen.query_one("#library-canvas") in screen.query_one(
-            "#library-collections-panel"
-        ).ancestors
+        assert (
+            screen.query_one("#library-canvas")
+            in screen.query_one("#library-collections-panel").ancestors
+        )
         assert screen._library_selected_row_id == "browse-collections"
         assert screen.query_one("#library-row-browse-collections").has_class(
             "library-rail-row-selected"
@@ -269,9 +280,10 @@ async def test_library_core_loop_modes_are_actionable_without_leaving_library():
         await _wait_for_selector(screen, pilot, "#library-study-handoff-detail")
 
         assert _active_destination_screen(host) is screen
-        assert screen.query_one("#library-canvas") in screen.query_one(
-            "#library-study-handoff-detail"
-        ).ancestors
+        assert (
+            screen.query_one("#library-canvas")
+            in screen.query_one("#library-study-handoff-detail").ancestors
+        )
         assert screen._library_selected_row_id == "create-flashcards"
         assert screen.query_one("#library-row-create-flashcards").has_class(
             "library-rail-row-selected"

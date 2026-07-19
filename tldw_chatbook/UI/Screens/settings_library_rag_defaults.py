@@ -57,6 +57,8 @@ def _coerce_bool(value: Any, default: bool) -> bool:
 
 def _coerce_int(value: Any, default: int) -> int:
     """Coerce a Settings field to int, falling back on parse failures."""
+
+
 def _coerce_int(value: Any, default: int) -> int:
     """Coerce a Settings field to int, falling back on parse failures."""
     try:
@@ -146,7 +148,9 @@ def normalise_library_rag_citation_style(value: Any) -> str:
     return text if text in CITATION_STYLES else DEFAULT_CITATION_STYLE
 
 
-def load_library_rag_defaults(app_config: Mapping[str, Any]) -> SettingsLibraryRagDefaults:
+def load_library_rag_defaults(
+    app_config: Mapping[str, Any],
+) -> SettingsLibraryRagDefaults:
     """Load Settings-owned Library/RAG defaults from app configuration.
 
     Args:
@@ -255,7 +259,10 @@ def validate_library_rag_defaults(
             f"Hybrid balance must be between {MIN_RAG_BALANCE:.1f} and {MAX_RAG_BALANCE:.1f}.",
         )
     score_threshold = _strict_float(values.score_threshold)
-    if score_threshold is None or not MIN_RAG_BALANCE <= score_threshold <= MAX_RAG_BALANCE:
+    if (
+        score_threshold is None
+        or not MIN_RAG_BALANCE <= score_threshold <= MAX_RAG_BALANCE
+    ):
         return SettingsValidationResult(
             False,
             f"Score threshold must be between {MIN_RAG_BALANCE:.1f} and {MAX_RAG_BALANCE:.1f}.",

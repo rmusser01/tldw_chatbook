@@ -17,6 +17,7 @@ import importlib.util
 import os
 from typing import Dict, Any, Optional, List
 from pathlib import Path
+
 #
 # Import External Libs
 # Docling is a heavy optional dependency (pulls in torch/transformers/
@@ -27,6 +28,7 @@ DOCLING_AVAILABLE = importlib.util.find_spec("docling") is not None
 
 try:
     import docx
+
     PYTHON_DOCX_AVAILABLE = True
 except ImportError:
     PYTHON_DOCX_AVAILABLE = False
@@ -34,24 +36,28 @@ except ImportError:
 try:
     from odf import text, teletype
     from odf.opendocument import load as load_odf
+
     ODT_AVAILABLE = True
 except ImportError:
     ODT_AVAILABLE = False
 
 try:
     from pptx import Presentation
+
     PPTX_AVAILABLE = True
 except ImportError:
     PPTX_AVAILABLE = False
 
 try:
     import openpyxl
+
     XLSX_AVAILABLE = True
 except ImportError:
     XLSX_AVAILABLE = False
 
 try:
     from striprtf.striprtf import rtf_to_text
+
     RTF_AVAILABLE = True
 except ImportError:
     RTF_AVAILABLE = False
@@ -60,6 +66,7 @@ except ImportError:
 from ..config import get_cli_setting
 from ..Metrics.metrics_logger import log_counter
 from loguru import logger
+
 # NOTE: `analyze` (LLM_Calls.Summarization_General_Lib) is intentionally NOT
 # imported at module level -- it pulls in nltk (via Chunk_Lib) and should
 # only load when LLM analysis is actually invoked, not just from parsing a
@@ -68,31 +75,38 @@ from loguru import logger
 # Constants
 # Get media processing config from CLI settings
 media_config = {
-    'document': {
-        'chunk_method': get_cli_setting('media_processing.document', 'chunk_method', 'sentences'),
-        'chunk_size': get_cli_setting('media_processing.document', 'chunk_size', 1500),
-        'chunk_overlap': get_cli_setting('media_processing.document', 'chunk_overlap', 100),
-        'max_summary_length': get_cli_setting('media_processing.document', 'max_summary_length', 1000),
+    "document": {
+        "chunk_method": get_cli_setting(
+            "media_processing.document", "chunk_method", "sentences"
+        ),
+        "chunk_size": get_cli_setting("media_processing.document", "chunk_size", 1500),
+        "chunk_overlap": get_cli_setting(
+            "media_processing.document", "chunk_overlap", 100
+        ),
+        "max_summary_length": get_cli_setting(
+            "media_processing.document", "max_summary_length", 1000
+        ),
     }
 }
 
 # Supported document formats
 SUPPORTED_FORMATS = {
-    '.docx': 'Microsoft Word',
-    '.doc': 'Microsoft Word (Legacy)',
-    '.odt': 'OpenDocument Text',
-    '.rtf': 'Rich Text Format',
-    '.pptx': 'Microsoft PowerPoint',
-    '.ppt': 'Microsoft PowerPoint (Legacy)',
-    '.xlsx': 'Microsoft Excel',
-    '.xls': 'Microsoft Excel (Legacy)',
-    '.ods': 'OpenDocument Spreadsheet',
-    '.odp': 'OpenDocument Presentation'
+    ".docx": "Microsoft Word",
+    ".doc": "Microsoft Word (Legacy)",
+    ".odt": "OpenDocument Text",
+    ".rtf": "Rich Text Format",
+    ".pptx": "Microsoft PowerPoint",
+    ".ppt": "Microsoft PowerPoint (Legacy)",
+    ".xlsx": "Microsoft Excel",
+    ".xls": "Microsoft Excel (Legacy)",
+    ".ods": "OpenDocument Spreadsheet",
+    ".odp": "OpenDocument Presentation",
 }
 
 #######################################################################################################################
 # Function Definitions
 #
+
 
 def process_document(
     file_path: str,
@@ -106,13 +120,13 @@ def process_document(
     api_name: Optional[str] = None,
     api_key: Optional[str] = None,
     chunk_options: Optional[Dict[str, Any]] = None,
-    processing_method: str = 'auto',
+    processing_method: str = "auto",
     enable_ocr: bool = False,  # NEW: Enable OCR for scanned documents
-    ocr_language: str = "en"   # NEW: OCR language code
+    ocr_language: str = "en",  # NEW: OCR language code
 ) -> Dict[str, Any]:
     """
     Process a document file and extract its content.
-    
+
     Args:
         file_path: Path to the document file
         title_override: Optional title to use instead of extracted title
@@ -128,7 +142,7 @@ def process_document(
         processing_method: Method to use ('auto', 'docling', 'native')
         enable_ocr: Enable OCR for scanned documents (only works with 'docling' method)
         ocr_language: Language code for OCR (e.g., 'en', 'de', 'fr')
-        
+
     Returns:
         Dict containing:
             - content: Extracted text content
@@ -141,80 +155,107 @@ def process_document(
     """
     logger.info(f"Processing document: {file_path}")
     log_counter("document_processing_attempt", labels={"file_path": file_path})
-    
+
     file_ext = Path(file_path).suffix.lower()
-    
+
     if file_ext not in SUPPORTED_FORMATS:
         logger.error(f"Unsupported document format: {file_ext}")
         return {
-            'content': '',
-            'title': os.path.basename(file_path),
-            'author': 'Unknown',
-            'metadata': {'error': f'Unsupported format: {file_ext}'},
-            'extraction_successful': False
+            "content": "",
+            "title": os.path.basename(file_path),
+            "author": "Unknown",
+            "metadata": {"error": f"Unsupported format: {file_ext}"},
+            "extraction_successful": False,
         }
-    
+
     # Default chunk options
     if chunk_options is None:
         chunk_options = {
-            'method': media_config['document']['chunk_method'],
-            'max_size': media_config['document']['chunk_size'],
-            'overlap': media_config['document']['chunk_overlap'],
-            'adaptive': True,
-            'language': 'en'
+            "method": media_config["document"]["chunk_method"],
+            "max_size": media_config["document"]["chunk_size"],
+            "overlap": media_config["document"]["chunk_overlap"],
+            "adaptive": True,
+            "language": "en",
         }
-    
+
     try:
         # Determine processing method
         requested_processing_method = processing_method
         docling_available_for_request = DOCLING_AVAILABLE
-        if processing_method == 'auto':
+        if processing_method == "auto":
             if docling_available_for_request:
-                processing_method = 'docling'
+                processing_method = "docling"
             else:
-                processing_method = 'native'
-        
+                processing_method = "native"
+
         # Extract content based on method
-        if processing_method == 'docling':
+        if processing_method == "docling":
             if not docling_available_for_request:
-                raise ImportError("Docling processing requested, but Docling is unavailable")
+                raise ImportError(
+                    "Docling processing requested, but Docling is unavailable"
+                )
             try:
-                result = process_with_docling(file_path, title_override, author_override, keywords, enable_ocr, ocr_language)
+                result = process_with_docling(
+                    file_path,
+                    title_override,
+                    author_override,
+                    keywords,
+                    enable_ocr,
+                    ocr_language,
+                )
             except ImportError:
-                if requested_processing_method != 'auto':
+                if requested_processing_method != "auto":
                     raise
                 docling_available_for_request = False
-                processing_method = 'native'
+                processing_method = "native"
 
-        if processing_method != 'docling':
+        if processing_method != "docling":
             # Use native libraries based on file type
-            if file_ext == '.docx' and PYTHON_DOCX_AVAILABLE:
-                result = process_docx(file_path, title_override, author_override, keywords)
-            elif file_ext == '.odt' and ODT_AVAILABLE:
-                result = process_odt(file_path, title_override, author_override, keywords)
-            elif file_ext == '.rtf' and RTF_AVAILABLE:
-                result = process_rtf(file_path, title_override, author_override, keywords)
-            elif file_ext == '.pptx' and PPTX_AVAILABLE:
-                result = process_pptx(file_path, title_override, author_override, keywords)
-            elif file_ext in ['.xlsx', '.xls'] and XLSX_AVAILABLE:
-                result = process_xlsx(file_path, title_override, author_override, keywords)
+            if file_ext == ".docx" and PYTHON_DOCX_AVAILABLE:
+                result = process_docx(
+                    file_path, title_override, author_override, keywords
+                )
+            elif file_ext == ".odt" and ODT_AVAILABLE:
+                result = process_odt(
+                    file_path, title_override, author_override, keywords
+                )
+            elif file_ext == ".rtf" and RTF_AVAILABLE:
+                result = process_rtf(
+                    file_path, title_override, author_override, keywords
+                )
+            elif file_ext == ".pptx" and PPTX_AVAILABLE:
+                result = process_pptx(
+                    file_path, title_override, author_override, keywords
+                )
+            elif file_ext in [".xlsx", ".xls"] and XLSX_AVAILABLE:
+                result = process_xlsx(
+                    file_path, title_override, author_override, keywords
+                )
             else:
                 # Fallback to Docling if available
                 if docling_available_for_request:
-                    result = process_with_docling(file_path, title_override, author_override, keywords, enable_ocr, ocr_language)
+                    result = process_with_docling(
+                        file_path,
+                        title_override,
+                        author_override,
+                        keywords,
+                        enable_ocr,
+                        ocr_language,
+                    )
                 else:
                     return {
-                        'content': '',
-                        'title': os.path.basename(file_path),
-                        'author': 'Unknown',
-                        'metadata': {'error': f'No parser available for {file_ext}'},
-                        'extraction_successful': False
+                        "content": "",
+                        "title": os.path.basename(file_path),
+                        "author": "Unknown",
+                        "metadata": {"error": f"No parser available for {file_ext}"},
+                        "extraction_successful": False,
                     }
-        
+
         # Add summarization if requested
-        if auto_summarize and api_name and result.get('extraction_successful'):
+        if auto_summarize and api_name and result.get("extraction_successful"):
             from ..LLM_Calls.Summarization_General_Lib import analyze
-            content = result.get('content', '')
+
+            content = result.get("content", "")
             if content:
                 if custom_prompt:
                     summary_prompt = custom_prompt
@@ -227,26 +268,33 @@ def process_document(
                     api_name=api_name,
                     api_key=api_key,
                     temp=0.7,
-                    system_message=system_prompt
+                    system_message=system_prompt,
                 )
-                result['summary'] = summary
+                result["summary"] = summary
             else:
-                result['summary'] = "No content available to summarize."
+                result["summary"] = "No content available to summarize."
         elif summary:
-            result['summary'] = summary
-        
-        log_counter("document_processing_success", labels={"method": processing_method, "format": file_ext})
+            result["summary"] = summary
+
+        log_counter(
+            "document_processing_success",
+            labels={"method": processing_method, "format": file_ext},
+        )
         return result
-        
+
     except Exception as e:
-        logger.opt(exception=True).error(f"Error processing document {file_path}: {str(e)}")
-        log_counter("document_processing_error", labels={"error": str(e), "format": file_ext})
+        logger.opt(exception=True).error(
+            f"Error processing document {file_path}: {str(e)}"
+        )
+        log_counter(
+            "document_processing_error", labels={"error": str(e), "format": file_ext}
+        )
         return {
-            'content': '',
-            'title': os.path.basename(file_path),
-            'author': 'Unknown',
-            'metadata': {'error': str(e)},
-            'extraction_successful': False
+            "content": "",
+            "title": os.path.basename(file_path),
+            "author": "Unknown",
+            "metadata": {"error": str(e)},
+            "extraction_successful": False,
         }
 
 
@@ -256,14 +304,14 @@ def process_with_docling(
     author_override: Optional[str] = None,
     keywords: Optional[List[str]] = None,
     enable_ocr: bool = False,  # NEW: Enable OCR for scanned documents
-    ocr_language: str = "en"   # NEW: OCR language code
+    ocr_language: str = "en",  # NEW: OCR language code
 ) -> Dict[str, Any]:
     """
     Process a document using Docling.
-    
+
     Docling provides advanced document understanding and can handle
     complex layouts, tables, and various document formats.
-    
+
     Args:
         file_path: Path to the document
         title_override: Optional title override
@@ -272,12 +320,17 @@ def process_with_docling(
         enable_ocr: Whether to enable OCR for scanned content
         ocr_language: Language code for OCR (e.g., 'en', 'de', 'fr')
     """
-    logger.info(f"Processing document with Docling: {file_path}, OCR enabled: {enable_ocr}")
+    logger.info(
+        f"Processing document with Docling: {file_path}, OCR enabled: {enable_ocr}"
+    )
 
     try:
         from docling.document_converter import DocumentConverter
         from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.pipeline_options import PdfPipelineOptions, PaginatedPipelineOptions
+        from docling.datamodel.pipeline_options import (
+            PdfPipelineOptions,
+            PaginatedPipelineOptions,
+        )
         from docling.datamodel.document import WordFormatOption
         from docling.backend.md_backend import MarkdownDocumentBackend
 
@@ -285,65 +338,81 @@ def process_with_docling(
         file_extension = Path(file_path).suffix.lower()
 
         # Configure pipeline options based on file type
-        if file_extension == '.pdf':
+        if file_extension == ".pdf":
             # Use PDF-specific options
             pipeline_options = PdfPipelineOptions()
-            pipeline_options.do_ocr = enable_ocr  # Enable/disable OCR based on parameter
+            pipeline_options.do_ocr = (
+                enable_ocr  # Enable/disable OCR based on parameter
+            )
             pipeline_options.do_table_structure = True  # Extract tables
-            
+
             # Set OCR language if enabled
-            if enable_ocr and hasattr(pipeline_options, 'ocr_lang'):
+            if enable_ocr and hasattr(pipeline_options, "ocr_lang"):
                 pipeline_options.ocr_lang = ocr_language
-                
+
             # Initialize converter and convert
             converter = DocumentConverter()
             result = converter.convert(file_path, pipeline_options=pipeline_options)
-            
-        elif file_extension in ['.docx', '.doc', '.odt', '.rtf', '.pptx', '.xlsx']:
+
+        elif file_extension in [".docx", ".doc", ".odt", ".rtf", ".pptx", ".xlsx"]:
             # Use paginated options for office documents
             pipeline_options = PaginatedPipelineOptions()
             pipeline_options.do_table_structure = True  # Extract tables
-            
+
             # Set format-specific options
             format_options = {}
-            if file_extension in ['.docx', '.doc']:
+            if file_extension in [".docx", ".doc"]:
                 format_options = {
-                    InputFormat.DOCX: WordFormatOption(pipeline_options=pipeline_options)
+                    InputFormat.DOCX: WordFormatOption(
+                        pipeline_options=pipeline_options
+                    )
                 }
-            
+
             # Initialize converter with format options
             converter = DocumentConverter(format_options=format_options)
             result = converter.convert(file_path)
-            
+
         else:
             # Default fallback for other formats
             converter = DocumentConverter()
             result = converter.convert(file_path)
-        
+
         # Export to markdown
         md_backend = MarkdownDocumentBackend()
         markdown_content = result.document.export_to_markdown(backend=md_backend)
-        
+
         # Extract metadata
         metadata = {
-            'num_pages': len(result.document.pages) if hasattr(result.document, 'pages') else 1,
-            'processing_method': 'docling',
-            'tables_found': len(result.document.tables) if hasattr(result.document, 'tables') else 0,
+            "num_pages": len(result.document.pages)
+            if hasattr(result.document, "pages")
+            else 1,
+            "processing_method": "docling",
+            "tables_found": len(result.document.tables)
+            if hasattr(result.document, "tables")
+            else 0,
         }
-        
+
         # Extract title and author from document if available
-        title = title_override or result.document.title if hasattr(result.document, 'title') else os.path.basename(file_path)
-        author = author_override or result.document.author if hasattr(result.document, 'author') else 'Unknown'
-        
+        title = (
+            title_override or result.document.title
+            if hasattr(result.document, "title")
+            else os.path.basename(file_path)
+        )
+        author = (
+            author_override or result.document.author
+            if hasattr(result.document, "author")
+            else "Unknown"
+        )
+
         return {
-            'content': markdown_content,
-            'title': title,
-            'author': author,
-            'metadata': metadata,
-            'keywords': keywords or [],
-            'extraction_successful': True
+            "content": markdown_content,
+            "title": title,
+            "author": author,
+            "metadata": metadata,
+            "keywords": keywords or [],
+            "extraction_successful": True,
         }
-        
+
     except Exception as e:
         logger.opt(exception=True).error(f"Error processing with Docling: {str(e)}")
         raise
@@ -353,20 +422,20 @@ def process_docx(
     file_path: str,
     title_override: Optional[str] = None,
     author_override: Optional[str] = None,
-    keywords: Optional[List[str]] = None
+    keywords: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Process a DOCX file using python-docx."""
     logger.info(f"Processing DOCX file: {file_path}")
-    
+
     try:
         doc = docx.Document(file_path)
-        
+
         # Extract text content
         content_parts = []
         for paragraph in doc.paragraphs:
             if paragraph.text.strip():
                 content_parts.append(paragraph.text)
-        
+
         # Extract tables
         for table in doc.tables:
             table_text = []
@@ -377,33 +446,33 @@ def process_docx(
                     if cell_text:
                         row_text.append(cell_text)
                 if row_text:
-                    table_text.append(' | '.join(row_text))
+                    table_text.append(" | ".join(row_text))
             if table_text:
-                content_parts.append('\n' + '\n'.join(table_text) + '\n')
-        
-        content = '\n\n'.join(content_parts)
-        
+                content_parts.append("\n" + "\n".join(table_text) + "\n")
+
+        content = "\n\n".join(content_parts)
+
         # Extract metadata
         core_props = doc.core_properties
         title = title_override or core_props.title or os.path.basename(file_path)
-        author = author_override or core_props.author or 'Unknown'
-        
+        author = author_override or core_props.author or "Unknown"
+
         metadata = {
-            'created': str(core_props.created) if core_props.created else None,
-            'modified': str(core_props.modified) if core_props.modified else None,
-            'subject': core_props.subject,
-            'processing_method': 'python-docx'
+            "created": str(core_props.created) if core_props.created else None,
+            "modified": str(core_props.modified) if core_props.modified else None,
+            "subject": core_props.subject,
+            "processing_method": "python-docx",
         }
-        
+
         return {
-            'content': content,
-            'title': title,
-            'author': author,
-            'metadata': metadata,
-            'keywords': keywords or [],
-            'extraction_successful': True
+            "content": content,
+            "title": title,
+            "author": author,
+            "metadata": metadata,
+            "keywords": keywords or [],
+            "extraction_successful": True,
         }
-        
+
     except Exception as e:
         logger.opt(exception=True).error(f"Error processing DOCX: {str(e)}")
         raise
@@ -413,39 +482,43 @@ def process_odt(
     file_path: str,
     title_override: Optional[str] = None,
     author_override: Optional[str] = None,
-    keywords: Optional[List[str]] = None
+    keywords: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Process an ODT file using odfpy."""
     logger.info(f"Processing ODT file: {file_path}")
-    
+
     try:
         doc = load_odf(file_path)
-        
+
         # Extract text content
         all_paragraphs = doc.getElementsByType(text.P)
         content_parts = []
-        
+
         for paragraph in all_paragraphs:
             text_content = teletype.extractText(paragraph).strip()
             if text_content:
                 content_parts.append(text_content)
-        
-        content = '\n\n'.join(content_parts)
-        
+
+        content = "\n\n".join(content_parts)
+
         # Extract metadata
         meta = doc.meta
-        title = title_override or (meta.getElementsByType(text.Title)[0].firstChild.data if meta.getElementsByType(text.Title) else os.path.basename(file_path))
-        author = author_override or 'Unknown'  # ODT metadata extraction is limited
-        
+        title = title_override or (
+            meta.getElementsByType(text.Title)[0].firstChild.data
+            if meta.getElementsByType(text.Title)
+            else os.path.basename(file_path)
+        )
+        author = author_override or "Unknown"  # ODT metadata extraction is limited
+
         return {
-            'content': content,
-            'title': title,
-            'author': author,
-            'metadata': {'processing_method': 'odfpy'},
-            'keywords': keywords or [],
-            'extraction_successful': True
+            "content": content,
+            "title": title,
+            "author": author,
+            "metadata": {"processing_method": "odfpy"},
+            "keywords": keywords or [],
+            "extraction_successful": True,
         }
-        
+
     except Exception as e:
         logger.opt(exception=True).error(f"Error processing ODT: {str(e)}")
         raise
@@ -455,27 +528,27 @@ def process_rtf(
     file_path: str,
     title_override: Optional[str] = None,
     author_override: Optional[str] = None,
-    keywords: Optional[List[str]] = None
+    keywords: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Process an RTF file using striprtf."""
     logger.info(f"Processing RTF file: {file_path}")
-    
+
     try:
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as file:
             rtf_content = file.read()
-        
+
         # Convert RTF to plain text
         text_content = rtf_to_text(rtf_content)
-        
+
         return {
-            'content': text_content,
-            'title': title_override or os.path.basename(file_path),
-            'author': author_override or 'Unknown',
-            'metadata': {'processing_method': 'striprtf'},
-            'keywords': keywords or [],
-            'extraction_successful': True
+            "content": text_content,
+            "title": title_override or os.path.basename(file_path),
+            "author": author_override or "Unknown",
+            "metadata": {"processing_method": "striprtf"},
+            "keywords": keywords or [],
+            "extraction_successful": True,
         }
-        
+
     except Exception as e:
         logger.opt(exception=True).error(f"Error processing RTF: {str(e)}")
         raise
@@ -485,24 +558,24 @@ def process_pptx(
     file_path: str,
     title_override: Optional[str] = None,
     author_override: Optional[str] = None,
-    keywords: Optional[List[str]] = None
+    keywords: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Process a PPTX file using python-pptx."""
     logger.info(f"Processing PPTX file: {file_path}")
-    
+
     try:
         prs = Presentation(file_path)
-        
+
         content_parts = []
-        
+
         # Extract text from slides
         for slide_num, slide in enumerate(prs.slides, 1):
             slide_text = [f"## Slide {slide_num}"]
-            
+
             for shape in slide.shapes:
                 if hasattr(shape, "text") and shape.text.strip():
                     slide_text.append(shape.text)
-                
+
                 # Extract text from tables
                 if shape.has_table:
                     table_text = []
@@ -512,36 +585,36 @@ def process_pptx(
                             if cell.text.strip():
                                 row_text.append(cell.text.strip())
                         if row_text:
-                            table_text.append(' | '.join(row_text))
+                            table_text.append(" | ".join(row_text))
                     if table_text:
-                        slide_text.append('\n'.join(table_text))
-            
+                        slide_text.append("\n".join(table_text))
+
             if len(slide_text) > 1:  # More than just the slide header
-                content_parts.append('\n'.join(slide_text))
-        
-        content = '\n\n'.join(content_parts)
-        
+                content_parts.append("\n".join(slide_text))
+
+        content = "\n\n".join(content_parts)
+
         # Extract metadata
         core_props = prs.core_properties
         title = title_override or core_props.title or os.path.basename(file_path)
-        author = author_override or core_props.author or 'Unknown'
-        
+        author = author_override or core_props.author or "Unknown"
+
         metadata = {
-            'num_slides': len(prs.slides),
-            'created': str(core_props.created) if core_props.created else None,
-            'modified': str(core_props.modified) if core_props.modified else None,
-            'processing_method': 'python-pptx'
+            "num_slides": len(prs.slides),
+            "created": str(core_props.created) if core_props.created else None,
+            "modified": str(core_props.modified) if core_props.modified else None,
+            "processing_method": "python-pptx",
         }
-        
+
         return {
-            'content': content,
-            'title': title,
-            'author': author,
-            'metadata': metadata,
-            'keywords': keywords or [],
-            'extraction_successful': True
+            "content": content,
+            "title": title,
+            "author": author,
+            "metadata": metadata,
+            "keywords": keywords or [],
+            "extraction_successful": True,
         }
-        
+
     except Exception as e:
         logger.opt(exception=True).error(f"Error processing PPTX: {str(e)}")
         raise
@@ -551,85 +624,87 @@ def process_xlsx(
     file_path: str,
     title_override: Optional[str] = None,
     author_override: Optional[str] = None,
-    keywords: Optional[List[str]] = None
+    keywords: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Process an XLSX file using openpyxl."""
     logger.info(f"Processing XLSX file: {file_path}")
-    
+
     try:
         wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
-        
+
         content_parts = []
-        
+
         # Process each sheet
         for sheet_name in wb.sheetnames:
             sheet = wb[sheet_name]
             sheet_content = [f"## Sheet: {sheet_name}"]
-            
+
             # Extract data from cells
             rows_data = []
             for row in sheet.iter_rows(values_only=True):
                 # Filter out empty rows
-                row_values = [str(cell) if cell is not None else '' for cell in row]
+                row_values = [str(cell) if cell is not None else "" for cell in row]
                 if any(val.strip() for val in row_values):
-                    rows_data.append(' | '.join(row_values))
-            
+                    rows_data.append(" | ".join(row_values))
+
             if rows_data:
                 sheet_content.extend(rows_data[:100])  # Limit to first 100 rows
                 if len(rows_data) > 100:
                     sheet_content.append(f"... and {len(rows_data) - 100} more rows")
-                
-                content_parts.append('\n'.join(sheet_content))
-        
-        content = '\n\n'.join(content_parts)
-        
+
+                content_parts.append("\n".join(sheet_content))
+
+        content = "\n\n".join(content_parts)
+
         # Extract metadata
         title = title_override or wb.properties.title or os.path.basename(file_path)
-        author = author_override or wb.properties.creator or 'Unknown'
-        
+        author = author_override or wb.properties.creator or "Unknown"
+
         metadata = {
-            'num_sheets': len(wb.sheetnames),
-            'created': str(wb.properties.created) if wb.properties.created else None,
-            'modified': str(wb.properties.modified) if wb.properties.modified else None,
-            'processing_method': 'openpyxl'
+            "num_sheets": len(wb.sheetnames),
+            "created": str(wb.properties.created) if wb.properties.created else None,
+            "modified": str(wb.properties.modified) if wb.properties.modified else None,
+            "processing_method": "openpyxl",
         }
-        
+
         wb.close()
-        
+
         return {
-            'content': content,
-            'title': title,
-            'author': author,
-            'metadata': metadata,
-            'keywords': keywords or [],
-            'extraction_successful': True
+            "content": content,
+            "title": title,
+            "author": author,
+            "metadata": metadata,
+            "keywords": keywords or [],
+            "extraction_successful": True,
         }
-        
+
     except Exception as e:
         logger.opt(exception=True).error(f"Error processing XLSX: {str(e)}")
         raise
 
 
-def extract_text_from_document(file_path: str, method: str = 'auto') -> str:
+def extract_text_from_document(file_path: str, method: str = "auto") -> str:
     """
     Simple text extraction from a document file.
-    
+
     Args:
         file_path: Path to the document
         method: Extraction method ('auto', 'docling', 'native')
-        
+
     Returns:
         Extracted text as string
     """
     result = process_document(file_path, processing_method=method)
-    
-    if result.get('extraction_successful'):
-        return result.get('content', '')
+
+    if result.get("extraction_successful"):
+        return result.get("content", "")
     else:
-        raise ValueError(f"Failed to extract text: {result.get('metadata', {}).get('error', 'Unknown error')}")
+        raise ValueError(
+            f"Failed to extract text: {result.get('metadata', {}).get('error', 'Unknown error')}"
+        )
 
 
 # Compatibility function for existing code
 def process_document_with_docling(file_path: str, **kwargs) -> Dict[str, Any]:
     """Compatibility wrapper that forces Docling processing."""
-    return process_document(file_path, processing_method='docling', **kwargs)
+    return process_document(file_path, processing_method="docling", **kwargs)

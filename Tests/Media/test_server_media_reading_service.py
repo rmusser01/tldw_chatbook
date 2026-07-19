@@ -36,7 +36,10 @@ from tldw_chatbook.tldw_api import (
     ReadingSummaryResponse,
     ReadingTTSResponse,
 )
-from tldw_chatbook.tldw_api.media_reading_schemas import ItemsBulkRequest, ItemsBulkResponse
+from tldw_chatbook.tldw_api.media_reading_schemas import (
+    ItemsBulkRequest,
+    ItemsBulkResponse,
+)
 
 
 class FakeClient:
@@ -46,7 +49,10 @@ class FakeClient:
 
     async def list_reading_items(self, **kwargs):
         self.calls.append(("list_reading_items", kwargs))
-        return {"items": [{"id": 41, "media_id": 99, "title": "Server Article"}], "total": 1}
+        return {
+            "items": [{"id": 41, "media_id": 99, "title": "Server Article"}],
+            "total": 1,
+        }
 
     async def list_media_keywords(self, **kwargs):
         self.calls.append(("list_media_keywords", kwargs))
@@ -55,27 +61,75 @@ class FakeClient:
     async def list_media_items(self, **kwargs):
         self.calls.append(("list_media_items", kwargs))
         return {
-            "items": [{"id": 99, "title": "Server Media", "url": "/api/v1/media/99", "type": "pdf"}],
-            "pagination": {"page": 1, "results_per_page": 10, "total_pages": 1, "total_items": 1},
+            "items": [
+                {
+                    "id": 99,
+                    "title": "Server Media",
+                    "url": "/api/v1/media/99",
+                    "type": "pdf",
+                }
+            ],
+            "pagination": {
+                "page": 1,
+                "results_per_page": 10,
+                "total_pages": 1,
+                "total_items": 1,
+            },
         }
 
     async def search_media_items(self, request_data, page=1, results_per_page=10):
-        self.calls.append(("search_media_items", request_data.model_dump(exclude_none=True, mode="json"), page, results_per_page))
+        self.calls.append(
+            (
+                "search_media_items",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                page,
+                results_per_page,
+            )
+        )
         return {
-            "items": [{"id": 99, "title": "Server Media", "url": "/api/v1/media/99", "type": "pdf"}],
-            "pagination": {"page": page, "results_per_page": results_per_page, "total_pages": 1, "total_items": 1},
+            "items": [
+                {
+                    "id": 99,
+                    "title": "Server Media",
+                    "url": "/api/v1/media/99",
+                    "type": "pdf",
+                }
+            ],
+            "pagination": {
+                "page": page,
+                "results_per_page": results_per_page,
+                "total_pages": 1,
+                "total_items": 1,
+            },
         }
 
     async def list_media_trash(self, **kwargs):
         self.calls.append(("list_media_trash", kwargs))
         return {
-            "items": [{"id": 99, "title": "Trashed Media", "url": "/api/v1/media/99", "type": "pdf"}],
-            "pagination": {"page": 1, "results_per_page": 10, "total_pages": 1, "total_items": 1},
+            "items": [
+                {
+                    "id": 99,
+                    "title": "Trashed Media",
+                    "url": "/api/v1/media/99",
+                    "type": "pdf",
+                }
+            ],
+            "pagination": {
+                "page": 1,
+                "results_per_page": 10,
+                "total_pages": 1,
+                "total_items": 1,
+            },
         }
 
     async def empty_media_trash(self):
         self.calls.append(("empty_media_trash",))
-        return {"deleted_count": 1, "failed_count": 0, "failed_ids": [], "remaining_count": 0}
+        return {
+            "deleted_count": 1,
+            "failed_count": 0,
+            "failed_ids": [],
+            "remaining_count": 0,
+        }
 
     async def search_media_metadata(self, **kwargs):
         self.calls.append(("search_media_metadata", kwargs))
@@ -86,14 +140,23 @@ class FakeClient:
 
     async def get_media_by_identifier(self, **kwargs):
         self.calls.append(("get_media_by_identifier", kwargs))
-        return {"results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}], "total": 1}
+        return {
+            "results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}],
+            "total": 1,
+        }
 
     async def get_media_transcription_models(self):
         self.calls.append(("get_media_transcription_models",))
         return {"categories": {}, "all_models": ["whisper-small"]}
 
     async def reprocess_media(self, media_id, request_data):
-        self.calls.append(("reprocess_media", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "reprocess_media",
+                media_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {
             "media_id": media_id,
             "status": "completed",
@@ -103,7 +166,13 @@ class FakeClient:
         }
 
     async def add_media(self, request_data, file_paths=None):
-        self.calls.append(("add_media", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "add_media",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {
             "processed_count": 1,
             "errors_count": 0,
@@ -119,7 +188,12 @@ class FakeClient:
         }
 
     async def save_reading_item(self, request_data):
-        self.calls.append(("save_reading_item", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "save_reading_item",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         item_id = 50 if request_data.title == "Saved URL" else 77
         return {
             "id": item_id,
@@ -169,40 +243,90 @@ class FakeClient:
         }
 
     async def bulk_update_unified_items(self, request_data):
-        self.calls.append(("bulk_update_unified_items", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "bulk_update_unified_items",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {
             "total": len(request_data.item_ids),
             "succeeded": len(request_data.item_ids),
             "failed": 0,
-            "results": [{"item_id": item_id, "success": True} for item_id in request_data.item_ids],
+            "results": [
+                {"item_id": item_id, "success": True}
+                for item_id in request_data.item_ids
+            ],
         }
 
     async def process_video(self, request_data, file_paths=None):
-        self.calls.append(("process_video", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_video",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def process_audio(self, request_data, file_paths=None):
-        self.calls.append(("process_audio", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_audio",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def process_pdf(self, request_data, file_paths=None):
-        self.calls.append(("process_pdf", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_pdf",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def process_ebook(self, request_data, file_paths=None):
-        self.calls.append(("process_ebook", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_ebook",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def process_document(self, request_data, file_paths=None):
-        self.calls.append(("process_document", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_document",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def process_code(self, request_data, file_paths=None):
-        self.calls.append(("process_code", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_code",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def process_email(self, request_data, file_paths=None):
-        self.calls.append(("process_email", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_email",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def get_reading_item(self, item_id):
@@ -210,17 +334,34 @@ class FakeClient:
         return {"id": item_id, "media_id": 99, "title": "Server Detail"}
 
     async def update_reading_item(self, item_id, request_data):
-        self.calls.append(("update_reading_item", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "update_reading_item",
+                item_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"id": item_id, "updated": True}
 
     async def delete_reading_item(self, item_id, hard=False):
         self.calls.append(("delete_reading_item", item_id, hard))
         return {"status": "deleted", "item_id": item_id, "hard": hard}
 
-    async def list_media_items(self, *, page=1, results_per_page=10, include_keywords=False):
-        self.calls.append(("list_media_items", page, results_per_page, include_keywords))
+    async def list_media_items(
+        self, *, page=1, results_per_page=10, include_keywords=False
+    ):
+        self.calls.append(
+            ("list_media_items", page, results_per_page, include_keywords)
+        )
         return {
-            "items": [{"id": 99, "title": "Server Media", "url": "/api/v1/media/99", "type": "pdf"}],
+            "items": [
+                {
+                    "id": 99,
+                    "title": "Server Media",
+                    "url": "/api/v1/media/99",
+                    "type": "pdf",
+                }
+            ],
             "pagination": {
                 "page": page,
                 "results_per_page": results_per_page,
@@ -233,10 +374,21 @@ class FakeClient:
         self.calls.append(("list_media_keywords", query, limit))
         return {"keywords": ["ai", "testing"]}
 
-    async def list_media_trash(self, *, page=1, results_per_page=10, include_keywords=False):
-        self.calls.append(("list_media_trash", page, results_per_page, include_keywords))
+    async def list_media_trash(
+        self, *, page=1, results_per_page=10, include_keywords=False
+    ):
+        self.calls.append(
+            ("list_media_trash", page, results_per_page, include_keywords)
+        )
         return {
-            "items": [{"id": 99, "title": "Trashed Media", "url": "/api/v1/media/99", "type": "pdf"}],
+            "items": [
+                {
+                    "id": 99,
+                    "title": "Trashed Media",
+                    "url": "/api/v1/media/99",
+                    "type": "pdf",
+                }
+            ],
             "pagination": {
                 "page": page,
                 "results_per_page": results_per_page,
@@ -247,7 +399,12 @@ class FakeClient:
 
     async def empty_media_trash(self):
         self.calls.append(("empty_media_trash",))
-        return {"deleted_count": 1, "failed_count": 0, "failed_ids": [], "remaining_count": 0}
+        return {
+            "deleted_count": 1,
+            "failed_count": 0,
+            "failed_ids": [],
+            "remaining_count": 0,
+        }
 
     async def get_media_item(
         self,
@@ -257,11 +414,31 @@ class FakeClient:
         include_versions=True,
         include_version_content=False,
     ):
-        self.calls.append(("get_media_item", media_id, include_content, include_versions, include_version_content))
-        return {"media_id": media_id, "source": {"title": "Server Media"}, "processing": {}, "content": {}, "keywords": []}
+        self.calls.append(
+            (
+                "get_media_item",
+                media_id,
+                include_content,
+                include_versions,
+                include_version_content,
+            )
+        )
+        return {
+            "media_id": media_id,
+            "source": {"title": "Server Media"},
+            "processing": {},
+            "content": {},
+            "keywords": [],
+        }
 
     async def update_media_item(self, media_id, request_data):
-        self.calls.append(("update_media_item", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "update_media_item",
+                media_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {
             "media_id": media_id,
             "source": {"title": request_data.title},
@@ -286,7 +463,15 @@ class FakeClient:
         include_versions=True,
         include_version_content=False,
     ):
-        self.calls.append(("restore_media_item", media_id, include_content, include_versions, include_version_content))
+        self.calls.append(
+            (
+                "restore_media_item",
+                media_id,
+                include_content,
+                include_versions,
+                include_version_content,
+            )
+        )
         return {"media_id": media_id, "restored": True}
 
     async def permanently_delete_media_item(self, media_id):
@@ -294,7 +479,9 @@ class FakeClient:
         return {"deleted": True}
 
     async def update_media_keywords(self, media_id, request_data):
-        self.calls.append(("update_media_keywords", media_id, request_data.model_dump(mode="json")))
+        self.calls.append(
+            ("update_media_keywords", media_id, request_data.model_dump(mode="json"))
+        )
         return {"media_id": media_id, "keywords": request_data.keywords}
 
     async def search_media_metadata(self, **kwargs):
@@ -306,20 +493,43 @@ class FakeClient:
 
     async def get_media_by_identifier(self, **kwargs):
         self.calls.append(("get_media_by_identifier", kwargs))
-        return {"results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}], "total": 1}
+        return {
+            "results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}],
+            "total": 1,
+        }
 
     async def process_mediawiki_dump(self, request_data, dump_file_path):
-        self.calls.append(("process_mediawiki_dump", request_data.model_dump(exclude_none=True, mode="json"), dump_file_path))
+        self.calls.append(
+            (
+                "process_mediawiki_dump",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                dump_file_path,
+            )
+        )
         if getattr(request_data, "wiki_name", None) == "Example Wiki":
-            yield {"title": "Page One", "content": "Body", "status": "Success", "input_ref": "example.xml"}
+            yield {
+                "title": "Page One",
+                "content": "Body",
+                "status": "Success",
+                "input_ref": "example.xml",
+            }
         else:
             yield {"title": "Main Page", "content": "Body"}
 
     async def ingest_mediawiki_dump(self, request_data, dump_file_path):
-        self.calls.append(("ingest_mediawiki_dump", request_data.model_dump(exclude_none=True, mode="json"), dump_file_path))
+        self.calls.append(
+            (
+                "ingest_mediawiki_dump",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                dump_file_path,
+            )
+        )
         if getattr(request_data, "wiki_name", None) == "Example Wiki":
             yield {"type": "progress", "processed": 1}
-            yield {"type": "item_result", "data": {"title": "Stored Page", "media_id": 42}}
+            yield {
+                "type": "item_result",
+                "data": {"title": "Stored Page", "media_id": 42},
+            }
         else:
             yield {"type": "summary", "processed": 1}
 
@@ -332,7 +542,13 @@ class FakeClient:
         return {"available": True, "content_length": 1024}
 
     async def add_media(self, request_data, file_paths=None):
-        self.calls.append(("add_media", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "add_media",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {
             "processed_count": 1,
             "errors_count": 0,
@@ -349,18 +565,40 @@ class FakeClient:
 
     async def get_reading_progress(self, media_id):
         self.calls.append(("get_reading_progress", media_id))
-        return {"media_id": media_id, "current_page": 4, "total_pages": 10, "percent_complete": 40.0}
+        return {
+            "media_id": media_id,
+            "current_page": 4,
+            "total_pages": 10,
+            "percent_complete": 40.0,
+        }
 
     async def update_reading_progress(self, media_id, request_data):
-        self.calls.append(("update_reading_progress", media_id, request_data.model_dump(exclude_none=True, mode="json")))
-        return {"media_id": media_id, "current_page": 5, "total_pages": 10, "percent_complete": 50.0}
+        self.calls.append(
+            (
+                "update_reading_progress",
+                media_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
+        return {
+            "media_id": media_id,
+            "current_page": 5,
+            "total_pages": 10,
+            "percent_complete": 50.0,
+        }
 
     async def delete_reading_progress(self, media_id):
         self.calls.append(("delete_reading_progress", media_id))
         return {"deleted": True}
 
     async def create_reading_highlight(self, item_id, request_data):
-        self.calls.append(("create_reading_highlight", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "create_reading_highlight",
+                item_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {
             "id": 5,
             "item_id": item_id,
@@ -376,10 +614,20 @@ class FakeClient:
 
     async def list_reading_highlights(self, item_id):
         self.calls.append(("list_reading_highlights", item_id))
-        return [await self.create_reading_highlight(item_id, request_data=Mock(model_dump=lambda **_: {}))]
+        return [
+            await self.create_reading_highlight(
+                item_id, request_data=Mock(model_dump=lambda **_: {})
+            )
+        ]
 
     async def update_reading_highlight(self, highlight_id, request_data):
-        self.calls.append(("update_reading_highlight", highlight_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "update_reading_highlight",
+                highlight_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {
             "id": highlight_id,
             "item_id": 31,
@@ -399,10 +647,23 @@ class FakeClient:
 
     async def list_ingestion_sources(self):
         self.calls.append(("list_ingestion_sources",))
-        return [{"id": 7, "source_type": "archive_snapshot", "sink_type": "media", "policy": "canonical", "enabled": True}]
+        return [
+            {
+                "id": 7,
+                "source_type": "archive_snapshot",
+                "sink_type": "media",
+                "policy": "canonical",
+                "enabled": True,
+            }
+        ]
 
     async def create_ingestion_source(self, request_data):
-        self.calls.append(("create_ingestion_source", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "create_ingestion_source",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {
             "id": 8,
             "user_id": 1,
@@ -417,15 +678,40 @@ class FakeClient:
 
     async def get_ingestion_source(self, source_id):
         self.calls.append(("get_ingestion_source", source_id))
-        return {"id": source_id, "source_type": "archive_snapshot", "sink_type": "media", "policy": "canonical", "enabled": True}
+        return {
+            "id": source_id,
+            "source_type": "archive_snapshot",
+            "sink_type": "media",
+            "policy": "canonical",
+            "enabled": True,
+        }
 
     async def patch_ingestion_source(self, source_id, request_data):
-        self.calls.append(("patch_ingestion_source", source_id, request_data.model_dump(exclude_none=True, mode="json")))
-        return {"id": source_id, "enabled": False, "source_type": "archive_snapshot", "sink_type": "media", "policy": "canonical"}
+        self.calls.append(
+            (
+                "patch_ingestion_source",
+                source_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
+        return {
+            "id": source_id,
+            "enabled": False,
+            "source_type": "archive_snapshot",
+            "sink_type": "media",
+            "policy": "canonical",
+        }
 
     async def list_ingestion_source_items(self, source_id):
         self.calls.append(("list_ingestion_source_items", source_id))
-        return [{"id": 55, "source_id": source_id, "normalized_relative_path": "chapter-1.md", "sync_status": "synced"}]
+        return [
+            {
+                "id": 55,
+                "source_id": source_id,
+                "normalized_relative_path": "chapter-1.md",
+                "sync_status": "synced",
+            }
+        ]
 
     async def trigger_ingestion_source_sync(self, source_id):
         self.calls.append(("trigger_ingestion_source_sync", source_id))
@@ -445,12 +731,24 @@ class FakeClient:
             "binding": {"media_id": 99},
         }
 
-    async def list_media_versions(self, media_id, *, include_content=False, limit=10, page=1):
-        self.calls.append(("list_media_versions", media_id, include_content, limit, page))
-        return [{"media_id": media_id, "version_number": 1, "analysis_content": "analysis"}]
+    async def list_media_versions(
+        self, media_id, *, include_content=False, limit=10, page=1
+    ):
+        self.calls.append(
+            ("list_media_versions", media_id, include_content, limit, page)
+        )
+        return [
+            {"media_id": media_id, "version_number": 1, "analysis_content": "analysis"}
+        ]
 
     async def create_media_version(self, media_id, request_data):
-        self.calls.append(("create_media_version", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "create_media_version",
+                media_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"media_id": media_id, "version_number": 2}
 
     async def delete_media_version(self, media_id, version_number):
@@ -458,23 +756,57 @@ class FakeClient:
         return {"deleted": True, "media_id": media_id, "version_number": version_number}
 
     async def rollback_media_version(self, media_id, request_data):
-        self.calls.append(("rollback_media_version", media_id, request_data.model_dump(mode="json")))
-        return {"rolled_back": True, "media_id": media_id, "version_number": request_data.version_number}
+        self.calls.append(
+            ("rollback_media_version", media_id, request_data.model_dump(mode="json"))
+        )
+        return {
+            "rolled_back": True,
+            "media_id": media_id,
+            "version_number": request_data.version_number,
+        }
 
     async def patch_media_metadata(self, media_id, request_data):
-        self.calls.append(("patch_media_metadata", media_id, request_data.model_dump(mode="json")))
-        return {"media_id": media_id, "safe_metadata": request_data.safe_metadata, "patched": True}
+        self.calls.append(
+            ("patch_media_metadata", media_id, request_data.model_dump(mode="json"))
+        )
+        return {
+            "media_id": media_id,
+            "safe_metadata": request_data.safe_metadata,
+            "patched": True,
+        }
 
     async def put_media_version_metadata(self, media_id, version_number, request_data):
-        self.calls.append(("put_media_version_metadata", media_id, version_number, request_data.model_dump(mode="json")))
-        return {"media_id": media_id, "version_number": version_number, "safe_metadata": request_data.safe_metadata}
+        self.calls.append(
+            (
+                "put_media_version_metadata",
+                media_id,
+                version_number,
+                request_data.model_dump(mode="json"),
+            )
+        )
+        return {
+            "media_id": media_id,
+            "version_number": version_number,
+            "safe_metadata": request_data.safe_metadata,
+        }
 
     async def upsert_media_version_advanced(self, media_id, request_data):
-        self.calls.append(("upsert_media_version_advanced", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "upsert_media_version_advanced",
+                media_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"media_id": media_id, "version_number": 3, "advanced": True}
 
     async def save_reading_item(self, request_data):
-        self.calls.append(("save_reading_item", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "save_reading_item",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         item_id = 50 if request_data.title == "Saved URL" else 77
         return {
             "id": item_id,
@@ -487,7 +819,12 @@ class FakeClient:
         }
 
     async def create_reading_saved_search(self, request_data):
-        self.calls.append(("create_reading_saved_search", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "create_reading_saved_search",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return ReadingSavedSearchResponse.model_validate(
             {"id": 1, "name": "Morning", "query": {"q": "ai"}, "sort": "updated_desc"}
         )
@@ -504,9 +841,20 @@ class FakeClient:
         )
 
     async def update_reading_saved_search(self, search_id, request_data):
-        self.calls.append(("update_reading_saved_search", search_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "update_reading_saved_search",
+                search_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return ReadingSavedSearchResponse.model_validate(
-            {"id": search_id, "name": "Updated", "query": {"q": "ml"}, "sort": "created_desc"}
+            {
+                "id": search_id,
+                "name": "Updated",
+                "query": {"q": "ml"},
+                "sort": "created_desc",
+            }
         )
 
     async def delete_reading_saved_search(self, search_id):
@@ -515,11 +863,17 @@ class FakeClient:
 
     async def link_note_to_reading_item(self, item_id, note_id):
         self.calls.append(("link_note_to_reading_item", item_id, note_id))
-        return ReadingNoteLinkResponse.model_validate({"item_id": item_id, "note_id": note_id})
+        return ReadingNoteLinkResponse.model_validate(
+            {"item_id": item_id, "note_id": note_id}
+        )
 
     async def link_reading_item_note(self, item_id, request_data):
-        self.calls.append(("link_reading_item_note", item_id, request_data.model_dump(mode="json")))
-        return ReadingNoteLinkResponse.model_validate({"item_id": item_id, "note_id": request_data.note_id})
+        self.calls.append(
+            ("link_reading_item_note", item_id, request_data.model_dump(mode="json"))
+        )
+        return ReadingNoteLinkResponse.model_validate(
+            {"item_id": item_id, "note_id": request_data.note_id}
+        )
 
     async def list_reading_item_note_links(self, item_id):
         self.calls.append(("list_reading_item_note_links", item_id))
@@ -537,13 +891,29 @@ class FakeClient:
         return {"ok": True}
 
     async def bulk_update_reading_items(self, request_data):
-        self.calls.append(("bulk_update_reading_items", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "bulk_update_reading_items",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return ItemsBulkResponse.model_validate(
-            {"total": 2, "succeeded": 2, "failed": 0, "results": [{"item_id": 50, "success": True}]}
+            {
+                "total": 2,
+                "succeeded": 2,
+                "failed": 0,
+                "results": [{"item_id": 50, "success": True}],
+            }
         )
 
     async def create_reading_archive(self, item_id, request_data):
-        self.calls.append(("create_reading_archive", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "create_reading_archive",
+                item_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         output_id = 77 if item_id == 31 else 99
         return ReadingArchiveResponse.model_validate(
             {
@@ -556,7 +926,13 @@ class FakeClient:
         )
 
     async def summarize_reading_item(self, item_id, request_data):
-        self.calls.append(("summarize_reading_item", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "summarize_reading_item",
+                item_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return ReadingSummaryResponse.model_validate(
             {
                 "item_id": item_id,
@@ -567,12 +943,21 @@ class FakeClient:
             }
         )
 
-    async def import_reading_items(self, import_path, *, source="auto", merge_tags=True):
+    async def import_reading_items(
+        self, import_path, *, source="auto", merge_tags=True
+    ):
         self.calls.append(("import_reading_items", import_path, source, merge_tags))
-        return ReadingImportJobResponse.model_validate({"job_id": 701, "job_uuid": "job-uuid", "status": "queued"})
+        return ReadingImportJobResponse.model_validate(
+            {"job_id": 701, "job_uuid": "job-uuid", "status": "queued"}
+        )
 
     async def export_reading_items(self, **kwargs):
-        self.calls.append(("export_reading_items", {key: value for key, value in kwargs.items() if value is not None}))
+        self.calls.append(
+            (
+                "export_reading_items",
+                {key: value for key, value in kwargs.items() if value is not None},
+            )
+        )
         return ReadingExportResponse(
             content=b'{"id":31}\n',
             content_type="application/x-ndjson",
@@ -581,7 +966,13 @@ class FakeClient:
         )
 
     async def tts_reading_item(self, item_id, request_data):
-        self.calls.append(("tts_reading_item", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "tts_reading_item",
+                item_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return ReadingTTSResponse(
             item_id=item_id,
             content=b"mp3-bytes",
@@ -599,7 +990,13 @@ class FakeClient:
                         "job_id": 701,
                         "job_uuid": "job-uuid",
                         "status": status or "completed",
-                        "result": {"source": "pocket", "imported": 2, "updated": 1, "skipped": 0, "errors": []},
+                        "result": {
+                            "source": "pocket",
+                            "imported": 2,
+                            "updated": 1,
+                            "skipped": 0,
+                            "errors": [],
+                        },
                     }
                 ],
                 "total": 1,
@@ -615,13 +1012,26 @@ class FakeClient:
                 "job_id": job_id,
                 "job_uuid": "job-uuid",
                 "status": "completed",
-                "result": {"source": "pocket", "imported": 2, "updated": 1, "skipped": 0, "errors": []},
+                "result": {
+                    "source": "pocket",
+                    "imported": 2,
+                    "updated": 1,
+                    "skipped": 0,
+                    "errors": [],
+                },
             }
         )
 
     async def create_reading_digest_schedule(self, request_data):
-        self.calls.append(("create_reading_digest_schedule", request_data.model_dump(exclude_none=True, mode="json")))
-        self.digest_schedule_id = "sched-1" if request_data.name == "Morning Digest" else "digest-1"
+        self.calls.append(
+            (
+                "create_reading_digest_schedule",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
+        self.digest_schedule_id = (
+            "sched-1" if request_data.name == "Morning Digest" else "digest-1"
+        )
         return {"id": self.digest_schedule_id}
 
     async def list_reading_digest_schedules(self, *, limit=50, offset=0):
@@ -655,7 +1065,13 @@ class FakeClient:
         )
 
     async def update_reading_digest_schedule(self, schedule_id, request_data):
-        self.calls.append(("update_reading_digest_schedule", schedule_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "update_reading_digest_schedule",
+                schedule_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return ReadingDigestScheduleResponse.model_validate(
             {
                 "id": schedule_id,
@@ -672,7 +1088,9 @@ class FakeClient:
         self.calls.append(("delete_reading_digest_schedule", schedule_id))
         return {"ok": True}
 
-    async def list_reading_digest_outputs(self, *, schedule_id=None, limit=50, offset=0):
+    async def list_reading_digest_outputs(
+        self, *, schedule_id=None, limit=50, offset=0
+    ):
         self.calls.append(("list_reading_digest_outputs", schedule_id, limit, offset))
         return ReadingDigestOutputsListResponse.model_validate(
             {
@@ -692,7 +1110,12 @@ class FakeClient:
         )
 
     async def ingest_web_content(self, request_data):
-        self.calls.append(("ingest_web_content", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "ingest_web_content",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {
             "status": "success",
             "message": "Web content processed",
@@ -706,26 +1129,51 @@ class FakeClient:
         }
 
     async def submit_media_ingest_jobs(self, request_data, file_paths=None):
-        self.calls.append(("submit_media_ingest_jobs", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "submit_media_ingest_jobs",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {
             "batch_id": "batch-1",
-            "jobs": [{"id": 7, "source": "https://example.com/document", "source_kind": "url", "status": "queued"}],
+            "jobs": [
+                {
+                    "id": 7,
+                    "source": "https://example.com/document",
+                    "source_kind": "url",
+                    "status": "queued",
+                }
+            ],
             "errors": [],
         }
 
     async def get_media_ingest_job(self, job_id):
         self.calls.append(("get_media_ingest_job", job_id))
-        return {"id": job_id, "status": "queued", "job_type": "document", "batch_id": "batch-1"}
+        return {
+            "id": job_id,
+            "status": "queued",
+            "job_type": "document",
+            "batch_id": "batch-1",
+        }
 
     async def list_media_ingest_jobs(self, batch_id, *, limit=100):
         self.calls.append(("list_media_ingest_jobs", batch_id, limit))
-        return {"batch_id": batch_id, "jobs": [{"id": 7, "status": "queued", "job_type": "document"}]}
+        return {
+            "batch_id": batch_id,
+            "jobs": [{"id": 7, "status": "queued", "job_type": "document"}],
+        }
 
     def stream_media_ingest_job_events(self, *, batch_id=None, after_id=0):
         self.calls.append(("stream_media_ingest_job_events", batch_id, after_id))
 
         async def _events():
-            yield {"event": "snapshot", "data": {"batch_id": batch_id, "jobs": [{"id": 7, "status": "queued"}]}, "id": "1"}
+            yield {
+                "event": "snapshot",
+                "data": {"batch_id": batch_id, "jobs": [{"id": 7, "status": "queued"}]},
+                "id": "1",
+            }
             await self.get_media_ingest_job(7)
             yield {
                 "event": "job",
@@ -737,10 +1185,19 @@ class FakeClient:
 
     async def cancel_media_ingest_job(self, job_id, *, reason=None):
         self.calls.append(("cancel_media_ingest_job", job_id, reason))
-        return {"success": True, "job_id": job_id, "status": "cancelled", "message": reason}
+        return {
+            "success": True,
+            "job_id": job_id,
+            "status": "cancelled",
+            "message": reason,
+        }
 
-    async def cancel_media_ingest_batch(self, *, batch_id=None, session_id=None, reason=None):
-        self.calls.append(("cancel_media_ingest_jobs_batch", batch_id, session_id, reason))
+    async def cancel_media_ingest_batch(
+        self, *, batch_id=None, session_id=None, reason=None
+    ):
+        self.calls.append(
+            ("cancel_media_ingest_jobs_batch", batch_id, session_id, reason)
+        )
         return {
             "success": True,
             "batch_id": batch_id or "batch-1",
@@ -752,50 +1209,157 @@ class FakeClient:
         }
 
     async def process_video(self, request_data, file_paths=None):
-        self.calls.append(("process_video", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"status": "Success", "input_ref": "video.mp4", "media_type": "video"}]}
-
-    async def process_audio(self, request_data, file_paths=None):
-        self.calls.append(("process_audio", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"status": "Success", "input_ref": "audio.mp3", "media_type": "audio"}]}
-
-    async def process_pdf(self, request_data, file_paths=None):
-        self.calls.append(("process_pdf", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"status": "Success", "input_ref": "paper.pdf", "media_type": "pdf"}]}
-
-    async def process_ebook(self, request_data, file_paths=None):
-        self.calls.append(("process_ebook", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"status": "Success", "input_ref": "book.epub", "media_type": "ebook"}]}
-
-    async def process_document(self, request_data, file_paths=None):
-        self.calls.append(("process_document", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"status": "Success", "input_ref": "doc.md", "media_type": "document"}]}
-
-    async def process_plaintext(self, request_data, file_paths=None):
-        self.calls.append(("process_plaintext", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"status": "Success", "input_ref": "notes.txt", "media_type": "plaintext"}]}
-
-    async def process_code(self, request_data, file_paths=None):
-        self.calls.append(("process_code", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_video",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {
             "processed_count": 1,
             "errors_count": 0,
             "errors": [],
-            "results": [{"status": "Success", "input_ref": "main.py", "media_type": "code"}],
+            "results": [
+                {"status": "Success", "input_ref": "video.mp4", "media_type": "video"}
+            ],
+        }
+
+    async def process_audio(self, request_data, file_paths=None):
+        self.calls.append(
+            (
+                "process_audio",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {"status": "Success", "input_ref": "audio.mp3", "media_type": "audio"}
+            ],
+        }
+
+    async def process_pdf(self, request_data, file_paths=None):
+        self.calls.append(
+            (
+                "process_pdf",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {"status": "Success", "input_ref": "paper.pdf", "media_type": "pdf"}
+            ],
+        }
+
+    async def process_ebook(self, request_data, file_paths=None):
+        self.calls.append(
+            (
+                "process_ebook",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {"status": "Success", "input_ref": "book.epub", "media_type": "ebook"}
+            ],
+        }
+
+    async def process_document(self, request_data, file_paths=None):
+        self.calls.append(
+            (
+                "process_document",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {"status": "Success", "input_ref": "doc.md", "media_type": "document"}
+            ],
+        }
+
+    async def process_plaintext(self, request_data, file_paths=None):
+        self.calls.append(
+            (
+                "process_plaintext",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {
+                    "status": "Success",
+                    "input_ref": "notes.txt",
+                    "media_type": "plaintext",
+                }
+            ],
+        }
+
+    async def process_code(self, request_data, file_paths=None):
+        self.calls.append(
+            (
+                "process_code",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {"status": "Success", "input_ref": "main.py", "media_type": "code"}
+            ],
         }
 
     async def process_emails(self, request_data, file_paths=None):
-        self.calls.append(("process_emails", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_emails",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {
             "processed_count": 1,
             "errors_count": 0,
             "errors": [],
-            "results": [{"status": "Success", "input_ref": "message.eml", "media_type": "email"}],
+            "results": [
+                {"status": "Success", "input_ref": "message.eml", "media_type": "email"}
+            ],
         }
 
     async def process_web_scraping(self, request_data):
-        self.calls.append(("process_web_scraping", request_data.model_dump(exclude_none=True, mode="json")))
-        title = "Post" if str(request_data.url_input).endswith("/post") else "Scraped Article"
+        self.calls.append(
+            (
+                "process_web_scraping",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
+        title = (
+            "Post"
+            if str(request_data.url_input).endswith("/post")
+            else "Scraped Article"
+        )
         return {
             "status": "success",
             "message": "Web content processed",
@@ -825,7 +1389,12 @@ class FakeClient:
                     "source": "pdf_outline",
                 }
             ],
-            "stats": {"returned_node_count": 1, "node_count": 1, "max_depth": 0, "truncated": False},
+            "stats": {
+                "returned_node_count": 1,
+                "node_count": 1,
+                "max_depth": 0,
+                "truncated": False,
+            },
         }
 
     async def get_media_navigation_content(self, media_id, node_id, **kwargs):
@@ -841,7 +1410,12 @@ class FakeClient:
         }
 
     async def create_file_artifact(self, request_data):
-        self.calls.append(("create_file_artifact", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "create_file_artifact",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {
             "artifact": {
                 "file_id": 19,
@@ -899,7 +1473,9 @@ class FakeClient:
         return {"success": True, "file_deleted": delete_file}
 
     async def purge_file_artifacts(self, request_data=None):
-        self.calls.append(("purge_file_artifacts", request_data.model_dump(mode="json")))
+        self.calls.append(
+            ("purge_file_artifacts", request_data.model_dump(mode="json"))
+        )
         return {"removed": 2, "files_deleted": 1}
 
 
@@ -931,7 +1507,9 @@ async def test_server_service_uses_provider_backed_client_when_no_direct_client(
     provider = FakeClientProvider(client)
     service = ServerMediaReadingService(client=None, client_provider=provider)
 
-    result = await service.list_media_items(page=2, results_per_page=5, include_keywords=True)
+    result = await service.list_media_items(
+        page=2, results_per_page=5, include_keywords=True
+    )
 
     assert service.client is None
     assert provider.build_calls == 1
@@ -978,15 +1556,19 @@ async def test_server_service_from_server_context_provider_uses_provider_client(
 @pytest.mark.asyncio
 async def test_server_service_denied_policy_does_not_build_provider_client():
     policy = Mock()
-    policy.require_allowed = Mock(side_effect=PolicyDeniedError(
-        action_id="media.items.list.server",
-        reason_code="wrong_source",
-        user_message="Blocked.",
-        effective_source="local",
-        authority_owner="shared",
-    ))
+    policy.require_allowed = Mock(
+        side_effect=PolicyDeniedError(
+            action_id="media.items.list.server",
+            reason_code="wrong_source",
+            user_message="Blocked.",
+            effective_source="local",
+            authority_owner="shared",
+        )
+    )
     provider = FakeClientProvider(FakeClient())
-    service = ServerMediaReadingService(client=None, client_provider=provider, policy_enforcer=policy)
+    service = ServerMediaReadingService(
+        client=None, client_provider=provider, policy_enforcer=policy
+    )
 
     with pytest.raises(PolicyDeniedError):
         await service.list_media_items()
@@ -1015,13 +1597,15 @@ async def test_server_service_denied_unified_policy_does_not_build_provider_clie
     expected_action_id,
 ):
     policy = Mock()
-    policy.require_allowed = Mock(side_effect=PolicyDeniedError(
-        action_id=expected_action_id,
-        reason_code="wrong_source",
-        user_message="Blocked.",
-        effective_source="local",
-        authority_owner="shared",
-    ))
+    policy.require_allowed = Mock(
+        side_effect=PolicyDeniedError(
+            action_id=expected_action_id,
+            reason_code="wrong_source",
+            user_message="Blocked.",
+            effective_source="local",
+            authority_owner="shared",
+        )
+    )
     service = ServerMediaReadingService(
         client=None,
         client_provider=ExplodingClientProvider(),
@@ -1039,13 +1623,18 @@ async def test_server_service_delegates_search_and_detail_to_reading_item_endpoi
     client = FakeClient()
     service = ServerMediaReadingService(client=client)
 
-    search_result = await service.search_media(query="rag", limit=25, offset=10, status=["saved"])
+    search_result = await service.search_media(
+        query="rag", limit=25, offset=10, status=["saved"]
+    )
     detail = await service.get_media_detail(41)
 
     assert search_result["items"][0]["id"] == 41
     assert detail["id"] == 41
     assert client.calls[:2] == [
-        ("list_reading_items", {"q": "rag", "limit": 25, "offset": 10, "status": ["saved"]}),
+        (
+            "list_reading_items",
+            {"q": "rag", "limit": 25, "offset": 10, "status": ["saved"]},
+        ),
         ("get_reading_item", 41),
     ]
 
@@ -1055,8 +1644,12 @@ async def test_server_service_routes_processing_and_transcription_model_calls():
     client = FakeClient()
     service = ServerMediaReadingService(client=client)
 
-    code = await service.process_code(urls=["https://example.com/main.py"], chunk_method="lines")
-    emails = await service.process_emails(title="Inbox", file_paths=["/tmp/message.eml"], accept_mbox=True)
+    code = await service.process_code(
+        urls=["https://example.com/main.py"], chunk_method="lines"
+    )
+    emails = await service.process_emails(
+        title="Inbox", file_paths=["/tmp/message.eml"], accept_mbox=True
+    )
     web = await service.process_web_scraping(
         scrape_method="individual",
         url_input="https://example.com/post",
@@ -1106,14 +1699,19 @@ async def test_server_service_routes_existing_no_db_processing_endpoints_with_po
     policy = Mock()
     service = ServerMediaReadingService(client=client, policy_enforcer=policy)
 
-    video = await service.process_video(urls=["https://example.com/video.mp4"], file_paths=["/tmp/video.mp4"])
+    video = await service.process_video(
+        urls=["https://example.com/video.mp4"], file_paths=["/tmp/video.mp4"]
+    )
     audio = await service.process_audio(urls=["https://example.com/audio.mp3"])
     pdf = await service.process_pdf(file_paths=["/tmp/paper.pdf"])
     ebook = await service.process_ebook(file_paths=["/tmp/book.epub"])
     document = await service.process_document(file_paths=["/tmp/doc.md"])
     plaintext = await service.process_plaintext(file_paths=["/tmp/notes.txt"])
 
-    assert [item.results[0].media_type for item in [video, audio, pdf, ebook, document, plaintext]] == [
+    assert [
+        item.results[0].media_type
+        for item in [video, audio, pdf, ebook, document, plaintext]
+    ] == [
         "video",
         "audio",
         "pdf",
@@ -1129,7 +1727,9 @@ async def test_server_service_routes_existing_no_db_processing_endpoints_with_po
         "process_document",
         "process_plaintext",
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "media.processing.video.process.server",
         "media.processing.audio.process.server",
         "media.processing.pdf.process.server",
@@ -1144,7 +1744,9 @@ async def test_server_service_routes_media_navigation():
     client = FakeClient()
     service = ServerMediaReadingService(client=client)
 
-    navigation = await service.get_media_navigation(99, max_depth=3, max_nodes=25, parent_id="root")
+    navigation = await service.get_media_navigation(
+        99, max_depth=3, max_nodes=25, parent_id="root"
+    )
     content = await service.get_media_navigation_content(
         99,
         "node-1",
@@ -1233,7 +1835,9 @@ async def test_server_service_routes_bulk_reading_item_updates_with_schema_objec
 async def test_server_service_rejects_local_only_metadata_fields():
     service = ServerMediaReadingService(client=FakeClient())
 
-    with pytest.raises(ValueError, match="Unsupported server media metadata fields: author"):
+    with pytest.raises(
+        ValueError, match="Unsupported server media metadata fields: author"
+    ):
         await service.update_media_metadata(41, author="Ada")
 
 
@@ -1243,14 +1847,18 @@ async def test_server_service_routes_media_listing_search_and_trash_adjuncts_to_
     service = ServerMediaReadingService(client=client)
 
     keywords = await service.list_media_keywords(query="ai", limit=5)
-    listed = await service.list_backing_media_items(page=2, results_per_page=25, include_keywords=True)
+    listed = await service.list_backing_media_items(
+        page=2, results_per_page=25, include_keywords=True
+    )
     searched = await service.search_backing_media_items(
         query="paper",
         media_types=["pdf"],
         page=2,
         results_per_page=25,
     )
-    trash = await service.list_media_trash(page=1, results_per_page=10, include_keywords=True)
+    trash = await service.list_media_trash(
+        page=1, results_per_page=10, include_keywords=True
+    )
     emptied = await service.empty_media_trash()
     metadata = await service.search_media_metadata(
         filters=[{"field": "doi", "op": "eq", "value": "10/example"}],
@@ -1258,7 +1866,9 @@ async def test_server_service_routes_media_listing_search_and_trash_adjuncts_to_
         media_types=["pdf"],
         must_have=["ai"],
     )
-    identifier = await service.get_media_by_identifier(doi="10/example", group_by_media=False)
+    identifier = await service.get_media_by_identifier(
+        doi="10/example", group_by_media=False
+    )
 
     assert keywords == {"keywords": ["ai", "testing"]}
     assert listed["pagination"]["total_items"] == 1
@@ -1308,13 +1918,27 @@ async def test_server_service_routes_media_processing_controls_to_client():
         generate_embeddings=True,
         chunk_method="sentences",
     )
-    video = await service.process_video(ProcessVideoRequest(title="Video"), file_paths=["video.mp4"])
-    audio = await service.process_audio(ProcessAudioRequest(title="Audio"), file_paths=["audio.mp3"])
-    pdf = await service.process_pdf(ProcessPDFRequest(title="PDF"), file_paths=["paper.pdf"])
-    ebook = await service.process_ebook(ProcessEbookRequest(title="Book"), file_paths=["book.epub"])
-    document = await service.process_document(ProcessDocumentRequest(title="Doc"), file_paths=["doc.docx"])
-    code = await service.process_code(ProcessCodeRequest(chunk_method="lines"), file_paths=["project.py"])
-    email = await service.process_email(ProcessEmailRequest(title="Inbox"), file_paths=["inbox.eml"])
+    video = await service.process_video(
+        ProcessVideoRequest(title="Video"), file_paths=["video.mp4"]
+    )
+    audio = await service.process_audio(
+        ProcessAudioRequest(title="Audio"), file_paths=["audio.mp3"]
+    )
+    pdf = await service.process_pdf(
+        ProcessPDFRequest(title="PDF"), file_paths=["paper.pdf"]
+    )
+    ebook = await service.process_ebook(
+        ProcessEbookRequest(title="Book"), file_paths=["book.epub"]
+    )
+    document = await service.process_document(
+        ProcessDocumentRequest(title="Doc"), file_paths=["doc.docx"]
+    )
+    code = await service.process_code(
+        ProcessCodeRequest(chunk_method="lines"), file_paths=["project.py"]
+    )
+    email = await service.process_email(
+        ProcessEmailRequest(title="Inbox"), file_paths=["inbox.eml"]
+    )
 
     assert models["all_models"] == ["whisper-small"]
     assert reprocessed["chunks_created"] == 3
@@ -1336,13 +1960,53 @@ async def test_server_service_routes_media_processing_controls_to_client():
                 chunk_method="sentences",
             ).model_dump(exclude_none=True, mode="json"),
         ),
-        ("process_video", ProcessVideoRequest(title="Video").model_dump(exclude_none=True, mode="json"), ["video.mp4"]),
-        ("process_audio", ProcessAudioRequest(title="Audio").model_dump(exclude_none=True, mode="json"), ["audio.mp3"]),
-        ("process_pdf", ProcessPDFRequest(title="PDF").model_dump(exclude_none=True, mode="json"), ["paper.pdf"]),
-        ("process_ebook", ProcessEbookRequest(title="Book").model_dump(exclude_none=True, mode="json"), ["book.epub"]),
-        ("process_document", ProcessDocumentRequest(title="Doc").model_dump(exclude_none=True, mode="json"), ["doc.docx"]),
-        ("process_code", ProcessCodeRequest(chunk_method="lines").model_dump(exclude_none=True, mode="json"), ["project.py"]),
-        ("process_email", ProcessEmailRequest(title="Inbox").model_dump(exclude_none=True, mode="json"), ["inbox.eml"]),
+        (
+            "process_video",
+            ProcessVideoRequest(title="Video").model_dump(
+                exclude_none=True, mode="json"
+            ),
+            ["video.mp4"],
+        ),
+        (
+            "process_audio",
+            ProcessAudioRequest(title="Audio").model_dump(
+                exclude_none=True, mode="json"
+            ),
+            ["audio.mp3"],
+        ),
+        (
+            "process_pdf",
+            ProcessPDFRequest(title="PDF").model_dump(exclude_none=True, mode="json"),
+            ["paper.pdf"],
+        ),
+        (
+            "process_ebook",
+            ProcessEbookRequest(title="Book").model_dump(
+                exclude_none=True, mode="json"
+            ),
+            ["book.epub"],
+        ),
+        (
+            "process_document",
+            ProcessDocumentRequest(title="Doc").model_dump(
+                exclude_none=True, mode="json"
+            ),
+            ["doc.docx"],
+        ),
+        (
+            "process_code",
+            ProcessCodeRequest(chunk_method="lines").model_dump(
+                exclude_none=True, mode="json"
+            ),
+            ["project.py"],
+        ),
+        (
+            "process_email",
+            ProcessEmailRequest(title="Inbox").model_dump(
+                exclude_none=True, mode="json"
+            ),
+            ["inbox.eml"],
+        ),
     ]
 
 
@@ -1426,7 +2090,9 @@ async def test_server_service_routes_unified_items_surface():
     policy = Mock()
     service = ServerMediaReadingService(client=client, policy_enforcer=policy)
 
-    listing = await service.list_unified_items(q="article", origin="reading", page=2, size=10)
+    listing = await service.list_unified_items(
+        q="article", origin="reading", page=2, size=10
+    )
     item = await service.get_unified_item(42)
     bulk = await service.bulk_update_unified_items(
         ItemsBulkRequest(item_ids=[42, 43], action="set_favorite", favorite=True)
@@ -1437,7 +2103,10 @@ async def test_server_service_routes_unified_items_surface():
     assert item["id"] == 42
     assert bulk["succeeded"] == 2
     assert client.calls == [
-        ("list_unified_items", {"q": "article", "origin": "reading", "page": 2, "size": 10}),
+        (
+            "list_unified_items",
+            {"q": "article", "origin": "reading", "page": 2, "size": 10},
+        ),
         ("get_unified_item", 42),
         (
             "bulk_update_unified_items",
@@ -1449,7 +2118,9 @@ async def test_server_service_routes_unified_items_surface():
             },
         ),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "media.items.list.server",
         "media.items.detail.server",
         "media.items.update.server",
@@ -1478,7 +2149,9 @@ async def test_server_service_routes_media_item_lifecycle_to_true_media_endpoint
     trashed = await service.trash_media_item(99)
     restored = await service.restore_media_item(99)
     purged = await service.permanently_delete_media_item(99)
-    keywords = await service.update_media_keywords(99, keywords=["ai", "ml"], mode="set")
+    keywords = await service.update_media_keywords(
+        99, keywords=["ai", "ml"], mode="set"
+    )
     downloaded = await service.download_media_file(99, file_type="original")
 
     assert detail["media_id"] == 99
@@ -1549,7 +2222,12 @@ async def test_server_service_routes_media_navigation_to_server_contract():
                 "parent_id": "root",
             },
         ),
-        ("get_media_navigation_content", 99, "node-1", {"format": "markdown", "include_alternates": True}),
+        (
+            "get_media_navigation_content",
+            99,
+            "node-1",
+            {"format": "markdown", "include_alternates": True},
+        ),
     ]
 
 
@@ -1607,7 +2285,9 @@ async def test_server_service_routes_reading_highlight_calls_with_schema_objects
         note="Check this",
     )
     listed = await service.list_reading_highlights(31)
-    updated = await service.update_reading_highlight(5, color="blue", note="Updated", state="active")
+    updated = await service.update_reading_highlight(
+        5, color="blue", note="Updated", state="active"
+    )
     deleted = await service.delete_reading_highlight(5)
 
     assert created["id"] == 5
@@ -1630,7 +2310,11 @@ async def test_server_service_routes_reading_highlight_calls_with_schema_objects
         ),
         ("list_reading_highlights", 31),
         ("create_reading_highlight", 31, {}),
-        ("update_reading_highlight", 5, {"color": "blue", "note": "Updated", "state": "active"}),
+        (
+            "update_reading_highlight",
+            5,
+            {"color": "blue", "note": "Updated", "state": "active"},
+        ),
         ("delete_reading_highlight", 5),
     ]
 
@@ -1684,7 +2368,9 @@ async def test_server_service_routes_ingestion_source_calls_and_payloads():
         ("reattach_ingestion_source_item", 7, 55),
     ]
 
-    with pytest.raises(ValueError, match="Server ingestion source delete is not available yet."):
+    with pytest.raises(
+        ValueError, match="Server ingestion source delete is not available yet."
+    ):
         await service.delete_ingestion_source(7)
 
 
@@ -1692,7 +2378,9 @@ async def test_server_service_routes_ingestion_source_calls_and_payloads():
 async def test_server_service_ingestion_source_delete_fails_explicitly():
     service = ServerMediaReadingService(client=FakeClient())
 
-    with pytest.raises(ValueError, match="Server ingestion source delete is not available yet."):
+    with pytest.raises(
+        ValueError, match="Server ingestion source delete is not available yet."
+    ):
         await service.delete_ingestion_source(7)
 
 
@@ -1708,7 +2396,9 @@ async def test_server_service_routes_ingestion_item_reattach_saved_searches_and_
         sort="updated_desc",
     )
     listed = await service.list_reading_saved_searches(limit=25, offset=5)
-    updated = await service.update_reading_saved_search(9, name="Updated", query={"status": "read"})
+    updated = await service.update_reading_saved_search(
+        9, name="Updated", query={"status": "read"}
+    )
     deleted = await service.delete_reading_saved_search(9)
     linked = await service.link_reading_item_note(31, note_id="note-uuid-1")
     links = await service.list_reading_item_note_links(31)
@@ -1724,9 +2414,16 @@ async def test_server_service_routes_ingestion_item_reattach_saved_searches_and_
     assert unlinked == {"ok": True}
     assert client.calls[-8:] == [
         ("reattach_ingestion_source_item", 7, 55),
-        ("create_reading_saved_search", {"name": "Morning", "query": {"status": ["saved"]}, "sort": "updated_desc"}),
+        (
+            "create_reading_saved_search",
+            {"name": "Morning", "query": {"status": ["saved"]}, "sort": "updated_desc"},
+        ),
         ("list_reading_saved_searches", 25, 5),
-        ("update_reading_saved_search", 9, {"name": "Updated", "query": {"status": "read"}}),
+        (
+            "update_reading_saved_search",
+            9,
+            {"name": "Updated", "query": {"status": "read"}},
+        ),
         ("delete_reading_saved_search", 9),
         ("link_reading_item_note", 31, {"note_id": "note-uuid-1"}),
         ("list_reading_item_note_links", 31),
@@ -1739,8 +2436,12 @@ async def test_server_service_routes_reading_import_jobs_and_archive_creation():
     client = FakeClient()
     service = ServerMediaReadingService(client=client)
 
-    submitted = await service.import_reading_items("/tmp/pocket.csv", source="pocket", merge_tags=False)
-    jobs = await service.list_reading_import_jobs(status="processing", limit=25, offset=5)
+    submitted = await service.import_reading_items(
+        "/tmp/pocket.csv", source="pocket", merge_tags=False
+    )
+    jobs = await service.list_reading_import_jobs(
+        status="processing", limit=25, offset=5
+    )
     job = await service.get_reading_import_job(42)
     archive = await service.create_reading_archive(
         31,
@@ -1770,14 +2471,18 @@ async def test_server_service_routes_reading_export_summary_and_tts_payloads():
     client = FakeClient()
     service = ServerMediaReadingService(client=client)
 
-    exported = await service.export_reading_items(status=["saved"], include_text=True, format="jsonl")
+    exported = await service.export_reading_items(
+        status=["saved"], include_text=True, format="jsonl"
+    )
     summary = await service.summarize_reading_item(
         31,
         provider="openai",
         model="gpt-4o-mini",
         prompt="Summarize",
     )
-    audio = await service.tts_reading_item(31, model="kokoro", stream=False, text_source="text")
+    audio = await service.tts_reading_item(
+        31, model="kokoro", stream=False, text_source="text"
+    )
 
     assert exported.content == b'{"id":31}\n'
     assert summary["summary"] == "Short summary"
@@ -1837,7 +2542,9 @@ async def test_server_service_routes_reading_digest_schedule_and_output_calls():
     schedule = await service.get_reading_digest_schedule("sched-1")
     updated = await service.update_reading_digest_schedule("sched-1", enabled=False)
     deleted = await service.delete_reading_digest_schedule("sched-1")
-    outputs = await service.list_reading_digest_outputs(schedule_id="sched-1", limit=25, offset=5)
+    outputs = await service.list_reading_digest_outputs(
+        schedule_id="sched-1", limit=25, offset=5
+    )
 
     assert created == {"id": "sched-1"}
     assert schedules[0]["id"] == "sched-1"
@@ -1881,7 +2588,9 @@ async def test_server_service_routes_media_ingest_job_calls_and_payloads():
     status = await service.get_media_ingest_job(7)
     listed = await service.list_media_ingest_jobs(batch_id="batch-1", limit=10)
     cancelled = await service.cancel_media_ingest_job(7, reason="duplicate")
-    batch_cancelled = await service.cancel_media_ingest_jobs_batch(batch_id="batch-1", reason="duplicate")
+    batch_cancelled = await service.cancel_media_ingest_jobs_batch(
+        batch_id="batch-1", reason="duplicate"
+    )
 
     assert submitted["batch_id"] == "batch-1"
     assert status["id"] == 7
@@ -2041,10 +2750,23 @@ async def test_server_service_routes_mediawiki_process_and_ingest_streams():
     service = ServerMediaReadingService(client=client)
     request = ProcessMediaWikiRequest(wiki_name="Example Wiki")
 
-    pages = [page async for page in service.process_mediawiki_dump(request, "/tmp/example.xml")]
-    events = [event async for event in service.ingest_mediawiki_dump(request, "/tmp/example.xml")]
+    pages = [
+        page
+        async for page in service.process_mediawiki_dump(request, "/tmp/example.xml")
+    ]
+    events = [
+        event
+        async for event in service.ingest_mediawiki_dump(request, "/tmp/example.xml")
+    ]
 
-    assert pages == [{"title": "Page One", "content": "Body", "status": "Success", "input_ref": "example.xml"}]
+    assert pages == [
+        {
+            "title": "Page One",
+            "content": "Body",
+            "status": "Success",
+            "input_ref": "example.xml",
+        }
+    ]
     assert events == [
         {"type": "progress", "processed": 1},
         {"type": "item_result", "data": {"title": "Stored Page", "media_id": 42}},
@@ -2052,12 +2774,20 @@ async def test_server_service_routes_mediawiki_process_and_ingest_streams():
     assert client.calls == [
         (
             "process_mediawiki_dump",
-            {"wiki_name": "Example Wiki", "skip_redirects": True, "chunk_max_size": 1000},
+            {
+                "wiki_name": "Example Wiki",
+                "skip_redirects": True,
+                "chunk_max_size": 1000,
+            },
             "/tmp/example.xml",
         ),
         (
             "ingest_mediawiki_dump",
-            {"wiki_name": "Example Wiki", "skip_redirects": True, "chunk_max_size": 1000},
+            {
+                "wiki_name": "Example Wiki",
+                "skip_redirects": True,
+                "chunk_max_size": 1000,
+            },
             "/tmp/example.xml",
         ),
     ]
@@ -2084,7 +2814,9 @@ async def test_server_service_routes_document_version_helpers_and_keeps_uuid_del
     client = FakeClient()
     service = ServerMediaReadingService(client=client)
 
-    versions = await service.list_document_versions(99, include_content=True, limit=5, page=2)
+    versions = await service.list_document_versions(
+        99, include_content=True, limit=5, page=2
+    )
     saved = await service.save_analysis_version(
         99,
         content="body",
@@ -2098,7 +2830,9 @@ async def test_server_service_routes_document_version_helpers_and_keeps_uuid_del
     )
     deleted = await service.delete_document_version(99, 2)
 
-    assert versions == [{"media_id": 99, "version_number": 1, "analysis_content": "analysis"}]
+    assert versions == [
+        {"media_id": 99, "version_number": 1, "analysis_content": "analysis"}
+    ]
     assert saved["version_number"] == 2
     assert overwritten["version_number"] == 2
     assert deleted["deleted"] is True
@@ -2125,7 +2859,10 @@ async def test_server_service_routes_document_version_helpers_and_keeps_uuid_del
         ("delete_media_version", 99, 2),
     ]
 
-    with pytest.raises(ValueError, match="Server document version deletion requires media_id and version_number."):
+    with pytest.raises(
+        ValueError,
+        match="Server document version deletion requires media_id and version_number.",
+    ):
         await service.delete_analysis_version("version-1")
 
 
@@ -2166,13 +2903,21 @@ async def test_server_service_routes_advanced_document_version_helpers_with_poli
         (
             "patch_media_metadata",
             99,
-            {"safe_metadata": {"source": "import"}, "merge": False, "new_version": True},
+            {
+                "safe_metadata": {"source": "import"},
+                "merge": False,
+                "new_version": True,
+            },
         ),
         (
             "put_media_version_metadata",
             99,
             2,
-            {"safe_metadata": {"quality": "reviewed"}, "merge": True, "new_version": False},
+            {
+                "safe_metadata": {"quality": "reviewed"},
+                "merge": True,
+                "new_version": False,
+            },
         ),
         (
             "upsert_media_version_advanced",
@@ -2187,7 +2932,9 @@ async def test_server_service_routes_advanced_document_version_helpers_with_poli
             },
         ),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list[-4:]] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list[-4:]
+    ] == [
         "media.reading.update.server",
         "media.reading.update.server",
         "media.reading.update.server",
@@ -2206,9 +2953,13 @@ async def test_server_service_routes_reading_save_saved_searches_and_note_links(
         tags=[" ai "],
         notes="Read later",
     )
-    created = await service.create_saved_search(name="Morning", query={"q": "ai"}, sort="updated_desc")
+    created = await service.create_saved_search(
+        name="Morning", query={"q": "ai"}, sort="updated_desc"
+    )
     listed = await service.list_saved_searches(limit=25, offset=5)
-    updated = await service.update_saved_search(1, name="Updated", query={"q": "ml"}, sort="created_desc")
+    updated = await service.update_saved_search(
+        1, name="Updated", query={"q": "ml"}, sort="created_desc"
+    )
     deleted = await service.delete_saved_search(1)
     linked = await service.link_note(50, "note-1")
     links = await service.list_note_links(50)
@@ -2235,9 +2986,16 @@ async def test_server_service_routes_reading_save_saved_searches_and_note_links(
                 "notes": "Read later",
             },
         ),
-        ("create_reading_saved_search", {"name": "Morning", "query": {"q": "ai"}, "sort": "updated_desc"}),
+        (
+            "create_reading_saved_search",
+            {"name": "Morning", "query": {"q": "ai"}, "sort": "updated_desc"},
+        ),
         ("list_reading_saved_searches", 25, 5),
-        ("update_reading_saved_search", 1, {"name": "Updated", "query": {"q": "ml"}, "sort": "created_desc"}),
+        (
+            "update_reading_saved_search",
+            1,
+            {"name": "Updated", "query": {"q": "ml"}, "sort": "created_desc"},
+        ),
         ("delete_reading_saved_search", 1),
         ("link_note_to_reading_item", 50, "note-1"),
         ("list_reading_item_note_links", 50),
@@ -2250,8 +3008,12 @@ async def test_server_service_routes_reading_bulk_archive_and_summary_actions():
     client = FakeClient()
     service = ServerMediaReadingService(client=client)
 
-    bulk = await service.bulk_update_reading_items(item_ids=[50, 51], action="set_status", status="read")
-    archive = await service.create_reading_archive(50, format="md", source="text", title="Archive")
+    bulk = await service.bulk_update_reading_items(
+        item_ids=[50, 51], action="set_status", status="read"
+    )
+    archive = await service.create_reading_archive(
+        50, format="md", source="text", title="Archive"
+    )
     summary = await service.summarize_reading_item(
         50,
         provider="openai",
@@ -2265,7 +3027,12 @@ async def test_server_service_routes_reading_bulk_archive_and_summary_actions():
     assert client.calls[-3:] == [
         (
             "bulk_update_reading_items",
-            {"item_ids": [50, 51], "action": "set_status", "status": "read", "hard": False},
+            {
+                "item_ids": [50, 51],
+                "action": "set_status",
+                "status": "read",
+                "hard": False,
+            },
         ),
         (
             "create_reading_archive",
@@ -2291,8 +3058,12 @@ async def test_server_service_routes_reading_import_jobs_with_policy_actions():
     client = FakeClient()
     service = ServerMediaReadingService(client=client)
 
-    submitted = await service.import_reading_items("/tmp/pocket.csv", source="pocket", merge_tags=False)
-    listed = await service.list_reading_import_jobs(status="completed", limit=25, offset=5)
+    submitted = await service.import_reading_items(
+        "/tmp/pocket.csv", source="pocket", merge_tags=False
+    )
+    listed = await service.list_reading_import_jobs(
+        status="completed", limit=25, offset=5
+    )
     detail = await service.get_reading_import_job(701)
 
     assert submitted.job_id == 701
@@ -2328,7 +3099,9 @@ async def test_server_service_routes_reading_digest_schedules_outputs_with_polic
         format="html",
     )
     deleted = await service.delete_reading_digest_schedule("digest-1")
-    outputs = await service.list_reading_digest_outputs(schedule_id="digest-1", limit=25, offset=5)
+    outputs = await service.list_reading_digest_outputs(
+        schedule_id="digest-1", limit=25, offset=5
+    )
 
     assert created == {"id": "digest-1"}
     assert listed[0].id == "digest-1"
@@ -2354,12 +3127,20 @@ async def test_server_service_routes_reading_digest_schedules_outputs_with_polic
         (
             "update_reading_digest_schedule",
             "digest-1",
-            {"name": "Updated", "cron": "0 9 * * *", "enabled": False, "require_online": True, "format": "html"},
+            {
+                "name": "Updated",
+                "cron": "0 9 * * *",
+                "enabled": False,
+                "require_online": True,
+                "format": "html",
+            },
         ),
         ("delete_reading_digest_schedule", "digest-1"),
         ("list_reading_digest_outputs", "digest-1", 25, 5),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "media.reading.digest_schedules.create.server",
         "media.reading.digest_schedules.list.server",
         "media.reading.digest_schedules.detail.server",
@@ -2410,7 +3191,9 @@ async def test_server_service_routes_web_content_ingest_with_policy_action():
             "perform_confabulation_check_of_analysis": False,
         },
     )
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "media.web_content_ingest.launch.server",
     ]
 
@@ -2456,9 +3239,9 @@ async def test_server_service_routes_reading_export_with_policy_action():
             "format": "zip",
         },
     )
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
-        "media.reading.export.server"
-    ]
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == ["media.reading.export.server"]
 
 
 @pytest.mark.asyncio
@@ -2492,9 +3275,9 @@ async def test_server_service_routes_reading_tts_with_policy_action():
             "text_source": "text",
         },
     )
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
-        "media.reading.tts.server"
-    ]
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == ["media.reading.tts.server"]
 
 
 @pytest.mark.asyncio
@@ -2511,14 +3294,18 @@ async def test_server_service_enforces_media_reading_and_ingestion_policy_action
     await service.update_reading_progress(99, {"current_page": 5, "total_pages": 10})
     await service.delete_reading_progress(99)
     await service.list_ingestion_sources()
-    await service.create_ingestion_source(source_type="git_repository", sink_type="media")
+    await service.create_ingestion_source(
+        source_type="git_repository", sink_type="media"
+    )
     await service.get_ingestion_source(7)
     await service.patch_ingestion_source(7, enabled=False)
     await service.list_ingestion_source_items(7)
     await service.trigger_ingestion_source_sync(7)
     await service.upload_ingestion_source_archive(7, "/tmp/archive.zip")
     await service.reattach_ingestion_source_item(7, 55)
-    await service.bulk_update_reading_items(item_ids=[41], action="set_status", status="read")
+    await service.bulk_update_reading_items(
+        item_ids=[41], action="set_status", status="read"
+    )
     await service.create_reading_archive(41, format="md")
     await service.summarize_reading_item(41, prompt="Summarize")
     await service.import_reading_items("/tmp/pocket.csv")
@@ -2530,7 +3317,9 @@ async def test_server_service_enforces_media_reading_and_ingestion_policy_action
     await service.save_analysis_version(99, content="body", analysis_content="analysis")
     await service.delete_document_version(99, 2)
 
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "media.reading.list.server",
         "media.reading.detail.server",
         "media.reading.update.server",
@@ -2576,7 +3365,9 @@ async def test_server_service_routes_direct_media_management_with_policy_actions
     await service.restore_media_item(41, include_content=False)
     await service.permanently_delete_media_item(41)
     await service.update_media_keywords(41, keywords=["ai"], mode="set")
-    await service.search_media_metadata(field="doi", value="10.123/example", media_types=["pdf"])
+    await service.search_media_metadata(
+        field="doi", value="10.123/example", media_types=["pdf"]
+    )
     await service.get_media_by_identifier(doi="10.123/example")
 
     assert client.calls[-12:] == [
@@ -2590,10 +3381,15 @@ async def test_server_service_routes_direct_media_management_with_policy_actions
         ("restore_media_item", 41, False, True, False),
         ("permanently_delete_media_item", 41),
         ("update_media_keywords", 41, {"keywords": ["ai"], "mode": "set"}),
-        ("search_media_metadata", {"field": "doi", "value": "10.123/example", "media_types": ["pdf"]}),
+        (
+            "search_media_metadata",
+            {"field": "doi", "value": "10.123/example", "media_types": ["pdf"]},
+        ),
         ("get_media_by_identifier", {"doi": "10.123/example"}),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "media.items.list.server",
         "media.items.keywords.list.server",
         "media.items.trash.list.server",
@@ -2615,8 +3411,18 @@ async def test_server_service_routes_mediawiki_and_media_file_with_policy_action
     policy = Mock()
     service = ServerMediaReadingService(client=client, policy_enforcer=policy)
 
-    pages = [page async for page in service.process_mediawiki_dump(dump_file_path="/tmp/dump.xml", wiki_name="Demo")]
-    events = [event async for event in service.ingest_mediawiki_dump(dump_file_path="/tmp/dump.xml", wiki_name="Demo")]
+    pages = [
+        page
+        async for page in service.process_mediawiki_dump(
+            dump_file_path="/tmp/dump.xml", wiki_name="Demo"
+        )
+    ]
+    events = [
+        event
+        async for event in service.ingest_mediawiki_dump(
+            dump_file_path="/tmp/dump.xml", wiki_name="Demo"
+        )
+    ]
     file_response = await service.download_media_file(41, file_type="original")
     file_availability = await service.check_media_file(41, file_type="original")
 
@@ -2632,7 +3438,9 @@ async def test_server_service_routes_mediawiki_and_media_file_with_policy_action
     assert client.calls[-3][2] == "/tmp/dump.xml"
     assert client.calls[-2] == ("download_media_file", 41, "original")
     assert client.calls[-1] == ("check_media_file", 41, "original")
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "media.processing.mediawiki.process.server",
         "media.processing.mediawiki.import.server",
         "media.items.file.detail.server",
@@ -2665,7 +3473,9 @@ async def test_server_service_routes_add_media_with_policy_action():
         },
         ["/tmp/report.md"],
     )
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "media.add.create.server",
     ]
 
@@ -2694,7 +3504,9 @@ async def test_server_service_routes_file_artifacts_and_reference_images_with_po
     exported = await service.export_file_artifact(19, format="md")
     deleted = await service.delete_file_artifact(19, hard=True, delete_file=True)
     purged = await service.purge_file_artifacts(
-        FileArtifactsPurgeRequest(delete_files=True, soft_deleted_grace_days=7, include_retention=False)
+        FileArtifactsPurgeRequest(
+            delete_files=True, soft_deleted_grace_days=7, include_retention=False
+        )
     )
 
     assert created["artifact"]["file_id"] == 19
@@ -2728,10 +3540,16 @@ async def test_server_service_routes_file_artifacts_and_reference_images_with_po
         ("delete_file_artifact", 19, True, True),
         (
             "purge_file_artifacts",
-            {"delete_files": True, "soft_deleted_grace_days": 7, "include_retention": False},
+            {
+                "delete_files": True,
+                "soft_deleted_grace_days": 7,
+                "include_retention": False,
+            },
         ),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "media.file_artifacts.create.server",
         "media.file_artifacts.create.server",
         "media.reference_images.list.server",
@@ -2774,7 +3592,9 @@ async def test_server_service_from_config_uses_shared_provider_lazily(monkeypatc
         build_client,
     )
 
-    service = ServerMediaReadingService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+    service = ServerMediaReadingService.from_config(
+        {"tldw_api": {"base_url": "https://example.com"}}
+    )
 
     assert isinstance(service, ServerMediaReadingService)
     assert service.client is None
@@ -2785,4 +3605,6 @@ async def test_server_service_from_config_uses_shared_provider_lazily(monkeypatc
 
     assert result["items"][0]["title"] == "Server Media"
     assert service.client is None
-    build_client.assert_called_once_with({"tldw_api": {"base_url": "https://example.com"}})
+    build_client.assert_called_once_with(
+        {"tldw_api": {"base_url": "https://example.com"}}
+    )

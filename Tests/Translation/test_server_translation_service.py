@@ -1,6 +1,8 @@
 import pytest
 
-from tldw_chatbook.Translation_Interop.server_translation_service import ServerTranslationService
+from tldw_chatbook.Translation_Interop.server_translation_service import (
+    ServerTranslationService,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -67,7 +69,9 @@ async def test_server_translation_service_launches_text_translation_with_policy_
 @pytest.mark.asyncio
 async def test_server_translation_service_denies_before_dispatch():
     client = FakeTranslationClient()
-    service = ServerTranslationService(client, policy_enforcer=FakePolicyEnforcer("authority_denied"))
+    service = ServerTranslationService(
+        client, policy_enforcer=FakePolicyEnforcer("authority_denied")
+    )
 
     with pytest.raises(PolicyDeniedError):
         await service.translate_text({"text": "Hello", "target_language": "French"})

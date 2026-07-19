@@ -31,7 +31,9 @@ from tldw_chatbook.tldw_api import (
 
 
 @pytest.mark.asyncio
-async def test_list_chunking_templates_serializes_filters_and_returns_typed_response(monkeypatch):
+async def test_list_chunking_templates_serializes_filters_and_returns_typed_response(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         return_value={
@@ -172,13 +174,28 @@ async def test_chunking_template_crud_apply_and_diagnostics_routes_wire(monkeypa
     diagnostics = await client.get_chunking_template_diagnostics()
 
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/chunking/templates")
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/chunking/templates/demo")
-    assert mocked.await_args_list[2].args[:2] == ("PUT", "/api/v1/chunking/templates/demo")
-    assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/chunking/templates/demo")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/chunking/templates/demo",
+    )
+    assert mocked.await_args_list[2].args[:2] == (
+        "PUT",
+        "/api/v1/chunking/templates/demo",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "DELETE",
+        "/api/v1/chunking/templates/demo",
+    )
     assert mocked.await_args_list[3].kwargs["params"] == {"hard_delete": True}
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/chunking/templates/apply")
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/chunking/templates/apply",
+    )
     assert mocked.await_args_list[4].kwargs["params"] == {"include_metadata": True}
-    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/chunking/templates/diagnostics")
+    assert mocked.await_args_list[5].args[:2] == (
+        "GET",
+        "/api/v1/chunking/templates/diagnostics",
+    )
 
     assert isinstance(created, ChunkingTemplateResponse)
     assert isinstance(fetched, ChunkingTemplateResponse)
@@ -200,7 +217,10 @@ async def test_chunking_template_validate_match_and_learn_routes_wire(monkeypatc
                 "template": {
                     "name": "learned",
                     "description": "Learned template",
-                    "chunking": {"method": "sentences", "config": {"hierarchical": True}},
+                    "chunking": {
+                        "method": "sentences",
+                        "config": {"hierarchical": True},
+                    },
                 },
                 "saved": True,
             },
@@ -232,16 +252,25 @@ async def test_chunking_template_validate_match_and_learn_routes_wire(monkeypatc
     assert validation.valid is True
     assert matches.matches[0]["name"] == "article-template"
     assert learned.saved is True
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/chunking/templates/validate")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/chunking/templates/validate",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == template_config
-    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/chunking/templates/match")
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/chunking/templates/match",
+    )
     assert mocked.await_args_list[1].kwargs["params"] == {
         "media_type": "article",
         "title": "Example Article",
         "url": "https://example.test/article",
         "filename": "article.md",
     }
-    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/chunking/templates/learn")
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/chunking/templates/learn",
+    )
     assert mocked.await_args_list[2].kwargs["json_data"] == {
         "name": "learned",
         "example_text": "# Heading\nBody",
@@ -292,14 +321,20 @@ async def test_embedding_collection_routes_wire_and_stats_are_typed(monkeypatch)
     stats = await client.get_embedding_collection_stats("demo_collection")
     await client.delete_embedding_collection("demo_collection")
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/embeddings/collections")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/embeddings/collections",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "name": "new_collection",
         "metadata": {"purpose": "tests"},
         "embedding_model": "text-embedding-3-small",
         "provider": "openai",
     }
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/embeddings/collections")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/embeddings/collections",
+    )
     assert mocked.await_args_list[2].args[:2] == (
         "GET",
         "/api/v1/embeddings/collections/demo_collection/stats",
@@ -401,9 +436,14 @@ async def test_media_embedding_routes_wire_and_return_typed_responses(monkeypatc
     )
     deleted = await client.delete_media_embeddings(7)
     job = await client.get_media_embedding_job("job-7")
-    jobs = await client.list_media_embedding_jobs(status="completed", limit=10, offset=5)
+    jobs = await client.list_media_embedding_jobs(
+        status="completed", limit=10, offset=5
+    )
 
-    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/media/7/embeddings/status")
+    assert mocked.await_args_list[0].args[:2] == (
+        "GET",
+        "/api/v1/media/7/embeddings/status",
+    )
     assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/media/7/embeddings")
     assert mocked.await_args_list[1].kwargs["json_data"] == {
         "embedding_model": "text-embedding-3-small",
@@ -413,11 +453,26 @@ async def test_media_embedding_routes_wire_and_return_typed_responses(monkeypatc
         "force_regenerate": True,
         "priority": 80,
     }
-    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/media/embeddings/batch")
-    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/media/embeddings/search")
-    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/media/7/embeddings")
-    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/media/embeddings/jobs/job-7")
-    assert mocked.await_args_list[6].args[:2] == ("GET", "/api/v1/media/embeddings/jobs")
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/media/embeddings/batch",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "POST",
+        "/api/v1/media/embeddings/search",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "DELETE",
+        "/api/v1/media/7/embeddings",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "GET",
+        "/api/v1/media/embeddings/jobs/job-7",
+    )
+    assert mocked.await_args_list[6].args[:2] == (
+        "GET",
+        "/api/v1/media/embeddings/jobs",
+    )
     assert mocked.await_args_list[6].kwargs["params"] == {
         "status": "completed",
         "limit": 10,

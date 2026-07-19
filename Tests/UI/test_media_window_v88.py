@@ -37,7 +37,9 @@ async def test_media_window_v88_mounts_current_shell(
     mock_app_instance: MagicMock,
     widget_pilot,
 ) -> None:
-    async with await widget_pilot(MediaWindowV88, app_instance=mock_app_instance) as pilot:
+    async with await widget_pilot(
+        MediaWindowV88, app_instance=mock_app_instance
+    ) as pilot:
         window = pilot.app.test_widget
 
         assert window.query_one("#media-nav-panel")
@@ -51,7 +53,9 @@ async def test_media_window_v88_exposes_search_controls(
     mock_app_instance: MagicMock,
     widget_pilot,
 ) -> None:
-    async with await widget_pilot(MediaWindowV88, app_instance=mock_app_instance) as pilot:
+    async with await widget_pilot(
+        MediaWindowV88, app_instance=mock_app_instance
+    ) as pilot:
         window = pilot.app.test_widget
 
         assert window.search_panel.query_one("#search-input", Input)

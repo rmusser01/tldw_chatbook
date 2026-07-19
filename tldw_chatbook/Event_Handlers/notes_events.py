@@ -5,10 +5,12 @@
 import json
 from pathlib import Path
 from typing import Optional, Tuple, TYPE_CHECKING
+
 #
 # 3rd-Party Imports
 from loguru import logger
 import yaml
+
 #
 # Local Imports
 #
@@ -33,7 +35,10 @@ if TYPE_CHECKING:
 #
 ########################################################################################################################
 
-def _parse_note_from_file_content(file_path: Path, file_content_str: str) -> Tuple[Optional[str], Optional[str]]:
+
+def _parse_note_from_file_content(
+    file_path: Path, file_content_str: str
+) -> Tuple[Optional[str], Optional[str]]:
     """
     Parses note title and content from string content.
     Tries JSON (expects "title", "content" keys), then YAML (same keys),
@@ -51,14 +56,18 @@ def _parse_note_from_file_content(file_path: Path, file_content_str: str) -> Tup
     full_file_content = file_content_str.strip()
 
     if not full_file_content:  # Handle truly empty files after stripping
-        logger_instance.debug(f"Note file '{file_path.name}' is empty. Using filename as title.")
+        logger_instance.debug(
+            f"Note file '{file_path.name}' is empty. Using filename as title."
+        )
         return filename_as_title, ""
 
     file_suffix = file_path.suffix.lower()
 
     # 1. Specific handling for .txt and .md files
-    if file_suffix in ['.txt', '.md']:
-        logger_instance.debug(f"Parsing note file '{file_path.name}' as TXT/MD. Using filename as title.")
+    if file_suffix in [".txt", ".md"]:
+        logger_instance.debug(
+            f"Parsing note file '{file_path.name}' as TXT/MD. Using filename as title."
+        )
         return filename_as_title, full_file_content
 
     # 1. Try JSON
@@ -70,12 +79,19 @@ def _parse_note_from_file_content(file_path: Path, file_content_str: str) -> Tup
             if json_title is not None:  # JSON has a "title" key
                 logger_instance.debug(f"Parsed note file '{file_path.name}' as JSON.")
                 # Use JSON content if present, otherwise use the full file content
-                return json_title, json_content if json_content is not None else full_file_content
+                return (
+                    json_title,
+                    json_content if json_content is not None else full_file_content,
+                )
                 # If JSON is valid dict but no "title", fall through to filename fallback logic
     except json.JSONDecodeError:
-        logger_instance.debug(f"Note file '{file_path.name}' is not valid JSON. Trying YAML.")
+        logger_instance.debug(
+            f"Note file '{file_path.name}' is not valid JSON. Trying YAML."
+        )
     except Exception as e_json_other:
-        logger_instance.warning(f"Unexpected error during JSON parsing of note '{file_path.name}': {e_json_other}")
+        logger_instance.warning(
+            f"Unexpected error during JSON parsing of note '{file_path.name}': {e_json_other}"
+        )
         # Fall through
 
     # 2. Try YAML
@@ -86,17 +102,25 @@ def _parse_note_from_file_content(file_path: Path, file_content_str: str) -> Tup
             yaml_content = data.get("content")
             if yaml_title is not None:  # YAML has a "title" key
                 logger_instance.debug(f"Parsed note file '{file_path.name}' as YAML.")
-                return yaml_title, yaml_content if yaml_content is not None else full_file_content
+                return (
+                    yaml_title,
+                    yaml_content if yaml_content is not None else full_file_content,
+                )
             # If YAML is a valid dict but has no "title", fall through to filename fallback logic
     except yaml.YAMLError:
-        logger_instance.debug(f"Note file '{file_path.name}' is not valid YAML. Using filename as title.")
+        logger_instance.debug(
+            f"Note file '{file_path.name}' is not valid YAML. Using filename as title."
+        )
     except Exception as e_yaml_other:
-        logger_instance.warning(f"Unexpected error during YAML parsing of note '{file_path.name}': {e_yaml_other}")
+        logger_instance.warning(
+            f"Unexpected error during YAML parsing of note '{file_path.name}': {e_yaml_other}"
+        )
     # Fall through
 
     # 3. Fallback for non-txt/md files if JSON/YAML parsing failed or didn't yield a title
     logger_instance.debug(
-        f"Note file '{file_path.name}' (not TXT/MD) failed structured parsing or lacked 'title'. Using filename as title.")
+        f"Note file '{file_path.name}' (not TXT/MD) failed structured parsing or lacked 'title'. Using filename as title."
+    )
     return filename_as_title, full_file_content
 
 
@@ -113,21 +137,20 @@ def _parse_note_from_file_content(file_path: Path, file_content_str: str) -> Tup
 
 from pathlib import Path
 
+
 def load_note_templates():
     """Load note templates from JSON file or use defaults."""
     # Try to load from user's config directory first
     user_config_path = Path.home() / ".config" / "tldw_cli" / "note_templates.json"
-    
+
     # Fallback to app's config directory
-    app_config_path = Path(__file__).parent.parent / "Config_Files" / "note_templates.json"
-    
+    app_config_path = (
+        Path(__file__).parent.parent / "Config_Files" / "note_templates.json"
+    )
+
     # Use hardcoded defaults as last resort
     default_templates = {
-        "blank": {
-            "title": "New Note",
-            "content": "",
-            "keywords": ""
-        },
+        "blank": {"title": "New Note", "content": "", "keywords": ""},
         "meeting": {
             "title": "Meeting Notes - {date}",
             "content": """## Meeting Notes
@@ -151,41 +174,44 @@ def load_note_templates():
 
 ### Notes
 """,
-            "keywords": "meeting, notes"
-        }
+            "keywords": "meeting, notes",
+        },
     }
-    
+
     # Try to load templates
     templates_data = None
     loaded_from = None
-    
+
     # First try user config
     if user_config_path.exists():
         try:
-            with open(user_config_path, 'r', encoding='utf-8') as f:
+            with open(user_config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                templates_data = data.get('templates', data)
+                templates_data = data.get("templates", data)
                 loaded_from = "user config"
         except Exception as e:
-            logger.warning(f"Failed to load user templates from {user_config_path}: {e}")
-    
+            logger.warning(
+                f"Failed to load user templates from {user_config_path}: {e}"
+            )
+
     # Then try app config
     if templates_data is None and app_config_path.exists():
         try:
-            with open(app_config_path, 'r', encoding='utf-8') as f:
+            with open(app_config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                templates_data = data.get('templates', data)
+                templates_data = data.get("templates", data)
                 loaded_from = "app config"
         except Exception as e:
             logger.warning(f"Failed to load app templates from {app_config_path}: {e}")
-    
+
     # Use defaults if nothing loaded
     if templates_data is None:
         templates_data = default_templates
         loaded_from = "defaults"
-    
+
     logger.info(f"Loaded {len(templates_data)} note templates from {loaded_from}")
     return templates_data
+
 
 # Load templates on module import
 NOTE_TEMPLATES = load_note_templates()

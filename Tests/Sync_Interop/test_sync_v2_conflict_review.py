@@ -57,7 +57,9 @@ def test_sync_v2_conflict_review_records_are_durable_and_user_facing(tmp_path):
     assert reviews[0]["resolution_status"] == "open"
 
 
-def test_conflict_review_service_maps_retained_outbox_failures_without_plaintext(tmp_path):
+def test_conflict_review_service_maps_retained_outbox_failures_without_plaintext(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
         dataset_id="dataset-1",
@@ -107,7 +109,10 @@ def test_conflict_review_service_maps_retained_outbox_failures_without_plaintext
     assert reviews[0].item_label == "notes note-1"
     assert reviews[0].cause == "stale_base: Remote base changed."
     assert reviews[0].local_summary == "Local pending notes change retained for retry."
-    assert reviews[0].remote_summary == "Remote state unavailable until retry or conflict review."
+    assert (
+        reviews[0].remote_summary
+        == "Remote state unavailable until retry or conflict review."
+    )
     assert reviews[0].recovery_options["retry"] == "available"
     assert reviews[0].recovery_options["keep-local"] == "unavailable"
     assert reviews[0].recovery_options["accept-remote"] == "unavailable"
@@ -116,7 +121,9 @@ def test_conflict_review_service_maps_retained_outbox_failures_without_plaintext
     assert "Private" not in str(reviews[0])
 
 
-def test_conflict_review_service_prefers_newest_durable_rows_and_dedupes_retained_failures(tmp_path):
+def test_conflict_review_service_prefers_newest_durable_rows_and_dedupes_retained_failures(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
         dataset_id="dataset-1",
@@ -189,4 +196,7 @@ def test_conflict_review_service_prefers_newest_durable_rows_and_dedupes_retaine
         domains=["notes"],
     )
 
-    assert [review.item_label for review in reviews] == ["New durable note", "Old durable note"]
+    assert [review.item_label for review in reviews] == [
+        "New durable note",
+        "Old durable note",
+    ]

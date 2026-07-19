@@ -64,14 +64,20 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
                 pilot,
                 # Nav strip + docked hint mount a tick after the screen swap;
                 # wait for the full chrome before asserting/clicking.
-                lambda: app.current_tab == "home"
-                and app.screen.__class__.__name__ == "HomeScreen"
-                and len(app.screen.query(".nav-button")) == len(EXPECTED_NAV)
-                and len(app.screen.query("#nav-overflow-hint")) == 1,
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and len(app.screen.query(".nav-button")) == len(EXPECTED_NAV)
+                    and len(app.screen.query("#nav-overflow-hint")) == 1
+                ),
             )
 
-            nav_buttons = list(app.screen.query("MainNavigationBar").first().query(Button))
-            assert [(button.id, str(button.label).strip()) for button in nav_buttons] == EXPECTED_NAV
+            nav_buttons = list(
+                app.screen.query("MainNavigationBar").first().query(Button)
+            )
+            assert [
+                (button.id, str(button.label).strip()) for button in nav_buttons
+            ] == EXPECTED_NAV
 
             home_text = _screen_text(app)
             assert "Details" in home_text
@@ -83,7 +89,10 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             app.screen.query_one("#nav-console", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
             )
             console_text = _screen_text(app)
             assert "Live work sources" in console_text
@@ -94,7 +103,10 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             app.screen.query_one("#nav-acp", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "acp" and app.screen.__class__.__name__ == "ACPScreen",
+                lambda: (
+                    app.current_tab == "acp"
+                    and app.screen.__class__.__name__ == "ACPScreen"
+                ),
             )
             acp_text = _screen_text(app)
             assert "Runtime not configured" in acp_text
@@ -105,7 +117,10 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             app.screen.query_one("#nav-library", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
+                lambda: (
+                    app.current_tab == "library"
+                    and app.screen.__class__.__name__ == "LibraryScreen"
+                ),
             )
             library_text = _screen_text(app)
             assert "Library" in library_text
@@ -115,11 +130,20 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             app.screen.query_one("#nav-settings", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "settings" and app.screen.__class__.__name__ == "SettingsScreen",
+                lambda: (
+                    app.current_tab == "settings"
+                    and app.screen.__class__.__name__ == "SettingsScreen"
+                ),
             )
             await _wait_until(
                 pilot,
-                lambda: "Global preferences, appearance, accounts, storage" in _screen_text(app),
+                lambda: (
+                    "Global preferences, appearance, accounts, storage"
+                    in _screen_text(app)
+                ),
             )
             settings_text = _screen_text(app)
-            assert "Settings | Global preferences, appearance, accounts, storage | Local" in settings_text
+            assert (
+                "Settings | Global preferences, appearance, accounts, storage | Local"
+                in settings_text
+            )

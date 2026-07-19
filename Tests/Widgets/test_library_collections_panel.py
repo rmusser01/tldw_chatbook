@@ -6,13 +6,17 @@ import pytest
 from textual.widgets import Static
 
 from tldw_chatbook.Library.library_collections_state import LibraryCollectionsPanelState
-from tldw_chatbook.Widgets.Library.library_collections_panel import LibraryCollectionsPanel
+from tldw_chatbook.Widgets.Library.library_collections_panel import (
+    LibraryCollectionsPanel,
+)
 
 
 pytestmark = pytest.mark.asyncio
 
 
-async def test_library_collections_panel_renders_read_only_sync_dry_run_detail(widget_pilot):
+async def test_library_collections_panel_renders_read_only_sync_dry_run_detail(
+    widget_pilot,
+):
     state = LibraryCollectionsPanelState.from_values(
         collections=(
             {
@@ -40,15 +44,17 @@ async def test_library_collections_panel_renders_read_only_sync_dry_run_detail(w
 
     async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
         await pilot.pause()
-        assert str(pilot.app.query_one("#library-collection-sync-status", Static).renderable) == (
-            "Sync dry-run: ready"
-        )
-        assert str(pilot.app.query_one("#library-collection-sync-detail", Static).renderable) == (
-            "Read-only mirror check: 2 mapped records. No writes will be queued."
-        )
+        assert str(
+            pilot.app.query_one("#library-collection-sync-status", Static).renderable
+        ) == ("Sync dry-run: ready")
+        assert str(
+            pilot.app.query_one("#library-collection-sync-detail", Static).renderable
+        ) == ("Read-only mirror check: 2 mapped records. No writes will be queued.")
 
 
-async def test_library_collections_panel_renders_write_sync_promotion_labels(widget_pilot):
+async def test_library_collections_panel_renders_write_sync_promotion_labels(
+    widget_pilot,
+):
     state = LibraryCollectionsPanelState.from_values(
         collections=(
             {
@@ -76,23 +82,31 @@ async def test_library_collections_panel_renders_write_sync_promotion_labels(wid
 
     async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
         await pilot.pause()
-        assert str(pilot.app.query_one("#library-collection-sync-status", Static).renderable) == (
-            "Sync: dry-run only"
-        )
-        assert str(pilot.app.query_one("#library-collection-sync-safety-heading", Static).renderable) == (
-            "Write Sync Safety"
-        )
-        assert str(pilot.app.query_one("#library-collection-sync-safety-help", Static).renderable) == (
-            "Review these labels before any future server write promotion."
-        )
-        assert str(pilot.app.query_one("#library-collection-sync-detail", Static).renderable) == (
+        assert str(
+            pilot.app.query_one("#library-collection-sync-status", Static).renderable
+        ) == ("Sync: dry-run only")
+        assert str(
+            pilot.app.query_one(
+                "#library-collection-sync-safety-heading", Static
+            ).renderable
+        ) == ("Write Sync Safety")
+        assert str(
+            pilot.app.query_one(
+                "#library-collection-sync-safety-help", Static
+            ).renderable
+        ) == ("Review these labels before any future server write promotion.")
+        assert str(
+            pilot.app.query_one("#library-collection-sync-detail", Static).renderable
+        ) == (
             "Authority: local | Mirror: 2 mapped records | Review: required before writes | "
             "Conflicts: none | Rollback: not required | "
             "Writes stay blocked until review, conflict, and rollback gates are ready."
         )
 
 
-async def test_library_collections_panel_renders_sync_profile_status_banner(widget_pilot):
+async def test_library_collections_panel_renders_sync_profile_status_banner(
+    widget_pilot,
+):
     state = LibraryCollectionsPanelState.from_values(
         collections=(
             {
@@ -128,15 +142,26 @@ async def test_library_collections_panel_renders_sync_profile_status_banner(widg
 
     async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
         await pilot.pause()
-        assert str(pilot.app.query_one("#library-sync-profile-status", Static).renderable) == (
-            "Sync profile: pending local changes"
+        assert str(
+            pilot.app.query_one("#library-sync-profile-status", Static).renderable
+        ) == ("Sync profile: pending local changes")
+        assert str(
+            pilot.app.query_one("#library-sync-profile-detail", Static).renderable
+        ) == ("2 pending local changes are waiting for the next sync pass.")
+        assert str(
+            pilot.app.query_one("#library-sync-profile-read-only", Static).renderable
+        ) == ("This view only reads sync state; it does not start sync.")
+        assert (
+            pilot.app.query_one("#library-sync-profile-status", Static)._render_markup
+            is False
         )
-        assert str(pilot.app.query_one("#library-sync-profile-detail", Static).renderable) == (
-            "2 pending local changes are waiting for the next sync pass."
+        assert (
+            pilot.app.query_one("#library-sync-profile-detail", Static)._render_markup
+            is False
         )
-        assert str(pilot.app.query_one("#library-sync-profile-read-only", Static).renderable) == (
-            "This view only reads sync state; it does not start sync."
+        assert (
+            pilot.app.query_one(
+                "#library-sync-profile-read-only", Static
+            )._render_markup
+            is False
         )
-        assert pilot.app.query_one("#library-sync-profile-status", Static)._render_markup is False
-        assert pilot.app.query_one("#library-sync-profile-detail", Static)._render_markup is False
-        assert pilot.app.query_one("#library-sync-profile-read-only", Static)._render_markup is False

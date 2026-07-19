@@ -17,7 +17,10 @@ import pytest
 
 CHAT_SCREEN_PATH = (
     Path(__file__).resolve().parents[2]
-    / "tldw_chatbook" / "UI" / "Screens" / "chat_screen.py"
+    / "tldw_chatbook"
+    / "UI"
+    / "Screens"
+    / "chat_screen.py"
 )
 
 
@@ -41,7 +44,8 @@ def _exclusive_worker_sites(tree: ast.AST):
             calls.append(node)
         elif isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
             calls.extend(
-                dec for dec in node.decorator_list
+                dec
+                for dec in node.decorator_list
                 if isinstance(dec, ast.Call) and _call_name(dec) == "work"
             )
         for call in calls:
@@ -63,8 +67,7 @@ def test_every_exclusive_worker_on_chat_screen_names_a_group():
     — including the Console send worker mid-stream. Never ship one."""
     tree = ast.parse(CHAT_SCREEN_PATH.read_text(encoding="utf-8"))
     ungrouped = [
-        lineno for lineno, has_group in _exclusive_worker_sites(tree)
-        if not has_group
+        lineno for lineno, has_group in _exclusive_worker_sites(tree) if not has_group
     ]
     assert ungrouped == [], (
         "exclusive worker (run_worker or @work) without an explicit group= at "

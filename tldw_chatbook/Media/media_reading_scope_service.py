@@ -19,7 +19,11 @@ from .media_reading_normalizers import (
     normalize_server_reading_item,
 )
 
-ALLOWED_SERVER_CREATE_SOURCE_TYPES = ("local_directory", "archive_snapshot", "git_repository")
+ALLOWED_SERVER_CREATE_SOURCE_TYPES = (
+    "local_directory",
+    "archive_snapshot",
+    "git_repository",
+)
 
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
@@ -97,7 +101,9 @@ class MediaReadingScopeService:
         self.policy_enforcer = policy_enforcer
         self.sync_scope_service = sync_scope_service
 
-    def _normalize_mode(self, mode: MediaReadingBackend | str | None) -> MediaReadingBackend:
+    def _normalize_mode(
+        self, mode: MediaReadingBackend | str | None
+    ) -> MediaReadingBackend:
         if mode is None:
             return MediaReadingBackend.LOCAL
         if isinstance(mode, MediaReadingBackend):
@@ -114,13 +120,19 @@ class MediaReadingScopeService:
         media_type_slug: str | None = None,
     ) -> ReadItLaterContextCapability:
         normalized_mode = self._normalize_mode(mode)
-        normalized_type = str(media_type_slug or "all-media").strip().lower() or "all-media"
+        normalized_type = (
+            str(media_type_slug or "all-media").strip().lower() or "all-media"
+        )
 
         if normalized_mode == MediaReadingBackend.LOCAL:
-            return ReadItLaterContextCapability(available=True, aggregate_only=False, reason=None)
+            return ReadItLaterContextCapability(
+                available=True, aggregate_only=False, reason=None
+            )
 
         if normalized_type == "all-media":
-            return ReadItLaterContextCapability(available=True, aggregate_only=True, reason=None)
+            return ReadItLaterContextCapability(
+                available=True, aggregate_only=True, reason=None
+            )
 
         return ReadItLaterContextCapability(
             available=False,
@@ -197,7 +209,9 @@ class MediaReadingScopeService:
         delete_method = getattr(self.server_service, "delete_ingestion_source", None)
         if not callable(delete_method):
             return False
-        return bool(getattr(self.server_service, "supports_ingestion_source_delete", True))
+        return bool(
+            getattr(self.server_service, "supports_ingestion_source_delete", True)
+        )
 
     @staticmethod
     def _reading_action_id(mode: MediaReadingBackend, action: str) -> str:
@@ -224,7 +238,9 @@ class MediaReadingScopeService:
         return f"media.reading_import_jobs.{action}.{mode.value}"
 
     @staticmethod
-    def _reading_digest_schedule_action_id(mode: MediaReadingBackend, action: str) -> str:
+    def _reading_digest_schedule_action_id(
+        mode: MediaReadingBackend, action: str
+    ) -> str:
         return f"media.reading.digest_schedules.{action}.{mode.value}"
 
     @staticmethod
@@ -232,7 +248,9 @@ class MediaReadingScopeService:
         return f"media.reading.digest_outputs.{action}.{mode.value}"
 
     @staticmethod
-    def _reading_digest_scheduler_action_id(mode: MediaReadingBackend, action: str) -> str:
+    def _reading_digest_scheduler_action_id(
+        mode: MediaReadingBackend, action: str
+    ) -> str:
         return f"media.reading.digest_scheduler.{action}.{mode.value}"
 
     @staticmethod
@@ -240,7 +258,9 @@ class MediaReadingScopeService:
         return f"media.web_content_ingest.{action}.server"
 
     @staticmethod
-    def _processing_action_id(kind: str, action: str, mode: MediaReadingBackend | None = None) -> str:
+    def _processing_action_id(
+        kind: str, action: str, mode: MediaReadingBackend | None = None
+    ) -> str:
         source = mode.value if mode is not None else MediaReadingBackend.SERVER.value
         return f"media.processing.{kind}.{action}.{source}"
 
@@ -253,7 +273,9 @@ class MediaReadingScopeService:
         return f"media.items.{action}.{mode.value}"
 
     @staticmethod
-    def _media_item_subresource_action_id(mode: MediaReadingBackend, subresource: str, action: str) -> str:
+    def _media_item_subresource_action_id(
+        mode: MediaReadingBackend, subresource: str, action: str
+    ) -> str:
         return f"media.items.{subresource}.{action}.{mode.value}"
 
     @staticmethod
@@ -269,11 +291,15 @@ class MediaReadingScopeService:
         return f"media.items.trash.{action}.{mode.value}"
 
     @staticmethod
-    def _media_item_metadata_search_action_id(mode: MediaReadingBackend, action: str) -> str:
+    def _media_item_metadata_search_action_id(
+        mode: MediaReadingBackend, action: str
+    ) -> str:
         return f"media.items.metadata_search.{action}.{mode.value}"
 
     @staticmethod
-    def _media_item_identifier_lookup_action_id(mode: MediaReadingBackend, action: str) -> str:
+    def _media_item_identifier_lookup_action_id(
+        mode: MediaReadingBackend, action: str
+    ) -> str:
         return f"media.items.identifier_lookup.{action}.{mode.value}"
 
     @staticmethod
@@ -285,7 +311,9 @@ class MediaReadingScopeService:
         return f"media.processing.{action}.{mode.value}"
 
     @staticmethod
-    def _media_processing_models_action_id(mode: MediaReadingBackend, action: str) -> str:
+    def _media_processing_models_action_id(
+        mode: MediaReadingBackend, action: str
+    ) -> str:
         return f"media.processing_models.{action}.{mode.value}"
 
     @staticmethod
@@ -317,7 +345,9 @@ class MediaReadingScopeService:
         return f"media.document_navigation.{action}.{mode.value}"
 
     @staticmethod
-    def _document_navigation_content_action_id(mode: MediaReadingBackend, action: str) -> str:
+    def _document_navigation_content_action_id(
+        mode: MediaReadingBackend, action: str
+    ) -> str:
         return f"media.document_navigation_content.{action}.{mode.value}"
 
     @staticmethod
@@ -340,7 +370,9 @@ class MediaReadingScopeService:
     ) -> ReadItLaterContextCapability:
         """Return the authoritative read-it-later browse capability for a context."""
         normalized_mode = self._normalize_mode(mode)
-        normalized_media_type = str(media_type_slug or "all-media").strip().lower() or "all-media"
+        normalized_media_type = (
+            str(media_type_slug or "all-media").strip().lower() or "all-media"
+        )
 
         if normalized_mode == MediaReadingBackend.LOCAL:
             return ReadItLaterContextCapability(
@@ -396,12 +428,18 @@ class MediaReadingScopeService:
 
     def _server_web_content_ingest_service(self, mode: MediaReadingBackend) -> Any:
         if mode == MediaReadingBackend.LOCAL:
-            raise ValueError("The direct web-content ingestion is server-only; use local URL ingest jobs in local mode.")
+            raise ValueError(
+                "The direct web-content ingestion is server-only; use local URL ingest jobs in local mode."
+            )
         return self._service_for_mode(mode)
 
-    def _server_processing_service(self, mode: MediaReadingBackend, operation_name: str) -> Any:
+    def _server_processing_service(
+        self, mode: MediaReadingBackend, operation_name: str
+    ) -> Any:
         if mode == MediaReadingBackend.LOCAL:
-            raise ValueError(f"{operation_name} is server-only; use local/offline ingestion tooling in local mode.")
+            raise ValueError(
+                f"{operation_name} is server-only; use local/offline ingestion tooling in local mode."
+            )
         return self._service_for_mode(mode)
 
     @staticmethod
@@ -436,10 +474,14 @@ class MediaReadingScopeService:
             backing_media_id = record.get("backing_media_id")
             if backing_media_id not in (None, ""):
                 return backing_media_id
-            raise ValueError("record['backing_media_id'] is required for reading progress operations.")
+            raise ValueError(
+                "record['backing_media_id'] is required for reading progress operations."
+            )
         if media_id not in (None, ""):
             return media_id
-        raise ValueError("A media record or media_id is required for reading progress operations.")
+        raise ValueError(
+            "A media record or media_id is required for reading progress operations."
+        )
 
     def _resolve_highlight_item_id(
         self,
@@ -458,12 +500,18 @@ class MediaReadingScopeService:
                 source_id = record.get("source_id")
                 if source_id not in (None, ""):
                     return source_id
-                raise ValueError("record['source_id'] is required for server reading highlight operations.")
+                raise ValueError(
+                    "record['source_id'] is required for server reading highlight operations."
+                )
             backing_media_id = record.get("backing_media_id")
             if backing_media_id not in (None, ""):
                 return backing_media_id
-            raise ValueError("record['backing_media_id'] is required for local reading highlight operations.")
-        raise ValueError("A media record, item_id, or media_id is required for reading highlight operations.")
+            raise ValueError(
+                "record['backing_media_id'] is required for local reading highlight operations."
+            )
+        raise ValueError(
+            "A media record, item_id, or media_id is required for reading highlight operations."
+        )
 
     @staticmethod
     def _to_plain(value: Any) -> Any:
@@ -487,7 +535,9 @@ class MediaReadingScopeService:
         service = self._service_for_mode(normalized_mode)
         self._enforce_policy(self._file_artifact_action_id(normalized_mode, "create"))
         if request_data is not None:
-            response = await self._maybe_await(service.create_file_artifact(request_data=request_data))
+            response = await self._maybe_await(
+                service.create_file_artifact(request_data=request_data)
+            )
         else:
             response = await self._maybe_await(
                 service.create_file_artifact(
@@ -498,7 +548,9 @@ class MediaReadingScopeService:
                     options=dict(options or {"persist": True}),
                 )
             )
-        return normalize_file_artifact(self._to_plain(response), backend=normalized_mode.value)
+        return normalize_file_artifact(
+            self._to_plain(response), backend=normalized_mode.value
+        )
 
     async def list_reference_images(
         self,
@@ -508,12 +560,23 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
         self._enforce_policy(self._reference_image_action_id(normalized_mode, "list"))
-        response = self._to_plain(await self._maybe_await(service.list_reference_images()))
-        items = response.get("items", []) if isinstance(response, Mapping) else list(response or [])
-        normalized_items = [normalize_reference_image(item, backend=normalized_mode.value) for item in items]
+        response = self._to_plain(
+            await self._maybe_await(service.list_reference_images())
+        )
+        items = (
+            response.get("items", [])
+            if isinstance(response, Mapping)
+            else list(response or [])
+        )
+        normalized_items = [
+            normalize_reference_image(item, backend=normalized_mode.value)
+            for item in items
+        ]
         return {
             "items": normalized_items,
-            "total": response.get("total", len(normalized_items)) if isinstance(response, Mapping) else len(normalized_items),
+            "total": response.get("total", len(normalized_items))
+            if isinstance(response, Mapping)
+            else len(normalized_items),
         }
 
     async def get_file_artifact(
@@ -526,7 +589,9 @@ class MediaReadingScopeService:
         service = self._service_for_mode(normalized_mode)
         self._enforce_policy(self._file_artifact_action_id(normalized_mode, "detail"))
         response = await self._maybe_await(service.get_file_artifact(file_id))
-        return normalize_file_artifact(self._to_plain(response), backend=normalized_mode.value)
+        return normalize_file_artifact(
+            self._to_plain(response), backend=normalized_mode.value
+        )
 
     async def export_file_artifact(
         self,
@@ -538,7 +603,11 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
         self._enforce_policy(self._file_artifact_action_id(normalized_mode, "export"))
-        return self._to_plain(await self._maybe_await(service.export_file_artifact(file_id, format=format)))
+        return self._to_plain(
+            await self._maybe_await(
+                service.export_file_artifact(file_id, format=format)
+            )
+        )
 
     async def delete_file_artifact(
         self,
@@ -552,7 +621,11 @@ class MediaReadingScopeService:
         service = self._service_for_mode(normalized_mode)
         self._enforce_policy(self._file_artifact_action_id(normalized_mode, "delete"))
         return self._to_plain(
-            await self._maybe_await(service.delete_file_artifact(file_id, hard=hard, delete_file=delete_file))
+            await self._maybe_await(
+                service.delete_file_artifact(
+                    file_id, hard=hard, delete_file=delete_file
+                )
+            )
         )
 
     async def purge_file_artifacts(
@@ -591,13 +664,25 @@ class MediaReadingScopeService:
         payload = await self._maybe_await(
             service.search_media(query=query, limit=limit, offset=offset, **filters)
         )
-        raw_items = list(payload.get("items", [])) if isinstance(payload, Mapping) else list(payload or [])
-        items = [self._normalize_media_record(normalized_mode, item) for item in raw_items]
+        raw_items = (
+            list(payload.get("items", []))
+            if isinstance(payload, Mapping)
+            else list(payload or [])
+        )
+        items = [
+            self._normalize_media_record(normalized_mode, item) for item in raw_items
+        ]
         return {
             "items": items,
-            "total": payload.get("total", len(items)) if isinstance(payload, Mapping) else len(items),
-            "offset": payload.get("offset", offset) if isinstance(payload, Mapping) else offset,
-            "limit": payload.get("limit", limit) if isinstance(payload, Mapping) else limit,
+            "total": payload.get("total", len(items))
+            if isinstance(payload, Mapping)
+            else len(items),
+            "offset": payload.get("offset", offset)
+            if isinstance(payload, Mapping)
+            else offset,
+            "limit": payload.get("limit", limit)
+            if isinstance(payload, Mapping)
+            else limit,
         }
 
     async def get_media_detail(
@@ -614,7 +699,9 @@ class MediaReadingScopeService:
 
         backing_media_id = normalized.get("backing_media_id")
         if backing_media_id not in (None, ""):
-            progress = await self._maybe_await(service.get_reading_progress(backing_media_id))
+            progress = await self._maybe_await(
+                service.get_reading_progress(backing_media_id)
+            )
             normalized["reading_progress"] = normalize_reading_progress(
                 progress,
                 backend=normalized_mode.value,
@@ -631,9 +718,15 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_media_item_lifecycle(normalized_mode)
-        self._enforce_policy(self._media_item_keywords_action_id(normalized_mode, "list"))
+        self._enforce_policy(
+            self._media_item_keywords_action_id(normalized_mode, "list")
+        )
         service = self._service_for_mode(normalized_mode)
-        return self._as_mapping_payload(await self._maybe_await(service.list_media_keywords(query=query, limit=limit)))
+        return self._as_mapping_payload(
+            await self._maybe_await(
+                service.list_media_keywords(query=query, limit=limit)
+            )
+        )
 
     async def list_backing_media_items(
         self,
@@ -708,9 +801,13 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_media_item_lifecycle(normalized_mode)
-        self._enforce_policy(self._media_item_trash_action_id(normalized_mode, "delete"))
+        self._enforce_policy(
+            self._media_item_trash_action_id(normalized_mode, "delete")
+        )
         service = self._service_for_mode(normalized_mode)
-        return self._as_mapping_payload(await self._maybe_await(service.empty_media_trash()))
+        return self._as_mapping_payload(
+            await self._maybe_await(service.empty_media_trash())
+        )
 
     async def search_backing_media_metadata(
         self,
@@ -720,9 +817,13 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_media_item_lifecycle(normalized_mode)
-        self._enforce_policy(self._media_item_metadata_search_action_id(normalized_mode, "list"))
+        self._enforce_policy(
+            self._media_item_metadata_search_action_id(normalized_mode, "list")
+        )
         service = self._service_for_mode(normalized_mode)
-        return self._as_mapping_payload(await self._maybe_await(service.search_media_metadata(**filters)))
+        return self._as_mapping_payload(
+            await self._maybe_await(service.search_media_metadata(**filters))
+        )
 
     async def get_backing_media_by_identifier(
         self,
@@ -732,9 +833,13 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_media_item_lifecycle(normalized_mode)
-        self._enforce_policy(self._media_item_identifier_lookup_action_id(normalized_mode, "detail"))
+        self._enforce_policy(
+            self._media_item_identifier_lookup_action_id(normalized_mode, "detail")
+        )
         service = self._service_for_mode(normalized_mode)
-        return self._as_mapping_payload(await self._maybe_await(service.get_media_by_identifier(**identifiers)))
+        return self._as_mapping_payload(
+            await self._maybe_await(service.get_media_by_identifier(**identifiers))
+        )
 
     async def get_media_transcription_models(
         self,
@@ -743,9 +848,13 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_media_processing(normalized_mode)
-        self._enforce_policy(self._media_processing_models_action_id(normalized_mode, "list"))
+        self._enforce_policy(
+            self._media_processing_models_action_id(normalized_mode, "list")
+        )
         service = self._service_for_mode(normalized_mode)
-        return self._as_mapping_payload(await self._maybe_await(service.get_media_transcription_models()))
+        return self._as_mapping_payload(
+            await self._maybe_await(service.get_media_transcription_models())
+        )
 
     async def reprocess_backing_media_item(
         self,
@@ -756,9 +865,13 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_media_processing(normalized_mode)
-        self._enforce_policy(self._media_item_reprocess_action_id(normalized_mode, "launch"))
+        self._enforce_policy(
+            self._media_item_reprocess_action_id(normalized_mode, "launch")
+        )
         service = self._service_for_mode(normalized_mode)
-        return self._as_mapping_payload(await self._maybe_await(service.reprocess_media(media_id, **options)))
+        return self._as_mapping_payload(
+            await self._maybe_await(service.reprocess_media(media_id, **options))
+        )
 
     async def list_unified_items(
         self,
@@ -770,7 +883,9 @@ class MediaReadingScopeService:
         self._enforce_policy(self._unified_item_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         payload = {key: value for key, value in filters.items() if value is not None}
-        return self._as_mapping_payload(await self._maybe_await(service.list_unified_items(**payload)))
+        return self._as_mapping_payload(
+            await self._maybe_await(service.list_unified_items(**payload))
+        )
 
     async def get_unified_item(
         self,
@@ -781,7 +896,9 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._unified_item_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
-        return self._as_mapping_payload(await self._maybe_await(service.get_unified_item(item_id)))
+        return self._as_mapping_payload(
+            await self._maybe_await(service.get_unified_item(item_id))
+        )
 
     async def bulk_update_unified_items(
         self,
@@ -791,9 +908,15 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         action = self._as_mapping_payload(request_data).get("action")
-        self._enforce_policy(self._unified_item_action_id(normalized_mode, "delete" if action == "delete" else "update"))
+        self._enforce_policy(
+            self._unified_item_action_id(
+                normalized_mode, "delete" if action == "delete" else "update"
+            )
+        )
         service = self._service_for_mode(normalized_mode)
-        return self._as_mapping_payload(await self._maybe_await(service.bulk_update_unified_items(request_data)))
+        return self._as_mapping_payload(
+            await self._maybe_await(service.bulk_update_unified_items(request_data))
+        )
 
     async def _process_server_media(
         self,
@@ -805,10 +928,14 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_media_processing(normalized_mode)
-        self._enforce_policy(self._media_processing_action_id(normalized_mode, "launch"))
+        self._enforce_policy(
+            self._media_processing_action_id(normalized_mode, "launch")
+        )
         service = self._service_for_mode(normalized_mode)
         method = getattr(service, method_name)
-        return self._as_mapping_payload(await self._maybe_await(method(request_data, file_paths=file_paths)))
+        return self._as_mapping_payload(
+            await self._maybe_await(method(request_data, file_paths=file_paths))
+        )
 
     async def process_media_video(
         self,
@@ -817,7 +944,12 @@ class MediaReadingScopeService:
         request_data: Any,
         file_paths: list[str] | None = None,
     ) -> dict[str, Any]:
-        return await self._process_server_media(mode=mode, method_name="process_video", request_data=request_data, file_paths=file_paths)
+        return await self._process_server_media(
+            mode=mode,
+            method_name="process_video",
+            request_data=request_data,
+            file_paths=file_paths,
+        )
 
     async def process_media_audio(
         self,
@@ -826,7 +958,12 @@ class MediaReadingScopeService:
         request_data: Any,
         file_paths: list[str] | None = None,
     ) -> dict[str, Any]:
-        return await self._process_server_media(mode=mode, method_name="process_audio", request_data=request_data, file_paths=file_paths)
+        return await self._process_server_media(
+            mode=mode,
+            method_name="process_audio",
+            request_data=request_data,
+            file_paths=file_paths,
+        )
 
     async def process_media_pdf(
         self,
@@ -835,7 +972,12 @@ class MediaReadingScopeService:
         request_data: Any,
         file_paths: list[str] | None = None,
     ) -> dict[str, Any]:
-        return await self._process_server_media(mode=mode, method_name="process_pdf", request_data=request_data, file_paths=file_paths)
+        return await self._process_server_media(
+            mode=mode,
+            method_name="process_pdf",
+            request_data=request_data,
+            file_paths=file_paths,
+        )
 
     async def process_media_ebook(
         self,
@@ -844,7 +986,12 @@ class MediaReadingScopeService:
         request_data: Any,
         file_paths: list[str] | None = None,
     ) -> dict[str, Any]:
-        return await self._process_server_media(mode=mode, method_name="process_ebook", request_data=request_data, file_paths=file_paths)
+        return await self._process_server_media(
+            mode=mode,
+            method_name="process_ebook",
+            request_data=request_data,
+            file_paths=file_paths,
+        )
 
     async def process_media_document(
         self,
@@ -853,7 +1000,12 @@ class MediaReadingScopeService:
         request_data: Any,
         file_paths: list[str] | None = None,
     ) -> dict[str, Any]:
-        return await self._process_server_media(mode=mode, method_name="process_document", request_data=request_data, file_paths=file_paths)
+        return await self._process_server_media(
+            mode=mode,
+            method_name="process_document",
+            request_data=request_data,
+            file_paths=file_paths,
+        )
 
     async def process_media_code(
         self,
@@ -862,7 +1014,12 @@ class MediaReadingScopeService:
         request_data: Any,
         file_paths: list[str] | None = None,
     ) -> dict[str, Any]:
-        return await self._process_server_media(mode=mode, method_name="process_code", request_data=request_data, file_paths=file_paths)
+        return await self._process_server_media(
+            mode=mode,
+            method_name="process_code",
+            request_data=request_data,
+            file_paths=file_paths,
+        )
 
     async def process_media_email(
         self,
@@ -871,7 +1028,12 @@ class MediaReadingScopeService:
         request_data: Any,
         file_paths: list[str] | None = None,
     ) -> dict[str, Any]:
-        return await self._process_server_media(mode=mode, method_name="process_email", request_data=request_data, file_paths=file_paths)
+        return await self._process_server_media(
+            mode=mode,
+            method_name="process_email",
+            request_data=request_data,
+            file_paths=file_paths,
+        )
 
     async def get_backing_media_item(
         self,
@@ -908,7 +1070,9 @@ class MediaReadingScopeService:
         self._require_server_media_item_lifecycle(normalized_mode)
         self._enforce_policy(self._media_item_action_id(normalized_mode, "update"))
         service = self._service_for_mode(normalized_mode)
-        return self._as_mapping_payload(await self._maybe_await(service.update_media_item(media_id, **changes)))
+        return self._as_mapping_payload(
+            await self._maybe_await(service.update_media_item(media_id, **changes))
+        )
 
     async def trash_backing_media_item(
         self,
@@ -954,7 +1118,9 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_media_item_lifecycle(normalized_mode)
-        self._enforce_policy(self._media_item_action_id(normalized_mode, "permanent_delete"))
+        self._enforce_policy(
+            self._media_item_action_id(normalized_mode, "permanent_delete")
+        )
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.permanently_delete_media_item(media_id))
 
@@ -968,10 +1134,16 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._require_server_media_item_lifecycle(normalized_mode)
-        self._enforce_policy(self._media_item_keywords_action_id(normalized_mode, "update"))
+        self._enforce_policy(
+            self._media_item_keywords_action_id(normalized_mode, "update")
+        )
         service = self._service_for_mode(normalized_mode)
         return self._as_mapping_payload(
-            await self._maybe_await(service.update_media_keywords(media_id, keywords=keywords, mode=update_mode))
+            await self._maybe_await(
+                service.update_media_keywords(
+                    media_id, keywords=keywords, mode=update_mode
+                )
+            )
         )
 
     async def download_backing_media_file(
@@ -985,7 +1157,9 @@ class MediaReadingScopeService:
         self._require_server_media_item_lifecycle(normalized_mode)
         self._enforce_policy(self._media_item_file_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
-        payload = await self._maybe_await(service.download_media_file(media_id, file_type=file_type))
+        payload = await self._maybe_await(
+            service.download_media_file(media_id, file_type=file_type)
+        )
         content = getattr(payload, "content", None)
         return content if content is not None else payload
 
@@ -1000,7 +1174,9 @@ class MediaReadingScopeService:
         parent_id: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._document_navigation_action_id(normalized_mode, "detail"))
+        self._enforce_policy(
+            self._document_navigation_action_id(normalized_mode, "detail")
+        )
         service = self._service_for_mode(normalized_mode)
         payload = self._as_mapping_payload(
             await self._maybe_await(
@@ -1030,7 +1206,9 @@ class MediaReadingScopeService:
         include_alternates: bool = False,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._document_navigation_content_action_id(normalized_mode, "detail"))
+        self._enforce_policy(
+            self._document_navigation_content_action_id(normalized_mode, "detail")
+        )
         service = self._service_for_mode(normalized_mode)
         return self._as_mapping_payload(
             await self._maybe_await(
@@ -1063,13 +1241,28 @@ class MediaReadingScopeService:
         self._enforce_policy(self._reading_list_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         payload = await self._maybe_await(
-            service.search_media(query=query, limit=limit, offset=offset, read_it_later_only=True, **filters)
+            service.search_media(
+                query=query,
+                limit=limit,
+                offset=offset,
+                read_it_later_only=True,
+                **filters,
+            )
             if normalized_mode == MediaReadingBackend.LOCAL
-            else service.search_media(query=query, limit=limit, offset=offset, status=["saved"], **filters)
+            else service.search_media(
+                query=query, limit=limit, offset=offset, status=["saved"], **filters
+            )
         )
         raw_items = list(payload.get("items", []))
-        items = [self._normalize_media_record(normalized_mode, item) for item in raw_items]
-        return {"items": items, "total": payload.get("total", len(items)), "offset": offset, "limit": limit}
+        items = [
+            self._normalize_media_record(normalized_mode, item) for item in raw_items
+        ]
+        return {
+            "items": items,
+            "total": payload.get("total", len(items)),
+            "offset": offset,
+            "limit": limit,
+        }
 
     async def save_to_read_it_later(
         self,
@@ -1082,7 +1275,9 @@ class MediaReadingScopeService:
         service = self._service_for_mode(normalized_mode)
         if normalized_mode == MediaReadingBackend.LOCAL:
             return await self._maybe_await(service.save_to_read_it_later(media_id))
-        return await self._maybe_await(service.update_media_metadata(media_id, status="saved"))
+        return await self._maybe_await(
+            service.update_media_metadata(media_id, status="saved")
+        )
 
     async def remove_from_read_it_later(
         self,
@@ -1095,7 +1290,9 @@ class MediaReadingScopeService:
         service = self._service_for_mode(normalized_mode)
         if normalized_mode == MediaReadingBackend.LOCAL:
             return await self._maybe_await(service.remove_from_read_it_later(media_id))
-        return await self._maybe_await(service.update_media_metadata(media_id, status="archived"))
+        return await self._maybe_await(
+            service.update_media_metadata(media_id, status="archived")
+        )
 
     async def save_reading_item(
         self,
@@ -1114,7 +1311,9 @@ class MediaReadingScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         if request_data is not None:
-            self._enforce_policy(self._reading_list_action_id(normalized_mode, "create"))
+            self._enforce_policy(
+                self._reading_list_action_id(normalized_mode, "create")
+            )
             service = self._service_for_mode(normalized_mode)
             payload = await self._maybe_await(service.save_reading_item(request_data))
             return self._as_mapping_payload(payload)
@@ -1150,7 +1349,11 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._saved_search_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
-        return self._to_plain(await self._maybe_await(service.create_saved_search(name=name, query=query, sort=sort)))
+        return self._to_plain(
+            await self._maybe_await(
+                service.create_saved_search(name=name, query=query, sort=sort)
+            )
+        )
 
     async def list_saved_searches(
         self,
@@ -1162,7 +1365,11 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._saved_search_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
-        return self._to_plain(await self._maybe_await(service.list_saved_searches(limit=limit, offset=offset)))
+        return self._to_plain(
+            await self._maybe_await(
+                service.list_saved_searches(limit=limit, offset=offset)
+            )
+        )
 
     async def update_saved_search(
         self,
@@ -1178,7 +1385,9 @@ class MediaReadingScopeService:
         service = self._service_for_mode(normalized_mode)
         return self._to_plain(
             await self._maybe_await(
-                service.update_saved_search(search_id, name=name, query=query, sort=sort)
+                service.update_saved_search(
+                    search_id, name=name, query=query, sort=sort
+                )
             )
         )
 
@@ -1191,7 +1400,9 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._saved_search_action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
-        return self._to_plain(await self._maybe_await(service.delete_saved_search(search_id)))
+        return self._to_plain(
+            await self._maybe_await(service.delete_saved_search(search_id))
+        )
 
     async def link_note(
         self,
@@ -1203,7 +1414,9 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._note_link_action_id(normalized_mode, "create"))
         service = self._service_for_mode(normalized_mode)
-        return self._to_plain(await self._maybe_await(service.link_note(item_id, note_id)))
+        return self._to_plain(
+            await self._maybe_await(service.link_note(item_id, note_id))
+        )
 
     async def list_note_links(
         self,
@@ -1226,7 +1439,9 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._note_link_action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
-        return self._to_plain(await self._maybe_await(service.unlink_note(item_id, note_id)))
+        return self._to_plain(
+            await self._maybe_await(service.unlink_note(item_id, note_id))
+        )
 
     async def bulk_update_reading_items(
         self,
@@ -1415,11 +1630,15 @@ class MediaReadingScopeService:
         offset: int = 0,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._reading_import_job_action_id(normalized_mode, "list"))
+        self._enforce_policy(
+            self._reading_import_job_action_id(normalized_mode, "list")
+        )
         service = self._service_for_mode(normalized_mode)
         return self._to_plain(
             await self._maybe_await(
-                service.list_reading_import_jobs(status=status, limit=limit, offset=offset)
+                service.list_reading_import_jobs(
+                    status=status, limit=limit, offset=offset
+                )
             )
         )
 
@@ -1430,9 +1649,13 @@ class MediaReadingScopeService:
         job_id: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._reading_import_job_action_id(normalized_mode, "detail"))
+        self._enforce_policy(
+            self._reading_import_job_action_id(normalized_mode, "detail")
+        )
         service = self._service_for_mode(normalized_mode)
-        return self._to_plain(await self._maybe_await(service.get_reading_import_job(job_id)))
+        return self._to_plain(
+            await self._maybe_await(service.get_reading_import_job(job_id))
+        )
 
     async def create_reading_digest_schedule(
         self,
@@ -1451,7 +1674,9 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "create"))
+        self._enforce_policy(
+            self._reading_digest_schedule_action_id(normalized_mode, "create")
+        )
         return await self._maybe_await(
             service.create_reading_digest_schedule(
                 name=name,
@@ -1476,8 +1701,12 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "list"))
-        return await self._maybe_await(service.list_reading_digest_schedules(limit=limit, offset=offset))
+        self._enforce_policy(
+            self._reading_digest_schedule_action_id(normalized_mode, "list")
+        )
+        return await self._maybe_await(
+            service.list_reading_digest_schedules(limit=limit, offset=offset)
+        )
 
     async def get_reading_digest_schedule(
         self,
@@ -1487,7 +1716,9 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "detail"))
+        self._enforce_policy(
+            self._reading_digest_schedule_action_id(normalized_mode, "detail")
+        )
         return await self._maybe_await(service.get_reading_digest_schedule(schedule_id))
 
     async def update_reading_digest_schedule(
@@ -1499,8 +1730,12 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "update"))
-        return await self._maybe_await(service.update_reading_digest_schedule(schedule_id, **changes))
+        self._enforce_policy(
+            self._reading_digest_schedule_action_id(normalized_mode, "update")
+        )
+        return await self._maybe_await(
+            service.update_reading_digest_schedule(schedule_id, **changes)
+        )
 
     async def delete_reading_digest_schedule(
         self,
@@ -1510,8 +1745,12 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._reading_digest_schedule_action_id(normalized_mode, "delete"))
-        return await self._maybe_await(service.delete_reading_digest_schedule(schedule_id))
+        self._enforce_policy(
+            self._reading_digest_schedule_action_id(normalized_mode, "delete")
+        )
+        return await self._maybe_await(
+            service.delete_reading_digest_schedule(schedule_id)
+        )
 
     async def list_reading_digest_outputs(
         self,
@@ -1523,9 +1762,13 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._reading_digest_output_action_id(normalized_mode, "list"))
+        self._enforce_policy(
+            self._reading_digest_output_action_id(normalized_mode, "list")
+        )
         return await self._maybe_await(
-            service.list_reading_digest_outputs(schedule_id=schedule_id, limit=limit, offset=offset)
+            service.list_reading_digest_outputs(
+                schedule_id=schedule_id, limit=limit, offset=offset
+            )
         )
 
     async def run_due_reading_digest_schedules(
@@ -1536,10 +1779,16 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode != MediaReadingBackend.LOCAL:
-            raise ValueError("Local reading digest scheduler execution is local-only; server schedules run on the server.")
+            raise ValueError(
+                "Local reading digest scheduler execution is local-only; server schedules run on the server."
+            )
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._reading_digest_scheduler_action_id(normalized_mode, "trigger"))
-        return self._to_plain(await self._maybe_await(service.run_due_reading_digest_schedules(now=now)))
+        self._enforce_policy(
+            self._reading_digest_scheduler_action_id(normalized_mode, "trigger")
+        )
+        return self._to_plain(
+            await self._maybe_await(service.run_due_reading_digest_schedules(now=now))
+        )
 
     async def ingest_web_content(
         self,
@@ -1612,7 +1861,9 @@ class MediaReadingScopeService:
                     chunk_size=chunk_size,
                     chunk_overlap=chunk_overlap,
                     hierarchical_chunking=hierarchical_chunking,
-                    hierarchical_template=dict(hierarchical_template) if hierarchical_template is not None else None,
+                    hierarchical_template=dict(hierarchical_template)
+                    if hierarchical_template is not None
+                    else None,
                     use_cookies=use_cookies,
                     cookies=cookies,
                     perform_confabulation_check_of_analysis=perform_confabulation_check_of_analysis,
@@ -1637,7 +1888,9 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._processing_action_id("code", "process", normalized_mode))
+        self._enforce_policy(
+            self._processing_action_id("code", "process", normalized_mode)
+        )
         return self._to_plain(
             await self._maybe_await(
                 service.process_code(
@@ -1662,11 +1915,22 @@ class MediaReadingScopeService:
         **options: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == MediaReadingBackend.LOCAL and kind not in {"video", "audio", "pdf", "ebook", "document", "plaintext"}:
-            service = self._server_processing_service(normalized_mode, f"process-{kind}")
+        if normalized_mode == MediaReadingBackend.LOCAL and kind not in {
+            "video",
+            "audio",
+            "pdf",
+            "ebook",
+            "document",
+            "plaintext",
+        }:
+            service = self._server_processing_service(
+                normalized_mode, f"process-{kind}"
+            )
         else:
             service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._processing_action_id(kind, "process", normalized_mode))
+        self._enforce_policy(
+            self._processing_action_id(kind, "process", normalized_mode)
+        )
         service_method = getattr(service, method_name)
         return self._to_plain(
             await self._maybe_await(
@@ -1785,7 +2049,9 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._processing_action_id("emails", "process", normalized_mode))
+        self._enforce_policy(
+            self._processing_action_id("emails", "process", normalized_mode)
+        )
         return self._to_plain(
             await self._maybe_await(
                 service.process_emails(file_paths=file_paths, **kwargs)
@@ -1807,16 +2073,25 @@ class MediaReadingScopeService:
 
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._processing_action_id("web_scraping", "process", normalized_mode))
+        self._enforce_policy(
+            self._processing_action_id("web_scraping", "process", normalized_mode)
+        )
         if request_data is not None:
-            return self._to_plain(await self._maybe_await(service.process_web_scraping(request_data)))
+            return self._to_plain(
+                await self._maybe_await(service.process_web_scraping(request_data))
+            )
 
         if scrape_method is None or url_input is None:
-            raise ValueError("scrape_method and url_input are required when request_data is not provided.")
+            raise ValueError(
+                "scrape_method and url_input are required when request_data is not provided."
+            )
 
         method = service.process_web_scraping
         signature = inspect.signature(method)
-        accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
+        accepts_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in signature.parameters.values()
+        )
         if not accepts_kwargs and "request_data" in signature.parameters:
             request = ProcessWebScrapingRequest(
                 scrape_method=scrape_method,
@@ -1843,7 +2118,9 @@ class MediaReadingScopeService:
         mode: MediaReadingBackend | str | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        service = self._server_processing_service(normalized_mode, "transcription model discovery")
+        service = self._server_processing_service(
+            normalized_mode, "transcription model discovery"
+        )
         self._enforce_policy(self._transcription_models_action_id("list"))
         return await self._maybe_await(service.get_transcription_models())
 
@@ -1906,11 +2183,15 @@ class MediaReadingScopeService:
             if missing_defaults and callable(model_copy):
                 request_data = model_copy(update=missing_defaults)
             return self._as_mapping_payload(
-                await self._maybe_await(service.add_media(request_data, file_paths=file_paths))
+                await self._maybe_await(
+                    service.add_media(request_data, file_paths=file_paths)
+                )
             )
 
         if not media_type:
-            raise ValueError("media_type is required when request_data is not provided.")
+            raise ValueError(
+                "media_type is required when request_data is not provided."
+            )
 
         self._enforce_policy(self._media_add_action_id(normalized_mode, "create"))
         return self._to_plain(
@@ -1933,8 +2214,14 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._media_item_subresource_action_id(normalized_mode, "keywords", "list"))
-        return self._to_plain(await self._maybe_await(service.list_media_keywords(query=query, limit=limit)))
+        self._enforce_policy(
+            self._media_item_subresource_action_id(normalized_mode, "keywords", "list")
+        )
+        return self._to_plain(
+            await self._maybe_await(
+                service.list_media_keywords(query=query, limit=limit)
+            )
+        )
 
     async def list_media_trash(
         self,
@@ -1946,7 +2233,9 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._media_item_subresource_action_id(normalized_mode, "trash", "list"))
+        self._enforce_policy(
+            self._media_item_subresource_action_id(normalized_mode, "trash", "list")
+        )
         return self._to_plain(
             await self._maybe_await(
                 service.list_media_trash(
@@ -1957,10 +2246,14 @@ class MediaReadingScopeService:
             )
         )
 
-    async def empty_media_trash(self, *, mode: MediaReadingBackend | str | None = None) -> Any:
+    async def empty_media_trash(
+        self, *, mode: MediaReadingBackend | str | None = None
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._media_item_subresource_action_id(normalized_mode, "trash", "delete"))
+        self._enforce_policy(
+            self._media_item_subresource_action_id(normalized_mode, "trash", "delete")
+        )
         return self._to_plain(await self._maybe_await(service.empty_media_trash()))
 
     async def get_media_item(
@@ -1996,13 +2289,19 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
         self._enforce_policy(self._media_item_action_id(normalized_mode, "update"))
-        return self._to_plain(await self._maybe_await(service.update_media_item(media_id, **fields)))
+        return self._to_plain(
+            await self._maybe_await(service.update_media_item(media_id, **fields))
+        )
 
-    async def delete_media_item(self, *, mode: MediaReadingBackend | str | None = None, media_id: Any) -> Any:
+    async def delete_media_item(
+        self, *, mode: MediaReadingBackend | str | None = None, media_id: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
         self._enforce_policy(self._media_item_action_id(normalized_mode, "delete"))
-        return self._to_plain(await self._maybe_await(service.delete_media_item(media_id)))
+        return self._to_plain(
+            await self._maybe_await(service.delete_media_item(media_id))
+        )
 
     async def restore_media_item(
         self,
@@ -2035,8 +2334,14 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._media_item_subresource_action_id(normalized_mode, "permanent", "delete"))
-        return self._to_plain(await self._maybe_await(service.permanently_delete_media_item(media_id)))
+        self._enforce_policy(
+            self._media_item_subresource_action_id(
+                normalized_mode, "permanent", "delete"
+            )
+        )
+        return self._to_plain(
+            await self._maybe_await(service.permanently_delete_media_item(media_id))
+        )
 
     async def update_media_keywords(
         self,
@@ -2048,10 +2353,16 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._media_item_subresource_action_id(normalized_mode, "keywords", "update"))
+        self._enforce_policy(
+            self._media_item_subresource_action_id(
+                normalized_mode, "keywords", "update"
+            )
+        )
         return self._to_plain(
             await self._maybe_await(
-                service.update_media_keywords(media_id, keywords=keywords, mode=update_mode)
+                service.update_media_keywords(
+                    media_id, keywords=keywords, mode=update_mode
+                )
             )
         )
 
@@ -2063,8 +2374,14 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._media_item_subresource_action_id(normalized_mode, "metadata_search", "list"))
-        return self._to_plain(await self._maybe_await(service.search_media_metadata(**filters)))
+        self._enforce_policy(
+            self._media_item_subresource_action_id(
+                normalized_mode, "metadata_search", "list"
+            )
+        )
+        return self._to_plain(
+            await self._maybe_await(service.search_media_metadata(**filters))
+        )
 
     async def get_media_by_identifier(
         self,
@@ -2074,8 +2391,14 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._media_item_subresource_action_id(normalized_mode, "identifier_lookup", "detail"))
-        return self._to_plain(await self._maybe_await(service.get_media_by_identifier(**identifiers)))
+        self._enforce_policy(
+            self._media_item_subresource_action_id(
+                normalized_mode, "identifier_lookup", "detail"
+            )
+        )
+        return self._to_plain(
+            await self._maybe_await(service.get_media_by_identifier(**identifiers))
+        )
 
     async def process_mediawiki_dump(
         self,
@@ -2086,8 +2409,12 @@ class MediaReadingScopeService:
     ):
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._processing_action_id("mediawiki", "process", normalized_mode))
-        async for item in service.process_mediawiki_dump(dump_file_path=dump_file_path, **options):
+        self._enforce_policy(
+            self._processing_action_id("mediawiki", "process", normalized_mode)
+        )
+        async for item in service.process_mediawiki_dump(
+            dump_file_path=dump_file_path, **options
+        ):
             yield self._to_plain(item)
 
     async def ingest_mediawiki_dump(
@@ -2099,8 +2426,12 @@ class MediaReadingScopeService:
     ):
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._processing_action_id("mediawiki", "import", normalized_mode))
-        async for item in service.ingest_mediawiki_dump(dump_file_path=dump_file_path, **options):
+        self._enforce_policy(
+            self._processing_action_id("mediawiki", "import", normalized_mode)
+        )
+        async for item in service.ingest_mediawiki_dump(
+            dump_file_path=dump_file_path, **options
+        ):
             yield self._to_plain(item)
 
     async def download_media_file(
@@ -2112,8 +2443,14 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._media_item_subresource_action_id(normalized_mode, "file", "detail"))
-        return self._to_plain(await self._maybe_await(service.download_media_file(media_id, file_type=file_type)))
+        self._enforce_policy(
+            self._media_item_subresource_action_id(normalized_mode, "file", "detail")
+        )
+        return self._to_plain(
+            await self._maybe_await(
+                service.download_media_file(media_id, file_type=file_type)
+            )
+        )
 
     async def check_media_file(
         self,
@@ -2124,8 +2461,14 @@ class MediaReadingScopeService:
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._service_for_mode(normalized_mode)
-        self._enforce_policy(self._media_item_subresource_action_id(normalized_mode, "file", "detail"))
-        return self._to_plain(await self._maybe_await(service.check_media_file(media_id, file_type=file_type)))
+        self._enforce_policy(
+            self._media_item_subresource_action_id(normalized_mode, "file", "detail")
+        )
+        return self._to_plain(
+            await self._maybe_await(
+                service.check_media_file(media_id, file_type=file_type)
+            )
+        )
 
     async def update_media_metadata(
         self,
@@ -2137,9 +2480,13 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._reading_action_id(normalized_mode, "update"))
         service = self._service_for_mode(normalized_mode)
-        return await self._maybe_await(service.update_media_metadata(media_id, **metadata))
+        return await self._maybe_await(
+            service.update_media_metadata(media_id, **metadata)
+        )
 
-    async def delete_media(self, *, mode: MediaReadingBackend | str | None = None, media_id: Any) -> Any:
+    async def delete_media(
+        self, *, mode: MediaReadingBackend | str | None = None, media_id: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._reading_action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
@@ -2170,9 +2517,13 @@ class MediaReadingScopeService:
                 tags=tags,
             )
         )
-        return normalize_reading_items_bulk_update(payload, backend=normalized_mode.value)
+        return normalize_reading_items_bulk_update(
+            payload, backend=normalized_mode.value
+        )
 
-    async def undelete_media(self, *, mode: MediaReadingBackend | str | None = None, media_id: Any) -> Any:
+    async def undelete_media(
+        self, *, mode: MediaReadingBackend | str | None = None, media_id: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._reading_action_id(normalized_mode, "update"))
         service = self._service_for_mode(normalized_mode)
@@ -2186,10 +2537,16 @@ class MediaReadingScopeService:
         media_id: Any = None,
     ) -> Optional[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._reading_progress_action_id(normalized_mode, "detail"))
+        self._enforce_policy(
+            self._reading_progress_action_id(normalized_mode, "detail")
+        )
         service = self._service_for_mode(normalized_mode)
-        backing_media_id = self._resolve_backing_media_id(record=record, media_id=media_id)
-        progress = await self._maybe_await(service.get_reading_progress(backing_media_id))
+        backing_media_id = self._resolve_backing_media_id(
+            record=record, media_id=media_id
+        )
+        progress = await self._maybe_await(
+            service.get_reading_progress(backing_media_id)
+        )
         return normalize_reading_progress(
             progress,
             backend=normalized_mode.value,
@@ -2205,10 +2562,16 @@ class MediaReadingScopeService:
         progress_data: Mapping[str, Any],
     ) -> Optional[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._reading_progress_action_id(normalized_mode, "update"))
+        self._enforce_policy(
+            self._reading_progress_action_id(normalized_mode, "update")
+        )
         service = self._service_for_mode(normalized_mode)
-        backing_media_id = self._resolve_backing_media_id(record=record, media_id=media_id)
-        progress = await self._maybe_await(service.update_reading_progress(backing_media_id, progress_data))
+        backing_media_id = self._resolve_backing_media_id(
+            record=record, media_id=media_id
+        )
+        progress = await self._maybe_await(
+            service.update_reading_progress(backing_media_id, progress_data)
+        )
         return normalize_reading_progress(
             progress,
             backend=normalized_mode.value,
@@ -2223,10 +2586,16 @@ class MediaReadingScopeService:
         media_id: Any = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._reading_progress_action_id(normalized_mode, "update"))
+        self._enforce_policy(
+            self._reading_progress_action_id(normalized_mode, "update")
+        )
         service = self._service_for_mode(normalized_mode)
-        backing_media_id = self._resolve_backing_media_id(record=record, media_id=media_id)
-        return await self._maybe_await(service.delete_reading_progress(backing_media_id))
+        backing_media_id = self._resolve_backing_media_id(
+            record=record, media_id=media_id
+        )
+        return await self._maybe_await(
+            service.delete_reading_progress(backing_media_id)
+        )
 
     async def create_reading_highlight(
         self,
@@ -2243,7 +2612,9 @@ class MediaReadingScopeService:
         anchor_strategy: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._reading_highlight_action_id(normalized_mode, "create"))
+        self._enforce_policy(
+            self._reading_highlight_action_id(normalized_mode, "create")
+        )
         service = self._service_for_mode(normalized_mode)
         resolved_item_id = self._resolve_highlight_item_id(
             mode=normalized_mode,
@@ -2263,7 +2634,9 @@ class MediaReadingScopeService:
             }.items()
             if value is not None
         }
-        highlight = await self._maybe_await(service.create_reading_highlight(resolved_item_id, **payload))
+        highlight = await self._maybe_await(
+            service.create_reading_highlight(resolved_item_id, **payload)
+        )
         return normalize_reading_highlight(highlight, backend=normalized_mode.value)
 
     async def list_reading_highlights(
@@ -2283,7 +2656,9 @@ class MediaReadingScopeService:
             item_id=item_id,
             media_id=media_id,
         )
-        highlights = await self._maybe_await(service.list_reading_highlights(resolved_item_id))
+        highlights = await self._maybe_await(
+            service.list_reading_highlights(resolved_item_id)
+        )
         return [
             normalize_reading_highlight(highlight, backend=normalized_mode.value)
             for highlight in list(highlights or [])
@@ -2297,7 +2672,9 @@ class MediaReadingScopeService:
         **changes: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._reading_highlight_action_id(normalized_mode, "update"))
+        self._enforce_policy(
+            self._reading_highlight_action_id(normalized_mode, "update")
+        )
         service = self._service_for_mode(normalized_mode)
         highlight = await self._maybe_await(
             service.update_reading_highlight(
@@ -2314,7 +2691,9 @@ class MediaReadingScopeService:
         highlight_id: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._reading_highlight_action_id(normalized_mode, "delete"))
+        self._enforce_policy(
+            self._reading_highlight_action_id(normalized_mode, "delete")
+        )
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.delete_reading_highlight(highlight_id))
 
@@ -2461,7 +2840,9 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._reading_action_id(normalized_mode, "delete"))
         service = self._service_for_mode(normalized_mode)
-        return await self._maybe_await(service.delete_annotation(media_id, annotation_id))
+        return await self._maybe_await(
+            service.delete_annotation(media_id, annotation_id)
+        )
 
     async def sync_annotations(
         self,
@@ -2503,7 +2884,9 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._reading_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
-        return await self._maybe_await(service.get_document_figures(media_id, min_size=min_size))
+        return await self._maybe_await(
+            service.get_document_figures(media_id, min_size=min_size)
+        )
 
     async def get_document_references(
         self,
@@ -2620,9 +3003,7 @@ class MediaReadingScopeService:
         }
         if file_paths is not None:
             payload["file_paths"] = file_paths
-        return await self._maybe_await(
-            service.submit_ingest_jobs(**payload)
-        )
+        return await self._maybe_await(service.submit_ingest_jobs(**payload))
 
     async def get_ingest_job(
         self,
@@ -2702,12 +3083,17 @@ class MediaReadingScopeService:
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.reprocess_media(media_id, **options))
 
-    async def list_ingestion_sources(self, *, mode: MediaReadingBackend | str | None = None) -> list[dict[str, Any]]:
+    async def list_ingestion_sources(
+        self, *, mode: MediaReadingBackend | str | None = None
+    ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._ingestion_source_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         sources = await self._maybe_await(service.list_ingestion_sources())
-        return [normalize_ingestion_source(source, backend=normalized_mode.value) for source in list(sources or [])]
+        return [
+            normalize_ingestion_source(source, backend=normalized_mode.value)
+            for source in list(sources or [])
+        ]
 
     async def create_ingestion_source(
         self,
@@ -2727,7 +3113,9 @@ class MediaReadingScopeService:
             if normalized_mode == MediaReadingBackend.LOCAL
             else self._validate_server_create_source_type(source_type)
         )
-        self._enforce_policy(self._ingestion_source_action_id(normalized_mode, "create"))
+        self._enforce_policy(
+            self._ingestion_source_action_id(normalized_mode, "create")
+        )
         service = self._service_for_mode(normalized_mode)
         source = await self._maybe_await(
             service.create_ingestion_source(
@@ -2749,7 +3137,9 @@ class MediaReadingScopeService:
         source_id: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._ingestion_source_action_id(normalized_mode, "detail"))
+        self._enforce_policy(
+            self._ingestion_source_action_id(normalized_mode, "detail")
+        )
         service = self._service_for_mode(normalized_mode)
         source = await self._maybe_await(service.get_ingestion_source(source_id))
         return normalize_ingestion_source(source, backend=normalized_mode.value)
@@ -2762,9 +3152,13 @@ class MediaReadingScopeService:
         **changes: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._ingestion_source_action_id(normalized_mode, "update"))
+        self._enforce_policy(
+            self._ingestion_source_action_id(normalized_mode, "update")
+        )
         service = self._service_for_mode(normalized_mode)
-        source = await self._maybe_await(service.patch_ingestion_source(source_id, **changes))
+        source = await self._maybe_await(
+            service.patch_ingestion_source(source_id, **changes)
+        )
         return normalize_ingestion_source(source, backend=normalized_mode.value)
 
     async def delete_ingestion_source(
@@ -2774,7 +3168,9 @@ class MediaReadingScopeService:
         source_id: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._ingestion_source_action_id(normalized_mode, "delete"))
+        self._enforce_policy(
+            self._ingestion_source_action_id(normalized_mode, "delete")
+        )
         service = self._service_for_mode(normalized_mode)
         return await self._maybe_await(service.delete_ingestion_source(source_id))
 
@@ -2803,9 +3199,13 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == MediaReadingBackend.LOCAL:
             raise ValueError("Local ingestion sources are not available yet.")
-        self._enforce_policy(self._ingestion_source_action_id(normalized_mode, "update"))
+        self._enforce_policy(
+            self._ingestion_source_action_id(normalized_mode, "update")
+        )
         service = self._service_for_mode(normalized_mode)
-        item = await self._maybe_await(service.reattach_ingestion_source_item(source_id, item_id))
+        item = await self._maybe_await(
+            service.reattach_ingestion_source_item(source_id, item_id)
+        )
         return normalize_ingestion_source_item(item, backend=normalized_mode.value)
 
     async def trigger_ingestion_source_sync(
@@ -2829,7 +3229,9 @@ class MediaReadingScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._ingestion_job_action_id(normalized_mode, "launch"))
         service = self._service_for_mode(normalized_mode)
-        return await self._maybe_await(service.upload_ingestion_source_archive(source_id, archive_path))
+        return await self._maybe_await(
+            service.upload_ingestion_source_archive(source_id, archive_path)
+        )
 
     async def reattach_ingestion_source_item(
         self,
@@ -2839,9 +3241,13 @@ class MediaReadingScopeService:
         item_id: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._ingestion_source_item_action_id(normalized_mode, "reattach"))
+        self._enforce_policy(
+            self._ingestion_source_item_action_id(normalized_mode, "reattach")
+        )
         service = self._service_for_mode(normalized_mode)
-        item = await self._maybe_await(service.reattach_ingestion_source_item(source_id, item_id))
+        item = await self._maybe_await(
+            service.reattach_ingestion_source_item(source_id, item_id)
+        )
         return normalize_ingestion_source_item(item, backend=normalized_mode.value)
 
     async def list_document_versions(
@@ -2870,7 +3276,9 @@ class MediaReadingScopeService:
         self._enforce_policy(self._reading_action_id(normalized_mode, "detail"))
         service = self._service_for_mode(normalized_mode)
         if not hasattr(service, "get_analysis_version"):
-            raise ValueError("Document version detail is not available for this media backend.")
+            raise ValueError(
+                "Document version detail is not available for this media backend."
+            )
         return await self._maybe_await(
             service.get_analysis_version(
                 media_id,

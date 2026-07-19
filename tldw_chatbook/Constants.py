@@ -52,9 +52,26 @@ LIBRARY_NAV_CONTEXT_NOTES_CREATE = "notes_create"
 LIBRARY_NAV_CONTEXT_INGEST = "ingest_media"
 LIBRARY_MODE_CONVERSATIONS = "conversations"
 
-ALL_TABS = [TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH, TAB_INGEST,
-            TAB_EVALS, TAB_LLM, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH,
-            TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_CODING, TAB_STATS, TAB_CUSTOMIZE]
+ALL_TABS = [
+    TAB_CHAT,
+    TAB_CCP,
+    TAB_MEDIA,
+    TAB_SEARCH,
+    TAB_INGEST,
+    TAB_EVALS,
+    TAB_LLM,
+    TAB_STTS,
+    TAB_STUDY,
+    TAB_WRITING,
+    TAB_RESEARCH,
+    TAB_SUBSCRIPTIONS,
+    TAB_CHATBOOKS,
+    TAB_TOOLS_SETTINGS,
+    TAB_LOGS,
+    TAB_CODING,
+    TAB_STATS,
+    TAB_CUSTOMIZE,
+]
 
 TAB_DISPLAY_LABELS = {
     TAB_CHAT: "Console",
@@ -93,15 +110,16 @@ def get_tab_display_label(tab_id: str) -> str:
     """Return the user-facing label for a top-level tab ID."""
     return TAB_DISPLAY_LABELS.get(tab_id, tab_id.replace("_", " ").title())
 
+
 # Subscription types
 SUBSCRIPTION_TYPES = [
     "rss",
-    "reddit", 
+    "reddit",
     "youtube",
     "github",
     "hackernews",
     "generic",
-    "custom"
+    "custom",
 ]
 
 # Subscription update frequencies (in seconds)
@@ -114,7 +132,7 @@ SUBSCRIPTION_UPDATE_FREQUENCIES = {
     "6 hours": 21600,
     "12 hours": 43200,
     "Daily": 86400,
-    "Weekly": 604800
+    "Weekly": 604800,
 }
 
 # --- TLDW API Form Specific Option Containers (IDs) ---
@@ -128,9 +146,14 @@ TLDW_API_MEDIAWIKI_OPTIONS_ID = "tldw-api-mediawiki-options"
 TLDW_API_PLAINTEXT_OPTIONS_ID = "tldw-api-plaintext-options"
 
 ALL_TLDW_API_OPTION_CONTAINERS = [
-    TLDW_API_VIDEO_OPTIONS_ID, TLDW_API_AUDIO_OPTIONS_ID, TLDW_API_PDF_OPTIONS_ID,
-    TLDW_API_EBOOK_OPTIONS_ID, TLDW_API_DOCUMENT_OPTIONS_ID, TLDW_API_XML_OPTIONS_ID,
-    TLDW_API_MEDIAWIKI_OPTIONS_ID, TLDW_API_PLAINTEXT_OPTIONS_ID
+    TLDW_API_VIDEO_OPTIONS_ID,
+    TLDW_API_AUDIO_OPTIONS_ID,
+    TLDW_API_PDF_OPTIONS_ID,
+    TLDW_API_EBOOK_OPTIONS_ID,
+    TLDW_API_DOCUMENT_OPTIONS_ID,
+    TLDW_API_XML_OPTIONS_ID,
+    TLDW_API_MEDIAWIKI_OPTIONS_ID,
+    TLDW_API_PLAINTEXT_OPTIONS_ID,
 ]
 
 
@@ -1958,8 +1981,6 @@ AppFooterStatus {
 ##########################################################################################################################
 
 
-
-
 ##########################################################################################################################
 #
 #
@@ -2124,11 +2145,7 @@ LLAMA_CPP_SERVER_ARGS_HELP_TEXT = """
 ##########################################################################################################################
 
 
-
-
-
 ##########################################################################################################################
-
 
 
 ##########################################################################################################################
@@ -2196,14 +2213,6 @@ LLAMAFILE_SERVER_ARGS_HELP_TEXT = """
 
 [italic]Obtained from: https://github.com/Mozilla-Ocho/llamafile/blob/main/llama.cpp/server/README.md[/]
 """
-
-
-
-
-
-
-
-
 
 
 #

@@ -39,7 +39,9 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
 )
 
 
-def _assert_request_call(call_args, expected_method, expected_endpoint, expected_kwargs):
+def _assert_request_call(
+    call_args, expected_method, expected_endpoint, expected_kwargs
+):
     args, kwargs = call_args
     assert args[:2] == (expected_method, expected_endpoint)
     for key, value in expected_kwargs.items():
@@ -67,9 +69,17 @@ class TestCharacterPersonaClient:
             (
                 "GET",
                 "/api/v1/characters/query",
-                {"params": CharacterQueryRequest(query="alpha").model_dump(exclude_none=True, mode="json")},
+                {
+                    "params": CharacterQueryRequest(query="alpha").model_dump(
+                        exclude_none=True, mode="json"
+                    )
+                },
             ),
-            ("GET", "/api/v1/characters/search/", {"params": {"query": "alpha", "limit": 10}}),
+            (
+                "GET",
+                "/api/v1/characters/search/",
+                {"params": {"query": "alpha", "limit": 10}},
+            ),
             ("GET", "/api/v1/characters/12", {}),
             ("POST", "/api/v1/characters/", {"json_data": {"name": "Ada"}}),
             (
@@ -78,7 +88,11 @@ class TestCharacterPersonaClient:
                 {"json_data": {"name": "Ada v2"}, "params": {"expected_version": 3}},
             ),
             ("DELETE", "/api/v1/characters/12", {"params": {"expected_version": 4}}),
-            ("POST", "/api/v1/characters/12/restore", {"params": {"expected_version": 5}}),
+            (
+                "POST",
+                "/api/v1/characters/12/restore",
+                {"params": {"expected_version": 5}},
+            ),
         ]
         assert len(mocked.await_args_list) == len(expected_calls)
         for call_args, expected in zip(mocked.await_args_list, expected_calls):
@@ -97,16 +111,22 @@ class TestCharacterPersonaClient:
 
         await client.get_character_exemplar(12, "ex-1")
         await client.create_character_exemplar(12, create_payload)
-        await client.update_character_exemplar(12, "ex-1", CharacterExemplarUpdate(text="updated"))
+        await client.update_character_exemplar(
+            12, "ex-1", CharacterExemplarUpdate(text="updated")
+        )
         await client.delete_character_exemplar(12, "ex-1")
-        await client.search_character_exemplars(12, CharacterExemplarSearchRequest(query="hello"))
+        await client.search_character_exemplars(
+            12, CharacterExemplarSearchRequest(query="hello")
+        )
         await client.select_character_exemplars_debug(
             12,
             CharacterExemplarSelectionDebugRequest(user_turn="why?"),
         )
 
         assert len(mocked.await_args_list) == 6
-        _assert_request_call(mocked.await_args_list[0], "GET", "/api/v1/characters/12/exemplars/ex-1", {})
+        _assert_request_call(
+            mocked.await_args_list[0], "GET", "/api/v1/characters/12/exemplars/ex-1", {}
+        )
         _assert_request_call(
             mocked.await_args_list[1],
             "POST",
@@ -122,18 +142,41 @@ class TestCharacterPersonaClient:
             "/api/v1/characters/12/exemplars/ex-1",
             {"json_data": {"text": "updated"}},
         )
-        _assert_request_call(mocked.await_args_list[3], "DELETE", "/api/v1/characters/12/exemplars/ex-1", {})
+        _assert_request_call(
+            mocked.await_args_list[3],
+            "DELETE",
+            "/api/v1/characters/12/exemplars/ex-1",
+            {},
+        )
         _assert_request_call(
             mocked.await_args_list[4],
             "POST",
             "/api/v1/characters/12/exemplars/search",
-            {"json_data": {"query": "hello", "filter": {"rhetorical": []}, "limit": 20, "offset": 0, "use_embedding_scores": False}},
+            {
+                "json_data": {
+                    "query": "hello",
+                    "filter": {"rhetorical": []},
+                    "limit": 20,
+                    "offset": 0,
+                    "use_embedding_scores": False,
+                }
+            },
         )
         _assert_request_call(
             mocked.await_args_list[5],
             "POST",
             "/api/v1/characters/12/exemplars/select/debug",
-            {"json_data": {"user_turn": "why?", "selection_config": {"budget_tokens": 600, "max_exemplar_tokens": 120, "mmr_lambda": 0.7, "use_embedding_scores": False}}},
+            {
+                "json_data": {
+                    "user_turn": "why?",
+                    "selection_config": {
+                        "budget_tokens": 600,
+                        "max_exemplar_tokens": 120,
+                        "mmr_lambda": 0.7,
+                        "use_embedding_scores": False,
+                    },
+                }
+            },
         )
 
     async def test_character_exemplar_batch_create_uses_list_payload(self, monkeypatch):
@@ -155,8 +198,22 @@ class TestCharacterPersonaClient:
             {},
         )
         assert mocked.await_args.kwargs["json_data"] == [
-            {"text": "hello", "source": {"type": "other"}, "novelty_hint": "unknown", "labels": {"emotion": "other", "scenario": "other", "rhetorical": []}, "safety": {"allowed": [], "blocked": []}, "rights": {"public_figure": True}},
-            {"text": "world", "source": {"type": "other"}, "novelty_hint": "unknown", "labels": {"emotion": "other", "scenario": "other", "rhetorical": []}, "safety": {"allowed": [], "blocked": []}, "rights": {"public_figure": True}},
+            {
+                "text": "hello",
+                "source": {"type": "other"},
+                "novelty_hint": "unknown",
+                "labels": {"emotion": "other", "scenario": "other", "rhetorical": []},
+                "safety": {"allowed": [], "blocked": []},
+                "rights": {"public_figure": True},
+            },
+            {
+                "text": "world",
+                "source": {"type": "other"},
+                "novelty_hint": "unknown",
+                "labels": {"emotion": "other", "scenario": "other", "rhetorical": []},
+                "safety": {"allowed": [], "blocked": []},
+                "rights": {"public_figure": True},
+            },
         ]
 
     async def test_persona_profile_endpoint_wiring(self, monkeypatch):
@@ -166,13 +223,28 @@ class TestCharacterPersonaClient:
 
         await client.list_persona_profiles()
         await client.get_persona_profile("persona-1")
-        await client.create_persona_profile(PersonaProfileCreate(id="persona-1", name="Guide"))
-        await client.update_persona_profile("persona-1", PersonaProfileUpdate(name="Guide v2"), 7)
+        await client.create_persona_profile(
+            PersonaProfileCreate(id="persona-1", name="Guide")
+        )
+        await client.update_persona_profile(
+            "persona-1", PersonaProfileUpdate(name="Guide v2"), 7
+        )
         await client.delete_persona_profile("persona-1", 8)
         await client.restore_persona_profile("persona-1", 9)
 
         expected_calls = [
-            ("GET", "/api/v1/persona/profiles", {"params": {"active_only": "false", "include_deleted": "false", "limit": 100, "offset": 0}}),
+            (
+                "GET",
+                "/api/v1/persona/profiles",
+                {
+                    "params": {
+                        "active_only": "false",
+                        "include_deleted": "false",
+                        "limit": 100,
+                        "offset": 0,
+                    }
+                },
+            ),
             ("GET", "/api/v1/persona/profiles/persona-1", {}),
             ("POST", "/api/v1/persona/profiles", {}),
             (
@@ -180,8 +252,16 @@ class TestCharacterPersonaClient:
                 "/api/v1/persona/profiles/persona-1",
                 {"json_data": {"name": "Guide v2"}, "params": {"expected_version": 7}},
             ),
-            ("DELETE", "/api/v1/persona/profiles/persona-1", {"params": {"expected_version": 8}}),
-            ("POST", "/api/v1/persona/profiles/persona-1/restore", {"params": {"expected_version": 9}}),
+            (
+                "DELETE",
+                "/api/v1/persona/profiles/persona-1",
+                {"params": {"expected_version": 8}},
+            ),
+            (
+                "POST",
+                "/api/v1/persona/profiles/persona-1/restore",
+                {"params": {"expected_version": 9}},
+            ),
         ]
         assert len(mocked.await_args_list) == len(expected_calls)
         for call_args, expected in zip(mocked.await_args_list, expected_calls):
@@ -193,8 +273,13 @@ class TestCharacterPersonaClient:
         assert create_payload["voice_defaults"]["voice_chat_trigger_phrases"] == []
         assert create_payload["setup"]["status"] == "not_started"
         assert create_payload["setup"]["current_step"] == "persona"
-        assert isinstance(PersonaVoiceDefaults.model_validate(create_payload["voice_defaults"]), PersonaVoiceDefaults)
-        assert isinstance(PersonaSetupState.model_validate(create_payload["setup"]), PersonaSetupState)
+        assert isinstance(
+            PersonaVoiceDefaults.model_validate(create_payload["voice_defaults"]),
+            PersonaVoiceDefaults,
+        )
+        assert isinstance(
+            PersonaSetupState.model_validate(create_payload["setup"]), PersonaSetupState
+        )
 
     async def test_persona_archetype_endpoint_wiring(self, monkeypatch):
         client = TLDWAPIClient("http://localhost:8000")
@@ -222,11 +307,17 @@ class TestCharacterPersonaClient:
                     "suggested_external_servers": ["semantic-scholar"],
                     "policy": {
                         "confirmation_mode": "destructive_only",
-                        "tool_overrides": [{"tool": "web.search", "requires_confirmation": False}],
+                        "tool_overrides": [
+                            {"tool": "web.search", "requires_confirmation": False}
+                        ],
                     },
                     "voice_defaults": {"wake_phrase": "research"},
                     "scope_rules": [{"scope": "workspace"}],
-                    "buddy": {"species": "owl", "palette": "sepia", "silhouette": "round"},
+                    "buddy": {
+                        "species": "owl",
+                        "palette": "sepia",
+                        "silhouette": "round",
+                    },
                     "starter_commands": [{"template_key": "summarize"}],
                 },
                 {
@@ -265,14 +356,34 @@ class TestCharacterPersonaClient:
 
         await client.list_persona_exemplars("persona-1")
         await client.get_persona_exemplar("persona-1", "ex-1")
-        await client.create_persona_exemplar("persona-1", PersonaExemplarCreate(content="hello"))
-        await client.import_persona_exemplars("persona-1", PersonaExemplarImportRequest(transcript="hello world"))
-        await client.update_persona_exemplar("persona-1", "ex-1", PersonaExemplarUpdate(content="updated"))
-        await client.review_persona_exemplar("persona-1", "ex-1", PersonaExemplarReviewRequest(action="approve"))
+        await client.create_persona_exemplar(
+            "persona-1", PersonaExemplarCreate(content="hello")
+        )
+        await client.import_persona_exemplars(
+            "persona-1", PersonaExemplarImportRequest(transcript="hello world")
+        )
+        await client.update_persona_exemplar(
+            "persona-1", "ex-1", PersonaExemplarUpdate(content="updated")
+        )
+        await client.review_persona_exemplar(
+            "persona-1", "ex-1", PersonaExemplarReviewRequest(action="approve")
+        )
         await client.delete_persona_exemplar("persona-1", "ex-1")
 
         expected_calls = [
-            ("GET", "/api/v1/persona/profiles/persona-1/exemplars", {"params": {"include_disabled": "false", "include_deleted": "false", "include_deleted_personas": "false", "limit": 100, "offset": 0}}),
+            (
+                "GET",
+                "/api/v1/persona/profiles/persona-1/exemplars",
+                {
+                    "params": {
+                        "include_disabled": "false",
+                        "include_deleted": "false",
+                        "include_deleted_personas": "false",
+                        "limit": 100,
+                        "offset": 0,
+                    }
+                },
+            ),
             ("GET", "/api/v1/persona/profiles/persona-1/exemplars/ex-1", {}),
             ("POST", "/api/v1/persona/profiles/persona-1/exemplars", {}),
             (
@@ -280,8 +391,16 @@ class TestCharacterPersonaClient:
                 "/api/v1/persona/profiles/persona-1/exemplars/import",
                 {"json_data": {"transcript": "hello world", "max_candidates": 5}},
             ),
-            ("PATCH", "/api/v1/persona/profiles/persona-1/exemplars/ex-1", {"json_data": {"content": "updated"}}),
-            ("POST", "/api/v1/persona/profiles/persona-1/exemplars/ex-1/review", {"json_data": {"action": "approve"}}),
+            (
+                "PATCH",
+                "/api/v1/persona/profiles/persona-1/exemplars/ex-1",
+                {"json_data": {"content": "updated"}},
+            ),
+            (
+                "POST",
+                "/api/v1/persona/profiles/persona-1/exemplars/ex-1/review",
+                {"json_data": {"action": "approve"}},
+            ),
             ("DELETE", "/api/v1/persona/profiles/persona-1/exemplars/ex-1", {}),
         ]
         assert len(mocked.await_args_list) == len(expected_calls)
@@ -307,7 +426,11 @@ class TestCharacterPersonaClient:
                 message_payload,
                 {"messages": [message_payload], "total": 1, "limit": 25, "offset": 5},
                 message_payload,
-                {**message_payload, "content": "Updated", "metadata_extra": {"pinned": True}},
+                {
+                    **message_payload,
+                    "content": "Updated",
+                    "metadata_extra": {"pinned": True},
+                },
                 None,
                 {"messages": [message_payload], "total": 1, "limit": 10, "offset": 0},
             ]
@@ -336,7 +459,9 @@ class TestCharacterPersonaClient:
             expected_version=2,
         )
         await client.delete_character_message("msg-1", expected_version=3)
-        results = await client.search_character_messages("chat-1", query="hello", limit=10)
+        results = await client.search_character_messages(
+            "chat-1", query="hello", limit=10
+        )
 
         expected_calls = [
             (
@@ -373,7 +498,10 @@ class TestCharacterPersonaClient:
             (
                 "PUT",
                 "/api/v1/messages/msg-1",
-                {"json_data": {"content": "Updated", "pinned": True}, "params": {"expected_version": 2}},
+                {
+                    "json_data": {"content": "Updated", "pinned": True},
+                    "params": {"expected_version": 2},
+                },
             ),
             ("DELETE", "/api/v1/messages/msg-1", {"params": {"expected_version": 3}}),
             (
@@ -414,12 +542,23 @@ class TestCharacterPersonaClient:
 
         expected_calls = [
             ("GET", "/api/v1/chats/chat-1/greetings", {}),
-            ("PUT", "/api/v1/chats/chat-1/greetings/select", {"json_data": {"index": 2}}),
+            (
+                "PUT",
+                "/api/v1/chats/chat-1/greetings/select",
+                {"json_data": {"index": 2}},
+            ),
             ("GET", "/api/v1/chats/presets", {}),
             (
                 "POST",
                 "/api/v1/chats/presets",
-                {"json_data": {"preset_id": "custom", "name": "Custom", "section_order": ["system"], "section_templates": {"system": "hi"}}},
+                {
+                    "json_data": {
+                        "preset_id": "custom",
+                        "name": "Custom",
+                        "section_order": ["system"],
+                        "section_templates": {"system": "hi"},
+                    }
+                },
             ),
             ("PUT", "/api/v1/chats/presets/custom", {"json_data": {"name": "Updated"}}),
             ("DELETE", "/api/v1/chats/presets/custom", {}),
@@ -530,7 +669,11 @@ class TestCharacterPersonaClient:
                 "/api/v1/chats/chat-1",
                 {
                     "json_data": {"title": "Evening Chat 2", "state": "resolved"},
-                    "params": {"expected_version": 4, "scope_type": "workspace", "workspace_id": "ws-1"},
+                    "params": {
+                        "expected_version": 4,
+                        "scope_type": "workspace",
+                        "workspace_id": "ws-1",
+                    },
                 },
             ),
             (
@@ -561,12 +704,16 @@ class TestCharacterPersonaClient:
         for call_args, expected in zip(mocked.await_args_list, expected_calls):
             _assert_request_call(call_args, *expected)
 
-    async def test_character_chat_settings_export_and_diagnostics_endpoint_wiring(self, monkeypatch):
+    async def test_character_chat_settings_export_and_diagnostics_endpoint_wiring(
+        self, monkeypatch
+    ):
         client = TLDWAPIClient("http://localhost:8000")
         mocked = AsyncMock(return_value={"ok": True})
         monkeypatch.setattr(client, "_request", mocked)
 
-        await client.get_chat_settings("chat-1", scope_type="workspace", workspace_id="ws-1")
+        await client.get_chat_settings(
+            "chat-1", scope_type="workspace", workspace_id="ws-1"
+        )
         await client.update_chat_settings(
             "chat-1",
             ChatSettingsUpdate(settings={"authorNote": "Stay concise."}),
@@ -582,7 +729,9 @@ class TestCharacterPersonaClient:
             page_size=25,
         )
         await client.get_author_note_info("chat-1")
-        await client.export_lorebook_diagnostics("chat-1", page=2, size=10, order="desc")
+        await client.export_lorebook_diagnostics(
+            "chat-1", page=2, size=10, order="desc"
+        )
 
         expected_calls = [
             (
@@ -630,7 +779,9 @@ class TestCharacterPersonaClient:
             "project_id": "project-1",
         }
 
-    async def test_character_namespace_gateway_routes_server_only_surfaces(self, monkeypatch):
+    async def test_character_namespace_gateway_routes_server_only_surfaces(
+        self, monkeypatch
+    ):
         client = TLDWAPIClient("http://localhost:8000")
         mocked = AsyncMock(return_value={"ok": True})
         monkeypatch.setattr(client, "_request", mocked)
@@ -649,20 +800,37 @@ class TestCharacterPersonaClient:
             files=[("attachment", ("bulk.json", b"{}"))],
         )
 
-        assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/characters/world-books/42/export")
+        assert mocked.await_args_list[0].args[:2] == (
+            "GET",
+            "/api/v1/characters/world-books/42/export",
+        )
         assert mocked.await_args_list[0].kwargs["params"] == {"format": "json"}
-        assert mocked.await_args_list[0].kwargs["headers"] == {"accept": "application/json"}
-        assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/characters/world-books/entries/bulk")
-        assert mocked.await_args_list[1].kwargs["json_data"] == {"operation": "delete", "entry_ids": [1, 2]}
+        assert mocked.await_args_list[0].kwargs["headers"] == {
+            "accept": "application/json"
+        }
+        assert mocked.await_args_list[1].args[:2] == (
+            "POST",
+            "/api/v1/characters/world-books/entries/bulk",
+        )
+        assert mocked.await_args_list[1].kwargs["json_data"] == {
+            "operation": "delete",
+            "entry_ids": [1, 2],
+        }
         assert mocked.await_args_list[1].kwargs["data"] == {"audit": "client"}
-        assert mocked.await_args_list[1].kwargs["files"] == [("attachment", ("bulk.json", b"{}"))]
+        assert mocked.await_args_list[1].kwargs["files"] == [
+            ("attachment", ("bulk.json", b"{}"))
+        ]
 
-    async def test_persona_namespace_gateway_routes_server_only_surfaces(self, monkeypatch):
+    async def test_persona_namespace_gateway_routes_server_only_surfaces(
+        self, monkeypatch
+    ):
         client = TLDWAPIClient("http://localhost:8000")
         mocked = AsyncMock(return_value={"ok": True})
         monkeypatch.setattr(client, "_request", mocked)
 
-        await client.call_server_persona_endpoint("GET", "catalog", params={"active_only": "true"})
+        await client.call_server_persona_endpoint(
+            "GET", "catalog", params={"active_only": "true"}
+        )
         await client.call_server_persona_endpoint(
             "put",
             "/api/v1/persona/profiles/persona-1/scope-rules",
@@ -671,10 +839,17 @@ class TestCharacterPersonaClient:
 
         assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/persona/catalog")
         assert mocked.await_args_list[0].kwargs["params"] == {"active_only": "true"}
-        assert mocked.await_args_list[1].args[:2] == ("PUT", "/api/v1/persona/profiles/persona-1/scope-rules")
-        assert mocked.await_args_list[1].kwargs["json_data"] == {"rules": [{"scope": "workspace"}]}
+        assert mocked.await_args_list[1].args[:2] == (
+            "PUT",
+            "/api/v1/persona/profiles/persona-1/scope-rules",
+        )
+        assert mocked.await_args_list[1].kwargs["json_data"] == {
+            "rules": [{"scope": "workspace"}]
+        }
 
-    async def test_character_and_persona_namespace_gateways_reject_unsafe_routes(self, monkeypatch):
+    async def test_character_and_persona_namespace_gateways_reject_unsafe_routes(
+        self, monkeypatch
+    ):
         client = TLDWAPIClient("http://localhost:8000")
         mocked = AsyncMock(return_value={"ok": True})
         monkeypatch.setattr(client, "_request", mocked)
@@ -682,7 +857,9 @@ class TestCharacterPersonaClient:
         unsafe_calls = [
             client.call_server_characters_endpoint("GET", "/api/v1/persona/catalog"),
             client.call_server_characters_endpoint("GET", "../persona/catalog"),
-            client.call_server_persona_endpoint("GET", "/api/v1/characters/world-books"),
+            client.call_server_persona_endpoint(
+                "GET", "/api/v1/characters/world-books"
+            ),
             client.call_server_persona_endpoint("GET", "../characters/world-books"),
             client.call_server_persona_endpoint("OPTIONS", "catalog"),
         ]

@@ -12,8 +12,9 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button, Label, Markdown # Added Label and Markdown
+from textual.widgets import Button, Label, Markdown  # Added Label and Markdown
 from textual.reactive import reactive
+
 #
 # Local Imports
 from tldw_chatbook.Utils.file_extraction import FileExtractor
@@ -22,11 +23,13 @@ from tldw_chatbook.Utils.file_extraction import FileExtractor
 #
 # Functions:
 
+
 class ChatMessage(Widget):
     """A widget to display a single chat message with action buttons."""
 
     class Action(Message):
         """Posted when a button on the message is pressed."""
+
         def __init__(self, message_widget: "ChatMessage", button: Button) -> None:
             super().__init__()
             self.message_widget = message_widget
@@ -99,7 +102,9 @@ class ChatMessage(Widget):
     """
 
     # Store the raw text content
-    message_text = reactive("")  # Remove repaint=True to prevent double rendering during streaming
+    message_text = reactive(
+        ""
+    )  # Remove repaint=True to prevent double rendering during streaming
     role = reactive("User", repaint=True)
     # Use an internal reactive to manage generation status and trigger UI updates
     _generation_complete_internal = reactive(True)
@@ -108,7 +113,7 @@ class ChatMessage(Widget):
     message_id_internal: reactive[Optional[str]] = reactive(None)
     message_version_internal: reactive[Optional[int]] = reactive(None)
     # Store timestamp if provided, e.g. when loading from DB
-    timestamp: reactive[Optional[str]] = reactive(None) # Store as ISO string
+    timestamp: reactive[Optional[str]] = reactive(None)  # Store as ISO string
     # Store image data if message has an image
     image_data: reactive[Optional[bytes]] = reactive(None)
     image_mime_type: reactive[Optional[str]] = reactive(None)
@@ -118,18 +123,20 @@ class ChatMessage(Widget):
     _extracted_files = None
     _file_extractor = None
 
-    def __init__(self,
-                 message: str,
-                 role: str,
-                 generation_complete: bool = True,
-                 message_id: Optional[str] = None,
-                 message_version: Optional[int] = None,
-                 timestamp: Optional[str] = None,
-                 image_data: Optional[bytes] = None,
-                 image_mime_type: Optional[str] = None,
-                 feedback: Optional[str] = None,
-                 sender: Optional[str] = None,
-                 **kwargs):
+    def __init__(
+        self,
+        message: str,
+        role: str,
+        generation_complete: bool = True,
+        message_id: Optional[str] = None,
+        message_version: Optional[int] = None,
+        timestamp: Optional[str] = None,
+        image_data: Optional[bytes] = None,
+        image_mime_type: Optional[str] = None,
+        feedback: Optional[str] = None,
+        sender: Optional[str] = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.message_text = message
         self.role = role
@@ -142,13 +149,13 @@ class ChatMessage(Widget):
         self.image_mime_type = image_mime_type
         self.feedback = feedback
 
-        #self.add_class(f"-{role.lower()}") # Add role-specific class
+        # self.add_class(f"-{role.lower()}") # Add role-specific class
         # For CSS styling, we use a generic class based on whether it's the user or not.
         # The actual self.role (e.g., "Default Assistant") is used for display in the header.
         # User messages have sender="User" even if role is the username
         if (sender and sender.lower() == "user") or role.lower() == "user":
             self.add_class("-user")
-        else: # Any role other than "user" (e.g., "AI", "Default Assistant", "Character Name") gets the -ai style
+        else:  # Any role other than "user" (e.g., "AI", "Default Assistant", "Character Name") gets the -ai style
             self.add_class("-ai")
 
     @property
@@ -167,44 +174,95 @@ class ChatMessage(Widget):
                 actions_class += " -generating"
 
             with Horizontal(classes=actions_class) as actions_bar:
-                actions_bar.id = f"actions-bar-{self.id or self.message_id_internal or 'new'}"
+                actions_bar.id = (
+                    f"actions-bar-{self.id or self.message_id_internal or 'new'}"
+                )
                 # Common buttons
-                yield Button("Edit", classes="action-button edit-button", tooltip="Edit message")
-                yield Button("📋", classes="action-button copy-button", id="copy", tooltip="Copy message to clipboard") # Emoji for copy
-                yield Button("📝", classes="action-button note-button", id="create-note", tooltip="Create note from message")
-                
+                yield Button(
+                    "Edit", classes="action-button edit-button", tooltip="Edit message"
+                )
+                yield Button(
+                    "📋",
+                    classes="action-button copy-button",
+                    id="copy",
+                    tooltip="Copy message to clipboard",
+                )  # Emoji for copy
+                yield Button(
+                    "📝",
+                    classes="action-button note-button",
+                    id="create-note",
+                    tooltip="Create note from message",
+                )
+
                 # Add file extraction button if files detected
                 if self._extracted_files is None:
                     self._check_for_files()
                 if self._extracted_files:
                     file_count = len(self._extracted_files)
-                    yield Button(f"📎 {file_count}", classes="action-button file-extract-button", 
-                               id="extract-files", 
-                               tooltip=f"Extract {file_count} file{'s' if file_count > 1 else ''} from message")
-                
-                yield Button("🔊", classes="action-button speak-button", id="speak", tooltip="Read message aloud") # Emoji for speak
+                    yield Button(
+                        f"📎 {file_count}",
+                        classes="action-button file-extract-button",
+                        id="extract-files",
+                        tooltip=f"Extract {file_count} file{'s' if file_count > 1 else ''} from message",
+                    )
+
+                yield Button(
+                    "🔊",
+                    classes="action-button speak-button",
+                    id="speak",
+                    tooltip="Read message aloud",
+                )  # Emoji for speak
 
                 # AI-specific buttons
                 if self.has_class("-ai"):
                     # Display feedback state on thumb buttons
                     thumb_up_label = "👍✓" if self.feedback == "1;" else "👍"
                     thumb_down_label = "👎✓" if self.feedback == "2;" else "👎"
-                    yield Button(thumb_up_label, classes="action-button thumb-up-button", id="thumb-up", tooltip="Mark as helpful")
-                    yield Button(thumb_down_label, classes="action-button thumb-down-button", id="thumb-down", tooltip="Mark as unhelpful")
+                    yield Button(
+                        thumb_up_label,
+                        classes="action-button thumb-up-button",
+                        id="thumb-up",
+                        tooltip="Mark as helpful",
+                    )
+                    yield Button(
+                        thumb_down_label,
+                        classes="action-button thumb-down-button",
+                        id="thumb-down",
+                        tooltip="Mark as unhelpful",
+                    )
                     if str(self.role or "").strip().lower() != "system":
-                        yield Button("💾", classes="action-button artifact-button", id="save-artifact", tooltip="Save response as Chatbook artifact")
-                    yield Button("🔄", classes="action-button regenerate-button", id="regenerate", tooltip="Regenerate response") # Emoji for regenerate
-                    yield Button("↪️", id="continue-response-button", classes="action-button continue-button", tooltip="Continue response")
+                        yield Button(
+                            "💾",
+                            classes="action-button artifact-button",
+                            id="save-artifact",
+                            tooltip="Save response as Chatbook artifact",
+                        )
+                    yield Button(
+                        "🔄",
+                        classes="action-button regenerate-button",
+                        id="regenerate",
+                        tooltip="Regenerate response",
+                    )  # Emoji for regenerate
+                    yield Button(
+                        "↪️",
+                        id="continue-response-button",
+                        classes="action-button continue-button",
+                        tooltip="Continue response",
+                    )
 
                 # Add delete button for all messages at very end
-                yield Button("🗑️", classes="action-button delete-button", tooltip="Delete message")  # Emoji for delete ; Label: Delete, Class: delete-button
+                yield Button(
+                    "🗑️", classes="action-button delete-button", tooltip="Delete message"
+                )  # Emoji for delete ; Label: Delete, Class: delete-button
 
     def watch__generation_complete_internal(self, complete: bool) -> None:
         """
         Watcher for the internal generation status.
         Updates the actions bar visibility and the continue button visibility for AI messages.
         """
-        logging.info(f"watch__generation_complete_internal called with complete={complete} for ChatMessage (ID: {self.id}, Role: {self.role})")
+        logging.info(
+            f"watch__generation_complete_internal called with complete={complete} for ChatMessage (ID: {self.id}, Role: {self.role})"
+        )
         if self.has_class("-ai"):
             logging.info("ChatMessage has -ai class")
             try:
@@ -223,24 +281,33 @@ class ChatMessage(Widget):
                 # Separately handle the continue button in its own try...except block
                 # This prevents an error here from stopping the whole function.
                 try:
-                    continue_button = self.query_one("#continue-response-button", Button)
+                    continue_button = self.query_one(
+                        "#continue-response-button", Button
+                    )
                     continue_button.display = complete
                 except QueryError:
                     # It's okay if the continue button doesn't exist, as it's commented out.
-                    logging.debug("Continue button not found in ChatMessage, skipping visibility toggle.")
+                    logging.debug(
+                        "Continue button not found in ChatMessage, skipping visibility toggle."
+                    )
 
             except QueryError as qe:
                 # This might happen if the query runs before the widget is fully composed or if it's being removed.
-                logging.warning(f"ChatMessage (ID: {self.id}, Role: {self.role}): QueryError in watch__generation_complete_internal: {qe}. Widget might not be fully ready or is not an AI message with these components.")
+                logging.warning(
+                    f"ChatMessage (ID: {self.id}, Role: {self.role}): QueryError in watch__generation_complete_internal: {qe}. Widget might not be fully ready or is not an AI message with these components."
+                )
             except Exception as e:
-                logging.error(f"Error in watch__generation_complete_internal for ChatMessage (ID: {self.id}): {e}", exc_info=True)
-        else: # Not an AI message
+                logging.error(
+                    f"Error in watch__generation_complete_internal for ChatMessage (ID: {self.id}): {e}",
+                    exc_info=True,
+                )
+        else:  # Not an AI message
             logging.info("ChatMessage does not have -ai class")
-            try: # Ensure continue button is hidden for non-AI messages if it somehow got queried
+            try:  # Ensure continue button is hidden for non-AI messages if it somehow got queried
                 continue_button = self.query_one("#continue-response-button", Button)
                 continue_button.display = False
             except QueryError:
-                pass # Expected for non-AI messages as the button isn't composed.
+                pass  # Expected for non-AI messages as the button isn't composed.
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Called when a button inside this message is pressed."""
@@ -255,7 +322,9 @@ class ChatMessage(Widget):
         Marks the AI message generation as complete.
         This will trigger the watcher for _generation_complete_internal to update UI.
         """
-        logging.info(f"mark_generation_complete called for ChatMessage (ID: {self.id}, Role: {self.role})")
+        logging.info(
+            f"mark_generation_complete called for ChatMessage (ID: {self.id}, Role: {self.role})"
+        )
         if self.has_class("-ai"):
             logging.info("Setting _generation_complete_internal to True")
             self._generation_complete_internal = True
@@ -277,17 +346,20 @@ class ChatMessage(Widget):
             self.message_text += chunk
         # If called at other times, ensure it doesn't break if markdown_widget not found.
         # For streaming, handle_streaming_chunk updates the Markdown widget directly.
-    
+
     def _check_for_files(self):
         """Check if the message contains extractable files."""
         if not self._file_extractor:
             self._file_extractor = FileExtractor()
-        
+
         try:
-            self._extracted_files = self._file_extractor.extract_files(self.message_text)
+            self._extracted_files = self._file_extractor.extract_files(
+                self.message_text
+            )
         except Exception as e:
             logging.error(f"Error extracting files from message: {e}")
             self._extracted_files = []
+
 
 #
 #

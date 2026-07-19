@@ -8,13 +8,14 @@ import pytest
 # Note: These are placeholder tests for manual UI testing guidance
 # Full automated UI testing would require Textual's testing framework
 
+
 class TestChatDictionaryUI:
     """Test cases for chat dictionary UI in chat window."""
-    
+
     def test_ui_elements_checklist(self):
         """
         Manual test checklist for chat dictionary UI elements.
-        
+
         When testing the UI manually, verify:
         1. Chat Dictionaries collapsible section appears in right sidebar
         2. Section is positioned between Active Character Info and World Books
@@ -27,11 +28,11 @@ class TestChatDictionaryUI:
         """
         # This is a documentation test - always passes
         assert True
-    
+
     def test_workflow_checklist(self):
         """
         Manual test checklist for chat dictionary workflows.
-        
+
         Test these workflows:
         1. Search for dictionaries by name
         2. Select a dictionary from available list
@@ -44,11 +45,11 @@ class TestChatDictionaryUI:
         """
         # This is a documentation test - always passes
         assert True
-    
+
     def test_integration_checklist(self):
         """
         Manual test checklist for integration with chat system.
-        
+
         Verify:
         1. Dictionaries are applied when sending messages
         2. Pre-processing replacements work on user input
@@ -59,20 +60,20 @@ class TestChatDictionaryUI:
         """
         # This is a documentation test - always passes
         assert True
-    
+
     @pytest.mark.skip(reason="Requires running app instance")
     def test_example_dictionary_creation(self):
         """
         Example code for creating test dictionaries.
         Run this in the app console or a separate script.
         """
-        
+
         # This would need a real database connection
         # db = CharactersRAGDB("path/to/db", "test_client")
         # dict_lib = ChatDictionaryLib(db)
-        
+
         # Create test dictionaries
-        
+
         # Code to create these would go here
         pass
 
@@ -83,26 +84,26 @@ def create_test_dictionaries(db):
     Helper function to create test dictionaries for manual testing.
     """
     from tldw_chatbook.Character_Chat.Chat_Dictionary_Lib import ChatDictionaryLib
-    
+
     dict_lib = ChatDictionaryLib(db)
-    
+
     # Create a variety of test dictionaries
     test_data = [
         ("Test Dict 1", "First test dictionary"),
-        ("Test Dict 2", "Second test dictionary with longer description for testing display"),
+        (
+            "Test Dict 2",
+            "Second test dictionary with longer description for testing display",
+        ),
         ("Empty Dict", "Dictionary with no entries"),
         ("Large Dict", "Dictionary with many entries"),
     ]
-    
+
     created_ids = []
     for name, desc in test_data:
         try:
-            dict_id = dict_lib.create_dictionary(
-                name=name,
-                description=desc
-            )
+            dict_id = dict_lib.create_dictionary(name=name, description=desc)
             created_ids.append(dict_id)
-            
+
             # Add some test entries to non-empty dictionaries
             if name != "Empty Dict":
                 # Pre-processing entry
@@ -111,7 +112,7 @@ def create_test_dictionaries(db):
                     pattern=f"test_{name.lower().replace(' ', '_')}",
                     replacement=f"Replaced {name}",
                     entry_type="preprocessing",
-                    use_regex=False
+                    use_regex=False,
                 )
                 # Post-processing entry
                 dict_lib.add_dictionary_entry(
@@ -119,18 +120,18 @@ def create_test_dictionaries(db):
                     pattern=f"output_{name.lower().replace(' ', '_')}",
                     replacement=f"Processed {name}",
                     entry_type="postprocessing",
-                    use_regex=False
+                    use_regex=False,
                 )
         except Exception as e:
             print(f"Error creating {name}: {e}")
-    
+
     return created_ids
 
 
 def test_dictionary_vs_worldbook():
     """
     Test to verify the differences between dictionaries and world books.
-    
+
     Key differences:
     1. Dictionaries: Text replacement on input/output
     2. World Books: Context injection based on keywords
@@ -142,21 +143,21 @@ def test_dictionary_vs_worldbook():
     differences = {
         "Processing Stage": {
             "Dictionaries": "Pre-process user input, post-process AI output",
-            "World Books": "Inject context during message preparation"
+            "World Books": "Inject context during message preparation",
         },
         "Function": {
             "Dictionaries": "Text replacement/transformation",
-            "World Books": "Context/lore injection"
+            "World Books": "Context/lore injection",
         },
         "Trigger": {
             "Dictionaries": "Pattern matching for replacement",
-            "World Books": "Keyword scanning for injection"
+            "World Books": "Keyword scanning for injection",
         },
         "Effect": {
             "Dictionaries": "Modifies actual message text",
-            "World Books": "Adds additional context"
-        }
+            "World Books": "Adds additional context",
+        },
     }
-    
+
     assert len(differences) == 4
     return differences
