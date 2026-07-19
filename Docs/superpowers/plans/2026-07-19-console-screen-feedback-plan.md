@@ -1212,7 +1212,6 @@ async def action_view_chat_context(self) -> None:
         self.notify("No active conversation.", severity="warning")
         return
 
-    session = controller.store.session(session_id)
     composer = self.query_one("#console-native-composer", ConsoleComposerBar)
     draft = composer.value if composer else ""
     staged_sources = controller.store.workspace_context.allowed_sources
