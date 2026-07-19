@@ -14,7 +14,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from tldw_chatbook.Library.ingest_capabilities import get_tooling_warnings, get_type_group
-from tldw_chatbook.Local_Ingestion.local_file_ingestion import _is_http_url
+from tldw_chatbook.Local_Ingestion.local_file_ingestion import is_http_url
 
 
 @dataclass(frozen=True)
@@ -52,14 +52,17 @@ def _safe_size(path: Path) -> int:
 def _collect_files(p: Path, scan_limit: int) -> tuple[list[Path], bool]:
     """Recursively collect files under ``p`` up to ``scan_limit``.
 
+    Symlinks and hidden entries (names starting with ``.``) are skipped to avoid
+    cycles, system files, and unexpected traversal. Directories that raise
+    ``PermissionError`` are skipped.
+
     Args:
         p: Directory to scan.
         scan_limit: Maximum number of files to collect.
 
     Returns:
-        A tuple of ``(files, truncated)``. ``truncated`` is ``True`` when the
-        scan limit was reached before all files were enumerated. Directories
-        that raise ``PermissionError`` are skipped.
+        A tuple of ``(files, truncated)``. ``truncated`` is ``True`` when there
+        were additional files beyond ``scan_limit`` that could not be collected.
     """
     files: list[Path] = []
     truncated = False
@@ -70,21 +73,29 @@ def _collect_files(p: Path, scan_limit: int) -> tuple[list[Path], bool]:
         return files, truncated
 
     for entry in entries:
-        if len(files) >= scan_limit:
-            truncated = True
-            break
+        if entry.is_symlink() or entry.name.startswith("."):
+            continue
 
         try:
-            if entry.is_symlink():
-                continue
             if entry.is_dir():
                 remaining = scan_limit - len(files)
+                if remaining <= 0:
+                    # The limit is already reached; only mark truncated if this
+                    # directory actually contains files we cannot collect.
+                    sub_files, _ = _collect_files(entry, 1)
+                    if sub_files:
+                        truncated = True
+                        break
+                    continue
                 sub_files, sub_truncated = _collect_files(entry, remaining)
                 files.extend(sub_files)
                 if sub_truncated:
                     truncated = True
                     break
             elif entry.is_file():
+                if len(files) >= scan_limit:
+                    truncated = True
+                    break
                 files.append(entry)
         except PermissionError:
             continue
@@ -119,10 +130,17 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
     Args:
         path_or_url: Local file path, directory path, or HTTP(S) URL.
         scan_limit: Maximum number of files to enumerate for directories.
+            Must be greater than zero.
 
     Returns:
         A ``PreflightResult`` describing the discovered source.
+
+    Raises:
+        ValueError: If ``scan_limit`` is less than or equal to zero.
     """
+    if scan_limit <= 0:
+        raise ValueError("scan_limit must be greater than zero")
+
     type_groups: dict[str, list[str]] = {}
     warnings: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -130,7 +148,7 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
     truncated = False
     total_files = 0
 
-    if _is_http_url(path_or_url):
+    if is_http_url(path_or_url):
         error = _probe_url(path_or_url)
         if error:
             errors.append(error)

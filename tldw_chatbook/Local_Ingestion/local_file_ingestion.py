@@ -121,12 +121,17 @@ _TRACKING_PARAMS = frozenset({
 })
 
 
-def _is_http_url(source: str) -> bool:
+def is_http_url(source: str) -> bool:
+    """Return whether ``source`` is an http or https URL."""
     from urllib.parse import urlparse
     try:
         return urlparse(source).scheme in ("http", "https")
     except Exception:
         return False
+
+
+# Backward-compatible alias retained for existing callers.
+_is_http_url = is_http_url
 
 
 def classify_ingest_source(source: str) -> str:

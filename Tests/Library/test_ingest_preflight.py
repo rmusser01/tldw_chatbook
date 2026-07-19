@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -15,6 +15,7 @@ from tldw_chatbook.Library.ingest_preflight import (
     _safe_size,
     analyze_path,
 )
+from tldw_chatbook.Local_Ingestion.local_file_ingestion import is_http_url
 
 
 class TestSafeSize:
@@ -47,6 +48,39 @@ class TestCollectFiles:
         files, truncated = _collect_files(tmp_path, 3)
         assert len(files) == 3
         assert truncated is True
+
+    def test_exact_scan_limit_is_not_truncated(self, tmp_path: Path) -> None:
+        for i in range(3):
+            (tmp_path / f"file{i}.pdf").write_bytes(b"%PDF")
+
+        files, truncated = _collect_files(tmp_path, 3)
+        assert len(files) == 3
+        assert truncated is False
+
+    def test_skips_symlinks(self, tmp_path: Path) -> None:
+        real_file = tmp_path / "real.pdf"
+        real_file.write_bytes(b"%PDF")
+        symlink = tmp_path / "link.pdf"
+        symlink.symlink_to(real_file)
+
+        files, truncated = _collect_files(tmp_path, 1000)
+        assert len(files) == 1
+        assert files[0].name == "real.pdf"
+        assert truncated is False
+
+    def test_empty_directory(self, tmp_path: Path) -> None:
+        files, truncated = _collect_files(tmp_path, 1000)
+        assert files == []
+        assert truncated is False
+
+    def test_skips_hidden_files(self, tmp_path: Path) -> None:
+        (tmp_path / "visible.pdf").write_bytes(b"%PDF")
+        (tmp_path / ".hidden").write_text("secret")
+
+        files, truncated = _collect_files(tmp_path, 1000)
+        assert len(files) == 1
+        assert files[0].name == "visible.pdf"
+        assert truncated is False
 
     def test_handles_permission_error(self, tmp_path: Path, monkeypatch) -> None:
         locked = tmp_path / "locked"
@@ -102,6 +136,16 @@ class TestProbeUrl:
             result = _probe_url("https://example.com/doc.pdf")
         assert result is not None
         assert "failed" in result.lower()
+
+    def test_returns_error_on_http_404(self) -> None:
+        error = HTTPError("https://example.com/doc.pdf", 404, "Not Found", {}, None)
+        with patch(
+            "tldw_chatbook.Library.ingest_preflight.urlopen",
+            side_effect=error,
+        ):
+            result = _probe_url("https://example.com/doc.pdf")
+        assert result is not None
+        assert "unreachable" in result.lower()
 
 
 class TestAnalyzePath:
@@ -203,3 +247,24 @@ class TestAnalyzePath:
 
         assert result.errors == []
         assert result.type_groups == {"audio_video": ["https://example.com/lecture.mp4"]}
+
+    def test_empty_directory(self, tmp_path: Path) -> None:
+        result = analyze_path(str(tmp_path))
+        assert result.errors == []
+        assert result.total_files == 0
+        assert result.total_size == 0
+        assert result.truncated is False
+        assert result.type_groups == {}
+
+    @pytest.mark.parametrize("bad_limit", [0, -1, -100])
+    def test_invalid_scan_limit_raises(self, bad_limit: int) -> None:
+        with pytest.raises(ValueError, match="scan_limit must be greater than zero"):
+            analyze_path("/some/path", scan_limit=bad_limit)
+
+
+class TestPublicApi:
+    def test_uses_public_is_http_url(self) -> None:
+        # The preflight module should rely on the public helper rather than
+        # importing a private name from local_file_ingestion.
+        assert is_http_url("https://example.com") is True
+        assert is_http_url("/local/path") is False
