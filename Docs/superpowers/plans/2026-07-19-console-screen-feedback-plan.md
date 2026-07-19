@@ -22,6 +22,7 @@
 | `tldw_chatbook/UI/Screens/chat_screen.py` | Bind `ctrl+shift+p` to open the context modal. |
 | `Tests/UI/test_console_native_transcript.py` | Tests for selection clearing. |
 | `Tests/Chat/test_console_chat_controller.py` | Tests for agent finalization and context snapshot. |
+| `Tests/Chat/test_console_agent_bridge.py` | Bridge-level tests for `ConsoleAgentBridge.run_reply()`. |
 | `Tests/UI/test_console_context_modal.py` | Tests for the context viewer modal. |
 
 ---
@@ -69,8 +70,19 @@ In `ConsoleTranscript` (`tldw_chatbook/Widgets/Console/console_transcript.py`), 
 ```python
 from textual.events import Click
 
-NEGATIVE_SPACE_WIDGET_IDS = {
+# Widget IDs / classes that count as negative space for deselection.
+_NEGATIVE_SPACE_IDS = {
     "console-native-transcript",
+}
+# Classes whose clicks must NOT clear selection even if they bubble.
+_INTERACTIVE_CLASSES = {
+    "console-transcript-message",
+    "console-transcript-action-row",
+    "console-transcript-action-button",
+    "console-transcript-rule",
+    "console-transcript-action-guide",
+    "console-transcript-empty-state",
+    "console-transcript-empty-panel",
 }
 
 
@@ -80,8 +92,14 @@ def on_click(self, event: Click) -> None:
     control = event.control
     if control is None:
         return
-    if control.id in NEGATIVE_SPACE_WIDGET_IDS:
+    if control.id in _NEGATIVE_SPACE_IDS:
         self.action_clear_selection()
+        return
+    if any(cls in control.classes for cls in _INTERACTIVE_CLASSES):
+        return
+    # Scrollbar widgets have classes containing "scrollbar".
+    if "scrollbar" in " ".join(control.classes):
+        return
 ```
 
 Place it next to the existing `action_clear_selection` method.
@@ -94,7 +112,7 @@ pytest Tests/UI/test_console_native_transcript.py::test_console_transcript_click
 
 Expected: PASS.
 
-### Step 3: Add negative test for action-row background
+### Step 3: Add negative tests for interactive backgrounds
 
 Append to `Tests/UI/test_console_native_transcript.py`:
 
@@ -110,6 +128,21 @@ async def test_console_transcript_click_action_row_background_preserves_selectio
         assert transcript.selected_message_id == "m2"
 
         await pilot.click("#console-message-actions-m2")
+        await pilot.pause()
+
+        assert transcript.selected_message_id == "m2"
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_click_rule_preserves_selection():
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message("m2")
+        await pilot.pause()
+
+        await pilot.click(".console-transcript-rule")
         await pilot.pause()
 
         assert transcript.selected_message_id == "m2"
@@ -136,7 +169,9 @@ git commit -m "feat(console): clear message selection on negative-space click"
 
 **Files:**
 - Modify: `tldw_chatbook/Chat/console_chat_controller.py`
+- Modify: `tldw_chatbook/Chat/console_agent_bridge.py`
 - Test: `Tests/Chat/test_console_chat_controller.py`
+- Test: `Tests/Chat/test_console_agent_bridge.py` (new file)
 
 ### Step 2.1: Inspect current `_finalize_agent_reply`
 
@@ -146,7 +181,7 @@ Open `tldw_chatbook/Chat/console_chat_controller.py:1661-1735`. Confirm the exis
 - non-`RUN_DONE` → `mark_message_failed` + `_append_failure_system_row`
 - `RUN_DONE` → `finalize_variant_stream` / `mark_message_complete`
 
-No special handling exists for empty `final_text` or unknown statuses.
+No special handling exists for empty `final_text`, placeholder-missing fallback, or explicit unknown-status logging.
 
 ### Step 2.2: Write failing test for empty `final_text` fallback
 
@@ -154,12 +189,14 @@ Append to `Tests/Chat/test_console_chat_controller.py`:
 
 ```python
 @pytest.mark.asyncio
-async def test_finalize_agent_reply_empty_final_text_uses_fallback(controller, sample_session):
+async def test_finalize_agent_reply_empty_final_text_uses_fallback():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
     from tldw_chatbook.Agents.agent_models import RUN_DONE
 
-    session_id = sample_session.id
-    assistant = controller.store.append_message(
-        session_id,
+    assistant = store.append_message(
+        session.id,
         role=ConsoleMessageRole.ASSISTANT,
         content="",
     )
@@ -167,16 +204,18 @@ async def test_finalize_agent_reply_empty_final_text_uses_fallback(controller, s
     outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="")
     result = controller._finalize_agent_reply(
         assistant.id,
-        session_id,
+        session.id,
         outcome,
         variant_mode=False,
     )
 
-    updated = controller.store.get_message(assistant.id)
+    updated = store.get_message(assistant.id)
     assert updated.status == "complete"
     assert "No response was generated" in updated.content
-    assert result.success is True
+    assert result.accepted is True
 ```
+
+> Replace `StreamingGateway()` with the actual gateway class used by existing tests.
 
 Run:
 
@@ -184,7 +223,7 @@ Run:
 pytest Tests/Chat/test_console_chat_controller.py::test_finalize_agent_reply_empty_final_text_uses_fallback -v
 ```
 
-Expected: FAIL (status may be `complete` with empty content, or assertion fails).
+Expected: FAIL (message is complete but empty, or assertion on content fails).
 
 ### Step 2.3: Implement empty `final_text` fallback
 
@@ -216,17 +255,14 @@ def _complete_agent_message(
     from tldw_chatbook.Agents.agent_models import RUN_DONE
 
     if outcome.status == RUN_DONE and not outcome.final_text.strip():
-        self.store.update_message_content(
-            assistant_message_id,
-            "No response was generated.",
-        )
+        # Placeholder is pending/streaming; bypass the store's post-stream guard.
+        message = self.store.get_message(assistant_message_id)
+        message.content = "No response was generated."
 
     if variant_mode:
         return self.store.finalize_variant_stream(assistant_message_id)
     return self.store.mark_message_complete(assistant_message_id)
 ```
-
-> If `update_message_content` does not exist, use the store's existing mutation method (e.g., `set_message_content` or direct field update).
 
 Run:
 
@@ -236,93 +272,191 @@ pytest Tests/Chat/test_console_chat_controller.py::test_finalize_agent_reply_emp
 
 Expected: PASS.
 
-### Step 2.4: Write failing test for unknown/superseded status
+### Step 2.4: Write failing test for placeholder-missing fallback
 
 Append to `Tests/Chat/test_console_chat_controller.py`:
 
 ```python
 @pytest.mark.asyncio
-async def test_finalize_agent_reply_unknown_status_is_failure(controller, sample_session):
-    from tldw_chatbook.Agents.agent_models import RUN_ERROR
+async def test_finalize_agent_reply_missing_placeholder_appends_message():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+    from tldw_chatbook.Agents.agent_models import RUN_DONE
 
-    session_id = sample_session.id
-    assistant = controller.store.append_message(
-        session_id,
-        role=ConsoleMessageRole.ASSISTANT,
-        content="partial",
-    )
-
-    outcome = RunOutcome(status="UNKNOWN_STATUS", steps=[], final_text="")
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="final answer")
     result = controller._finalize_agent_reply(
-        assistant.id,
-        session_id,
+        "non-existent-id",
+        session.id,
         outcome,
         variant_mode=False,
     )
 
-    updated = controller.store.get_message(assistant.id)
-    assert updated.status == "failed"
-    assert result.success is True  # finalize succeeded, message is failed
+    messages = list(store.messages_for_session(session.id))
+    assert len(messages) == 1
+    assert messages[0].role == ConsoleMessageRole.ASSISTANT
+    assert messages[0].content == "final answer"
+    assert result.accepted is True
 ```
 
 Run:
 
 ```bash
-pytest Tests/Chat/test_console_chat_controller.py::test_finalize_agent_reply_unknown_status_is_failure -v
+pytest Tests/Chat/test_console_chat_controller.py::test_finalize_agent_reply_missing_placeholder_appends_message -v
 ```
 
-Expected: FAIL (unknown status may not enter the failure branch).
+Expected: FAIL (`KeyError` or `_session_closed_result`).
 
-### Step 2.5: Implement unknown status handling
+### Step 2.5: Implement placeholder-missing fallback
 
-In `_finalize_agent_reply`, after the `RUN_CANCELLED` branch and before the `outcome.status != RUN_DONE` branch, add an explicit guard:
+Refactor `_finalize_agent_reply` to delegate terminal handling to helpers. Replace the body after the stopped/cancelled guard with:
 
 ```python
-from tldw_chatbook.Agents.agent_models import RUN_DONE, RUN_CANCELLED
-
-# ... existing RUN_CANCELLED branch ...
+if outcome.status == RUN_CANCELLED:
+    return self._finalize_agent_cancelled(assistant_message_id, session_id)
 
 if outcome.status != RUN_DONE:
-    # RUN_ERROR, RUN_STUCK, RUN_SUPERSEDED, or any future status.
-    visible_copy = self._agent_failure_visible_copy(outcome)
+    return self._finalize_agent_failure(assistant_message_id, session_id, outcome)
+
+return self._finalize_agent_success(
+    assistant_message_id, session_id, outcome, variant_mode=variant_mode
+)
+```
+
+Add helpers:
+
+```python
+def _ensure_assistant_placeholder(self, assistant_message_id: str, session_id: str) -> ConsoleChatMessage | None:
     try:
-        failed = self.store.mark_message_failed(assistant_message_id)
+        return self.store.get_message(assistant_message_id)
     except KeyError:
-        return self._session_closed_result()
+        return None
+
+
+def _finalize_agent_success(
+    self,
+    assistant_message_id: str,
+    session_id: str,
+    outcome: Any,
+    *,
+    variant_mode: bool,
+) -> ConsoleSubmitResult:
+    placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
+    if placeholder is None:
+        message = self.store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=outcome.final_text,
+        )
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
+        return ConsoleSubmitResult(True, True, message.content)
+
+    completed = self._complete_agent_message(
+        assistant_message_id, variant_mode=variant_mode, outcome=outcome
+    )
+    self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
+    return ConsoleSubmitResult(True, True, completed.content)
+
+
+def _finalize_agent_failure(
+    self,
+    assistant_message_id: str,
+    session_id: str,
+    outcome: Any,
+) -> ConsoleSubmitResult:
+    visible_copy = self._agent_failure_visible_copy(outcome)
+    placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
+    if placeholder is None:
+        message = self.store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            status="failed",
+        )
+        self._append_failure_system_row(session_id, visible_copy)
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+        return ConsoleSubmitResult(True, True, message.content)
+
+    failed = self.store.mark_message_failed(assistant_message_id)
     self._append_failure_system_row(session_id, visible_copy)
     self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
     return ConsoleSubmitResult(True, True, failed.content)
 ```
 
-Update `_agent_failure_visible_copy` to handle unknown statuses gracefully:
-
-```python
-@staticmethod
-def _agent_failure_visible_copy(outcome: Any) -> str:
-    from tldw_chatbook.Agents.agent_models import RUN_STUCK, STEP_ERROR
-    reason = ""
-    for step in reversed(getattr(outcome, "steps", None) or []):
-        if getattr(step, "kind", None) == STEP_ERROR and getattr(step, "summary", ""):
-            reason = step.summary
-            break
-    if outcome.status == RUN_STUCK:
-        return f"Agent run stuck: {reason or 'budget or loop limit reached'}."
-    if reason:
-        return f"Agent run failed: {reason}."
-    return f"Agent run failed: {outcome.status}."
-```
-
 Run:
 
 ```bash
-pytest Tests/Chat/test_console_chat_controller.py::test_finalize_agent_reply_unknown_status_is_failure Tests/Chat/test_console_chat_controller.py::test_finalize_agent_reply_empty_final_text_uses_fallback -v
+pytest Tests/Chat/test_console_chat_controller.py::test_finalize_agent_reply_missing_placeholder_appends_message Tests/Chat/test_console_chat_controller.py::test_finalize_agent_reply_empty_final_text_uses_fallback -v
 ```
 
 Expected: PASS.
 
-### Step 2.6: Add structured diagnostics logging
+### Step 2.6: Add bridge-level tests
 
-In `_run_agent_reply`, before and after the `asyncio.to_thread` call, add log lines:
+Create `Tests/Chat/test_console_agent_bridge.py`:
+
+```python
+import pytest
+from unittest.mock import MagicMock
+
+from tldw_chatbook.Agents.agent_models import RUN_DONE, RUN_ERROR, RunOutcome
+from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+
+
+class FakeAgentService:
+    def __init__(self, outcome: RunOutcome):
+        self.outcome = outcome
+
+    def run_turn(self, *args, **kwargs) -> RunOutcome:
+        return self.outcome
+
+
+def test_run_reply_returns_runoutcome_done():
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
+    bridge = ConsoleAgentBridge(agent_service=FakeAgentService(outcome))
+    result = bridge.run_reply(
+        conversation_id="c1",
+        session_id="s1",
+        resolution=None,
+        assistant_message_id="a1",
+        model="gpt-4",
+        session_system_prompt="sys",
+        agent_messages=[{"role": "user", "content": "hi"}],
+        should_cancel=lambda: False,
+    )
+    assert result.status == RUN_DONE
+    assert result.final_text == "done"
+
+
+def test_run_reply_returns_runoutcome_error():
+    outcome = RunOutcome(status=RUN_ERROR, steps=[], final_text="")
+    bridge = ConsoleAgentBridge(agent_service=FakeAgentService(outcome))
+    result = bridge.run_reply(
+        conversation_id="c1",
+        session_id="s1",
+        resolution=None,
+        assistant_message_id="a1",
+        model="gpt-4",
+        session_system_prompt="sys",
+        agent_messages=[{"role": "user", "content": "hi"}],
+        should_cancel=lambda: False,
+    )
+    assert result.status == RUN_ERROR
+```
+
+> The constructor signature for `ConsoleAgentBridge` may differ; adjust the test setup to match the actual class.
+
+Run:
+
+```bash
+pytest Tests/Chat/test_console_agent_bridge.py -v
+```
+
+Expected: PASS.
+
+### Step 2.7: Add structured diagnostics logging
+
+In `_run_agent_reply`, before and after the `asyncio.to_thread` call:
 
 ```python
 from loguru import logger
@@ -345,7 +479,7 @@ logger.info(
 )
 ```
 
-Inside `ConsoleAgentBridge.run_reply`, after each model turn is impractical without restructuring; instead log at the bridge entry/exit:
+In `ConsoleAgentBridge.run_reply`, add at entry and exit:
 
 ```python
 logger.info(
@@ -356,19 +490,21 @@ logger.info(
 )
 ```
 
-Run the existing controller tests to ensure no regressions:
+For per-turn/per-tool logging, add inside the bridge after `AgentService.run_turn` returns (or wrap the run in a lightweight callback if the runtime supports it). If the runtime does not expose hooks, document that per-turn logs are deferred to a future bridge refactor.
+
+Run the existing controller tests:
 
 ```bash
-pytest Tests/Chat/test_console_chat_controller.py -v
+pytest Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_agent_bridge.py -v
 ```
 
-Expected: all existing + new tests PASS.
+Expected: all PASS.
 
-### Step 2.7: Commit
+### Step 2.8: Commit
 
 ```bash
-git add Tests/Chat/test_console_chat_controller.py tldw_chatbook/Chat/console_chat_controller.py
-git commit -m "feat(console): harden agent turn-control finalization and add diagnostics"
+git add Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_agent_bridge.py tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_agent_bridge.py
+git commit -m "feat(console): harden agent turn-control finalization, fallback, and diagnostics"
 ```
 
 ---
@@ -410,15 +546,18 @@ async def build_context_snapshot(
     attachments: Iterable[MessageAttachment] | None = None,
     staged_sources: Iterable[ConsoleStagedSource] | None = None,
 ) -> ConsoleContextSnapshot:
-    """Return a read-only snapshot of the current transcript and the assembled next-send payload."""
-    session = self.active_session
-    if session is None:
+    """Return a read-only snapshot of the current transcript and the assembled next-send payload.
+
+    Skills with side effects are NOT executed; only chat dictionaries are applied.
+    """
+    session_id = self.store.active_session_id
+    if not session_id:
         return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
 
-    current_messages = list(self.store.messages_for_session(session.id))
+    current_messages = list(self.store.messages_for_session(session_id))
 
     # Build the next-send payload as submit_draft would, but do not persist.
-    provider_messages = self._provider_messages_for_session(session.id)
+    provider_messages = self._provider_messages_for_session(session_id)
 
     # Append a synthetic user turn for the draft so the preview matches what would be sent.
     if draft.strip():
@@ -432,29 +571,86 @@ async def build_context_snapshot(
             ],
             skip_failed=True,
         )
+        # Replace image data with placeholders for the preview.
+        synthetic_user = self._replace_image_data_with_placeholders(synthetic_user)
         provider_messages.extend(synthetic_user)
 
-    provider_messages, _ = await self._apply_skill_substitution(provider_messages)
-    provider_messages = await self._apply_chat_dictionaries(provider_messages, session.id)
+    # Do NOT call _apply_skill_substitution because it may execute skills with side effects.
+    # Instead, annotate the final user message if it starts with a skill command.
+    provider_messages = self._annotate_skill_commands(provider_messages)
+
+    # Chat dictionaries are safe to apply (string replacements only).
+    provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
+
+    # Gather native tool schemas and MCP note.
+    tools_info = self._build_tools_info_for_snapshot()
 
     # Redact secrets before returning.
-    redacted = self._redact_secrets(provider_messages)
+    redacted_messages = self._redact_secrets(provider_messages)
 
     return ConsoleContextSnapshot(
         current_messages=list(current_messages),
         next_send_payload={
             "model": self.model or self.configured_model,
-            "messages": redacted,
+            "messages": redacted_messages,
             "system": self._leading_system_message(),
             "staged_sources": [
                 {"source_id": s.source_id, "label": s.label, "type": s.source_type}
                 for s in (staged_sources or ())
             ],
+            "tools": tools_info,
         },
     )
 ```
 
 > Note: `_provider_messages_for_session` already includes the leading system message; the `system` field above is duplicated for clarity in the viewer. If the project prefers a single `messages` list, omit the separate `system` key.
+
+Add helpers:
+
+```python
+@staticmethod
+def _replace_image_data_with_placeholders(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    import copy
+    result = copy.deepcopy(messages)
+    for message in result:
+        content = message.get("content")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    part["image_url"] = {"url": "[image: data redacted for preview]"}
+                if isinstance(part, dict) and part.get("type") == "image":
+                    part["image"] = "[image: data redacted for preview]"
+    return result
+
+
+@staticmethod
+def _annotate_skill_commands(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    import copy
+    result = copy.deepcopy(messages)
+    if result and result[-1].get("role") == "user":
+        text = result[-1].get("content", "")
+        if isinstance(text, str) and text.startswith("/"):
+            result[-1]["content"] = (
+                f"{text}\n\n[Skill command not resolved in preview; "
+                "actual substitution happens at send time.]"
+            )
+    return result
+
+
+def _build_tools_info_for_snapshot(self) -> dict[str, Any]:
+    """Return native tool schemas and an MCP note for the snapshot."""
+    tools: list[dict[str, Any]] = []
+    if self._agent_bridge is not None:
+        # Native tools only; live MCP catalog composition is out of scope.
+        tools = getattr(self._agent_bridge, "native_tool_schemas", lambda: [])()
+    mcp_note = "MCP tools are configured but live catalog composition is not shown in this preview."
+    return {
+        "native_schemas": tools,
+        "mcp_note": mcp_note if self._mcp_provider else None,
+    }
+```
+
+> Adjust attribute names (`_agent_bridge`, `_mcp_provider`) to match the actual controller fields.
 
 Add a static helper for secrets redaction:
 
@@ -491,33 +687,43 @@ Append to `Tests/Chat/test_console_chat_controller.py`:
 
 ```python
 @pytest.mark.asyncio
-async def test_build_context_snapshot_returns_current_and_next_send(controller, sample_session):
-    controller.store.append_message(
-        sample_session.id,
-        role=ConsoleMessageRole.USER,
-        content="Hello",
-    )
-    controller.store.append_message(
-        sample_session.id,
-        role=ConsoleMessageRole.ASSISTANT,
-        content="Hi there",
-    )
+async def test_build_context_snapshot_returns_current_and_next_send():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="Hi there")
 
     snapshot = await controller.build_context_snapshot(draft="Explain tools")
 
     assert len(snapshot.current_messages) == 2
     assert snapshot.current_messages[0].role == ConsoleMessageRole.USER
-    assert snapshot.next_send_payload["messages"][-1]["content"] == "Explain tools"
+    assert snapshot.next_send_payload["messages"][-1]["content"].startswith("Explain tools")
 
 
 @pytest.mark.asyncio
-async def test_build_context_snapshot_redacts_secrets(controller, sample_session):
-    controller.store.append_message(
-        sample_session.id,
-        role=ConsoleMessageRole.USER,
-        content="run",
-    )
-    controller.session_settings.system_prompt = "Use api_key=secret123"
+async def test_build_context_snapshot_does_not_execute_skills():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
+
+    snapshot = await controller.build_context_snapshot(draft="/search tools")
+    final_content = snapshot.next_send_payload["messages"][-1]["content"]
+    assert "/search tools" in final_content
+    assert "Skill command not resolved in preview" in final_content
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_redacts_secrets():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="run")
+    controller.system_prompt = "Use api_key=secret123"
 
     snapshot = await controller.build_context_snapshot(draft="ok")
     payload_text = str(snapshot.next_send_payload)
@@ -526,22 +732,22 @@ async def test_build_context_snapshot_redacts_secrets(controller, sample_session
 
 
 @pytest.mark.asyncio
-async def test_build_context_snapshot_is_immutable(controller, sample_session):
-    controller.store.append_message(
-        sample_session.id,
-        role=ConsoleMessageRole.USER,
-        content="Hello",
-    )
+async def test_build_context_snapshot_is_immutable():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    msg = store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
 
     snapshot = await controller.build_context_snapshot(draft="Follow up")
     original_content = snapshot.current_messages[0].content
     snapshot.current_messages[0].content = "mutated"
 
-    reloaded = controller.store.get_message(snapshot.current_messages[0].id)
+    reloaded = store.get_message(msg.id)
     assert reloaded.content == original_content
 ```
 
-> Adjust the test fixtures (`controller`, `sample_session`) to match the actual fixture names in `Tests/Chat/test_console_chat_controller.py`.
+> Replace `StreamingGateway()` with the actual gateway class used by existing tests.
 
 Run:
 
@@ -565,9 +771,10 @@ git commit -m "feat(console): add build_context_snapshot for next-send context p
 **Files:**
 - Create: `tldw_chatbook/Widgets/Console/console_context_modal.py`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
+- Modify: `tldw_chatbook/UI/console_command_provider.py`
 - Test: `Tests/UI/test_console_context_modal.py`
 
-### Step 4.1: Create the modal widget
+### Step 4.1: Create the modal widget (v1)
 
 Create `tldw_chatbook/Widgets/Console/console_context_modal.py`:
 
@@ -578,8 +785,10 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, Static, TabbedContent, TabPane, TextArea
+from textual.widgets import Button, Checkbox, Static, TabbedContent, TabPane, TextArea
+from textual.worker import Worker, WorkerState
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 
@@ -587,80 +796,160 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 class ConsoleContextModal(ModalScreen[None]):
     DEFAULT_CSS = """
     ConsoleContextModal { align: center middle; }
-    #console-context-modal { width: 95; height: 35; border: tall gray; }
+    #console-context-modal { width: 95; height: 38; border: tall gray; }
     #console-context-header { height: auto; }
+    #console-context-warning { height: auto; color: yellow; }
     #console-context-tabs { height: 1fr; }
     #console-context-actions { height: auto; }
     """
 
-    BINDINGS = [("escape", "dismiss", "Close")]
+    BINDINGS = [("escape", "dismiss", "Close"), ("r", "refresh", "Refresh")]
+
+    snapshot = reactive(ConsoleContextSnapshot(current_messages=[], next_send_payload={}))
+    raw_json = reactive(False)
+    in_progress = reactive(False)
+    token_estimate = reactive(None)
 
     def __init__(
         self,
-        snapshot: ConsoleContextSnapshot,
+        snapshot_factory: Callable[[], Awaitable[ConsoleContextSnapshot]],
         *,
         token_estimate: int | None = None,
+        in_progress: bool = False,
     ) -> None:
         super().__init__()
-        self._snapshot = snapshot
-        self._token_estimate = token_estimate
+        self._snapshot_factory = snapshot_factory
+        self.token_estimate = token_estimate
+        self.in_progress = in_progress
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-context-modal"):
-            header_text = "Chat Context"
-            if self._token_estimate is not None:
-                header_text += f" (~{self._token_estimate} tokens)"
-            yield Static(header_text, id="console-context-header")
+            yield Static("Chat Context", id="console-context-header")
+            yield Static("", id="console-context-warning")
 
             with TabbedContent(id="console-context-tabs"):
                 with TabPane("Current", id="console-context-current"):
-                    yield self._render_current_context()
+                    yield TextArea("", id="console-context-current-body", read_only=True)
                 with TabPane("Next Send", id="console-context-next-send"):
-                    yield self._render_next_send()
+                    yield TextArea("", id="console-context-next-send-body", read_only=True)
 
             with Horizontal(id="console-context-actions"):
+                yield Checkbox("Raw JSON", id="console-context-raw")
+                yield Button("Refresh", id="console-context-refresh", disabled=self.in_progress)
                 yield Button("Copy JSON", id="console-context-copy")
-                yield Button("Save to File", id="console-context-save")
                 yield Button("Close", id="console-context-close")
 
-    def _render_current_context(self) -> TextArea:
+    def on_mount(self) -> None:
+        self._render()
+
+    def watch_snapshot(self) -> None:
+        self._render()
+
+    def watch_raw_json(self) -> None:
+        self._render()
+
+    def _render(self) -> None:
+        warning = self.query_one("#console-context-warning", Static)
+        if self.in_progress:
+            warning.update("A response is in progress; snapshot may change.")
+        else:
+            warning.update("")
+
+        header = self.query_one("#console-context-header", Static)
+        header_text = "Chat Context"
+        if self.token_estimate is not None:
+            header_text += f" (~{self.token_estimate} tokens)"
+        header.update(header_text)
+
+        current_body = self.query_one("#console-context-current-body", TextArea)
+        next_body = self.query_one("#console-context-next-send-body", TextArea)
+
+        current_body.text = self._format_current_context()
+        next_body.text = self._format_next_send()
+
+    def _format_current_context(self) -> str:
         lines: list[str] = []
-        for msg in self._snapshot.current_messages:
+        for msg in self.snapshot.current_messages:
             lines.append(f"[{msg.role}] {msg.status}")
             lines.append(msg.content)
             lines.append("")
         if not lines:
-            lines.append("No conversation context.")
-        return TextArea("\n".join(lines), read_only=True)
+            return "No conversation context."
+        return "\n".join(lines)
 
-    def _render_next_send(self) -> TextArea:
+    def _format_next_send(self) -> str:
         import json
 
-        payload = self._snapshot.next_send_payload
-        text = json.dumps(payload, indent=2, default=str)
-        return TextArea(text, read_only=True)
+        if self.raw_json:
+            return json.dumps(self.snapshot.next_send_payload, indent=2, default=str)
+        return self._format_payload_human_readable()
+
+    def _format_payload_human_readable(self) -> str:
+        import json
+
+        payload = self.snapshot.next_send_payload
+        lines: list[str] = []
+        lines.append(f"Model: {payload.get('model', 'unknown')}")
+        lines.append("")
+        lines.append("System:")
+        lines.append(json.dumps(payload.get('system'), indent=2, default=str))
+        lines.append("")
+        lines.append("Messages:")
+        for msg in payload.get("messages", []):
+            lines.append(json.dumps(msg, indent=2, default=str))
+            lines.append("")
+        tools = payload.get("tools")
+        if tools:
+            lines.append("Tools:")
+            lines.append(json.dumps(tools, indent=2, default=str))
+            lines.append("")
+        staged = payload.get("staged_sources")
+        if staged:
+            lines.append("Staged sources:")
+            lines.append(json.dumps(staged, indent=2, default=str))
+        return "\n".join(lines)
 
     @on(Button.Pressed, "#console-context-close")
     def _close(self, event: Button.Pressed) -> None:
         event.stop()
         self.dismiss(None)
 
+    @on(Button.Pressed, "#console-context-refresh")
+    def _refresh(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.run_worker(self._load_snapshot, exclusive=True)
+
+    async def _load_snapshot(self) -> None:
+        self.snapshot = await self._snapshot_factory()
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.state == WorkerState.ERROR:
+            self.notify("Failed to refresh context.", severity="error")
+
+    @on(Checkbox.Changed, "#console-context-raw")
+    def _toggle_raw(self, event: Checkbox.Changed) -> None:
+        event.stop()
+        self.raw_json = event.value
+
     @on(Button.Pressed, "#console-context-copy")
     def _copy_json(self, event: Button.Pressed) -> None:
         event.stop()
         import json
-        import pyperclip
 
-        pyperclip.copy(json.dumps(self._snapshot.next_send_payload, indent=2, default=str))
+        text = json.dumps(self.snapshot.next_send_payload, indent=2, default=str)
+        # Use existing clipboard utility if available; otherwise notify.
+        try:
+            import pyperclip
+            pyperclip.copy(text)
+            self.notify("JSON copied to clipboard.")
+        except Exception:
+            self.notify("Copy failed: pyperclip unavailable.", severity="warning")
 
-    @on(Button.Pressed, "#console-context-save")
-    def _save_json(self, event: Button.Pressed) -> None:
-        event.stop()
-        # Save-to-file implementation is a follow-up task; for now, raise a warning.
-        self.notify("Save to file is not yet implemented.", severity="warning")
+    def action_refresh(self) -> None:
+        self.run_worker(self._load_snapshot, exclusive=True)
 ```
 
-> If `pyperclip` is not a project dependency, replace the copy action with a call to the existing clipboard utility (search for `copy_to_clipboard` in the codebase) or remove the button.
+> Note: This is a v1 modal. The spec's "Save to file" >1 MiB fallback is deferred to a follow-up task; the Copy button is sufficient for the beta feedback.
 
 ### Step 4.2: Wire up keybinding and command palette
 
@@ -674,22 +963,31 @@ Add the action method to `ChatScreen`:
 
 ```python
 from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
+from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 async def action_view_chat_context(self) -> None:
     controller = self._controller
-    composer = self.query_one("#console-composer", ConsoleComposer)
+    session = controller.store.session(controller.store.active_session_id)
+
+    composer = self.query_one("#console-native-composer", ConsoleComposerBar)
     draft = composer.value if composer else ""
-    staged_sources = self._staged_sources  # or however the screen exposes staged sources
-    attachments = self._pending_attachments  # or however the screen exposes pending attachments
+    staged_sources = session.workspace_context.allowed_sources if session else []
+    attachments = controller.store.pending_attachments(session.id) if session else []
 
-    snapshot = await controller.build_context_snapshot(
-        draft=draft,
-        attachments=attachments,
-        staged_sources=staged_sources,
-    )
+    async def _factory() -> ConsoleContextSnapshot:
+        return await controller.build_context_snapshot(
+            draft=draft,
+            attachments=attachments,
+            staged_sources=staged_sources,
+        )
 
+    snapshot = await _factory()
     token_estimate = self._estimate_tokens(snapshot.next_send_payload)
-    self.push_screen(ConsoleContextModal(snapshot, token_estimate=token_estimate))
+    in_progress = controller.run_state.status in (
+        ConsoleRunStatus.STREAMING,
+        ConsoleRunStatus.AGENT_RUNNING,
+    )
+    self.push_screen(ConsoleContextModal(_factory, token_estimate=token_estimate, in_progress=in_progress))
 
 
 def _estimate_tokens(self, payload: dict[str, Any]) -> int | None:
@@ -697,7 +995,7 @@ def _estimate_tokens(self, payload: dict[str, Any]) -> int | None:
     return int(len(text.split()) * 1.3)
 ```
 
-> Replace `#console-composer`, `_staged_sources`, and `_pending_attachments` with the actual widget IDs / attributes used by `ChatScreen`.
+> Replace `run_state`, `ConsoleRunStatus`, and store methods with the actual attributes/methods used by `ChatScreen`.
 
 In `tldw_chatbook/UI/console_command_provider.py`, add to `_commands`:
 
@@ -709,7 +1007,7 @@ In `tldw_chatbook/UI/console_command_provider.py`, add to `_commands`:
 ),
 ```
 
-### Step 4.3: Write a modal test
+### Step 4.3: Write modal tests
 
 Create `Tests/UI/test_console_context_modal.py`:
 
@@ -725,16 +1023,22 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
 
 
+async def _snapshot_factory() -> ConsoleContextSnapshot:
+    return ConsoleContextSnapshot(
+        current_messages=[
+            ConsoleChatMessage(role=ConsoleMessageRole.USER, content="Hello"),
+            ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="Hi"),
+        ],
+        next_send_payload={"model": "gpt-4", "messages": [{"role": "user", "content": "Hello"}]},
+    )
+
+
 class ModalHarness(App):
     def compose(self) -> ComposeResult:
-        snapshot = ConsoleContextSnapshot(
-            current_messages=[
-                ConsoleChatMessage(role=ConsoleMessageRole.USER, content="Hello"),
-                ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="Hi"),
-            ],
-            next_send_payload={"model": "gpt-4", "messages": [{"role": "user", "content": "Hello"}]},
-        )
-        yield ConsoleContextModal(snapshot, token_estimate=42)
+        yield Static("background")
+
+    def on_mount(self) -> None:
+        self.push_screen(ConsoleContextModal(_snapshot_factory, token_estimate=42))
 
 
 @pytest.mark.asyncio
@@ -742,13 +1046,17 @@ async def test_context_modal_renders_tabs():
     app = ModalHarness()
 
     async with app.run_test(size=(100, 40)) as pilot:
-        text = app.screen.query_one("#console-context-modal").display_text
-        assert "Current" in text
-        assert "Next Send" in text
-        assert "42 tokens" in text
-```
+        modal = app.screen
+        header = modal.query_one("#console-context-header", Static)
+        assert "Chat Context" in header.renderable
+        assert "42 tokens" in str(header.renderable)
 
-> `display_text` may need to be replaced with the actual way to extract visible text from the modal (e.g., `pilot.screen.display_text` or a helper).
+        current_body = modal.query_one("#console-context-current-body", TextArea)
+        assert "Hello" in current_body.text
+
+        next_body = modal.query_one("#console-context-next-send-body", TextArea)
+        assert "gpt-4" in next_body.text
+```
 
 Run:
 
@@ -772,7 +1080,7 @@ git commit -m "feat(console): add context viewer modal and keybinding"
 ### Step 5.1: Run the full console test suites
 
 ```bash
-pytest Tests/UI/test_console_native_transcript.py Tests/UI/test_console_context_modal.py Tests/Chat/test_console_chat_controller.py -v
+pytest Tests/UI/test_console_native_transcript.py Tests/UI/test_console_context_modal.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_agent_bridge.py -v
 ```
 
 Expected: all PASS.
@@ -787,7 +1095,7 @@ Expected: all PASS.
 ### Step 5.3: Final commit
 
 ```bash
-git add -A
+git add Tests/UI/test_console_native_transcript.py Tests/UI/test_console_context_modal.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_agent_bridge.py
 git commit -m "test(console): add integration tests and smoke checklist for console feedback"
 ```
 
