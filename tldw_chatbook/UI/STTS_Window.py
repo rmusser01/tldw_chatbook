@@ -2,6 +2,7 @@
 # Description: S/TT/S (Speech/Text-to-Speech) tab with TTS Playground, Settings, and AudioBook/Podcast Generation
 #
 # Imports
+import asyncio
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 from textual.app import ComposeResult

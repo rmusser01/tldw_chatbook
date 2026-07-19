@@ -613,7 +613,7 @@ class AudioBookGenerator:
             )
             log_histogram(
                 "tts_character_count",
-                len(normalized_text),
+                len(processed_text),
                 labels={"provider": request.provider, "model": request.model},
             )
 

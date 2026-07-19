@@ -7,7 +7,7 @@ Provides quick access to dictation functionality from anywhere in the app.
 from typing import Optional, Callable, Literal
 from textual.app import ComposeResult
 from textual.containers import Container
-from textual.widgets import Button, Static
+from textual.widgets import Button, Label, Static
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual import work

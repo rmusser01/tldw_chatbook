@@ -12,7 +12,7 @@ from urllib.parse import quote
 #
 # 3rd-party Libraries
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 #
 # Local Imports
@@ -22,6 +22,7 @@ from .schemas import (
     ProcessAudioRequest,
     ProcessPDFRequest,
     ProcessEbookRequest,
+    ProcessEmailRequest,
     ProcessDocumentRequest,
     ProcessXMLRequest,
     ProcessMediaWikiRequest,
@@ -146,7 +147,10 @@ from .media_reading_schemas import (
 )
 from .prompt_chatbook_schemas import (
     ChatbookContinueExportRequest,
+    ChatbookCleanupResponse,
     ChatbookExportRequest,
+    ChatbookExportJobListResponse,
+    ChatbookExportJobResponse,
     ChatbookImportRequest,
     ChatbookImportJobListResponse,
     ChatbookImportJobResponse,
@@ -161,6 +165,12 @@ from .prompt_chatbook_schemas import (
     PromptPreviewRequest,
     PromptResponse,
     PromptVersionResponse,
+)
+from .flashcards_schemas import (
+    FlashcardBulkUpdateItemRequest,
+    FlashcardTagsResponse,
+    FlashcardTagsUpdateRequest,
+    FlashcardsImportResponse,
 )
 from .translation_schemas import (
     TranslateRequest,
@@ -1027,6 +1037,18 @@ from .utils import model_to_form_data, prepare_files_for_httpx, cleanup_file_obj
 ########################################################################################################################
 #
 # Functions:
+
+
+class ChatQueueStatusResponse(BaseModel):
+    """Placeholder response for chat queue status endpoints."""
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class ChatQueueActivityResponse(BaseModel):
+    """Placeholder response for chat queue activity endpoints."""
+
+    model_config = ConfigDict(extra="ignore")
 
 
 class TLDWAPIClient:
@@ -11752,8 +11774,15 @@ class TLDWAPIClient:
         finally:
             cleanup_file_objects(httpx_files)
 
-    async def list_prompts(self, include_deleted: bool = False) -> Dict[str, Any]:
-        return await self._request(
+    async def list_prompts(
+        self,
+        include_deleted: bool = False,
+        page: int = 1,
+        per_page: int = 20,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> PaginatedPromptsResponse:
+        response = await self._request(
             "GET",
             "/api/v1/prompts",
             params={
@@ -13280,15 +13309,6 @@ class TLDWAPIClient:
             json_data=self._dump_request_payload(request_data),
         )
 
-    async def list_prompt_versions(
-        self, prompt_identifier: Union[str, int]
-    ) -> Dict[str, Any]:
-        return await self._request(
-            "GET",
-            f"/api/v1/chat/messages/{message_id}/rag-context",
-            params=params,
-        )
-
     async def get_chat_conversation_messages_with_context(
         self,
         conversation_id: str,
@@ -13730,7 +13750,6 @@ class TLDWAPIClient:
             "GET",
             f"/api/v1/chatbooks/import/jobs/{job_id}",
         )
-        return ChatbookImportJobResponse.model_validate(response)
 
     async def cancel_chatbook_export_job(
         self, job_id: str

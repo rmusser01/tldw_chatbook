@@ -17,6 +17,8 @@ from textual.css.query import NoMatches
 
 if TYPE_CHECKING:
     from ..Chat_Window_Enhanced import ChatWindowEnhanced
+    from ...Widgets.Chat_Widgets.chat_message import ChatMessage
+    from ...Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
 
 logger = logger.bind(module="ChatMessageManager")
 

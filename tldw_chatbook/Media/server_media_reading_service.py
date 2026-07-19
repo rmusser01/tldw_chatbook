@@ -20,6 +20,7 @@ if TYPE_CHECKING:
         ProcessCodeRequest,
         ProcessDocumentRequest,
         ProcessEbookRequest,
+        ProcessEmailRequest,
         ProcessMediaWikiRequest,
         ProcessPDFRequest,
         ProcessPlaintextRequest,

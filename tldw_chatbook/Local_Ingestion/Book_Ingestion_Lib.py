@@ -1936,7 +1936,7 @@ def extract_epub_metadata(content: str) -> Tuple[Optional[str], Optional[str]]:
     return title, author
 
 
-def ingest_text_file(file_path, title=None, author=None, keywords=None):
+def ingest_text_file(file_path, title=None, author=None, keywords=None, db=None):
     """
     Ingests a plain text file into the database with optional metadata.
 
@@ -1959,10 +1959,14 @@ def ingest_text_file(file_path, title=None, author=None, keywords=None):
             If None, defaults to 'text_file,epub_converted'.
             'text_file' and 'epub_converted' are always added if keywords are provided.
             Defaults to None.
+        db (Optional[MediaDatabase]): Database instance. Required for ingestion.
 
     Returns:
         - str: Status message indicating success or failure.
     """
+    if db is None:
+        raise TypeError("A MediaDatabase instance is required to ingest text files")
+
     try:
         with open(file_path, "r", encoding="utf-8") as file:
             content = file.read()
@@ -1991,7 +1995,7 @@ def ingest_text_file(file_path, title=None, author=None, keywords=None):
             keywords = f"text_file,epub_converted,{keywords}"
 
         # Add the text file to the database
-        add_media_with_keywords(
+        db.add_media_with_keywords(
             url="its_a_book",
             title=title,
             media_type="book",
@@ -2011,7 +2015,7 @@ def ingest_text_file(file_path, title=None, author=None, keywords=None):
         return f"Error ingesting text file: {str(e)}"
 
 
-def ingest_folder(folder_path, keywords=None):
+def ingest_folder(folder_path, keywords=None, db=None):
     """
     Ingests all text files (.txt) within a specified folder into the database.
 
@@ -2026,6 +2030,7 @@ def ingest_folder(folder_path, keywords=None):
         keywords (Optional[str], optional): A comma-separated string of keywords
             to be added to each text file ingested from this folder. These keywords
             are passed to `ingest_text_file`. Defaults to None.
+        db (Optional[MediaDatabase]): Database instance passed to `ingest_text_file`.
 
     Returns:
         str: A string containing combined status messages from each `ingest_text_file`
@@ -2038,7 +2043,7 @@ def ingest_folder(folder_path, keywords=None):
         for filename in os.listdir(folder_path):
             if filename.lower().endswith(".txt"):
                 file_path = os.path.join(folder_path, filename)
-                result = ingest_text_file(file_path, keywords=keywords)
+                result = ingest_text_file(file_path, keywords=keywords, db=db)
                 results.append(result)
         logger.info("Completed ingestion of all text files in the folder.")
     except Exception as e:

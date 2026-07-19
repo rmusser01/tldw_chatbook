@@ -17,7 +17,7 @@ from tldw_chatbook.UI.Screens.stats_screen import (
 
 # from ..Constants import TAB_STATS # Not strictly needed
 if TYPE_CHECKING:
-    pass
+    from ..app import TldwCli
 #
 #######################################################################################################################
 #

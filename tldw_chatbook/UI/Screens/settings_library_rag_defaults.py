@@ -57,10 +57,6 @@ def _coerce_bool(value: Any, default: bool) -> bool:
 
 def _coerce_int(value: Any, default: int) -> int:
     """Coerce a Settings field to int, falling back on parse failures."""
-
-
-def _coerce_int(value: Any, default: int) -> int:
-    """Coerce a Settings field to int, falling back on parse failures."""
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -68,9 +64,6 @@ def _coerce_int(value: Any, default: int) -> int:
             return int(float(str(value).strip()))
         except (TypeError, ValueError):
             return default
-    if not parsed.is_integer():
-        return default
-    return int(parsed)
 
 
 def _coerce_float(value: Any, default: float) -> float:
@@ -92,9 +85,6 @@ def _strict_int(value: Any) -> int | None:
     except (TypeError, ValueError):
         pass
     return None
-    if not parsed.is_integer():
-        return None
-    return int(parsed)
 
 
 def _strict_float(value: Any) -> float | None:

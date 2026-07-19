@@ -39,6 +39,13 @@ CharacterAssistantKind = Literal["character", "persona"]
 PersonaMemoryMode = Literal["read_only", "read_write"]
 MCPAuthType = Literal["none", "bearer", "api_key"]
 
+# Aliases used by the server-backed chat schemas
+CharacterChatAssistantKind = CharacterAssistantKind
+CharacterChatPersonaMemoryMode = PersonaMemoryMode
+CharacterChatScopeType = Literal["server", "local", "workspace", "global"]
+CharacterChatMessageRole = Literal["user", "assistant", "system", "tool"]
+CharacterMemoryType = Literal["manual", "auto", "imported", "archived"]
+
 
 class ArchetypePersonaDefaults(BaseModel):
     """Default persona settings seeded by a server persona archetype."""

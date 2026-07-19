@@ -143,25 +143,28 @@ if __name__ == "__main__":
     print(f"Config File Path (Constant): {CONFIG_FILE_PATH}")
     print(f"User DB Path (Constant): {USER_DB_PATH}")
 
-    try:
-        # Create dummy config for loading test
-        if not CONFIG_FILE_PATH.exists():
-            print(f"Creating dummy config at {CONFIG_FILE_PATH} for test...")
-            CONFIG_FILE_PATH.write_text("[Settings]\nvalue = test\n", encoding="utf-8")
-        config_data = load_comprehensive_config()
-        print("\nLoaded Config Sections:", config_data.sections())
-        # Clean up dummy config if created just for test
-        # if CONFIG_FILE_PATH.read_text() == "[Settings]\nvalue = test\n":
-        #     CONFIG_FILE_PATH.unlink()
-        #     print("Cleaned up dummy config.")
-    except Exception as e:
-        print(f"\nError loading config: {e}")
+    # FIXME: load_comprehensive_config and get_user_database_path are not
+    # available in this module. Re-enable these tests once the helpers are
+    # imported or defined here.
+    # try:
+    #     # Create dummy config for loading test
+    #     if not CONFIG_FILE_PATH.exists():
+    #         print(f"Creating dummy config at {CONFIG_FILE_PATH} for test...")
+    #         CONFIG_FILE_PATH.write_text("[Settings]\nvalue = test\n", encoding="utf-8")
+    #     config_data = load_comprehensive_config()
+    #     print("\nLoaded Config Sections:", config_data.sections())
+    #     # Clean up dummy config if created just for test
+    #     # if CONFIG_FILE_PATH.read_text() == "[Settings]\nvalue = test\n":
+    #     #     CONFIG_FILE_PATH.unlink()
+    #     #     print("Cleaned up dummy config.")
+    # except Exception as e:
+    #     print(f"\nError loading config: {e}")
 
-    try:
-        user_db = get_user_database_path()
-        print(f"\nUser Database Path (Ensured Dir): {user_db}")
-    except Exception as e:
-        print(f"\nError getting user database path: {e}")
+    # try:
+    #     user_db = get_user_database_path()
+    #     print(f"\nUser Database Path (Ensured Dir): {user_db}")
+    # except Exception as e:
+    #     print(f"\nError getting user database path: {e}")
 
     try:
         proj_db_dir = get_project_databases_dir()

@@ -490,12 +490,13 @@ class ChatMessageEnhanced(Widget):
                 # Render with textual-image or fallback
                 self._render_regular()
         except Exception as e:
-            logging.error(f"Error rendering image: {e}")
+            error = e
+            logging.error(f"Error rendering image: {error}")
             # Use call_after_refresh for error mounting too
             self.call_after_refresh(
                 lambda: (
                     self._image_widget.mount(
-                        Static(f"[red]Error rendering image: {e}[/red]")
+                        Static(f"[red]Error rendering image: {error}[/red]")
                     )
                     if self._image_widget
                     else None

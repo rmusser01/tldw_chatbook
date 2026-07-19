@@ -17,6 +17,7 @@ from loguru import logger
 
 # Local imports
 from ..Audio import LiveDictationService, DictationState
+from ..Audio.dictation_service_lazy import LazyLiveDictationService
 from ..Event_Handlers.Audio_Events import (
     DictationStartedEvent,
     DictationStoppedEvent,

@@ -292,18 +292,6 @@ class ModelManagementWindow(BaseEvaluationWindow):
         self.notify_error("API config dialog not yet implemented")
         return
 
-        def on_config_saved(config):
-            if config:
-                self.notify_success(
-                    f"API configuration saved for {self.selected_provider}"
-                )
-                self._load_provider_info(self.selected_provider)
-
-        dialog = APIConfigDialog(
-            provider=self.selected_provider, callback=on_config_saved
-        )
-        await self.app.push_screen(dialog)
-
     @on(Button.Pressed, "#test-connection-btn")
     async def handle_test_connection(self) -> None:
         """Test connection to selected provider."""
@@ -402,18 +390,6 @@ class ModelManagementWindow(BaseEvaluationWindow):
         # TODO: Implement dialog
         self.notify_error("Quick test dialog not yet implemented")
         return
-
-        def on_test_complete(result):
-            if result:
-                self.notify_success("Quick test completed successfully")
-                # Could show results in a popup or navigate to results
-
-        dialog = QuickTestDialog(
-            provider=self.selected_provider,
-            model=self.selected_model,
-            callback=on_test_complete,
-        )
-        await self.app.push_screen(dialog)
 
     @on(Button.Pressed, "#favorite-btn")
     async def handle_add_favorite(self) -> None:

@@ -1526,6 +1526,13 @@ class PlaceholderWindow(Container):
                     await result
 
 
+class TabDropdown(Widget):
+    """Placeholder for dropdown navigation (not yet implemented)."""
+
+    def update_active_tab(self, tab_id: str) -> None:
+        """No-op until the dropdown is implemented."""
+
+
 def _sanitize_library_ingest_error_text(message: str) -> str:
     """Reduce a raw error message to a single-line, ``<=200``-char string.
 
@@ -9455,32 +9462,6 @@ class TldwCli(
             # Store the preset for the screen to handle
             self.rag_preset = preset
             return
-
-            # Apply preset configurations
-            if preset == "none":
-                rag_enable.value = False
-                self.notify("RAG disabled")
-            elif preset == "light":
-                rag_enable.value = True
-                top_k.value = "3"
-                self.notify("Light RAG: BM25 only, top 3 results")
-            elif preset == "full":
-                rag_enable.value = True
-                top_k.value = "10"
-                # Try to enable reranking if in advanced mode
-                try:
-                    rerank = self.query_one(
-                        "#chat-rag-rerank-enable-checkbox", Checkbox
-                    )
-                    rerank.value = True
-                except QueryError:
-                    pass  # Reranking is in advanced mode
-                self.notify("Full RAG: Embeddings + reranking, top 10 results")
-            elif preset == "custom":
-                rag_enable.value = True
-                self.notify("Custom RAG: Configure settings manually")
-
-            self.loguru_logger.info(f"Applied RAG preset: {preset}")
 
         except Exception as e:
             self.loguru_logger.error(f"Error applying RAG preset: {e}")

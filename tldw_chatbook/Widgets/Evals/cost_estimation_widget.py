@@ -344,7 +344,7 @@ class CostEstimationWidget(Container):
 class CostSummaryWidget(Container):
     """Widget for displaying historical cost summary."""
 
-    def __init__(self, cost_estimator: CostEstimator, **kwargs):
+    def __init__(self, cost_estimator: Any, **kwargs):
         super().__init__(**kwargs)
         self.cost_estimator = cost_estimator
 

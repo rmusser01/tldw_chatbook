@@ -4,6 +4,7 @@
 # Imports
 from typing import TYPE_CHECKING, Optional, List, Dict, Any
 import shutil
+import sqlite3
 import json
 from datetime import datetime
 from pathlib import Path

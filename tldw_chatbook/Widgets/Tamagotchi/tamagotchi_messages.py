@@ -5,7 +5,10 @@ Defines custom messages for tamagotchi events following Textual patterns.
 """
 
 from textual.message import Message
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .base_tamagotchi import BaseTamagotchi
 
 
 class TamagotchiMessage(Message):

@@ -13,6 +13,8 @@ import re
 
 import torch
 
+logger = logging.getLogger(__name__)
+
 try:
     import numpy as np
 except ImportError:
@@ -26,8 +28,6 @@ try:
     PHONEMIZER_AVAILABLE = True
 except ImportError:
     PHONEMIZER_AVAILABLE = False
-
-logger = logging.getLogger(__name__)
 
 #######################################################################################################################
 #

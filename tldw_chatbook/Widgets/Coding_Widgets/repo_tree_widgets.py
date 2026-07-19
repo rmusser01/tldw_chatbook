@@ -5,7 +5,7 @@
 # from GitHub repositories with expand/collapse and checkbox functionality.
 
 from __future__ import annotations
-from typing import Optional, Dict, List, Set, Callable
+from typing import Optional, Dict, List, Set, Callable, Any
 import hashlib
 import os
 

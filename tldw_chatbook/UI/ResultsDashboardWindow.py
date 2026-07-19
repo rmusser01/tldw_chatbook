@@ -275,13 +275,6 @@ class ResultsDashboardWindow(BaseEvaluationWindow):
         self.notify_error("Export dialog not yet implemented")
         return
 
-        def on_export_config(config):
-            if config:
-                self._export_history(config)
-
-        dialog = ExportDialog(callback=on_export_config, data_type="history")
-        await self.app.push_screen(dialog)
-
     @on(Button.Pressed, "#generate-report-btn")
     async def handle_generate_report(self) -> None:
         """Generate comprehensive evaluation report."""
@@ -316,13 +309,6 @@ class ResultsDashboardWindow(BaseEvaluationWindow):
         # TODO: Implement dialog
         self.notify_error("Export dialog not yet implemented")
         return
-
-        def on_export_config(config):
-            if config:
-                self._export_raw_data(config)
-
-        dialog = ExportDialog(callback=on_export_config, data_type="raw")
-        await self.app.push_screen(dialog)
 
     @on(Button.Pressed, "#back-to-main")
     def handle_back(self) -> None:

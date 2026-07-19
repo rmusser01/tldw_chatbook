@@ -10,6 +10,7 @@ Handles all sidebar functionality including:
 - Settings sidebar interactions
 """
 
+import asyncio
 from typing import TYPE_CHECKING
 from loguru import logger
 from textual.widgets import Button, TextArea
