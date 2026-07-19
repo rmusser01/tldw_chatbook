@@ -172,6 +172,48 @@ async def test_over_cap_catalog_fully_searchable():
         assert app.selected_models == [target]
 
 
+class PickerCustomSelectApp(App[None]):
+    """Host app exposing a non-default provider select id (popover-style)."""
+
+    def __init__(self, providers_models, entries):
+        super().__init__()
+        self.providers_models = providers_models
+        self.llm_provider_catalog_scope_service = _FakeScope(entries)
+        self.selected_models: list[str] = []
+
+    def compose(self):
+        yield Select(
+            [("OpenRouter", "OpenRouter")],
+            id="console-popover-provider",
+            value="OpenRouter",
+            allow_blank=False,
+        )
+        yield ModelSearchPicker(
+            id="model-search-picker",
+            provider_select_id="#console-popover-provider",
+        )
+
+    @on(ModelSearchPicker.ModelSelected)
+    def _record_selected(self, event: ModelSearchPicker.ModelSelected) -> None:
+        self.selected_models.append(event.model_id)
+
+
+@pytest.mark.asyncio
+async def test_custom_provider_select_id():
+    """A custom provider_select_id points the picker at a different select."""
+    app = PickerCustomSelectApp(
+        {"OpenRouter": []},
+        _entries("OpenRouter", ["anthropic/claude-x", "openai/gpt-y"]),
+    )
+    async with app.run_test() as pilot:
+        await _set_query(pilot, "openai")
+        results = _results(app)
+        assert results.display
+        assert _result_prompts(results) == ["openai/gpt-y"]
+        await _select_option(pilot, 0)
+        assert app.selected_models == ["openai/gpt-y"]
+
+
 @pytest.mark.asyncio
 async def test_selection_clears_search_input():
     """Picking a result resets the search input to empty."""

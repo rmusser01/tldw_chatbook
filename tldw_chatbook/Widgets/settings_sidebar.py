@@ -186,10 +186,6 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 value=current_model_value,
             )
 
-            if id_prefix == "chat":
-                from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
-                yield ModelSearchPicker(id="model-search-picker")
-
             yield Static("Temperature", classes="sidebar-label")
             yield Input(
                 placeholder="e.g., 0.7",

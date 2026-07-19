@@ -19,6 +19,16 @@ class ModelSearchPicker(Widget):
 
     MAX_RESULTS = 20
 
+    DEFAULT_CSS = """
+    ModelSearchPicker {
+        height: auto;
+    }
+
+    ModelSearchPicker #model-search-picker-results {
+        max-height: 10;
+    }
+    """
+
     class ModelSelected(Message):
         """Posted when the user picks a model from the search results."""
 
@@ -26,8 +36,14 @@ class ModelSearchPicker(Widget):
             super().__init__()
             self.model_id = model_id
 
-    def __init__(self, *, id: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        id: str | None = None,
+        provider_select_id: str = "#chat-api-provider",
+    ) -> None:
         super().__init__(id=id)
+        self._provider_select_id = provider_select_id
         self._matches: list[str] = []
 
     def compose(self) -> ComposeResult:
@@ -38,8 +54,10 @@ class ModelSearchPicker(Widget):
         self.query_one("#model-search-picker-results", OptionList).display = False
 
     def _current_provider(self) -> str | None:
+        # Query via self.screen (not self.app): App queries resolve against the
+        # default screen, which misses selects inside a modal like the popover.
         try:
-            provider_select = self.app.query_one("#chat-api-provider", Select)
+            provider_select = self.screen.query_one(self._provider_select_id, Select)
         except Exception:
             return None
         value = str(provider_select.value or "").strip()
