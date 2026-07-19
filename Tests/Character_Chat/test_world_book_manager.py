@@ -551,3 +551,26 @@ def test_import_book_malformed_priority_and_null_order_coerced(wb_manager):
     row = wb_manager.get_world_book_entries(new_id)[0]
     assert row["priority"] == 0
     assert row["insertion_order"] == 0
+
+
+def test_entry_regex_round_trips(wb_manager):
+    book_id = wb_manager.create_world_book("B")
+    eid = wb_manager.create_world_book_entry(book_id, ["w[ao]rden"], "c", regex=True)
+    assert wb_manager.get_world_book_entries(book_id)[0]["regex"] is True
+    wb_manager.update_world_book_entry(eid, regex=False)
+    assert wb_manager.get_world_book_entries(book_id)[0]["regex"] is False
+
+
+def test_entry_regex_defaults_false(wb_manager):
+    book_id = wb_manager.create_world_book("B")
+    wb_manager.create_world_book_entry(book_id, ["k"], "c")
+    assert wb_manager.get_world_book_entries(book_id)[0]["regex"] is False
+
+
+def test_export_import_preserves_regex(wb_manager):
+    book_id = wb_manager.create_world_book("B")
+    wb_manager.create_world_book_entry(book_id, ["w[ao]rden"], "c", regex=True)
+    data = wb_manager.export_world_book(book_id)
+    assert data["entries"][0]["regex"] is True
+    new_id = wb_manager.import_world_book(data, name_override="B copy")
+    assert wb_manager.get_world_book_entries(new_id)[0]["regex"] is True

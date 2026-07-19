@@ -330,7 +330,8 @@ class WorldBookManager:
                                secondary_keys: Optional[List[str]] = None,
                                case_sensitive: bool = False,
                                extensions: Optional[Dict[str, Any]] = None,
-                               priority: int = 0) -> int:
+                               priority: int = 0,
+                               regex: bool = False) -> int:
         """
         Create a new world book entry.
 
@@ -346,6 +347,7 @@ class WorldBookManager:
             case_sensitive: Whether keyword matching is case sensitive
             extensions: Additional data for future features
             priority: Priority for budget-aware inclusion (higher wins under token pressure)
+            regex: Whether keys/secondary_keys are regex patterns instead of literal keywords
 
         Returns:
             The ID of the created entry
@@ -365,8 +367,8 @@ class WorldBookManager:
         query = """
         INSERT INTO world_book_entries (world_book_id, keys, content, enabled, position,
                                        insertion_order, selective, secondary_keys,
-                                       case_sensitive, extensions, priority)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                       case_sensitive, extensions, priority, regex)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
 
         with self.db.transaction() as cursor:
@@ -381,7 +383,8 @@ class WorldBookManager:
                 json.dumps(clean_secondary) if clean_secondary else None,
                 case_sensitive,
                 json.dumps(extensions) if extensions else None,
-                _coerce_int(priority, 0)
+                _coerce_int(priority, 0),
+                bool(regex)
             ))
             entry_id = cursor.lastrowid
             logger.info(f"Created world book entry {entry_id} for book {world_book_id}")
@@ -401,7 +404,7 @@ class WorldBookManager:
         query = """
         SELECT id, world_book_id, keys, content, enabled, position, insertion_order,
                selective, secondary_keys, case_sensitive, extensions, created_at, last_modified,
-               priority
+               priority, regex
         FROM world_book_entries
         WHERE world_book_id = ?
         """
@@ -430,7 +433,8 @@ class WorldBookManager:
                     'extensions': json.loads(row[10]) if row[10] else {},
                     'created_at': row[11],
                     'last_modified': row[12],
-                    'priority': row[13]
+                    'priority': row[13],
+                    'regex': bool(row[14])
                 })
 
             return entries
@@ -452,7 +456,7 @@ class WorldBookManager:
         
         # Handle each possible field
         for field in ['keys', 'content', 'enabled', 'position', 'insertion_order',
-                     'selective', 'secondary_keys', 'case_sensitive', 'extensions', 'priority']:
+                     'selective', 'secondary_keys', 'case_sensitive', 'extensions', 'priority', 'regex']:
             if field in kwargs:
                 value = kwargs[field]
                 if field in ['keys', 'secondary_keys', 'extensions']:
@@ -618,7 +622,8 @@ class WorldBookManager:
                 'secondary_keys': entry['secondary_keys'],
                 'case_sensitive': entry['case_sensitive'],
                 'extensions': entry['extensions'],
-                'priority': entry['priority']
+                'priority': entry['priority'],
+                'regex': entry['regex']
             })
 
         return export_data
@@ -664,7 +669,8 @@ class WorldBookManager:
                 secondary_keys=entry.get('secondary_keys', []),
                 case_sensitive=entry.get('case_sensitive', False),
                 extensions=entry.get('extensions', {}),
-                priority=entry.get('priority', 0)
+                priority=entry.get('priority', 0),
+                regex=entry.get('regex', False)
             )
         
         logger.info(f"Imported world book '{name}' with {len(entries)} entries")
