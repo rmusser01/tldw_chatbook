@@ -77,7 +77,7 @@ from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (  # noqa: E402
     chat_with_custom_openai_2,
     chat_with_mlx_lm,
 )
-from tldw_chatbook.Utils.Utils import generate_unique_filename, logging  # noqa: E402
+from tldw_chatbook.Utils.Utils import generate_unique_filename  # noqa: E402
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
 from tldw_chatbook.config import load_settings  # noqa: E402
 from .chat_persistence_service import ChatPersistenceService  # noqa: E402

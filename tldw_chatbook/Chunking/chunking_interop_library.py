@@ -9,9 +9,6 @@ from typing import List, Dict, Optional, Any, Union, Tuple
 from datetime import datetime
 import sqlite3
 
-# Third-Party Imports
-from loguru import logger
-
 # Local Imports
 from ..DB.Client_Media_DB_v2 import MediaDatabase, InputError
 from ..Metrics.metrics_logger import log_counter

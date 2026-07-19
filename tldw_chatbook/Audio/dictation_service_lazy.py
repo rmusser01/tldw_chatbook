@@ -168,16 +168,6 @@ class LazyLiveDictationService:
             ),
         }
 
-    def update_privacy_settings(self, settings: Dict[str, Any]):
-        """Update privacy settings."""
-        for key, value in settings.items():
-            if key in self.privacy_settings:
-                self.privacy_settings[key] = value
-                save_setting_to_cli_config(
-                    "dictation.privacy", key.replace("_", "."), value
-                )
-        logger.info(f"Privacy settings updated: {self.privacy_settings}")
-
     @property
     def audio_service(self):
         """Lazy-load audio recording service."""
