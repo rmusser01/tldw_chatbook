@@ -116,6 +116,13 @@ class ScheduledTasksDB(BaseDB):
 
     _RESERVED_FIELDS = {"id"}
 
+    _SYNC_STATE_COLUMNS = {
+        "last_pull_at",
+        "last_push_at",
+        "last_conflict_at",
+        "sync_errors",
+    }
+
     def __init__(
         self,
         db_path: Union[str, Path],
@@ -574,3 +581,94 @@ class ScheduledTasksDB(BaseDB):
 
         logger.debug(f"Created automation audit event {event_id} for definition {definition_id}")
         return event_id
+
+    # ------------------------------------------------------------------
+    # Sync helpers
+    # ------------------------------------------------------------------
+
+    def get_sync_mapping_by_server_id(
+        self,
+        server_id: str,
+        primitive: str,
+        owner_id: str,
+    ) -> Optional[dict[str, Any]]:
+        """Look up a sync mapping by server-side identifier.
+
+        Returns the matching mapping row, or ``None`` if no mapping exists.
+        """
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM sync_mapping
+                WHERE server_id = ? AND primitive = ? AND owner_id = ?
+                """,
+                (server_id, primitive, owner_id),
+            )
+            return self._row_to_dict(cursor.fetchone())
+
+    def set_sync_mapping(
+        self,
+        local_id: str,
+        server_id: str,
+        primitive: str,
+        owner_id: str,
+    ) -> None:
+        """Create or replace the mapping between a local and server record."""
+        now = datetime.now(timezone.utc)
+        with closing(self._get_connection()) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO sync_mapping
+                (local_id, server_id, primitive, owner_id, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (local_id, server_id, primitive, owner_id, self._to_utc_iso(now)),
+            )
+            conn.commit()
+
+    def get_sync_state(self, owner_id: str) -> Optional[dict[str, Any]]:
+        """Fetch the sync state row for ``owner_id``, or ``None`` if absent."""
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                "SELECT * FROM sync_state WHERE owner_id = ?",
+                (owner_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return self._row_to_dict(row, json_fields={"sync_errors"})
+
+    def update_sync_state(self, owner_id: str, **kwargs: Any) -> None:
+        """Upsert per-owner sync state.
+
+        Supported fields: ``last_pull_at``, ``last_push_at``,
+        ``last_conflict_at``, ``sync_errors``. The ``owner_id`` is always
+        stored; other fields are updated if provided.
+        """
+        if not kwargs:
+            return
+
+        self._validate_kwargs(kwargs, self._SYNC_STATE_COLUMNS, "sync state")
+
+        fields: dict[str, Any] = {"owner_id": owner_id}
+        for key, value in kwargs.items():
+            if key == "sync_errors":
+                fields[key] = self._to_json(value)
+            elif key in self._DATETIME_FIELDS:
+                fields[key] = self._to_utc_iso(value)
+            else:
+                fields[key] = value
+
+        columns = ", ".join(fields.keys())
+        placeholders = ", ".join(["?"] * len(fields))
+        updates = [f"{key} = excluded.{key}" for key in fields if key != "owner_id"]
+
+        with closing(self._get_connection()) as conn:
+            conn.execute(
+                f"""
+                INSERT INTO sync_state ({columns}) VALUES ({placeholders})
+                ON CONFLICT(owner_id) DO UPDATE SET {', '.join(updates)}
+                """,
+                list(fields.values()),
+            )
+            conn.commit()
