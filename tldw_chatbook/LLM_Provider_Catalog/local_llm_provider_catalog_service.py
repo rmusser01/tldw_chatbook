@@ -6,9 +6,20 @@ import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
+from loguru import logger
+
 from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
+)
+from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
+    ProviderRefreshOutcome,
+    RefreshReport,
+)
+from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+    AUTO_REFRESH_PROVIDER_LIST_KEYS,
+    SELECTOR_MERGE_CAP,
+    ModelCatalogSettings,
 )
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import ModelDiscoveryCache
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
@@ -17,6 +28,9 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     ModelDiscoveryError,
     ModelDiscoveryResult,
     PersistenceResult,
+)
+from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
+    ModelCatalogDiskStore,
 )
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_merge import (
     CapabilityResolver,
@@ -491,6 +505,146 @@ class LocalLLMProviderCatalogService:
             )
         return result
 
+    async def refresh_stale_configured_providers(
+        self,
+        *,
+        catalog_settings: ModelCatalogSettings,
+        disk_store: ModelCatalogDiskStore,
+        provider_list_keys: Sequence[str] = AUTO_REFRESH_PROVIDER_LIST_KEYS,
+        merge_cap: int = SELECTOR_MERGE_CAP,
+        force: bool = False,
+        on_config_saved: Callable[[], None] | None = None,
+    ) -> RefreshReport:
+        """Refresh stale cloud-provider catalogs; optionally append new models to config.
+
+        Never raises for per-provider failures; each becomes a "failed" outcome.
+        Write-through is append-only, computed against the pre-fetch cache entry,
+        with a baseline guard for oversized first fetches (ADR-019).
+        """
+        self._enforce("llm.catalog.models.discover.local")
+        outcomes: list[ProviderRefreshOutcome] = []
+        catalog = self._catalog()
+        saved_settings = self._settings()
+
+        for requested_key in provider_list_keys:
+            resolution = resolve_provider_list_key(requested_key, catalog)
+            if resolution.status != "resolved" or resolution.provider_list_key is None:
+                outcomes.append(ProviderRefreshOutcome(
+                    provider_list_key=requested_key, status="skipped_not_ready"))
+                continue
+            provider_key = resolution.normalized_provider
+            list_key = resolution.provider_list_key
+
+            if provider_key in catalog_settings.auto_refresh_disabled:
+                outcomes.append(ProviderRefreshOutcome(
+                    provider_list_key=list_key, status="skipped_disabled"))
+                continue
+
+            api_key = self._resolve_api_key(
+                provider=list_key,
+                provider_key=provider_key,
+                saved_settings=saved_settings,
+                staged_settings=None,
+            )
+            # OpenRouter's catalog is public; everything else needs credentials.
+            if api_key is None and provider_key != "openrouter":
+                outcomes.append(ProviderRefreshOutcome(
+                    provider_list_key=list_key, status="skipped_not_ready"))
+                continue
+
+            fingerprint = self._current_endpoint_fingerprint(provider_key=provider_key)
+            if fingerprint is None:
+                outcomes.append(ProviderRefreshOutcome(
+                    provider_list_key=list_key, status="skipped_not_ready"))
+                continue
+
+            if not force and not disk_store.is_stale(
+                list_key, fingerprint,
+                stale_after_hours=catalog_settings.stale_after_hours,
+            ):
+                outcomes.append(ProviderRefreshOutcome(
+                    provider_list_key=list_key, status="skipped_fresh"))
+                continue
+
+            # Snapshot the pre-fetch cache entry for the diff BEFORE discover_models
+            # replaces it (also empty after fingerprint change/corruption — the
+            # baseline guard below keeps that safe).
+            previous_ids = {
+                model.model_id
+                for model in self.discovery_cache.list(list_key, fingerprint)
+            }
+            saved_ids = set(catalog.get(list_key, []))
+
+            result = await self.discover_models(provider=list_key)
+            if result.status != "success":
+                if result.error and result.error.kind == "missing_credentials":
+                    # Bad/rejected key: quiet not-ready skip, no per-launch nagging.
+                    outcomes.append(ProviderRefreshOutcome(
+                        provider_list_key=list_key, status="skipped_not_ready"))
+                    continue
+                outcomes.append(ProviderRefreshOutcome(
+                    provider_list_key=list_key,
+                    status="failed",
+                    error_kind=result.error.kind if result.error else "request_failed",
+                ))
+                continue
+
+            fresh_ids = [model.model_id for model in result.models]
+            new_ids = tuple(
+                model_id for model_id in fresh_ids
+                if model_id not in previous_ids and model_id not in saved_ids
+            )
+
+            saved_to_config: tuple[str, ...] = ()
+            write_failed = False
+            status = "refreshed"
+            if provider_key in catalog_settings.write_to_config:
+                if not previous_ids and len(fresh_ids) > merge_cap:
+                    # Oversized first fetch: establish baseline, append nothing so
+                    # e.g. OpenRouter's 300+ catalog is never dumped into config.
+                    status = "baseline"
+                elif new_ids:
+                    self._enforce("llm.catalog.models.persist.local")
+                    # Re-read current settings so the append base is the latest file
+                    # state, not the startup snapshot.
+                    fresh_providers = self._providers_from_settings(self._settings())
+                    persist_result = persist_discovered_models_to_settings(
+                        providers_config=fresh_providers,
+                        requested_provider=list_key,
+                        model_ids=new_ids,
+                        save_callback=self.save_discovered_models_callback,
+                    )
+                    if persist_result.status == "saved" and persist_result.saved_model_ids:
+                        saved_to_config = persist_result.saved_model_ids
+                        if on_config_saved is not None:
+                            on_config_saved()
+                    elif persist_result.status == "error":
+                        # Cache is already updated; config untouched. Log + surface
+                        # in the consolidated notification (spec error handling).
+                        write_failed = True
+                        logger.warning(
+                            f"Model catalog write-through failed for {list_key}: "
+                            f"{persist_result.message}"
+                        )
+
+            disk_store.record(list_key, fingerprint, fresh_ids)
+            outcomes.append(ProviderRefreshOutcome(
+                provider_list_key=list_key,
+                status=status,
+                new_model_ids=new_ids,
+                saved_model_ids=saved_to_config,
+                write_failed=write_failed,
+            ))
+
+        disk_store.prune(set(catalog) | set(provider_list_keys))
+        try:
+            disk_store.save()
+        except OSError as exc:
+            # Persistence hiccup: in-memory cache is updated for this session;
+            # don't discard the whole report over it.
+            logger.warning(f"Could not persist model catalog cache: {exc}")
+        return RefreshReport(outcomes=tuple(outcomes))
+
     def list_discovered_models(
         self,
         *,
@@ -572,3 +726,14 @@ class LocalLLMProviderCatalogService:
             model_ids=model_ids,
             save_callback=self.save_discovered_models_callback,
         )
+
+    @staticmethod
+    def _providers_from_settings(settings: Mapping[str, Any]) -> dict[str, list[str]]:
+        providers = settings.get("providers", {}) if isinstance(settings, Mapping) else {}
+        if not isinstance(providers, Mapping):
+            return {}
+        return {
+            str(provider): [str(m) for m in models if isinstance(m, str)]
+            for provider, models in providers.items()
+            if isinstance(provider, str) and isinstance(models, list)
+        }
