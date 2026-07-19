@@ -14,6 +14,7 @@ from tldw_chatbook.Scheduling.models import (
     ScheduleKind,
     TaskStatus,
 )
+from tldw_chatbook.UI.Screens.scheduling.conflicts_tab import ConflictsTab
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
@@ -863,3 +864,101 @@ async def test_sync_status_widget_disables_server_button_when_unavailable():
         await pilot.pause()
         server_btn = widget.query_one("#scheduling-owner-server", Button)
         assert server_btn.disabled
+
+
+@pytest.mark.asyncio
+async def test_conflicts_tab_renders_rows_and_resolves():
+    class FakeEngine:
+        def __init__(self):
+            self.calls = []
+
+        def resolve_conflict(self, conflict_id, resolution):
+            self.calls.append((conflict_id, resolution))
+            return True
+
+    class CapturingConflictsTab(ConflictsTab):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.posted_messages: list[ConflictsTab.ConflictResolved] = []
+
+        def post_message(self, message):
+            if isinstance(message, ConflictsTab.ConflictResolved):
+                self.posted_messages.append(message)
+            return super().post_message(message)
+
+    app = WorkbenchTestApp()
+    async with app.run_test() as pilot:
+        engine = FakeEngine()
+        tab = CapturingConflictsTab(sync_engine=engine)
+        await pilot.app.mount(tab)
+        await pilot.pause()
+        tab.populate([
+            {
+                "id": "c1",
+                "local_id": "l1",
+                "server_state": {},
+                "local_state": {"record": {"title": "Local"}},
+            },
+        ])
+        await pilot.pause()
+
+        table = tab.query_one("#scheduling-conflicts-table", DataTable)
+        assert table.row_count == 1
+        table.cursor_coordinate = (0, 0)
+        await pilot.click("#scheduling-use-server")
+        await pilot.pause()
+
+        assert engine.calls == [("c1", "server")]
+        assert len(tab.posted_messages) == 1
+        msg = tab.posted_messages[0]
+        assert msg.conflict_id == "c1"
+        assert msg.resolution == "server"
+        assert table.row_count == 0
+
+
+
+@pytest.mark.asyncio
+async def test_conflicts_tab_resolve_false_does_not_post_message():
+    class FakeEngine:
+        def __init__(self):
+            self.calls = []
+
+        def resolve_conflict(self, conflict_id, resolution):
+            self.calls.append((conflict_id, resolution))
+            return False
+
+    class CapturingConflictsTab(ConflictsTab):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.posted_messages: list[ConflictsTab.ConflictResolved] = []
+
+        def post_message(self, message):
+            if isinstance(message, ConflictsTab.ConflictResolved):
+                self.posted_messages.append(message)
+            return super().post_message(message)
+
+    app = WorkbenchTestApp()
+    async with app.run_test() as pilot:
+        engine = FakeEngine()
+        tab = CapturingConflictsTab(sync_engine=engine)
+        await pilot.app.mount(tab)
+        await pilot.pause()
+        tab.populate([
+            {
+                "id": "c1",
+                "local_id": "l1",
+                "server_state": {},
+                "local_state": {"record": {"title": "Local"}},
+            },
+        ])
+        await pilot.pause()
+
+        table = tab.query_one("#scheduling-conflicts-table", DataTable)
+        assert table.row_count == 1
+        table.cursor_coordinate = (0, 0)
+        await pilot.click("#scheduling-use-server")
+        await pilot.pause()
+
+        assert engine.calls == [("c1", "server")]
+        assert len(tab.posted_messages) == 0
+        assert table.row_count == 1
