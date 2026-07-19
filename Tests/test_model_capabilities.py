@@ -413,10 +413,10 @@ class TestCachingAndPerformance:
 class TestModuleFunctions:
     """Test module-level convenience functions."""
 
-    @patch("tldw_chatbook.model_capabilities.get_cli_setting")
-    def test_get_model_capabilities(self, mock_get_setting):
+    @patch("tldw_chatbook.config.load_cli_config_and_ensure_existence")
+    def test_get_model_capabilities(self, mock_load_config):
         """Test get_model_capabilities function."""
-        mock_get_setting.return_value = {}
+        mock_load_config.return_value = {}
 
         # Should return singleton instance
         caps1 = get_model_capabilities()
@@ -438,10 +438,10 @@ class TestModuleFunctions:
         # Should work
         assert is_vision_capable("AnyProvider", "test-model") is True
 
-    @patch("tldw_chatbook.model_capabilities.get_cli_setting")
-    def test_reload_capabilities(self, mock_get_setting):
+    @patch("tldw_chatbook.config.load_cli_config_and_ensure_existence")
+    def test_reload_capabilities(self, mock_load_config):
         """Test reloading capabilities."""
-        mock_get_setting.return_value = {}
+        mock_load_config.return_value = {}
 
         # Get initial instance
         caps1 = get_model_capabilities()
