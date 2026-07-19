@@ -17,14 +17,16 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static, Rule
+from textual.reactive import reactive
+from textual.widgets import Button, Rule, Select, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...runtime_policy.types import PolicyDeniedError
 from ...Utils.input_validation import sanitize_string, validate_text_input
-from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Watchlists_Modules.watchlists_backend_controller import WatchlistsBackendController
+from ..Watchlists_Modules.watchlists_navigator import SectionSelected, WatchlistsNavigator
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
 
 
@@ -39,6 +41,12 @@ WC_SNAPSHOT_TIMEOUT_SECONDS = 1.5
 class WatchlistsCollectionsScreen(BaseAppScreen):
     """Monitored sources, runs, alerts, and recovery."""
 
+    active_section = reactive("overview")
+    runtime_backend = reactive("local")
+    selected_source = reactive(None)
+    selected_run = reactive(None)
+    recovery_state = reactive(None)
+
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(app_instance, "watchlists_collections", **kwargs)
         self._latest_console_follow_item_id = None
@@ -46,14 +54,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._latest_console_follow_loaded = False
         self._latest_console_follow_error_logged = False
         self._local_watchlist_records: tuple[Mapping[str, Any], ...] = ()
-        self._local_collection_records: tuple[Mapping[str, Any], ...] = ()
         self._local_watchlist_count = 0
-        self._local_collection_count = 0
         self._watchlist_total_known = True
-        self._collection_total_known = True
         self._wc_lookup_error: str | None = None
         self._wc_lookup_recovery_state: DestinationRecoveryState | None = None
         self._wc_loaded = False
+        self._controller = WatchlistsBackendController(
+            app_instance=app_instance,
+            scope_service=getattr(app_instance, "watchlist_scope_service", None),
+            server_service=getattr(app_instance, "server_watchlists_service", None),
+        )
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -67,10 +77,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         self._apply_local_wc_snapshot(
             (),
-            (),
             0,
-            0,
-            True,
             True,
             WC_SERVICE_ERROR_COPY,
             None,
@@ -80,21 +87,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     async def _refresh_local_wc_snapshot(self) -> None:
         (
             watchlists,
-            collections,
             watchlist_count,
-            collection_count,
             watchlist_total_known,
-            collection_total_known,
             lookup_error,
             recovery_state,
         ) = await self._list_local_wc_snapshot()
         self._apply_local_wc_snapshot(
             watchlists,
-            collections,
             watchlist_count,
-            collection_count,
             watchlist_total_known,
-            collection_total_known,
             lookup_error,
             recovery_state,
         )
@@ -102,20 +103,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _apply_local_wc_snapshot(
         self,
         watchlists: tuple[Mapping[str, Any], ...],
-        collections: tuple[Mapping[str, Any], ...],
         watchlist_count: int,
-        collection_count: int,
         watchlist_total_known: bool,
-        collection_total_known: bool,
         lookup_error: str | None = None,
         recovery_state: DestinationRecoveryState | None = None,
     ) -> None:
         self._local_watchlist_records = watchlists
-        self._local_collection_records = collections
         self._local_watchlist_count = watchlist_count
-        self._local_collection_count = collection_count
         self._watchlist_total_known = watchlist_total_known
-        self._collection_total_known = collection_total_known
         self._wc_lookup_error = lookup_error
         self._wc_lookup_recovery_state = recovery_state
         self._wc_loaded = True
@@ -172,10 +167,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self,
     ) -> tuple[
         tuple[Mapping[str, Any], ...],
-        tuple[Mapping[str, Any], ...],
         int,
-        int,
-        bool,
         bool,
         str | None,
         DestinationRecoveryState | None,
@@ -183,7 +175,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         watchlist_service = getattr(self.app_instance, "watchlist_scope_service", None)
         list_watch_items = getattr(watchlist_service, "list_watch_items", None)
         if not callable(list_watch_items):
-            return (), (), 0, 0, True, True, WC_SERVICE_UNAVAILABLE_COPY, None
+            return (), 0, True, WC_SERVICE_UNAVAILABLE_COPY, None
 
         try:
             watchlist_result = await asyncio.wait_for(
@@ -202,26 +194,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 stable_selector="wc-service-error",
                 policy_message=policy_message,
             )
-            return (), (), 0, 0, True, True, recovery_state.visible_copy, recovery_state
+            return (), 0, True, recovery_state.visible_copy, recovery_state
         except TimeoutError:
             logger.debug("Timed out loading local Watchlists snapshot.")
-            return (), (), 0, 0, True, True, WC_SERVICE_ERROR_COPY, None
+            return (), 0, True, WC_SERVICE_ERROR_COPY, None
         except Exception:
             logger.opt(exception=True).debug(
                 "Failed to load local Watchlists snapshot.",
             )
-            return (), (), 0, 0, True, True, WC_SERVICE_ERROR_COPY, None
+            return (), 0, True, WC_SERVICE_ERROR_COPY, None
 
         watchlists, watchlist_count, watchlist_total_known = (
             self._response_records_and_count(watchlist_result)
         )
         return (
             watchlists,
-            (),
             watchlist_count,
-            0,
             watchlist_total_known,
-            True,
             None,
             None,
         )
@@ -315,38 +304,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 id="watchlists-collections-title",
                 classes="ds-destination-header",
             )
-            with DestinationModeStrip(
-                id="watchlists-filter-strip", classes="destination-filter-strip"
-            ):
-                yield Static(
-                    "Filters: Running Failed Recent Alerts Sources Feeds",
-                    id="watchlists-filter-label",
-                    classes="destination-section",
+            with Horizontal(id="watchlists-header-bar", classes="destination-filter-strip"):
+                yield Select(
+                    [("Local", "local"), ("Server", "server")],
+                    value="local",
+                    id="watchlists-backend-select",
+                    allow_blank=False,
                 )
-            with Horizontal(
-                id="watchlists-workbench", classes="ds-panel destination-workbench"
-            ):
-                with Vertical(
-                    id="watchlists-list-pane", classes="destination-workbench-pane"
-                ):
-                    yield Static(
-                        "Column 1: Watchlist List",
-                        classes="destination-section watchlists-column-title",
-                    )
-                    yield Static(
-                        "Monitored sources, feeds, queries, schedules, alerts, telemetry, retry/backoff."
-                    )
-                    yield Static(
-                        "Library owns reusable source sets, imports, saved searches, and reading workflows."
-                    )
-                yield self._column_divider("watchlists-list-detail-divider")
-                with Vertical(
-                    id="watchlists-detail-pane", classes="destination-workbench-pane"
-                ):
-                    yield Static(
-                        "Column 2: Detail / Items / Runs",
-                        classes="destination-section watchlists-column-title",
-                    )
+                yield Static(
+                    f"Backend: {self.runtime_backend}",
+                    id="watchlists-backend-label",
+                )
+            with Horizontal(id="watchlists-workbench", classes="ds-panel destination-workbench"):
+                yield WatchlistsNavigator(id="watchlists-navigator")
+                yield self._column_divider("watchlists-nav-list-divider")
+                with Vertical(id="watchlists-list-pane", classes="destination-workbench-pane"):
+                    yield Static("Column 1: Watchlist List", classes="destination-section watchlists-column-title")
                     if not self._wc_loaded:
                         yield Static(
                             "Loading local Watchlists snapshot...",
@@ -400,6 +373,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                             )
                         attach_disabled = False
                         attach_tooltip = "Stage local Watchlists context in Console."
+                yield self._column_divider("watchlists-list-detail-divider")
+                with Vertical(id="watchlists-detail-pane", classes="destination-workbench-pane"):
+                    yield Static("Column 2: Detail / Items / Runs", classes="destination-section watchlists-column-title")
+                    yield Static(
+                        f"Active section: {self.active_section}",
+                        id="watchlists-active-section-label",
+                    )
                 yield self._column_divider("watchlists-detail-inspector-divider")
                 with Vertical(
                     id="watchlists-inspector-pane",
@@ -464,6 +444,34 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                             disabled=True,
                             tooltip="Unavailable until Watchlists has an active run with Console context.",
                         )
+
+    def watch_active_section(self) -> None:
+        if not self.is_mounted:
+            return
+        try:
+            label = self.query_one("#watchlists-active-section-label", Static)
+            label.update(f"Active section: {self.active_section}")
+        except Exception:
+            pass
+
+    def watch_runtime_backend(self) -> None:
+        if not self.is_mounted:
+            return
+        try:
+            label = self.query_one("#watchlists-backend-label", Static)
+            label.update(f"Backend: {self.runtime_backend}")
+        except Exception:
+            pass
+
+    @on(SectionSelected)
+    def handle_section_selected(self, event: SectionSelected) -> None:
+        event.stop()
+        self.active_section = event.section_id
+
+    @on(Select.Changed, "#watchlists-backend-select")
+    def handle_backend_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        self.runtime_backend = str(event.value or "local")
 
     @on(Button.Pressed, "#wc-open-watchlists")
     def open_watchlists(self) -> None:

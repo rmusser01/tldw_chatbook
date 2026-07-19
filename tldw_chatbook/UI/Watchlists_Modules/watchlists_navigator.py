@@ -26,7 +26,12 @@ class WatchlistsNavigator(Vertical):
 
     def compose(self):
         for section_id, label in self.SECTIONS:
-            yield Button(label, id=f"nav-{section_id}", classes="watchlists-nav-button")
+            yield Button(
+                label,
+                id=f"nav-{section_id}",
+                classes="watchlists-nav-button",
+                tooltip=f"Open the {label} section",
+            )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         section_id = str(event.button.id).replace("nav-", "")
