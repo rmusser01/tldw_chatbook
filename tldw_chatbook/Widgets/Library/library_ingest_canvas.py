@@ -77,16 +77,61 @@ class LibraryIngestCanvas(VerticalScroll):
             classes="library-canvas-action",
             compact=True,
         )
-        # L4 (fix batch F1b): the supported-extensions list lives here,
-        # always visible, instead of being repeated on every failed queue
-        # row (see the row's own short_error) -- reuses the same quiet-line
-        # class as the other muted informational lines on this canvas.
-        yield Static(
-            state.supported_types_line,
-            id="library-ingest-supported-types",
-            classes="library-ingest-quiet-line",
-            markup=False,
-        )
+        # Pre-flight summary replaces the old always-visible supported-types
+        # line. All copy is taken straight from ``state``; this widget stays
+        # render-only and does not compute pre-flight results itself.
+        if state.preflight_checking:
+            yield Static(
+                "Checking…",
+                id="ingest-preflight-status",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
+        else:
+            if state.errors:
+                for index, error in enumerate(state.errors):
+                    yield Static(
+                        escape_markup(error),
+                        id=f"ingest-preflight-error-{index}",
+                        classes="library-ingest-quiet-line",
+                    )
+                yield Button(
+                    "Retry",
+                    id="ingest-preflight-retry",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+            if state.warning_lines:
+                for index, warning in enumerate(state.warning_lines):
+                    yield Static(
+                        f"⚠ {escape_markup(warning)}",
+                        id=f"ingest-preflight-warning-{index}",
+                        classes="library-ingest-quiet-line",
+                    )
+            if state.type_breakdown_line:
+                yield Static(
+                    state.type_breakdown_line,
+                    id="ingest-type-breakdown",
+                    classes="library-ingest-quiet-line",
+                    markup=False,
+                )
+            if state.estimate_line:
+                yield Static(
+                    state.estimate_line,
+                    id="ingest-estimate",
+                    classes="library-ingest-quiet-line",
+                    markup=False,
+                )
+            if state.unsupported_files:
+                count = len(state.unsupported_files)
+                file_noun = "file" if count == 1 else "files"
+                failure_noun = "failure" if count == 1 else "failures"
+                yield Static(
+                    f"{count} unsupported {file_noun} will be recorded as a {failure_noun}.",
+                    id="ingest-unsupported-summary",
+                    classes="library-ingest-quiet-line",
+                    markup=False,
+                )
         yield Input(
             value=state.form.title,
             placeholder="Title (optional)",

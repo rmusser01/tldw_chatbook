@@ -4,17 +4,12 @@ Renders the app-level Library ingest job registry (``library_ingest_jobs.py``)
 plus a small local form echo into the immutable state
 ``LibraryIngestCanvas`` (the widget in ``Widgets/Library/library_ingest_canvas.py``)
 renders from. Textual-free (stdlib only) so it is unit-testable without
-booting the TUI, mirroring ``library_notes_sync_state.py``. The one non-
-stdlib data source -- ``get_supported_extensions()`` from the heavy
-``Local_Ingestion`` package (L4, fix batch F1b) -- is deliberately a
-function-scoped, memoized import inside ``_supported_types_line``, so
-merely importing this module stays light; see that helper's docstring.
+booting the TUI, mirroring ``library_notes_sync_state.py``.
 """
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from functools import lru_cache
 from pathlib import PurePath
 from typing import Any, Sequence
 
@@ -47,11 +42,6 @@ _GLYPH_ACTIVE = "●"  # "●" -- queued, parsing, or writing
 _GLYPH_DONE = "✓"  # "✓"
 _GLYPH_FAILED = "✗"  # "✗"
 
-# L4 (fix batch F1b): the failed-row line's "Supported types: ..." tail
-# moves to the form as its own always-visible line, prefixed with this
-# exact copy.
-SUPPORTED_TYPES_PREFIX = "Supported: "
-
 # L4: the marker `local_file_ingestion.py`'s "Unsupported file type" error
 # copy uses to separate the offending extension from its own supported-list
 # tail -- shared here so the queue row's ``short_error`` split can never
@@ -64,9 +54,9 @@ def short_ingest_error(error: str) -> str:
 
     Drops the trailing ``" Supported types: ..."`` tail that
     ``local_file_ingestion.py``'s "Unsupported file type" error carries --
-    that list lives on the ingest form as its own always-visible line (L4,
-    fix batch F1b) instead of being repeated on every failure surface. An
-    error without that exact marker passes through whole.
+    that tail is dropped from the queue-row summary so it is not repeated
+    on every failure surface. An error without that exact marker passes
+    through whole.
 
     Single source of truth for BOTH failure-reason surfaces: the Library
     ingest queue row (``_build_queue_row``) and Home's failed-item canvas
@@ -93,46 +83,6 @@ def _retry_suffix(job: LibraryIngestJob) -> str:
     other way: ``Home`` already imports from ``Library``).
     """
     return f" · retry {job.retry_count}" if job.retry_count else ""
-
-
-@lru_cache(maxsize=1)
-def _supported_types_line() -> str:
-    """Build the ingest form's supported-extensions line.
-
-    Derived live from ``get_supported_extensions()`` -- the exact same
-    function whose values back ``local_file_ingestion.py``'s "Unsupported
-    file type" error copy -- rather than a hardcoded duplicate list, so the
-    form's line and the runner's error copy can never drift apart (the A2
-    lesson: never hand-duplicate a value that already has a canonical
-    source).
-
-    The import is deliberately function-scoped, and the result is memoized
-    (``lru_cache``): importing ``tldw_chatbook.Local_Ingestion`` pulls the
-    full heavy ingestion module graph (PDF/audio/video processing, config,
-    DB), which would break this module's importable-in-isolation contract
-    (see the module docstring) and slow every isolated unit test of the
-    Library state modules. In production the graph is already loaded (the
-    queue-runner in ``app.py`` imports it eagerly), so the deferred import
-    costs nothing there; the supported-extensions set is a hardcoded
-    constant of the ingest seam, so caching the first result forever is
-    safe.
-
-    Returns:
-        ``"Supported: "`` followed by every supported extension (upper-
-        cased, dot stripped, comma-joined), in ``get_supported_extensions()``'s
-        own media-type -> extension-list order.
-    """
-    from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
-        get_supported_extensions,
-    )
-
-    extensions = [
-        ext.lstrip(".").upper()
-        for exts in get_supported_extensions().values()
-        for ext in exts
-    ]
-    return SUPPORTED_TYPES_PREFIX + ", ".join(extensions)
-
 
 # Human-readable (singular, plural) labels for pre-flight type groups.
 # ``unsupported`` is popped into ``unsupported_files`` before this mapping is
@@ -345,12 +295,6 @@ class LibraryIngestCanvasState:
             both would be redundant, since without a registry the media-db
             gate can never even be checked in production.
         form: The form echo (see ``LibraryIngestFormState``).
-        supported_types_line: (L4, fix batch F1b) A muted, always-visible
-            line listing every ingestible extension, built live from
-            ``get_supported_extensions()`` (see ``_supported_types_line``)
-            rather than hardcoded -- rendered under the Browse… button so
-            it stays reachable without being repeated on every failed queue
-            row (see ``IngestQueueRow.line``'s ``short_error``).
         start_enabled: Whether the "Start ingest" button is enabled --
             requires a working registry, an available media DB, and a
             non-blank typed path.
@@ -405,7 +349,6 @@ class LibraryIngestCanvasState:
     server_quiet_line: str
     unavailable_line: str
     form: LibraryIngestFormState
-    supported_types_line: str
     start_enabled: bool
     start_quiet_line: str
     queue_heading: str
@@ -475,10 +418,9 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
     - done: ``"✓ done · {basename} · {elapsed}"``.
     - failed: ``"✗ failed · {basename} · {short_error}"``, where
       ``short_error`` (L4, fix batch F1b) drops a trailing
-      ``" Supported types: ..."`` tail from ``job.error`` -- that list now
-      lives on the form as ``supported_types_line`` instead, always visible
-      rather than repeated on every failed row. An error without that exact
-      marker passes through whole. Once ``job.retry_count`` is nonzero
+      ``" Supported types: ..."`` tail from ``job.error`` so it is not
+      repeated on every failed row. An error without that exact marker
+      passes through whole. Once ``job.retry_count`` is nonzero
       (task 161), a `` · retry {n}`` suffix is appended.
     """
     basename = _basename(job.source_path)
@@ -682,7 +624,6 @@ def build_library_ingest_state(
         server_quiet_line=server_quiet_line,
         unavailable_line=unavailable_line,
         form=form,
-        supported_types_line=_supported_types_line(),
         start_enabled=start_enabled,
         start_quiet_line=start_quiet_line,
         queue_heading=QUEUE_HEADING_COPY,

@@ -370,21 +370,6 @@ def test_failed_row_line_appends_retry_suffix():
     assert row.line == "✗ failed · report.txt · bad codec · retry 2"
 
 
-def test_supported_types_line_present_and_derived_from_live_registry():
-    state = build_library_ingest_state((), form=LibraryIngestFormState())
-    assert state.supported_types_line.startswith("Supported: ")
-    assert "TXT" in state.supported_types_line
-    assert "XML" not in state.supported_types_line
-
-
-def test_supported_types_line_always_visible_regardless_of_jobs():
-    empty_state = build_library_ingest_state((), form=LibraryIngestFormState())
-    jobs = (_job(state=IngestJobState.QUEUED),)
-    populated_state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
-    assert empty_state.supported_types_line == populated_state.supported_types_line
-    assert populated_state.supported_types_line != ""
-
-
 def test_basename_used_for_nested_path():
     jobs = (_job(state=IngestJobState.QUEUED, source_path="/a/b/c/deep.md"),)
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
