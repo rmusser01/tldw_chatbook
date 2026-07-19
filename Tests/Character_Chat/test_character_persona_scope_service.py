@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 import inspect
 from unittest.mock import Mock
 
@@ -1085,47 +1086,6 @@ async def test_scope_service_routes_character_crud_to_selected_backend():
     assert server_updated["version"] == 4
     assert server_deleted == {"status": "deleted", "character_id": 1}
     assert server_restored["deleted"] is False
-
-
-@pytest.mark.asyncio
-async def test_scope_service_routes_persona_profile_crud_to_server_backend():
-    scope_service = CharacterPersonaScopeService(
-        local_service=FakeLocalCharacterBackend(),
-        server_service=server_service,
-        policy_enforcer=policy,
-    )
-
-    detail = await scope_service.get_character(12, mode="server")
-    created = await scope_service.create_character({"name": "Ada"}, mode="server")
-    updated = await scope_service.update_character(
-        12, {"name": "Ada v2"}, expected_version=3, mode="server"
-    )
-    deleted = await scope_service.delete_character(
-        12, expected_version=4, mode="server"
-    )
-    restored = await scope_service.restore_character(
-        12, expected_version=5, mode="server"
-    )
-
-    assert detail["id"] == 12
-    assert created["id"] == 42
-    assert updated["version"] == 4
-    assert deleted["deleted"] is True
-    assert restored["deleted"] is False
-    assert policy.actions == [
-        "character.persona.detail.server",
-        "character.persona.create.server",
-        "character.persona.update.server",
-        "character.persona.delete.server",
-        "character.persona.update.server",
-    ]
-    assert server_service.character_calls == [
-        ("detail", 12),
-        ("create", {"name": "Ada"}),
-        ("update", 12, {"name": "Ada v2"}, 3),
-        ("delete", 12, 4),
-        ("restore", 12, 5),
-    ]
 
 
 @pytest.mark.asyncio

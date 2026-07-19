@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 """
 Tests for notes, workspaces, and media endpoint wiring on the shared TLDW API client.
 """

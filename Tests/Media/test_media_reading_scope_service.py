@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database

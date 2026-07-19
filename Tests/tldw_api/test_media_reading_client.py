@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 from unittest.mock import AsyncMock
 
 import httpx

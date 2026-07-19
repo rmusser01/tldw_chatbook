@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 import inspect
 from unittest.mock import Mock
 

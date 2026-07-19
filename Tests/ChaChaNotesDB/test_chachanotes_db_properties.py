@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 # test_chachanotes_db_properties.py
 #
 # Property-based tests for the ChaChaNotes_DB library using Hypothesis.

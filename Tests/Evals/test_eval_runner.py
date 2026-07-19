@@ -854,12 +854,6 @@ class TestConcurrencyAndPerformance:
         # Note: run_evaluation_batch doesn't exist, skipping this test
         pytest.skip("Cancellation support test requires different implementation")
 
-        await asyncio.sleep(0.1)
-        eval_task.cancel()
-
-        with pytest.raises(asyncio.CancelledError):
-            await eval_task
-
 
 class TestAdvancedFeatures:
     """Test advanced evaluation features."""

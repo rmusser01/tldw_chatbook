@@ -9,7 +9,8 @@ Provides comprehensive mocking patterns for all supported LLM APIs.
 import pytest
 import json
 import asyncio
-from typing import Dict, List, Optional, AsyncGenerator
+from contextlib import contextmanager
+from typing import Callable, Dict, List, Optional, AsyncGenerator
 from unittest.mock import MagicMock, AsyncMock, patch
 from datetime import datetime
 import httpx

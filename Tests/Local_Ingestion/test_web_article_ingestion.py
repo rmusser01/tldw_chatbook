@@ -165,7 +165,8 @@ def test_unsupported_protocol_is_permanent():
 
 
 def test_dns_failure_is_permanent():
-    import httpx, socket
+    import httpx
+    import socket
 
     err = httpx.ConnectError("name resolution failed")
     err.__cause__ = socket.gaierror(-2, "Name or service not known")

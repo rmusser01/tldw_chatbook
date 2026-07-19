@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 import pytest
 
 from tldw_chatbook.Study_Interop.study_scope_service import StudyScopeService

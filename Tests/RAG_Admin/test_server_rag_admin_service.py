@@ -12,6 +12,7 @@ from tldw_chatbook.tldw_api import (
     ChunkingTemplateMatchResponse,
     ChunkingTemplateResponse,
     ChunkingTemplateUpdateRequest,
+    ChunkingTemplateValidationResponse,
     EmbeddingCollectionCreateRequest,
     EmbeddingCollectionResponse,
     EmbeddingCollectionStatsResponse,

@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 import pytest
 
 from tldw_chatbook.RAG_Admin.rag_admin_scope_service import RAGAdminScopeService

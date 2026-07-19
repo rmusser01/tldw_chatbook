@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 # Tests/fixtures/llm_provider_mocks.py
 # Description: Mock fixtures for LLM providers and external services
 #

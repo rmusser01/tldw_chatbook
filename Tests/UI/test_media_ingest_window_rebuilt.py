@@ -9,6 +9,7 @@ from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeSer
 from tldw_chatbook.UI.MediaIngestWindowRebuilt import (
     MediaIngestWindowRebuilt,
     RemoteIngestionPanel,
+    WebClipperPanel,
 )
 from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState

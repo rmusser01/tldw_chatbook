@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 import pytest
 
 from tldw_chatbook.Evaluations_Interop.evaluation_scope_service import (
