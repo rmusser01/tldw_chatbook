@@ -621,6 +621,26 @@ class ScheduledTasksDB(BaseDB):
             )
             return self._row_to_dict(cursor.fetchone())
 
+    def get_sync_mapping_by_local_id(
+        self,
+        local_id: str,
+        primitive: str,
+        owner_id: str,
+    ) -> Optional[dict[str, Any]]:
+        """Look up a sync mapping by local identifier.
+
+        Returns the matching mapping row, or ``None`` if no mapping exists.
+        """
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM sync_mapping
+                WHERE local_id = ? AND primitive = ? AND owner_id = ?
+                """,
+                (local_id, primitive, owner_id),
+            )
+            return self._row_to_dict(cursor.fetchone())
+
     def set_sync_mapping(
         self,
         local_id: str,
@@ -687,3 +707,267 @@ class ScheduledTasksDB(BaseDB):
                 list(fields.values()),
             )
             conn.commit()
+
+    # ------------------------------------------------------------------
+    # Pending mutations
+    # ------------------------------------------------------------------
+
+    def record_pending_mutation(
+        self,
+        local_id: str,
+        primitive: str,
+        owner_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """Store a local mutation waiting to be pushed to the server.
+
+        ``payload`` typically contains an ``action`` key (``create``,
+        ``update``, or ``delete``) plus any fields required by the server
+        client. Existing pending mutations for the same local id/primitive/
+        owner are replaced.
+        """
+        now = datetime.now(timezone.utc)
+        with closing(self._get_connection()) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO pending_mutations
+                (local_id, primitive, owner_id, payload, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    local_id,
+                    primitive,
+                    owner_id,
+                    self._to_json(payload),
+                    self._to_utc_iso(now),
+                ),
+            )
+            conn.commit()
+
+    def get_pending_mutations(
+        self,
+        owner_id: str,
+        primitive: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """Return pending mutations for ``owner_id``, optionally filtered by primitive."""
+        conditions = ["owner_id = ?"]
+        params: list[Any] = [owner_id]
+        if primitive is not None:
+            conditions.append("primitive = ?")
+            params.append(primitive)
+
+        where_clause = " AND ".join(conditions)
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                f"""
+                SELECT * FROM pending_mutations
+                WHERE {where_clause}
+                ORDER BY created_at
+                """,
+                params,
+            )
+            return [
+                self._row_to_dict(row, json_fields={"payload"})
+                for row in cursor.fetchall()
+            ]
+
+    def delete_pending_mutation(self, mutation_id: int) -> None:
+        """Delete a pending mutation by its row id."""
+        with closing(self._get_connection()) as conn:
+            conn.execute("DELETE FROM pending_mutations WHERE id = ?", (mutation_id,))
+            conn.commit()
+
+    def delete_pending_mutation_for_record(
+        self,
+        local_id: str,
+        primitive: str,
+        owner_id: str,
+    ) -> None:
+        """Delete any pending mutation matching a local record identifier."""
+        with closing(self._get_connection()) as conn:
+            conn.execute(
+                """
+                DELETE FROM pending_mutations
+                WHERE local_id = ? AND primitive = ? AND owner_id = ?
+                """,
+                (local_id, primitive, owner_id),
+            )
+            conn.commit()
+
+    # ------------------------------------------------------------------
+    # Tombstones
+    # ------------------------------------------------------------------
+
+    def record_tombstone(
+        self,
+        local_id: str,
+        primitive: str,
+        owner_id: str,
+    ) -> None:
+        """Record that a local record was deleted and the delete must be pushed."""
+        now = datetime.now(timezone.utc)
+        with closing(self._get_connection()) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO sync_tombstones
+                (local_id, primitive, owner_id, deleted_at, pushed_at)
+                VALUES (?, ?, ?, ?, NULL)
+                """,
+                (local_id, primitive, owner_id, self._to_utc_iso(now)),
+            )
+            conn.commit()
+
+    def get_tombstones(
+        self,
+        owner_id: str,
+        primitive: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """Return tombstones for ``owner_id``, optionally filtered by primitive."""
+        conditions = ["owner_id = ?"]
+        params: list[Any] = [owner_id]
+        if primitive is not None:
+            conditions.append("primitive = ?")
+            params.append(primitive)
+
+        where_clause = " AND ".join(conditions)
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                f"""
+                SELECT * FROM sync_tombstones
+                WHERE {where_clause}
+                ORDER BY deleted_at
+                """,
+                params,
+            )
+            return [self._row_to_dict(row) for row in cursor.fetchall()]
+
+    def delete_tombstone(
+        self,
+        local_id: str,
+        primitive: str,
+        owner_id: str,
+    ) -> None:
+        """Remove a tombstone after its delete has been pushed to the server."""
+        with closing(self._get_connection()) as conn:
+            conn.execute(
+                """
+                DELETE FROM sync_tombstones
+                WHERE local_id = ? AND primitive = ? AND owner_id = ?
+                """,
+                (local_id, primitive, owner_id),
+            )
+            conn.commit()
+
+    # ------------------------------------------------------------------
+    # Conflicts
+    # ------------------------------------------------------------------
+
+    def record_conflict(
+        self,
+        local_id: str,
+        primitive: str,
+        owner_id: str,
+        server_state: dict[str, Any],
+        local_state: dict[str, Any],
+    ) -> str:
+        """Record a sync conflict between server and local state.
+
+        Returns the generated conflict id.
+        """
+        conflict_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        with closing(self._get_connection()) as conn:
+            conn.execute(
+                """
+                INSERT INTO sync_conflicts
+                (id, local_id, primitive, owner_id, server_state, local_state,
+                 server_state_at, created_at, resolved_at, resolution, retry_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0)
+                """,
+                (
+                    conflict_id,
+                    local_id,
+                    primitive,
+                    owner_id,
+                    self._to_json(server_state),
+                    self._to_json(local_state),
+                    self._to_utc_iso(server_state.get("updated_at") or now),
+                    self._to_utc_iso(now),
+                ),
+            )
+            conn.commit()
+        return conflict_id
+
+    def get_conflicts(
+        self,
+        owner_id: str,
+        primitive: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """Return unresolved conflicts for ``owner_id``, optionally filtered by primitive."""
+        conditions = ["owner_id = ?", "resolved_at IS NULL"]
+        params: list[Any] = [owner_id]
+        if primitive is not None:
+            conditions.append("primitive = ?")
+            params.append(primitive)
+
+        where_clause = " AND ".join(conditions)
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                f"""
+                SELECT * FROM sync_conflicts
+                WHERE {where_clause}
+                ORDER BY created_at
+                """,
+                params,
+            )
+            return [
+                self._row_to_dict(row, json_fields={"server_state", "local_state"})
+                for row in cursor.fetchall()
+            ]
+
+    def get_conflict_by_id(self, conflict_id: str) -> Optional[dict[str, Any]]:
+        """Fetch a single conflict row by id."""
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                "SELECT * FROM sync_conflicts WHERE id = ?",
+                (conflict_id,),
+            )
+            return self._row_to_dict(
+                cursor.fetchone(), json_fields={"server_state", "local_state"}
+            )
+
+    def resolve_conflict(
+        self,
+        conflict_id: str,
+        resolution: str,
+    ) -> bool:
+        """Mark a conflict as resolved with the given resolution value.
+
+        Returns ``True`` if a row was updated.
+        """
+        now = datetime.now(timezone.utc)
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE sync_conflicts
+                SET resolved_at = ?, resolution = ?
+                WHERE id = ? AND resolved_at IS NULL
+                """,
+                (self._to_utc_iso(now), resolution, conflict_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def increment_conflict_retry_count(self, conflict_id: str) -> bool:
+        """Increment the retry count on a conflict."""
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE sync_conflicts
+                SET retry_count = retry_count + 1
+                WHERE id = ?
+                """,
+                (conflict_id,),
+            )
+            conn.commit()
+            return cursor.rowcount > 0

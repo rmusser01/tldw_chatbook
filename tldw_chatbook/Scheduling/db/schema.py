@@ -129,6 +129,20 @@ CREATE TABLE IF NOT EXISTS sync_state (
     sync_errors TEXT
 );
 
+-- Pending local mutations waiting to be pushed to the server
+CREATE TABLE IF NOT EXISTS pending_mutations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    local_id TEXT NOT NULL,
+    primitive TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (local_id, primitive, owner_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_mutations_owner_primitive
+    ON pending_mutations (owner_id, primitive);
+
 -- Mapping between local and server IDs
 CREATE TABLE IF NOT EXISTS sync_mapping (
     local_id TEXT NOT NULL,

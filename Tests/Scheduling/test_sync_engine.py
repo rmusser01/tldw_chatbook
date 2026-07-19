@@ -210,3 +210,103 @@ async def test_pull_updates_existing_reminder_without_mapping(tmp_path):
     )
     assert mapping is not None
     assert mapping["local_id"] == local_id
+
+
+@pytest.mark.asyncio
+async def test_sync_pushes_local_reminder(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local",
+        title="Local",
+        schedule_kind="one_time",
+    )
+    db.record_pending_mutation(
+        local_id=local_id,
+        primitive="reminder_task",
+        owner_id="local",
+        payload={"action": "create", "fields": {"title": "Local", "schedule_kind": "one_time"}},
+    )
+
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.create_reminder.return_value = {"id": "srv-1", "title": "Local"}
+
+    engine = SyncEngine(db, server_client, owner_id="local")
+    await engine.sync_now()
+
+    server_client.create_reminder.assert_awaited_once()
+    local_row = db.get_reminder_task(local_id)
+    assert local_row["server_id"] == "srv-1"
+
+    pending = db.get_pending_mutations("local", primitive="reminder_task")
+    assert len(pending) == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_records_conflict_when_server_newer(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="server:1",
+        server_id="srv-1",
+        title="Local",
+        schedule_kind="one_time",
+        updated_at="2026-01-01T00:00:00+00:00",
+    )
+    db.set_sync_mapping(local_id, "srv-1", "reminder_task", "server:1")
+    db.record_pending_mutation(
+        local_id=local_id,
+        primitive="reminder_task",
+        owner_id="server:1",
+        payload={"action": "update", "fields": {"title": "Local Update"}},
+    )
+
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {
+        "items": [
+            {
+                "id": "srv-1",
+                "title": "Server Newer",
+                "schedule_kind": "one_time",
+                "updated_at": "2026-07-19T00:00:00+00:00",
+            }
+        ]
+    }
+
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+    await engine.sync_now()
+
+    local_row = db.get_reminder_task(local_id)
+    assert local_row["title"] == "Server Newer"
+
+    conflicts = db.get_conflicts("server:1", primitive="reminder_task")
+    assert len(conflicts) == 1
+    assert conflicts[0]["local_id"] == local_id
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_pushes_tombstone(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="server:1",
+        server_id="srv-1",
+        title="To Delete",
+        schedule_kind="one_time",
+    )
+    db.set_sync_mapping(local_id, "srv-1", "reminder_task", "server:1")
+    db.delete_reminder_task(local_id)
+    db.record_tombstone(local_id, "reminder_task", "server:1")
+
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.delete_reminder.return_value = {}
+
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+    await engine.sync_now()
+
+    server_client.delete_reminder.assert_awaited_once_with("srv-1")
+
+    tombstones = db.get_tombstones("server:1", primitive="reminder_task")
+    assert len(tombstones) == 0

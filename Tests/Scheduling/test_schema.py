@@ -12,6 +12,7 @@ EXPECTED_TABLES = [
     "automation_previews",
     "automation_audit_events",
     "sync_state",
+    "pending_mutations",
     "sync_mapping",
     "sync_tombstones",
     "sync_conflicts",
