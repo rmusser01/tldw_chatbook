@@ -50,7 +50,12 @@ def temp_user_data_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def search_rag_test_env(temp_user_data_dir: Path):
-    """Patch Search/RAG persistence and optional dependency state for tests."""
+    """Patch Search/RAG persistence and optional dependency state for tests.
+
+    Also stubs the shared-RAG-service pre-resolution seam used by the Start
+    Indexing worker so tests never construct a real embeddings runtime as a
+    side effect of pressing the button.
+    """
     with patch.dict(
         search_rag_window_module.DEPENDENCIES_AVAILABLE,
         {"embeddings_rag": True},
@@ -64,7 +69,15 @@ def search_rag_test_env(temp_user_data_dir: Path):
                 "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
                 return_value=temp_user_data_dir,
             ):
-                yield
+                with patch(
+                    "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.semantic_indexing_available",
+                    return_value=True,
+                ):
+                    with patch(
+                        "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_shared_rag_service",
+                        return_value=MagicMock(name="shared_rag_service"),
+                    ):
+                        yield
 
 
 @pytest.mark.ui
@@ -931,6 +944,42 @@ class TestIndexingControls:
                 assert any("embeddings" in message for message in messages)
 
     @pytest.mark.asyncio
+    async def test_service_preresolution_failure_short_circuits_before_backfill(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """A failed shared-service pre-resolution never enters the backfill loop.
+
+        The worker resolves the shared RAG service OUTSIDE its transient
+        asyncio.run loop (PR #700 review); when that fails, the run reports
+        service-unavailable honestly instead of retrying construction inside
+        the loop.
+        """
+        backfill = MagicMock()
+        with patch.object(search_rag_window_module, "backfill_semantic_index", backfill):
+            with patch.object(
+                search_rag_window_module, "get_shared_rag_service", return_value=None
+            ):
+                async with await widget_pilot(
+                    SearchRAGWindow, app_instance=mock_app_instance
+                ) as pilot:
+                    window = pilot.app.test_widget
+
+                    window.query_one("#start-indexing", Button).press()
+                    await _wait_for_indexing_cycle(pilot)
+
+                    backfill.assert_not_called()
+                    messages = _notify_messages(mock_app_instance)
+                    assert any(
+                        "RAG service could not be created" in message
+                        for message in messages
+                    )
+                    assert window._indexing_in_flight is False
+                    assert window.query_one("#start-indexing", Button).disabled is False
+
+    @pytest.mark.asyncio
     async def test_backfill_crash_is_caught_and_reported(
         self,
         mock_app_instance: MagicMock,
@@ -1035,6 +1084,35 @@ class TestWiredSearchChromeControls:
             assert not window.query("#delete-collection")
             assert not window.query("#refresh-results")
             assert not window.query("#indexing-progress")
+
+    @pytest.mark.asyncio
+    async def test_mixin_on_handlers_are_dispatched_for_real_presses(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """Guard the mixin @on registration mechanism with a real button press.
+
+        SearchEventHandlersMixin only gets its @on handlers dispatched because
+        it is created through Textual's message-pump metaclass (derived via
+        type(Container), task-251). If a Textual upgrade changes the
+        registration mechanism, this public-behavior test fails loudly:
+        pressing Search with an empty query must run handle_search and notify.
+        """
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+            window.query_one("#search-query-input", Input).value = ""
+
+            window.query_one("#search-button", Button).press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert any(
+                "Please enter a search query" in message
+                for message in _notify_messages(mock_app_instance)
+            )
 
     @pytest.mark.asyncio
     async def test_pagination_buttons_page_through_results(

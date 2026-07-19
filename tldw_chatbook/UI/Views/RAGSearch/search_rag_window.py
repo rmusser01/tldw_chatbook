@@ -50,7 +50,9 @@ from ....RAG_Search.ingestion_indexing import (
     ITEM_TYPE_MEDIA,
     ITEM_TYPE_NOTE,
     backfill_semantic_index,
+    get_shared_rag_service,
     peek_shared_rag_service,
+    semantic_indexing_available,
 )
 from ....RAG_Search.semantic_availability import (
     SEMANTIC_DIAGNOSTICS_KEY,
@@ -853,7 +855,11 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         try:
             stats = get_stats()
         except Exception as e:
-            logger.error(f"Vector-store stats read failed: {e}")
+            logger.error(
+                f"Vector-store stats read failed "
+                f"(operation=vector_store.get_collection_stats, "
+                f"service={type(service).__name__}): {e}"
+            )
             return {"error": str(e)}
         if not isinstance(stats, dict):
             return {"error": "vector store returned malformed statistics"}
@@ -866,7 +872,10 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
             stats = self._load_index_stats()
             self.app.call_from_thread(self._apply_index_stats, stats)
         except Exception as e:
-            logger.error(f"Error refreshing index stats: {e}")
+            logger.error(
+                f"Error refreshing index stats "
+                f"(operation=refresh_index_stats, worker_group=rag-index-stats): {e}"
+            )
 
     def _apply_index_stats(self, stats: Optional[Dict[str, Any]]) -> None:
         """Render index statistics honestly: real counts or the actual state.
@@ -974,24 +983,74 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         classes use thread-local sqlite connections, so cross-thread use is
         safe. Progress and completion are marshalled back with
         ``call_from_thread``.
+
+        The shared RAG service is pre-resolved here, OUTSIDE the transient
+        ``asyncio.run`` loop, so first-time service construction can never
+        happen inside a loop that closes when this run finishes (PR #700
+        review). Verified no current component binds a loop at construction
+        (plain ThreadPoolExecutor, threading.Lock circuit breaker, cache's
+        asyncio.Lock binds on first acquisition, local embeddings with no
+        HTTP client) -- pre-resolving keeps that true by construction.
         """
         def _progress(update: Dict[str, Any]) -> None:
             try:
                 self.app.call_from_thread(self._update_indexing_progress, dict(update))
             except Exception as e:
-                logger.debug(f"Indexing progress update failed: {e}")
+                logger.debug(
+                    f"Indexing progress update failed "
+                    f"(operation=update_indexing_progress, "
+                    f"item_type={update.get('item_type', '?')}): {e}"
+                )
+
+        rag_service = None
+        indexing_available = False
+        try:
+            indexing_available = semantic_indexing_available()
+            if indexing_available:
+                rag_service = get_shared_rag_service()
+        except Exception as e:
+            logger.error(
+                f"Shared RAG service pre-resolution failed "
+                f"(operation=get_shared_rag_service, item_types={item_types}): {e}"
+            )
+        if indexing_available and rag_service is None:
+            # Do not enter the transient loop at all: backfill would retry
+            # service construction inside it, which is exactly what
+            # pre-resolution exists to prevent. Same outcome/copy as
+            # backfill's own service-unavailable path.
+            unavailable_summary = {
+                "status": "unavailable",
+                "indexed": 0,
+                "skipped": 0,
+                "failed": 0,
+                "errors": ["RAG service could not be created"],
+            }
+            try:
+                self.app.call_from_thread(self._finish_indexing_run, unavailable_summary)
+            except Exception as e:
+                logger.error(
+                    f"Could not deliver indexing completion to the UI "
+                    f"(operation=finish_indexing_run, item_types={item_types}, "
+                    f"summary_status=unavailable): {e}"
+                )
+                self._indexing_in_flight = False
+            return
 
         try:
             summary = asyncio.run(
                 backfill_semantic_index(
                     media_db=media_db,
                     chachanotes_db=chachanotes_db,
+                    rag_service=rag_service,
                     item_types=item_types,
                     progress_callback=_progress,
                 )
             )
         except Exception as e:
-            logger.opt(exception=True).error(f"Semantic index backfill crashed: {e}")
+            logger.opt(exception=True).error(
+                f"Semantic index backfill crashed "
+                f"(operation=backfill_semantic_index, item_types={item_types}): {e}"
+            )
             summary = {
                 "status": "error",
                 "indexed": 0,
@@ -1002,7 +1061,11 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         try:
             self.app.call_from_thread(self._finish_indexing_run, summary)
         except Exception as e:
-            logger.error(f"Could not deliver indexing completion to the UI: {e}")
+            logger.error(
+                f"Could not deliver indexing completion to the UI "
+                f"(operation=finish_indexing_run, item_types={item_types}, "
+                f"summary_status={summary.get('status')}): {e}"
+            )
             self._indexing_in_flight = False
 
     def _update_indexing_progress(self, update: Dict[str, Any]) -> None:

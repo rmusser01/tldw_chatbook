@@ -158,6 +158,10 @@ def peek_shared_rag_service() -> Optional[Any]:
     Read-only accessor for surfaces that display runtime state (e.g. the
     Search window's index statistics, task-251) and must not pay the
     embedding-model construction cost as a side effect of rendering.
+
+    Returns:
+        The already-constructed shared RAG service, or None when no service
+        has been created (or injected) in this process yet.
     """
     return _shared_service
 

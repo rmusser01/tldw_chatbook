@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 from textual import on, work
-from textual.message_pump import _MessagePumpMeta
+from textual.containers import Container
 from textual.widgets import Button, Select, Checkbox, Input, ListView, ListItem, DataTable, Static
 from textual.css.query import NoMatches
 from rich.text import Text
@@ -40,15 +40,22 @@ except ImportError:
     RAG_EVENTS_AVAILABLE = False
 
 
-class SearchEventHandlersMixin(metaclass=_MessagePumpMeta):
+class SearchEventHandlersMixin(metaclass=type(Container)):
     """Mixin class containing all event handlers for SearchRAGWindow.
 
     The mixin must be created through Textual's message-pump metaclass:
     ``@on`` registration happens per-class at class-creation time and message
-    dispatch walks each MRO class's own ``_decorated_handlers``. As a plain
+    dispatch walks each MRO class's own registered handlers. As a plain
     class, NONE of these ``@on`` handlers (including the Search button's)
-    were ever dispatched -- found and fixed in task-251. ``Container`` uses
-    exactly this metaclass, so combining the two bases stays conflict-free.
+    were ever dispatched -- found and fixed in task-251.
+
+    ``type(Container)`` derives that metaclass from Textual's public
+    ``Container`` (the other base of ``SearchRAGWindow``) without importing
+    a private symbol, and by construction can never conflict with the
+    combined class's metaclass across Textual upgrades. Dispatch of these
+    handlers is regression-tested via real button presses in
+    Tests/UI/test_search_rag_window.py, so a future Textual change to the
+    registration mechanism fails loudly there.
     """
     
     @on(Button.Pressed, "#search-button")
