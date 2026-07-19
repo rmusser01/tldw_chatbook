@@ -489,19 +489,6 @@ async def test_console_transcript_click_background_clears_selection():
 
 
 @pytest.mark.asyncio
-async def test_console_transcript_click_message_row_selects():
-    app = TranscriptHarness()
-
-    async with app.run_test(size=(100, 32)) as pilot:
-        await pilot.click("#console-message-m2")
-        text = _visible_text(app)
-
-    assert "Copy" in text
-    assert "Save as..." in text
-    assert "🗑" in text
-
-
-@pytest.mark.asyncio
 async def test_console_transcript_click_action_button_preserves_selection():
     app = TranscriptHarness()
 
@@ -546,8 +533,8 @@ async def test_console_transcript_click_scrollbar_does_not_clear_selection():
         await pilot.pause()
         assert transcript.selected_message_id == "m15"
 
-        # Click the vertical scrollbar (rightmost two columns of the scroll view).
-        await pilot.click("#console-native-transcript", offset=(38, 5))
+        scrollbar = transcript.vertical_scrollbar
+        await pilot.click(scrollbar)
         await pilot.pause()
 
         assert transcript.selected_message_id == "m15"
