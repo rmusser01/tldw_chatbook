@@ -149,7 +149,7 @@ async def resolve_provider_model_options(
     """Return saved and runtime-discovered model selector options for a provider.
 
     Discovered entries merge only when the provider's total discovered catalog is
-    at or below ``merge_cap`` (ADR-019); pass ``merge_cap=None`` for the uncapped
+    at or below ``merge_cap`` (ADR-020); pass ``merge_cap=None`` for the uncapped
     list (search picker). Oversized catalogs stay saved-list-only in dropdowns.
     """
     provider_key = provider_config_key(provider)

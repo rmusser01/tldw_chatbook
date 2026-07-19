@@ -4527,7 +4527,7 @@ class TldwCli(
             default_provider=get_cli_setting("chat_defaults", "provider", None),
             policy_enforcer=self.service_policy_enforcer,
         )
-        # ADR-019: load the disk-backed model catalog cache before selectors build.
+        # ADR-020: load the disk-backed model catalog cache before selectors build.
         try:
             from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
                 ModelCatalogDiskStore,
@@ -6900,7 +6900,7 @@ class TldwCli(
         if config_data.get("_first_run", False):
             self.call_later(self._show_first_run_notification)
 
-        # ADR-019: non-blocking startup refresh of stale model catalogs.
+        # ADR-020: non-blocking startup refresh of stale model catalogs.
         self.run_worker(
             self._refresh_model_catalogs(),
             exclusive=True,
@@ -6908,7 +6908,7 @@ class TldwCli(
         )
 
     async def _refresh_model_catalogs(self) -> None:
-        """ADR-019 startup auto-refresh; never blocks or crashes startup."""
+        """ADR-020 startup auto-refresh; never blocks or crashes startup."""
         try:
             from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
                 format_refresh_notification,

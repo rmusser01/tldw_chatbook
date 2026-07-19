@@ -1,12 +1,12 @@
 # Model Catalog Auto-Refresh Implementation Plan
 
-> Executed on branch feature/model-catalog-auto-refresh; ADR renumbered to 019 and task to 299 during execution (main gained 014-018).
+> Executed on branch feature/model-catalog-auto-refresh; ADR renumbered to 019 and task to 299 during execution (main gained 014-018), then to ADR-020 / task-301 on rebase (dev gained 019/299-300).
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Automatically refresh model lists for OpenRouter, Moonshot, Z.AI, OpenAI, Anthropic, and Mistral on app startup, surfacing them in the chat model selector (capped merge + type-to-filter search picker) with an opt-in per-provider write-through to `config.toml`.
 
-**Architecture:** Extend the existing `tldw_chatbook/LLM_Provider_Catalog/` package (ADR-002 pipeline: discover → cache → merge → persist) with six-provider coverage, a disk-backed TTL cache, and a startup refresher; amend ADR-002 via ADR-019 for opt-in write-through. All failures degrade to cached/saved models; startup is never blocked.
+**Architecture:** Extend the existing `tldw_chatbook/LLM_Provider_Catalog/` package (ADR-002 pipeline: discover → cache → merge → persist) with six-provider coverage, a disk-backed TTL cache, and a startup refresher; amend ADR-002 via ADR-020 for opt-in write-through. All failures degrade to cached/saved models; startup is never blocked.
 
 **Tech Stack:** Python 3.11+, Textual 8.x, httpx (async), loguru, pytest (mocked `httpx.MockTransport`, real filesystem via `tmp_path`).
 
@@ -18,32 +18,32 @@
 
 ---
 
-### Task 0: Governance — backlog task + ADR-019
+### Task 0: Governance — backlog task + ADR-020
 
 This repo uses Backlog.md (see AGENTS.md). ADR required: **yes** — this feature amends ADR-002's "explicit user persistence only" decision.
 
 **Files:**
-- Create: `backlog/decisions/019-automatic-model-catalog-refresh.md`
-- Create: `backlog/tasks/task-299 - Auto-refresh model catalogs for cloud providers.md` (via CLI)
+- Create: `backlog/decisions/020-automatic-model-catalog-refresh.md`
+- Create: `backlog/tasks/task-301 - Auto-refresh model catalogs for cloud providers.md` (via CLI)
 
 - [ ] **Step 1: Create the backlog task**
 
 ```bash
 backlog task create "Auto-refresh model catalogs for cloud providers" \
-  -d "Refresh model lists for OpenRouter, Moonshot, Z.AI, OpenAI, Anthropic, and Mistral on app startup via the LLM_Provider_Catalog discovery pipeline. Disk-backed TTL cache feeds selectors (capped merge + search picker); per-provider opt-in write-through appends new models to [providers]. Amends ADR-002; see ADR-019 and Docs/superpowers/specs/2026-07-17-model-catalog-auto-refresh-design.md." \
-  --ac "Startup auto-refresh fetches stale providers in a background worker without blocking app start,Fetched small catalogs (<=50) merge into chat selector and survive restarts,Large catalogs stay saved-list-only in dropdown and are searchable via picker,Write-through is append-only with baseline guard for oversized first fetch,Global toggle off / opt-out / no key / fresh cache each skip fetching,Failures degrade to cached models with at most one notification,Anthropic uses x-api-key + pagination; Z.AI ships config defaults,ADR-019 linked; tests pass"
+  -d "Refresh model lists for OpenRouter, Moonshot, Z.AI, OpenAI, Anthropic, and Mistral on app startup via the LLM_Provider_Catalog discovery pipeline. Disk-backed TTL cache feeds selectors (capped merge + search picker); per-provider opt-in write-through appends new models to [providers]. Amends ADR-002; see ADR-020 and Docs/superpowers/specs/2026-07-17-model-catalog-auto-refresh-design.md." \
+  --ac "Startup auto-refresh fetches stale providers in a background worker without blocking app start,Fetched small catalogs (<=50) merge into chat selector and survive restarts,Large catalogs stay saved-list-only in dropdown and are searchable via picker,Write-through is append-only with baseline guard for oversized first fetch,Global toggle off / opt-out / no key / fresh cache each skip fetching,Failures degrade to cached models with at most one notification,Anthropic uses x-api-key + pagination; Z.AI ships config defaults,ADR-020 linked; tests pass"
 ```
 
 Note the returned task id (`<N>`).
 
-- [ ] **Step 2: Write ADR-019** following `backlog/decisions/000-template.md`:
+- [ ] **Step 2: Write ADR-020** following `backlog/decisions/000-template.md`:
 
 ```markdown
-# ADR-019: Automatic model catalog refresh for cloud providers
+# ADR-020: Automatic model catalog refresh for cloud providers
 
 Status: Accepted
 Date: 2026-07-17
-Related Task: [backlog/tasks/task-299 - Auto-refresh model catalogs for cloud providers.md](../tasks/task-299%20-%20Auto-refresh%20model%20catalogs%20for%20cloud%20providers.md)
+Related Task: [backlog/tasks/task-301 - Auto-refresh model catalogs for cloud providers.md](../tasks/task-301%20-%20Auto-refresh%20model%20catalogs%20for%20cloud%20providers.md)
 Supersedes: N/A (amends ADR-002)
 
 ## Decision
@@ -87,15 +87,15 @@ as an opt-in. OpenRouter's catalog is public (no key required).
 - [ ] **Step 3: Link plan + ADR from the task**
 
 ```bash
-backlog task edit 299 --plan "Implementation plan: Docs/superpowers/plans/2026-07-17-model-catalog-auto-refresh.md\nADR: backlog/decisions/019-automatic-model-catalog-refresh.md (amends ADR-002)"
+backlog task edit 301 --plan "Implementation plan: Docs/superpowers/plans/2026-07-17-model-catalog-auto-refresh.md\nADR: backlog/decisions/020-automatic-model-catalog-refresh.md (amends ADR-002)"
 backlog task edit <N> -s "In Progress"
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add backlog/decisions/019-automatic-model-catalog-refresh.md backlog/tasks/
-git commit -m "docs: ADR-019 + backlog task for model catalog auto-refresh"
+git add backlog/decisions/020-automatic-model-catalog-refresh.md backlog/tasks/
+git commit -m "docs: ADR-020 + backlog task for model catalog auto-refresh"
 ```
 
 ---
@@ -498,7 +498,7 @@ c) After the `[providers]` block ends (after `local_mlx_lm = ["None"]`, ~line 16
 
 ```toml
 [model_catalog]
-# Automatic model-list refresh for cloud providers (ADR-019).
+# Automatic model-list refresh for cloud providers (ADR-020).
 auto_refresh_enabled = true
 stale_after_hours = 24 # 0 = refetch every launch
 auto_refresh_disabled = [] # exact [providers] keys to opt out, e.g. ["ZAI"]
@@ -860,7 +860,7 @@ def test_six_providers_and_cap():
 - [ ] **Step 2: Run to verify failure**, then **Step 3: Implement** `model_catalog_settings.py`:
 
 ```python
-"""Settings contract for automatic model catalog refresh (ADR-019)."""
+"""Settings contract for automatic model catalog refresh (ADR-020)."""
 
 from __future__ import annotations
 
@@ -1113,7 +1113,7 @@ def test_notification_reports_cached_and_failed():
 a) Create `tldw_chatbook/LLM_Provider_Catalog/model_auto_refresh.py`:
 
 ```python
-"""Automatic startup refresh for cloud provider model catalogs (ADR-019)."""
+"""Automatic startup refresh for cloud provider model catalogs (ADR-020)."""
 
 from __future__ import annotations
 
@@ -1213,7 +1213,7 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
 
         Never raises for per-provider failures; each becomes a "failed" outcome.
         Write-through is append-only, computed against the pre-fetch cache entry,
-        with a baseline guard for oversized first fetches (ADR-019).
+        with a baseline guard for oversized first fetches (ADR-020).
         """
         self._enforce("llm.catalog.models.discover.local")
         outcomes: list[ProviderRefreshOutcome] = []
@@ -1419,7 +1419,7 @@ b) **Refresh-loop test:** construct the app's refresh coroutine against a stub a
 a) After the `LocalLLMProviderCatalogService` creation (`app.py:3751-3756`), add:
 
 ```python
-        # ADR-019: load the disk-backed model catalog cache before selectors build.
+        # ADR-020: load the disk-backed model catalog cache before selectors build.
         try:
             from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
                 ModelCatalogDiskStore,
@@ -1439,7 +1439,7 @@ b) Add the refresh coroutine method on `TldwCli`:
 
 ```python
     async def _refresh_model_catalogs(self) -> None:
-        """ADR-019 startup auto-refresh; never blocks or crashes startup."""
+        """ADR-020 startup auto-refresh; never blocks or crashes startup."""
         try:
             from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
                 format_refresh_notification,
@@ -1638,7 +1638,7 @@ async def resolve_provider_model_options(
     """Return saved and runtime-discovered model selector options for a provider.
 
     Discovered entries merge only when the provider's total discovered catalog is
-    at or below ``merge_cap`` (ADR-019); pass ``merge_cap=None`` for the uncapped
+    at or below ``merge_cap`` (ADR-020); pass ``merge_cap=None`` for the uncapped
     list (search picker). Oversized catalogs stay saved-list-only in dropdowns.
     """
 ```
@@ -1754,7 +1754,7 @@ d) `settings_sidebar.py` compose (lines 135-139): keep a previously-picked model
                 default_model if default_model else (initial_models[0] if initial_models else Select.BLANK)
             )
             if default_model and default_model not in initial_models:
-                # ADR-019: a model picked outside the saved list (e.g. via search
+                # ADR-020: a model picked outside the saved list (e.g. via search
                 # picker) restores as a transient option instead of falling back.
                 model_options = [(default_model, default_model)] + model_options
 ```
@@ -1804,7 +1804,7 @@ class ModelSearchPicker(Widget):
     """Substring search across saved + discovered models for the active provider.
 
     OpenRouter model IDs embed the upstream provider prefix
-    (``anthropic/claude-3.7-sonnet``), so provider search works naturally (ADR-019).
+    (``anthropic/claude-3.7-sonnet``), so provider search works naturally (ADR-020).
     """
 
     MAX_RESULTS = 20
@@ -1884,7 +1884,7 @@ In `chat_screen.py` (add `from tldw_chatbook.Widgets.model_search_picker import 
 ```python
     @on(ModelSearchPicker.ModelSelected)
     async def handle_model_search_selected(self, event: ModelSearchPicker.ModelSelected) -> None:
-        """Insert a picked model as a transient option and select it (ADR-019)."""
+        """Insert a picked model as a transient option and select it (ADR-020)."""
         model_id = event.model_id.strip()
         if not model_id or not self.chat_window:
             return
@@ -1929,7 +1929,7 @@ git commit -m "feat: type-to-filter model search picker with transient option in
 - [ ] **Step 2: Run to verify failure**, then **Step 3: Implement** — first add `Checkbox` to the `textual.widgets` import in `settings_screen.py` (line 22-31 currently imports Button/Collapsible/Input/Rule/Select/SelectionList/Static/TextArea) and import `AUTO_REFRESH_PROVIDER_LIST_KEYS` from `tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings`. Then, in the compose block after the discovery `SelectionList` (line 5424):
 
 ```python
-            yield Static("Automatic refresh (ADR-019)", classes="destination-section")
+            yield Static("Automatic refresh (ADR-020)", classes="destination-section")
             yield Checkbox(
                 "Auto-refresh model lists on startup",
                 id="settings-model-catalog-auto-refresh",
@@ -2033,7 +2033,7 @@ python3 -m pytest Tests/LLM_Provider_Catalog/ Tests/UI/ Tests/Widgets/test_model
 python3 -m pytest Tests/ -q -x --timeout=600  # or the repo's standard quick suite; check Tests/README.md
 ```
 
-- [ ] **Step 3: Update documentation** — AGENTS.md "Special Systems" (Tool Calling section area): add a short "Model Catalog Auto-Refresh (ADR-019)" entry pointing to the ADR/spec.
+- [ ] **Step 3: Update documentation** — AGENTS.md "Special Systems" (Tool Calling section area): add a short "Model Catalog Auto-Refresh (ADR-020)" entry pointing to the ADR/spec.
 
 - [ ] **Step 4: Complete the backlog task** — mark every AC `- [x]`, add `## Implementation Notes` (approach, files, trade-offs), then:
 

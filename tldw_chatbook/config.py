@@ -2241,7 +2241,7 @@ sync_retry_max_delay_seconds = 300
 sync_retry_jitter = true
 scheduler_poll_interval_seconds = 30
 reminder_catchup_hours = 24
-# Feature flags for the watchlist-to-unified-scheduler migration (ADR-019).
+# Feature flags for the watchlist-to-unified-scheduler migration (ADR-020).
 watchlist_checks_enabled = false  # Enable unified scheduler watchlist execution
 watchlist_checks_shadow = true    # Run new handler side-by-side without mutating Subscriptions_DB
 
@@ -2305,7 +2305,7 @@ local_transformers = ["None"]
 local_mlx_lm = ["None"]
 
 [model_catalog]
-# Automatic model-list refresh for cloud providers (ADR-019).
+# Automatic model-list refresh for cloud providers (ADR-020).
 auto_refresh_enabled = true
 stale_after_hours = 24 # 0 = refetch every launch
 auto_refresh_disabled = [] # exact [providers] keys to opt out, e.g. ["ZAI"]

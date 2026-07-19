@@ -1,4 +1,4 @@
-"""Automatic startup refresh for cloud provider model catalogs (ADR-019)."""
+"""Automatic startup refresh for cloud provider model catalogs (ADR-020)."""
 
 from __future__ import annotations
 

@@ -519,7 +519,7 @@ class LocalLLMProviderCatalogService:
 
         Never raises for per-provider failures; each becomes a "failed" outcome.
         Write-through is append-only, computed against the pre-fetch cache entry,
-        with a baseline guard for oversized first fetches (ADR-019).
+        with a baseline guard for oversized first fetches (ADR-020).
         """
         self._enforce("llm.catalog.models.discover.local")
         outcomes: list[ProviderRefreshOutcome] = []

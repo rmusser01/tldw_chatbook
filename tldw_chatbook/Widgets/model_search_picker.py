@@ -14,7 +14,7 @@ class ModelSearchPicker(Widget):
     """Substring search across saved + discovered models for the active provider.
 
     OpenRouter model IDs embed the upstream provider prefix
-    (``anthropic/claude-3.7-sonnet``), so provider search works naturally (ADR-019).
+    (``anthropic/claude-3.7-sonnet``), so provider search works naturally (ADR-020).
     """
 
     MAX_RESULTS = 20

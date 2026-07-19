@@ -160,7 +160,7 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
 
     @on(ModelSearchPicker.ModelSelected)
     def _model_search_selected(self, event: ModelSearchPicker.ModelSelected) -> None:
-        """Insert a picked model as a transient option and select it (ADR-019)."""
+        """Insert a picked model as a transient option and select it (ADR-020)."""
         event.stop()
         model_id = event.model_id.strip()
         if not model_id:

@@ -216,7 +216,7 @@ MODEL_DISCOVERY_UNSUPPORTED_ENDPOINT_COPY = (
     "This endpoint is not OpenAI-compatible for v1 discovery. Configure a /v1 endpoint "
     "to discover models."
 )
-# ADR-019: ids of the [model_catalog] auto-refresh toggles so unrelated
+# ADR-020: ids of the [model_catalog] auto-refresh toggles so unrelated
 # Checkbox.Changed events never trigger a config write.
 MODEL_CATALOG_CHECKBOX_IDS = frozenset(
     {"settings-model-catalog-auto-refresh"}
@@ -5135,7 +5135,7 @@ class SettingsScreen(BaseAppScreen):
         self._reset_provider_model_discovery_state("Discovered model cache cleared.")
 
     def _persist_model_catalog_settings(self) -> None:
-        """Persist the model catalog toggles to ``[model_catalog]`` (ADR-019).
+        """Persist the model catalog toggles to ``[model_catalog]`` (ADR-020).
 
         The toggles gate a background behavior, so changes save immediately
         instead of staging into the category draft. States that match the
@@ -6201,11 +6201,11 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-discovered-models-list",
                 disabled=not self._model_discovery_models,
             )
-            # ADR-019: [model_catalog] auto-refresh toggles. Values initialize
+            # ADR-020: [model_catalog] auto-refresh toggles. Values initialize
             # inline from the saved config (the Connect block pattern) and
             # persist immediately on change via the handlers below.
             model_catalog_settings = load_model_catalog_settings(load_settings())
-            yield Static("Automatic refresh (ADR-019)", classes="destination-section")
+            yield Static("Automatic refresh (ADR-020)", classes="destination-section")
             yield Checkbox(
                 "Auto-refresh model lists on startup",
                 value=model_catalog_settings.auto_refresh_enabled,

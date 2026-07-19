@@ -175,7 +175,7 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 else (initial_models[0] if initial_models else Select.BLANK)
             )
             if default_model and default_model not in initial_models:
-                # ADR-019: a model picked outside the saved list (e.g. via search
+                # ADR-020: a model picked outside the saved list (e.g. via search
                 # picker) restores as a transient option instead of falling back.
                 model_options = [(default_model, default_model)] + model_options
             yield Select(

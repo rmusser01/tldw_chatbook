@@ -263,7 +263,7 @@ shape and Anthropic's pagination against live APIs.)
 ## Governance
 
 - **ADR required: yes** — this amends ADR-002's "explicit user persistence only" decision.
-  Create `backlog/decisions/019-automatic-model-catalog-refresh.md` (cache-first default,
+  Create `backlog/decisions/020-automatic-model-catalog-refresh.md` (cache-first default,
   opt-in write-through, append-only semantics) before implementation; link from the task.
 - **Backlog task**: create one task for the implementation with the acceptance criteria below.
 
