@@ -43,7 +43,11 @@ class SourcesPane(Vertical):
     selected_source = reactive[dict[str, Any] | None](None)
     search_query = reactive("", recompose=True)
     source_type_filter = reactive("all", recompose=True)
+    status_filter = reactive("all", recompose=True)
+    active_filter = reactive("all", recompose=True)
+    tags_filter = reactive("", recompose=True)
     show_create_form = reactive(False, recompose=True)
+    show_filter_editor = reactive(False, recompose=True)
 
     _TYPE_OPTIONS = [
         ("All", "all"),
@@ -52,6 +56,19 @@ class SourcesPane(Vertical):
         ("Feed", "feed"),
         ("Playlist", "playlist"),
         ("Channel", "channel"),
+    ]
+
+    _STATUS_OPTIONS = [
+        ("All statuses", "all"),
+        ("OK", "ok"),
+        ("Error", "error"),
+        ("Pending", "pending"),
+    ]
+
+    _ACTIVE_OPTIONS = [
+        ("All", "all"),
+        ("Active", "active"),
+        ("Inactive", "inactive"),
     ]
 
     def compose(self):
@@ -69,6 +86,26 @@ class SourcesPane(Vertical):
                     allow_blank=False,
                 )
                 yield Button("New Source", id="sources-new-button", variant="primary")
+                yield Button("Filters", id="sources-filter-toggle", variant="default")
+            if self.show_filter_editor:
+                with Horizontal(id="sources-filter-editor", classes="destination-filter-strip"):
+                    yield Select(
+                        self._STATUS_OPTIONS,
+                        value=self.status_filter,
+                        id="sources-status-filter",
+                        allow_blank=False,
+                    )
+                    yield Select(
+                        self._ACTIVE_OPTIONS,
+                        value=self.active_filter,
+                        id="sources-active-filter",
+                        allow_blank=False,
+                    )
+                    yield Input(
+                        placeholder="Tags (comma separated)...",
+                        id="sources-tags-filter",
+                        value=self.tags_filter,
+                    )
             with Horizontal(classes="destination-filter-strip"):
                 yield Button(
                     "Preview",
@@ -119,10 +156,24 @@ class SourcesPane(Vertical):
     def _filtered_sources(self) -> list[dict[str, Any]]:
         query = self.search_query.strip().lower()
         type_filter = self.source_type_filter
+        status_filter = self.status_filter
+        active_filter = self.active_filter
+        tags_filter = self.tags_filter
+        required_tags = [tag.strip().lower() for tag in tags_filter.split(",") if tag.strip()] if tags_filter else []
         results: list[dict[str, Any]] = []
         for source in self.sources:
             if type_filter != "all" and str(source.get("source_type") or "").lower() != type_filter:
                 continue
+            if status_filter != "all" and str(source.get("status") or "").lower() != status_filter:
+                continue
+            if active_filter == "active" and not source.get("active"):
+                continue
+            if active_filter == "inactive" and source.get("active"):
+                continue
+            if required_tags:
+                source_tags = {str(tag).lower() for tag in (source.get("tags") or [])}
+                if not any(tag in source_tags for tag in required_tags):
+                    continue
             if query:
                 text = " ".join(
                     str(source.get(key) or "") for key in ("name", "title", "url", "source_type", "status")
@@ -135,17 +186,25 @@ class SourcesPane(Vertical):
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "sources-search-input":
             self.search_query = event.value
+        elif event.input.id == "sources-tags-filter":
+            self.tags_filter = event.value
         event.stop()
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "sources-type-select":
             self.source_type_filter = str(event.value or "all")
+        elif event.select.id == "sources-status-filter":
+            self.status_filter = str(event.value or "all")
+        elif event.select.id == "sources-active-filter":
+            self.active_filter = str(event.value or "all")
         event.stop()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = str(event.button.id)
         if button_id == "sources-new-button":
             self.show_create_form = True
+        elif button_id == "sources-filter-toggle":
+            self.show_filter_editor = not self.show_filter_editor
         elif button_id == "sources-create-cancel":
             self.show_create_form = False
         elif button_id == "sources-create-submit":

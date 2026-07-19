@@ -76,6 +76,8 @@ class InspectorPane(Vertical):
             return "source"
         if "status" in entity and ("found_count" in entity or "processed_count" in entity):
             return "run"
+        if "item_id" in entity:
+            return "item"
         return "unknown"
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

@@ -225,3 +225,24 @@ def normalize_watchlist_alert_rule(
         "created_at": payload.get("created_at"),
         "updated_at": payload.get("updated_at"),
     }
+
+
+def normalize_watchlist_item(source: str, row: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize a local subscriptions DB item row as a watchlist item."""
+    item_id = row["id"]
+    return {
+        "id": build_watchlist_item_id(source, "watchlist_item", item_id),
+        "backend": source,
+        "entity_kind": "watchlist_item",
+        "item_id": item_id,
+        "source_id": row.get("subscription_id"),
+        "source_name": row.get("subscription_name"),
+        "source_type": row.get("subscription_type"),
+        "title": row.get("title") or "Untitled item",
+        "url": row.get("url") or row.get("canonical_url"),
+        "status": row.get("status") or "new",
+        "author": row.get("author"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "published_date": row.get("published_date"),
+    }

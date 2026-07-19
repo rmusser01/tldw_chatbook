@@ -95,6 +95,24 @@ async def test_export_opml_lists_sources_and_returns_xml():
 
 
 @pytest.mark.asyncio
+async def test_list_items_delegates_to_local_service():
+    scope_service, local_service, _ = make_scope_service()
+    local_service.list_items = AsyncMock(return_value=[{"id": "local:watchlist_item:1", "title": "Post"}])
+
+    result = await scope_service.list_items(runtime_backend=WatchlistBackend.LOCAL, status="new")
+
+    local_service.list_items.assert_awaited_once_with(source_id=None, status="new", limit=100, offset=0)
+    assert len(result) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_items_rejects_server():
+    scope_service, _, _ = make_scope_service()
+    with pytest.raises(ValueError, match="Item listing is only supported for the local backend"):
+        await scope_service.list_items(runtime_backend=WatchlistBackend.SERVER)
+
+
+@pytest.mark.asyncio
 async def test_save_alert_rule_create_path():
     scope_service, local_service, _ = make_scope_service()
     local_service.create_alert_rule = AsyncMock(return_value={"id": 3, "name": "New Rule"})

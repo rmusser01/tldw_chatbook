@@ -15,6 +15,7 @@ from .watchlist_filter_service import WatchlistFilterService
 from .watchlist_normalizers import (
     normalize_local_subscription_row,
     normalize_watchlist_alert_rule,
+    normalize_watchlist_item,
     normalize_watchlist_run,
 )
 
@@ -85,6 +86,27 @@ class LocalWatchlistsService:
         if row is None:
             raise KeyError(f"Subscription not found: {source_id}")
         return normalize_local_subscription_row(row)
+
+    async def list_items(
+        self,
+        *,
+        source_id: Any = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List watchlist items from the local subscriptions database."""
+        db = self._db()
+        subscription_id = int(source_id) if source_id is not None else None
+        status_filter = status if status else "new"
+        fetch_limit = int(limit) + int(offset)
+        rows = db.get_new_items(
+            subscription_id=subscription_id,
+            status=status_filter,
+            limit=fetch_limit,
+        )
+        normalized = [normalize_watchlist_item("local", row) for row in rows]
+        return normalized[int(offset) : int(offset) + int(limit)]
 
     async def create_source(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         db = self._db()

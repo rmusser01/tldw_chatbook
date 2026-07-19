@@ -241,3 +241,68 @@ async def test_sources_pane_posts_opml_messages():
             ("import_opml_requested", None),
             ("export_opml_requested", None),
         ]
+
+
+@pytest.mark.asyncio
+async def test_sources_pane_filter_editor_toggles():
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        assert not pane.query("#sources-filter-editor")
+        pane.query_one("#sources-filter-toggle", Button).press()
+        await pilot.pause()
+        assert pane.query_one("#sources-filter-editor")
+        pane.query_one("#sources-filter-toggle", Button).press()
+        await pilot.pause()
+        assert not pane.query("#sources-filter-editor")
+
+
+@pytest.mark.asyncio
+async def test_sources_pane_filters_by_status():
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.sources = [
+            {"id": "s1", "name": "A", "source_type": "rss", "status": "ok", "active": True},
+            {"id": "s2", "name": "B", "source_type": "rss", "status": "error", "active": True},
+        ]
+        pane.status_filter = "error"
+        await pilot.pause()
+
+        table = pane.query_one("#sources-table", DataTable)
+        assert table.row_count == 1
+        assert "B" in str(table.get_row_at(0)[0])
+
+
+@pytest.mark.asyncio
+async def test_sources_pane_filters_by_active_state():
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.sources = [
+            {"id": "s1", "name": "A", "source_type": "rss", "status": "ok", "active": True},
+            {"id": "s2", "name": "B", "source_type": "rss", "status": "ok", "active": False},
+        ]
+        pane.active_filter = "active"
+        await pilot.pause()
+
+        table = pane.query_one("#sources-table", DataTable)
+        assert table.row_count == 1
+        assert "A" in str(table.get_row_at(0)[0])
+
+
+@pytest.mark.asyncio
+async def test_sources_pane_filters_by_tags():
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.sources = [
+            {"id": "s1", "name": "A", "source_type": "rss", "status": "ok", "active": True, "tags": ["ai"]},
+            {"id": "s2", "name": "B", "source_type": "rss", "status": "ok", "active": True, "tags": ["tech"]},
+        ]
+        pane.tags_filter = "tech"
+        await pilot.pause()
+
+        table = pane.query_one("#sources-table", DataTable)
+        assert table.row_count == 1
+        assert "B" in str(table.get_row_at(0)[0])

@@ -32,6 +32,7 @@ from ..Watchlists_Modules.inspector_pane import (
     PreviewRequested,
     StageInConsoleRequested,
 )
+from ..Watchlists_Modules.items_pane import ItemSelected, ItemsPane, RefreshItemsRequested
 from ..Watchlists_Modules.opml_dialogs import OpmlExportDialog, OpmlImportDialog
 from ..Watchlists_Modules.overview_pane import OverviewPane
 from ..Watchlists_Modules.runs_pane import CancelRunRequested, RerunRunRequested, RunsPane, RunSelected
@@ -405,7 +406,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     elif self.active_section == "runs":
                         yield RunsPane(id="watchlists-runs-pane")
                     elif self.active_section == "items":
-                        yield Static("Items pane not implemented yet.", id="watchlists-items-pane")
+                        yield ItemsPane(id="watchlists-items-pane")
                     elif self.active_section == "rules":
                         yield Static("Alert rules pane not implemented yet.", id="watchlists-rules-pane")
                 yield self._column_divider("watchlists-detail-inspector-divider")
@@ -480,6 +481,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.selected_entity = None
         if self.is_mounted:
             self.refresh(recompose=True)
+        if self.active_section == "items":
+            self.run_worker(self._load_items(), exclusive=True)
 
     def watch_runtime_backend(self) -> None:
         if not self.is_mounted:
@@ -744,6 +747,36 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify("Stage in Console is not implemented yet.", severity="information")
+
+    async def _load_items(self) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            items = await self._controller.list_items(
+                runtime_backend=self.runtime_backend,
+                status=None,
+                limit=100,
+                offset=0,
+            )
+            if self.is_mounted:
+                try:
+                    items_pane = self.query_one("#watchlists-items-pane", ItemsPane)
+                    items_pane.items = items
+                except Exception:
+                    pass
+        except Exception:
+            logger.opt(exception=True).debug("Failed to load watchlist items.")
+            if callable(notify):
+                notify("Failed to load watchlist items.", severity="error")
+
+    @on(ItemSelected)
+    def handle_item_selected(self, event: ItemSelected) -> None:
+        event.stop()
+        self.selected_entity = event.item
+
+    @on(RefreshItemsRequested)
+    def handle_refresh_items_requested(self, event: RefreshItemsRequested) -> None:
+        event.stop()
+        self.run_worker(self._load_items(), exclusive=True)
 
     @on(DeleteRequested)
     def handle_delete_requested(self, event: DeleteRequested) -> None:

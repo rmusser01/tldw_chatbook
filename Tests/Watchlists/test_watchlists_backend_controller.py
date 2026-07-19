@@ -85,6 +85,19 @@ async def test_export_opml_routes_to_scope_service():
 
 
 @pytest.mark.asyncio
+async def test_list_items_routes_to_scope_service():
+    scope_service = AsyncMock()
+    scope_service.list_items = AsyncMock(return_value=[{"id": "local:watchlist_item:1", "title": "Post"}])
+    ctrl = WatchlistsBackendController(app_instance=None, scope_service=scope_service, server_service=None)
+
+    result = await ctrl.list_items(runtime_backend="local")
+
+    scope_service.list_items.assert_awaited_once_with(runtime_backend="local")
+    assert len(result) == 1
+    assert result[0]["title"] == "Post"
+
+
+@pytest.mark.asyncio
 async def test_cancel_run_routes_to_scope_service():
     scope_service = AsyncMock()
     scope_service.cancel_run = AsyncMock(return_value={"run_id": "42", "status": "cancelled"})

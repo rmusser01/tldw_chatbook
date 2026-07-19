@@ -188,6 +188,41 @@ class WatchlistScopeService:
             service.list_sources(limit=limit, offset=offset, **filters)
         )
 
+    async def list_items(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        source_id: Any = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List content items for watchlist sources.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+            source_id: Optional source identifier to filter by.
+            status: Item status filter (``new``, ``reviewed``, ``ingested``,
+                ``ignored``, ``error``).
+            limit: Maximum items to return.
+            offset: Pagination offset.
+
+        Returns:
+            List of normalized watchlist item dicts.
+
+        Raises:
+            ValueError: If the server backend is requested; item listing is
+                local-only in this slice.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "items.list")
+        if backend == WatchlistBackend.SERVER:
+            raise ValueError("Item listing is only supported for the local backend in this slice.")
+        service = self._service_for_backend(backend)
+        return await self._maybe_await(
+            service.list_items(source_id=source_id, status=status, limit=limit, offset=offset)
+        )
+
     async def get_watch_item_detail(
         self,
         item_id: Any,

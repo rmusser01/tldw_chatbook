@@ -36,6 +36,14 @@ class WatchlistsBackendController:
         )
         return [dict(item) for item in list(result or [])]
 
+    async def list_items(self, *, runtime_backend: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+        """List watchlist content items through the scope service."""
+        backend = self._normalize_backend(runtime_backend)
+        result = await self._maybe_await(
+            self.scope_service.list_items(runtime_backend=backend, **kwargs)
+        )
+        return [dict(item) for item in list(result or [])]
+
     async def create_source(self, *, runtime_backend: str | None = None, payload: dict[str, Any]) -> dict[str, Any]:
         backend = self._normalize_backend(runtime_backend)
         result = await self._maybe_await(
