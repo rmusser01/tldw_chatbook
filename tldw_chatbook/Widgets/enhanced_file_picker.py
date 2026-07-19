@@ -3,15 +3,15 @@
 
 import sys
 from pathlib import Path
-from typing import List, Optional, Callable, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 import os
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 
-from textual.widgets import Button, Label, ListView, ListItem, Input
+from textual.widgets import Button, Label, ListView, ListItem, Input, Static
 from textual.reactive import reactive
 from textual.message import Message
 from loguru import logger
@@ -414,121 +414,166 @@ class EnhancedFileDialog(BaseFileDialog):
     """Enhanced file picker with keyboard shortcuts, recent files, breadcrumbs, bookmarks, and search"""
 
     DEFAULT_CSS = BaseFileDialog.DEFAULT_CSS + """
-    BaseFileDialog {
-        .hidden {
-            display: none;
-        }
+    .hidden {
+        display: none;
+    }
 
-        Dialog {
-            height: 90%;
-            width: 90%;
-        }
+    EnhancedFileDialog Dialog {
+        height: 95%;
+        width: 95%;
+        border-title-align: center;
+        border-title-style: bold;
+    }
 
-        #recent-locations, #bookmarks-panel {
-            height: 10;
-            border: solid $primary;
-            background: $surface;
-            margin-bottom: 1;
-            display: none;
-        }
+    #dialog-body {
+        height: 1fr;
+        width: 1fr;
+    }
 
-        #recent-locations.visible, #bookmarks-panel.visible {
-            display: block;
-        }
+    #filepicker-sidebar {
+        width: 28;
+        height: 1fr;
+        border-right: tall $primary-lighten-1;
+        background: $surface;
+        display: none;
+    }
 
-        #recent-list, #bookmarks-list {
-            height: 8;
-            background: $surface;
-        }
+    #filepicker-main {
+        width: 1fr;
+        height: 1fr;
+    }
 
-        .recent-item, .bookmark-item {
-            padding: 0 1;
-        }
+    #recent-locations, #bookmarks-panel {
+        height: auto;
+        border: none;
+        background: $surface;
+        padding: 0 1;
+    }
 
-        #bookmarks-list {
-            layout: grid;
-            grid-size: 2;
-            grid-columns: 1fr 1fr;
-            grid-gutter: 1;
-            height: 8;
-            overflow-y: auto;
-        }
+    #recent-list, #bookmarks-list {
+        height: auto;
+        background: $surface;
+    }
 
-        #bookmarks-list ListItem {
-            height: 3;
-            margin: 0;
-            padding: 0 1;
-        }
+    .recent-item, .bookmark-item {
+        padding: 0 1;
+    }
 
-        .bookmark-item {
-            padding: 0 1;
-            height: 3;
-            overflow: hidden;
-        }
+    EnhancedFileDialog #bookmarks-list {
+        height: auto;
+        max-height: 1fr;
+        overflow-y: auto;
+    }
 
-        .bookmark-item-icon {
-            margin-right: 1;
-        }
+    EnhancedFileDialog #bookmarks-list ListItem {
+        height: 3;
+        margin: 0;
+        padding: 0 1;
+    }
 
-        .bookmarks-header {
-            height: 2;
-            padding: 0 1;
-        }
+    .bookmark-item {
+        padding: 0 1;
+        height: 3;
+        overflow: hidden;
+    }
 
-        .bookmark-button, #add-bookmark {
-            min-width: 1;
-            width: 3;
-            height: 1;
-            margin: 0;
-            padding: 0;
-            text-align: center;
-        }
+    .bookmark-item-icon {
+        margin-right: 1;
+    }
 
-        .bookmark-container {
-            width: 100%;
-            height: 100%;
-            align: left middle;
-        }
+    .bookmarks-header {
+        height: 2;
+        padding: 0 1;
+    }
 
-        #path-breadcrumbs {
-            height: 3;
-            padding: 0 1;
-            background: $surface;
-            border-bottom: tall $primary-lighten-1;
-            overflow: hidden;
-        }
+    .bookmark-button, #add-bookmark {
+        min-width: 1;
+        width: 3;
+        height: 1;
+        margin: 0;
+        padding: 0;
+        text-align: center;
+    }
 
-        #path-breadcrumbs .breadcrumb-btn {
-            min-width: 0;
-            padding: 0 1;
-            margin: 0;
-            height: 1;
-            background: transparent;
-            border: none;
-            color: $text;
-            text-style: none;
-        }
+    .bookmark-container {
+        width: 100%;
+        height: 100%;
+        align: left middle;
+    }
 
-        #path-breadcrumbs .breadcrumb-btn:hover {
-            background: $primary 20%;
-            text-style: underline;
-        }
+    #current_path_display {
+        display: none;
+    }
 
-        #path-breadcrumbs .breadcrumb-separator {
-            margin: 0;
-            padding: 0 1;
-            color: $text-muted;
-        }
+    EnhancedFileDialog #path-breadcrumbs {
+        height: 3;
+        min-height: 3;
+        padding: 0 1;
+        margin-bottom: 1;
+        background: $surface;
+        border-bottom: tall $primary-lighten-1;
+        align: center middle;
+    }
 
-        .search-active {
-            border-title-style: bold;
-            border-title-color: $warning;
-        }
+    EnhancedFileDialog #path-breadcrumbs .breadcrumb-btn {
+        min-width: 0;
+        padding: 0 1;
+        margin: 0;
+        height: 1;
+        background: transparent;
+        border: none;
+        color: $text;
+        text-style: none;
+    }
 
-        .section-title {
-            width: 1fr;
-            text-style: bold;
-        }
+    EnhancedFileDialog #path-breadcrumbs .breadcrumb-btn:hover {
+        background: $primary 20%;
+        text-style: underline;
+    }
+
+    EnhancedFileDialog #path-breadcrumbs .breadcrumb-separator {
+        margin: 0;
+        padding: 0 1;
+        color: $text-muted;
+    }
+
+    EnhancedFileDialog #path-input-container {
+        height: 3;
+        padding: 0 1;
+    }
+
+    EnhancedFileDialog #path-input {
+        width: 1fr;
+    }
+
+    EnhancedFileDialog #go-to-path,
+    EnhancedFileDialog #cancel-path-input {
+        min-width: 7;
+    }
+
+    .search-active {
+        border-title-style: bold;
+        border-title-color: $warning;
+    }
+
+    .section-title {
+        width: 1fr;
+        text-style: bold;
+    }
+
+    .shortcut-hints {
+        height: 1;
+        padding: 0 1;
+        color: $text-muted;
+        background: $surface-darken-1;
+        text-align: center;
+        text-style: italic;
+    }
+
+    #select {
+        background: $primary;
+        color: $text;
+        text-style: bold;
     }
     """
 
@@ -628,45 +673,63 @@ class EnhancedFileDialog(BaseFileDialog):
         with Dialog() as dialog:
             dialog.border_title = self._title
 
-            # Recent locations panel (hidden by default)
-            with VerticalScroll(id="recent-locations"):
-                yield Label("📋 Recent Locations", classes="section-title")
-                yield ListView(id="recent-list")
+            with Horizontal(id="dialog-body"):
+                # Sidebar for bookmarks/recent (hidden by default)
+                with VerticalScroll(id="filepicker-sidebar"):
+                    with VerticalScroll(id="recent-locations"):
+                        yield Label("📋 Recent", classes="section-title")
+                        yield ListView(id="recent-list")
 
-            # Bookmarks panel (hidden by default)
-            with VerticalScroll(id="bookmarks-panel"):
-                with Horizontal(classes="bookmarks-header"):
-                    yield Label("⭐ Bookmarks", classes="section-title")
-                    yield Button("➕", id="add-bookmark", classes="bookmark-button")
-                yield ListView(id="bookmarks-list")
+                    with VerticalScroll(id="bookmarks-panel"):
+                        with Horizontal(classes="bookmarks-header"):
+                            yield Label("⭐ Bookmarks", classes="section-title")
+                            yield Button("➕", id="add-bookmark", classes="bookmark-button")
+                        yield ListView(id="bookmarks-list")
 
-            # Path display and breadcrumbs
-            yield Label(id="current_path_display")
-            with Horizontal(id="path-breadcrumbs"):
-                pass
+                with Vertical(id="filepicker-main"):
+                    # Path display (kept for base on_mount, hidden visually)
+                    yield Label(id="current_path_display")
+                    with Horizontal(id="path-breadcrumbs"):
+                        pass
 
-            # Path input field (hidden by default, shown with Ctrl+L)
-            with Horizontal(id="path-input-container", classes="hidden"):
-                yield Input(placeholder="Enter path...", id="path-input")
-                yield Button("Go", id="go-to-path", variant="primary")
-                yield Button("Cancel", id="cancel-path-input", variant="default")
+                    # Path input field (hidden by default, shown with Ctrl+L)
+                    with Horizontal(id="path-input-container", classes="hidden"):
+                        yield Input(placeholder="Enter path...", id="path-input")
+                        yield Button("Go", id="go-to-path", variant="primary")
+                        yield Button("Cancel", id="cancel-path-input", variant="default")
 
-            # Search container (hidden by default)
-            with Horizontal(id="search-container"):
-                yield Input(placeholder="Search files...", id="search-input")
-                yield Button("Clear", id="clear-search", variant="default")
+                    # Search container (hidden by default)
+                    with Horizontal(id="search-container"):
+                        yield Input(placeholder="Search files...", id="search-input")
+                        yield Button("Clear", id="clear-search", variant="default")
 
-            # Main directory navigation
-            with Horizontal():
-                if sys.platform == "win32":
-                    yield DriveNavigation(self._location)
-                yield SearchableDirectoryNavigation(self._location)
+                    # Main directory navigation
+                    with Horizontal():
+                        if sys.platform == "win32":
+                            yield DriveNavigation(self._location)
+                        yield SearchableDirectoryNavigation(self._location)
 
-            # Input bar with buttons
-            with InputBar():
-                yield from self._input_bar()
-                yield Button(self._label(self._select_button, "Select"), id="select")
-                yield Button(self._label(self._cancel_button, "Cancel"), id="cancel")
+                    select_hint = self._label(self._select_button, "Select")
+                    yield Static(
+                        f"Ctrl+B Bookmarks  Ctrl+R Recent  Ctrl+F Search  Ctrl+L Path  "
+                        f"1-9 Jump  Enter {select_hint}  Esc Cancel",
+                        id="shortcut-hints",
+                        classes="shortcut-hints",
+                    )
+
+                    # Input bar with buttons
+                    with InputBar():
+                        yield from self._input_bar()
+                        yield Button(
+                            self._label(self._select_button, "Select"),
+                            id="select",
+                            variant="primary",
+                        )
+                        yield Button(
+                            self._label(self._cancel_button, "Cancel"),
+                            id="cancel",
+                            variant="default",
+                        )
 
     def on_mount(self) -> None:
         """Initialize the dialog on mount.
@@ -674,20 +737,47 @@ class EnhancedFileDialog(BaseFileDialog):
         The base ``on_mount`` expects ``#path-breadcrumbs`` and
         ``#recent-list`` to exist; our compose provides them, so calling
         ``super().on_mount()`` is safe.
+
+        Hidden panels rely on inline ``styles.display`` rather than CSS
+        ``display: none`` rules because the vendored base selectors do not
+        reliably override container defaults in this subclass.
         """
         super().on_mount()
         self._update_bookmarks_list()
         self._update_bookmark_button_state(
             self.query_one(SearchableDirectoryNavigation).location
         )
+        try:
+            self.query_one("#path-input-container").styles.display = "none"
+            self.query_one("#search-container").styles.display = "none"
+            self.query_one("#recent-locations").styles.display = "none"
+            self.query_one("#bookmarks-panel").styles.display = "none"
+            self.query_one("#filepicker-sidebar").styles.display = "none"
+            # Breadcrumbs already show the path; the label is redundant and
+            # often truncated.
+            self.query_one("#current_path_display").styles.display = "none"
+        except Exception:
+            pass
+
+    def _sync_sidebar(self) -> None:
+        """Show the sidebar if either panel is open, otherwise hide it."""
+        try:
+            sidebar = self.query_one("#filepicker-sidebar")
+            sidebar.styles.display = (
+                "block" if self.show_recent or self.show_bookmarks else "none"
+            )
+        except Exception:
+            pass
 
     def watch_show_recent(self, show: bool) -> None:
         """Toggle recent locations visibility."""
         try:
-            recent_panel = self.query_one("#recent-locations")
-            recent_panel.set_class(show, "visible")
+            self.query_one("#recent-locations").styles.display = (
+                "block" if show else "none"
+            )
             if show:
                 self.show_bookmarks = False
+            self._sync_sidebar()
         except Exception:
             pass
 
@@ -698,12 +788,43 @@ class EnhancedFileDialog(BaseFileDialog):
     def watch_show_bookmarks(self, show: bool) -> None:
         """Toggle bookmarks panel visibility."""
         try:
-            bookmarks_panel = self.query_one("#bookmarks-panel")
-            bookmarks_panel.set_class(show, "visible")
+            self.query_one("#bookmarks-panel").styles.display = (
+                "block" if show else "none"
+            )
             if show:
                 self.show_recent = False
+            self._sync_sidebar()
         except Exception:
             pass
+
+    def watch_search_active(self, active: bool) -> None:
+        """Toggle search container visibility."""
+        try:
+            self.query_one("#search-container").styles.display = (
+                "block" if active else "none"
+            )
+            if active:
+                self.query_one("#search-input", Input).focus()
+        except Exception:
+            pass
+
+    def action_focus_path_input(self) -> None:
+        """Toggle and focus the path input field."""
+        try:
+            path_container = self.query_one("#path-input-container")
+            path_input = self.query_one("#path-input", Input)
+            if path_container.styles.display == "none":
+                path_container.styles.display = "block"
+                path_input.value = str(
+                    self.query_one(SearchableDirectoryNavigation).location
+                )
+                path_input.focus()
+                path_input.selection = (0, len(path_input.value))
+            else:
+                path_container.styles.display = "none"
+                self.query_one(SearchableDirectoryNavigation).focus()
+        except Exception as e:
+            self.notify(f"Error toggling path input: {e}", severity="error", timeout=2)
 
     def _select_file(self, event: DirectoryNavigation.Selected) -> None:
         """No-op override of ``BaseFileDialog._select_file``.
@@ -797,22 +918,46 @@ class EnhancedFileDialog(BaseFileDialog):
             # ...return it.
             self.dismiss(result=chosen)
 
+    _MAX_VISIBLE_BREADCRUMBS = 5
+
     def _update_breadcrumbs(self, path: Path) -> None:
-        """Update breadcrumb navigation using the base container."""
+        """Update breadcrumb navigation using the base container.
+
+        Very deep paths are collapsed in the middle so the current directory
+        always remains readable.
+        """
         try:
             breadcrumb_container = self.query_one("#path-breadcrumbs", Horizontal)
             breadcrumb_container.remove_children()
 
             parts = path.parts
-            for i, part in enumerate(parts):
-                partial_path = Path(*parts[:i+1])
+            max_visible = self._MAX_VISIBLE_BREADCRUMBS
+            if len(parts) > max_visible:
+                # Root + ellipsis + tail so the current directory is visible.
+                visible_indices = [0] + list(range(len(parts) - max_visible + 2, len(parts)))
+            else:
+                visible_indices = list(range(len(parts)))
 
-                btn = Button(part, variant="default", classes="breadcrumb-btn")
+            for position, i in enumerate(visible_indices):
+                part = parts[i]
+                # Show the root as a home-ish icon rather than a raw "/" that
+                # would collide with the separator.
+                label = "🏠" if part == "/" else part
+                partial_path = Path(*parts[: i + 1])
+
+                if i > 0 and i != visible_indices[position - 1] + 1:
+                    breadcrumb_container.mount(
+                        Label("…", classes="breadcrumb-separator")
+                    )
+
+                btn = Button(label, variant="default", classes="breadcrumb-btn")
                 btn.tooltip = str(partial_path)
                 breadcrumb_container.mount(btn)
 
-                if i < len(parts) - 1:
-                    breadcrumb_container.mount(Label("/", classes="breadcrumb-separator"))
+                if position < len(visible_indices) - 1:
+                    breadcrumb_container.mount(
+                        Label("›", classes="breadcrumb-separator")
+                    )
         except Exception:
             pass
 
@@ -877,6 +1022,12 @@ class EnhancedFileDialog(BaseFileDialog):
                 btn.tooltip = "Add bookmark"
         except Exception:
             pass
+
+    def _filename_placeholder(self) -> str:
+        """Placeholder text for the filename input."""
+        if getattr(self, "filters", None):
+            return "File name (filtered by selected type)"
+        return "File name"
 
     def action_toggle_bookmarks(self) -> None:
         """Toggle bookmarks panel."""
@@ -1075,7 +1226,7 @@ class EnhancedFileOpen(EnhancedFileDialog):
         """Provide input widgets for file selection"""
         from textual.widgets import Input, Select
 
-        yield Input(placeholder="File name...", id="filename-input")
+        yield Input(placeholder=self._filename_placeholder(), id="filename-input")
         if self.filters:
             yield Select(
                 self.filters.selections,
@@ -1121,7 +1272,11 @@ class EnhancedFileSave(EnhancedFileDialog):
         """Provide input widgets for file saving"""
         from textual.widgets import Input, Select
 
-        yield Input(value=self.default_filename, placeholder="File name...", id="filename-input")
+        yield Input(
+            value=self.default_filename,
+            placeholder=self._filename_placeholder(),
+            id="filename-input",
+        )
         if self.filters:
             yield Select(
                 self.filters.selections,
