@@ -15,8 +15,14 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, DataTable, Static
 
 from ...Navigation.base_app_screen import BaseAppScreen
-from ....Scheduling.events import DeleteTaskRequested
+from ....Scheduling.events import (
+    DeleteTaskRequested,
+    DisableTaskRequested,
+    EditTaskRequested,
+    EnableTaskRequested,
+)
 from ....Scheduling.models import ReminderTask, ScheduledTask
+from .forms.reminder_form import ReminderForm
 from .task_detail import (
     SCHEDULES_EMPTY_CONSOLE_RECOVERY,
     TaskDetail,
@@ -352,8 +358,89 @@ class SchedulesWorkbench(BaseAppScreen):
         )
 
     def action_create_reminder(self) -> None:
-        """Create a new reminder (stub for Task 4.4+)."""
-        self.app_instance.notify("Not yet available", severity="warning")
+        """Open the create-reminder form."""
+        self.app.push_screen(ReminderForm(), callback=self._on_reminder_form_result)
+
+    def _on_reminder_form_result(
+        self, form_data: dict[str, Any] | None, task_id: str | None = None
+    ) -> None:
+        """Create or update a reminder from the form and refresh the queue."""
+        if form_data is None:
+            return
+
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot save reminder.",
+                severity="warning",
+            )
+            return
+
+        async def _save_and_refresh() -> None:
+            try:
+                if task_id is None:
+                    await service.create_reminder(form_data)
+                    self.app_instance.notify("Reminder created.", severity="information")
+                else:
+                    await service.update_reminder(task_id, form_data)
+                    self.app_instance.notify("Reminder updated.", severity="information")
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to save reminder")
+                self.app_instance.notify(
+                    "Failed to save reminder. Check the form values and try again.",
+                    severity="error",
+                )
+            await self.load_tasks()
+
+        self.run_worker(_save_and_refresh, exclusive=True)  # type: ignore[arg-type]
+
+    @on(EditTaskRequested)
+    def _on_edit_task_requested(self, event: EditTaskRequested) -> None:
+        """Open the reminder form pre-filled for editing."""
+        event.stop()
+        self.app.push_screen(
+            ReminderForm(event.task),
+            callback=lambda result: self._on_reminder_form_result(result, event.task.id),
+        )
+
+    @on(EnableTaskRequested)
+    def _on_enable_task_requested(self, event: EnableTaskRequested) -> None:
+        """Enable the requested reminder and refresh the queue."""
+        event.stop()
+        self._set_reminder_enabled(event.task, True)
+
+    @on(DisableTaskRequested)
+    def _on_disable_task_requested(self, event: DisableTaskRequested) -> None:
+        """Disable the requested reminder and refresh the queue."""
+        event.stop()
+        self._set_reminder_enabled(event.task, False)
+
+    def _set_reminder_enabled(self, task: ReminderTask, enabled: bool) -> None:
+        """Update a reminder's enabled state and refresh the queue."""
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot update reminder.",
+                severity="warning",
+            )
+            return
+
+        async def _update_and_refresh() -> None:
+            try:
+                await service.update_reminder(task.id, {"enabled": enabled})
+                status = "enabled" if enabled else "disabled"
+                self.app_instance.notify(
+                    f"'{task.title}' {status}.", severity="information"
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to update reminder enabled state")
+                self.app_instance.notify(
+                    f"Failed to update '{task.title}'.",
+                    severity="error",
+                )
+            await self.load_tasks()
+
+        self.run_worker(_update_and_refresh, exclusive=True)  # type: ignore[arg-type]
 
     def action_run_now(self) -> None:
         """Run the selected schedule immediately (stub for later tasks)."""

@@ -39,6 +39,8 @@ async def test_reminder_form_submits_when_valid():
         await app.push_screen(ReminderForm())
         title_input = pilot.app.screen.query_one("#reminder-title", Input)
         title_input.value = "Water plants"
+        run_at_input = pilot.app.screen.query_one("#reminder-run-at", Input)
+        run_at_input.value = "2026-07-20T14:00:00+00:00"
         await pilot.click("#reminder-save")
         await pilot.pause()
 
@@ -46,6 +48,7 @@ async def test_reminder_form_submits_when_valid():
         assert app.submitted is not None
         assert app.submitted["title"] == "Water plants"
         assert app.submitted["schedule_kind"] == "one_time"
+        assert app.submitted["run_at"] == "2026-07-20T14:00:00+00:00"
 
 
 @pytest.mark.asyncio

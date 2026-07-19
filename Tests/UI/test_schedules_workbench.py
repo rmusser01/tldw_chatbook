@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, DataTable, Static
+from textual.widgets import Button, DataTable, Input, Static
 
 from tldw_chatbook.Scheduling.events import DeleteTaskRequested
 from tldw_chatbook.Scheduling.models import (
@@ -13,6 +13,7 @@ from tldw_chatbook.Scheduling.models import (
     ScheduleKind,
     TaskStatus,
 )
+from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.scheduling.task_detail import (
     TaskDetail,
@@ -32,6 +33,11 @@ class WorkbenchTestApp(App):
 class MockSchedulingService:
     """Stub service returning a single reminder task."""
 
+    def __init__(self) -> None:
+        self.updated: list[tuple[str, dict]] = []
+        self.created: list[dict] = []
+        self.deleted_ids: list[str] = []
+
     async def list_reminders(self):
         return [
             ReminderTask(
@@ -45,6 +51,22 @@ class MockSchedulingService:
 
     async def list_tasks(self):
         return await self.list_reminders()
+
+    async def create_reminder(self, payload: dict):
+        self.created.append(payload)
+        return ReminderTask(**payload)
+
+    async def update_reminder(self, task_id: str, fields: dict):
+        self.updated.append((task_id, fields))
+        reminders = await self.list_reminders()
+        task = reminders[0]
+        for key, value in fields.items():
+            setattr(task, key, value)
+        return task
+
+    async def delete_reminder(self, task_id: str):
+        self.deleted_ids.append(task_id)
+        return True
 
 
 class WorkbenchTestAppWithService(App):
@@ -661,7 +683,6 @@ async def test_unimplemented_action_bindings_notify_user():
         await pilot.pause()
 
         for action in (
-            pilot.app.screen.action_create_reminder,
             pilot.app.screen.action_run_now,
             pilot.app.screen.action_pause_resume,
             pilot.app.screen.action_sync_now,
@@ -669,15 +690,15 @@ async def test_unimplemented_action_bindings_notify_user():
             action()
             await pilot.pause()
 
-        assert len(pilot.app._notifications) == 4
+        assert len(pilot.app._notifications) == 3
         for notification in pilot.app._notifications:
             assert notification.message == "Not yet available"
             assert notification.severity == "warning"
 
 
 @pytest.mark.asyncio
-async def test_unimplemented_enable_disable_buttons_notify_user():
-    """Enable/Disable buttons notify the user instead of silently doing nothing."""
+async def test_enable_disable_buttons_update_reminder():
+    """Enable/Disable buttons call the scheduling service and notify the user."""
     async with WorkbenchTestAppWithService().run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
@@ -688,10 +709,82 @@ async def test_unimplemented_enable_disable_buttons_notify_user():
 
         detail.on_button_pressed(Button.Pressed(enable_button))
         await pilot.pause()
-        detail.on_button_pressed(Button.Pressed(disable_button))
+        await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert len(pilot.app._notifications) == 2
-        for notification in pilot.app._notifications:
-            assert notification.message == "Not yet available"
-            assert notification.severity == "warning"
+        detail.on_button_pressed(Button.Pressed(disable_button))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        service = pilot.app.scheduling_service
+        assert service.updated == [
+            ("task-1", {"enabled": True}),
+            ("task-1", {"enabled": False}),
+        ]
+        notifications = list(pilot.app._notifications)
+        assert len(notifications) == 2
+        assert notifications[0].severity == "information"
+        assert notifications[1].severity == "information"
+
+
+@pytest.mark.asyncio
+async def test_create_reminder_action_saves_new_reminder():
+    """Ctrl+C opens the reminder form; saving calls the scheduling service."""
+    async with WorkbenchTestAppWithService().run_test() as pilot:
+        pilot.app.scheduling_service = MockSchedulingService()
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        pilot.app.screen.action_create_reminder()
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, ReminderForm)
+
+        title_input = pilot.app.screen.query_one("#reminder-title", Input)
+        title_input.value = "New reminder"
+        run_at_input = pilot.app.screen.query_one("#reminder-run-at", Input)
+        run_at_input.value = "2026-07-20T14:00:00+00:00"
+
+        await pilot.click("#reminder-save")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        service = pilot.app.scheduling_service
+        assert len(service.created) == 1
+        assert service.created[0]["title"] == "New reminder"
+        assert service.created[0]["schedule_kind"] == "one_time"
+        notifications = list(pilot.app._notifications)
+        assert any(n.message == "Reminder created." for n in notifications)
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_action_updates_existing_reminder():
+    """Clicking Edit opens the form pre-filled; saving calls update_reminder."""
+    async with WorkbenchTestAppWithService().run_test() as pilot:
+        pilot.app.scheduling_service = MockSchedulingService()
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+        edit_button = detail.query_one("#scheduling-edit-task", Button)
+        detail.on_button_pressed(Button.Pressed(edit_button))
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, ReminderForm)
+        title_input = pilot.app.screen.query_one("#reminder-title", Input)
+        assert title_input.value == "Test"
+        title_input.value = "Updated title"
+
+        await pilot.click("#reminder-save")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        service = pilot.app.scheduling_service
+        assert len(service.updated) == 1
+        assert service.updated[0][0] == "task-1"
+        assert service.updated[0][1]["title"] == "Updated title"
+        notifications = list(pilot.app._notifications)
+        assert any(n.message == "Reminder updated." for n in notifications)
