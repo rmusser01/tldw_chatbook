@@ -67,3 +67,15 @@ async def test_reminder_handler_allows_missing_id(handler):
         source_entity_kind="scheduled_task",
         source_entity_id=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_reminder_handler_is_callable(handler):
+    await handler({"id": "5", "title": "T", "body": "B"})
+    handler.dispatch_service.dispatch.assert_called_once_with(
+        category="reminder",
+        title="T",
+        message="B",
+        source_entity_kind="scheduled_task",
+        source_entity_id="5",
+    )

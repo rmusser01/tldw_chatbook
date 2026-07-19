@@ -28,3 +28,7 @@ class ReminderHandler:
             source_entity_kind="scheduled_task",
             source_entity_id=task.get("id"),
         )
+
+    async def __call__(self, task: dict[str, Any]) -> None:
+        """Allow the handler to be invoked directly by the scheduler loop."""
+        await self.handle(task)
