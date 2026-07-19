@@ -474,6 +474,62 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
 
 
 @pytest.mark.asyncio
+async def test_console_transcript_click_background_clears_selection():
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.click("#console-message-m2")
+        assert "Save as..." in _visible_text(app)
+
+        # Click empty space below the rendered messages.
+        await pilot.click("#console-native-transcript", offset=(5, 20))
+        await pilot.pause()
+
+        assert "Save as..." not in _visible_text(app)
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_click_message_row_selects():
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.click("#console-message-m2")
+        text = _visible_text(app)
+
+    assert "Copy" in text
+    assert "Save as..." in text
+    assert "🗑" in text
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_click_action_button_preserves_selection():
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.click("#console-message-m2")
+        assert "Save as..." in _visible_text(app)
+
+        await pilot.click("#console-message-action-copy-m2")
+        await pilot.pause()
+
+        assert "Save as..." in _visible_text(app)
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_click_rule_separator_preserves_selection():
+    app = TranscriptHarness()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.click("#console-message-m2")
+        assert "Save as..." in _visible_text(app)
+
+        await pilot.click(".console-transcript-rule")
+        await pilot.pause()
+
+        assert "Save as..." in _visible_text(app)
+
+
+@pytest.mark.asyncio
 async def test_console_selected_message_uses_class_without_inline_frame():
     app = TranscriptHarness()
 

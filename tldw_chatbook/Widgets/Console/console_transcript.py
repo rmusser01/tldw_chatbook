@@ -380,6 +380,9 @@ class ConsoleTranscript(VerticalScroll):
         ("r", "invoke_selected_action('regenerate')", "Regenerate"),
     ]
 
+    NEGATIVE_SPACE_CLASSES: frozenset[str] = frozenset()
+    """Widget classes that should be treated as negative space for selection clearing."""
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._messages: list[ConsoleChatMessage] = []
@@ -656,6 +659,21 @@ class ConsoleTranscript(VerticalScroll):
             return False
         button.press()
         return True
+
+    def on_click(self, event: Click) -> None:
+        """Clear selection when the user clicks negative space in the transcript.
+
+        Clicks that land on message rows, action buttons, the action row,
+        rule separators, action-help text, the empty-state panel, or scrollbars
+        are ignored so that those interactive elements keep the current
+        selection active.
+        """
+        control = event.control
+        if control is self or (
+            control is not None
+            and any(control.has_class(class_name) for class_name in self.NEGATIVE_SPACE_CLASSES)
+        ):
+            self.action_clear_selection()
 
     def on_key(self, event: Key) -> None:
         if event.key in {"down", "j"}:
