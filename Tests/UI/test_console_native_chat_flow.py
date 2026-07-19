@@ -22,10 +22,12 @@ from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationS
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
+    ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleRunStatus,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -1194,6 +1196,24 @@ def test_console_provider_selection_reads_local_llamacpp_configured_model():
     assert selection.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
 
 
+def test_console_provider_selection_carries_active_session_system_prompt():
+    """The selection built for the controller carries the session's system prompt."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    screen = ChatScreen(app)
+    settings = screen._ensure_active_console_session_settings()
+    screen._replace_active_console_session_settings(
+        replace(settings, system_prompt="Answer only in French.")
+    )
+
+    selection = screen._build_console_provider_selection()
+
+    assert selection.system_prompt == "Answer only in French."
+
+    controller = screen._ensure_console_chat_controller()
+    assert controller.system_prompt == "Answer only in French."
+
+
 def test_console_provider_selection_restores_default_workspace_when_none_active():
     app = _build_test_app()
     service = app.workspace_registry_service
@@ -2269,7 +2289,7 @@ async def test_console_setup_required_state_groups_recovery_and_action_copy():
         assert recovery.display is False
         modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
         assert modal.display is True
-        assert "Add an API key" in _visible_text(console)
+        assert "Connect a provider (API key or local server)" in _visible_text(console)
         assert (
             str(console.query_one("#console-setup-modal-action", Button).label)
             == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
@@ -2292,7 +2312,7 @@ async def test_console_empty_transcript_teaches_setup_and_start_paths():
         assert modal.display is True
         console_text = _visible_text(console)
         assert "Get started" in console_text
-        assert "Add an API key" in console_text
+        assert "Connect a provider (API key or local server)" in console_text
         assert "Send your first message" in console_text
         assert "Attach context" in console_text
         assert "Run Library RAG" in console_text
@@ -2314,7 +2334,7 @@ async def test_console_blocked_empty_transcript_shows_setup_card_steps():
         await _wait_for_selector(console, pilot, "#console-transcript-empty-state")
         text = _visible_text(console)
         assert "Get started" in text
-        assert "Add an API key" in text
+        assert "Connect a provider (API key or local server)" in text
         assert "Pick a model" in text
         assert "Send your first message" in text
         # The legacy provider recovery strip must not compete with the setup card.
@@ -2332,7 +2352,7 @@ async def test_console_first_send_flag_switches_empty_state_to_quiet():
         text = _visible_text(console)
         assert "No messages yet." in text
         assert "Get started" not in text
-        assert "Add an API key" not in text
+        assert "Connect a provider" not in text
 
 
 @pytest.mark.asyncio
@@ -2360,6 +2380,66 @@ async def test_console_accepted_send_records_first_send_flag():
 
         onboarding = app.app_config.get("console", {}).get("onboarding", {})
         assert onboarding.get("first_send_completed") is True
+
+
+@pytest.mark.asyncio
+async def test_console_failed_send_does_not_record_first_send_flag():
+    """A FAILED first send must not set the one-time onboarding flag (task-182d)."""
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: FailThenRecoverGateway()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "llama.cpp stream failed")
+
+        onboarding = app.app_config.get("console", {})
+        if isinstance(onboarding, dict):
+            onboarding = onboarding.get("onboarding", {})
+        assert not (isinstance(onboarding, dict) and onboarding.get("first_send_completed"))
+        assert console._console_first_send_completed() is False
+
+        # The provider error must not be stored as assistant message content.
+        store = console._ensure_console_chat_store()
+        assistant_contents = [
+            message.content
+            for message in store.messages_for_session(store.active_session_id)
+            if message.role is ConsoleMessageRole.ASSISTANT
+        ]
+        assert all("Provider stream failed" not in content for content in assistant_contents)
+
+
+@pytest.mark.asyncio
+async def test_console_accepted_send_clears_composer_before_run_end():
+    """The composer clears when the submit is accepted, not only at run end."""
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("accepted",))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        controller = console._ensure_console_chat_controller()
+        assert controller.on_submission_accepted is not None
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("clear me on accept")
+        # Invoke the acceptance hook exactly as the controller does the moment
+        # the user message is persisted; the composer must clear immediately.
+        controller.on_submission_accepted()
+        await pilot.pause()
+        assert composer.draft_text() == ""
 
 
 @pytest.mark.asyncio
@@ -2780,31 +2860,51 @@ async def test_console_selected_message_save_as_action_opens_modal():
     assert console._last_console_action.action_id == "save-as"
 
 
+def _install_console_save_service_fakes(app) -> None:
+    """Give the test app callable handles for every Save-as destination."""
+    app.notes_scope_service = SimpleNamespace(
+        save_note=AsyncMock(return_value={"id": "note-1"})
+    )
+    app.media_db = SimpleNamespace(
+        add_media_with_keywords=Mock(return_value=(7, "media-uuid-7", "Media added."))
+    )
+    app.prompts_db = SimpleNamespace(
+        add_prompt=Mock(return_value=(5, "prompt-uuid-5", "Prompt added."))
+    )
+    app.local_chatbook_service = SimpleNamespace(
+        create_chatbook=AsyncMock(return_value={"id": "1", "chatbook_id": 1})
+    )
+
+
+async def _open_save_as_modal_for_message(host, pilot, console, role, content):
+    """Append one message, select it, and open its Save as modal."""
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=role, content=content)
+    await console._sync_native_console_chat_ui()
+
+    transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    transcript.select_message(message.id)
+    await console._sync_native_console_chat_ui()
+    await _wait_for_selector(console, pilot, f"#console-message-action-save-as-{message.id}")
+
+    await pilot.click(f"#console-message-action-save-as-{message.id}")
+    await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-modal")
+    return message, host.screen_stack[-1]
+
+
 @pytest.mark.asyncio
-async def test_console_save_as_modal_labels_unwired_destinations_as_wip():
+async def test_console_save_as_modal_offers_all_wired_destinations():
     app = _build_test_app()
+    _install_console_save_service_fakes(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        store = console._ensure_console_chat_store()
-        session = store.ensure_session()
-        message = store.append_message(
-            session.id,
-            role=ConsoleMessageRole.ASSISTANT,
-            content="answer",
+        _message, save_as_modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
         )
-        await console._sync_native_console_chat_ui()
-
-        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
-        transcript.select_message(message.id)
-        await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-save-as-{message.id}")
-
-        await pilot.click(f"#console-message-action-save-as-{message.id}")
-        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-modal")
-        save_as_modal = host.screen_stack[-1]
 
         assert "Saving selected Assistant message" in _static_plain_text(
             save_as_modal.query_one("#console-save-as-context", Static)
@@ -2812,18 +2912,67 @@ async def test_console_save_as_modal_labels_unwired_destinations_as_wip():
         assert "answer" in _static_plain_text(
             save_as_modal.query_one("#console-save-as-excerpt", Static)
         )
-        assert _static_plain_text(save_as_modal.query_one("#console-save-as-wip-chatbook", Static)).startswith(
-            "Chatbook [WIP]"
+        for destination in ("chatbook", "note", "media", "prompt"):
+            assert save_as_modal.query(f"#console-save-as-destination-{destination}")
+        modal_text = _visible_text(save_as_modal)
+        assert "WIP" not in modal_text
+        assert "unavailable" not in modal_text
+        assert "No Save as destinations are wired" not in modal_text
+
+
+@pytest.mark.asyncio
+async def test_console_save_as_modal_gates_chatbook_for_user_messages_with_honest_reason():
+    app = _build_test_app()
+    _install_console_save_service_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        _message, save_as_modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.USER, "question"
         )
-        assert "WIP: save as Chatbook is not wired yet." in _static_plain_text(
-            save_as_modal.query_one("#console-save-as-wip-chatbook", Static)
+
+        for destination in ("note", "media", "prompt"):
+            assert save_as_modal.query(f"#console-save-as-destination-{destination}")
+        assert not save_as_modal.query("#console-save-as-destination-chatbook")
+        gated_copy = _static_plain_text(
+            save_as_modal.query_one("#console-save-as-unavailable-chatbook", Static)
         )
-        assert "WIP: save as Media is not wired yet." in _static_plain_text(
-            save_as_modal.query_one("#console-save-as-wip-media", Static)
-        )
-        assert "WIP: save as Prompt is not wired yet." in _static_plain_text(
-            save_as_modal.query_one("#console-save-as-wip-prompt", Static)
-        )
+        assert "Only assistant responses can be saved as Chatbook artifacts." in gated_copy
+        assert "WIP" not in gated_copy
+        assert "No Save as destinations are wired" not in _visible_text(save_as_modal)
+
+
+def test_console_save_as_destinations_gate_on_runtime_services_and_role():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    _install_console_save_service_fakes(app)
+    assistant = SimpleNamespace(role=ConsoleMessageRole.ASSISTANT, content="answer")
+    user = SimpleNamespace(role=ConsoleMessageRole.USER, content="question")
+
+    wired = screen._console_save_as_destinations(assistant)
+    assert [d.label for d in wired] == ["Chatbook", "Note", "Media", "Prompt"]
+    assert all(d.available for d in wired)
+
+    gated = screen._console_save_as_destinations(user)
+    chatbook = next(d for d in gated if d.label == "Chatbook")
+    assert chatbook.available is False
+    assert chatbook.reason == "Only assistant responses can be saved as Chatbook artifacts."
+    assert [d.label for d in gated if d.available] == ["Note", "Media", "Prompt"]
+
+    app.notes_scope_service = None
+    app.media_db = None
+    app.prompts_db = None
+    app.local_chatbook_service = None
+    dark = screen._console_save_as_destinations(assistant)
+    assert all(d.available is False for d in dark)
+    reasons = {d.label: d.reason for d in dark}
+    assert reasons["Note"] == "Notes service is not ready in this session."
+    assert reasons["Media"] == "Media library is not ready in this session."
+    assert reasons["Prompt"] == "Prompts service is not ready in this session."
+    assert reasons["Chatbook"] == "Chatbook artifacts service is not ready in this session."
+    assert all("WIP" not in reason for reason in reasons.values())
 
 
 @pytest.mark.asyncio
@@ -2837,37 +2986,182 @@ async def test_console_selected_message_save_as_note_creates_note_from_message()
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        store = console._ensure_console_chat_store()
-        session = store.ensure_session()
-        message = store.append_message(
-            session.id,
-            role=ConsoleMessageRole.ASSISTANT,
-            content="answer",
+        message, _modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
         )
-        await console._sync_native_console_chat_ui()
-
-        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
-        transcript.select_message(message.id)
-        await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, f"#console-message-action-save-as-{message.id}")
-
-        await pilot.click(f"#console-message-action-save-as-{message.id}")
         await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-note")
         await pilot.click("#console-save-as-destination-note")
         await pilot.pause()
 
-    app.notes_scope_service.save_note.assert_awaited_once_with(
-        scope="local_note",
-        title="Console message",
-        content="answer",
-        note_id=None,
-        version=None,
-        user_id="default_user",
-        workspace_id=None,
-        keywords=["console"],
-    )
+    app.notes_scope_service.save_note.assert_awaited_once()
+    kwargs = app.notes_scope_service.save_note.await_args.kwargs
+    # Title carries the conversation title plus a short UTC date, e.g.
+    # "Console message — Chat 1 (2026-07-11)" (UAT: no more generic titles).
+    assert kwargs["title"].startswith("Console message — Chat 1 (")
+    assert kwargs["title"].endswith(")")
+    assert len(kwargs["title"]) <= 80
+    assert kwargs["scope"] == "local_note"
+    assert kwargs["content"] == "answer"
+    assert kwargs["note_id"] is None
+    assert kwargs["version"] is None
+    assert kwargs["user_id"] == "default_user"
+    assert kwargs["workspace_id"] is None
+    assert kwargs["keywords"] == ["console"]
     assert console._last_console_action.action_id == "save-as-note"
     assert console._last_console_action.visible_copy == "Saved message as Note."
+
+
+@pytest.mark.asyncio
+async def test_console_selected_message_save_as_media_adds_plaintext_media():
+    app = _build_test_app()
+    _install_console_save_service_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        message, _modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
+        )
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-media")
+        await pilot.click("#console-save-as-destination-media")
+        await pilot.pause()
+
+    add_media = app.media_db.add_media_with_keywords
+    add_media.assert_called_once()
+    kwargs = add_media.call_args.kwargs
+    assert kwargs["media_type"] == "plaintext"
+    assert kwargs["content"] == "answer"
+    assert kwargs["keywords"] == ["console"]
+    assert kwargs["title"].startswith("Console assistant message — Chat 1 (")
+    assert len(kwargs["title"]) <= 80
+    assert console._last_console_action.action_id == "save-as-media"
+    assert console._last_console_action.visible_copy == "Saved message as Media."
+
+
+@pytest.mark.asyncio
+async def test_console_selected_message_save_as_prompt_persists_prompt():
+    app = _build_test_app()
+    _install_console_save_service_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        message, _modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
+        )
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-prompt")
+        await pilot.click("#console-save-as-destination-prompt")
+        await pilot.pause()
+
+    add_prompt = app.prompts_db.add_prompt
+    add_prompt.assert_called_once()
+    kwargs = add_prompt.call_args.kwargs
+    assert kwargs["name"].startswith("Console message — Chat 1 (")
+    assert kwargs["system_prompt"] == "answer"
+    assert kwargs["author"] == "Console"
+    assert kwargs["keywords"] == ["console"]
+    assert kwargs["overwrite"] is False
+    assert "Chat 1" in kwargs["details"]
+    assert console._last_console_action.action_id == "save-as-prompt"
+    assert console._last_console_action.visible_copy == "Saved message as Prompt."
+
+
+@pytest.mark.asyncio
+async def test_console_save_as_prompt_retries_with_suffix_on_name_conflict():
+    from tldw_chatbook.DB.Prompts_DB import ConflictError as PromptsConflictError
+
+    app = _build_test_app()
+    _install_console_save_service_fakes(app)
+    calls = []
+
+    def add_prompt(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise PromptsConflictError("Prompt already exists.")
+        return (9, "prompt-uuid-9", "added")
+
+    app.prompts_db = SimpleNamespace(add_prompt=add_prompt)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        _message, _modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
+        )
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-prompt")
+        await pilot.click("#console-save-as-destination-prompt")
+        await pilot.pause()
+
+    assert len(calls) == 2
+    assert calls[1]["name"] == f"{calls[0]['name']} (2)"
+    assert console._last_console_action.action_id == "save-as-prompt"
+
+
+@pytest.mark.asyncio
+async def test_console_selected_message_save_as_chatbook_registers_console_artifact():
+    app = _build_test_app()
+    _install_console_save_service_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        message, _modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
+        )
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-chatbook")
+        await pilot.click("#console-save-as-destination-chatbook")
+        await pilot.pause()
+
+    create_chatbook = app.local_chatbook_service.create_chatbook
+    create_chatbook.assert_awaited_once()
+    kwargs = create_chatbook.await_args.kwargs
+    assert kwargs["name"].startswith("Console message — Chat 1 (")
+    assert kwargs["tags"] == ["console", "artifact"]
+    metadata = kwargs["metadata"]
+    assert metadata["artifact_source"] == "console"
+    assert metadata["artifact_kind"] == "assistant-response"
+    assert metadata["content"] == "answer"
+    assert metadata["message_id"] == message.id
+    assert console._last_console_action.action_id == "save-as-chatbook"
+    assert console._last_console_action.visible_copy == "Saved message as Chatbook artifact."
+
+
+@pytest.mark.asyncio
+async def test_console_save_as_media_failure_notifies_without_crashing():
+    app = _build_test_app()
+    _install_console_save_service_fakes(app)
+    app.media_db = SimpleNamespace(
+        add_media_with_keywords=Mock(side_effect=RuntimeError("disk full"))
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        notifications = []
+        app.notify = lambda *args, **kwargs: notifications.append((args, kwargs))
+        message, _modal = await _open_save_as_modal_for_message(
+            host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
+        )
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-media")
+        await pilot.click("#console-save-as-destination-media")
+        await pilot.pause()
+
+        # Screen stays alive and responsive after the failed save.
+        assert console.query("#console-native-transcript")
+
+    failure_messages = [
+        args[0]
+        for args, kwargs in notifications
+        if args and "Save as Media failed" in str(args[0])
+    ]
+    assert failure_messages
+    assert "disk full" in failure_messages[0]
+    assert console._last_console_action.action_id == "save-as"
 
 
 @pytest.mark.asyncio
@@ -2890,7 +3184,13 @@ async def test_console_failed_stream_renders_inline_retry_and_recovers():
         await _wait_for_text(console, pilot, "llama.cpp stream failed")
 
         store = console._ensure_console_chat_store()
-        failed = store.messages_for_session(store.active_session_id)[-1]
+        # The failure copy now lands in a trailing system row; retry targets
+        # the failed assistant message itself.
+        failed = next(
+            message
+            for message in reversed(store.messages_for_session(store.active_session_id))
+            if message.role is ConsoleMessageRole.ASSISTANT and message.status == "failed"
+        )
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(failed.id)
         await console._sync_native_console_chat_ui()
@@ -5183,6 +5483,71 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
 
 
 @pytest.mark.asyncio
+async def test_console_workspace_conversation_resume_restores_system_prompt():
+    """Resuming a saved conversation restores its persisted system prompt.
+
+    Task 0 persistence seam: the resumed session's settings must carry the
+    ``system_prompt`` column from the persisted conversation row (read via
+    ``get_conversation_by_id``/``get_conversation_tree``), not whatever
+    system prompt (if any) the previously active session had.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    service.link_membership(
+        active_workspace.workspace_id,
+        item_type="conversation",
+        item_id="persisted-chat-system-prompt",
+        role="workspace-thread",
+        title="System prompt chat",
+    )
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "persisted-chat-system-prompt": {
+                "conversation": {
+                    "id": "persisted-chat-system-prompt",
+                    "title": "System prompt chat",
+                    "workspace_id": active_workspace.workspace_id,
+                    "system_prompt": "Answer only in French.",
+                },
+                "root_threads": [],
+                "pagination": {"total_root_threads": 0},
+            }
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "System prompt chat",
+            selected=False,
+        )
+
+        await _click_console_workspace_conversation_for_id(
+            console,
+            pilot,
+            "persisted-chat-system-prompt",
+        )
+
+        await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "System prompt chat",
+            selected=True,
+        )
+        store = console._ensure_console_chat_store()
+        active_session = store.switch_session(store.active_session_id)
+        assert active_session.persisted_conversation_id == "persisted-chat-system-prompt"
+        assert active_session.settings is not None
+        assert active_session.settings.system_prompt == "Answer only in French."
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_conversation_resume_uses_persisted_workspace():
     """Resume into the persisted conversation workspace when it differs from active."""
     app = _build_test_app()
@@ -5765,6 +6130,44 @@ def test_native_console_state_round_trip_preserves_session_updated_at():
     assert restored_session.updated_at == "2020-01-01T00:00:00+00:00"
 
 
+def test_native_console_state_round_trip_preserves_session_system_prompt():
+    """Verify a restored session keeps its per-session system prompt.
+
+    ``ConsoleSessionSettings.system_prompt`` must flow through the generic
+    ``__dataclass_fields__``-based whitelist in ``_restore_console_settings``
+    the same way ``source`` and every other settings field does, with no
+    per-field allowlist entry needed.
+    """
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(
+        id="session-a",
+        title="Chat 1",
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="gpt-4o",
+            system_prompt="Be terse and cite sources.",
+        ),
+    )
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    screen = _bare_console_screen(store)
+
+    payload = screen._serialize_native_console_state()
+    assert payload is not None
+    assert payload["sessions"][0]["settings"]["system_prompt"] == "Be terse and cite sources."
+
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+    restored_screen._restore_native_console_state(payload)
+
+    restored_session = restored_store.sessions()[0]
+    assert restored_session.settings is not None
+    assert restored_session.settings.system_prompt == "Be terse and cite sources."
+
+
 def test_native_console_state_restore_tolerates_legacy_payload_without_updated_at():
     """Verify legacy saved states (no ``updated_at`` key) still restore.
 
@@ -5856,3 +6259,970 @@ async def test_switcher_rename_choice_chains_to_rename_modal():
         await pilot.pause(0.3)
         assert host.screen_stack[-1].__class__.__name__ == "ConsoleRenameSessionModal"
         await pilot.press("escape")
+
+
+def test_insert_file_segment_collapses_with_custom_label():
+    composer = ConsoleComposerBar()
+    composer.insert_file_segment("file body text", "📄 notes.md · 4 KB")
+
+    assert composer.draft_text() == "file body text"
+    assert composer._display_draft_text() == "📄 notes.md · 4 KB"
+
+
+def test_insert_file_segment_appends_after_typed_draft():
+    composer = ConsoleComposerBar()
+    composer.insert_text("see attached: ")
+    composer.insert_file_segment("file body", "📄 a.md · 9 B")
+
+    assert composer.draft_text() == "see attached: file body"
+    assert composer._display_draft_text() == "see attached: 📄 a.md · 9 B"
+
+
+def test_paste_collapse_label_still_defaults_to_character_count():
+    composer = ConsoleComposerBar(paste_collapse_threshold=5)
+    composer.insert_pasted_text("0123456789")
+
+    assert composer._display_draft_text() == "Pasted Text: 10 Characters"
+
+
+@pytest.mark.asyncio
+async def test_attachment_indicator_visibility_follows_label():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        composer.set_pending_attachment_label("photo.png · 240 KB")
+        await pilot.pause()
+        indicator = console.query_one("#console-attachment-indicator", Static)
+        clear_button = console.query_one("#console-clear-attachment", Button)
+        assert "photo.png" in str(indicator.renderable)
+        assert indicator.styles.display != "none"
+        assert clear_button.styles.display != "none"
+
+        composer.set_pending_attachment_label(None)
+        await pilot.pause()
+        assert indicator.styles.display == "none"
+        assert clear_button.styles.display == "none"
+
+
+@pytest.mark.asyncio
+async def test_console_attachment_worker_stages_image_and_inlines_text(tmp_path):
+    from PIL import Image as PILImage
+
+    image_path = tmp_path / "photo.png"
+    PILImage.new("RGB", (4, 4), color=(0, 100, 0)).save(image_path, format="PNG")
+    text_path = tmp_path / "notes.md"
+    text_path.write_text("# heading\nbody")
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        import tldw_chatbook.Chat.attachment_core as attachment_core
+        # Test files live in tmp_path, outside $HOME — widen the safety root.
+        original = attachment_core.load_processed_file
+
+        async def _rooted(file_path, *, allowed_root=None):
+            return await original(file_path, allowed_root=str(tmp_path))
+
+        attachment_core.load_processed_file = _rooted
+        try:
+            await console._process_console_attachment(str(image_path))
+            await pilot.pause()
+            store = console._ensure_console_chat_store()
+            session_id = store.active_session_id
+            pending = store.pending_attachment(session_id)
+            assert pending is not None and pending.file_type == "image"
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            assert composer._pending_attachment_label is not None
+
+            await console._process_console_attachment(str(text_path))
+            await pilot.pause()
+            assert "body" in composer.draft_text()
+            assert "notes.md" in composer._display_draft_text()
+        finally:
+            attachment_core.load_processed_file = original
+
+
+def _staged_image_attachment():
+    from tldw_chatbook.Chat.attachment_core import PendingAttachment
+
+    return PendingAttachment(
+        file_path="/tmp/photo.png",
+        display_name="photo.png",
+        file_type="image",
+        insert_mode="attachment",
+        data=b"\x89PNG-bytes",
+        mime_type="image/png",
+        original_size=11,
+        processed_size=11,
+    )
+
+
+@pytest.mark.asyncio
+async def test_pending_image_on_non_vision_model_blocks_send(monkeypatch):
+    import tldw_chatbook.Chat.attachment_core as attachment_core
+
+    monkeypatch.setattr(attachment_core, "is_vision_capable", lambda p, m: False)
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.set_pending_attachment(session.id, _staged_image_attachment())
+
+        reason = console._console_send_blocked_reason()
+        assert "can't accept images" in reason
+
+
+@pytest.mark.asyncio
+async def test_pending_image_on_vision_model_does_not_block(monkeypatch):
+    import tldw_chatbook.Chat.attachment_core as attachment_core
+
+    monkeypatch.setattr(attachment_core, "is_vision_capable", lambda p, m: True)
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.set_pending_attachment(session.id, _staged_image_attachment())
+
+        assert console._console_attachment_blocked_reason() == ""
+
+
+def test_resume_hydrates_image_messages_including_image_only_rows():
+    """Verify resuming a saved conversation keeps image-only rows and their bytes."""
+    screen = ChatScreen(_build_test_app())
+    tree = {
+        "conversation": {"title": "Saved", "workspace_id": None},
+        "root_threads": [
+            {
+                "id": "m-1",
+                "sender": "user",
+                "content": "",
+                "image_data": b"\x89PNG-bytes",
+                "image_mime_type": "image/png",
+                "children": [
+                    {
+                        "id": "m-2",
+                        "sender": "assistant",
+                        "content": "a red square",
+                        "children": [],
+                    }
+                ],
+            }
+        ],
+    }
+
+    messages = screen._console_messages_from_conversation_tree(tree)
+
+    assert len(messages) == 2
+    assert messages[0].image_data == b"\x89PNG-bytes"
+    assert messages[0].image_mime_type == "image/png"
+    assert messages[0].content == ""
+    assert messages[1].content == "a red square"
+
+
+def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
+    """Plan-B final-review Medium-1: the ChatScreen-level wiring
+    (`_inject_resume_agent_markers`) must re-derive TOOL markers from the
+    real sibling `AgentRunsDB` the same way `_ensure_console_agent_bridge`
+    locates it (keyed off `chachanotes_db.db_path`), not just the pure
+    helper functions in isolation."""
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    screen = ChatScreen(_build_test_app())
+    screen.app_instance.chachanotes_db = SimpleNamespace(
+        db_path=str(tmp_path / "chacha.db")
+    )
+    runs_db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="t")
+    primary_id = runs_db.create_run(conversation_id="conv-x", agent_kind="primary")
+    runs_db.append_steps(primary_id, [
+        {"index": 0, "kind": "tool_result", "tool_name": "calculator",
+         "result": "42", "summary": "", "args": None, "created_at": ""},
+    ])
+    runs_db.set_status(primary_id, "done", result="It is 42.")
+
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="what is 6*7"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="It is 42.", status="complete"),
+    ]
+
+    resumed = screen._inject_resume_agent_markers(messages, "conv-x")
+
+    tool_rows = [m for m in resumed if m.role is ConsoleMessageRole.TOOL]
+    assert len(tool_rows) == 1
+    assert tool_rows[0].content == "⚙ calculator → 42"
+    assert resumed[-1] is tool_rows[0]  # placed right after the assistant answer
+
+    # Idempotent: injecting again onto the already-injected list adds nothing.
+    resumed_again = screen._inject_resume_agent_markers(resumed, "conv-x")
+    assert len(resumed_again) == len(resumed)
+
+
+def test_console_message_serialization_carries_image_metadata_not_bytes():
+    """Verify screen-state snapshots carry image metadata but never raw bytes."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+        attachment_label="photo.png · 11 B",
+    )
+
+    payload = ChatScreen._serialize_console_message(message)
+
+    assert payload["image_mime_type"] == "image/png"
+    assert payload["attachment_label"] == "photo.png · 11 B"
+    assert "image_data" not in payload
+
+    restored = ChatScreen._restore_console_message(payload)
+
+    assert restored is not None
+    assert restored.image_mime_type == "image/png"
+    assert restored.attachment_label == "photo.png · 11 B"
+    assert restored.image_data is None
+
+
+@pytest.mark.asyncio
+async def test_save_console_message_image_writes_file(tmp_path, monkeypatch):
+    """Verify the save-image worker writes the message's image bytes to disk."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
+            lambda section, key, default=None: str(tmp_path)
+            if (section, key) == ("chat.images", "save_location")
+            else default,
+        )
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="pic",
+            image_data=b"\x89PNG-bytes",
+            image_mime_type="image/png",
+        )
+
+        await console._save_console_message_image(message.id)
+
+        saved = list(tmp_path.glob("console_image_*.png"))
+        assert len(saved) == 1
+        assert saved[0].read_bytes() == b"\x89PNG-bytes"
+
+
+@pytest.mark.asyncio
+async def test_save_console_message_image_disambiguates_filename_collision(tmp_path, monkeypatch):
+    """Verify the save-image worker never silently overwrites a prior save."""
+    import datetime as datetime_module
+
+    class _FixedDateTime(datetime_module.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 1, 1, 12, 0, 0)
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
+            lambda section, key, default=None: str(tmp_path)
+            if (section, key) == ("chat.images", "save_location")
+            else default,
+        )
+        # The save-image worker imports `datetime.datetime` locally on each
+        # call, so freezing the clock here forces both saves below to compute
+        # the same base filename and deterministically exercise the
+        # collision-disambiguation loop.
+        monkeypatch.setattr(datetime_module, "datetime", _FixedDateTime)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="pic",
+            image_data=b"\x89PNG-bytes",
+            image_mime_type="image/png",
+        )
+
+        await console._save_console_message_image(message.id)
+        await console._save_console_message_image(message.id)
+
+        saved = sorted(tmp_path.glob("console_image_*.png"))
+        assert len(saved) == 2
+        assert saved[0].name != saved[1].name
+        assert all(path.read_bytes() == b"\x89PNG-bytes" for path in saved)
+
+
+def test_rehydrate_console_message_image_refetches_bytes_from_db():
+    """Verify restore rehydration refetches bytes screen-state serialization drops.
+
+    Regression test: `_restore_console_message` intentionally restores metadata
+    only (no bytes in screen state), but the controller's payload builder only
+    attaches an image when `message.image_data is not None`. Without rehydration
+    a message that survives a Console navigate-away/navigate-back round trip
+    still shows its chip (metadata-only) but the model never sees the image
+    again.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+
+    screen = ChatScreen(_build_test_app())
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="",
+        image_mime_type="image/png",
+        persisted_message_id="msg-123",
+    )
+    screen.app_instance.chachanotes_db = Mock(
+        get_message_by_id=Mock(
+            return_value={"image_data": b"\x89PNG-bytes", "image_mime_type": "image/png"}
+        )
+    )
+
+    screen._rehydrate_console_message_image(message)
+
+    assert message.image_data == b"\x89PNG-bytes"
+    assert message.image_mime_type == "image/png"
+    screen.app_instance.chachanotes_db.get_message_by_id.assert_called_once_with("msg-123")
+
+
+def test_rehydrate_console_message_image_degrades_gracefully_on_db_failure():
+    """Verify a DB failure during restore rehydration leaves the message metadata-only."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+
+    screen = ChatScreen(_build_test_app())
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="",
+        image_mime_type="image/png",
+        persisted_message_id="msg-123",
+    )
+    screen.app_instance.chachanotes_db = Mock(
+        get_message_by_id=Mock(side_effect=Exception("db offline"))
+    )
+
+    screen._rehydrate_console_message_image(message)  # must not raise
+
+    assert message.image_data is None
+    assert message.image_mime_type == "image/png"
+
+
+def test_restore_native_console_state_rehydrates_image_bytes_end_to_end():
+    """Verify the full restore path rehydrates bytes for a persisted image message."""
+    screen = ChatScreen(_build_test_app())
+    screen.app_instance.chachanotes_db = Mock(
+        get_message_by_id=Mock(
+            return_value={"image_data": b"\x89PNG-bytes", "image_mime_type": "image/png"}
+        )
+    )
+    payload = {
+        "version": "1.0",
+        "active_session_id": "session-1",
+        "sessions": [
+            {
+                "id": "session-1",
+                "title": "Saved",
+                "workspace_id": None,
+                "persisted_conversation_id": None,
+                "draft": "",
+                "settings": None,
+                "updated_at": None,
+            }
+        ],
+        "messages_by_session": {
+            "session-1": [
+                {
+                    "role": "user",
+                    "content": "",
+                    "id": "m-1",
+                    "status": "complete",
+                    "persisted_message_id": "msg-123",
+                    "image_mime_type": "image/png",
+                    "attachment_label": "photo.png · 11 B",
+                }
+            ]
+        },
+    }
+
+    screen._restore_native_console_state(payload)
+
+    store = screen._ensure_console_chat_store()
+    restored = store.messages_for_session("session-1")
+    assert len(restored) == 1
+    assert restored[0].image_data == b"\x89PNG-bytes"
+    assert restored[0].image_mime_type == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_clear_attachment_button_resyncs_composer_blocked_state(monkeypatch):
+    """Verify clicking Clear on a staged image resyncs the composer's blocked visuals.
+
+    Regression test: `_process_console_attachment` calls `_sync_console_control_bar()`
+    after staging, so the composer immediately reflects the "can't accept images"
+    block. `handle_console_clear_attachment` used to skip that sync, leaving the
+    composer showing a stale blocked-send state (and tooltip) after the
+    attachment was removed via the ✕ button.
+    """
+    import tldw_chatbook.Chat.attachment_core as attachment_core
+
+    monkeypatch.setattr(attachment_core, "is_vision_capable", lambda p, m: False)
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.set_pending_attachment(session.id, _staged_image_attachment())
+        # Mirror the sync `_process_console_attachment` performs right after
+        # staging, so the composer starts in the same blocked state a real
+        # attach would leave behind.
+        console._sync_console_control_bar()
+        await pilot.pause()
+
+        send_button = console.query_one("#console-send-message", Button)
+        assert composer._send_blocked is True
+        assert send_button.tooltip and "can't accept images" in send_button.tooltip
+
+        await pilot.click("#console-clear-attachment")
+        await pilot.pause()
+
+        assert store.pending_attachment(session.id) is None
+        assert composer._send_blocked is False
+        assert not send_button.tooltip or "can't accept images" not in send_button.tooltip
+
+
+@pytest.mark.asyncio
+async def test_image_message_gets_inline_row_after_prep_and_toggle_cycles():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    # Pin the session default so the pixels -> graphics -> hidden -> pixels
+    # cycle below is deterministic; leaving this on "auto" resolves from the
+    # host terminal's TERM/TERM_PROGRAM env vars (see resolve_default_mode),
+    # which varies across dev machines and CI.
+    app.app_config["chat"] = {"images": {"default_render_mode": "pixels"}}
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        from io import BytesIO
+
+        from PIL import Image as PILImage
+
+        buffer = BytesIO()
+        PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buffer, format="PNG")
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="look at this",
+            image_data=buffer.getvalue(),
+            image_mime_type="image/png",
+        )
+        await console._sync_native_console_chat_ui()
+        # Prep runs in a worker; wait for the image row to appear.
+        for _ in range(80):
+            if console.query(f"#console-image-{message.id}"):
+                break
+            await pilot.pause(0.05)
+        assert console.query(f"#console-image-{message.id}"), "image row never appeared"
+
+        # Toggle: pixels -> graphics (widget swaps, still present)
+        console._handle_console_toggle_image_view(message.id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        assert console.query(f"#console-image-{message.id}")
+
+        # Toggle: graphics -> hidden (row disappears)
+        console._handle_console_toggle_image_view(message.id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        assert not console.query(f"#console-image-{message.id}")
+
+        # Toggle: hidden -> pixels (row returns)
+        console._handle_console_toggle_image_view(message.id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        assert console.query(f"#console-image-{message.id}")
+
+
+def test_image_view_modes_ride_screen_state_allowlist_and_prune_stale():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="pic",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    state, _cache = screen._ensure_console_image_view()
+    state.restore({message.id: "hidden", "stale-id": "graphics"})
+
+    payload = screen._serialize_native_console_state()
+    assert payload is not None
+    # Live override survives; the stale one is pruned at serialize time.
+    assert payload["image_view_modes"] == {message.id: "hidden"}
+
+    fresh = ChatScreen(app)
+    fresh._restore_native_console_state(payload)
+    fresh_state, _ = fresh._ensure_console_image_view()
+    assert fresh_state.serialize() == {message.id: "hidden"}
+
+
+def test_console_image_prep_bounded_to_cache_capacity_avoids_churn():
+    """Regression: prep must never chase more images than the cache can hold.
+
+    Before this fix, the sync path computed `cache.pending_ids(messages)`
+    over the FULL session while `ConsoleImageRenderCache` is LRU-bounded at
+    `IMAGE_CACHE_MAX_ENTRIES`. With more image messages than the cache holds,
+    each sync would prep an older message, evict the newest one to make room,
+    and the next sync would re-prep the evicted one — an infinite decode +
+    refresh churn. `_build_console_image_specs` (and the sync-site pending
+    computation) must bound their working set to the most-recent-N
+    image-bearing messages so the working set can never exceed cache
+    capacity.
+    """
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+
+    total_images = IMAGE_CACHE_MAX_ENTRIES + 3
+    messages = []
+    for index in range(total_images):
+        buffer = BytesIO()
+        PILImage.new("RGB", (4, 4), (index % 256, 20, 30)).save(buffer, format="PNG")
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content=f"pic {index}",
+            image_data=buffer.getvalue(),
+            image_mime_type="image/png",
+        )
+        messages.append(message)
+
+    _state, cache = screen._ensure_console_image_view()
+    recent = screen._recent_console_image_messages(messages)
+    most_recent_ids = [m.id for m in messages[-IMAGE_CACHE_MAX_ENTRIES:]]
+    assert len(recent) == IMAGE_CACHE_MAX_ENTRIES
+    assert [m.id for m in recent] == most_recent_ids
+
+    # Prepare exactly the bounded (most-recent) subset via the cache
+    # directly, mirroring what the fixed sync-site prep kick does.
+    for message_id, image_data in cache.pending_ids(recent):
+        cache.prepare(message_id, image_data)
+
+    # (a) + (b): specs are bounded to cache capacity and are the most recent
+    # image messages — older messages were never prepared, so they can never
+    # appear here regardless of how many messages the session holds.
+    specs = screen._build_console_image_specs(messages)
+    assert len(specs) <= IMAGE_CACHE_MAX_ENTRIES
+    assert set(specs) == set(most_recent_ids)
+
+    # The older, out-of-window messages were never touched by prep.
+    older_ids = [m.id for m in messages[: -IMAGE_CACHE_MAX_ENTRIES]]
+    assert older_ids  # sanity: the test actually exceeds cache capacity
+    for older_id in older_ids:
+        assert cache.get_pil(older_id) is None
+
+    # (c) No churn: recomputing pending over the same bounded subset finds
+    # nothing left to prepare — the working set converges instead of
+    # flapping between decode and eviction.
+    assert cache.pending_ids(screen._recent_console_image_messages(messages)) == []
+
+
+def test_console_image_prep_kick_skips_ids_already_preparing():
+    """Regression: the 0.2s sync tick must not re-kick prep for ids a
+    worker is already chewing on.
+
+    Before this fix, every sync tick recomputed `cache.pending_ids(...)`
+    over the still-uncached image messages and unconditionally kicked the
+    exclusive `console-image-prep` worker for them — cancelling any
+    in-flight run and piling duplicate decodes into the executor.
+    `_console_image_preparing` tracks in-flight ids so the kick site's
+    filtered pending list converges to empty once a batch is staged.
+    """
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+
+    buffer = BytesIO()
+    PILImage.new("RGB", (4, 4), (10, 20, 30)).save(buffer, format="PNG")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="pic",
+        image_data=buffer.getvalue(),
+        image_mime_type="image/png",
+    )
+
+    messages = [message]
+    _state, cache = screen._ensure_console_image_view()
+
+    # Same helper chain the sync site uses to compute the raw pending set.
+    recent = screen._recent_console_image_messages(messages)
+    assert cache.pending_ids(recent) == [(message.id, message.image_data)]
+
+    # Stage the id as already-preparing, exactly as the kick site does right
+    # before `run_worker`.
+    screen._console_image_preparing.update(mid for mid, _ in cache.pending_ids(recent))
+    assert message.id in screen._console_image_preparing
+
+    # The filtered pending list the kick site actually acts on must now be
+    # empty — a re-kick for the same id must not fire while it's in flight.
+    pending_images = [
+        (mid, data)
+        for mid, data in cache.pending_ids(recent)
+        if mid not in screen._console_image_preparing
+    ]
+    assert pending_images == []
+
+
+@pytest.mark.asyncio
+async def test_path_paste_routes_to_attach_instead_of_draft(tmp_path, monkeypatch):
+    from PIL import Image as PILImage
+
+    from textual.events import Paste
+
+    image_path = tmp_path / "dropped.png"
+    PILImage.new("RGB", (8, 8), (9, 9, 9)).save(image_path, format="PNG")
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+
+        # Widen the attach root to tmp_path for both gating and processing.
+        # chat_screen imports these helpers BY NAME, so patch the consuming
+        # module's bindings, not the source module's.
+        import tldw_chatbook.Chat.attachment_core as attachment_core
+        import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+        from tldw_chatbook.Chat.console_paste_attach import (
+            looks_attachable as original_attachable,
+        )
+
+        original_load = attachment_core.load_processed_file
+
+        async def _rooted(file_path, *, allowed_root=None):
+            return await original_load(file_path, allowed_root=str(tmp_path))
+
+        monkeypatch.setattr(attachment_core, "load_processed_file", _rooted)
+        monkeypatch.setattr(
+            chat_screen_module,
+            "looks_attachable",
+            lambda path, allowed_root=None: original_attachable(
+                path, allowed_root=str(tmp_path)
+            ),
+        )
+
+        console.on_paste(Paste(text=str(image_path)))
+        for _ in range(80):
+            store = console._ensure_console_chat_store()
+            session_id = store.active_session_id
+            if session_id and store.pending_attachment(session_id) is not None:
+                break
+            await pilot.pause(0.05)
+
+        store = console._ensure_console_chat_store()
+        pending = store.pending_attachment(store.active_session_id)
+        assert pending is not None and pending.file_type == "image"
+        assert composer.draft_text() == ""  # path did NOT land as draft text
+
+
+@pytest.mark.asyncio
+async def test_prose_paste_still_lands_in_draft():
+    from textual.events import Paste
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+
+        console.on_paste(Paste(text="what does /etc/hosts do?"))
+        await pilot.pause()
+        assert composer.draft_text() == "what does /etc/hosts do?"
+
+
+@pytest.mark.asyncio
+async def test_alt_v_grabs_clipboard_image_into_pending(monkeypatch):
+    from io import BytesIO
+
+    from PIL import Image as PILImage
+
+    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+
+    buffer = BytesIO()
+    PILImage.new("RGB", (16, 16), (10, 200, 10)).save(buffer, format="PNG")
+    png = buffer.getvalue()
+
+    from tldw_chatbook.Chat.console_paste_attach import ClipboardGrab
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "grab_clipboard_image",
+        lambda: ClipboardGrab(kind="image", png_bytes=png),
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console.query_one("#console-native-composer", ConsoleComposerBar).focus()
+        await pilot.pause()
+
+        await pilot.press("alt+v")
+        for _ in range(80):
+            store = console._ensure_console_chat_store()
+            sid = store.active_session_id
+            if sid and store.pending_attachment(sid) is not None:
+                break
+            await pilot.pause(0.05)
+
+        store = console._ensure_console_chat_store()
+        pending = store.pending_attachment(store.active_session_id)
+        assert pending is not None
+        assert pending.file_type == "image"
+        assert pending.display_name.startswith("clipboard-")
+
+
+@pytest.mark.asyncio
+async def test_alt_v_unavailable_platform_toasts(monkeypatch):
+    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+
+    from tldw_chatbook.Chat.console_paste_attach import ClipboardGrab
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "grab_clipboard_image",
+        lambda: ClipboardGrab(kind="unavailable"),
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    notifications: list[str] = []
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(
+            console.app_instance,
+            "notify",
+            lambda message, **kwargs: notifications.append(str(message)),
+        )
+        await pilot.press("alt+v")
+        for _ in range(40):
+            if notifications:
+                break
+            await pilot.pause(0.05)
+        assert any("aren't readable on this platform" in n for n in notifications)
+        store = console._ensure_console_chat_store()
+        sid = store.active_session_id
+        assert sid is None or store.pending_attachment(sid) is None
+
+
+@pytest.mark.asyncio
+async def test_alt_v_action_is_inert_while_setup_modal_blocks(monkeypatch):
+    import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+
+    grab_calls: list[None] = []
+    monkeypatch.setattr(
+        chat_screen_module,
+        "grab_clipboard_image",
+        lambda: grab_calls.append(None),
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(console, "_console_setup_modal_blocking", lambda: True)
+
+        console.action_paste_clipboard_image()
+        await pilot.pause(0.2)
+
+        assert grab_calls == []
+        store = console._ensure_console_chat_store()
+        sid = store.active_session_id
+        assert sid is None or store.pending_attachment(sid) is None
+
+
+@pytest.mark.asyncio
+async def test_staging_appends_and_caps_at_five(tmp_path, monkeypatch):
+    from PIL import Image as PILImage
+
+    paths = []
+    for index in range(6):
+        p = tmp_path / f"img{index}.png"
+        PILImage.new("RGB", (8, 8), (index * 30, 9, 9)).save(p, format="PNG")
+        paths.append(p)
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    notifications: list[str] = []
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        import tldw_chatbook.Chat.attachment_core as attachment_core
+
+        original_load = attachment_core.load_processed_file
+
+        async def _rooted(file_path, *, allowed_root=None):
+            return await original_load(file_path, allowed_root=str(tmp_path))
+
+        monkeypatch.setattr(attachment_core, "load_processed_file", _rooted)
+        monkeypatch.setattr(
+            console.app_instance,
+            "notify",
+            lambda message, **kwargs: notifications.append(str(message)),
+        )
+
+        store = console._ensure_console_chat_store()
+        for index in range(5):
+            await console._process_console_attachment(str(paths[index]))
+            session_id = store.active_session_id
+            assert len(store.pending_attachments(session_id)) == index + 1
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        # The composer prepends its own 📎 glyph, so the label PARAMETER is
+        # glyph-free while the RENDERED indicator carries exactly one glyph.
+        assert composer._pending_attachment_label == "5 files"
+        await pilot.pause()
+        indicator = console.query_one("#console-attachment-indicator", Static)
+        rendered = str(indicator.renderable)
+        assert "📎 5 files" in rendered
+        assert "📎 📎" not in rendered
+
+        await console._process_console_attachment(str(paths[5]))
+        assert len(store.pending_attachments(store.active_session_id)) == 5
+        assert any("Attachment limit reached (5 per message)." in n for n in notifications)
+
+
+@pytest.mark.asyncio
+async def test_save_image_saves_all_attachments(tmp_path, monkeypatch):
+    from tldw_chatbook.Chat.console_chat_models import MessageAttachment
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    notifications: list[str] = []
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        monkeypatch.setattr(
+            "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
+            lambda section, key, default=None: str(tmp_path)
+            if (section, key) == ("chat.images", "save_location")
+            else default,
+        )
+        monkeypatch.setattr(
+            console.app_instance,
+            "notify",
+            lambda message, **kwargs: notifications.append(str(message)),
+        )
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="three",
+            attachments=(
+                MessageAttachment(data=b"img-0", mime_type="image/png", display_name="a.png", position=0),
+                MessageAttachment(data=b"img-1", mime_type="image/png", display_name="b.png", position=1),
+                MessageAttachment(data=b"img-2", mime_type="image/jpeg", display_name="c.jpg", position=2),
+            ),
+        )
+
+        await console._save_console_message_image(message.id)
+
+        saved = sorted(tmp_path.glob("console_image_*"))
+        assert len(saved) == 3
+        assert any("Saved 3 images to" in n for n in notifications)
+
+
+def test_console_message_serialization_round_trips_multi_attachment_labels():
+    """Verify multi-attachment messages serialize to labels-only and restore metadata-only.
+
+    Companion to `test_console_message_serialization_carries_image_metadata_not_bytes`:
+    that test covers the single-attachment (scalar-only) shape, this one
+    covers the `attachment_labels` list a 2+ attachment message carries.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, MessageAttachment
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="two files",
+        image_data=b"\x89PNG-a",
+        image_mime_type="image/png",
+        attachment_label="a.png",
+        attachments=(
+            MessageAttachment(data=b"\x89PNG-a", mime_type="image/png", display_name="a.png", position=0),
+            MessageAttachment(data=b"\x89PNG-b", mime_type="image/png", display_name="b.png", position=1),
+        ),
+    )
+
+    payload = ChatScreen._serialize_console_message(message)
+
+    assert payload["attachment_labels"] == ["a.png", "b.png"]
+    assert "image_data" not in payload
+    assert not any(isinstance(value, (bytes, bytearray)) for value in payload.values())
+
+    restored = ChatScreen._restore_console_message(payload)
+
+    assert restored is not None
+    assert len(restored.attachments) == 2
+    assert [a.display_name for a in restored.attachments] == ["a.png", "b.png"]
+    assert all(a.data is None for a in restored.attachments)

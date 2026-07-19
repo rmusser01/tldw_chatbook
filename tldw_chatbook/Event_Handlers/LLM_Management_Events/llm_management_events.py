@@ -6,6 +6,7 @@ from __future__ import annotations
 #
 import functools
 import logging
+from loguru import logger as _loguru_fallback_logger
 import os
 import shlex
 import subprocess
@@ -57,7 +58,7 @@ def _make_path_update_callback(app: "TldwCli", input_widget_id: str, is_director
     Return a callback that sets an input widget's value to a picked path.
     If is_directory is True, it uses the parent directory of the selected file.
     """
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
 
     async def _callback(selected_path: Optional[Path]) -> None:
         if selected_path:
@@ -67,7 +68,7 @@ def _make_path_update_callback(app: "TldwCli", input_widget_id: str, is_director
                 input_widget.value = str(final_path)
                 logger.info(f"Updated input {input_widget_id} with path: {final_path}")
             except Exception as err:
-                logger.error(f"Error updating input #{input_widget_id}: {err}", exc_info=True)
+                logger.opt(exception=True).error(f"Error updating input #{input_widget_id}: {err}")
                 app.notify(f"Error setting path for {input_widget_id}.", severity="error")
         else:
             logger.info("File/Directory selection cancelled for #%s.", input_widget_id)
@@ -80,7 +81,7 @@ def _make_path_update_callback(app: "TldwCli", input_widget_id: str, is_director
 
 
 async def handle_llamafile_browse_exec_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Llamafile browse executable button pressed.")
 
     exec_filters = Filters(("Executables", lambda p: p.is_file()))
@@ -94,7 +95,7 @@ async def handle_llamafile_browse_exec_button_pressed(app: "TldwCli", event: But
 
 
 async def handle_llamafile_browse_model_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Llamafile browse model button pressed.")
 
     gguf_filters = Filters(
@@ -138,7 +139,7 @@ def _set_llamafile_process_on_app(app_instance: "TldwCli", process: Optional[sub
 
 
 def run_llamafile_server_worker(app_instance: "TldwCli", command: List[str]) -> str:
-    logger = getattr(app_instance, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app_instance, "loguru_logger", _loguru_fallback_logger)
     quoted_command = ' '.join(shlex.quote(c) for c in command)
     logger.info(f"Llamafile WORKER (diag v2) starting with command: {quoted_command}")
 
@@ -294,7 +295,7 @@ def run_llamafile_server_worker(app_instance: "TldwCli", command: List[str]) -> 
         raise
     except Exception as err:
         msg = f"CRITICAL ERROR in Llamafile worker: {err} (Command: {quoted_command})"
-        logger.error(msg, exc_info=True)
+        logger.opt(exception=True).error(msg)
         app_instance.call_from_thread(app_instance._update_llamafile_log, f"[bold red]{msg}[/]\n")
         raise
     finally:
@@ -323,7 +324,7 @@ def _set_llamacpp_process_on_app(app_instance: "TldwCli", process: Optional[subp
 
 
 def run_llamacpp_server_worker(app_instance: "TldwCli", command: List[str]) -> str | None:
-    logger = getattr(app_instance, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app_instance, "loguru_logger", _loguru_fallback_logger)
     quoted_command = ' '.join(shlex.quote(c) for c in command)
     logger.info(f"Llama.cpp WORKER (persistent stream) starting with command: {quoted_command}")
 
@@ -436,7 +437,7 @@ def run_llamacpp_server_worker(app_instance: "TldwCli", command: List[str]) -> s
         raise
     except Exception as err:
         msg = f"CRITICAL ERROR in Llama.cpp worker (persistent stream): {err} (Command: {quoted_command})"
-        logger.error(msg, exc_info=True)
+        logger.opt(exception=True).error(msg)
         app_instance.call_from_thread(app_instance._update_llamacpp_log, f"[bold red]{msg}[/]\n")
         raise
     finally:
@@ -471,7 +472,7 @@ class ModelDownloadWorker(Worker):
         super().__init__()
         self.app_instance = app_instance
         self.command = command
-        self.logger = getattr(app_instance, "loguru_logger", logging.getLogger(__name__))
+        self.logger = getattr(app_instance, "loguru_logger", _loguru_fallback_logger)
     
     async def run(self):
         """Run the model download process."""
@@ -505,7 +506,7 @@ class ModelDownloadWorker(Worker):
             
         except Exception as err:  # pragma: no cover
             msg = f"ERROR in model‑download worker: {err}\n"
-            self.logger.error(msg.rstrip(), exc_info=True)
+            self.logger.opt(exception=True).error(msg.rstrip())
             self.app_instance.call_from_thread(self.app_instance._update_model_download_log, msg)
             yield msg
 
@@ -518,7 +519,7 @@ class ModelDownloadWorker(Worker):
 async def stream_worker_output_to_log(app: "TldwCli", worker: Worker, log_widget_id: str):
     """Forward *worker*'s yielded final messages to *log_widget_id*."""
 
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
 
     # FIXME
     try:
@@ -552,7 +553,7 @@ async def stream_worker_output_to_log(app: "TldwCli", worker: Worker, log_widget
 
 
 async def handle_start_llamafile_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to start Llamafile server.")
 
     try:
@@ -616,13 +617,12 @@ async def handle_start_llamafile_server_button_pressed(app: "TldwCli", event: Bu
         )
         app.notify("Llamafile server starting…")
     except Exception as err:
-        # Corrected the logger call to pass exc_info=True
-        logger.error(f"Error preparing to start Llamafile server: {err}", exc_info=True)
+        logger.opt(exception=True).error(f"Error preparing to start Llamafile server: {err}")
         app.notify("Error setting up Llamafile server start.", severity="error")
 
 
 async def handle_stop_llamafile_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to stop Llamafile server.")
 
     log_output_widget: Optional[RichLog] = None
@@ -662,7 +662,7 @@ async def handle_stop_llamafile_server_button_pressed(app: "TldwCli", event: But
                     f"Error ensuring Llamafile server (PID: {pid}) was killed: {e_kill_wait}\n")
             app.notify("Llamafile server killed after timeout.", severity="warning")
         except Exception as e_term:
-            logger.error(f"Error during Llamafile server termination (PID: {pid}): {e_term}", exc_info=True)
+            logger.opt(exception=True).error(f"Error during Llamafile server termination (PID: {pid}): {e_term}")
             if log_output_widget: log_output_widget.write(f"Error stopping Llamafile server (PID: {pid}): {e_term}\n")
             app.notify(f"Error stopping Llamafile server: {e_term}", severity="error")
         finally:
@@ -693,7 +693,7 @@ async def handle_stop_llamafile_server_button_pressed(app: "TldwCli", event: But
 
 
 async def handle_llamacpp_browse_exec_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Llama.cpp browse executable button pressed.")
 
     exec_filters = Filters(("Executables", lambda p: p.is_file()))
@@ -724,7 +724,7 @@ async def handle_llamacpp_browse_model_button_pressed(app: "TldwCli", event: But
 
 
 async def handle_start_llamacpp_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to start Llama.cpp server.")
 
     try:
@@ -790,13 +790,13 @@ async def handle_start_llamacpp_server_button_pressed(app: "TldwCli", event: But
 
         app.notify("Llama.cpp server starting…")
     except Exception as err:
-        logger.error(f"Error preparing to start Llama.cpp server: {err}", exc_info=True)
+        logger.opt(exception=True).error(f"Error preparing to start Llama.cpp server: {err}")
         app.notify("Error setting up Llama.cpp server start.", severity="error")
 
 
 async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
     """Stops the Llama.cpp server process if it is running."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to stop Llama.cpp server.")
 
     log_output_widget = None
@@ -835,7 +835,7 @@ async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Butt
                 start_button.disabled = False
                 stop_button.disabled = True
             except Exception as e:  # Catch other errors during wait/terminate like process already exited
-                logger.error(f"Error during Llama.cpp server termination (PID: {pid}): {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Error during Llama.cpp server termination (PID: {pid}): {e}")
                 log_output_widget.write(f"Error stopping Llama.cpp server (PID: {pid}): {e}\n")
                 app.notify(f"Error stopping Llama.cpp server: {e}", severity="error")
                 # Attempt to reset buttons on error
@@ -845,8 +845,7 @@ async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Butt
                     start_button.disabled = False
                     stop_button.disabled = True
                 except QueryError as q_err:  # pragma: no cover
-                    logger.error(f"Failed to query buttons to reset state after termination error: {q_err}",
-                                 exc_info=True)
+                    logger.opt(exception=True).error(f"Failed to query buttons to reset state after termination error: {q_err}")
         else:
             logger.info("Llama.cpp server is not running or process attribute is missing.")
             log_output_widget.write("Llama.cpp server is not running or was already stopped.\n")
@@ -858,7 +857,7 @@ async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Butt
             stop_button.disabled = True
 
     except QueryError as e:  # pragma: no cover
-        logger.error(f"Could not find #llamacpp-log-output or a button: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Could not find #llamacpp-log-output or a button: {e}")
         app.notify("Error: UI widget not found during stop operation.", severity="error")
         # Attempt to reset buttons even if log widget is missing
         try:
@@ -867,9 +866,9 @@ async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Butt
             start_button.disabled = False
             stop_button.disabled = True
         except QueryError as q_err:  # pragma: no cover
-            logger.error(f"Failed to query buttons to reset state after QueryError: {q_err}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to query buttons to reset state after QueryError: {q_err}")
     except Exception as e:  # Catch any other unexpected errors
-        logger.error(f"Error stopping Llama.cpp server: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error stopping Llama.cpp server: {e}")
         if log_output_widget:  # Check if log_widget was found before error
             log_output_widget.write(f"An unexpected error occurred while stopping the server: {e}\n")
         app.notify(f"An unexpected error occurred: {e}", severity="error")
@@ -880,7 +879,7 @@ async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Butt
             start_button.disabled = False
             stop_button.disabled = True
         except QueryError as q_err:  # pragma: no cover
-            logger.error(f"Failed to query buttons to reset state after generic error: {q_err}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to query buttons to reset state after generic error: {q_err}")
     finally:
         if hasattr(app, 'llamacpp_server_process'):
             app.llamacpp_server_process = None
@@ -897,7 +896,7 @@ async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Butt
             start_button.disabled = is_running
             stop_button.disabled = not is_running
         except QueryError as q_err:  # pragma: no cover
-            logger.error(f"Failed to query buttons in finally block: {q_err}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to query buttons in finally block: {q_err}")
 
 
 ###############################################################################
@@ -920,7 +919,7 @@ async def handle_browse_models_dir_button_pressed(app: "TldwCli", event: Button.
 async def handle_start_model_download_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
     """Validate inputs and launch *run_model_download_worker*."""
 
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to download a model from Hugging Face.")
 
     try:
@@ -971,7 +970,7 @@ async def handle_start_model_download_button_pressed(app: "TldwCli", event: Butt
             ))
         app.notify("Model download started…")
     except Exception as err:  # pragma: no cover
-        logger.error("Error preparing model download: %s", err, exc_info=True)
+        logger.opt(exception=True).error("Error preparing model download: %s", err)
         app.notify("Error setting up model download.", severity="error")
 
 async def populate_llm_help_texts(app: 'TldwCli') -> None:
@@ -999,7 +998,7 @@ async def populate_llm_help_texts(app: 'TldwCli') -> None:
     except QueryError:
         app.loguru_logger.debug("Failed to find #llamacpp-args-help-display widget.")
     except Exception as e:
-        app.loguru_logger.error(f"Error populating Llama.cpp help: {e}", exc_info=True)
+        app.loguru_logger.opt(exception=True).error(f"Error populating Llama.cpp help: {e}")
     try:
         # Llamafile - only populate if the view is active
         if app.llm_active_view == "llm-view-llamafile":
@@ -1010,7 +1009,7 @@ async def populate_llm_help_texts(app: 'TldwCli') -> None:
     except QueryError:
         app.loguru_logger.debug("Failed to find #llamafile-args-help-display widget.")
     except Exception as e:
-        app.loguru_logger.error(f"Error populating Llamafile help: {e}", exc_info=True)
+        app.loguru_logger.opt(exception=True).error(f"Error populating Llamafile help: {e}")
     try:
         # MLX-LM - only populate if the view is active
         if app.llm_active_view == "llm-view-mlx-lm":
@@ -1021,7 +1020,7 @@ async def populate_llm_help_texts(app: 'TldwCli') -> None:
     except QueryError:
         app.loguru_logger.debug("Failed to find #mlx-args-help-display widget.")
     except Exception as e:
-        app.loguru_logger.error(f"Error populating MLX-LM help: {e}", exc_info=True)
+        app.loguru_logger.opt(exception=True).error(f"Error populating MLX-LM help: {e}")
 
 # --- Button Handler Map ---
 LLM_MANAGEMENT_BUTTON_HANDLERS = {

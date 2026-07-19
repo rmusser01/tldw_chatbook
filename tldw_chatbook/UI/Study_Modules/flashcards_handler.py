@@ -610,7 +610,7 @@ class StudyFlashcardsController:
                 **self._workspace_create_arguments(),
             )
         except Exception:
-            logger.error("Failed to create study deck", exc_info=True)
+            logger.opt(exception=True).error("Failed to create study deck")
             self._notify("Failed to create deck.", severity="error")
             return
 
@@ -662,7 +662,7 @@ class StudyFlashcardsController:
                 extra=None,
             )
         except Exception:
-            logger.error("Failed to create study flashcard", exc_info=True)
+            logger.opt(exception=True).error("Failed to create study flashcard")
             self._notify("Failed to create flashcard.", severity="error")
             return
 
@@ -714,7 +714,7 @@ class StudyFlashcardsController:
                 hard_delete=False,
             )
         except Exception:
-            logger.error("Failed to delete study flashcard", exc_info=True)
+            logger.opt(exception=True).error("Failed to delete study flashcard")
             self._notify("Failed to delete flashcard.", severity="error")
             return
 
@@ -747,7 +747,7 @@ class StudyFlashcardsController:
                 expected_version=selected_card.get("version"),
             )
         except Exception:
-            logger.error("Failed to move study flashcard", exc_info=True)
+            logger.opt(exception=True).error("Failed to move study flashcard")
             self._notify("Failed to move flashcard.", severity="error")
             return
 
@@ -781,7 +781,7 @@ class StudyFlashcardsController:
                 hard_delete=False,
             )
         except Exception:
-            logger.error("Failed to delete study deck", exc_info=True)
+            logger.opt(exception=True).error("Failed to delete study deck")
             self._notify("Failed to delete deck.", severity="error")
             return
 
@@ -832,7 +832,7 @@ class StudyFlashcardsController:
                 current_card=self.current_review_card,
             )
         except Exception:
-            logger.error("Failed to submit flashcard review", exc_info=True)
+            logger.opt(exception=True).error("Failed to submit flashcard review")
             self._notify("Failed to save review.", severity="error")
             return
 
@@ -859,7 +859,7 @@ class StudyFlashcardsController:
                 deck_id=deck_id,
             )
         except Exception:
-            logger.error("Failed to fetch next review candidate", exc_info=True)
+            logger.opt(exception=True).error("Failed to fetch next review candidate")
             self._notify("Failed to load review card.", severity="error")
             return
 
@@ -896,7 +896,7 @@ class StudyFlashcardsController:
             await service.end_review_session(**teardown_request)
         except Exception:
             self._pending_review_session_teardown = teardown_request
-            logger.warning("Failed to end review session {}", teardown_request.get("review_session_id"), exc_info=True)
+            logger.opt(exception=True).warning("Failed to end review session {}", teardown_request.get("review_session_id"))
             return
 
         self._pending_review_session_teardown = None

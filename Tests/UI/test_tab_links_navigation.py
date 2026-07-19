@@ -18,7 +18,7 @@ from tldw_chatbook.Constants import (
     TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH,
     TAB_INGEST, TAB_EVALS, TAB_LLM, TAB_TOOLS_SETTINGS,
     TAB_STATS, TAB_LOGS, TAB_CODING, TAB_STTS, TAB_STUDY,
-    TAB_CHATBOOKS, TAB_MCP, ALL_TABS, TAB_GROUPS
+    TAB_CHATBOOKS, TAB_MCP, TAB_RESEARCH, ALL_TABS, TAB_GROUPS
 )
 
 
@@ -55,6 +55,10 @@ def _expected_current_tab(tab_id: str) -> str:
         return TAB_MCP
     if tab_id == TAB_CCP:
         return "personas"
+    if tab_id == TAB_RESEARCH:
+        # The orphan "research" screen registration is removed (Task 255):
+        # the route id is now a compatibility alias that lands on Library.
+        return "library"
     return tab_id
 
 

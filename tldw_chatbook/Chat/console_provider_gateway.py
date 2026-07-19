@@ -33,6 +33,16 @@ from tldw_chatbook.Utils.input_validation import validate_url
 
 
 DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
+PROBE_TIMEOUT_SECONDS = 5.0
+"""Per-request timeout for readiness probes (``/health``, ``/v1/models``)."""
+GENERATION_CONNECT_TIMEOUT_SECONDS = 10.0
+"""Connect timeout for the owned HTTP client used for generation calls."""
+GENERATION_READ_TIMEOUT_SECONDS = 300.0
+"""Read/write/pool timeout for generation calls.
+
+Large local models routinely need 60-180s for a non-streamed completion, so
+the owned client must not cap reads at the old 30s ceiling.
+"""
 INVALID_LLAMACPP_BASE_URL_COPY = (
     "Provider blocked: invalid llama.cpp base URL. "
     "Use an http(s) URL such as http://127.0.0.1:9099."
@@ -207,6 +217,7 @@ class ConsoleProviderResolution:
 class _QueueItem:
     kind: str
     text: str = ""
+    payload: Any = None
 
     @classmethod
     def content(cls, text: str) -> "_QueueItem":
@@ -219,6 +230,134 @@ class _QueueItem:
     @classmethod
     def done(cls) -> "_QueueItem":
         return cls("done")
+
+    @classmethod
+    def native_tool_calls(cls, calls: tuple) -> "_QueueItem":
+        return cls("tool_calls", payload=calls)
+
+
+@dataclass(frozen=True)
+class ProviderToolCalls:
+    """Accumulated native tool-calls, yielded as ``stream_chat``'s FINAL
+    item -- and only when the caller passed ``tools=``. Plain Console sends
+    never receive one. ``tool_calls`` entries are OpenAI-shape dicts with
+    streaming fragments already merged."""
+
+    tool_calls: tuple[dict, ...]
+
+
+_PRESERVED_FRAGMENT_EXTRAS = frozenset({
+    # Gemini 3 thought signatures — must round-trip verbatim (task-266).
+    "google_thought_signature",
+})
+
+
+class _ToolCallAccumulator:
+    """Merges OpenAI streaming ``delta.tool_calls`` fragments (and
+    non-streaming ``message.tool_calls`` entries) into complete calls."""
+
+    def __init__(self) -> None:
+        self._by_index: dict[int, dict] = {}
+
+    def feed_payload(self, payload: Any) -> None:
+        if not isinstance(payload, Mapping):
+            return
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return
+        first = choices[0]
+        if not isinstance(first, Mapping):
+            return
+        message = first.get("message")
+        if isinstance(message, Mapping):
+            for i, raw in enumerate(message.get("tool_calls") or []):
+                if isinstance(raw, Mapping):
+                    self._merge(i, raw)
+        delta = first.get("delta")
+        if isinstance(delta, Mapping):
+            for raw in delta.get("tool_calls") or []:
+                if isinstance(raw, Mapping):
+                    try:
+                        index = int(raw.get("index", 0))
+                    except (TypeError, ValueError):
+                        index = 0
+                    self._merge(index, raw)
+
+    def _merge(self, index: int, fragment: Mapping[str, Any]) -> None:
+        if index not in self._by_index:
+            self._by_index[index] = {"id": "", "type": "function",
+                                     "function": {"name": "", "arguments": ""}}
+        entry = self._by_index[index]
+        if fragment.get("id"):
+            entry["id"] = str(fragment["id"])
+        if fragment.get("type"):
+            entry["type"] = str(fragment["type"])
+        function = fragment.get("function")
+        if isinstance(function, Mapping):
+            if function.get("name"):
+                entry["function"]["name"] = str(function["name"])
+            arguments = function.get("arguments")
+            if isinstance(arguments, str):
+                entry["function"]["arguments"] += arguments
+            elif isinstance(arguments, Mapping):
+                entry["function"]["arguments"] = json.dumps(arguments)
+        # Preserve KNOWN provider-specific extra keys verbatim (last-wins;
+        # falsy-but-present survives, None drops) — e.g. Gemini 3 thought
+        # signatures, which the request converter must echo back (task-266
+        # live gate). Allow-listed rather than open-ended so a quirky
+        # provider can't inject arbitrary keys that get echoed into the
+        # next request (PR #662 final-review minor).
+        for key in _PRESERVED_FRAGMENT_EXTRAS:
+            if key in fragment and fragment[key] is not None:
+                entry[key] = fragment[key]
+
+    def calls(self) -> tuple[dict, ...]:
+        # Numeric index order, not first-seen order: the provider's index
+        # field defines the batch's array position, and fragments may arrive
+        # interleaved/out of order (PR #648 review).
+        return tuple(self._by_index[i] for i in sorted(self._by_index)
+                     if self._by_index[i]["function"]["name"])
+
+
+def _decode_stream_item(item: Any) -> Any:
+    """Best-effort payload decode for accumulator teeing: mappings pass
+    through; SSE ``data: {...}`` strings/bytes are JSON-decoded; anything
+    else (comments, [DONE], junk) yields None."""
+    if isinstance(item, Mapping):
+        return item
+    if isinstance(item, bytes):
+        try:
+            item = item.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    if not isinstance(item, str):
+        return None
+    data = item.strip()
+    if data.startswith("data:"):
+        data = data.removeprefix("data:").strip()
+    if not data or data == "[DONE]":
+        return None
+    try:
+        return json.loads(data)
+    except json.JSONDecodeError:
+        return None
+
+
+def _tee_tool_calls(response: Any, accumulator: _ToolCallAccumulator) -> Any:
+    """Feed every provider item through ``accumulator``, unchanged, for the
+    three shapes ``chat_api_call`` returns: a full mapping (non-streaming),
+    an iterator of mappings, or an iterator of SSE strings."""
+    if isinstance(response, Mapping):
+        accumulator.feed_payload(response)
+        return response
+    if not _is_iterable_response(response):
+        return response
+
+    def generator():
+        for item in response:
+            accumulator.feed_payload(_decode_stream_item(item))
+            yield item
+    return generator()
 
 
 def build_llamacpp_chat_payload(
@@ -269,7 +408,11 @@ class ConsoleProviderGateway:
     """Resolve Console providers and stream chat responses.
 
     Args:
-        http_client: Optional HTTP client for llama.cpp probes and calls.
+        http_client: Optional HTTP client for llama.cpp probes and calls. When
+            omitted, an owned client is created with a generous read timeout
+            (``GENERATION_READ_TIMEOUT_SECONDS``) so slow local generations do
+            not fail mid-request; probes always pass a short per-request
+            timeout (``PROBE_TIMEOUT_SECONDS``).
         config_provider: Callable returning the current app configuration.
         environ: Optional environment mapping for provider readiness checks.
         chat_api_call_fn: Optional replacement for ``chat_api_call`` in tests.
@@ -286,7 +429,16 @@ class ConsoleProviderGateway:
         safe_error_copy: Callable[[str, BaseException], str] | None = None,
     ) -> None:
         self._owns_http_client = http_client is None
-        self.http_client = http_client or httpx.AsyncClient(timeout=30.0)
+        self.http_client = http_client or self._new_owned_http_client()
+        self._client_loop: asyncio.AbstractEventLoop | None = None
+        # Guards the check-and-swap in `_active_http_client` as a single
+        # atomic critical section (PR #629 Fix 1(a)): concurrent callers on
+        # different loops/threads -- e.g. the app loop's readiness probe
+        # racing the agent worker thread's per-turn loop -- must never
+        # interleave the read-then-write, which could otherwise desync
+        # `http_client` from `_client_loop` (a client bound to one loop
+        # while the recorded loop is a different one).
+        self._client_lock = threading.Lock()
         self._config_provider = config_provider or (lambda: {})
         self._environ = environ
         self._chat_api_call_fn = chat_api_call_fn
@@ -300,6 +452,90 @@ class ConsoleProviderGateway:
         """
         if self._owns_http_client:
             await self.http_client.aclose()
+
+    @staticmethod
+    def _new_owned_http_client() -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=GENERATION_CONNECT_TIMEOUT_SECONDS,
+                read=GENERATION_READ_TIMEOUT_SECONDS,
+                write=GENERATION_READ_TIMEOUT_SECONDS,
+                pool=GENERATION_READ_TIMEOUT_SECONDS,
+            )
+        )
+
+    def _active_http_client(self) -> httpx.AsyncClient:
+        """Return an HTTP client bound to the CURRENTLY running event loop.
+
+        The Console reuses one gateway instance for both readiness probes
+        (awaited on the app's own event loop) and agent-runtime generation
+        calls (bridged from a worker thread via a fresh ``asyncio.run()``
+        per turn -- see ``console_agent_bridge._StreamingModelAdapter``).
+        httpx/httpcore lazily bind their internal connection-pool
+        ``asyncio.Lock``/``Event`` objects to whichever loop first touches
+        them; reusing that same client from a second, different loop raises
+        ``RuntimeError: ... is bound to a different event loop`` (or, once
+        the first loop has since closed, ``RuntimeError: Event loop is
+        closed``) on every request -- observed live as every agent send
+        failing with "Agent run failed: ... is bound to a different event
+        loop." Recreate the owned client whenever the running loop changes
+        so each loop gets its own client; injected clients (tests) are
+        trusted to manage their own loop lifecycle and are left untouched.
+
+        The read-check-swap below is guarded by ``_client_lock`` (PR #629
+        Fix 1(a)): without it, two concurrent callers on different
+        loops/threads (the app loop's readiness probe racing the agent
+        worker thread's per-turn loop) can each read the same stale
+        ``(http_client, _client_loop)`` pair before either writes, then
+        both swap -- whichever writer's ``self.http_client`` assignment
+        loses the race ends up paired with the *other* writer's
+        ``self._client_loop`` assignment, leaving the recorded loop and the
+        actual client bound to different loops. The very next probe on the
+        recorded loop then reuses a client bound elsewhere and crashes.
+        Holding the lock across the whole check, creation, and both
+        assignments makes the swap a single atomic step.
+        """
+        if not self._owns_http_client:
+            return self.http_client
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return self.http_client
+        with self._client_lock:
+            if self._client_loop is loop:
+                return self.http_client
+            stale_client, stale_loop = self.http_client, self._client_loop
+            self.http_client = self._new_owned_http_client()
+            self._client_loop = loop
+            active_client = self.http_client
+        # Best-effort close of whatever this swap replaced -- including the
+        # very first swap, where `stale_loop` is still `None` (there is no
+        # previous loop to close it on). A dropped owned client must never
+        # simply leak (PR #629 Fix 1(b)): fall back to closing it on the
+        # loop that just replaced it, which is safe since we are executing
+        # inside that running loop right now. Scheduling the close outside
+        # the lock keeps the critical section itself minimal.
+        self._schedule_stale_client_close(
+            stale_client, stale_loop if stale_loop is not None else loop
+        )
+        return active_client
+
+    @staticmethod
+    def _schedule_stale_client_close(
+        client: httpx.AsyncClient, loop: asyncio.AbstractEventLoop
+    ) -> None:
+        """Best-effort close of a client left behind by a loop swap.
+
+        The previous loop may already be closed (a completed per-turn
+        ``asyncio.run()``) or may still be running elsewhere (the app's
+        main loop) -- either way this must never raise into the caller
+        that triggered the swap.
+        """
+        try:
+            future = asyncio.run_coroutine_threadsafe(client.aclose(), loop)
+        except RuntimeError:
+            return
+        future.add_done_callback(lambda f: f.exception())
 
     async def resolve_llamacpp(self, config: LlamaCppProviderConfig) -> ConsoleProviderResolution:
         """Resolve llama.cpp readiness and the effective model.
@@ -347,7 +583,10 @@ class ConsoleProviderGateway:
             )
 
         try:
-            response = await self.http_client.get(f"{base_url.rstrip('/')}/v1/models")
+            response = await self._active_http_client().get(
+                f"{base_url.rstrip('/')}/v1/models",
+                timeout=PROBE_TIMEOUT_SECONDS,
+            )
         except httpx.HTTPError:
             return ConsoleProviderResolution(
                 provider="llama_cpp",
@@ -553,7 +792,7 @@ class ConsoleProviderGateway:
         emitted_content = False
         stream_error: httpx.HTTPError | None = None
         try:
-            async with self.http_client.stream(
+            async with self._active_http_client().stream(
                 "POST",
                 f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
                 json=payload,
@@ -619,7 +858,7 @@ class ConsoleProviderGateway:
         if not validate_url(normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
 
-        response = await self.http_client.post(
+        response = await self._active_http_client().post(
             f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
             json=build_llamacpp_chat_payload(
                 model=model,
@@ -639,15 +878,23 @@ class ConsoleProviderGateway:
         self,
         resolution: ConsoleProviderResolution,
         messages: list[Mapping[str, Any]],
-    ) -> AsyncIterator[str]:
+        tools: list | None = None,
+    ) -> AsyncIterator[str | ProviderToolCalls]:
         """Dispatch streaming for a resolved Console provider.
 
         Args:
             resolution: Provider resolution produced by ``resolve_for_send``.
             messages: OpenAI-compatible chat messages.
+            tools: Optional OpenAI-shape tool definitions. When omitted,
+                behavior is byte-identical to a plain Console send. When
+                provided, yields str chunks as before; if the provider
+                returned native tool-calls, the final item is a
+                ``ProviderToolCalls`` instead of a str.
 
         Yields:
-            Assistant-visible content chunks.
+            Assistant-visible content chunks, and -- only when ``tools`` was
+            passed and the provider returned native tool-calls -- a final
+            ``ProviderToolCalls``.
         """
         if not resolution.ready or not resolution.model:
             return
@@ -679,7 +926,7 @@ class ConsoleProviderGateway:
                 yield chunk
             return
         if resolution.execution_key:
-            async for chunk in self._stream_generic_chat(resolution, messages):
+            async for chunk in self._stream_generic_chat(resolution, messages, tools=tools):
                 yield chunk
             return
 
@@ -687,7 +934,8 @@ class ConsoleProviderGateway:
         self,
         resolution: ConsoleProviderResolution,
         messages: list[Mapping[str, Any]],
-    ) -> AsyncIterator[str]:
+        tools: list | None = None,
+    ) -> AsyncIterator[str | ProviderToolCalls]:
         """Bridge synchronous chat_api_call responses into async Console chunks."""
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
@@ -701,12 +949,41 @@ class ConsoleProviderGateway:
 
         def worker() -> None:
             try:
-                kwargs = self._chat_api_kwargs(resolution, messages)
+                kwargs = self._chat_api_kwargs(resolution, messages, tools=tools)
                 response = self._chat_api_call(**kwargs)
-                for text in self.normalize_provider_response(response):
+                accumulator = _ToolCallAccumulator() if tools else None
+                if accumulator is not None:
+                    response = _tee_tool_calls(response, accumulator)
+                emitted_content = False
+                # tools= runs: fallback UI copy must never leak into agent
+                # history, so it is suppressed at GENERATION (not filtered
+                # by string equality — review minor m4: a real answer that
+                # happens to equal the copy text now flows through).
+                for text in self.normalize_provider_response(
+                        response,
+                        suppress_fallback_copy=accumulator is not None):
                     if stop_event.is_set():
                         break
+                    if text:
+                        emitted_content = True
                     enqueue(_QueueItem.content(text))
+                if accumulator is not None:
+                    calls = accumulator.calls()
+                    if calls:
+                        enqueue(_QueueItem.native_tool_calls(calls))
+                    elif not emitted_content:
+                        # PR #648 review Minor 1: the turn produced NEITHER
+                        # visible content NOR tool-calls. On the fence path
+                        # junk surfaces as diagnostic copy; silently
+                        # completing here would make a misbehaving provider's
+                        # junk 200-body indistinguishable from a legitimate
+                        # empty answer. Surface it as a provider error,
+                        # feeding the run's existing honest RUN_ERROR path.
+                        enqueue(_QueueItem.error(self._safe_error_copy(
+                            resolution.provider,
+                            ChatProviderError(
+                                "Provider returned no content and no tool calls.",
+                                provider=resolution.provider))))
             except BaseException as exc:
                 enqueue(_QueueItem.error(self._safe_error_copy(resolution.provider, exc)))
             finally:
@@ -723,6 +1000,9 @@ class ConsoleProviderGateway:
                         item.text or safe_provider_error_copy(resolution.provider, ChatProviderError()),
                         provider=resolution.provider,
                     )
+                if item.kind == "tool_calls":
+                    yield ProviderToolCalls(tuple(item.payload))
+                    continue
                 if item.text:
                     yield item.text
         finally:
@@ -733,18 +1013,29 @@ class ConsoleProviderGateway:
                 await asyncio.wait_for(asyncio.shield(worker_task), timeout=0)
 
     @staticmethod
-    def normalize_provider_response(response: Any) -> Iterator[str]:
+    def normalize_provider_response(
+        response: Any, suppress_fallback_copy: bool = False,
+    ) -> Iterator[str]:
         """Yield safe assistant-visible chunks from generic provider output.
 
         Args:
             response: Raw return value from ``chat_api_call``.
+            suppress_fallback_copy: When True (tools= agent runs), the
+                NO_PROVIDER_CONTENT / UNSUPPORTED fallback UI copy is never
+                GENERATED instead of being string-filtered downstream — so a
+                real model answer that happens to equal the copy text flows
+                through untouched (review minor m4, PR #648 line).
 
         Yields:
-            Assistant-visible text chunks or normalized fallback copy.
+            Assistant-visible text chunks (and, unless suppressed,
+            normalized fallback copy).
         """
         content = _content_from_provider_item(response)
         if isinstance(content, str):
-            yield content if content else NO_PROVIDER_CONTENT_COPY
+            if content:
+                yield content
+            elif not suppress_fallback_copy:
+                yield NO_PROVIDER_CONTENT_COPY
             return
         if content is _UNSUPPORTED_RESPONSE:
             if _is_iterable_response(response):
@@ -759,13 +1050,16 @@ class ConsoleProviderGateway:
                     if item_content is _EMPTY_RESPONSE:
                         continue
                     emitted = True
-                    yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
-                if not emitted:
+                    if not suppress_fallback_copy:
+                        yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
+                if not emitted and not suppress_fallback_copy:
                     yield NO_PROVIDER_CONTENT_COPY
                 return
-            yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
+            if not suppress_fallback_copy:
+                yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
             return
-        yield NO_PROVIDER_CONTENT_COPY
+        if not suppress_fallback_copy:
+            yield NO_PROVIDER_CONTENT_COPY
 
     def _chat_api_call(self, **kwargs: Any) -> Any:
         if self._chat_api_call_fn is None:
@@ -778,6 +1072,7 @@ class ConsoleProviderGateway:
     def _chat_api_kwargs(
         resolution: ConsoleProviderResolution,
         messages: list[Mapping[str, Any]],
+        tools: list | None = None,
     ) -> dict[str, Any]:
         kwargs = {
             "api_endpoint": resolution.execution_key,
@@ -799,6 +1094,7 @@ class ConsoleProviderGateway:
             "verbosity": resolution.verbosity,
             "thinking_effort": resolution.thinking_effort,
             "thinking_budget_tokens": resolution.thinking_budget_tokens,
+            "tools": tools,
         }
         return {key: value for key, value in kwargs.items() if value is not None}
 
@@ -835,7 +1131,10 @@ class ConsoleProviderGateway:
 
     async def _is_reachable(self, base_url: str) -> bool:
         try:
-            await self.http_client.get(f"{base_url.rstrip('/')}/health")
+            await self._active_http_client().get(
+                f"{base_url.rstrip('/')}/health",
+                timeout=PROBE_TIMEOUT_SECONDS,
+            )
         except httpx.HTTPError:
             return False
         return True

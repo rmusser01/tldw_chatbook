@@ -340,7 +340,7 @@ class CodeAuditTool(Tool):
                 return await self._comprehensive_audit(timeframe_hours, risk_filter)
                 
         except Exception as e:
-            logger.error(f"Code audit execution failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Code audit execution failed: {e}")
             return {
                 "error": f"Audit execution failed: {str(e)}",
                 "description": description

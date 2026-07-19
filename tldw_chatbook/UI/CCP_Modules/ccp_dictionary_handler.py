@@ -51,7 +51,7 @@ class CCPDictionaryHandler:
             logger.info(f"Refreshed dictionary list with {len(options)} dictionaries")
             
         except Exception as e:
-            logger.error(f"Error refreshing dictionary list: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error refreshing dictionary list: {e}")
     
     async def handle_load_dictionary(self) -> None:
         """Load the selected dictionary."""
@@ -65,7 +65,7 @@ class CCPDictionaryHandler:
                 logger.warning("No dictionary selected to load")
                 
         except Exception as e:
-            logger.error(f"Error loading selected dictionary: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error loading selected dictionary: {e}")
     
     async def load_dictionary(self, dictionary_id: int) -> None:
         """Load a dictionary and display it (async wrapper).
@@ -124,7 +124,7 @@ class CCPDictionaryHandler:
                 logger.error(f"Failed to load dictionary {dictionary_id}")
                 
         except Exception as e:
-            logger.error(f"Error loading dictionary {dictionary_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error loading dictionary {dictionary_id}: {e}")
     
     def _display_dictionary(self) -> None:
         """Display dictionary in the UI."""
@@ -146,7 +146,7 @@ class CCPDictionaryHandler:
             logger.debug(f"Displayed dictionary '{data.get('name', 'Unknown')}'")
             
         except Exception as e:
-            logger.error(f"Error displaying dictionary: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error displaying dictionary: {e}")
     
     def _display_dictionary_entries(self) -> None:
         """Display dictionary entries in the list."""
@@ -207,7 +207,7 @@ class CCPDictionaryHandler:
             self._populate_editor_fields()
             
         except Exception as e:
-            logger.error(f"Error switching to dictionary editor: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error switching to dictionary editor: {e}")
     
     def _populate_editor_fields(self) -> None:
         """Populate the dictionary editor fields with current data."""
@@ -229,7 +229,7 @@ class CCPDictionaryHandler:
             self._display_editor_entries()
             
         except Exception as e:
-            logger.error(f"Error populating editor fields: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error populating editor fields: {e}")
     
     def _display_editor_entries(self) -> None:
         """Display dictionary entries in the editor list."""
@@ -310,7 +310,7 @@ class CCPDictionaryHandler:
             logger.info(f"Added dictionary entry: {key}")
             
         except Exception as e:
-            logger.error(f"Error adding dictionary entry: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error adding dictionary entry: {e}")
     
     async def handle_remove_entry(self) -> None:
         """Remove the selected dictionary entry."""
@@ -343,7 +343,7 @@ class CCPDictionaryHandler:
                 logger.warning("No entry selected to remove")
                 
         except Exception as e:
-            logger.error(f"Error removing dictionary entry: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error removing dictionary entry: {e}")
     
     async def handle_save_dictionary(self) -> None:
         """Save the dictionary from editor."""
@@ -363,7 +363,7 @@ class CCPDictionaryHandler:
                 await self._create_dictionary(dictionary_data)
                 
         except Exception as e:
-            logger.error(f"Error saving dictionary: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error saving dictionary: {e}")
     
     def _gather_editor_data(self) -> Dict[str, Any]:
         """Gather all data from the editor fields."""
@@ -385,7 +385,7 @@ class CCPDictionaryHandler:
             data["entries"] = self.dictionary_entries
             
         except Exception as e:
-            logger.error(f"Error gathering editor data: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error gathering editor data: {e}")
         
         return data
     
@@ -416,7 +416,7 @@ class CCPDictionaryHandler:
                 logger.error("Failed to create new dictionary")
                 
         except Exception as e:
-            logger.error(f"Error creating dictionary: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error creating dictionary: {e}")
     
     @work(thread=True)
     def _update_dictionary(self, dictionary_id: int, data: Dict[str, Any]) -> None:
@@ -444,7 +444,7 @@ class CCPDictionaryHandler:
                 logger.error(f"Failed to update dictionary {dictionary_id}")
                 
         except Exception as e:
-            logger.error(f"Error updating dictionary: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error updating dictionary: {e}")
     
     async def handle_delete_dictionary(self) -> None:
         """Delete the current dictionary."""
@@ -481,7 +481,7 @@ class CCPDictionaryHandler:
                 logger.error(f"Failed to delete dictionary {self.current_dictionary_id}")
                 
         except Exception as e:
-            logger.error(f"Error deleting dictionary: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error deleting dictionary: {e}")
     
     async def handle_import(self) -> None:
         """Handle import request - prompts for file selection."""
@@ -543,8 +543,7 @@ class CCPDictionaryHandler:
             
         except Exception as e:
             dictionary_name = self.current_dictionary_data.get("name", "<unknown>")
-            logger.error(
+            logger.opt(exception=True).error(
                 f"Error cloning dictionary id={self.current_dictionary_id!r} "
                 f"name={dictionary_name!r}: {e}",
-                exc_info=True,
             )

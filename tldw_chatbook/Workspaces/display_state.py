@@ -307,9 +307,8 @@ def build_console_workspace_state(
     try:
         active_workspace = registry_service.get_active_workspace()
     except Exception:
-        logger.warning(
+        logger.opt(exception=True).warning(
             "Failed to read active workspace for Console context rail",
-            exc_info=True,
         )
         acp_state = _acp_handoff_state(acp_handoff_state)
         return ConsoleWorkspaceContextState(
@@ -459,9 +458,8 @@ def build_library_workspace_depth_state(
     try:
         active_workspace = registry_service.get_active_workspace()
     except Exception:
-        logger.warning(
+        logger.opt(exception=True).warning(
             "Failed to read active workspace for Library workspace depth",
-            exc_info=True,
         )
         rows = _library_source_rows_without_workspace(source_records)
         return LibraryWorkspaceDepthState(
@@ -581,9 +579,8 @@ def _safe_runtime_bindings(
             return ()
         return tuple(runtime_bindings)
     except Exception:
-        logger.warning(
+        logger.opt(exception=True).warning(
             "Failed to read workspace runtime bindings for Console context rail",
-            exc_info=True,
         )
         return ()
 
@@ -594,7 +591,7 @@ def _safe_workspaces(registry_service: Any) -> tuple[WorkspaceRecord, ...]:
     try:
         workspaces = registry_service.list_workspaces()
     except Exception:
-        logger.warning("Failed to list workspaces for display state", exc_info=True)
+        logger.opt(exception=True).warning("Failed to list workspaces for display state")
         return ()
     return tuple(workspaces or ())
 
@@ -606,9 +603,8 @@ def _conversation_rows_from_memberships(
     try:
         memberships = registry_service.list_workspace_memberships(active_workspace.workspace_id)
     except Exception:
-        logger.warning(
+        logger.opt(exception=True).warning(
             "Failed to read workspace memberships for Console context rail",
-            exc_info=True,
         )
         return ()
     if not memberships:
@@ -636,9 +632,8 @@ def _handoff_rows_from_memberships(
     try:
         memberships = registry_service.list_workspace_memberships(active_workspace.workspace_id)
     except Exception:
-        logger.warning(
+        logger.opt(exception=True).warning(
             "Failed to read workspace memberships for Console handoff readiness",
-            exc_info=True,
         )
         return ()
     memberships_seq = tuple(memberships or ())
@@ -787,11 +782,10 @@ def _safe_item_memberships(
     try:
         memberships = get_item_memberships(item_type, item_id)
     except Exception:
-        logger.warning(
+        logger.opt(exception=True).warning(
             "Failed to read Library source workspace memberships",
             item_type=item_type,
             item_id=item_id,
-            exc_info=True,
         )
         return ()
     return tuple(memberships or ())

@@ -10,15 +10,19 @@ from datetime import datetime
 from loguru import logger
 
 # Import tldw_chatbook components
-from ..DB.ChaChaNotes_DB import ChaChaNotes_DB
+from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
-from ..Character_Chat.Character_Chat_Lib import get_character_by_id
+
+# `get_character_by_id` was never a standalone function in
+# Character_Chat_Lib.py; `CharactersRAGDB.get_character_card_by_id()` is
+# the real equivalent, used below instead (QA round
+# mcp-hub-phase3-2026-07, Defect 2).
 
 
 class MCPPrompts:
     """Container for MCP prompt implementations."""
     
-    def __init__(self, chachanotes_db: ChaChaNotes_DB, media_db: MediaDatabase):
+    def __init__(self, chachanotes_db: CharactersRAGDB, media_db: MediaDatabase):
         """Initialize prompts with database connections."""
         self.chachanotes_db = chachanotes_db
         self.media_db = media_db
@@ -309,7 +313,7 @@ class MCPPrompts:
         """
         try:
             # Get character
-            character = get_character_by_id(self.chachanotes_db, character_id)
+            character = self.chachanotes_db.get_character_card_by_id(character_id)
             if not character:
                 return [{
                     "role": "user",

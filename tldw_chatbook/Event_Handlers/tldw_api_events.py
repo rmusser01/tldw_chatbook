@@ -72,7 +72,7 @@ async def handle_tldw_api_media_type_changed(app: 'TldwCli', event: Union[Select
     except QueryError as e:
         logger.error(f"UI component not found for TLDW API media type change: {e}")
     except Exception as ex:
-        logger.error(f"Unexpected error handling media type change: {ex}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error handling media type change: {ex}")
 
 def _collect_common_form_data(app: 'TldwCli', media_type: str) -> Dict[str, Any]:
     """Collects common data fields from the TLDW API form for a given media_type."""
@@ -205,7 +205,7 @@ def _collect_common_form_data(app: 'TldwCli', media_type: str) -> Dict[str, Any]
         logger.error(f"UI field not found: {current_field_template_for_error}. Exception: {e}")
         raise ValueError(f"Required field not found: {current_field_template_for_error}. Check UI composition for media type: {media_type}")
     except Exception as e:
-        logger.error(f"Unexpected error collecting common data for {media_type}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error collecting common data for {media_type}: {e}")
         raise
 
 def _collect_video_specific_data(app: 'TldwCli', common_data: Dict[str, Any], media_type: str) -> ProcessVideoRequest:
@@ -531,14 +531,14 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
             status_area.load_text("Unsupported media type selected. Submission halted.")
             return
     except (QueryError, ValueError) as e:
-        logger.error(f"Error collecting form data for {selected_media_type}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error collecting form data for {selected_media_type}: {e}")
         app.notify(f"Error in form data for {selected_media_type}: {str(e)[:100]}. Please check fields.", severity="error")
         loading_indicator.display = False
         submit_button.disabled = False
         status_area.load_text(f"Error processing form data: {str(e)[:100]}. Submission halted.")
         return
     except Exception as e:
-        logger.error(f"Unexpected error preparing request model for TLDW API ({selected_media_type}): {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error preparing request model for TLDW API ({selected_media_type}): {e}")
         app.notify("Error: Could not prepare data for API request.", severity="error")
         loading_indicator.display = False
         submit_button.disabled = False
@@ -749,7 +749,7 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
                         logger.error(f"Failed to ingest '{item_result.input_ref}' into local DB for {selected_media_type}. Message: {msg}")
                         error_count += 1
                 except Exception as e_ingest:
-                    logger.error(f"Error ingesting item '{item_result.input_ref}' for {selected_media_type} into local DB: {e_ingest}", exc_info=True)
+                    logger.opt(exception=True).error(f"Error ingesting item '{item_result.input_ref}' for {selected_media_type} into local DB: {e_ingest}")
                     error_count += 1
 
                 if media_id_ingested:  # Only add to details if successfully ingested
@@ -806,7 +806,7 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
         except QueryError as e_ui:
             logger.error(f"UI component not found in on_worker_failure for {selected_media_type}: {e_ui}")
 
-        logger.error(f"TLDW API request worker failed for {selected_media_type}: {error}", exc_info=True)
+        logger.opt(exception=True).error(f"TLDW API request worker failed for {selected_media_type}: {error}")
 
         error_message_parts = [f"## API Request Failed! ({selected_media_type.title()})\n\n"]
         brief_notify_message = f"{selected_media_type.title()} API Request Failed."

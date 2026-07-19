@@ -163,7 +163,7 @@ class LibraryMediaViewer(Vertical):
                     compact=True,
                 )
                 yield Button(
-                    "Use in Chat",
+                    "Use in Console",
                     id="library-media-use-in-chat",
                     classes="library-canvas-action",
                     compact=True,
@@ -175,7 +175,7 @@ class LibraryMediaViewer(Vertical):
                     compact=True,
                 )
                 yield Button(
-                    "Open in Media",
+                    "Open in Media manager",
                     id="library-media-open",
                     classes="library-canvas-action",
                     compact=True,
@@ -357,7 +357,7 @@ class LibraryMediaViewer(Vertical):
                 markup=False,
             )
             yield Button(
-                "Edit analysis",
+                "Edit analysis" if self.viewer.analysis else "Add analysis",
                 id="library-media-analysis-edit",
                 classes="library-canvas-action",
                 compact=True,

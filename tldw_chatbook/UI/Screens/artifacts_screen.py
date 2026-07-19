@@ -292,9 +292,8 @@ class ArtifactsScreen(BaseAppScreen):
             if inspect.isawaitable(result):
                 result = asyncio.run(result)
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Failed to load latest local Chatbook artifact for Console launch.",
-                exc_info=True,
             )
             return None, CHATBOOK_SERVICE_ERROR_COPY
         records = [record for record in tuple(result or ()) if isinstance(record, Mapping)]

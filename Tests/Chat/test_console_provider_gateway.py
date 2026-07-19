@@ -1,4 +1,6 @@
+import asyncio
 import builtins
+import http.server
 import json
 import threading
 
@@ -14,9 +16,14 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import (
+    GENERATION_READ_TIMEOUT_SECONDS,
+    NO_PROVIDER_CONTENT_COPY,
+    PROBE_TIMEOUT_SECONDS,
+    UNSUPPORTED_PROVIDER_RESPONSE_COPY,
     ConsoleProviderGateway,
     ConsoleProviderResolution,
     LlamaCppProviderConfig,
+    ProviderToolCalls,
     build_llamacpp_chat_payload,
     safe_provider_error_copy,
 )
@@ -1166,3 +1173,707 @@ async def test_gateway_does_not_close_injected_http_client():
 
     assert client.is_closed is False
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_owned_http_client_uses_generous_generation_read_timeout():
+    """The owned client must not cap slow local generations at the old 30s."""
+    gateway = ConsoleProviderGateway()
+    try:
+        timeout = gateway.http_client.timeout
+        assert timeout.read == GENERATION_READ_TIMEOUT_SECONDS
+        assert timeout.read >= 120
+        assert timeout.write >= 120
+        assert timeout.pool >= 120
+        assert timeout.connect is not None and timeout.connect <= 30
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_probes_use_short_per_request_timeout():
+    """Readiness probes stay snappy even though generation reads are long."""
+    seen: list[tuple[str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, dict(request.extensions.get("timeout", {}))))
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        return httpx.Response(200, json={"data": [{"id": "model-a"}]})
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            timeout=GENERATION_READ_TIMEOUT_SECONDS,
+        )
+    )
+
+    explicit = await gateway.resolve_llamacpp(LlamaCppProviderConfig(explicit_model="m"))
+    discovered = await gateway.resolve_llamacpp(LlamaCppProviderConfig())
+
+    assert explicit.ready is True
+    assert discovered.model == "model-a"
+    assert [path for path, _ in seen] == ["/health", "/v1/models"]
+    for path, timeout in seen:
+        assert timeout.get("connect") == PROBE_TIMEOUT_SECONDS, path
+        assert timeout.get("read") == PROBE_TIMEOUT_SECONDS, path
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_generation_calls_keep_client_level_timeout():
+    """Generation requests inherit the client timeout, not the probe override."""
+    client_timeout = 222.0
+    seen: list[tuple[str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, dict(request.extensions.get("timeout", {}))))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "slow answer"}}]},
+        )
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            timeout=client_timeout,
+        )
+    )
+
+    completion = await gateway.complete_llamacpp_chat(
+        base_url="http://127.0.0.1:9099",
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+    )
+
+    assert completion == "slow answer"
+    assert [path for path, _ in seen] == ["/v1/chat/completions"]
+    assert seen[0][1].get("read") == client_timeout
+    assert seen[0][1].get("read") != PROBE_TIMEOUT_SECONDS
+
+
+class _JSONOKHandler(http.server.BaseHTTPRequestHandler):
+    """Minimal local HTTP server: real sockets, real httpcore connection pool.
+
+    A ``httpx.MockTransport`` does not reproduce the loop-binding bug below
+    (it never touches httpcore's real ``AsyncConnectionPool``, so no
+    loop-bound lock/event is ever created) -- only genuine socket traffic
+    does, which is why this fixture spins up a real (if tiny) HTTP server
+    instead. ``protocol_version`` must be HTTP/1.1 (``BaseHTTPRequestHandler``
+    defaults to 1.0, which closes the connection after every response and
+    happens to sidestep the pool-level lock reuse this test targets) -- real
+    llama.cpp servers speak keep-alive HTTP/1.1, which is what actually
+    reproduced the live crash this regression test is pinned to.
+    """
+
+    protocol_version = "HTTP/1.1"
+
+    def do_GET(self):  # noqa: N802 -- BaseHTTPRequestHandler naming
+        body = b'{"data": [{"id": "model-a"}]}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):  # noqa: D102 -- silence default stderr logging
+        pass
+
+
+@pytest.fixture
+def local_http_server():
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _JSONOKHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_owned_http_client_survives_agent_bridge_style_loop_swap(local_http_server):
+    """Regression (Task 8 live gate): every agent turn crashed against a real
+    llama.cpp server with ``RuntimeError: <asyncio.locks.Event ...> is bound
+    to a different event loop``. Root cause: the gateway's OWNED httpx
+    client was reused verbatim across the app's main event loop (readiness
+    probes, awaited in-place) and the agent bridge's per-turn
+    ``asyncio.run()`` worker-thread loop (``console_agent_bridge.
+    _StreamingModelAdapter.chat_call``) -- httpx/httpcore bind their
+    internal connection-pool lock/event objects to whichever loop first
+    touches them, so a second, concurrently-running loop reusing the same
+    client always raised. This drives the exact same two-loop shape: a
+    background thread keeps a loop alive indefinitely (like the Textual app
+    loop) while a fresh ``asyncio.run()`` (like the agent bridge) reuses the
+    same gateway afterward.
+    """
+    gateway = ConsoleProviderGateway()
+
+    async def probe() -> bool:
+        return await gateway._is_reachable(local_http_server)
+
+    main_loop = asyncio.new_event_loop()
+    main_loop_ready = threading.Event()
+
+    def run_main_loop() -> None:
+        asyncio.set_event_loop(main_loop)
+        main_loop_ready.set()
+        main_loop.run_forever()
+
+    main_thread = threading.Thread(target=run_main_loop, daemon=True)
+    main_thread.start()
+    main_loop_ready.wait(timeout=2)
+    try:
+        # First use: a readiness probe awaited on the (still-running) main
+        # loop -- binds the owned client's internal locks to `main_loop`.
+        first = asyncio.run_coroutine_threadsafe(probe(), main_loop).result(timeout=5)
+        assert first is True
+
+        # Second use: the agent bridge's worker thread bridges via a BRAND
+        # NEW asyncio.run() loop while `main_loop` is still alive elsewhere.
+        # Before the fix this raised RuntimeError("... is bound to a
+        # different event loop") on every single agent turn.
+        second = asyncio.run(probe())
+        assert second is True
+    finally:
+        main_loop.call_soon_threadsafe(main_loop.stop)
+        main_thread.join(timeout=2)
+
+
+def test_injected_http_client_is_never_swapped_across_loops():
+    """Injected clients (test doubles / callers that own their own client)
+    must never be silently replaced -- only the gateway's OWNED client is
+    loop-swapped."""
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200)))
+    gateway = ConsoleProviderGateway(http_client=client)
+
+    async def active_client_identity() -> int:
+        return id(gateway._active_http_client())
+
+    first = asyncio.run(active_client_identity())
+    second = asyncio.run(active_client_identity())
+
+    assert first == second == id(client)
+    asyncio.run(client.aclose())
+
+
+def test_active_http_client_swap_is_mutually_exclusive_across_threads():
+    """PR #629 Fix 1(a) (Gemini HIGH x2 + Qodo-8): the check-and-swap of
+    ``http_client``/``_client_loop`` must be a single atomic critical
+    section guarded by one lock, not two independently-racy reads/writes --
+    otherwise a concurrent caller from another thread/loop can interleave
+    with an in-flight swap and desync the client/loop pair (see the
+    interleaving hammer test below for the crash this produces in
+    practice). Proven deterministically here (no reliance on GIL
+    scheduling luck): thread A is parked *inside* the swap via a
+    monkeypatched, blocking ``_new_owned_http_client``, and thread B's
+    concurrent call must provably fail to complete while A is still in
+    flight -- only completing once A releases and the lock is free."""
+    gateway = ConsoleProviderGateway()
+    original_new_client = ConsoleProviderGateway._new_owned_http_client
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking_new_client():
+        # Only the FIRST call (thread A's) blocks -- a concurrent second
+        # call (thread B's) that is *not* actually serialized by a lock
+        # would sail straight through this on its own turn and finish its
+        # swap well before thread A ever releases, which is exactly the
+        # unlocked-race behavior this test must catch.
+        if not entered.is_set():
+            entered.set()
+            release.wait(timeout=5)
+        return original_new_client()
+
+    ConsoleProviderGateway._new_owned_http_client = staticmethod(blocking_new_client)
+    loop_a = asyncio.new_event_loop()
+    loop_b = asyncio.new_event_loop()
+    thread_a: threading.Thread | None = None
+    thread_b: threading.Thread | None = None
+    second_done = threading.Event()
+    try:
+        def call_a() -> None:
+            async def go() -> None:
+                gateway._active_http_client()
+            loop_a.run_until_complete(go())
+
+        thread_a = threading.Thread(target=call_a)
+        thread_a.start()
+        assert entered.wait(timeout=5), "thread A must have entered the swap"
+
+        def call_b() -> None:
+            async def go() -> None:
+                gateway._active_http_client()
+            loop_b.run_until_complete(go())
+            second_done.set()
+
+        thread_b = threading.Thread(target=call_b)
+        thread_b.start()
+
+        # Thread A is still parked inside its swap -- give thread B ample
+        # opportunity to race ahead if the swap were not actually
+        # serialized by a lock.
+        premature = second_done.wait(timeout=0.5)
+        assert premature is False, (
+            "a concurrent swap completed while another thread's swap was "
+            "still in flight -- the check-and-swap is not atomic"
+        )
+        assert second_done.wait(timeout=5)
+    finally:
+        # Always unblock thread A and drain both threads before touching
+        # the loops, whether or not the assertions above passed -- an
+        # early failure must not leave a loop "running" (from the other
+        # thread's still-in-flight run_until_complete) when we try to
+        # close it.
+        release.set()
+        if thread_a is not None:
+            thread_a.join(timeout=5)
+        if thread_b is not None:
+            thread_b.join(timeout=5)
+        # Re-wrap in `staticmethod(...)`: plain-function reassignment onto
+        # the class would otherwise bind `self` as an implicit first
+        # argument on the next instance access, breaking every other test
+        # in this module that constructs a gateway afterward.
+        ConsoleProviderGateway._new_owned_http_client = staticmethod(original_new_client)
+        loop_a.close()
+        loop_b.close()
+
+
+def test_first_swap_still_schedules_close_of_the_original_owned_client(monkeypatch):
+    """PR #629 Fix 1(b) (Gemini HIGH + Qodo-8): the very first swap has
+    ``_client_loop`` still ``None`` (there is no previous loop to close the
+    replaced client on), and the old code's ``if stale_loop is not None:``
+    guard skipped scheduling a close entirely in that case -- silently
+    leaking the client created in ``__init__``. The replaced client must
+    always be closed best-effort, even on the first swap."""
+    gateway = ConsoleProviderGateway()
+    original_client = gateway.http_client
+    scheduled: list[tuple[int, object]] = []
+
+    def fake_schedule(client, loop):
+        scheduled.append((id(client), loop))
+
+    monkeypatch.setattr(
+        ConsoleProviderGateway, "_schedule_stale_client_close", staticmethod(fake_schedule)
+    )
+
+    async def touch() -> None:
+        gateway._active_http_client()
+
+    asyncio.run(touch())
+
+    assert scheduled, "the original owned client must be scheduled for close on the first swap too"
+    assert scheduled[0][0] == id(original_client)
+
+
+def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_loop(
+    local_http_server,
+):
+    """PR #629 Fix 1(a) (Gemini HIGH x2 + Qodo-8): the check-and-swap of
+    ``http_client``/``_client_loop`` was not atomic, so concurrent callers
+    from different threads/loops (e.g. the app loop's readiness probe
+    racing the agent worker thread's per-turn loop) could interleave the
+    read-then-write and leave the client bound to one loop while
+    ``_client_loop`` records a different one -- the next probe on the
+    recorded loop then reuses a client bound elsewhere and crashes with
+    "bound to a different event loop". This hammers many persistent loops
+    (each in its own OS thread, lined up on a barrier every round so they
+    all race the swap concurrently) against the gateway's single owned
+    client and asserts every single real request against a local server
+    succeeds -- a mismatch manifests as a genuine RuntimeError out of
+    httpx/httpcore, not just a stale internal-state assertion."""
+    gateway = ConsoleProviderGateway()
+    thread_count = 6
+    rounds = 20
+    barrier = threading.Barrier(thread_count)
+    loops: list[asyncio.AbstractEventLoop] = []
+    ready_events: list[threading.Event] = []
+    errors: list[BaseException] = []
+    errors_lock = threading.Lock()
+
+    def run_loop_thread(loop: asyncio.AbstractEventLoop, ready: threading.Event) -> None:
+        asyncio.set_event_loop(loop)
+        ready.set()
+        loop.run_forever()
+
+    loop_threads = []
+    for _ in range(thread_count):
+        loop = asyncio.new_event_loop()
+        ready = threading.Event()
+        loops.append(loop)
+        ready_events.append(ready)
+        thread = threading.Thread(target=run_loop_thread, args=(loop, ready), daemon=True)
+        loop_threads.append(thread)
+        thread.start()
+    for ready in ready_events:
+        assert ready.wait(timeout=2)
+
+    def hammer(loop: asyncio.AbstractEventLoop) -> None:
+        for _ in range(rounds):
+            try:
+                barrier.wait(timeout=10)
+            except threading.BrokenBarrierError:
+                return
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    gateway._is_reachable(local_http_server), loop
+                )
+                assert future.result(timeout=10) is True
+            except BaseException as exc:  # noqa: BLE001 -- collected, asserted below
+                with errors_lock:
+                    errors.append(exc)
+
+    workers = [
+        threading.Thread(target=hammer, args=(loop,), daemon=True) for loop in loops
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=60)
+
+    for loop in loops:
+        loop.call_soon_threadsafe(loop.stop)
+    for thread in loop_threads:
+        thread.join(timeout=2)
+
+    assert errors == []
+
+
+def _sse(payload):
+    return "data: " + json.dumps(payload)
+
+
+def _delta_fragment(index, call_id=None, name=None, arguments=None):
+    frag = {"index": index, "function": {}}
+    if call_id is not None:
+        frag["id"] = call_id
+        frag["type"] = "function"
+    if name is not None:
+        frag["function"]["name"] = name
+    if arguments is not None:
+        frag["function"]["arguments"] = arguments
+    return {"choices": [{"delta": {"tool_calls": [frag]}}]}
+
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "calculator",
+            "description": "d",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+]
+
+
+async def _collect(gateway, resolution, tools=None):
+    items = []
+    async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "q"}], tools=tools):
+        items.append(chunk)
+    return items
+
+
+@pytest.mark.asyncio
+async def test_stream_accumulates_sse_tool_call_fragments() -> None:
+    """OpenAI streaming: id/name on the first fragment, arguments split
+    across fragments -> ONE merged ProviderToolCalls yielded last."""
+    script = iter(
+        [
+            _sse(_delta_fragment(0, call_id="c9", name="calculator")),
+            _sse(_delta_fragment(0, arguments='{"expres')),
+            _sse(_delta_fragment(0, arguments='sion": "2+2"}')),
+            "data: [DONE]",
+        ]
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        return script
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    calls = [i for i in items if isinstance(i, ProviderToolCalls)]
+    assert len(calls) == 1 and items[-1] is calls[0]
+    (call,) = calls[0].tool_calls
+    assert call == {
+        "id": "c9",
+        "type": "function",
+        "function": {"name": "calculator", "arguments": '{"expression": "2+2"}'},
+    }
+    assert not any(isinstance(i, str) and i.strip() for i in items[:-1])  # no copy leaked
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_message_tool_calls_surface() -> None:
+    """resolution.streaming False: chat_api_call returns the full dict;
+    message.tool_calls surfaces as ProviderToolCalls, content as text."""
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "content": "Checking.",
+                    "tool_calls": [
+                        {"id": "n1", "type": "function", "function": {"name": "calculator", "arguments": "{}"}}
+                    ],
+                }
+            }
+        ]
+    }
+
+    def fake_chat_api_call(**_kwargs):
+        return response
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=False)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    assert "Checking." in [i for i in items if isinstance(i, str)]
+    (ptc,) = [i for i in items if isinstance(i, ProviderToolCalls)]
+    assert ptc.tool_calls[0]["id"] == "n1"
+
+
+@pytest.mark.asyncio
+async def test_no_tools_requested_is_byte_identical() -> None:
+    """Same fragment script WITHOUT tools=: no ProviderToolCalls, no new
+    strings -- the delta-only chunks stay silently dropped as today."""
+    script = iter(
+        [
+            _sse(_delta_fragment(0, call_id="c9", name="calculator")),
+            _sse(_delta_fragment(0, arguments='{"expres')),
+            _sse(_delta_fragment(0, arguments='sion": "2+2"}')),
+            "data: [DONE]",
+        ]
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        return script
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+    )
+
+    items = await _collect(gateway, resolution, tools=None)
+
+    assert all(isinstance(i, str) for i in items)
+    assert UNSUPPORTED_PROVIDER_RESPONSE_COPY not in items
+
+
+@pytest.mark.asyncio
+async def test_tools_none_raw_dict_tool_call_chunk_keeps_baseline_copy() -> None:
+    """Regression (task-243 review): a raw DICT streaming chunk (not an SSE
+    string, unlike ``test_no_tools_requested_is_byte_identical`` above) that
+    carries only ``delta.tool_calls`` with no content, and with ``tools``
+    NOT passed, must stay byte-identical to the pre-native-tools baseline --
+    ``_content_from_provider_mapping`` has no tool-call awareness in that
+    codepath, so the chunk falls through to ``_UNSUPPORTED_RESPONSE`` like
+    any other unrecognized dict shape, and ``normalize_provider_response``
+    surfaces it as ``UNSUPPORTED_PROVIDER_RESPONSE_COPY`` in the stream.
+    Mapping-level ``tool_calls`` guards previously short-circuited this to a
+    silent drop instead, which changed ``tools=None`` output."""
+    def fake_chat_api_call(**_kwargs):
+        yield "hel"
+        yield {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "c1",
+                                "type": "function",
+                                "function": {"name": "calculator", "arguments": "{}"},
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        yield {"choices": [{"delta": {"content": "lo"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1"))
+
+    chunks = [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "hi"}])]
+
+    assert chunks == ["hel", UNSUPPORTED_PROVIDER_RESPONSE_COPY, "lo"]
+
+
+@pytest.mark.asyncio
+async def test_tool_call_only_stream_yields_no_fallback_copy() -> None:
+    """A tools= run whose stream carries ONLY tool-call fragments must not
+    inject NO_PROVIDER_CONTENT_COPY / UNSUPPORTED copy into the text
+    stream (that copy would be echoed into agent history)."""
+    script = iter(
+        [
+            _sse(_delta_fragment(0, call_id="c9", name="calculator")),
+            _sse(_delta_fragment(0, arguments='{"expres')),
+            _sse(_delta_fragment(0, arguments='sion": "2+2"}')),
+            "data: [DONE]",
+        ]
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        return script
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    texts = [i for i in items if isinstance(i, str)]
+    assert NO_PROVIDER_CONTENT_COPY not in texts
+    assert UNSUPPORTED_PROVIDER_RESPONSE_COPY not in texts
+
+
+@pytest.mark.asyncio
+async def test_tools_run_with_neither_content_nor_calls_raises_instead_of_silent_empty() -> None:
+    """PR #648 review Minor 1: a tools= turn whose provider response carries
+    NEITHER visible content NOR tool-calls must surface as a provider error,
+    not complete as a silent empty turn. On the fence path the same junk
+    response surfaces diagnostic copy as the answer; in tools mode that copy
+    is filtered from agent history, so without this guard a misbehaving
+    provider's junk 200-body becomes an indistinguishable empty RUN_DONE."""
+    response = {"choices": [{"message": {}}]}  # junk: no content, no tool_calls
+
+    def fake_chat_api_call(**_kwargs):
+        return response
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=False)
+    )
+
+    with pytest.raises(ChatProviderError):
+        await _collect(gateway, resolution, tools=TOOLS)
+
+
+@pytest.mark.asyncio
+async def test_tools_run_with_real_content_and_no_calls_stays_a_normal_answer() -> None:
+    """Guard scope check: a tools= turn that answers with plain text (no tool
+    calls) is a perfectly normal final answer and must NOT raise."""
+    response = {"choices": [{"message": {"content": "Just an answer."}}]}
+
+    def fake_chat_api_call(**_kwargs):
+        return response
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=False)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    assert items == ["Just an answer."]
+
+
+@pytest.mark.asyncio
+async def test_tool_call_fragments_out_of_index_order_emit_in_index_order() -> None:
+    """PR #648 review: the provider's index field defines batch order; when
+    index-1 fragments arrive before index-0, the merged ProviderToolCalls
+    must still be ordered [0, 1]."""
+    script = iter(
+        [
+            _sse(_delta_fragment(1, call_id="c1", name="get_current_datetime")),
+            _sse(_delta_fragment(1, arguments="{}")),
+            _sse(_delta_fragment(0, call_id="c0", name="calculator")),
+            _sse(_delta_fragment(0, arguments='{"expression": "2+2"}')),
+            "data: [DONE]",
+        ]
+    )
+
+    def fake_chat_api_call(**_kwargs):
+        return script
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=True)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    (ptc,) = [i for i in items if isinstance(i, ProviderToolCalls)]
+    assert [c["id"] for c in ptc.tool_calls] == ["c0", "c1"]
+    assert [c["function"]["name"] for c in ptc.tool_calls] == [
+        "calculator", "get_current_datetime"]
+
+
+def test_tool_call_accumulator_preserves_extra_fragment_keys() -> None:
+    """task-266: provider-specific extra keys on tool-call fragments (e.g.
+    Gemini 3 google_thought_signature) must survive the merge — the request
+    converter has to echo them back verbatim."""
+    from tldw_chatbook.Chat.console_provider_gateway import _ToolCallAccumulator
+    acc = _ToolCallAccumulator()
+    acc.feed_payload({"choices": [{"delta": {"tool_calls": [
+        {"index": 0, "id": "c1", "type": "function",
+         "function": {"name": "calculator", "arguments": "{}"},
+         "google_thought_signature": "sig-x"}]}}]})
+    (call,) = acc.calls()
+    assert call["google_thought_signature"] == "sig-x"
+    assert call["function"]["name"] == "calculator"
+    # PR #662 review: falsy-but-present ALLOW-LISTED extras survive verbatim
+    # (None drops); unknown extra keys are NOT forwarded (PR #662 final
+    # review: open-ended passthrough let any provider inject echoed keys).
+    acc.feed_payload({"choices": [{"delta": {"tool_calls": [
+        {"index": 0, "google_thought_signature": "",
+         "arbitrary_extra": "nope", "none_extra": None}]}}]})
+    (call,) = acc.calls()
+    assert call["google_thought_signature"] == ""
+    assert "arbitrary_extra" not in call
+    assert "none_extra" not in call
+
+
+@pytest.mark.asyncio
+async def test_tools_run_real_answer_equal_to_fallback_copy_survives() -> None:
+    """Review minor m4: a REAL model answer that happens to equal the
+    fallback copy string must flow through in tools mode — suppression now
+    happens at generation (provenance), not by string equality."""
+    response = {"choices": [{"message": {"content": NO_PROVIDER_CONTENT_COPY}}]}
+
+    def fake_chat_api_call(**_kwargs):
+        return response
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="groq", explicit_model="llama3-groq", streaming=False)
+    )
+
+    items = await _collect(gateway, resolution, tools=TOOLS)
+
+    assert items == [NO_PROVIDER_CONTENT_COPY]  # it IS the model's answer here

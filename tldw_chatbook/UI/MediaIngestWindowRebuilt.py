@@ -851,7 +851,7 @@ class RemoteIngestionPanel(ScrollableContainer):
             # Submit jobs through the runtime-policy-aware media seam.
             logger.info(f"Submitting {len(urls)} URL(s) as server media ingest job(s)")
             response = await self._maybe_await(
-                self.scope_service.submit_media_ingest_jobs(
+                self.scope_service.submit_ingest_jobs(
                     mode="server",
                     media_type=self.media_type,
                     urls=urls,
@@ -861,7 +861,7 @@ class RemoteIngestionPanel(ScrollableContainer):
             self._render_submission_response(dict(response or {}))
             self.notify("Server ingest jobs submitted", severity="information")
         except Exception as exc:
-            logger.error(f"Error submitting server ingest jobs: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error submitting server ingest jobs: {exc}")
             self.query_one("#remote-job-status", Static).update(f"Error: {exc}")
             self.notify(f"Server ingest job submission failed: {exc}", severity="error")
         finally:
@@ -916,7 +916,7 @@ class RemoteIngestionPanel(ScrollableContainer):
             self._render_web_content_response(dict(response or {}))
             self.notify("Server web-content ingest completed", severity="information")
         except Exception as exc:
-            logger.error(f"Error running server web-content ingest: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error running server web-content ingest: {exc}")
             self.query_one("#remote-job-status", Static).update(f"Error: {exc}")
             self.notify(f"Server web-content ingest failed: {exc}", severity="error")
         finally:
@@ -938,7 +938,7 @@ class RemoteIngestionPanel(ScrollableContainer):
             self.notify("Server ingest jobs require server mode.", severity="warning")
             return
 
-        stream_events = getattr(self.scope_service, "stream_media_ingest_job_events", None)
+        stream_events = getattr(self.scope_service, "stream_ingest_job_events", None)
         if stream_events is None:
             self.notify("Server ingest job event stream is unavailable.", severity="error")
             return
@@ -951,7 +951,7 @@ class RemoteIngestionPanel(ScrollableContainer):
                 self._apply_job_stream_event(dict(event or {}), recent=True)
             self.notify("Recent server ingest job event stream ended", severity="information")
         except Exception as exc:
-            logger.error(f"Error watching recent server ingest jobs: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error watching recent server ingest jobs: {exc}")
             self.query_one("#remote-job-status", Static).update(f"Error: {exc}")
             self.notify(f"Recent server ingest job watch failed: {exc}", severity="error")
         finally:
@@ -989,7 +989,7 @@ class RemoteIngestionPanel(ScrollableContainer):
             self.notify("Server ingest jobs require server mode.", severity="warning")
             return
 
-        stream_events = getattr(self.scope_service, "stream_media_ingest_job_events", None)
+        stream_events = getattr(self.scope_service, "stream_ingest_job_events", None)
         if stream_events is None:
             self.notify("Server ingest job event stream is unavailable.", severity="error")
             return
@@ -1001,7 +1001,7 @@ class RemoteIngestionPanel(ScrollableContainer):
                 self._apply_job_stream_event(dict(event or {}))
             self.notify("Server ingest batch event stream ended", severity="information")
         except Exception as exc:
-            logger.error(f"Error watching server ingest batch: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error watching server ingest batch: {exc}")
             self.query_one("#remote-job-status", Static).update(f"Error: {exc}")
             self.notify(f"Server ingest batch watch failed: {exc}", severity="error")
         finally:
@@ -1029,7 +1029,7 @@ class RemoteIngestionPanel(ScrollableContainer):
         self._set_batch_controls_disabled(True)
         try:
             response = await self._maybe_await(
-                self.scope_service.list_media_ingest_jobs(
+                self.scope_service.list_ingest_jobs(
                     mode="server",
                     batch_id=self.last_batch_id,
                     limit=limit,
@@ -1038,7 +1038,7 @@ class RemoteIngestionPanel(ScrollableContainer):
             self._render_job_list_response(dict(response or {}))
             self.notify("Server ingest batch refreshed", severity="information")
         except Exception as exc:
-            logger.error(f"Error refreshing server ingest batch: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error refreshing server ingest batch: {exc}")
             self.query_one("#remote-job-status", Static).update(f"Error: {exc}")
             self.notify(f"Server ingest batch refresh failed: {exc}", severity="error")
         finally:
@@ -1066,7 +1066,7 @@ class RemoteIngestionPanel(ScrollableContainer):
         self._set_batch_controls_disabled(True)
         try:
             response = await self._maybe_await(
-                self.scope_service.cancel_media_ingest_jobs_batch(
+                self.scope_service.cancel_ingest_batch(
                     mode="server",
                     batch_id=self.last_batch_id,
                     reason=reason,
@@ -1075,7 +1075,7 @@ class RemoteIngestionPanel(ScrollableContainer):
             self._render_batch_cancel_response(dict(response or {}))
             self.notify("Server ingest batch cancellation requested", severity="information")
         except Exception as exc:
-            logger.error(f"Error cancelling server ingest batch: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error cancelling server ingest batch: {exc}")
             self.query_one("#remote-job-status", Static).update(f"Error: {exc}")
             self.notify(f"Server ingest batch cancellation failed: {exc}", severity="error")
         finally:
@@ -1114,7 +1114,7 @@ class RemoteIngestionPanel(ScrollableContainer):
         self._set_job_controls_disabled(True)
         try:
             response = await self._maybe_await(
-                self.scope_service.cancel_media_ingest_job(
+                self.scope_service.cancel_ingest_job(
                     mode="server",
                     job_id=job_id,
                     reason=reason,
@@ -1123,7 +1123,7 @@ class RemoteIngestionPanel(ScrollableContainer):
             self._render_job_cancel_response(dict(response or {}), fallback_job_id=job_id)
             self.notify("Server ingest job cancellation requested", severity="information")
         except Exception as exc:
-            logger.error(f"Error cancelling server ingest job {job_id}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error cancelling server ingest job {job_id}: {exc}")
             self.query_one("#remote-job-status", Static).update(f"Error: {exc}")
             self.notify(f"Server ingest job cancellation failed: {exc}", severity="error")
         finally:
@@ -1613,7 +1613,7 @@ class WebClipperPanel(ScrollableContainer):
             self._render_payload("Web Clipper save result", dict(result or {}))
             self.notify("Server Web Clipper save completed", severity="information")
         except Exception as exc:
-            logger.error(f"Server Web Clipper save failed: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Server Web Clipper save failed: {exc}")
             self.query_one("#web-clipper-status", Static).update(f"Error: {exc}")
             self.notify(f"Server Web Clipper save failed: {exc}", severity="error")
 
@@ -1630,7 +1630,7 @@ class WebClipperPanel(ScrollableContainer):
             result = await self._maybe_await(self.scope_service.get_clip_status(mode="server", clip_id=clip_id))
             self._render_payload("Web Clipper status", dict(result or {}))
         except Exception as exc:
-            logger.error(f"Server Web Clipper status failed: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Server Web Clipper status failed: {exc}")
             self.query_one("#web-clipper-status", Static).update(f"Error: {exc}")
             self.notify(f"Server Web Clipper status failed: {exc}", severity="error")
 
@@ -1662,7 +1662,7 @@ class WebClipperPanel(ScrollableContainer):
             self._render_payload("Web Clipper enrichment result", dict(result or {}))
             self.notify("Server Web Clipper enrichment persisted", severity="information")
         except Exception as exc:
-            logger.error(f"Server Web Clipper enrichment failed: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Server Web Clipper enrichment failed: {exc}")
             self.query_one("#web-clipper-status", Static).update(f"Error: {exc}")
             self.notify(f"Server Web Clipper enrichment failed: {exc}", severity="error")
 

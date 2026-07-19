@@ -1,11 +1,30 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
+import json
+import time
+from collections.abc import Mapping
 from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
+from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
+from .execution_log import MCPExecutionLog, RESULT_EXCERPT_LIMIT, build_record
+from .hub_tool_catalog import HubTool
+from .permission_store import (
+    EffectiveToolState,
+    MCPPermissionStore,
+    definition_hash,
+    resolve_effective_state,
+    resolve_effective_state_by_key,
+)
+from .redaction import redact_mapping
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
 from .unified_control_models import ServerAccessContext, UnifiedMCPContext
@@ -27,6 +46,8 @@ class UnifiedMCPControlPlaneService:
         self.local_service = local_service
         self.server_service = server_service
         self.context = self.context_store.load() if self.context_store is not None else UnifiedMCPContext()
+        self._execution_log: MCPExecutionLog | None = None
+        self._permission_store: MCPPermissionStore | None = None
 
     @property
     def selected_source(self) -> str:
@@ -1778,3 +1799,421 @@ class UnifiedMCPControlPlaneService:
         if value in (None, ""):
             raise ValueError(f"Unified MCP action requires '{field_name}'.")
         return value
+
+    # ---- Typed local lifecycle/mutation seam (Phase 2) ----------------------
+    # Shared by the Hub UI now and by the Phase 5 chat bridge / agent-runtime
+    # MCPToolProvider (task-201) later. Governance enforcement stays inside
+    # the local service exactly as run_action's branches rely on it.
+
+    def _lifecycle_timeout(self) -> float:
+        try:
+            return float(get_cli_setting("mcp", "hub_lifecycle_timeout_seconds", 45))
+        except (TypeError, ValueError):
+            return 45.0
+
+    def _record_local_attempt(self, profile_id: str, action: str, *,
+                              ok: bool, error: str | None) -> None:
+        store = getattr(self.local_service, "store", None)
+        if store is None:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            previous = store.get_profile_runtime_state(profile_id) or {}
+            store.save_profile_runtime_state(profile_id, {
+                "last_attempt_at": now,
+                "last_action": action,
+                "ok": ok,
+                "last_ok_at": now if ok else previous.get("last_ok_at"),
+                "last_error": None if ok else (error or "")[:300],
+            })
+        except Exception as exc:
+            # Recording is best-effort: it must never mask the lifecycle
+            # result or the original exception being propagated.
+            logger.warning(f"MCP lifecycle attempt record failed for {profile_id}: {exc}")
+
+    async def _run_local_lifecycle(self, action: str, profile_id: str, coro):
+        timeout = self._lifecycle_timeout()
+        try:
+            result = await asyncio.wait_for(coro, timeout=timeout)
+        except asyncio.TimeoutError:
+            message = f"Timed out after {timeout:.0f}s"
+            self._record_local_attempt(profile_id, action, ok=False, error=message)
+            raise RuntimeError(message) from None
+        except asyncio.CancelledError:
+            self._record_local_attempt(profile_id, action, ok=False, error="Cancelled")
+            raise
+        except Exception as exc:
+            self._record_local_attempt(profile_id, action, ok=False, error=str(exc))
+            raise
+        self._record_local_attempt(profile_id, action, ok=True, error=None)
+        return result
+
+    async def connect_local_profile(self, profile_id: str) -> dict:
+        return await self._run_local_lifecycle(
+            "connect", profile_id, self.local_service.connect_profile(profile_id))
+
+    async def disconnect_local_profile(self, profile_id: str) -> bool:
+        return await self._run_local_lifecycle(
+            "disconnect", profile_id, self.local_service.disconnect_profile(profile_id))
+
+    async def test_local_profile(self, profile_id: str) -> dict:
+        return await self._run_local_lifecycle(
+            "test", profile_id, self.local_service.test_external_profile(profile_id))
+
+    async def refresh_local_profile(self, profile_id: str) -> dict:
+        return await self._run_local_lifecycle(
+            "refresh", profile_id, self.local_service.refresh_external_profile(profile_id))
+
+    async def save_local_profile(self, payload: dict) -> dict:
+        return self.local_service.save_external_profile(dict(payload or {}))
+
+    async def delete_local_profile(self, profile_id: str) -> bool:
+        return bool(self.local_service.delete_external_profile(profile_id))
+
+    async def local_external_catalog(self) -> list[dict]:
+        # Records (profile fields + discovery_snapshot + is_connected) still
+        # come from the local service so governance enforcement and
+        # is_connected (read from the live client sessions) are unchanged.
+        # `runtime_state` is merged in from a single store bundle load
+        # rather than one `get_profile_runtime_state()` load per record.
+        records = list(self.local_service.get_external_servers() or [])
+        store = getattr(self.local_service, "store", None)
+        runtime_state_by_profile: dict[str, Any] = (
+            store.get_catalog_bundle()["profile_runtime_state"] if store else {}
+        )
+        for record in records:
+            profile_id = str(record.get("profile_id") or "")
+            record["runtime_state"] = runtime_state_by_profile.get(profile_id)
+        return records
+
+    # ---- Typed tool-execution seam (Phase 3) ---------------------------
+    # Shared by the Hub Tools mode now and by the Phase 5 chat bridge /
+    # agent-runtime MCPToolProvider (task-201) later. Keep this UI-free.
+
+    @property
+    def execution_log(self) -> MCPExecutionLog | None:
+        if self._execution_log is not None:
+            return self._execution_log
+        store = getattr(self.local_service, "store", None)
+        if store is None:
+            return None
+        log_path = Path(store.path).with_name("mcp_execution_log.jsonl")
+        self._execution_log = MCPExecutionLog(log_path)
+        return self._execution_log
+
+    def _record_tool_execution(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        ok: bool,
+        duration_ms: int,
+        error: str | None,
+        arguments: dict[str, Any],
+        result: Any,
+    ) -> None:
+        # Recording is best-effort: it must never mask the tool result or
+        # the tool error being propagated (Phase 2 masking lesson). N1: the
+        # `self.execution_log` property access itself must be inside this
+        # try too -- it can raise (e.g. `Path(store.path)` oddities), and
+        # sitting outside would let that raise straight out of
+        # `_record_tool_execution()` into the caller's own try/except
+        # around test_hub_tool()'s success/failure paths, masking the tool
+        # result exactly like an append() failure would.
+        try:
+            log = self.execution_log
+            if log is None:
+                return
+            record = build_record(
+                server_key=server_key,
+                tool_name=tool_name,
+                initiator="test",
+                ok=ok,
+                duration_ms=duration_ms,
+                error=error,
+                arguments=arguments,
+                # I2: `build_record()`/`MCPExecutionLog.append()` only
+                # redact `arguments`, never the result -- a Mapping result
+                # (the common shape: `test_hub_tool()`'s MCP call_tool
+                # response) is redacted here first, mirroring the UI's own
+                # result-formatting path (mcp_workbench.py's
+                # `_run_tool_test()`), so a secret echoed back in a tool's
+                # result can never reach disk unredacted.
+                result_excerpt=(
+                    json.dumps(redact_mapping(result), default=str)[:RESULT_EXCERPT_LIMIT]
+                    if isinstance(result, Mapping)
+                    else str(result)[:RESULT_EXCERPT_LIMIT]
+                ),
+                # Coerce: a mis-typed config string like "false" is truthy,
+                # which would silently keep argument capture ON against the
+                # user's stated intent (Qodo #639 finding).
+                capture_args=coerce_bool_setting(
+                    get_cli_setting("mcp", "log_tool_arguments", True), True
+                ),
+            )
+            log.append(record)
+        except Exception as exc:
+            logger.warning(f"MCP execution log record failed for {server_key}/{tool_name}: {exc}")
+
+    async def test_hub_tool(
+        self,
+        server_key: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Execute one tool test against a local or built-in server.
+
+        The shared execute seam for the Hub's Test Tool runner (and,
+        later, the Phase 5 chat bridge / agent MCPToolProvider). Every
+        attempt — success, failure, or timeout — is recorded to the
+        execution log best-effort before the result or error propagates.
+
+        Args:
+            server_key: Prefixed server key (``local:<profile_id>`` or
+                ``builtin:<id>``). Server-source keys are rejected until
+                Phase 4.
+            tool_name: Name of the tool to execute.
+            arguments: Tool arguments; defaults to an empty dict.
+
+        Returns:
+            The raw result payload from the underlying service call.
+
+        Raises:
+            ValueError: If ``server_key`` is not a local/builtin key.
+            RuntimeError: If the tool call fails or exceeds the
+                configured lifecycle timeout.
+        """
+        normalized_key = str(server_key or "").strip()
+        normalized_tool_name = str(tool_name or "").strip()
+        normalized_arguments = dict(arguments or {})
+
+        if normalized_key.startswith("local:"):
+            profile_id = normalized_key.split(":", 1)[1]
+            coro = self.local_service.execute_external_tool(profile_id, normalized_tool_name, normalized_arguments)
+        elif normalized_key.startswith("builtin:"):
+            coro = self.local_service.execute_tool(normalized_tool_name, normalized_arguments)
+        else:
+            raise ValueError("Tool testing for server-source tools arrives in Phase 4.")
+
+        timeout = self._lifecycle_timeout()
+        started = time.monotonic()
+        try:
+            result = await asyncio.wait_for(coro, timeout=timeout)
+        except asyncio.TimeoutError:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            message = f"Timed out after {timeout:.0f}s"
+            self._record_tool_execution(
+                normalized_key, normalized_tool_name, ok=False, duration_ms=duration_ms,
+                error=message, arguments=normalized_arguments, result=None,
+            )
+            raise RuntimeError(message) from None
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            self._record_tool_execution(
+                normalized_key, normalized_tool_name, ok=False, duration_ms=duration_ms,
+                error=str(exc), arguments=normalized_arguments, result=None,
+            )
+            raise
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+        self._record_tool_execution(
+            normalized_key, normalized_tool_name, ok=True, duration_ms=duration_ms,
+            error=None, arguments=normalized_arguments, result=result,
+        )
+        return result
+
+    # ---- Typed permission methods (Phase 4) ----------------------------
+    # Backs the Hub's Permissions mode: effective-state resolution (with
+    # the rug-pull downgrade audit), the state setters, and the Test Tool
+    # gate. Keep this UI-free -- the Phase 5 chat bridge / agent-runtime
+    # MCPToolProvider will call `gate_tool_test`-shaped resolution too.
+
+    @property
+    def permission_store(self) -> MCPPermissionStore | None:
+        if self._permission_store is not None:
+            return self._permission_store
+        store = getattr(self.local_service, "store", None)
+        if store is None:
+            return None
+        permissions_path = Path(store.path).with_name("mcp_permissions.json")
+        self._permission_store = MCPPermissionStore(permissions_path)
+        return self._permission_store
+
+    def effective_tool_states(self, tools: list[HubTool]) -> dict[tuple[str, str], EffectiveToolState]:
+        """Resolve the effective allow/ask/deny state for every tool in ``tools``.
+
+        Loads the permission-store payload once and resolves every tool
+        against it (Task 2's `resolve_effective_state`). Any tool whose
+        resolution flags a hash mismatch against an explicit tool-level
+        ``allow`` (`EffectiveToolState.config_changed`) has that mismatch
+        persisted via `store.mark_config_changed()`; the *first* time that
+        transition happens for a given tool, exactly one
+        ``decision="downgraded"`` audit record is appended to the
+        execution log, best-effort, mirroring `_record_tool_execution`'s
+        never-raise contract -- a logging failure must never prevent the
+        resolved states from being returned. Later calls see the marker
+        already set (`mark_config_changed` returns False) and skip the
+        audit.
+
+        `config_changed` is only ever True when the tool carries an
+        *explicit* tool-level ``allow`` entry (see
+        `resolve_effective_state`): a tool that inherits its state from a
+        server or global default has nothing to compare hashes against,
+        so it can never trigger a marker or an audit here.
+
+        No store configured -> every tool resolves to
+        `EffectiveToolState(state="ask", origin="global_default")` (fail
+        closed).
+        """
+        store = self.permission_store
+        if store is None:
+            return {
+                (tool.server_key, tool.name): EffectiveToolState(state="ask", origin="global_default")
+                for tool in tools
+            }
+
+        payload = store.load()
+        results: dict[tuple[str, str], EffectiveToolState] = {}
+        for tool in tools:
+            effective = resolve_effective_state(payload, tool)
+            results[(tool.server_key, tool.name)] = effective
+            if effective.config_changed:
+                self._audit_downgrade_if_fresh(store, tool)
+        return results
+
+    def _audit_downgrade_if_fresh(self, store: MCPPermissionStore, tool: HubTool) -> None:
+        # Best-effort, same never-raise contract as `_record_tool_execution`:
+        # a persistence/logging failure here must never propagate out of
+        # `effective_tool_states()` and mask the resolved states it already
+        # computed.
+        try:
+            newly_marked = store.mark_config_changed(tool.server_key, tool.name)
+            if not newly_marked:
+                return
+            log = self.execution_log
+            if log is None:
+                return
+            record = build_record(
+                server_key=tool.server_key,
+                tool_name=tool.name,
+                initiator="system",
+                decision="downgraded",
+                ok=False,
+                duration_ms=0,
+                error=f"{tool.name} definition changed since you allowed it — review and re-allow",
+            )
+            log.append(record)
+        except Exception as exc:
+            logger.warning(
+                f"MCP permission downgrade audit failed for {tool.server_key}/{tool.name}: {exc}"
+            )
+
+    def set_tool_state(
+        self,
+        server_key: str,
+        tool_name: str,
+        ui_state: str | None,
+        *,
+        tool: HubTool | None = None,
+    ) -> None:
+        """Set (or clear, when ``ui_state`` is None) a tool-level override.
+
+        Args:
+            server_key: Owning server's stable key.
+            tool_name: Tool name within that server.
+            ui_state: One of ``None`` (inherit), ``"allow"``, ``"ask"``,
+                ``"deny"``.
+            tool: Required when ``ui_state`` is ``"allow"`` -- its
+                description/input_schema are fingerprinted into the stored
+                ``definition_hash`` the rug-pull guard compares against
+                later.
+
+        Raises:
+            ValueError: ``ui_state`` is ``"allow"`` but ``tool`` is None.
+        """
+        store = self.permission_store
+        if store is None:
+            return
+        hash_value: str | None = None
+        if ui_state == "allow":
+            if tool is None:
+                raise ValueError("tool is required to set state 'allow' (need its description/input_schema)")
+            hash_value = definition_hash(tool.description, tool.input_schema)
+        store.set_tool_state(server_key, tool_name, ui_state, definition_hash=hash_value)
+
+    def set_server_default(self, server_key: str, state: str | None) -> None:
+        store = self.permission_store
+        if store is None:
+            return
+        store.set_server_default(server_key, state)
+
+    def set_global_default(self, state: str) -> None:
+        store = self.permission_store
+        if store is None:
+            return
+        store.set_global_default(state)
+
+    def get_kill_switch(self) -> bool:
+        store = self.permission_store
+        if store is None:
+            return False
+        return store.get_kill_switch()
+
+    def set_kill_switch(self, value: bool) -> None:
+        store = self.permission_store
+        if store is None:
+            return
+        store.set_kill_switch(value)
+
+    def gate_tool_test(self, tool: HubTool) -> EffectiveToolState:
+        """Resolve one tool's effective state for the Hub's Test Tool gate.
+
+        A single fresh `load()` + resolve -- no batching, no audit
+        emission (the `effective_tool_states()` sync/render pass owns the
+        rug-pull downgrade audit; calling both for the same mismatch would
+        double-count it).
+
+        Deliberately ignores the kill switch: the switch gates chat
+        send-time tool-call assembly for the Phase 5 chat bridge /
+        agent-runtime MCPToolProvider, not this operator-initiated Hub
+        diagnostic -- an operator explicitly running Test Tool from the
+        Hub UI should see the tool's real allow/ask/deny state regardless
+        of whether the kill switch happens to be on.
+
+        No store configured -> `EffectiveToolState(state="ask",
+        origin="global_default")` (fail closed).
+        """
+        store = self.permission_store
+        if store is None:
+            return EffectiveToolState(state="ask", origin="global_default")
+        payload = store.load()
+        return resolve_effective_state(payload, tool)
+
+    def gate_tool_test_by_key(self, server_key: str, tool_name: str) -> EffectiveToolState:
+        """Resolve one tool's Test Tool gate from the store alone, with no
+        live ``HubTool`` to fingerprint.
+
+        I1: the counterpart `gate_tool_test()` needs a `HubTool` to
+        hash-compare an explicit ``allow`` against its stored
+        ``definition_hash`` (the rug-pull guard) -- this is the seam for
+        when the workbench can't produce one anymore (`_tool_for()` came
+        back empty: the tool dropped out of `_last_hub_tools` since the
+        Test panel opened, e.g. a resync racing a rug-pull refresh).
+        Without this, `MCPWorkbench._resolve_test_gate()` had nothing to
+        gate a vanished-but-still-denied tool against and fell through to
+        an ungated dispatch.
+
+        Deny/ask verdicts resolve at full fidelity (no hash check is
+        needed to trust those); an "allow" verdict -- explicit or
+        inherited -- can't be trusted without the live definition, so it
+        resolves to "ask" instead (see `resolve_effective_state_by_key`).
+
+        No store configured -> `EffectiveToolState(state="ask",
+        origin="global_default")` (fail closed), matching
+        `gate_tool_test()`.
+        """
+        store = self.permission_store
+        if store is None:
+            return EffectiveToolState(state="ask", origin="global_default")
+        payload = store.load()
+        return resolve_effective_state_by_key(payload, server_key, tool_name)

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from tldw_chatbook.DB.ChaChaNotes_DB import CONVERSATION_SCOPE_ALL
 from tldw_chatbook.tldw_api.chat_conversation_schemas import ALLOWED_CONVERSATION_STATES
 
 
@@ -229,6 +230,7 @@ def normalize_conversation_row(
         "cluster_id": _clean_text(conversation_row.get("cluster_id")),
         "source": _clean_text(conversation_row.get("source")),
         "external_ref": _clean_text(conversation_row.get("external_ref")),
+        "system_prompt": _clean_text(conversation_row.get("system_prompt")),
         "version": conversation_row.get("version"),
     }
 
@@ -509,7 +511,15 @@ class ChatConversationService:
         if workspace_id is not None:
             effective_scope = "workspace"
 
-        normalized_scope, normalized_workspace_id = _normalize_scope(effective_scope, workspace_id)
+        if str(effective_scope).strip().lower() == CONVERSATION_SCOPE_ALL:
+            # Query-only scope spanning global- and workspace-scoped rows in
+            # one page/count. Used by the Library conversations snapshot so
+            # Console chats persisted inside a workspace session are listed.
+            # An explicit workspace_id always wins (handled above).
+            normalized_scope: str = CONVERSATION_SCOPE_ALL
+            normalized_workspace_id: str | None = None
+        else:
+            normalized_scope, normalized_workspace_id = _normalize_scope(effective_scope, workspace_id)
         rows, total, _ = self.db.search_conversations_page(
             query,
             scope_type=normalized_scope,

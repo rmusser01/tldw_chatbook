@@ -71,6 +71,15 @@ def test_local_marks_migrate_from_v16_to_v17_with_expected_schema(tmp_path):
     conn = db.get_connection()
     conn.execute("DROP INDEX IF EXISTS idx_conversation_local_marks_type")
     conn.execute("DROP TABLE IF EXISTS conversation_local_marks")
+    # A fresh DB is created at the current schema version (>= V18), which
+    # already includes the V17->V18 `system_prompt` column/triggers. Undo
+    # that too so replaying V16->V17->V18 from a true V16-shaped DB doesn't
+    # hit "duplicate column name" when V17->V18 re-adds it.
+    conn.execute("DROP TRIGGER IF EXISTS conversations_sync_create")
+    conn.execute("DROP TRIGGER IF EXISTS conversations_sync_update")
+    conn.execute("DROP TRIGGER IF EXISTS conversations_sync_delete")
+    conn.execute("DROP TRIGGER IF EXISTS conversations_sync_undelete")
+    conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
     conn.execute(
         """
         UPDATE db_schema_version
@@ -88,7 +97,7 @@ def test_local_marks_migrate_from_v16_to_v17_with_expected_schema(tmp_path):
         "SELECT version FROM db_schema_version WHERE schema_name = ?",
         (migrated._SCHEMA_NAME,),
     ).fetchone()
-    assert version["version"] == 17
+    assert version["version"] == migrated._CURRENT_SCHEMA_VERSION
     _assert_local_marks_schema(migrated)
 
 

@@ -28,6 +28,4 @@ Original imports have been moved to their respective component files:
 - SearchRAGWindow -> Views/RAGSearch/search_rag_window.py
 - Constants -> Views/RAGSearch/constants.py
 - Event Handlers -> Views/RAGSearch/search_event_handlers.py
-
-The original SearchRAGWindow.py file has been backed up as SearchRAGWindow.py.bak
 """

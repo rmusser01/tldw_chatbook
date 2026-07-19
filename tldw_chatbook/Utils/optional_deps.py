@@ -1,10 +1,12 @@
 # optional_deps.py
 # Central module for checking availability of optional dependencies
 #
+import os
 import sys
 import importlib.util
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, Callable
+
 from loguru import logger
 
 # Global flags for optional dependency availability
@@ -39,6 +41,8 @@ DEPENDENCIES_AVAILABLE = {
     'pymupdf': False,
     'pymupdf4llm': False,
     'docling': False,
+    # Image/SVG rendering
+    'svg_rendering': False,
     # E-book processing
     'ebook_processing': False,
     'ebooklib': False,
@@ -93,6 +97,12 @@ DEPENDENCIES_AVAILABLE = {
     # Progress bars
     'tqdm': False,
 }
+
+# Pristine copy of the registry above — reset_dependency_checks() restores
+# from THIS, so new keys need only be added to the literal once. (A stale
+# duplicated literal inside reset used to silently drop newer keys, e.g.
+# 'svg_rendering'.)
+_INITIAL_DEPENDENCIES_AVAILABLE = dict(DEPENDENCIES_AVAILABLE)
 
 # Store actual modules for conditional use
 MODULES = {}
@@ -306,6 +316,11 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         ("markdown", "schedule", "feedparser", "beautifulsoup4", "cryptography"),
         "Watchlists", "Subscriptions/watchlists", OWNER_WATCHLISTS,
     ),
+    "svg": _feature(
+        "svg", "SVG rasterization", AREA_MEDIA,
+        ("cairosvg",),
+        "Library > Import/Export", "SVG rasterization for image attachments", OWNER_LIBRARY_MEDIA,
+    ),
     "transcription_faster_whisper": _feature(
         "transcription_faster_whisper", "Faster Whisper transcription", AREA_MEDIA,
         ("faster-whisper",),
@@ -407,13 +422,106 @@ def check_dependency(module_name: str, feature_name: Optional[str] = None) -> bo
         logger.debug(f"⚠️ {module_name} dependency not found. Feature '{feature_name}' will be disabled. Reason: {e}")
         return False
 
+# SVG rendering (cairosvg) — checked lazily, cached after the first call.
+_svg_rendering_available: Optional[bool] = None
+
+_HOMEBREW_LIB = '/opt/homebrew/lib'
+
+
+def _ensure_homebrew_dyld_path() -> None:
+    """Make Homebrew's libcairo findable by ctypes.util.find_library on macOS.
+
+    dlopen reads DYLD_* at process start, but ctypes.util.find_library
+    (cairocffi's fallback resolver) re-reads os.environ on every call, so an
+    in-process append is sufficient. When the variable is unset, macOS uses a
+    default fallback chain — reproduce it first so other libraries keep
+    resolving exactly as before.
+    """
+    if not os.path.isdir(_HOMEBREW_LIB):
+        return
+    current = os.environ.get('DYLD_FALLBACK_LIBRARY_PATH')
+    if current is None:
+        default_chain = (
+            os.path.expanduser('~/lib'), '/usr/local/lib', '/lib', '/usr/lib',
+        )
+        os.environ['DYLD_FALLBACK_LIBRARY_PATH'] = ':'.join(
+            default_chain + (_HOMEBREW_LIB,)
+        )
+        return
+    if _HOMEBREW_LIB not in current.split(':'):
+        os.environ['DYLD_FALLBACK_LIBRARY_PATH'] = f"{current}:{_HOMEBREW_LIB}"
+
+
+def ensure_svg_rendering() -> bool:
+    """Return whether cairosvg-based SVG rasterization is available.
+
+    Applies the macOS Homebrew dyld fix before the first import attempt.
+    The result is cached for the life of the process.
+
+    check_dependency() only catches ImportError/ModuleNotFoundError, but a
+    missing native cairo library (e.g. on a Mac without cairo installed) can
+    make `import cairosvg` raise OSError instead (cairocffi's dlopen
+    failure). That is caught here — locally, rather than widening
+    check_dependency() for its many other callers — so a native load
+    failure gates SVG support off instead of crashing every caller of
+    supported_image_formats()/the picker/attachment routing.
+
+    Returns:
+        True when cairosvg-based SVG rasterization is available and
+        importable; False when the dependency is missing or any exception
+        (including a native-library OSError) occurs while checking it.
+    """
+    global _svg_rendering_available
+    if _svg_rendering_available is not None:
+        return _svg_rendering_available
+    if sys.platform == 'darwin':
+        _ensure_homebrew_dyld_path()
+    try:
+        _svg_rendering_available = check_dependency('cairosvg', 'svg_rendering')
+    except Exception as exc:
+        logger.warning(
+            f"cairosvg availability check raised an unexpected error; "
+            f"treating SVG rendering as unavailable: {exc!r}"
+        )
+        DEPENDENCIES_AVAILABLE['svg_rendering'] = False
+        _svg_rendering_available = False
+    return _svg_rendering_available
+
+# Modules that must be installed for the 'embeddings_rag' feature group.
+# Shared by the deep import check below and the cheap installed-probe.
+EMBEDDINGS_RAG_REQUIRED_MODULES = ('torch', 'transformers', 'numpy', 'chromadb', 'sentence_transformers')
+
+
+def embeddings_rag_deps_installed() -> bool:
+    """Cheap probe: are the embeddings_rag dependencies installed?
+
+    Uses `importlib.util.find_spec` only — no module imports, no side
+    effects, and no mutation of the DEPENDENCIES_AVAILABLE registry — so it
+    is safe to call from configuration/default-resolution code paths.
+    For a deep check that actually imports the modules (and updates the
+    registry), use `check_embeddings_rag_deps()`.
+
+    Returns:
+        True when every module in EMBEDDINGS_RAG_REQUIRED_MODULES resolves
+        to an installed distribution.
+    """
+    for dep in EMBEDDINGS_RAG_REQUIRED_MODULES:
+        try:
+            if importlib.util.find_spec(dep) is None:
+                return False
+        except Exception as e:
+            logger.debug(f"find_spec probe failed for {dep}: {e}")
+            return False
+    return True
+
+
 def check_embeddings_rag_deps() -> bool:
     """Check all dependencies needed for embeddings and RAG functionality."""
     # Always recheck dependencies - don't return cached False value
     # This ensures we actually check if dependencies are installed
-    
+
     # Check each dependency more thoroughly
-    required_deps = ['torch', 'transformers', 'numpy', 'chromadb', 'sentence_transformers']
+    required_deps = list(EMBEDDINGS_RAG_REQUIRED_MODULES)
     all_available = True
     missing_deps = []
     
@@ -943,93 +1051,17 @@ def create_unavailable_feature_handler(feature_name: str, suggestion: str = "") 
     return handler
 
 # Initialize dependency checks
-def reset_dependency_checks():
-    """Reset all dependency checks - useful for testing."""
-    global MODULES
+def reset_dependency_checks() -> None:
+    """Reset all dependency checks to their pristine unchecked state.
+
+    Restores ``DEPENDENCIES_AVAILABLE`` from the pristine copy of the module
+    literal, clears the cached SVG probe and imported-module registry.
+    Useful for testing.
+    """
+    global MODULES, _svg_rendering_available
     DEPENDENCIES_AVAILABLE.clear()
-    DEPENDENCIES_AVAILABLE.update({
-        'torch': False,
-        'transformers': False,
-        'numpy': False,
-        'chromadb': False,
-        'embeddings_rag': False,
-        'websearch': False,
-        'jieba': False,
-        'fugashi': False,
-        'flashrank': False,
-        'sentence_transformers': False,
-        'chunker': False,
-        'chinese_chunking': False,
-        'japanese_chunking': False,
-        'token_chunking': False,
-        'cohere': False,
-        # Audio/Video processing
-        'audio_processing': False,
-        'video_processing': False,
-        'faster_whisper': False,
-        'lightning_whisper_mlx': False,
-        'parakeet_mlx': False,
-        'yt_dlp': False,
-        'soundfile': False,
-        'scipy': False,
-        'qwen2audio': False,
-        # PDF processing
-        'pdf_processing': False,
-        'pymupdf': False,
-        'pymupdf4llm': False,
-        'docling': False,
-        # E-book processing
-        'ebook_processing': False,
-        'ebooklib': False,
-        'defusedxml': False,
-        'html2text': False,
-        'lxml': False,
-        'beautifulsoup4': False,
-        # Web scraping - additional
-        'pandas': False,
-        'playwright': False,
-        'trafilatura': False,
-        'aiohttp': False,
-        # Local LLM
-        'local_llm': False,
-        'mlx_lm': False,
-        'vllm': False,
-        'onnxruntime': False,
-        # MCP
-        'mcp': False,
-        # TTS
-        'tts_processing': False,
-        'kokoro_onnx': False,
-        'chatterbox': False,
-        'pydub': False,
-        'pyaudio': False,
-        'av': False,
-        # STT
-        'stt_processing': False,
-        'nemo_toolkit': False,
-        # OCR
-        'ocr_processing': False,
-        'docext': False,
-        'gradio_client': False,
-        'openai': False,
-        # Image processing
-        'image_processing': False,
-        'PIL': False,
-        'pillow': False,
-        'textual_image': False,
-        'rich_pixels': False,
-        # Mindmap
-        'mindmap': False,
-        'anytree': False,
-        # Subscriptions
-        'subscriptions': False,
-        'markdown': False,
-        'schedule': False,
-        'feedparser': False,
-        # Web server
-        'web': False,
-        'textual_serve': False,
-    })
+    DEPENDENCIES_AVAILABLE.update(_INITIAL_DEPENDENCIES_AVAILABLE)
+    _svg_rendering_available = None
     MODULES = {}
     logger.debug("Reset dependency checks")
 

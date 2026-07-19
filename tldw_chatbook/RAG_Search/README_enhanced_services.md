@@ -143,4 +143,9 @@ To migrate from base to v2:
 - `simplified/search_service.py` - MCP integration with auto-selection
 - `config.py` - Added service configuration section
 - `SearchRAGWindow.py` - Uses factory for service creation
-- `config_examples/rag_v2_example.toml` - Example configurations
+- `rag_config_example.toml` - Example configuration
+
+## Removed Features
+
+Late chunking, standalone context assembly, and LLM query expansion modules
+were removed as dead code (task-252); no profile or service ever invoked them.

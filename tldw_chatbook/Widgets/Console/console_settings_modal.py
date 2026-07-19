@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Awaitable, Callable, Mapping
 
 from textual import events
 from textual import on
@@ -11,13 +11,21 @@ from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Input, Select, Static
+from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.console_provider_endpoints import (
     first_configured_endpoint,
     normalize_generic_endpoint_for_compare,
 )
+from tldw_chatbook.Chat.local_server_discovery import (
+    normalize_probe_base_url,
+    LocalModelProbeResult,
+    endpoint_display,
+    probe_models_endpoint,
+)
+from tldw_chatbook.Chat.provider_catalog import provider_display_name
+from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -31,6 +39,8 @@ from tldw_chatbook.Chat.console_session_settings import (
     validate_console_session_settings,
 )
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Utils.input_validation import validate_url
+from rich.markup import escape as escape_markup
 
 
 MODEL_INPUT_PLACEHOLDER = "Enter model id"
@@ -38,13 +48,61 @@ MODAL_BODY_MIN_HEIGHT = 0
 MODAL_CONTROL_HEIGHT = 3
 MODAL_LABEL_WIDTH = 16
 MODEL_CUSTOM_BUTTON_WIDTH = 18
+MODEL_DISCOVER_BUTTON_ID = "console-settings-model-discover"
+MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
+MODEL_DISCOVER_BUTTON_LABEL = "Discover models"
+MODEL_DISCOVER_BUTTON_WIDTH = 19
+MODEL_DISCOVER_MISSING_URL_COPY = "Enter a base URL to discover models."
+MODEL_DISCOVER_INVALID_URL_COPY = "Enter a valid http(s) endpoint URL to discover models."
+ModelProber = Callable[[str, str], Awaitable[LocalModelProbeResult]]
+STREAMING_TOGGLE_WIDTH = 12
 PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
+# (label, input id, accepted-values placeholder) - placeholders mirror the
+# Settings screen's enumerated hints for these provider-specific fields.
 PROVIDER_CHOICE_INPUTS = (
-    ("Reasoning effort", "console-settings-reasoning-effort"),
-    ("Reasoning summary", "console-settings-reasoning-summary"),
-    ("Verbosity", "console-settings-verbosity"),
-    ("Thinking effort", "console-settings-thinking-effort"),
+    (
+        "Reasoning effort",
+        "console-settings-reasoning-effort",
+        "none, minimal, low, medium, high, xhigh",
+    ),
+    (
+        "Reasoning summary",
+        "console-settings-reasoning-summary",
+        "auto, concise, detailed, none",
+    ),
+    ("Verbosity", "console-settings-verbosity", "low, medium, high"),
+    (
+        "Thinking effort",
+        "console-settings-thinking-effort",
+        "off, low, medium, high, xhigh, max",
+    ),
 )
+STREAMING_ON_LABEL = "On"
+STREAMING_OFF_LABEL = "Off"
+CONSOLE_SETTINGS_SCOPE_COPY = (
+    "Save applies to this session only. "
+    "Save as default also writes provider + streaming defaults to config."
+)
+CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY = (
+    "Could not write defaults to the config file; session values still apply."
+)
+# Draft fields persisted under [api_settings.<provider>] by Save as default.
+PROVIDER_DEFAULT_PERSIST_FIELDS = (
+    "temperature",
+    "top_p",
+    "min_p",
+    "top_k",
+    "max_tokens",
+    "seed",
+    "presence_penalty",
+    "frequency_penalty",
+    "reasoning_effort",
+    "reasoning_summary",
+    "verbosity",
+    "thinking_effort",
+    "thinking_budget_tokens",
+)
+_ENDPOINT_PERSIST_KEYS = ("api_base_url", "api_base", "base_url", "api_url")
 
 
 def _settings_screen_region(widget: Any) -> Any:
@@ -58,6 +116,20 @@ def _settings_screen_region(widget: Any) -> Any:
         exposes one; otherwise the mounted widget region used by this project.
     """
     return getattr(widget, "screen_region", None) or widget.region
+
+
+async def _default_model_prober(base_url: str, provider_key: str) -> LocalModelProbeResult:
+    """Probe a models endpoint with the shared discovery helper.
+
+    Args:
+        base_url: Endpoint root taken from the current base-URL draft.
+        provider_key: Normalized provider config key (enables the Ollama
+            ``/api/tags`` fallback).
+
+    Returns:
+        The probe result, including honest failure copy on error.
+    """
+    return await probe_models_endpoint(base_url, provider_key=provider_key)
 
 
 class ConsoleSettingsInput(Input):
@@ -138,6 +210,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         context_estimate: ConsoleSettingsContextEstimate,
         can_save: bool,
         focus_model: bool = False,
+        model_prober: ModelProber | None = None,
     ) -> None:
         super().__init__()
         self._settings = settings
@@ -146,6 +219,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         self._context_estimate = context_estimate
         self._can_save = can_save
         self._focus_model = focus_model
+        self._model_prober: ModelProber = model_prober or _default_model_prober
+        self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
+        self._streaming_draft = bool(settings.streaming)
         self._active_provider = settings.provider
         self._provider_model_drafts: dict[str, str | None] = {}
         self._set_provider_model_draft(settings.provider, settings.model)
@@ -180,13 +256,29 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 markup=False,
             )
             yield Static(
+                CONSOLE_SETTINGS_SCOPE_COPY,
+                id="console-settings-scope",
+                classes="console-settings-modal-row",
+                markup=False,
+            )
+            yield Static(
                 "",
                 id="console-settings-error",
                 classes="console-settings-error console-settings-error-summary",
                 markup=False,
             )
 
-            with ScrollableContainer(id="console-settings-body", classes="console-settings-body"):
+            body = ScrollableContainer(
+                id="console-settings-body",
+                classes="console-settings-body",
+            )
+            # The global `*:focus` outline peeks through the 1-row section
+            # margins as stray "|" fragments when this scroll container takes
+            # focus (it was the first focusable widget on open). Keyboard
+            # scrolling still works through its bindings while a child input
+            # is focused, so the container stays out of the focus chain.
+            body.can_focus = False
+            with body:
                 with Vertical(
                     id="console-settings-provider-model-section",
                     classes=self._provider_model_section_classes(),
@@ -238,6 +330,22 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         model_custom.styles.max_width = MODEL_CUSTOM_BUTTON_WIDTH
                         model_custom.display = has_model_options
                         yield model_custom
+                        supports_discovery = self._provider_supports_model_discovery(
+                            self._settings.provider
+                        )
+                        model_discover = Button(
+                            MODEL_DISCOVER_BUTTON_LABEL,
+                            id=MODEL_DISCOVER_BUTTON_ID,
+                            disabled=not supports_discovery,
+                        )
+                        model_discover.tooltip = (
+                            "List models served at the Base URL (/v1/models)"
+                        )
+                        model_discover.styles.width = MODEL_DISCOVER_BUTTON_WIDTH
+                        model_discover.styles.min_width = MODEL_DISCOVER_BUTTON_WIDTH
+                        model_discover.styles.max_width = MODEL_DISCOVER_BUTTON_WIDTH
+                        model_discover.display = supports_discovery
+                        yield model_discover
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Base URL")
                         base_url_input = ConsoleSettingsInput(
@@ -248,6 +356,14 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         )
                         base_url_input.display = uses_base_url
                         yield base_url_input
+                    discover_status = Static(
+                        "",
+                        id=MODEL_DISCOVER_STATUS_ID,
+                        classes="console-settings-modal-row",
+                        markup=False,
+                    )
+                    discover_status.display = False
+                    yield discover_status
 
                 with Vertical(classes="console-settings-modal-section"):
                     yield Static("Sampling", classes="destination-section")
@@ -309,11 +425,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         )
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Streaming")
-                        yield Checkbox(
-                            value=self._settings.streaming,
+                        streaming_toggle = Button(
+                            self._streaming_toggle_label(),
                             id="console-settings-streaming",
-                            classes="console-settings-control",
                         )
+                        streaming_toggle.tooltip = "Toggle streaming on or off for this session"
+                        streaming_toggle.styles.width = STREAMING_TOGGLE_WIDTH
+                        streaming_toggle.styles.min_width = STREAMING_TOGGLE_WIDTH
+                        streaming_toggle.styles.max_width = STREAMING_TOGGLE_WIDTH
+                        yield streaming_toggle
 
                 with Vertical(classes="console-settings-modal-section"):
                     yield Static("Provider-specific", classes="destination-section")
@@ -321,6 +441,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield self._modal_label("Reasoning")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.reasoning_effort),
+                            placeholder=self._choice_placeholder("console-settings-reasoning-effort"),
                             id="console-settings-reasoning-effort",
                             classes="console-settings-control",
                         )
@@ -328,6 +449,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield self._modal_label("Summary")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.reasoning_summary),
+                            placeholder=self._choice_placeholder("console-settings-reasoning-summary"),
                             id="console-settings-reasoning-summary",
                             classes="console-settings-control",
                         )
@@ -335,6 +457,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield self._modal_label("Verbosity")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.verbosity),
+                            placeholder=self._choice_placeholder("console-settings-verbosity"),
                             id="console-settings-verbosity",
                             classes="console-settings-control",
                         )
@@ -342,6 +465,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield self._modal_label("Thinking")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.thinking_effort),
+                            placeholder=self._choice_placeholder("console-settings-thinking-effort"),
                             id="console-settings-thinking-effort",
                             classes="console-settings-control",
                         )
@@ -400,6 +524,22 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 classes="console-settings-modal-row console-settings-modal-actions",
             ):
                 yield Button("Cancel", id="console-settings-cancel")
+                save_default = Button(
+                    "Save as default",
+                    id="console-settings-save-default",
+                    disabled=not self._can_save,
+                )
+                save_default.tooltip = (
+                    "Apply to this session and write these values to your config "
+                    "defaults (provider settings + streaming)."
+                )
+                # Match the 1-row Cancel/Save action styling (their sizes come
+                # from id-scoped app CSS this button's id does not inherit).
+                save_default.styles.height = 1
+                save_default.styles.min_height = 1
+                save_default.styles.width = 17
+                save_default.styles.min_width = 17
+                yield save_default
                 yield Button("Save", id="console-settings-save", variant="primary", disabled=not self._can_save)
 
     def on_mount(self) -> None:
@@ -504,6 +644,31 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     @on(Button.Pressed, "#console-settings-save")
     def _save(self, event: Button.Pressed) -> None:
         event.stop()
+        draft = self._validated_draft_or_show_errors()
+        if draft is None:
+            return
+        self.dismiss(draft)
+
+    @on(Button.Pressed, "#console-settings-save-default")
+    def _save_as_default(self, event: Button.Pressed) -> None:
+        """Apply the draft to the session and write it through to config defaults."""
+        event.stop()
+        draft = self._validated_draft_or_show_errors()
+        if draft is None:
+            return
+        try:
+            saved = save_settings_to_cli_config(self._default_persist_sections(draft))
+        except Exception:
+            saved = False
+        if not saved:
+            self.query_one("#console-settings-error", Static).update(
+                CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY
+            )
+            return
+        self.dismiss(draft)
+
+    def _validated_draft_or_show_errors(self) -> ConsoleSessionSettings | None:
+        """Build the draft, surfacing validation errors in the modal when invalid."""
         draft = self._build_draft()
         errors = [
             *self._required_sampling_errors(),
@@ -512,8 +677,70 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         ]
         if errors:
             self.query_one("#console-settings-error", Static).update("\n".join(errors))
-            return
-        self.dismiss(draft)
+            return None
+        return draft
+
+    def _default_persist_sections(
+        self,
+        draft: ConsoleSessionSettings,
+    ) -> dict[str, dict[str, object]]:
+        """Build config sections written through by Save as default.
+
+        Provider-scoped values land in ``[api_settings.<provider>]`` (the source
+        ``build_default_console_session_settings`` reads on the next boot);
+        streaming lands on the canonical ``chat_defaults.streaming`` key (the
+        legacy ``enable_streaming`` bridge only applies when the canonical key
+        is absent). ``chat_defaults.provider`` is written too — the default
+        provider itself resolves ONLY from that key, so omitting it would make
+        "Save as default" keep booting into the previous provider. ``None``
+        values are skipped rather than deleting existing defaults.
+        """
+        sections: dict[str, dict[str, object]] = {}
+        provider_key = provider_config_key(draft.provider)
+        provider_values: dict[str, object] = {}
+        model = normalize_console_model_value(draft.model)
+        if model:
+            provider_values["model"] = model
+        base_url = (draft.base_url or "").strip()
+        if base_url and self._provider_uses_base_url(draft.provider):
+            provider_values[self._endpoint_persist_key(provider_key)] = base_url
+        for field_name in PROVIDER_DEFAULT_PERSIST_FIELDS:
+            value = getattr(draft, field_name)
+            if value is not None:
+                provider_values[field_name] = value
+        if provider_key and provider_values:
+            sections[f"api_settings.{provider_key}"] = provider_values
+        chat_defaults: dict[str, object] = {"streaming": bool(draft.streaming)}
+        if provider_key:
+            chat_defaults["provider"] = provider_key
+        sections["chat_defaults"] = chat_defaults
+        return sections
+
+    def _endpoint_persist_key(self, provider_key: str) -> str:
+        """Return the endpoint config key to write, preferring the configured one."""
+        provider_settings = self._provider_settings(provider_key)
+        for key in _ENDPOINT_PERSIST_KEYS:
+            value = provider_settings.get(key)
+            if isinstance(value, str) and value.strip():
+                return key
+        return "api_url"
+
+    @on(Button.Pressed, "#console-settings-streaming")
+    def _toggle_streaming(self, event: Button.Pressed) -> None:
+        """Cycle the streaming draft between on and off."""
+        event.stop()
+        self._streaming_draft = not self._streaming_draft
+        event.button.label = self._streaming_toggle_label()
+
+    def _streaming_toggle_label(self) -> str:
+        return STREAMING_ON_LABEL if self._streaming_draft else STREAMING_OFF_LABEL
+
+    def _choice_placeholder(self, input_id: str) -> str:
+        """Return the accepted-values placeholder for an enumerated choice input."""
+        for _label, choice_input_id, placeholder in PROVIDER_CHOICE_INPUTS:
+            if choice_input_id == input_id:
+                return placeholder
+        return ""
 
     @on(Select.Changed, "#console-settings-provider")
     def _provider_changed(self, event: Select.Changed) -> None:
@@ -525,6 +752,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         self._active_provider = provider
         self._sync_model_controls(provider, model)
         self._sync_base_url_control(provider, base_url)
+        self._sync_model_discover_controls(provider)
         self._sync_readiness_display()
 
     @on(Select.Changed, "#console-settings-model-select")
@@ -539,6 +767,107 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _model_custom_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self._toggle_manual_model_input()
+
+    @staticmethod
+    def _provider_supports_model_discovery(provider: str) -> bool:
+        """Return whether the provider serves an OpenAI-compatible model list."""
+        return provider_config_key(provider) in URL_BASED_PROVIDER_KEYS
+
+    @on(Button.Pressed, f"#{MODEL_DISCOVER_BUTTON_ID}")
+    def _model_discover_pressed(self, event: Button.Pressed) -> None:
+        """Probe the current base-URL draft for its served model list."""
+        event.stop()
+        provider = str(self.query_one("#console-settings-provider", Select).value or "")
+        if not self._provider_supports_model_discovery(provider):
+            return
+        base_url = self._current_base_url_value(provider) or ""
+        if not base_url:
+            self._set_model_discover_status(MODEL_DISCOVER_MISSING_URL_COPY)
+            return
+        normalized_probe_url = normalize_probe_base_url(base_url)
+        # PR #608 review: user-entered endpoint must pass the shared
+        # input_validation boundary before any network use.
+        if normalized_probe_url is None or not validate_url(normalized_probe_url):
+            self._set_model_discover_status(MODEL_DISCOVER_INVALID_URL_COPY)
+            return
+        event.button.disabled = True
+        self._set_model_discover_status(f"Contacting {endpoint_display(base_url)}…")
+        self.run_worker(
+            self._run_model_discovery(provider, base_url),
+            exclusive=True,
+            group="console-settings-model-discovery",
+        )
+
+    async def _run_model_discovery(self, provider: str, base_url: str) -> None:
+        """Run the model probe off the draft URL and apply the outcome.
+
+        Args:
+            provider: Provider draft value at press time.
+            base_url: Base-URL draft at press time.
+        """
+        try:
+            result = await self._model_prober(base_url, provider_config_key(provider))
+        except Exception:
+            result = LocalModelProbeResult(
+                ok=False,
+                base_url=base_url,
+                detail=f"No models endpoint at {endpoint_display(base_url)}.",
+            )
+        self._apply_model_discovery_result(provider, result)
+
+    def _apply_model_discovery_result(
+        self,
+        provider: str,
+        result: LocalModelProbeResult,
+    ) -> None:
+        """Surface a probe outcome: model Select on success, honest copy otherwise.
+
+        Args:
+            provider: Provider the probe was started for; results for a
+                provider the user has since switched away from are dropped.
+            result: Probe outcome from the discovery module.
+        """
+        try:
+            discover = self.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        except (NoMatches, QueryError):
+            return
+        discover.disabled = not self._provider_supports_model_discovery(self._active_provider)
+        if provider != self._active_provider:
+            self._set_model_discover_status("")
+            return
+        display = endpoint_display(result.base_url)
+        if not result.ok:
+            self._set_model_discover_status(result.detail or f"No models endpoint at {display}.")
+            return
+        if not result.model_ids:
+            self._set_model_discover_status(f"No models reported at {display}.")
+            return
+        self._discovered_model_ids[provider] = tuple(result.model_ids)
+        self._sync_model_controls(provider, self._current_model_value())
+        count = len(result.model_ids)
+        noun = "model" if count == 1 else "models"
+        self._set_model_discover_status(f"Found {count} {noun} at {display}.")
+        self._sync_readiness_display()
+
+    def _set_model_discover_status(self, text: str) -> None:
+        """Update the inline discovery status line, hiding it when blank."""
+        try:
+            status = self.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
+        except (NoMatches, QueryError):
+            return
+        status.update(text)
+        status.display = bool(text.strip())
+
+    def _sync_model_discover_controls(self, provider: str) -> None:
+        """Show the discovery affordance only for URL-based providers."""
+        supports_discovery = self._provider_supports_model_discovery(provider)
+        try:
+            discover = self.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        except (NoMatches, QueryError):
+            return
+        discover.display = supports_discovery
+        discover.disabled = not supports_discovery
+        self._set_model_discover_status("")
 
     def _sync_readiness_display(self) -> None:
         draft = self._build_draft()
@@ -574,7 +903,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             verbosity=self._parse_optional_choice_input("console-settings-verbosity"),
             thinking_effort=self._parse_optional_choice_input("console-settings-thinking-effort"),
             thinking_budget_tokens=self._parse_optional_int_input("console-settings-thinking-budget-tokens"),
-            streaming=self.query_one("#console-settings-streaming", Checkbox).value,
+            streaming=self._streaming_draft,
             persona_label=self._settings.persona_label,
             character_label=self._settings.character_label,
         )
@@ -653,16 +982,36 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         model_input.focus()
 
     def _provider_select_options(self) -> list[tuple[str, str]]:
-        options = [(option.label, option.value) for option in build_console_provider_options(self._providers_models)]
+        """Return provider options labeled with shared catalog display names.
+
+        Option values stay raw provider config keys (task-191); only the
+        rendered labels change, and the ``(WIP)`` marker from the underlying
+        option builder is preserved.
+        """
+        options: list[tuple[str, str]] = []
+        for option in build_console_provider_options(self._providers_models):
+            label = provider_display_name(option.value)
+            if option.label.endswith(" (WIP)"):
+                label = f"{label} (WIP)"
+            options.append((label, option.value))
         if self._settings.provider and self._settings.provider not in {value for _, value in options}:
-            options.append((self._settings.provider, self._settings.provider))
-        return options or [(self._settings.provider, self._settings.provider)]
+            options.append((provider_display_name(self._settings.provider), self._settings.provider))
+        return options or [(provider_display_name(self._settings.provider), self._settings.provider)]
 
     def _model_select_options(self, provider: str, current_model: str | None) -> list[tuple[str, str]]:
-        return [
+        options = [
             (option.label, option.value)
             for option in build_console_model_options(provider, self._providers_models, current_model)
         ]
+        option_values = {value for _, value in options}
+        for model_id in self._discovered_model_ids.get(provider, ()):
+            normalized = normalize_console_model_value(model_id)
+            if normalized and normalized not in option_values:
+                option_values.add(normalized)
+                # Server-supplied text: escape so Rich-markup-like ids cannot
+                # style or spoof the option label (PR #608 review).
+                options.append((escape_markup(normalized), normalized))
+        return options
 
     def _configured_model_select_options(self, provider: str) -> list[tuple[str, str]]:
         return [
@@ -922,7 +1271,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
 
     def _provider_choice_input_errors(self) -> list[str]:
         errors: list[str] = []
-        for label, input_id in PROVIDER_CHOICE_INPUTS:
+        for label, input_id, _placeholder in PROVIDER_CHOICE_INPUTS:
             raw_value = self.query_one(f"#{input_id}", Input).value.strip()
             if raw_value and not validate_text_input(
                 raw_value,

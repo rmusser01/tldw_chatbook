@@ -8,15 +8,21 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.Library.library_fts_query import build_fts_match_query
+from tldw_chatbook.Library.library_notes_sync_state import count_noun
 from tldw_chatbook.Library.library_rag_service import LibraryRagSearchOutcome
-from tldw_chatbook.Library.library_rag_state import LIBRARY_RAG_SERVICE_ERROR_SELECTOR
+from tldw_chatbook.Library.library_rag_state import (
+    LIBRARY_RAG_QUERY_MAX_LENGTH,
+    LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
+)
 from tldw_chatbook.UI.destination_recovery import DestinationRecoveryState
+from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 
 logger = logger.bind(module="LibraryLocalRagSearchService")
 
 _SEARCH_RUNTIME_BACKEND = "local-fts"
 _RAG_RUNTIME_BACKEND = "rag-semantic"
-_KNOWN_KEYWORD_SOURCE_TYPES = ("notes", "media", "conversations")
+_KNOWN_KEYWORD_SOURCE_TYPES = ("notes", "media", "conversations", "prompts")
 # Mirrors `library_rag_state`'s `_OPEN_SOURCE_TYPE_MAP` canonicalization:
 # raw provenance `source_type` values -> the scope-toggle identifiers used
 # by `LibraryRagScopeState`/the Search canvas's per-source toggles.
@@ -28,10 +34,39 @@ _SEMANTIC_SOURCE_TYPE_MAP = {
 }
 
 
+def _validated_query(query: str) -> str:
+    """Validate a user query before it reaches retrieval or FTS seams.
+
+    Args:
+        query: Raw Library search or RAG query.
+
+    Returns:
+        The unchanged query when it passes the shared input validators.
+
+    Raises:
+        ValueError: If the query is empty, oversized, contains stripped
+            control characters, or fails shared text-safety validation.
+    """
+    if not isinstance(query, str):
+        raise ValueError("Enter a safe Library search query.")
+    sanitized = sanitize_string(query, max_length=LIBRARY_RAG_QUERY_MAX_LENGTH)
+    if (
+        sanitized != query
+        or not sanitized.strip()
+        or not validate_text_input(
+            sanitized,
+            max_length=LIBRARY_RAG_QUERY_MAX_LENGTH,
+            allow_html=False,
+        )
+    ):
+        raise ValueError("Enter a safe Library search query.")
+    return sanitized
+
+
 class LibraryLocalRagSearchService:
     """Keyword-first Library retrieval over the app's local source seams.
 
-    `search` mode fans out over notes/media/conversations FTS seams and
+    `search` mode fans out over notes/media/conversations/prompts FTS seams and
     always works when at least one seam is available. `rag` mode delegates
     to the app's `_rag_service` and degrades to a blocked outcome with
     setup routing when that runtime is absent.
@@ -58,7 +93,11 @@ class LibraryLocalRagSearchService:
             to normalize into evidence rows, or a `LibraryRagSearchOutcome`
             directly for blocked states (missing local seams, missing RAG
             runtime).
+
+        Raises:
+            ValueError: If `query` fails shared Library input validation.
         """
+        query = _validated_query(query)
         top_k = max(1, int(kwargs.get("top_k") or 5))
         if mode == "rag":
             return await self._search_semantic(query, scope, top_k, kwargs)
@@ -70,7 +109,7 @@ class LibraryLocalRagSearchService:
         scope: tuple[str, ...],
         top_k: int,
     ) -> Any:
-        """Fan out a keyword search over the notes/media/conversations seams."""
+        """Fan out a keyword search over the notes/media/conversations/prompts seams."""
         user_id = getattr(self._app, "notes_user_id", None) or "default_user"
         coroutines: dict[str, Any] = {}
         if "notes" in scope:
@@ -79,6 +118,8 @@ class LibraryLocalRagSearchService:
             coroutines["media"] = self._search_media(query, top_k)
         if "conversations" in scope:
             coroutines["conversations"] = self._search_conversations(query, top_k)
+        if "prompts" in scope:
+            coroutines["prompts"] = self._search_prompts(query, top_k)
 
         if not coroutines:
             return LibraryRagSearchOutcome(
@@ -117,9 +158,13 @@ class LibraryLocalRagSearchService:
                 query=query,
                 limit=top_k,
                 user_id=user_id,
+                # Pre-built MATCH string (plural/singular widened) so the
+                # notes seam is not limited to its exact-phrase fallback --
+                # FTS5 unicode61 has no stemming (task-185 UAT).
+                fts_match_query=build_fts_match_query(query),
             )
         except Exception:
-            logger.warning("Library keyword search: notes seam failed.", exc_info=True)
+            logger.opt(exception=True).warning("Library keyword search: notes seam failed.")
             return True, []
         return True, [_note_row(item) for item in raw_results or () if isinstance(item, Mapping)]
 
@@ -133,9 +178,15 @@ class LibraryLocalRagSearchService:
         if service is None:
             return False, []
         try:
-            payload = await service.search_media(mode="local", query=query, limit=top_k, offset=0)
+            payload = await service.search_media(
+                mode="local",
+                query=query,
+                limit=top_k,
+                offset=0,
+                fts_match_query=build_fts_match_query(query),
+            )
         except Exception:
-            logger.warning("Library keyword search: media seam failed.", exc_info=True)
+            logger.opt(exception=True).warning("Library keyword search: media seam failed.")
             return True, []
         items = payload.get("items", []) if isinstance(payload, Mapping) else []
         return True, [_media_row(item) for item in items if isinstance(item, Mapping)]
@@ -149,20 +200,44 @@ class LibraryLocalRagSearchService:
         db = getattr(self._app, "chachanotes_db", None)
         if db is None:
             return False, []
+        fts_query = build_fts_match_query(query)
         try:
             if getattr(db, "is_memory_db", False):
                 # In-memory SQLite connections are thread-local and only the
                 # thread that created the database has the migrated schema;
                 # offloading to a worker thread would hit a blank connection.
-                raw_results = db.search_conversations_by_content(query, top_k)
+                raw_results = db.search_conversations_by_content(fts_query, top_k)
             else:
                 raw_results = await asyncio.to_thread(
-                    db.search_conversations_by_content, query, top_k
+                    db.search_conversations_by_content, fts_query, top_k
                 )
         except Exception:
-            logger.warning("Library keyword search: conversations seam failed.", exc_info=True)
+            logger.opt(exception=True).warning("Library keyword search: conversations seam failed.")
             return True, []
         return True, [_conversation_row(item) for item in raw_results or () if isinstance(item, Mapping)]
+
+    async def _search_prompts(
+        self,
+        query: str,
+        top_k: int,
+    ) -> tuple[bool, list[dict[str, Any]]]:
+        """Search the prompts seam. Returns (seam_available, rows)."""
+        service = getattr(self._app, "prompt_scope_service", None)
+        if service is None:
+            return False, []
+        try:
+            raw_results = await service.search_prompts(
+                mode="local",
+                query=query,
+                limit=top_k,
+                # Pre-built MATCH string (plural/singular widened), same as
+                # the notes/media/conversations seams above.
+                fts_match_query=build_fts_match_query(query),
+            )
+        except Exception:
+            logger.opt(exception=True).warning("Library keyword search: prompts seam failed.")
+            return True, []
+        return True, [_prompt_row(item) for item in raw_results or () if isinstance(item, Mapping)]
 
     async def _search_semantic(
         self,
@@ -230,18 +305,39 @@ def _media_row(item: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _conversation_row(item: Mapping[str, Any]) -> dict[str, Any]:
-    message_count = item.get("message_count") or 0
+    try:
+        message_count = int(item.get("message_count") or 0)
+    except (TypeError, ValueError):
+        message_count = 0
     return {
         "source_id": str(item.get("id", "")),
         "chunk_id": "",
         "title": item.get("title") or "",
-        "snippet": f"Matched conversation · {message_count} messages",
+        "snippet": f"Matched conversation · {count_noun(message_count, 'message')}",
         # C1: keyword-mode rows show no score, uniformly with notes/media --
         # `relevance_score`/`best_rank` are an FTS ranking artifact, not a
         # retrieval similarity score, so surfacing it here was misleading.
         # RAG-mode rows (see `_semantic_row`) keep their real scores.
         "score": None,
         "provenance": {"source_type": "conversation"},
+    }
+
+
+def _prompt_row(item: Mapping[str, Any]) -> dict[str, Any]:
+    # Trap (Task 4 review): `PromptScopeService.search_prompts` normalizes
+    # each result via `normalize_prompt_record`, whose "id" is a composite
+    # "local:prompt:<n>" string -- the raw integer prompt id lives under
+    # "local_id". Using "id" here would break
+    # `_open_library_item_by_id("prompt", ...)`/`handle_library_prompt_row`,
+    # which both expect the raw int.
+    local_id = item.get("local_id")
+    return {
+        "source_id": str(local_id) if local_id is not None else "",
+        "chunk_id": "",
+        "title": item.get("name") or "",
+        "snippet": item.get("user_prompt") or item.get("details") or "",
+        "score": None,
+        "provenance": {"source_type": "prompt"},
     }
 
 
@@ -327,7 +423,7 @@ def _no_backend_recovery_state() -> DestinationRecoveryState:
     return DestinationRecoveryState(
         status_label="Unavailable",
         unavailable_what="Library Search/RAG retrieval",
-        why="No local Library source seam (notes, media, or conversations) is available",
+        why="No local Library source seam (notes, media, conversations, or prompts) is available",
         next_action="Configure Library RAG retrieval or use standalone Search/RAG",
         recovery_action="Search/RAG setup",
         authority_owner="Library retrieval service",

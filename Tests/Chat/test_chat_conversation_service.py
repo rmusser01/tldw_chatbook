@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 @dataclass
@@ -180,6 +181,7 @@ def test_normalize_conversation_and_message_rows_preserve_stable_shape():
             "created_at": "2026-04-19T00:00:00Z",
             "last_modified": "2026-04-19T00:01:00Z",
             "version": 4,
+            "system_prompt": "  Be terse.  ",
         }
     )
     assert conversation["title"] == "Chat with Character 7"
@@ -191,7 +193,17 @@ def test_normalize_conversation_and_message_rows_preserve_stable_shape():
     assert conversation["discovery_entity_id"] is None
     assert conversation["keywords"] == []
     assert conversation["message_count"] == 0
+    assert conversation["system_prompt"] == "Be terse."
     assert service.derive_conversation_title({"assistant_kind": None, "title": None}) == "New Chat"
+
+
+def test_normalize_conversation_row_defaults_missing_system_prompt_to_none():
+    """A conversation row from a pre-migration DB or without one set has no system prompt."""
+    service = ChatConversationService(FakeDB())
+
+    conversation = service.normalize_conversation_row({"id": "conv-1"})
+
+    assert conversation["system_prompt"] is None
 
     message = service.normalize_message_row(
         {
@@ -298,6 +310,34 @@ def test_list_conversations_normalizes_pagination_and_enforces_global_defaults()
     assert workspace_call[2]["scope_type"] == "workspace"
     assert workspace_call[2]["workspace_id"] == "ws-99"
     assert workspace_call[2]["include_deleted"] is True
+
+
+def test_list_conversations_scope_all_passes_through_without_workspace_filter():
+    """The Library snapshot's ``scope_type='all'`` must reach the DB unnarrowed."""
+    db = FakeDB(
+        conversations_page_rows=[
+            {
+                "id": "conv-ws",
+                "title": "Console chat",
+                "scope_type": "workspace",
+                "workspace_id": "ws-chats",
+                "version": 1,
+            },
+        ],
+    )
+    service = ChatConversationService(db)
+
+    service.list_conversations(scope_type="all", limit=50, offset=0)
+
+    search_call = [call for call in db.calls if call[0] == "search_conversations_page"][-1]
+    assert search_call[2]["scope_type"] == "all"
+    assert search_call[2]["workspace_id"] is None
+
+    # An explicit workspace_id always wins over the 'all' sentinel.
+    service.list_conversations(scope_type="all", workspace_id="ws-chats")
+    narrowed_call = [call for call in db.calls if call[0] == "search_conversations_page"][-1]
+    assert narrowed_call[2]["scope_type"] == "workspace"
+    assert narrowed_call[2]["workspace_id"] == "ws-chats"
 
     deleted_only_result = service.list_conversations(deleted_only=True)
     assert deleted_only_result["pagination"]["limit"] == 50
@@ -636,6 +676,31 @@ def test_get_conversation_tree_wraps_root_and_child_rows():
     assert [node["id"] for node in tree["root_threads"]] == ["msg-root-1", "msg-root-2"]
     assert tree["root_threads"][0]["children"][0]["id"] == "msg-child-1"
     assert tree["root_threads"][0]["children"][0]["variant"]["variant_number"] == 2
+
+
+def test_get_conversation_tree_carries_system_prompt_through_real_db(tmp_path):
+    """Full production path: real DB row -> get_conversation_tree()["conversation"].
+
+    This is the exact seam Console's resume handler
+    (``ChatScreen._resume_console_workspace_conversation``) reads from. A
+    fake/static conversation-tree service in a UI-level test would hide a
+    regression here (``normalize_conversation_row`` silently drops any key
+    it doesn't explicitly allow-list), so this exercises the real
+    ``CharactersRAGDB`` + ``ChatConversationService`` stack end to end.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test-client")
+    try:
+        conversation_id = db.add_conversation({
+            "title": "Saved chat",
+            "system_prompt": "Answer only in French.",
+        })
+        service = ChatConversationService(db)
+
+        tree = service.get_conversation_tree(conversation_id)
+
+        assert tree["conversation"]["system_prompt"] == "Answer only in French."
+    finally:
+        db.close_connection()
 
 
 def test_local_rag_context_adjuncts_are_persisted_and_reloaded(tmp_path):

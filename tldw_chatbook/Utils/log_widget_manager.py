@@ -60,7 +60,7 @@ class LogWidgetManager:
         except QueryError:
             logger.error(f"Failed to query {widget_id} to write message.")
         except Exception as e:
-            logger.error(f"Error writing to {log_name} log: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error writing to {log_name} log: {e}")
     
     @staticmethod
     def update_llamacpp_log(app: 'App', message: str) -> None:

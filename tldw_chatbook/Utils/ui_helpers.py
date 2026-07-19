@@ -81,7 +81,9 @@ class UIHelpers:
             model_select.prompt = "Select Model..." if models else "No models available"
             
         except QueryError:
-            logger.error(f"Cannot find model select '{model_select_id}'")
+            # Legacy per-tab model selects (e.g. #chat-api-model) do not exist in the
+            # master-shell UI, so this lookup fails on every modern boot; DEBUG, not ERROR.
+            logger.debug(f"Cannot find model select '{model_select_id}'")
         except Exception as e:
             logger.error(f"Error updating model select: {e}")
     

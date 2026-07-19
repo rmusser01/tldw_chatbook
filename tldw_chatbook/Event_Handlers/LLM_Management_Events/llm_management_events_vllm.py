@@ -10,6 +10,7 @@ This module isolates vLLM-specific logic from the main llm_management_events.py.
 from __future__ import annotations
 #
 import logging
+from loguru import logger as _loguru_fallback_logger
 import re
 import shlex
 import subprocess
@@ -174,7 +175,7 @@ def _set_vllm_process_on_app(app_instance: "TldwCli", process: Optional[subproce
 
 
 async def run_vllm_server_worker(app_instance: "TldwCli", command: List[str]) -> str:
-    logger = getattr(app_instance, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app_instance, "loguru_logger", _loguru_fallback_logger)
     quoted_command = ' '.join(shlex.quote(c) for c in command)
     logger.info(f"vLLM WORKER (persistent stream) starting with command: {quoted_command}")
 
@@ -266,7 +267,7 @@ async def run_vllm_server_worker(app_instance: "TldwCli", command: List[str]) ->
         raise
     except Exception as err:
         msg = f"CRITICAL ERROR in vLLM worker: {err} (Command: {quoted_command})"
-        logger.error(msg, exc_info=True)
+        logger.opt(exception=True).error(msg)
         app_instance.call_from_thread(app_instance._update_vllm_log, f"[bold red]{msg}[/]\n")
         raise
     finally:
@@ -285,7 +286,7 @@ async def run_vllm_server_worker(app_instance: "TldwCli", command: List[str]) ->
 ###############################################################################
 
 async def handle_start_vllm_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to start vLLM server.")
 
     try:
@@ -366,13 +367,13 @@ async def handle_start_vllm_server_button_pressed(app: "TldwCli", event: Button.
         )
         app.notify("vLLM server starting…")
     except Exception as err:  # pragma: no cover
-        logger.error(f"Error preparing to start vLLM server: {err}", exc_info=True)
+        logger.opt(exception=True).error(f"Error preparing to start vLLM server: {err}")
         app.notify("Error setting up vLLM server start.", severity="error")
 
 
 async def handle_stop_vllm_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
     """Stops the vLLM server process if it's running."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to stop vLLM server.")
 
     log_output_widget = app.query_one("#vllm-log-output", RichLog)
@@ -396,7 +397,7 @@ async def handle_stop_vllm_server_button_pressed(app: "TldwCli", event: Button.P
                 log_output_widget.write("vLLM server killed.\n")
                 app.notify("vLLM server killed after timeout.", severity="warning")
             except Exception as e: # pylint: disable=broad-except
-                logger.error(f"Error during vLLM server termination: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Error during vLLM server termination: {e}")
                 log_output_widget.write(f"Error stopping vLLM server: {e}\n")
                 app.notify(f"Error stopping vLLM server: {e}", severity="error")
             finally:

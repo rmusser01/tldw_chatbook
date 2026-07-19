@@ -40,7 +40,7 @@ async def handle_search_button_pressed(app: "TldwCli", button: Button) -> None:
             mock_event = MockButtonEvent(button)
             search_window.on_button_pressed(mock_event)
     except Exception as e:
-        logger.error(f"Error handling search button press: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error handling search button press: {e}")
         app.notify(f"Error handling search button: {str(e)}", severity="error")
 
 # Export button handlers map

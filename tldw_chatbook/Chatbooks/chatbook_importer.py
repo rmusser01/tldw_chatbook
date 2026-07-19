@@ -364,35 +364,73 @@ class ChatbookImporter:
                     'character_id': character_id,
                     'root_id': f"imported_{conv_data.get('id', 'unknown')}"
                 }
-                new_conv_id = db.add_conversation(conv_dict)
-                logger.info(f"ChatbookImporter._import_conversations: Created conversation with ID {new_conv_id}")
-                
+                # Stage all filesystem work FIRST (attachment byte loads),
+                # so the transaction below holds the write lock only for
+                # pure DB writes — no disk I/O inside the transaction.
+                staged_messages = []
+                for msg in conv_data.get('messages', []):
+                    image_kwargs, attachment_rows = self._load_message_attachments(
+                        extract_dir, msg, status
+                    )
+                    staged_messages.append((msg, image_kwargs, attachment_rows))
+
+                # One outer transaction per conversation — per conversation,
+                # not per chatbook, to preserve error-isolation semantics
+                # (one bad conversation fails alone; others still import).
+                # TransactionContextManager is depth-tracked/reentrant, so
+                # add_conversation/add_message/set_message_attachments'
+                # own `with self.transaction():` calls become nested and
+                # only this outer block commits, once, per conversation
+                # (task-250 / performance audit finding A5). A failure
+                # partway through the message loop rolls back the whole
+                # conversation (an isolation improvement — the except below
+                # already counted that case as failed). Success accounting
+                # happens AFTER the block so a failed COMMIT can never be
+                # double-counted as both success and failure. Citation
+                # context (a JSON side-store, not this DB) also persists
+                # after commit, so it neither extends the transaction nor
+                # records context for rows that get rolled back.
+                imported_message_context: list[tuple[str, str, dict]] = []
+                new_conv_id = None
+                with db.transaction():
+                    new_conv_id = db.add_conversation(conv_dict)
+                    logger.info(f"ChatbookImporter._import_conversations: Created conversation with ID {new_conv_id}")
+
+                    if new_conv_id:
+                        logger.info(f"ChatbookImporter._import_conversations: Importing {len(staged_messages)} messages")
+                        for msg, image_kwargs, attachment_rows in staged_messages:
+                            msg_dict = {
+                                'conversation_id': new_conv_id,
+                                'sender': msg['role'],
+                                'content': msg['content'],
+                                'timestamp': msg.get('timestamp', datetime.now().isoformat())
+                            }
+                            msg_dict.update(image_kwargs)
+                            new_message_id = db.add_message(msg_dict)
+                            if new_message_id:
+                                if attachment_rows:
+                                    db.set_message_attachments(
+                                        str(new_message_id), attachment_rows
+                                    )
+                                imported_message_context.append(
+                                    (str(new_conv_id), str(new_message_id), msg)
+                                )
+
                 if new_conv_id:
-                    # Import messages
-                    logger.info(f"ChatbookImporter._import_conversations: Importing {len(conv_data.get('messages', []))} messages")
-                    for msg in conv_data.get('messages', []):
-                        msg_dict = {
-                            'conversation_id': new_conv_id,
-                            'sender': msg['role'],
-                            'content': msg['content'],
-                            'timestamp': msg.get('timestamp', datetime.now().isoformat())
-                        }
-                        new_message_id = db.add_message(msg_dict)
-                        if new_message_id:
-                            self._persist_imported_message_citation_context(
-                                conversation_service,
-                                str(new_conv_id),
-                                str(new_message_id),
-                                msg,
-                            )
-                    
+                    for context_conv_id, context_message_id, msg in imported_message_context:
+                        self._persist_imported_message_citation_context(
+                            conversation_service,
+                            context_conv_id,
+                            context_message_id,
+                            msg,
+                        )
                     status.successful_items += 1
                     logger.info(f"ChatbookImporter._import_conversations: Successfully imported conversation: {conv_name}")
                 else:
                     status.failed_items += 1
                     status.add_error(f"Failed to create conversation: {conv_name}")
                     logger.error(f"ChatbookImporter._import_conversations: Failed to create conversation: {conv_name}")
-                    
+
             except Exception as e:
                 status.failed_items += 1
                 status.add_error(f"Error importing conversation {conv_id}: {str(e)}")
@@ -400,6 +438,92 @@ class ChatbookImporter:
                     "ChatbookImporter._import_conversations: Error importing conversation {}",
                     conv_id,
                 )
+
+    @staticmethod
+    def _load_message_attachments(
+        extract_dir: Path,
+        msg: Dict[str, Any],
+        status: ImportStatus,
+    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        """Load a message's image attachments from the extracted chatbook.
+
+        Position 0 restores through the legacy ``image_data``/
+        ``image_mime_type`` message columns; positions >= 1 become
+        ``message_attachments`` rows — matching the app's live read contract.
+        Entries whose resolved path escapes the extraction root (a hostile
+        chatbook) or whose file is missing are skipped with a warning; the
+        message itself still imports.
+
+        Args:
+            extract_dir: Root the chatbook archive was extracted into.
+            msg: The message payload from the conversation JSON.
+            status: Import status collector for warnings.
+
+        Returns:
+            Tuple of (legacy image kwargs for ``add_message``,
+            attachment rows for ``set_message_attachments``).
+        """
+        image_kwargs: Dict[str, Any] = {}
+        rows: List[Dict[str, Any]] = []
+        raw_entries = msg.get("attachments")
+        if not isinstance(raw_entries, list):
+            return image_kwargs, rows
+        root = extract_dir.resolve()
+        for entry in raw_entries:
+            if not isinstance(entry, dict):
+                continue
+            relative = str(entry.get("file") or "")
+            try:
+                position = int(entry.get("position"))
+            except (TypeError, ValueError):
+                continue
+            if position < 0:
+                status.add_warning(
+                    f"Skipped attachment with invalid position {position}: {relative}"
+                )
+                continue
+            if not relative:
+                continue
+            # NOTE: path_validation.validate_path cannot bound this read — it
+            # rejects ANY resolved path containing a dot component, and the
+            # importer's own extraction root lives under ~/.local/share/….
+            # Same posture, expressed locally: no dot components within the
+            # archive-relative path (covers ../ and hidden files), plus a
+            # resolve()-based containment check as the symlink backstop.
+            if any(part.startswith(".") for part in Path(relative).parts):
+                status.add_warning(
+                    f"Skipped attachment outside chatbook archive: {relative}"
+                )
+                continue
+            resolved = (extract_dir / relative).resolve()
+            if root != resolved and root not in resolved.parents:
+                status.add_warning(
+                    f"Skipped attachment outside chatbook archive: {relative}"
+                )
+                continue
+            if not resolved.is_file():
+                status.add_warning(f"Attachment file missing from chatbook: {relative}")
+                continue
+            try:
+                data = resolved.read_bytes()
+            except OSError as exc:
+                status.add_warning(
+                    f"Failed to read attachment file {relative}: {exc}"
+                )
+                continue
+            mime_type = str(entry.get("mime_type") or "image/png")
+            display_name = str(entry.get("display_name") or "")
+            if position == 0:
+                image_kwargs = {"image_data": data, "image_mime_type": mime_type}
+            else:
+                rows.append({
+                    "position": position,
+                    "data": data,
+                    "mime_type": mime_type,
+                    "display_name": display_name,
+                })
+        rows.sort(key=lambda row: row["position"])
+        return image_kwargs, rows
 
     @staticmethod
     def _conversation_file_path(
@@ -812,25 +936,40 @@ class ChatbookImporter:
                         content = f.read()
                 
                 # Prepare media data for import
-                keywords = media_data.get('metadata', {}).get('media_keywords', '')
-                if isinstance(keywords, list):
-                    keywords = ', '.join(keywords)
-                
-                # Add media to database
+                keywords_raw = media_data.get('metadata', {}).get('media_keywords', '')
+                if isinstance(keywords_raw, str):
+                    keywords = [word.strip() for word in keywords_raw.split(',') if word.strip()]
+                elif isinstance(keywords_raw, (list, tuple)):
+                    keywords = [str(word).strip() for word in keywords_raw if str(word).strip()]
+                else:
+                    # Any other (non-str, non-sequence) shape -- e.g. a stray
+                    # int/dict from a malformed manifest -- yields no keywords
+                    # rather than crashing the whole import.
+                    keywords = []
+
+                # Add media to database. NOTE: this call previously used
+                # three parameter names that do not exist on
+                # ``MediaDatabase.add_media_with_keywords`` (``media_keywords``
+                # instead of ``keywords``, ``summary`` instead of
+                # ``analysis_content``) -- both raised ``TypeError`` for
+                # every media import -- and treated its return value as a
+                # bare id when it is actually a
+                # ``(media_id, message, status)`` tuple, so even a fixed
+                # call would have miscounted every import as successful.
                 try:
-                    new_media_id = db.add_media_with_keywords(
+                    new_media_id, _add_message, _add_status = db.add_media_with_keywords(
                         url=url,
                         title=title,
                         media_type=media_data.get('media_type'),
                         content=content or media_data.get('content', ''),
-                        media_keywords=keywords,
+                        keywords=keywords,
                         prompt=media_data.get('metadata', {}).get('prompt'),
-                        summary=media_data.get('metadata', {}).get('summary'),
+                        analysis_content=media_data.get('metadata', {}).get('summary'),
                         transcription_model=media_data.get('metadata', {}).get('transcription_model'),
                         author=media_data.get('author'),
                         ingestion_date=media_data.get('metadata', {}).get('ingestion_date')
                     )
-                    
+
                     if new_media_id:
                         status.successful_items += 1
                         logger.info(f"Imported media: {title}")

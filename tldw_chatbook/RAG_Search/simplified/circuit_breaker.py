@@ -4,6 +4,7 @@ Circuit breaker implementation for resilient service calls.
 Prevents cascading failures by temporarily disabling calls to failing services.
 """
 
+import threading
 import time
 from loguru import logger
 from typing import Callable, Any, Optional, TypeVar, Generic
@@ -68,7 +69,15 @@ class CircuitBreaker(Generic[T]):
         self.config = config or CircuitBreakerConfig()
         self._state = CircuitBreakerState()
         self._state.current_recovery_timeout = self.config.recovery_timeout
-        self._lock = asyncio.Lock()
+        # A threading.Lock (not asyncio.Lock): breakers are shared per name via
+        # get_circuit_breaker and are exercised from multiple event loops /
+        # threads at once (e.g. chat search on the app loop and ingestion-time
+        # indexing on its worker loop share one embeddings breaker, and
+        # call_sync spins up a fresh loop per call, so an asyncio.Lock never
+        # actually guarded across callers). The guarded sections are pure
+        # in-memory state updates with no awaits, so holding a thread lock
+        # inside async methods is safe and non-blocking in practice.
+        self._lock = threading.Lock()
         
         logger.info(f"Circuit breaker '{name}' initialized with threshold={self.config.failure_threshold}, "
                    f"exponential_backoff={self.config.enable_exponential_backoff}")
@@ -108,7 +117,7 @@ class CircuitBreaker(Generic[T]):
     
     async def _record_success(self):
         """Record a successful call."""
-        async with self._lock:
+        with self._lock:
             self._state.failure_count = 0
             
             if self._state.state == CircuitState.HALF_OPEN:
@@ -124,7 +133,7 @@ class CircuitBreaker(Generic[T]):
     
     async def _record_failure(self):
         """Record a failed call."""
-        async with self._lock:
+        with self._lock:
             self._state.failure_count += 1
             self._state.last_failure_time = time.time()
             self._state.success_count = 0
@@ -148,7 +157,7 @@ class CircuitBreaker(Generic[T]):
     
     async def _transition_to_half_open(self):
         """Transition to half-open state for testing."""
-        async with self._lock:
+        with self._lock:
             if self._state.state == CircuitState.OPEN:
                 self._state.state = CircuitState.HALF_OPEN
                 self._state.last_state_change = time.time()

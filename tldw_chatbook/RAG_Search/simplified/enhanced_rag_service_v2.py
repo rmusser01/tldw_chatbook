@@ -238,94 +238,36 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         
         return results
     
-    async def index_batch_optimized(self, 
+    async def index_batch_optimized(self,
                                    documents: List[Dict[str, Any]],
                                    show_progress: Optional[bool] = None,
                                    batch_size: Optional[int] = None) -> List[IndexingResult]:
         """
-        Optimized batch indexing with parallel processing.
-        
-        Overrides base method to use parallel processors when enabled.
+        Optimized batch indexing.
+
+        NOTE (task-247): the previous "parallel" branch here was broken in
+        both directions -- it imported ``generate_embeddings_batch`` /
+        ``store_documents_batch`` from ``enhanced_indexing_helpers`` (which
+        only defines the ``*_with_parents`` variants, so the imports raised
+        ImportError at first use), and the chunking processor's
+        ``doc_chunk_info`` (a dict keyed by doc_id) does not match the shape
+        the storage helper expects (a list with 'doc_idx'/'chunks'). Any
+        profile with a ``processing_config`` would therefore crash on its
+        first indexing call. Until a parallel pipeline is actually
+        implemented, always delegate to the base optimized batch path, which
+        works for every profile.
         """
-        if not self.enable_parallel_processing or not self.chunking_processor:
-            # Fall back to base implementation
-            return await super().index_batch_optimized(documents, show_progress, batch_size)
-        
-        total = len(documents)
-        if not documents:
-            return []
-        
-        # Use configured progress setting if not specified
-        if show_progress is None and self.processing_config:
-            show_progress = self.processing_config.show_progress
-        
-        logger.info(f"Starting parallel batch indexing for {total} documents")
-        batch_start_time = time.time()
-        
-        # Phase 1: Parallel chunking
-        chunk_start = time.time()
-        all_chunks, doc_chunk_info, failed_results = await self.chunking_processor.chunk_documents_batch(
+        if self.enable_parallel_processing and self.chunking_processor:
+            logger.debug(
+                "Parallel batch-indexing pipeline is not implemented; using base optimized path"
+            )
+        if show_progress is None:
+            show_progress = self.processing_config.show_progress if self.processing_config else True
+        return await super().index_batch_optimized(
             documents,
-            self.chunking,
-            self.config.chunk_size,
-            self.config.chunk_overlap,
-            self.config.chunking_method
+            show_progress=show_progress,
+            batch_size=batch_size or 32,
         )
-        chunk_time = time.time() - chunk_start
-        logger.info(f"Parallel chunking completed in {chunk_time:.2f}s, total chunks: {len(all_chunks)}")
-        
-        if not all_chunks:
-            logger.warning("No chunks created from any documents")
-            return failed_results
-        
-        # Phase 2: Parallel embedding generation
-        embed_start = time.time()
-        chunk_texts = [chunk['text'] for chunk in all_chunks]
-        
-        if self.embedding_processor:
-            # Use parallel embedding processor
-            embeddings_array, failed_indices = await self.embedding_processor.generate_embeddings_batch(
-                chunk_texts,
-                self.embeddings,
-                batch_size
-            )
-            all_embeddings = list(embeddings_array) if len(embeddings_array) > 0 else []
-        else:
-            # Fall back to sequential processing
-            from .enhanced_indexing_helpers import generate_embeddings_batch
-            all_embeddings, failed_indices = await generate_embeddings_batch(
-                self, chunk_texts, batch_size or 32, show_progress
-            )
-        
-        embed_time = time.time() - embed_start
-        logger.info(f"Parallel embedding generation completed in {embed_time:.2f}s")
-        
-        # Phase 3: Store documents (same as base)
-        store_start = time.time()
-        from .enhanced_indexing_helpers import store_documents_batch
-        storage_results = await store_documents_batch(
-            self, documents, doc_chunk_info, all_embeddings, batch_start_time, failed_indices
-        )
-        store_time = time.time() - store_start
-        
-        # Combine results
-        results = failed_results + storage_results
-        total_time = time.time() - batch_start_time
-        
-        # Summary
-        successful = sum(1 for r in results if r and r.success)
-        logger.info(
-            f"Parallel batch indexing completed: {successful}/{total} documents, "
-            f"total time: {total_time:.2f}s "
-            f"(chunk: {chunk_time:.2f}s, embed: {embed_time:.2f}s, store: {store_time:.2f}s)"
-        )
-        
-        # Log parallel processing metrics
-        log_counter("rag_parallel_batch_completed", value=successful)
-        log_histogram("rag_parallel_batch_time", total_time)
-        log_histogram("rag_parallel_speedup", total_time / total if total > 0 else 0)
-        
-        return results
     
     def start_experiment(self, experiment_config: ExperimentConfig):
         """Start an A/B testing experiment."""

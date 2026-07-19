@@ -162,32 +162,32 @@ def test_status_contract_requires_readable_labels():
         assert label in text
 
 
-def test_library_mode_chip_focus_keeps_active_label_readable():
-    """``.library-mode-chip`` (the retired mode-strip's own selector + focus
-    rule) was removed once the Library screen stopped rendering any widget
-    with that class (see Task 7's rail/canvas rework). ``.notes-mode-chip``
-    still shares the base rule + focus rule (dropped from these two
-    selectors), and ``.library-mode-chip.is-active``/``:focus`` variants are
-    untouched (still shared with ``.notes-mode-chip``/``.personas-mode-chip``
-    and out of this retirement's scope) -- both keep asserting here."""
+def test_library_mode_chip_selector_is_retired():
+    """``.library-mode-chip`` (the retired horizontal mode-strip's own
+    selector, in every variant: base rule, ``:focus``, ``.is-active``, and
+    ``.is-active:focus``) was deleted wholesale in L3b Task 9 along with
+    ``LIBRARY_MODES`` and the rest of the mode-switch chrome the Library rail
+    + canvas shell superseded. ``.notes-mode-chip``/``.personas-mode-chip``
+    still render their own mode strips and keep both the base rule and the
+    shared ``.is-active``/``.is-active:focus`` variants -- only the
+    ``library-`` selector is gone. The ``$ds-library-mode-chip-*`` size
+    tokens survive (still consumed by ``.notes-mode-chip``); only the
+    Library-only ``$ds-library-mode-bar-height``/``$ds-library-mode-label-width``
+    tokens, which had no other consumer, were deleted with the selector."""
     text = DESIGN_SYSTEM_TCSS.read_text(encoding="utf-8")
     variables = CORE_VARIABLES_TCSS.read_text(encoding="utf-8")
     library_screen = LIBRARY_SCREEN_PY.read_text(encoding="utf-8")
 
-    assert ".library-mode-chip:focus" not in text
-    assert ".library-mode-chip.is-active" in text
-    assert ".library-mode-chip.is-active:focus" in text
-    active_block = text.split(".library-mode-chip.is-active", 1)[1].split("}", 1)[0]
-    active_focus_block = text.split(".library-mode-chip.is-active:focus", 1)[1].split("}", 1)[0]
+    assert ".library-mode-chip" not in text
+    assert ".notes-mode-chip.is-active" in text
+    assert ".notes-mode-chip.is-active:focus" in text
+    assert ".personas-mode-chip.is-active" in text
 
-    assert "background: $ds-focus-bg;" in active_block
-    # Chips are one row tall; the active state must not rely on a border that
-    # would consume the single content row.
-    assert "border: none;" in active_block
-    assert "color: $ds-focus-fg;" in active_focus_block
-    assert "text-style: bold underline;" in active_focus_block
-    assert "$ds-library-mode-bar-height: 1;" in variables
+    assert "$ds-library-mode-bar-height" not in variables
+    assert "$ds-library-mode-label-width" not in variables
     assert "$ds-library-mode-chip-height: 1;" in variables
-    # Chip sizing lives in TCSS tokens, not inline widget styles.
+
+    assert "library-mode-chip" not in library_screen
+    assert "LIBRARY_MODES = {" not in library_screen
     assert "LIBRARY_MODE_BAR_HEIGHT" not in library_screen
     assert "LIBRARY_MODE_CHIP_WIDTH_PADDING" not in library_screen

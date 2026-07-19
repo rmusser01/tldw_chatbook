@@ -3,16 +3,32 @@ Root conftest.py for shared test fixtures and configuration.
 This file provides common fixtures used across the test suite.
 """
 
+import os
+import shutil
+import tempfile
+from pathlib import Path
+
+_TEST_CONFIG_ROOT_ENV = "TLDW_TEST_CONFIG_ROOT"
+_TEST_CONFIG_OWNER_ENV = "TLDW_TEST_CONFIG_ROOT_OWNER"
+_existing_test_config_root = os.environ.get(_TEST_CONFIG_ROOT_ENV)
+if _existing_test_config_root:
+    _BOOTSTRAP_CONFIG_ROOT = Path(_existing_test_config_root)
+    _OWNS_BOOTSTRAP_CONFIG_ROOT = False
+else:
+    _BOOTSTRAP_CONFIG_ROOT = Path(tempfile.mkdtemp(prefix="tldw_test_config_"))
+    os.environ[_TEST_CONFIG_ROOT_ENV] = str(_BOOTSTRAP_CONFIG_ROOT)
+    os.environ[_TEST_CONFIG_OWNER_ENV] = str(Path(__file__).resolve())
+    _OWNS_BOOTSTRAP_CONFIG_ROOT = True
+_BOOTSTRAP_CONFIG_PATH = _BOOTSTRAP_CONFIG_ROOT / "config" / "config.toml"
+_BOOTSTRAP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
+
 import pytest
 import pytest_asyncio
-import tempfile
-import shutil
 from loguru import logger
 import asyncio
-from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock
 import sqlite3
-import os
 import sys
 import gc
 import warnings
@@ -275,6 +291,18 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "optional_deps: Tests requiring optional dependencies")
 
 
+def pytest_sessionfinish(session, exitstatus):
+    """Remove the module-load config sandbox created by this conftest."""
+    if not _OWNS_BOOTSTRAP_CONFIG_ROOT:
+        return
+    if os.environ.get("TLDW_CONFIG_PATH") == str(_BOOTSTRAP_CONFIG_PATH):
+        os.environ.pop("TLDW_CONFIG_PATH", None)
+    if os.environ.get(_TEST_CONFIG_ROOT_ENV) == str(_BOOTSTRAP_CONFIG_ROOT):
+        os.environ.pop(_TEST_CONFIG_ROOT_ENV, None)
+        os.environ.pop(_TEST_CONFIG_OWNER_ENV, None)
+    shutil.rmtree(_BOOTSTRAP_CONFIG_ROOT, ignore_errors=True)
+
+
 # ========== Async Support ==========
 
 @pytest.fixture
@@ -305,6 +333,10 @@ def isolate_test_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_DATA_HOME", str(test_data_dir))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(test_data_dir / "config"))
     monkeypatch.setenv("HOME", str(test_data_dir / "home"))
+    monkeypatch.setenv(
+        "TLDW_CONFIG_PATH",
+        str(test_data_dir / "config" / "config.toml"),
+    )
     
     # Patch common data directory paths if they're imported
     try:

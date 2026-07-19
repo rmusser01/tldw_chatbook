@@ -191,7 +191,11 @@ def build_library_media_viewer_state(
     lines: list[str] = [f"Type: {media_type}"]
     if author:
         lines.append(f"Author: {author}")
-    if url:
+    if url and not url.startswith("local://"):
+        # The synthetic "local://media/{id}" placeholder (and any other
+        # local:// scheme value) is an internal identifier, not a
+        # user-meaningful link -- hide it from the metadata lines while
+        # still prefilling it in the edit form's URL field (L3).
         lines.append(f"URL: {url}")
     if keywords_text:
         lines.append(f"Keywords: {keywords_text}")

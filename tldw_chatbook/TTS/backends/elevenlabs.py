@@ -196,7 +196,7 @@ class ElevenLabsTTSBackend(APITTSBackend):
             raise ValueError("Unable to connect to TTS service. Please check your internet connection.")
             
         except Exception as e:
-            logger.error(f"ElevenLabsTTSBackend: Unexpected error: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"ElevenLabsTTSBackend: Unexpected error: {e}")
             raise ValueError("An unexpected error occurred during TTS generation.")
     
     def _map_output_format(self, format: str) -> str:

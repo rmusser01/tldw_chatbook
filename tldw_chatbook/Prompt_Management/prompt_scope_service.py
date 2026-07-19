@@ -279,10 +279,74 @@ class LocalPromptService:
             include_deleted=include_deleted,
         )
 
+    def count_prompts(self, *, include_deleted: bool = False, **_kwargs: Any) -> int:
+        """Count local prompts without fetching a full page.
+
+        Mirrors ``list_prompts`` above: fetches a single row
+        (``per_page=1``) purely to read the paginated response's exact
+        total.
+
+        Args:
+            include_deleted: Whether to include soft-deleted prompts.
+            **_kwargs: Accepted and ignored, mirroring ``list_prompts``'s
+                permissive signature so callers can forward the same
+                kwargs (e.g. ``mode``) uniformly.
+
+        Returns:
+            The exact number of matching prompts.
+        """
+        _prompts, _total_pages, _current_page, total_items = self.prompt_db.list_prompts(
+            page=1,
+            per_page=1,
+            include_deleted=include_deleted,
+        )
+        return total_items
+
     def get_prompt(self, prompt_identifier: str | int, *, include_deleted: bool = False) -> Any:
         if hasattr(self.prompt_db, "fetch_prompt_details"):
             return self.prompt_db.fetch_prompt_details(prompt_identifier, include_deleted=include_deleted)
         return self.prompt_db.get_prompt(prompt_identifier, include_deleted=include_deleted)
+
+    def search_prompts(
+        self,
+        *,
+        query: str,
+        limit: int = 10,
+        include_deleted: bool = False,
+        fts_match_query: Optional[str] = None,
+        **_kwargs: Any,
+    ) -> Any:
+        """Search local prompts via the prompts FTS index.
+
+        Mirrors ``list_prompts``/``count_prompts`` above: delegates straight
+        to ``PromptsDatabase.search_prompts``, requesting a single page
+        sized to ``limit`` results.
+
+        Args:
+            query: Plain user query text, forwarded as ``search_query``
+                (used verbatim as the FTS MATCH expression when
+                ``fts_match_query`` is not provided).
+            limit: Maximum number of prompts to return.
+            include_deleted: Whether to include soft-deleted prompts.
+            fts_match_query: Optional pre-built FTS5 MATCH string (e.g.
+                Library keyword search's plural/singular-widened query)
+                overriding the MATCH clause built from ``query``.
+            **_kwargs: Accepted and ignored, mirroring ``list_prompts``'s
+                permissive signature.
+
+        Returns:
+            The list of matching prompt dicts (keywords already attached),
+            per ``PromptsDatabase.search_prompts``'s first tuple element.
+        """
+        fts_kwargs = {"fts_match_query": fts_match_query} if fts_match_query is not None else {}
+        results, _total_matches = self.prompt_db.search_prompts(
+            search_query=query,
+            page=1,
+            results_per_page=max(1, int(limit)),
+            include_deleted=include_deleted,
+            **fts_kwargs,
+        )
+        return results
 
     def create_prompt(self, payload: dict[str, Any]) -> Any:
         prompt_id, prompt_uuid, _message = self.prompt_db.add_prompt(
@@ -497,6 +561,93 @@ class PromptScopeService:
             )
         )
         return normalize_prompt_list(response, backend=normalized_mode.value, page=page, per_page=per_page)
+
+    async def count_prompts(self, *, mode: PromptBackend | str = "local") -> int:
+        """Count prompts in the given backend without fetching a full page.
+
+        Mirrors ``NotesScopeService.count_notes``: reuses the existing
+        ``list`` policy action rather than a dedicated ``count`` action
+        (no such capability exists in the runtime policy registry), and
+        only the local backend exposes a count-only seam today -- there is
+        no server-side count-only endpoint, only a paginated ``list_prompts``
+        whose total would require a full fetch to read.
+
+        Args:
+            mode: Backend to count in; only the local backend is supported
+                today (see Raises). Defaults to ``"local"``.
+
+        Returns:
+            The exact number of non-deleted prompts in the local backend.
+
+        Raises:
+            ValueError: For the server backend, or when the resolved
+                backend is unavailable.
+        """
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id(normalized_mode, "list"))
+        if normalized_mode != PromptBackend.LOCAL:
+            raise ValueError(
+                "Server prompt counts are not supported; use list_prompts for a scoped total."
+            )
+        service = self._service_for_mode(normalized_mode)
+        return int(await self._maybe_await(service.count_prompts()))
+
+    async def search_prompts(
+        self,
+        *,
+        mode: PromptBackend | str = "local",
+        query: str,
+        limit: int = 10,
+        include_deleted: bool = False,
+        fts_match_query: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """Search prompts in the given backend, normalized like ``list_prompts``.
+
+        Mirrors ``NotesScopeService.search_notes``'s ``fts_match_query``
+        pass-through: forwarded to the local backend only when provided, so
+        existing local backends/test fakes without the parameter keep
+        working unchanged. Like ``count_prompts``, only the local backend is
+        supported today -- there is no server-side prompt search endpoint.
+
+        Args:
+            mode: Backend to search in; only the local backend is supported
+                today (see Raises). Defaults to ``"local"``.
+            query: Plain user query text.
+            limit: Maximum number of prompts to return.
+            include_deleted: Whether to include soft-deleted prompts.
+            fts_match_query: Optional pre-built FTS5 MATCH string (e.g.
+                Library keyword search's plural/singular-widened query)
+                overriding the MATCH clause built from ``query`` in the
+                local backend.
+
+        Returns:
+            Normalized prompt records (see ``normalize_prompt_record``);
+            each carries the local integer id under ``local_id`` (its
+            ``id`` is the composite ``"local:prompt:<id>"`` string -- use
+            ``local_id`` for any caller that needs the raw prompt id, e.g.
+            to open the prompt editor).
+
+        Raises:
+            ValueError: For the server backend, or when the resolved
+                backend is unavailable.
+        """
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id(normalized_mode, "list"))
+        if normalized_mode != PromptBackend.LOCAL:
+            raise ValueError(
+                "Server prompt search is not supported; use list_prompts for a scoped page."
+            )
+        service = self._service_for_mode(normalized_mode)
+        local_kwargs = {"fts_match_query": fts_match_query} if fts_match_query is not None else {}
+        response = await self._maybe_await(
+            service.search_prompts(
+                query=query,
+                limit=limit,
+                include_deleted=include_deleted,
+                **local_kwargs,
+            )
+        )
+        return [normalize_prompt_record(item, backend=normalized_mode.value) for item in response or ()]
 
     async def get_prompt(
         self,

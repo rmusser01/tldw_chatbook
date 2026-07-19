@@ -10,7 +10,6 @@ Handles all file attachment functionality including:
 """
 
 import asyncio
-import os
 from typing import TYPE_CHECKING, Optional, Any
 from pathlib import Path
 from loguru import logger
@@ -58,7 +57,7 @@ class ChatAttachmentHandler:
             return
         
         from fnmatch import fnmatch
-        from ...Widgets.enhanced_file_picker import FileOpen, Filters
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
         
         def on_file_selected(file_path: Optional[Path]):
             if file_path:
@@ -75,25 +74,24 @@ class ChatAttachmentHandler:
                 return any(fnmatch(path.name, pattern) for pattern in pattern_list)
             return filter_func
         
-        # Create comprehensive file filters
+        from ...Chat.attachment_core import attachment_filter_specs
+
         file_filters = Filters(
-            ("All Supported Files", create_filter("*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.tiff;*.tif;*.svg;*.txt;*.md;*.log;*.py;*.js;*.ts;*.java;*.cpp;*.c;*.h;*.cs;*.rb;*.go;*.rs;*.json;*.yaml;*.yml;*.csv;*.tsv;*.pdf;*.doc;*.docx;*.rtf;*.odt;*.epub;*.mobi;*.azw;*.azw3;*.fb2")),
-            ("Image Files", create_filter("*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.tiff;*.tif;*.svg")),
-            ("Document Files", create_filter("*.pdf;*.doc;*.docx;*.rtf;*.odt")),
-            ("E-book Files", create_filter("*.epub;*.mobi;*.azw;*.azw3;*.fb2")),
-            ("Text Files", create_filter("*.txt;*.md;*.log;*.text;*.rst")),
-            ("Code Files", create_filter("*.py;*.js;*.ts;*.java;*.cpp;*.c;*.h;*.cs;*.rb;*.go;*.rs;*.swift;*.kt;*.php;*.r;*.m;*.lua;*.sh;*.bash;*.ps1;*.sql;*.html;*.css;*.xml")),
-            ("Data Files", create_filter("*.json;*.yaml;*.yml;*.csv;*.tsv")),
-            ("All Files", lambda path: True)
+            *[(label, create_filter(patterns)) for label, patterns in attachment_filter_specs()],
+            ("All Files", lambda path: True),
         )
         
-        # Push the FileOpen dialog directly
+        # Push the picker directly — EnhancedFileOpen like every other picker
+        # surface: the plain FileOpen re-export accepts no `context` kwarg and
+        # raised TypeError the moment this branch was exercised (TASK-219).
         self.app_instance.push_screen(
-            FileOpen(location=".",
+            EnhancedFileOpen(
+                location=".",
                 title="Select File to Attach",
                 filters=file_filters,
-                context="chat_images"),
-            callback=on_file_selected
+                context="chat_images",
+            ),
+            callback=on_file_selected,
         )
     
     async def handle_clear_image_button(self, event):
@@ -149,26 +147,10 @@ class ChatAttachmentHandler:
         return attached_files
 
     async def _load_processed_file(self, file_path: str) -> Any:
-        """Validate and process a file attachment."""
-        from ...Utils.file_handlers import file_handler_registry
-        from ...Utils.path_validation import is_safe_path
+        """Validate and process a file attachment via the shared core."""
+        from ...Chat.attachment_core import load_processed_file
 
-        logger.info(f"Processing file attachment: {file_path}")
-
-        if not is_safe_path(file_path, os.path.expanduser("~")):
-            raise ValueError("File path is outside allowed directories")
-
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(file_path)
-
-        file_size = os.path.getsize(file_path)
-        max_size = 100 * 1024 * 1024  # 100MB limit
-        if file_size > max_size:
-            raise ValueError(
-                f"File too large: {file_size / 1024 / 1024:.1f}MB (max 100MB)"
-            )
-
-        return await file_handler_registry.process_file(file_path)
+        return await load_processed_file(file_path)
     
     def _process_file_worker(self, file_path: str) -> None:
         """Worker to process file attachment in background thread.
@@ -210,18 +192,16 @@ class ChatAttachmentHandler:
             logger.error(f"Out of memory processing file: {file_path}")
             self.app_instance.notify("File too large to process", severity="error")
         elif isinstance(error, (IOError, OSError)):
-            logger.error(
+            logger.opt(exception=True).error(
                 f"File system error processing attachment: {error}",
-                exc_info=True,
             )
             self.app_instance.notify(
                 f"File system error: {str(error)}",
                 severity="error",
             )
         else:
-            logger.critical(
+            logger.opt(exception=True).critical(
                 f"Unexpected error processing file attachment: {error}",
-                exc_info=True,
             )
             self.app_instance.notify("An unexpected error occurred", severity="error")
 
@@ -377,7 +357,7 @@ class ChatAttachmentHandler:
             logger.error(f"Invalid data type or value in processed file: {e}")
             self.app_instance.notify(f"Failed to process file: {str(e)}", severity="error")
         except RuntimeError as e:
-            logger.error(f"Runtime error handling processed file: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Runtime error handling processed file: {e}")
             self.app_instance.notify("Failed to process file", severity="error")
     
     def clear_attachment_state(self):

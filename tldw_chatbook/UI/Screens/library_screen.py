@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import inspect
 import re
+import threading
+import time
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,18 +24,46 @@ from textual.timer import Timer
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Chatbooks.chatbook_models import ContentType
 from ...config import get_cli_setting, save_setting_to_cli_config
 from ...Constants import (
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
 )
 from ...DB.ChaChaNotes_DB import ConflictError
+from ...Library.export_progress import (
+    ExportProgressThrottle,
+    format_export_progress_line,
+)
 from ...Library.library_collections_service import LibraryCollectionsServiceError
 from ...Library.library_collections_state import LibraryCollectionsPanelState
 from ...Library.library_conversations_state import build_library_conversations_state
+from ...Library.library_export_scope import (
+    ExportScope,
+    count_export_scope,
+    resolve_export_selections,
+)
+from ...Library.library_export_state import (
+    DEFAULT_MEDIA_QUALITY,
+    LibraryExportFormState,
+    build_library_export_form_state,
+    default_export_name,
+    next_media_quality,
+    normalize_export_destination,
+)
+from ...Library.library_ingest_jobs import LibraryIngestJob
+from ...Library.library_ingest_state import (
+    INGEST_UNAVAILABLE_COPY,
+    LibraryIngestCanvasState,
+    LibraryIngestFormState,
+    build_library_ingest_state,
+    clamp_chunk_size,
+    parse_keywords,
+)
 from ...Library.library_media_state import (
     LibraryMediaCanvasState,
     build_library_media_state,
@@ -44,12 +75,14 @@ from ...Library.library_media_viewer_state import (
 )
 from ...Library.library_notes_state import (
     LibraryNoteEditorState,
+    LibraryNotesListState,
     build_library_note_editor_state,
     build_library_notes_list_state,
     build_note_export_content,
     next_notes_sort_mode,
     note_template_keywords,
     notes_autosave_status_text,
+    patch_note_records_after_save,
     resolve_note_template_placeholders,
     sort_notes_records,
 )
@@ -65,6 +98,29 @@ from ...Library.library_notes_sync_state import (
     sync_conflict_label,
     sync_status_line,
 )
+from ...Library.library_prompts_state import (
+    PromptEditorState,
+    build_prompt_editor_state,
+    build_prompts_list_state,
+    classify_prompt_save_error,
+    prompt_editor_meta_line,
+)
+from ...Library.library_skills_state import (
+    SkillEditorState,
+    build_skill_editor_state,
+    build_skills_list_state,
+    classify_skill_save_error,
+    compose_skill_markdown,
+    save_marks_needs_review,
+    skill_name_shadows_builtin,
+)
+from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
+from ...Prompt_Management.Prompts_Interop import (
+    parse_json_prompts_from_content,
+    parse_markdown_prompts_from_content,
+    parse_txt_prompts_from_content,
+    parse_yaml_prompts_from_content,
+)
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -72,6 +128,7 @@ from ...Library.library_rag_service import (
 )
 from ...Library.library_rag_state import (
     LIBRARY_RAG_QUERY_MAX_LENGTH,
+    LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS,
     LIBRARY_SEARCH_HISTORY_LIMIT,
@@ -84,20 +141,29 @@ from ...Library.library_rail_state import (
     serialize_library_rail_preferences,
 )
 from ...Library.library_shell_state import (
+    LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
+    LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_BROWSE_SEARCH,
+    LIBRARY_ROW_BROWSE_SKILLS,
     LIBRARY_ROW_CREATE_NOTE,
+    LIBRARY_ROW_CREATE_PROMPT,
+    LIBRARY_ROW_CREATE_SKILL,
+    LIBRARY_ROW_INGEST_EXPORT,
+    LIBRARY_ROW_INGEST_MEDIA,
     LibraryShellInput,
     build_library_shell_state,
 )
+from ...Library.row_selection import RowSelection
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
 from ...Third_Party.textual_fspicker import FileOpen, FileSave
-from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import LibraryWorkspaceDepthState, build_library_workspace_depth_state
 from ...Widgets.Console.console_rail_section import (
@@ -107,12 +173,16 @@ from ...Widgets.Console.console_rail_section import (
 from ...Widgets.Library import (
     LibraryCollectionsPanel,
     LibraryConversationsCanvas,
+    LibraryExportCanvas,
+    LibraryIngestCanvas,
     LibraryMediaCanvas,
     LibraryMediaViewer,
     LibraryNotesCanvas,
+    LibraryPromptsListCanvas,
     LibraryRail,
     LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
+    LibrarySkillsListCanvas,
     library_dim_label_text,
     library_rag_history_children,
     library_rag_query_shows_full_recovery,
@@ -120,11 +190,20 @@ from ...Widgets.Library import (
     library_rag_results_body_children,
     library_rag_scope_recovery_children,
     library_rag_scope_shows_recovery,
+    next_skill_context,
+    skill_context_toggle_label,
+    skill_disable_model_label,
+    skill_editor_warning_lines,
+    skill_trust_review_enabled,
+    skill_trust_state_line,
+    skill_trust_unlock_enabled,
+    skill_user_invocable_label,
 )
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
+from .skills_screen import SkillTrustBootstrapModal, SkillTrustPassphraseModal
 from .study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
     MATERIAL_TITLE_LIBRARY_SOURCES,
@@ -134,7 +213,37 @@ from .study_scope_models import (
 
 
 logger = logger.bind(module="LibraryScreen")
-LIBRARY_SOURCE_PAGE_SIZES = {"notes": 100, "media": 50, "conversations": 50}
+LIBRARY_SOURCE_PAGE_SIZES = {"notes": 100, "media": 50, "conversations": 50, "prompts": 100}
+# Only two prompts sort modes (unlike notes' three) -- cycled by
+# handle_library_prompts_sort. Kept local to the screen (not
+# library_prompts_state.py) since it's screen-toolbar-cycling concern, not
+# pure list-state-building logic.
+_LIBRARY_PROMPTS_SORT_MODES = ("newest", "name")
+# Skills sort modes (Task 3 of the Skills sub-project): "name" (pure
+# alphabetical) <-> "status" (needs-review first, then alphabetical) --
+# cycled by handle_library_skills_sort. Same "screen-toolbar-cycling
+# concern, not pure list-state-building logic" posture as the prompts modes
+# above, kept local rather than in library_skills_state.py.
+_LIBRARY_SKILLS_SORT_MODES = ("name", "status")
+# Skills toolbar Import… (Task 5): the fixed filename every real skill
+# package uses for its own content, matched case-insensitively by
+# ``LibraryScreen._find_skill_md_in_dir``. See ``_run_library_skills_import``.
+_SKILL_MD_FILENAME = "SKILL.md"
+# Toolbar Import… (Task 5): which parser handles which file extension.
+# Mirrors ``Prompts_Interop._get_file_type``'s extension map, but writes
+# through ``prompt_scope_service``/``LocalPromptService`` per-prompt
+# (duplicate-name = skip, never overwrite) rather than
+# ``import_prompts_from_files`` -- that helper's own write path
+# (``add_or_update_prompt_interop``) hardcodes ``overwrite=True`` with no
+# way to opt out, and bypasses the scope service entirely. See
+# ``_run_library_prompts_import``.
+_LIBRARY_PROMPT_IMPORT_PARSERS = {
+    ".json": parse_json_prompts_from_content,
+    ".yaml": parse_yaml_prompts_from_content,
+    ".yml": parse_yaml_prompts_from_content,
+    ".md": parse_markdown_prompts_from_content,
+    ".txt": parse_txt_prompts_from_content,
+}
 LIBRARY_SERVICE_ERROR_COPY = "Library source services unavailable; retry Library later."
 LIBRARY_SERVICE_UNAVAILABLE_COPY = "Library source services are unavailable in this runtime."
 LIBRARY_EMPTY_COPY = "No local Library content yet."
@@ -146,11 +255,50 @@ LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY = (
     "Library remains a hub; Notes, Media, Search/RAG, and Study own deeper work."
 )
 LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
+# Navigation composes a FRESH LibraryScreen instance per visit (PR #595
+# freeze fix), so a per-instance memo is useless -- the previous visit's
+# snapshot is cached on the APP instance instead (see `on_mount` and
+# `_refresh_local_source_snapshot`) so a repeat visit within this window
+# renders instantly instead of showing the loading placeholder again. The
+# cached snapshot is always applied THEN immediately reconciled with a
+# fresh background fetch, so staleness is bounded to a single refresh
+# cycle regardless of this TTL's length.
+LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS = 5.0
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
+# Prompt editor body fields (details/system/user) have no dedicated cap of
+# their own -- reuses the note body's generous ceiling rather than inventing
+# a second magic number for the same "large text field" concern.
+LIBRARY_PROMPT_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
+# Exact outcome copy for the prompt editor's #library-prompt-save-status
+# line, keyed by `classify_prompt_save_error`'s return value. "conflict" is
+# deliberately absent -- both the pre-write staleness check AND a
+# ConflictError raised by the write itself (a race the pre-check cannot
+# see) route into the conflict banner instead (see `_save_library_prompt`),
+# never this status line.
+LIBRARY_PROMPT_SAVE_STATUS_COPY = {
+    "ok": "Saved.",
+    "name-in-use": "Name already in use — pick another or open the existing prompt.",
+    "soft-deleted-name": "A deleted prompt holds this name — restore it or choose another.",
+    "error": "Couldn't save this prompt. Try again.",
+}
+# Skill editor's text fields (description/allowed-tools/body) have no
+# dedicated cap of their own -- reuses the note body's generous ceiling,
+# same reasoning as ``LIBRARY_PROMPT_TEXT_MAX_CHARS`` above.
+LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
+# Exact outcome copy for the skill editor's #library-skill-save-status line,
+# keyed by ``classify_skill_save_error``'s return value. "version-conflict"
+# is deliberately absent -- it routes into the conflict banner instead (see
+# ``_save_library_skill``), never this status line.
+LIBRARY_SKILL_SAVE_STATUS_COPY = {
+    "ok": "Saved.",
+    "exists": "A skill with this name already exists.",
+    "invalid-name": "Skill name must use lowercase letters, numbers, and hyphens.",
+    "trust-blocked": "This skill is trust-blocked; resolve trust before saving.",
+    "error": "Couldn't save this skill. Try again.",
+}
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
 LIBRARY_HANDOFF_LABEL_PREFIX = "Console/RAG handoff: "
-LIBRARY_LOCAL_SNAPSHOT_MODES = frozenset({"sources", "conversations", "import-export"})
 LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH = 30
 LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH = 18
 LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH = 7
@@ -162,100 +310,66 @@ LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH = 22
 LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH = 18
 LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
 LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset({"library-rag-results-heading"})
-LIBRARY_COLUMN_TITLES = {
-    "sources": ("Source Map", "Active Workbench", "Inspector"),
-    "conversations": ("Source Map", "Saved Conversations", "Conversation Inspector"),
-    "search": ("Source Map", "Search/RAG Workbench", "Evidence Inspector"),
-    "import-export": ("Source Map", "Import/Export Workbench", "Import/Export Inspector"),
-    "workspaces": ("Source Map", "Workspace Context", "Handoff Rules"),
-    "collections": ("Source Map", "Collections Reader", "Collection Inspector"),
-    "study": ("Source Map", "Study Handoff", "Inspector"),
-    "flashcards": ("Source Map", "Flashcards Handoff", "Inspector"),
-    "quizzes": ("Source Map", "Quizzes Handoff", "Inspector"),
-}
-LIBRARY_MODES = {
-    "sources": {
-        "label": "Content Hub",
-        "button_id": "library-mode-sources",
-        "description": (
-            "Content Hub mode: Library landing page for ingested content, notes, media, "
-            "conversations, collections, and retrieval."
-        ),
-        "next_action": "Open the owning module for deep work; Console handoff is secondary.",
-    },
-    "conversations": {
-        "label": "Conversations",
-        "button_id": "library-mode-conversations",
-        "description": (
-            "Conversations mode: browse saved chats inside Library, inspect metadata, "
-            "and prepare eligible conversation context."
-        ),
-        "next_action": "Select a saved conversation to inspect metadata and handoff eligibility.",
-        "show_in_strip": False,
-    },
-    "search": {
-        "label": "Search/RAG",
-        "button_id": "library-mode-search",
-        "description": (
-            "Ask Library sources, inspect evidence, then send selected snippets to Console."
-        ),
-        "next_action": "Query first; scope, evidence, and Console handoff stay visible below.",
-    },
-    "import-export": {
-        "label": "Import/Export",
-        "button_id": "library-mode-import-export",
-        "description": (
-            "Import/Export mode: Library owns source acquisition framing; "
-            "Ingest and Media own deeper file handling."
-        ),
-        "next_action": "Choose a handoff action below; imported material returns as Library inventory.",
-    },
-    "workspaces": {
-        "label": "Workspaces",
-        "button_id": "library-mode-workspaces",
-        "description": "Workspaces mode: scope Library material to project or task contexts.",
-        "next_action": "Workspace scoping is shown here before material is staged in Console.",
-    },
-    "collections": {
-        "label": "Collections",
-        "button_id": "library-mode-collections",
-        "description": "Collections mode: read and review saved Library content.",
-        "next_action": "Select or create a Collection record before item actions become available.",
-    },
-    "study": {
-        "label": "Study",
-        "button_id": "library-mode-study",
-        "description": "Study mode: turn Library material into study sessions.",
-        "next_action": "Open Study Dashboard to continue due cards, decks, and quizzes.",
-    },
-    "flashcards": {
-        "label": "Flashcards",
-        "button_id": "library-mode-flashcards",
-        "description": "Flashcards mode: generate or review cards from Library sources.",
-        "next_action": "Open Flashcards to work with the current source snapshot.",
-    },
-    "quizzes": {
-        "label": "Quizzes",
-        "button_id": "library-mode-quizzes",
-        "description": "Quizzes mode: generate or resume quizzes from Library sources.",
-        "next_action": "Open Quizzes to test recall against the current source snapshot.",
-    },
-}
 
 LIBRARY_STUDY_HANDOFF_MODES = {
     "study": {
-        "label": "Study",
+        # "header" mirrors the rail row title that opens this canvas
+        # (LibraryRailRow "Study decks", library_shell_state.py) so the
+        # canvas doesn't restate the mode name a second, differently-worded
+        # way (L3b Task 8/9 follow-up: UX wave C/D, handoff copy
+        # consolidation).
+        "header": "Study decks",
         "action_label": "Study Dashboard",
+        # UX wave L2: the button reads as a verb ("Continue in Study")
+        # instead of restating the destination's own name -- action_label
+        # still backs the header/purpose/recovery copy below.
+        "button_label": "Continue in Study",
+        "purpose": "Plan study decks from Library sources.",
     },
     "flashcards": {
-        "label": "Flashcards",
+        "header": "Flashcards",
         "action_label": "Flashcards",
+        "button_label": "Continue in Study",
+        "purpose": "Generate or review cards from Library sources.",
     },
     "quizzes": {
-        "label": "Quizzes",
+        "header": "Quizzes",
         "action_label": "Quizzes",
+        "button_label": "Continue in Study",
+        "purpose": "Generate or resume quizzes from Library sources.",
     },
 }
+
+# Single shared ownership line for all three handoff canvases: Library only
+# prepares source context, Study owns everything downstream of "open".
+LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY = "Generation and review run in Study."
+
+# How many carried-forward source titles the handoff canvas names before
+# collapsing the rest into an "and N more" count.
+LIBRARY_STUDY_HANDOFF_TITLES_CAP = 3
+
+
+def _library_carries_forward_line(titles: Sequence[str]) -> str:
+    """Build the handoff canvas's capped, markup-escaped carries-forward line.
+
+    Args:
+        titles: Sampled source titles (notes/media/conversations) that will
+            carry forward into Study. Must be non-empty -- callers render no
+            line at all when there is no source context (see
+            ``_study_handoff_copy``).
+
+    Returns:
+        ``"Carries forward: a, b, c"`` when there are at most
+        ``LIBRARY_STUDY_HANDOFF_TITLES_CAP`` titles, else ``"Carries
+        forward: a, b, c and N more."`` with the remaining count appended.
+    """
+    escaped_titles = [escape_markup(title) for title in titles]
+    capped = escaped_titles[:LIBRARY_STUDY_HANDOFF_TITLES_CAP]
+    joined = ", ".join(capped)
+    remaining = len(escaped_titles) - len(capped)
+    if remaining > 0:
+        return f"Carries forward: {joined} and {remaining} more."
+    return f"Carries forward: {joined}"
 
 
 def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
@@ -287,20 +401,32 @@ def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
         "authenticated_principal_id": authenticated_principal_id,
         "workspace_scope": workspace_scope,
     }
-LIBRARY_MODE_BY_BUTTON_ID = {
-    mode["button_id"]: mode_id for mode_id, mode in LIBRARY_MODES.items()
-}
 
-# Maps a Library mode id to the shell rail row that selects that canvas so
-# navigation context and legacy mode switches land on the right canvas.
-LIBRARY_MODE_TO_ROW_ID = {
+# Maps a Library navigation-context ``mode`` value to the shell rail row
+# that selects that canvas -- covers exactly the mode values nav-context
+# callers emit/support today (L3b Task 8 audit): ``conversations`` (Personas'
+# conversations controller), ``search`` and ``collections`` (both directly
+# tested contracts of ``apply_navigation_context``, though no live emitter
+# currently sends them), and ``prompts`` (the retired Personas "prompts" mode
+# chip's legacy route alias -- see ``screen_registry``'s ``_SCREEN_ALIASES``
+# and ``shell_destinations``, Task 7). ``skills`` (Skills sub-project Task 1)
+# has no live emitter yet either -- same forward-compat posture as
+# ``search``/``collections`` -- added so a future Skills deep link has
+# somewhere to land without another table edit. ``notes`` is handled as its
+# own dedicated branch in ``_apply_navigation_context_state`` below
+# (``open_notes_workspace``'s route), not through this table. ``media`` has
+# no navigation-context entry point at all (the retired mode-strip machinery
+# never had a "media" mode either). Any other mode value -- including the
+# retired ``study``/``flashcards``/``quizzes`` mode values (those rows are
+# now "handoff" rows, not nav-context targets) and the retired
+# ``sources``/``workspaces``/``import-export`` values -- degrades quietly,
+# unchanged from before this table existed.
+LIBRARY_NAV_MODE_TO_ROW_ID = {
     "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
-    "collections": "browse-collections",
-    "search": "browse-search",
-    "study": "create-study",
-    "flashcards": "create-flashcards",
-    "quizzes": "create-quizzes",
-    "import-export": "ingest-import-export",
+    "collections": LIBRARY_ROW_BROWSE_COLLECTIONS,
+    "search": LIBRARY_ROW_BROWSE_SEARCH,
+    "prompts": LIBRARY_ROW_BROWSE_PROMPTS,
+    "skills": LIBRARY_ROW_BROWSE_SKILLS,
 }
 
 
@@ -372,6 +498,153 @@ def _collection_scoped_conflicts(
     return tuple(scoped)
 
 
+# --- task-252: targeted (non-recompose) selection-interaction updates ------
+#
+# Docs/Design/2026-07-16-performance-audit.md §P1 B2: library_screen.py
+# called self.refresh(recompose=True) -- a whole-screen remove/remount of
+# the nav bar, footer, ~20-row rail, and 50-100-row canvas -- from every
+# per-row selection/checkbox handler. These two helpers are the SELECTION
+# interaction class's staged fix: Tier 1 patches a toggled row in place;
+# Tier 2 routes structural selection changes (browse-mode row pick,
+# select-mode enter/exit/select-all/clear) through the canvas widget's own
+# sync_state(), a canvas-scoped recompose that never touches the nav bar,
+# footer, or rail.
+#
+# Both are MODULE-LEVEL functions (screen passed explicitly), not
+# LibraryScreen methods, so that existing bare-SimpleNamespace-fake unit
+# tests (Tests/UI/test_library_multiselect_{conversations,media,notes}.py)
+# that stub only `.refresh` -- not a new method name -- keep passing: a
+# `self._new_method(...)` call would fail attribute lookup on a fake
+# lacking that attribute BEFORE this function's own try/except could ever
+# run; calling a module-level function with `screen` as an explicit
+# argument has no such attribute-lookup step, so a fake missing
+# `query_one`/`app`/etc. correctly falls through to the `except` below and
+# reaches the already-stubbed `screen.refresh(...)` fallback instead.
+def _apply_library_row_toggle(
+    screen: "LibraryScreen", kind: str, button: Button, row_id: str
+) -> None:
+    """In-place select-mode checkbox toggle for a Library row button.
+
+    Tier 1: after the caller's ``row_selection.toggle(row_id)``, flips the
+    pressed row's marker, the "N selected" Static, and the
+    export-selected button's disabled state directly -- never a
+    screen-level recompose. Any failure (e.g. the select-mode action
+    strip isn't mounted because the mode raced) falls back to the old
+    ``screen.refresh(recompose=True)`` rather than raising.
+
+    Args:
+        screen: The Library screen instance driving the update.
+        kind: One of "conversations", "media", "notes" -- selects
+            ``screen._library_<kind>_row_selection`` and the
+            ``#library-<kind>-selected-count`` /
+            ``#library-<kind>-export-selected`` action-strip ids.
+        button: The pressed row's Button, rendered with the marker at
+            position 0 (``f"{marker} {title}..."`` / notes'
+            ``f"{marker} {title}..."`` glyph shape) -- only that leading
+            character is replaced; the rest of the label (title,
+            secondary line) is untouched since a selection toggle never
+            changes it.
+        row_id: The row's id, already toggled into/out of
+            ``screen._library_<kind>_row_selection`` by the caller --
+            read back here (single source of truth) rather than inferred
+            by flipping the old marker text.
+
+    Returns:
+        None.
+    """
+    try:
+        selection = getattr(screen, f"_library_{kind}_row_selection")
+        count_static = screen.query_one(f"#library-{kind}-selected-count", Static)
+        export_button = screen.query_one(f"#library-{kind}-export-selected", Button)
+        checked = selection.is_selected(row_id)
+        marker = "☑" if checked else "☐"
+        # Rebuild the label from the RAW remainder the canvas stashed on the
+        # button at compose time — NEVER from the mounted label: both
+        # ``.plain`` and Textual 8's ``str(Content)`` return RENDERED text,
+        # stripping the escape_markup() the canvas applied to user titles,
+        # so a title like "[draft] notes" would restyle or drop on toggle
+        # (PR #665 review; same escape lesson as the Library redesign). A
+        # missing stash (unexpected widget shape) raises into the fallback
+        # full recompose below.
+        label_rest = button._library_row_label_rest
+        glyph = f"{marker} " if kind == "notes" else marker
+        button.label = f"{glyph}{label_rest}"
+        count_static.update(f"{selection.count} selected")
+        export_button.disabled = selection.count == 0
+    except Exception:
+        logger.debug(
+            f"Library {kind} row toggle in-place update failed; falling back "
+            "to full recompose.",
+            exc_info=True,
+        )
+        screen.refresh(recompose=True)
+
+
+def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
+    """Canvas-scoped targeted update for a Library browse canvas (Tier 2).
+
+    Rebuilds the given canvas's fresh display state and hands it to the
+    mounted canvas widget's own ``sync_state`` -- a canvas-scoped
+    ``recompose`` (the widget rebuilds only its OWN children) that skips
+    the nav bar, footer, and rail entirely, unlike a screen-level
+    ``screen.refresh(recompose=True)``.
+
+    Releases the app's mouse capture first, mirroring
+    ``BaseAppScreen.refresh`` (see that method's docstring for the full
+    mouse-capture war story it defends against): this path recomposes the
+    canvas directly via ``sync_state``, bypassing ``BaseAppScreen.refresh``
+    -- and hence its guard -- entirely, so a canvas row mid mouse-capture
+    (e.g. an ``Input`` click/selection whose ``MouseUp`` hasn't arrived
+    yet) would otherwise be recomposed away and leave
+    ``App.mouse_captured`` referencing a removed widget forever,
+    permanently breaking click dispatch app-wide.
+
+    Only "conversations" and "media" have a canvas ``sync_state`` hook
+    today -- ``LibraryNotesCanvas`` has none (see task-252's
+    Implementation Notes inventory: its constructor's own ``sync_state``
+    parameter, an unrelated notes-sync-panel display state, shadows the
+    method name a targeted-update hook would need). An unsupported
+    ``kind``, like any other failure here (e.g. the canvas isn't mounted
+    because a mode switch raced), falls back to the old whole-screen
+    recompose rather than raising.
+
+    Args:
+        screen: The Library screen instance driving the update.
+        kind: "conversations" or "media".
+
+    Returns:
+        None.
+    """
+    try:
+        if kind == "conversations":
+            canvas = screen.query_one(
+                "#library-conversations-canvas", LibraryConversationsCanvas
+            )
+            new_state = screen._build_library_conversations_state()
+        elif kind == "media":
+            canvas = screen.query_one("#library-media-canvas", LibraryMediaCanvas)
+            new_state = screen._build_library_media_state()
+        else:
+            raise ValueError(
+                f"Unsupported Library canvas kind for targeted sync: {kind!r}"
+            )
+        if screen.is_running:
+            try:
+                screen.app.capture_mouse(None)
+            except Exception:
+                logger.debug(
+                    "Mouse-capture release before Library canvas sync skipped.",
+                    exc_info=True,
+                )
+        canvas.sync_state(new_state)
+    except Exception:
+        logger.debug(
+            f"Library {kind} canvas sync failed; falling back to full recompose.",
+            exc_info=True,
+        )
+        screen.refresh(recompose=True)
+
+
 class LibraryScreen(BaseAppScreen):
     """Source material, imports/exports, conversations, and Search/RAG entry."""
 
@@ -383,34 +656,6 @@ class LibraryScreen(BaseAppScreen):
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
     # equal-specificity selectors and takes precedence when loaded.
     DEFAULT_CSS = """
-    #library-mode-bar {
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        overflow: hidden;
-    }
-
-    #library-mode-label {
-        width: 8;
-        min-width: 8;
-        height: 1;
-        min-height: 1;
-    }
-
-    Button.library-mode-chip {
-        width: auto;
-        min-width: 10;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
-
-    .library-mode-chip.is-active {
-        border: none;
-        text-style: bold underline;
-    }
-
     /* Standalone fallback chrome: the app bundle overrides these ID/class
        rules with $ds-grid-line tokens (css/tldw_cli_modular.tcss), but the
        screen must render its workbench borders when mounted outside TldwCli
@@ -513,6 +758,21 @@ class LibraryScreen(BaseAppScreen):
             "notes": (),
             "media": (),
             "conversations": (),
+            # Task 1/3 (count seam + rail row + list canvas): unlike the
+            # three sources above, "prompts" carries ``(count,
+            # page_records)`` rather than a bare records tuple. The
+            # ``LibraryPromptsListCanvas`` list view now renders this
+            # page's records (see ``_build_library_prompts_state``); only
+            # fetching/paging past the first page of records remains
+            # future work.
+            "prompts": (None, ()),
+            # Skills sub-project Task 1: also ``(count, payload)``, not a
+            # bare records tuple -- but unlike prompts' ``page_records``
+            # (a list of rows), ``payload`` here is the normalized
+            # ``get_context`` dict (``available_skills`` + ``blocked_skills``)
+            # a future Skills canvas will render directly, so there is no
+            # separate paginated fetch to add later.
+            "skills": (None, {"available_skills": [], "blocked_skills": []}),
         }
         self._local_source_counts: dict[str, int] = {
             "notes": 0,
@@ -538,7 +798,6 @@ class LibraryScreen(BaseAppScreen):
             "quizzes": None,
         }
         self._library_loaded = False
-        self._active_mode = "sources"
         self._library_rag_mode: str = "search"
         self._library_rag_query = ""
         self._library_rag_results = ()
@@ -573,8 +832,12 @@ class LibraryScreen(BaseAppScreen):
         self._selected_conversation_id = ""
         self._library_selected_row_id: str = ""
         self._library_conversation_query: str = ""
+        self._library_conversations_select_mode: bool = False
+        self._library_conversations_row_selection = RowSelection("conversations")
         self._library_media_type_filter: str = "All"
         self._selected_media_id: str = ""
+        self._library_media_select_mode: bool = False
+        self._library_media_row_selection = RowSelection("media")
         self._library_media_view: str = "list"
         self._library_media_detail: Mapping[str, Any] | None = None
         self._library_media_editing: bool = False
@@ -584,9 +847,87 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_query: str = ""
         self._library_media_content_match_index: int = 0
         self._library_notes_view: str = "list"
+        self._library_notes_select_mode: bool = False
+        self._library_notes_row_selection = RowSelection("notes")
         self._library_notes_sort: str = "newest"
         self._library_notes_filter: str = ""
         self._library_notes_filter_records: list | None = None
+        self._library_prompts_sort: str = "newest"
+        self._library_prompts_filter: str = ""
+        self._selected_prompt_id: int | None = None
+        self._library_prompts_view: str = "list"
+        self._library_prompt_detail: Mapping[str, Any] | None = None
+        self._library_prompt_original_name: str = ""
+        self._library_prompt_version: int | None = None
+        self._library_prompt_dirty: bool = False
+        self._library_prompt_status: str = ""
+        self._library_prompt_conflict_snapshot: PromptEditorState | None = None
+        # Task 8b Fix wave 1 (Minor): the exact name that triggered the
+        # current "name-in-use" status, captured at the moment that status
+        # is set -- NOT re-derived from the live Name field at "Open
+        # existing" time, which can have drifted (the user can keep typing
+        # after a failed Save without re-saving) from the name that
+        # actually collided. See ``_open_library_prompt_colliding_with_current_name``.
+        self._library_prompt_name_in_use: str = ""
+        # Toolbar Import… state (Task 5): a path Input (file OR folder)
+        # inlined below the sort/Import…/Export… toolbar, worker-executed
+        # on Run/Enter. See ``_run_library_prompts_import``.
+        self._library_prompts_import_open: bool = False
+        self._library_prompts_import_path: str = ""
+        self._library_prompts_import_status: str = ""
+        # Guards against the spurious ``Input.Changed``/``TextArea.Changed``
+        # Textual fires when a widget mounts with a non-empty initial value
+        # -- without this, opening a prompt would immediately mark it dirty
+        # even though the user never typed anything. Re-armed via
+        # ``call_after_refresh`` after every prompt-editor (re)compose,
+        # mirroring ``_library_note_editor_armed``.
+        self._library_prompt_editor_armed: bool = False
+        # Skills list canvas (Task 3 of the Skills sub-project): sort/filter
+        # are pure in-memory operations over the already-fetched
+        # ``get_context`` snapshot payload (mirrors
+        # ``_library_prompts_sort``/``_library_prompts_filter``).
+        # ``_selected_skill_name`` is recording-only for now -- the
+        # in-canvas skill detail/trust editor lands in a later task -- same
+        # posture ``handle_library_prompt_row`` originally had before its
+        # own editor landed.
+        self._library_skills_sort: str = "name"
+        self._library_skills_filter: str = ""
+        self._selected_skill_name: str = ""
+        # Toolbar Import… state (Task 5): a path Input (a SKILL.md file OR
+        # a skill's own directory) inlined below the sort/Import… toolbar,
+        # worker-executed on Run/Enter. See ``_run_library_skills_import``.
+        self._library_skills_import_open: bool = False
+        self._library_skills_import_path: str = ""
+        self._library_skills_import_status: str = ""
+        # Skill detail/trust editor (Task 4 of the Skills sub-project).
+        # Mirrors the prompts editor's own state shape
+        # (``_library_prompts_view``/``_library_prompt_detail``/etc.) --
+        # ``_selected_skill_name`` (above, Task 3) doubles as the
+        # create-vs-update sentinel: ``""`` means "not yet created" (mirrors
+        # ``_selected_prompt_id is None``), a real name means "editing an
+        # existing skill", routed through by NAME (skills are keyed by name,
+        # not a numeric id -- unlike prompts' ``_resolve_editor_prompt_id``
+        # complication, ``detail["name"]`` is already the stable identity).
+        self._library_skills_view: str = "list"
+        self._library_skill_detail: Mapping[str, Any] | None = None
+        self._library_skill_original_name: str = ""
+        self._library_skill_editor_state: SkillEditorState | None = None
+        self._library_skill_dirty: bool = False
+        self._library_skill_status: str = ""
+        self._library_skill_conflict: bool = False
+        # Guards against the spurious ``Input.Changed``/``TextArea.Changed``
+        # Textual fires when a widget mounts with a non-empty initial value
+        # -- same rationale/re-arm timing as ``_library_prompt_editor_armed``.
+        self._library_skill_editor_armed: bool = False
+        # The trust panel's currently-captured review (from
+        # ``capture_review``'s result mapping), or ``None`` when no review
+        # is active for the open skill. Reset every time a (different)
+        # skill is opened -- unlike ``skills_screen.py``'s
+        # ``_active_trust_review`` (which persists across row selection
+        # within one long-lived screen instance and needs its own
+        # staleness reconciliation), this editor always starts a fresh
+        # session per open, so no extra staleness check is needed.
+        self._library_skill_active_review: dict[str, Any] | None = None
         self._library_note_detail: Mapping[str, Any] | None = None
         self._selected_note_id: str = ""
         self._library_note_version: int | None = None
@@ -627,15 +968,128 @@ class LibraryScreen(BaseAppScreen):
         # Sync now run. None = not edited this panel visit; fall back to the
         # persisted config value.
         self._library_notes_sync_folder_text: str | None = None
+        # Ingest canvas form echo -- a single bundled mutable dataclass
+        # (rather than a scatter of scalar fields like the sync panel
+        # above) since every field here is reset together on rail
+        # re-entry (see ``_reset_library_ingest_transient_state``); the
+        # job queue itself is registry-owned, not screen state.
+        self._library_ingest_form: LibraryIngestFormState = LibraryIngestFormState()
+        # Dedupe counter for the "poke the source snapshot on transitions
+        # into done" rule (Task 5's registry listener): only re-fetch when
+        # the registry's done-job count has grown since the last time this
+        # screen checked. Seeded from the live registry in ``on_mount``
+        # (not here) so a re-mounted, cached screen instance never treats
+        # jobs that finished in a previous mount as a fresh transition.
+        self._library_ingest_last_done_count: int = 0
+        # Export canvas state (F4 Task 2). ``_library_export_counts`` is
+        # ``None`` until the counts worker lands a result for the current
+        # scope (drives ``LibraryExportFormState.counts_loading`` --
+        # deliberately not a separate boolean flag, so "loading" and "no
+        # result yet" can never drift apart). ``_library_export_form`` is
+        # a plain dict (not a dataclass, unlike the ingest form echo)
+        # since Task 3 reads specific keys off it directly per the F4
+        # plan's screen-attrs contract.
+        self._library_export_scope: ExportScope = ExportScope(kind="everything")
+        self._library_export_counts: dict[str, int] | None = None
+        self._library_export_form: dict[str, Any] = self._default_library_export_form()
+        self._library_export_running: bool = False
+        self._library_export_error: str = ""
+        # Task 3: the running export's quiet status line ("Exporting…
+        # (N items)"); no backing field existed after Task 2 (its report
+        # flagged this as the natural next attr). Cleared alongside
+        # ``_library_export_error`` on every canvas reset and on run
+        # completion.
+        self._library_export_status: str = ""
+        # Task 3 review fix: a monotonic token identifying the CURRENT
+        # export attempt. Bumped both when a new export starts
+        # (``handle_library_export_submit``) and whenever the export
+        # canvas's transient state is reset out from under an in-flight
+        # run (``_reset_library_export_transient_state`` -- reachable via
+        # any rail-row switch or "Export…" section action while a worker
+        # is still executing on its own OS thread, which cannot be
+        # preempted mid-``asyncio.run`` by ``Worker.cancel()``). The
+        # worker captures the token at dispatch time and the completion
+        # handlers compare it back against the live value before mutating
+        # ``_library_export_running``/``_library_export_error``/
+        # ``_library_export_status`` or touching the DOM -- an orphaned
+        # run's late completion still notifies (the export genuinely
+        # happened) but can never stomp whatever the user is now looking
+        # at, mirroring ``_apply_library_export_counts``'s scope-mismatch
+        # staleness guard for the sibling counts worker.
+        self._library_export_run_id: int = 0
+        # Task 4: the current run's cancellation signal. Created fresh at
+        # every submit (``handle_library_export_submit``); the worker reads
+        # ``event.is_set`` as the service's ``cancel_check``. Nothing sets
+        # it yet in this task -- the Cancel button and navigate-away wiring
+        # land in Task 5.
+        self._library_export_cancel_event: threading.Event | None = None
 
     def on_mount(self) -> None:
+        """Populate the Library on entry, rendering instantly from cache.
+
+        Arms the snapshot-timeout failsafe, then (166) if the app-scoped
+        snapshot cache holds a recent result (within
+        ``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``) applies it synchronously so a
+        returning visit paints immediately instead of showing the loading
+        placeholder, and unconditionally kicks
+        ``_refresh_local_source_snapshot`` to reconcile against the DB. Also
+        seeds the ingest registry listener and runs any deferred deep-link
+        loads (collections / note editor / media viewer) that
+        ``apply_navigation_context`` could not run before mount.
+        """
         super().on_mount()
         self.set_timer(
             LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
             self._apply_source_snapshot_timeout,
         )
+        cached_snapshot = getattr(
+            self.app_instance, "_library_source_snapshot_cache", None
+        )
+        cached_stamp = getattr(
+            self.app_instance, "_library_source_snapshot_cache_stamp", None
+        )
+        if (
+            cached_snapshot is not None
+            and cached_stamp is not None
+            and time.monotonic() - cached_stamp < LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS
+        ):
+            # Instant-then-reconcile: paint the previous visit's snapshot
+            # synchronously (this screen instance is brand new, so nothing
+            # else has populated `_local_source_records` yet) so a
+            # returning visit never shows the loading placeholder, then
+            # still kick the real refresh below -- its completion re-applies
+            # fresh data and refreshes the cache, so this can't drift more
+            # than one refresh cycle stale.
+            self._apply_local_source_snapshot(*cached_snapshot)
+            # `_apply_local_source_snapshot`'s own `self.is_mounted`-guarded
+            # `refresh(recompose=True)` is a no-op here: Textual only flips
+            # `_is_mounted` True in the `finally` clause AFTER the Mount
+            # event finishes dispatching (see
+            # `MessagePump._pre_process`) -- i.e. strictly after this very
+            # `on_mount` call returns -- so without an explicit recompose
+            # here the cached attrs above would be set correctly but the
+            # already-composed (stale, pre-cache) DOM would never actually
+            # repaint. `Widget.refresh(recompose=True)` itself has no such
+            # guard (it just schedules `_check_recompose` via
+            # `call_next`), so calling it directly is safe mid-mount and is
+            # what actually makes the cached snapshot visible at first
+            # paint.
+            self.refresh(recompose=True)
         self._refresh_local_source_snapshot()
-        if self._active_mode == "collections" and not self._library_collections_loaded:
+        registry = self._library_ingest_registry()
+        if registry is not None:
+            counts_fn = getattr(registry, "counts", None)
+            if callable(counts_fn):
+                # Seed from whatever the registry already knows so a
+                # freshly composed screen doesn't treat jobs that finished
+                # during a previous Library visit as a brand-new
+                # done-transition and fire a redundant snapshot refresh.
+                self._library_ingest_last_done_count = counts_fn().get("done", 0)
+            registry.add_listener(self._handle_library_ingest_registry_changed)
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+            and not self._library_collections_loaded
+        ):
             # Deep-links that preset mode=collections call apply_navigation_context
             # BEFORE the screen is mounted (see app.py handle_screen_navigation),
             # so the is_mounted-guarded load there never fires. Kick the same
@@ -654,6 +1108,257 @@ class LibraryScreen(BaseAppScreen):
                 exclusive=True,
                 group="library_note_detail",
             )
+        if (
+            self._library_media_view == "viewer"
+            and self._selected_media_id
+            and self._library_media_detail is None
+        ):
+            # Cross-visit state restore (``restore_state``) sets the media
+            # viewer's selection/view attrs before mount the same way a
+            # note_id nav-context deep-link does above, but -- unlike that
+            # case -- nothing else pre-mount kicks off the detail fetch:
+            # ``handle_library_media_row`` (the only other caller of
+            # ``_refresh_library_media_detail``) only runs from a live row
+            # click. Without this, a restored viewer would render its
+            # "Loading media…" placeholder forever. Deleted-record safety
+            # mirrors the note case: ``_refresh_library_media_detail``
+            # notifies and falls back to the list view when the id no
+            # longer resolves.
+            self.run_worker(
+                self._refresh_library_media_detail(self._selected_media_id),
+                exclusive=True,
+                group="library_media_detail",
+            )
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+            and self._library_export_counts is None
+        ):
+            # Same restored-placeholder class as the media viewer/notes
+            # editor above: a cross-visit ``restore_state`` (or a tab
+            # round-trip whose ``save_state`` persisted
+            # ``_library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT``)
+            # lands a fresh instance on the export canvas with
+            # ``_library_export_counts is None`` -> the scope line renders
+            # "Counting…" and Export stays disabled. But the counts worker
+            # is only kicked from the two LIVE entry points
+            # (``_select_library_rail_row`` and
+            # ``_open_library_export_canvas``), never from a restore --
+            # so without this re-kick the form would stay stuck
+            # "Counting…" with Export permanently disabled until the user
+            # clicked another rail row and back. Mirrors
+            # ``_select_library_rail_row``'s own post-recompose kick. The
+            # ``is None`` guard keeps this from redundantly re-running when
+            # counts already landed (they never survive a restore today --
+            # ``save_state`` doesn't persist them -- but the guard makes
+            # the intent explicit and is cheap insurance).
+            self._start_library_export_counts_worker()
+
+    def on_unmount(self) -> None:
+        """Unregister the ingest registry listener registered in ``on_mount``.
+
+        ``on_unmount`` (not ``on_screen_suspend``) is the correct pairing:
+        listener add/remove must be symmetric with the mount/unmount
+        cycle, not the temporary suspend/resume pair a screen gets while
+        merely covered by another screen on the stack (suspend does not
+        tear down this screen, so pairing removal with it would silently
+        stop live updates while
+        still fully composed and, per the plan brief, still able to
+        resume). The registry itself is a plain in-memory object owned by
+        the app, not this screen, and can keep firing mutations long after
+        this screen is gone -- the listener body also guards on
+        ``self.is_mounted`` (belt and braces, matching this file's
+        established convention elsewhere), though note that in this
+        Textual version ``is_mounted`` tracks "has been mounted at least
+        once" rather than "currently mounted" (it is never reset back to
+        ``False`` after removal) -- so this call is what actually closes
+        the window, not the guard.
+        """
+        super().on_unmount()
+        registry = self._library_ingest_registry()
+        if registry is not None:
+            registry.remove_listener(self._handle_library_ingest_registry_changed)
+
+    def save_state(self) -> dict[str, Any]:
+        """Persist Library selection/view state for the next visit.
+
+        Only SELECTION and VIEW state is captured -- never bulk fetched
+        snapshots (``_local_source_records`` and friends re-fetch fresh on
+        the next mount's ``_refresh_local_source_snapshot``, and a restored
+        id may be stale by then) or note editor text (``flush_pending_work``
+        has already persisted any dirty edit to the DB before the app calls
+        this). The ingest form/queue, rail collapse preferences, and search
+        history are deliberately excluded here: they are already persisted
+        elsewhere (the app-owned ingest job registry and the CLI config,
+        respectively) and re-seeding them from this in-memory dict would
+        fight those owners. The RAG results tuple (and its paired retrieval
+        status / recovery state, set together by
+        ``_apply_library_rag_search_outcome``) are safe to carry verbatim
+        because their rows are frozen dataclasses -- copies are taken below
+        only to avoid aliasing a live mutable set with the stashed dict.
+
+        The per-pane filter/sort values below (media type cycle, notes
+        sort mode, notes substring filter, prompts sort mode, prompts
+        substring filter, selected prompt id, conversations query) are VIEW
+        state exactly like the selection ids above -- they change what the
+        canvas builders render, not what data is fetched -- so they belong
+        here too (PR #595 shipped the selection/RAG half of this contract
+        but left these out). ``_library_notes_filter_records`` (the
+        substring filter's recomputed result cache) is deliberately NOT
+        persisted -- it is a derived/bulk snapshot like
+        ``_local_source_records``, and restore leaves it ``None`` so the
+        canvas recomputes it fresh from ``_library_notes_filter`` on mount.
+        """
+        state = super().save_state()
+        state["library_selected_row_id"] = self._library_selected_row_id
+        state["selected_conversation_id"] = self._selected_conversation_id
+        state["selected_note_id"] = self._selected_note_id
+        state["library_notes_view"] = self._library_notes_view
+        state["selected_media_id"] = self._selected_media_id
+        state["library_media_view"] = self._library_media_view
+        state["library_rag_query"] = self._library_rag_query
+        state["library_rag_mode"] = self._library_rag_mode
+        state["library_rag_scope_deselected"] = set(self._library_rag_scope_deselected)
+        state["library_rag_results"] = tuple(self._library_rag_results)
+        state["library_rag_selected_result_id"] = self._library_rag_selected_result_id
+        state["library_rag_retrieval_status"] = self._library_rag_retrieval_status
+        state["library_rag_recovery_state"] = self._library_rag_recovery_state
+        state["library_media_type_filter"] = self._library_media_type_filter
+        state["library_notes_sort"] = self._library_notes_sort
+        state["library_notes_filter"] = self._library_notes_filter
+        state["library_prompts_sort"] = self._library_prompts_sort
+        state["library_prompts_filter"] = self._library_prompts_filter
+        state["selected_prompt_id"] = self._selected_prompt_id
+        state["library_conversation_query"] = getattr(
+            self, "_library_conversation_query", ""
+        )
+        return state
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore Library selection/view state saved by ``save_state``.
+
+        The app calls this on a freshly-constructed, not-yet-mounted
+        instance BEFORE ``switch_screen`` mounts it, so these attrs are
+        exactly what ``on_mount`` and the first ``compose_content`` see.
+
+        Stale-id safety (the record was deleted or is otherwise gone by the
+        time the user comes back): the conversations and media LIST canvases
+        already fall back to the first displayed row when the restored id is
+        absent (``build_library_conversations_state`` /
+        ``build_library_media_state``); the notes-editor and media-viewer
+        deep-link fetches this triggers from ``on_mount`` notify the user and
+        fall back to the list view when the id no longer resolves
+        (``_refresh_library_note_detail`` / ``_refresh_library_media_detail``).
+        A restored ``editor``/``viewer`` view with no matching selected id
+        (should never happen, but a saved-state dict is not statically typed)
+        degrades to the list view below rather than rendering a permanent
+        loading placeholder.
+
+        The four per-pane filter/sort values restored below are read by the
+        canvas builders at mount time (``_build_library_media_state``,
+        the notes canvas branch of ``compose_content``,
+        ``_build_library_conversations_state``) -- setting them here, before
+        ``switch_screen`` mounts this instance, is all that is needed for
+        the first paint to already reflect them; no on_mount re-kick is
+        required (unlike a fetched detail). The conversations query is
+        user text re-sanitized through ``_safe_text`` here too -- it was
+        already sanitized once when the user submitted it
+        (``handle_library_conversations_filter_submitted``), but a saved-
+        state dict is not statically typed, so this is defense against a
+        corrupted/foreign dict rather than a real double-sanitization of
+        trusted input.
+        """
+        super().restore_state(state)
+        if not isinstance(state, dict):
+            return
+
+        self._library_selected_row_id = str(state.get("library_selected_row_id") or "")
+        self._selected_conversation_id = str(state.get("selected_conversation_id") or "")
+
+        selected_note_id = str(state.get("selected_note_id") or "")
+        notes_view = str(state.get("library_notes_view") or "list")
+        if notes_view == "editor" and not selected_note_id:
+            notes_view = "list"
+        self._selected_note_id = selected_note_id
+        self._library_notes_view = notes_view
+
+        selected_media_id = str(state.get("selected_media_id") or "")
+        media_view = str(state.get("library_media_view") or "list")
+        if media_view == "viewer" and not selected_media_id:
+            media_view = "list"
+        self._selected_media_id = selected_media_id
+        self._library_media_view = media_view
+
+        self._library_rag_query = str(state.get("library_rag_query") or "")
+        rag_mode = state.get("library_rag_mode")
+        self._library_rag_mode = rag_mode if rag_mode in ("search", "rag") else "search"
+        scope_deselected = state.get("library_rag_scope_deselected")
+        self._library_rag_scope_deselected = (
+            set(scope_deselected)
+            if isinstance(scope_deselected, (set, frozenset, list, tuple))
+            else set()
+        )
+        rag_results = state.get("library_rag_results")
+        self._library_rag_results = (
+            tuple(rag_results) if isinstance(rag_results, (list, tuple)) else ()
+        )
+        self._library_rag_selected_result_id = str(
+            state.get("library_rag_selected_result_id") or ""
+        )
+        self._library_rag_retrieval_status = str(
+            state.get("library_rag_retrieval_status") or ""
+        )
+        recovery_state = state.get("library_rag_recovery_state")
+        self._library_rag_recovery_state = (
+            recovery_state if isinstance(recovery_state, DestinationRecoveryState) else None
+        )
+
+        media_type_filter = state.get("library_media_type_filter")
+        self._library_media_type_filter = (
+            media_type_filter if isinstance(media_type_filter, str) and media_type_filter else "All"
+        )
+        notes_sort = state.get("library_notes_sort")
+        self._library_notes_sort = (
+            notes_sort if isinstance(notes_sort, str) and notes_sort else "newest"
+        )
+        notes_filter = state.get("library_notes_filter")
+        self._library_notes_filter = notes_filter if isinstance(notes_filter, str) else ""
+        prompts_sort = state.get("library_prompts_sort")
+        self._library_prompts_sort = (
+            prompts_sort if isinstance(prompts_sort, str) and prompts_sort else "newest"
+        )
+        prompts_filter = state.get("library_prompts_filter")
+        self._library_prompts_filter = prompts_filter if isinstance(prompts_filter, str) else ""
+        selected_prompt_id = state.get("selected_prompt_id")
+        self._selected_prompt_id = (
+            selected_prompt_id if isinstance(selected_prompt_id, int) else None
+        )
+        conversation_query = state.get("library_conversation_query")
+        self._library_conversation_query = self._safe_text(
+            conversation_query if isinstance(conversation_query, str) else "",
+            "",
+            max_length=200,
+        )
+
+    async def flush_pending_work(self) -> bool:
+        """Persist pending note edits before the app navigates away.
+
+        The app awaits this from ``handle_screen_navigation`` before
+        discarding this screen instance -- without it, a note edit whose
+        debounced autosave has not fired yet (the timer re-arms on every
+        keystroke) would be destroyed with the screen when the user switches
+        tabs mid-edit.
+
+        Returns:
+            False whenever unsaved edits survive the flush -- an unresolved
+            save conflict (the user must resolve the banner) or a failed
+            save (state "error"; the edits are still only in the editor).
+            Both veto the navigation so the screen instance holding the
+            edits is not discarded. True once nothing dirty remains.
+        """
+        await self._flush_library_note_save()
+        prompt_flush_allowed = await self._flush_library_prompt_save()
+        skill_flush_allowed = await self._flush_library_skill_save()
+        return not self._library_note_dirty and prompt_flush_allowed and skill_flush_allowed
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply route context supplied by shell navigation.
@@ -668,19 +1373,21 @@ class LibraryScreen(BaseAppScreen):
                 "new note" deep link). A ``note_id`` opens that note's
                 in-canvas editor directly (the retired Notes tab's
                 chat-sidebar deep link); ``mode="notes"`` alone (no
-                ``note_id``) lands on the Notes list instead.
+                ``note_id``) lands on the Notes list instead. An
+                ``ingest_media`` flag lands on the in-canvas Ingest >
+                Import media view (Home's ingest-jobs "Open details"
+                control, L3b Task 6).
         """
         if not isinstance(context, Mapping):
             return
         if self.is_mounted and self._library_note_dirty:
-            # A cached, already-mounted Library screen can still hold a dirty
-            # note editor: _get_or_create_navigation_screen hands back the same
-            # instance, so a palette "new note"/note_id deep link fired mid-edit
-            # runs this on a live editor. Applying it synchronously would
+            # Defense in depth for direct callers: navigation always
+            # composes a fresh (unmounted) screen, but a future palette
+            # shortcut could invoke this on a live, mounted editor mid-edit. Applying it synchronously would
             # recompose the canvas out from under the pending debounced
             # autosave, destroying the #library-note-body it reads and dropping
             # the last edits. Flush first (awaited, off this sync nav path),
-            # mirroring _select_library_rail_row; an unresolved conflict aborts.
+            # mirroring _select_library_rail_row; unsaved edits abort it.
             self.run_worker(
                 self._apply_navigation_context_after_flush(context),
                 exclusive=True,
@@ -696,12 +1403,12 @@ class LibraryScreen(BaseAppScreen):
 
         The mounted dirty-editor branch of ``apply_navigation_context`` routes
         here so the pending save is awaited before the recompose that tears the
-        editor down. An unresolved save conflict aborts the switch, leaving the
-        editor and its conflict banner in place for the user to resolve -- the
-        same guard ``_select_library_rail_row`` applies.
+        editor down. If unsaved edits survive the flush, the switch aborts and
+        leaves the editor in place -- the same guard
+        ``_select_library_rail_row`` applies.
         """
         await self._flush_library_note_save()
-        if self._library_note_autosave_state == "conflict":
+        if self._library_note_dirty:
             return
         self._apply_navigation_context_state(context)
 
@@ -726,12 +1433,12 @@ class LibraryScreen(BaseAppScreen):
             max_length=200,
         )
         notes_create = bool(context.get(LIBRARY_NAV_CONTEXT_NOTES_CREATE))
-        target_mode = requested_mode if requested_mode in LIBRARY_MODES else ""
+        ingest_media = bool(context.get(LIBRARY_NAV_CONTEXT_INGEST))
+        target_mode = requested_mode if requested_mode in LIBRARY_NAV_MODE_TO_ROW_ID else ""
         if conversation_id and not target_mode:
             target_mode = LIBRARY_MODE_CONVERSATIONS
         if target_mode:
-            self._active_mode = target_mode
-            selected_row_id = LIBRARY_MODE_TO_ROW_ID.get(target_mode)
+            selected_row_id = LIBRARY_NAV_MODE_TO_ROW_ID.get(target_mode)
             if selected_row_id:
                 self._library_selected_row_id = selected_row_id
             self._invalidate_library_workspace_depth_state()
@@ -739,19 +1446,40 @@ class LibraryScreen(BaseAppScreen):
             self._selected_conversation_id = conversation_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
         if requested_mode == "notes" and not note_id:
-            # "notes" is a canvas row, not a LIBRARY_MODES entry (see
+            # "notes" is a canvas row, not a nav-context table entry (see
             # target_mode above), so it needs its own selection here --
             # mirrors handle_library_notes_row's list-view entry state.
-            self._active_mode = "notes"
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
         if notes_create:
-            # Mirrors _select_library_rail_row(LIBRARY_ROW_CREATE_NOTE,
-            # "notes-create") -- the create-note rail row's own target_id.
-            # The rail row's flush of a dirty editor is handled upstream by
+            # Mirrors _select_library_rail_row(LIBRARY_ROW_CREATE_NOTE) --
+            # the create-note rail row's own target_id. The rail row's
+            # flush of a dirty editor is handled upstream by
             # apply_navigation_context's mounted dirty-editor branch; here we
-            # only apply the mode + selection the recompose reads.
-            self._active_mode = "notes-create"
+            # only apply the selection the recompose reads. Reset the note
+            # editor state FIRST (a mounted screen re-entered via this
+            # deep link can still hold a previously opened note's
+            # id/detail/version) then re-assert the create-note target state
+            # AFTER, since the reset flips _library_notes_view back to
+            # "list" -- same reset-then-set ordering as
+            # _open_library_item_by_id's notes branch.
+            self._reset_library_note_editor_state()
             self._library_selected_row_id = LIBRARY_ROW_CREATE_NOTE
+        if ingest_media:
+            # Home's ingest-jobs "Open details" control re-points here
+            # (L3b Task 6): running/queued/failed Library ingest jobs
+            # mirror into Home's Running and Needs Attention sections, and
+            # this deep link is their one-hop route back to the in-canvas
+            # ingest queue. Mirrors
+            # _select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA) -- unlike
+            # collections/note_id above, the ingest canvas reads the job
+            # registry directly on recompose, so no async data fetch (and
+            # therefore no on_mount deferral) is needed even pre-mount.
+            self._library_selected_row_id = LIBRARY_ROW_INGEST_MEDIA
+            # Mirrors _select_library_rail_row's reset: a cached LibraryScreen
+            # re-entered via this deep link (e.g. from Home's ingest-jobs
+            # "Open details" control) must never show a stale half-filled
+            # form left over from a previous Ingest visit.
+            self._reset_library_ingest_transient_state()
         if note_id:
             # Forward-compat entry point: the retired Notes tab's chat-sidebar
             # deep link carried a note id, and this rebuilds the editor for it.
@@ -759,7 +1487,6 @@ class LibraryScreen(BaseAppScreen):
             # open_notes_workspace route carries none, landing on the list), so
             # this is exercised only by tests until such a producer is wired --
             # not orphaned wiring.
-            self._active_mode = "notes"
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
             self._selected_note_id = note_id
             self._library_notes_view = "editor"
@@ -779,14 +1506,24 @@ class LibraryScreen(BaseAppScreen):
                     group="library_note_detail",
                 )
         if self.is_mounted:
-            if self._active_mode == "collections" and not self._library_collections_loaded:
+            if (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+                and not self._library_collections_loaded
+            ):
                 # Deep-link into Collections must load the snapshot the retired
                 # chip flow ran; the panel shows the records once loaded.
                 self.run_worker(self._sync_collections_panel(refresh_snapshot=True))
             else:
                 self.refresh(recompose=True)
 
-    @work(exclusive=True)
+    # Own group, deliberately separate from the "default" group the plain
+    # `self.run_worker(self._sync_collections_panel(...))` calls above use
+    # (they take no explicit group either). Both were previously exclusive
+    # in the SAME (default) group, so an ingest-completion poke into this
+    # worker (see `_handle_library_ingest_registry_changed`) could cancel
+    # an in-flight Collections load. A separate group makes the two
+    # `exclusive=True` scopes independent.
+    @work(exclusive=True, group="library_source_snapshot")
     async def _refresh_local_source_snapshot(self) -> None:
         (
             records,
@@ -796,9 +1533,101 @@ class LibraryScreen(BaseAppScreen):
             recovery_state,
             study_counts,
         ) = await self._list_local_source_snapshot()
+        # Refresh the app-scoped instant-repeat-visit cache (see `on_mount`)
+        # with this fresh snapshot before applying it, so any other
+        # LibraryScreen instance mounted from here on -- including a
+        # concurrent one, since screens are recomposed per visit -- reads
+        # this fetch's result rather than stale/no data.
+        #
+        # Only a SUCCESSFUL snapshot (``lookup_error is None``) is cached: an
+        # error/service-unavailable result still applies to the current view
+        # as usual below (unchanged), but must not become the next visit's
+        # instant-apply seed -- otherwise a return visit within TTL would
+        # flash the "services unavailable" banner for one frame before the
+        # reconcile corrects it. Skipping the write leaves the previous good
+        # snapshot (or nothing) in place, so the next visit does a normal
+        # fresh fetch instead.
+        if lookup_error is None:
+            # Cache SHALLOW COPIES of the mutable containers, not the live
+            # objects (Qodo review): ``_apply_local_source_snapshot`` below
+            # aliases ``self._local_source_records = records``, and later
+            # in-place key reassignments (e.g. ``self._local_source_records
+            # ["media"] = ...`` after a media edit) would otherwise mutate
+            # the cached dict too, so a return visit's instant-apply would
+            # render a snapshot whose records no longer match its cached
+            # counts/totals. The record tuples themselves are immutable, so a
+            # one-level dict copy is enough to isolate the cache.
+            self.app_instance._library_source_snapshot_cache = (
+                dict(records),
+                dict(counts) if isinstance(counts, dict) else counts,
+                dict(total_known) if isinstance(total_known, dict) else total_known,
+                lookup_error,
+                recovery_state,
+                dict(study_counts) if isinstance(study_counts, dict) else study_counts,
+            )
+            self.app_instance._library_source_snapshot_cache_stamp = time.monotonic()
         self._apply_local_source_snapshot(
             records, counts, total_known, lookup_error, recovery_state, study_counts
         )
+
+    def _carry_selected_conversation_into_snapshot(
+        self,
+        records: dict[str, tuple[Mapping[str, Any], ...]],
+    ) -> dict[str, tuple[Mapping[str, Any], ...]]:
+        """Preserve an out-of-page selected conversation across a snapshot replace.
+
+        (C3) A wholesale ``_local_source_records`` replace -- the periodic
+        background refresh, not a user action -- can silently drop the
+        currently-open conversation if it fell off the loaded page (the
+        conversations snapshot is capped, see
+        ``LIBRARY_SOURCE_PAGE_SIZES["conversations"]``) or was fetched
+        out-of-band via ``_open_library_item_by_id`` and prepended into the
+        OLD records. Without this, the next recompose would silently reset
+        the selection to the first row (``_ensure_selected_conversation_id``)
+        even though the user never navigated away -- the same class of race
+        ``_open_library_item_by_id`` already guards against for its own
+        out-of-snapshot fetch, just triggered by a background refresh
+        instead of a user click.
+
+        Pure in-memory merge: reads the OLD ``self._local_source_records``
+        (not yet replaced) and the INCOMING ``records``, and -- only when the
+        selected id is present in the old snapshot but missing from the new
+        one -- prepends the old record into the new conversations tuple so
+        the selection survives the replace.
+
+        Args:
+            records: The incoming snapshot about to replace
+                ``self._local_source_records``.
+
+        Returns:
+            ``records``, unchanged, or with the selected conversation's
+            record prepended into its ``"conversations"`` tuple.
+        """
+        selected_id = getattr(self, "_selected_conversation_id", "")
+        if not selected_id:
+            return records
+        old_conversations = getattr(self, "_local_source_records", {}).get(
+            "conversations", ()
+        )
+        old_index_by_id = {
+            self._conversation_record_id(record, index): record
+            for index, record in enumerate(old_conversations)
+        }
+        carried_record = old_index_by_id.get(selected_id)
+        if carried_record is None:
+            # Not present in the old snapshot either -- nothing to carry.
+            return records
+        new_conversations = records.get("conversations", ())
+        new_ids = {
+            self._conversation_record_id(record, index)
+            for index, record in enumerate(new_conversations)
+        }
+        if selected_id in new_ids:
+            # Still present in the incoming snapshot -- no carry-over needed.
+            return records
+        merged = dict(records)
+        merged["conversations"] = (carried_record, *new_conversations)
+        return merged
 
     def _apply_local_source_snapshot(
         self,
@@ -809,6 +1638,7 @@ class LibraryScreen(BaseAppScreen):
         recovery_state: DestinationRecoveryState | None = None,
         study_counts: dict[str, int | None] | None = None,
     ) -> None:
+        records = self._carry_selected_conversation_into_snapshot(records)
         self._local_source_records = records
         self._local_source_counts = counts
         self._local_source_total_known = total_known
@@ -1044,9 +1874,154 @@ class LibraryScreen(BaseAppScreen):
         try:
             result = await self._run_library_service_call(count_notes, isolate_in_worker=True, **kwargs)
         except Exception:
-            logger.warning("Failed to fetch exact local notes count; using sample count.", exc_info=True)
+            logger.opt(exception=True).warning("Failed to fetch exact local notes count; using sample count.")
             return None
         return result if isinstance(result, int) else None
+
+    async def _prompts_count_or_none(self, count_prompts: Any, **kwargs: Any) -> int | None:
+        """Fetch the exact local prompts total, degrading quietly on failure.
+
+        Runs inside the same ``asyncio.gather`` as the notes/media/
+        conversations fetch (see ``_list_local_source_snapshot``). Mirrors
+        ``_notes_true_count_or_none``: the count seam is optional (guarded
+        by ``callable(count_prompts)`` at the call site), so when it is
+        missing this method is never invoked, and when it *is* present but
+        raises, the failure is swallowed and ``None`` is returned -- unlike
+        the paginated page-records fetch (``_prompts_page_records_or_empty``,
+        run alongside this in the same gather), a failed count has no
+        fallback of its own, so it simply renders the Prompts rail row with
+        no badge at all rather than surfacing an error or failing the whole
+        snapshot fetch.
+
+        Args:
+            count_prompts: The bound ``count_prompts`` callable to invoke.
+            **kwargs: Forwarded to ``count_prompts`` (``mode``).
+
+        Returns:
+            The exact prompts count, or ``None`` if the call failed or
+            returned something other than an ``int``.
+        """
+        try:
+            result = await self._run_library_service_call(count_prompts, isolate_in_worker=True, **kwargs)
+        except Exception:
+            logger.opt(exception=True).warning("Failed to fetch local prompts count; Prompts row will show no count.")
+            return None
+        return result if isinstance(result, int) else None
+
+    async def _prompts_page_records_or_empty(
+        self, list_prompts: Any, **kwargs: Any
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Fetch the local prompts snapshot page, degrading quietly on failure.
+
+        Runs inside the same ``asyncio.gather`` as ``count_prompts`` (see
+        ``_list_local_source_snapshot``). Mirrors ``_prompts_count_or_none``'s
+        degrade contract: the page fetch is optional (guarded by
+        ``callable(list_prompts)`` at the call site), and on failure this
+        returns an empty tuple rather than surfacing an error or failing the
+        whole snapshot fetch -- the Prompts rail badge (from the sibling
+        ``count_prompts`` call) still renders even when this fails, just
+        with an empty list canvas underneath.
+
+        ``PromptScopeService.list_prompts`` returns a *normalized* envelope
+        (composite ``"local:prompt:<id>"`` string ids and a separate integer
+        ``local_id``, per ``normalize_prompt_record``) rather than the raw
+        ``PromptsDatabase.list_prompts`` row shape
+        ``build_prompts_list_state`` expects -- each item is remapped back
+        to a raw-shaped record (``local_id`` -> ``id``) here so the pure
+        state builder can consume it unchanged.
+
+        Note: the raw local ``list_prompts`` DB query selects
+        ``id, name, uuid, author, details, last_modified`` -- it does not
+        join keywords, so every remapped record's ``keywords`` here is the
+        (always empty) list the normalizer defaults to. Bulk-enriching a
+        page of prompts with keywords would need either a new batched-join
+        DB seam or N per-row ``fetch_keywords_for_prompt`` calls; the notes
+        list canvas sets the precedent for skipping this (its own bulk
+        ``list_notes`` fetch has never carried keywords either -- only the
+        single-note editor enriches, via ``_fetch_library_note_keywords``),
+        so this deliberately matches that precedent rather than fetching
+        keywords per row here. ``details``, unlike keywords, IS cheap to
+        carry (a single extra column on the same query, Task 8b D2) --
+        ``build_prompts_list_state``'s filter/secondary-line now use it
+        instead of the never-populated ``keywords``.
+
+        Args:
+            list_prompts: The bound ``list_prompts`` callable to invoke.
+            **kwargs: Forwarded to ``list_prompts`` (``mode``, ``page``,
+                ``per_page``).
+
+        Returns:
+            The fetched page's records, raw-shaped for
+            ``build_prompts_list_state`` (``id``, ``name``, ``author``,
+            ``details``, ``keywords``, ``last_modified``, ``version``), or
+            ``()`` on failure or an unrecognized response shape.
+        """
+        try:
+            response = await self._run_library_service_call(
+                list_prompts, isolate_in_worker=True, **kwargs
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to fetch local prompts page; Prompts list will render empty."
+            )
+            return ()
+        items = response.get("items") if isinstance(response, Mapping) else None
+        if not isinstance(items, (list, tuple)):
+            return ()
+        records: list[Mapping[str, Any]] = []
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            records.append(
+                {
+                    "id": item.get("local_id"),
+                    "name": item.get("name"),
+                    "author": item.get("author"),
+                    "details": item.get("details"),
+                    "keywords": item.get("keywords"),
+                    "last_modified": item.get("last_modified"),
+                    "version": item.get("version"),
+                }
+            )
+        return tuple(records)
+
+    async def _skills_context_or_none(self, get_context: Any, **kwargs: Any) -> Mapping[str, Any] | None:
+        """Fetch the local skills context, degrading quietly on failure.
+
+        Runs inside the same ``asyncio.gather`` as the notes/media/
+        conversations/prompts fetch (see ``_list_local_source_snapshot``).
+        Mirrors ``_prompts_count_or_none``: the seam is optional (guarded by
+        ``callable(get_context)`` at the call site), so when it is missing
+        this method is never invoked, and when it *is* present but raises,
+        the failure is swallowed and ``None`` is returned -- the Skills
+        rail row then renders uncounted with an empty context payload
+        rather than surfacing an error or failing the whole snapshot
+        fetch.
+
+        Unlike prompts (a separate ``count_prompts`` call plus a separate
+        paginated ``list_prompts`` page fetch), a single ``get_context``
+        call here supplies both: the count is derived from its
+        ``available_skills``/``blocked_skills`` lengths by the caller, and
+        the same payload is stashed for a future Skills canvas to render.
+
+        Args:
+            get_context: The bound ``skills_scope_service.get_context``
+                callable to invoke.
+            **kwargs: Forwarded to ``get_context`` (``mode``).
+
+        Returns:
+            The normalized ``get_context`` payload (``available_skills`` +
+            ``blocked_skills``), or ``None`` if the call failed or returned
+            something other than a ``Mapping``.
+        """
+        try:
+            result = await self._run_library_service_call(get_context, isolate_in_worker=True, **kwargs)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to fetch local skills context; Skills row will show no count."
+            )
+            return None
+        return result if isinstance(result, Mapping) else None
 
     async def _study_count_or_none(self, count_callable: Any, label: str, **kwargs: Any) -> int | None:
         """Fetch a decorative Create-rail count, degrading quietly on failure.
@@ -1085,7 +2060,7 @@ class LibraryScreen(BaseAppScreen):
                 count_callable, isolate_in_worker=isolate_in_worker, **kwargs
             )
         except Exception:
-            logger.debug(f"Failed to fetch {label} count for Library create rail.", exc_info=True)
+            logger.opt(exception=True).debug(f"Failed to fetch {label} count for Library create rail.")
             return None
         return result if isinstance(result, int) else None
 
@@ -1104,6 +2079,8 @@ class LibraryScreen(BaseAppScreen):
         conversation_service = getattr(self.app_instance, "chat_conversation_scope_service", None)
         study_service = getattr(self.app_instance, "study_scope_service", None)
         quiz_service = getattr(self.app_instance, "study_quiz_scope_service", None)
+        prompt_service = getattr(self.app_instance, "prompt_scope_service", None)
+        skills_service = getattr(self.app_instance, "skills_scope_service", None)
         list_notes = getattr(notes_service, "list_notes", None)
         list_media = getattr(media_service, "list_media_items", None)
         list_conversations = getattr(conversation_service, "list_conversations", None)
@@ -1112,12 +2089,24 @@ class LibraryScreen(BaseAppScreen):
         count_decks = getattr(study_service, "count_decks", None)
         count_due_flashcards = getattr(study_service, "count_due_flashcards", None)
         count_quizzes = getattr(quiz_service, "count_quizzes", None)
+        count_prompts = getattr(prompt_service, "count_prompts", None)
+        count_prompts_available = callable(count_prompts)
+        list_prompts = getattr(prompt_service, "list_prompts", None)
+        list_prompts_available = callable(list_prompts)
+        get_skills_context = getattr(skills_service, "get_context", None)
+        get_skills_context_available = callable(get_skills_context)
         notes_user_id = getattr(self.app_instance, "notes_user_id", None) or "default_user"
 
         empty_records: dict[str, tuple[Mapping[str, Any], ...]] = {
             "notes": (),
             "media": (),
             "conversations": (),
+            # See ``__init__``'s ``_local_source_records`` default: this key
+            # carries ``(count, page_records)``, not a bare records tuple.
+            "prompts": (None, ()),
+            # Likewise ``(count, context_payload)`` -- see ``__init__``'s
+            # comment on this same key.
+            "skills": (None, {"available_skills": [], "blocked_skills": []}),
         }
         empty_counts = {"notes": 0, "media": 0, "conversations": 0}
         empty_total_known = {"notes": True, "media": True, "conversations": True}
@@ -1156,6 +2145,11 @@ class LibraryScreen(BaseAppScreen):
             self._run_library_service_call(
                 list_conversations,
                 mode="local",
+                # "all" spans global- and workspace-scoped conversations:
+                # Console chats persisted inside a workspace session are
+                # workspace-scoped and would be invisible (and uncounted)
+                # under the service's default 'global' scope.
+                scope_type="all",
                 limit=LIBRARY_SOURCE_PAGE_SIZES["conversations"],
                 offset=0,
                 isolate_in_worker=True,
@@ -1183,6 +2177,26 @@ class LibraryScreen(BaseAppScreen):
             )
         if callable(count_quizzes):
             optional_calls.append(("quizzes", self._study_count_or_none(count_quizzes, "quizzes")))
+        if count_prompts_available:
+            optional_calls.append(
+                ("prompts_count", self._prompts_count_or_none(count_prompts, mode="local"))
+            )
+        if list_prompts_available:
+            optional_calls.append(
+                (
+                    "prompts_page",
+                    self._prompts_page_records_or_empty(
+                        list_prompts,
+                        mode="local",
+                        page=1,
+                        per_page=LIBRARY_SOURCE_PAGE_SIZES["prompts"],
+                    ),
+                )
+            )
+        if get_skills_context_available:
+            optional_calls.append(
+                ("skills_context", self._skills_context_or_none(get_skills_context, mode="local"))
+            )
         gathered_calls.extend(call for _, call in optional_calls)
 
         try:
@@ -1207,9 +2221,8 @@ class LibraryScreen(BaseAppScreen):
                 empty_study_counts,
             )
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Failed to load local Library source snapshot.",
-                exc_info=True,
             )
             return (
                 empty_records,
@@ -1224,6 +2237,17 @@ class LibraryScreen(BaseAppScreen):
         optional_values = dict(zip((key for key, _ in optional_calls), optional_results))
 
         notes_true_count = optional_values.get("notes_true_count")
+        prompts_count = optional_values.get("prompts_count")
+        prompts_page_records = optional_values.get("prompts_page") or ()
+        skills_context = optional_values.get("skills_context")
+        if isinstance(skills_context, Mapping):
+            skills_available = skills_context.get("available_skills") or []
+            skills_blocked = skills_context.get("blocked_skills") or []
+            skills_count: int | None = len(skills_available) + len(skills_blocked)
+            skills_payload: Mapping[str, Any] = skills_context
+        else:
+            skills_count = None
+            skills_payload = {"available_skills": [], "blocked_skills": []}
         study_counts: dict[str, int | None] = {
             "study_decks": optional_values.get("study_decks"),
             "flashcards_due": optional_values.get("flashcards_due"),
@@ -1245,6 +2269,20 @@ class LibraryScreen(BaseAppScreen):
                 "notes": notes,
                 "media": media,
                 "conversations": conversations,
+                # (count, page_records) -- see the ``__init__``/
+                # ``empty_records`` comments above. ``prompts_page_records``
+                # is ``()`` whenever the local backend has no ``list_prompts``
+                # seam or the fetch failed (degrade-quietly contract; see
+                # ``_prompts_page_records_or_empty``).
+                "prompts": (prompts_count, prompts_page_records),
+                # (count, context_payload) -- see the ``__init__``/
+                # ``empty_records`` comments above. ``skills_count`` spans
+                # BOTH ``available_skills`` and ``blocked_skills`` (needs
+                # review) per the spec's blocked-skills visibility rule, and
+                # degrades to ``None``/empty payload whenever the local
+                # backend has no ``get_context`` seam or the fetch failed
+                # (degrade-quietly contract; see ``_skills_context_or_none``).
+                "skills": (skills_count, skills_payload),
             },
             {
                 "notes": notes_count,
@@ -1351,138 +2389,6 @@ class LibraryScreen(BaseAppScreen):
                 return f"Updated: {value}"
         return "Updated: unknown"
 
-    def _conversation_handoff_enabled(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState,
-    ) -> bool:
-        return bool(
-            self._selected_conversation_record()
-            and workspace_depth_state.context_handoff_enabled
-            and not self._library_lookup_error
-        )
-
-    def _conversation_handoff_label(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState,
-    ) -> str:
-        if not self._selected_conversation_record():
-            return "Handoff eligibility: select a conversation first."
-        if workspace_depth_state.context_handoff_enabled:
-            return "Handoff eligibility: ready for Console context."
-        return f"Handoff eligibility: blocked. {workspace_depth_state.context_handoff_tooltip}"
-
-    def _conversation_browser_rows(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState,
-    ) -> tuple[Static | Button, ...]:
-        records = self._conversation_records()
-        self._ensure_selected_conversation_id()
-        rows: list[Static | Button] = [
-            Static(
-                "Saved Conversations",
-                id="library-conversations-browser-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Library-owned browser for saved chats; select one to inspect metadata before handoff.",
-                id="library-conversations-browser-purpose",
-            ),
-        ]
-        if not records:
-            rows.extend(
-                (
-                    Static(
-                        "No saved conversations available in Library.",
-                        id="library-conversations-empty",
-                        classes="ds-recovery-callout is-blocked",
-                    ),
-                    Static(
-                        "Create or save a Console chat, then return here to browse it.",
-                        id="library-conversations-empty-recovery",
-                    ),
-                    Button(
-                        "Open Console",
-                        id="library-conversations-open-console-empty",
-                        classes="library-source-action",
-                        tooltip="Open Console to create or save a conversation.",
-                    ),
-                    Static(
-                        "What appears here:",
-                        id="library-conversations-empty-contents-title",
-                        classes="destination-section",
-                    ),
-                    Static(
-                        "Saved chats with title, message count, workspace, and updated time.",
-                        id="library-conversations-empty-contents-metadata",
-                    ),
-                    Static(
-                        "Select a row to enable Console handoff actions.",
-                        id="library-conversations-empty-contents-handoff",
-                    ),
-                )
-            )
-            return tuple(rows)
-        for index, record in enumerate(records):
-            conversation_id = self._conversation_record_id(record, index)
-            title = self._source_title("conversations", record)
-            selected_prefix = "> " if conversation_id == self._selected_conversation_id else "  "
-            rows.append(
-                Button(
-                    f"{selected_prefix}{title}",
-                    id=f"library-conversation-select-{index}",
-                    classes="library-source-action library-conversation-select",
-                    tooltip="Select this conversation for Library inspection.",
-                )
-            )
-            rows.append(
-                Static(
-                    " | ".join(
-                        (
-                            self._conversation_message_count_label(record),
-                            self._conversation_workspace_label(record),
-                        )
-                    ),
-                    id=f"library-conversation-row-{index}",
-                )
-            )
-        selected = self._selected_conversation_record()
-        if selected is None:
-            return tuple(rows)
-        _, selected_record = selected
-        rows.extend(
-            (
-                Static(
-                    "Selected conversation",
-                    classes="destination-section",
-                ),
-                Static(
-                    self._source_title("conversations", selected_record),
-                    id="library-selected-conversation-title",
-                ),
-                Static(
-                    self._conversation_message_count_label(selected_record),
-                    id="library-selected-conversation-message-count",
-                ),
-                Static(
-                    self._conversation_workspace_label(selected_record),
-                    id="library-selected-conversation-workspace",
-                ),
-                Static(
-                    self._conversation_updated_label(selected_record),
-                    id="library-selected-conversation-updated",
-                ),
-                Static(
-                    "Source authority: local",
-                    id="library-selected-conversation-authority",
-                ),
-                Static(
-                    self._conversation_handoff_label(workspace_depth_state),
-                    id="library-selected-conversation-handoff",
-                ),
-            )
-        )
-        return tuple(rows)
-
     def _selected_conversation_handoff_payload(self) -> ChatHandoffPayload | None:
         selected = self._selected_conversation_record()
         if selected is None:
@@ -1531,7 +2437,7 @@ class LibraryScreen(BaseAppScreen):
 
         Mirrors ``_selected_conversation_handoff_payload``, but reads the
         currently loaded media detail (``_library_media_detail``) instead of
-        a selected browser row -- the media viewer's "Use in Chat" action
+        a selected browser row -- the media viewer's "Use in Console" action
         stages whatever item is open in the in-canvas viewer, not a row
         selection from the list.
 
@@ -1748,270 +2654,6 @@ class LibraryScreen(BaseAppScreen):
     def _hub_spacer(self, widget_id: str) -> Static:
         return Static("", id=widget_id, classes="library-hub-spacer")
 
-    def _import_export_workflow_rows(self) -> tuple[Static, ...]:
-        return (
-            Static(
-                "Library Import/Export Workflow",
-                id="library-import-export-workflow-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Library owns source acquisition framing; Ingest and Media own deeper file handling.",
-                id="library-import-export-owner-boundary",
-            ),
-            Static(
-                "Import source material",
-                id="library-import-export-import-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Open Ingest to add files, URLs, transcripts, source packages, or external material.",
-                id="library-import-export-ingest-copy",
-            ),
-            Static(
-                "Imported material returns here as notes, media, conversations, or indexed sources.",
-                id="library-import-export-return-copy",
-            ),
-            Static(
-                "Media review",
-                id="library-import-export-media-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Full Media ingestion and review stays in Media.",
-                id="library-import-export-media-boundary",
-            ),
-            Static(
-                "Ownership boundaries",
-                id="library-import-export-boundaries-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Artifact export stays in Artifacts.",
-                id="library-import-export-artifact-boundary",
-            ),
-            Static(
-                "Generic file management stays outside Library.",
-                id="library-import-export-file-boundary",
-            ),
-            Static(
-                "Export is not wired here yet.",
-                id="library-import-export-export-blocked",
-                classes="ds-recovery-callout is-blocked",
-            ),
-            Static(
-                "Return path: come back to Library after import to see new hub inventory.",
-                id="library-import-export-return-path",
-            ),
-        )
-
-    def _import_export_inspector_rows(self) -> tuple[Static, ...]:
-        return (
-            Static(
-                "Import/Export inspector",
-                id="library-inspector-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Current scope: source-level Library acquisition.",
-                id="library-import-export-inspector-scope",
-            ),
-            Static(
-                "Handoff target: Ingest for new source material; Media for media review.",
-                id="library-import-export-inspector-targets",
-            ),
-            Static(
-                "Prerequisite: choose the owner workflow before leaving Library.",
-                id="library-import-export-inspector-prerequisite",
-            ),
-            Static(
-                "Blocked: Library source export is planned but not implemented here.",
-                id="library-import-export-inspector-blocked",
-                classes="ds-recovery-callout is-blocked",
-            ),
-            Static(
-                "Recovery: use owner screens for existing export paths until Library export is wired.",
-                id="library-import-export-inspector-recovery",
-            ),
-        )
-
-    def _source_action_meta(self, widget_id: str) -> str:
-        if widget_id == "library-open-notes":
-            return (
-                f"Notes: {self._hub_source_count_value('notes')} | "
-                "global browse | stage gated"
-            )
-        if widget_id == "library-open-media":
-            return (
-                f"Media: {self._hub_source_count_value('media')} | "
-                "global browse | stage gated"
-            )
-        if widget_id == "library-open-conversations":
-            return (
-                f"Conversations: {self._hub_source_count_value('conversations')} | "
-                "global browse | stage gated"
-            )
-        if widget_id == "library-open-search":
-            return "Retrieval | query first | stage evidence"
-        if widget_id == "library-open-collections":
-            return "Collections | read/review | items WIP"
-        return ""
-
-    def _source_module_action_widgets(self) -> tuple[Button | Static, ...]:
-        action_groups: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
-            (
-                "Sources",
-                (
-                    ("Open Notes", "library-open-notes", "Open saved notes and workspaces."),
-                    (
-                        "Open Media",
-                        "library-open-media",
-                        "Browse the media library, transcripts, analysis, and read-it-later.",
-                    ),
-                    (
-                        "Open Conversations",
-                        "library-open-conversations",
-                        "Open saved conversation browsing inside Library.",
-                    ),
-                ),
-            ),
-            (
-                "Retrieval",
-                (
-                    ("Search/RAG", "library-open-search", "Search or ask over indexed sources."),
-                ),
-            ),
-            (
-                "Movement",
-                (
-                    (
-                        "Import/Export Sources",
-                        "library-open-import-export",
-                        "Open source import and export tools.",
-                    ),
-                    (
-                        "Collections",
-                        "library-open-collections",
-                        "Read, review, and reuse saved Library content.",
-                    ),
-                ),
-            ),
-            (
-                "Learning",
-                (
-                    ("Study Dashboard", "library-open-study", "Open Study globally or with Library sources."),
-                    ("Flashcards", "library-open-flashcards", "Open Flashcards globally or with Library sources."),
-                    ("Quizzes", "library-open-quizzes", "Open Quizzes globally or with Library sources."),
-                ),
-            ),
-        )
-
-        widgets: list[Button | Static] = []
-        active_action_id = self._active_source_action_id()
-        hide_search_action = self._active_mode == "search"
-        hide_learning_actions = self._active_mode == "collections" or self._active_mode in LIBRARY_STUDY_HANDOFF_MODES
-        for group_index, (group_label, actions) in enumerate(action_groups):
-            if group_label == "Retrieval" and hide_search_action:
-                continue
-            if group_label == "Learning" and hide_learning_actions:
-                continue
-            if group_index > 0:
-                widgets.append(
-                    Static(
-                        "----",
-                        id=f"library-source-group-rule-{group_label.lower().replace(' ', '-')}",
-                        classes="library-source-group-rule",
-                    )
-                )
-            group_heading = Static(group_label, classes="destination-section library-source-group")
-            widgets.append(group_heading)
-            for index, (label, widget_id, tooltip) in enumerate(actions):
-                classes = "library-source-action"
-                if widget_id == active_action_id:
-                    classes = f"{classes} is-active"
-                    widgets.append(
-                        Static(
-                            f"> Active: {label}",
-                            id="library-source-active-marker",
-                            classes="library-source-active-marker",
-                        )
-                    )
-                button = Button(
-                    label,
-                    id=widget_id,
-                    classes=classes,
-                    tooltip=tooltip,
-                )
-                widgets.append(button)
-                meta = self._source_action_meta(widget_id)
-                if meta:
-                    widgets.append(
-                        Static(
-                            meta,
-                            id=f"{widget_id}-meta",
-                            classes="library-source-action-meta",
-                        )
-                    )
-                if index < len(actions) - 1:
-                    spacer = Static("", classes="library-source-action-spacer")
-                    widgets.append(spacer)
-        return tuple(widgets)
-
-    def _hub_inspector_rows(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState,
-    ) -> tuple[Static, ...]:
-        handoff_copy = (
-            "Console handoff is secondary and uses eligible Library content only."
-            if self._has_local_sources()
-            else "Console handoff is secondary and unavailable until Library content exists."
-        )
-        return (
-            Static(
-                "Hub inspector",
-                id="library-inspector-title",
-                classes="destination-section",
-            ),
-            Static("Selected", id="library-hub-inspector-selected-title", classes="destination-section"),
-            Static(LIBRARY_INSPECTOR_EMPTY_COPY, id="library-inspector-empty"),
-            Static("Available now", id="library-hub-inspector-available-title", classes="destination-section"),
-            Static(
-                "Browse Notes, Media, Conversations, Collections, and Search/RAG owner screens.",
-                id="library-hub-inspector-available-now",
-            ),
-            Static("Blocked", id="library-hub-inspector-blocked-title", classes="destination-section"),
-            Static(
-                handoff_copy,
-                id="library-hub-inspector-console-boundary",
-                classes="ds-recovery-callout is-blocked",
-            ),
-            Static("Next action", id="library-hub-inspector-next-title", classes="destination-section"),
-            Static(
-                LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY,
-                id="library-inspector-empty-next-action",
-            ),
-            Static("Details", id="library-hub-inspector-details-title", classes="destination-section"),
-            Static(
-                "Notes owner: Notes screen handles editing, sync, templates, export, and delete.",
-                id="library-hub-inspector-notes-owner",
-            ),
-            Static(
-                "Media owner: Media screen handles browse, ingest review, analysis, and read-it-later.",
-                id="library-hub-inspector-media-owner",
-            ),
-            Static(
-                "Search/RAG owner: Library Search/RAG handles retrieval, evidence, and saved searches.",
-                id="library-hub-inspector-rag-owner",
-            ),
-            Static(
-                "Workspace boundary: browse/search remains global; active workspace gates staging and manipulation.",
-                id="library-hub-inspector-workspace-boundary",
-            ),
-            Static(
-                workspace_depth_state.handoff_label,
-                id="library-hub-inspector-handoff-state",
-            ),
-        )
 
     @classmethod
     def _source_record_id(cls, record: Mapping[str, Any]) -> str | None:
@@ -2145,35 +2787,32 @@ class LibraryScreen(BaseAppScreen):
     def _has_source_study_context(self) -> bool:
         return self._has_local_sources()
 
-    def _study_handoff_copy(self) -> dict[str, str]:
+    def _study_handoff_copy(self, kind: str) -> dict[str, str]:
         mode = LIBRARY_STUDY_HANDOFF_MODES.get(
-            self._active_mode,
+            kind,
             LIBRARY_STUDY_HANDOFF_MODES["study"],
         )
         titles = self._source_study_handoff_titles()
         has_context = self._has_source_study_context()
         action_label = mode["action_label"]
         if has_context and titles:
-            context_copy = f"Carries forward: {', '.join(titles)}"
+            context_copy = _library_carries_forward_line(titles)
         elif has_context:
             context_copy = "Carries forward: Library source snapshot (titles unavailable)"
         else:
-            context_copy = "No Library source snapshot will be carried forward."
+            # No Library sources at all: the carries-forward line is omitted
+            # entirely rather than stating the negative (the blocked
+            # "recovery" line below already carries that signal).
+            context_copy = ""
         return {
-            "label": mode["label"],
+            "header": mode["header"],
             "action_label": action_label,
+            "button_label": mode["button_label"],
+            "purpose": mode["purpose"],
             "context": context_copy,
-            "owner": (
-                "Library prepares source context only; Study owns sessions, "
-                "generation, review, and attempts."
-            ),
-            "wip": (
-                "WIP: provider-backed generation and collection-scoped study "
-                "remain owned by later Study slices."
-            ),
+            "owner": LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,
             "recovery": (
-                "Source snapshot is ready; open "
-                f"{action_label} to continue with this Library context."
+                "Source snapshot is ready."
                 if has_context
                 else (
                     "Import sources or create notes first, or open "
@@ -2181,73 +2820,6 @@ class LibraryScreen(BaseAppScreen):
                 )
             ),
         }
-
-    def _status_label(self) -> str:
-        if not self._library_loaded:
-            return "Loading"
-        if self._library_lookup_recovery_state is not None:
-            return self._library_lookup_recovery_state.status_label
-        if self._library_lookup_error is None:
-            return "Ready" if self._has_local_sources() else "Empty"
-        if "unavailable" in self._library_lookup_error.lower():
-            return "Unavailable"
-        return "Blocked"
-
-    def _search_rag_status_label(self) -> str:
-        panel_state = self._library_rag_panel_state()
-        if panel_state.scope.status == "blocked":
-            if not panel_state.scope.has_available_sources:
-                return "Blocked: no Library sources"
-            return "Blocked: select Library source scope"
-        if panel_state.query_state.status == "blocked":
-            return f"Blocked: {panel_state.query_state.run_action.disabled_reason}"
-        if panel_state.retrieval_status == "searching":
-            return "Searching"
-        if panel_state.retrieval_status in {"blocked", "failed"}:
-            return "Blocked: retrieval unavailable"
-        if panel_state.retrieval_status == "empty":
-            return "No results"
-        if panel_state.selected_result is not None:
-            return "Evidence selected"
-        if panel_state.results:
-            return "Results ready"
-        return "Ready"
-
-    def _status_row_copy(self) -> str:
-        if self._active_mode == "conversations":
-            return f"Library | Conversations | {self._status_label()} | Local"
-        if self._active_mode == "search":
-            return f"Library | Search/RAG | {self._search_rag_status_label()} | Local"
-        if self._active_mode == "import-export":
-            return f"Library | Import/Export | {self._status_label()} | Local"
-        if self._active_mode == "collections":
-            collections_status = "Empty"
-            if self._library_collections_error:
-                collections_status = "Unavailable"
-            elif self._library_collections_records:
-                collections_status = "Ready"
-            return f"Library | Collections | {collections_status} | Local"
-        return (
-            "Library | Content hub, imports, Search/RAG, Workspaces, "
-            f"Collections, Study | {self._status_label()} | Local"
-        )
-
-    def _active_mode_contract(self) -> Mapping[str, str]:
-        return LIBRARY_MODES.get(self._active_mode, LIBRARY_MODES["sources"])
-
-    def _active_column_titles(self) -> tuple[str, str, str]:
-        return LIBRARY_COLUMN_TITLES.get(self._active_mode, LIBRARY_COLUMN_TITLES["sources"])
-
-    def _active_source_action_id(self) -> str:
-        return {
-            "conversations": "library-open-conversations",
-            "search": "library-open-search",
-            "collections": "library-open-collections",
-            "import-export": "library-open-import-export",
-        }.get(self._active_mode, "")
-
-    def _should_show_local_snapshot_region(self) -> bool:
-        return self._active_mode in LIBRARY_LOCAL_SNAPSHOT_MODES
 
     def _library_rag_panel_state(self) -> LibraryRagPanelState:
         # B2: explicit selection is every real source type NOT toggled off;
@@ -2264,6 +2836,12 @@ class LibraryScreen(BaseAppScreen):
                 "notes": self._local_source_counts.get("notes", 0),
                 "media": self._local_source_counts.get("media", 0),
                 "conversations": self._local_source_counts.get("conversations", 0),
+                # "prompts" carries (count, page_records) in
+                # `_local_source_records` (see its `__init__` comment), not
+                # a bare count in `_local_source_counts` -- reuse the
+                # already-fetched count-seam value rather than fetching
+                # again.
+                "prompts": self._local_source_records.get("prompts", (None, ()))[0] or 0,
                 "workspaces": 0,
                 "collections": 0,
             },
@@ -2307,100 +2885,6 @@ class LibraryScreen(BaseAppScreen):
             create_name=self._library_collection_name_input,
             rename_name=self._library_collection_name_input,
             sync_profile_summary=self._library_sync_profile_summary,
-        )
-
-    def _collections_inspector_rows(
-        self,
-        panel_state: LibraryCollectionsPanelState,
-    ) -> tuple[Static, ...]:
-        selected = panel_state.selected_collection
-        if selected is None:
-            return (
-                Static("Collections Inspector", id="library-inspector-title", classes="destination-section"),
-                Static("Selected: none", id="library-collection-inspector-empty"),
-                Static(
-                    (
-                        "Collections are for reading and reviewing saved content; "
-                        "the local item reader is not wired in this slice."
-                    ),
-                    id="library-collection-inspector-empty-next-action",
-                ),
-                Static(
-                    (
-                        "Global browsing/search remains available; active staging and manipulation "
-                        "stay workspace-gated."
-                    ),
-                    id="library-collection-inspector-global-rule",
-                ),
-                Static("Action status", classes="destination-section"),
-                Static(
-                    "Available now: create, rename, delete records",
-                    id="library-collection-inspector-empty-local-actions",
-                ),
-                Static(
-                    "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync",
-                    id="library-collection-inspector-empty-later-actions",
-                    classes="ds-recovery-callout is-blocked",
-                ),
-                Static(
-                    "Next: select or create a Collection record to inspect local item-reader readiness.",
-                    id="library-collection-inspector-empty-recovery",
-                ),
-            )
-        return (
-            Static("Selected Collection Record", id="library-inspector-title", classes="destination-section"),
-            Static(f"Selected: {selected.name}", id="library-collection-inspector-selected"),
-            Static(selected.name, id="library-collection-inspector-name"),
-            Static(
-                f"Stored item count: {selected.item_count_label}",
-                id="library-collection-inspector-item-count",
-            ),
-            Static(
-                "Collection item reader: not wired locally yet.",
-                id="library-collection-inspector-reader-state",
-            ),
-            Static(
-                "Workspace rule: Library browsing/search stays global; Console/RAG staging follows active workspace.",
-                id="library-collection-inspector-workspace-rule",
-            ),
-            Static("Action status", classes="destination-section"),
-            Static(
-                "Available now: create, rename, delete records",
-                id="library-collection-inspector-local-actions",
-            ),
-            Static(
-                "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync",
-                id="library-collection-inspector-later-actions",
-                classes="ds-recovery-callout is-blocked",
-            ),
-            Static(
-                "Next: collection item adapters are required before item-level actions unlock.",
-                id="library-collection-inspector-next",
-            ),
-            Static(
-                "Disabled: collection item Search/RAG is not wired yet.",
-                id="library-collection-inspector-rag-blocked",
-                classes="ds-recovery-callout is-blocked",
-            ),
-            Static(
-                "Disabled: collection item Console handoff is not wired yet.",
-                id="library-collection-inspector-console-blocked",
-                classes="ds-recovery-callout is-blocked",
-            ),
-            Static(
-                (
-                    "Recovery: use existing Library Search/RAG or individual eligible sources "
-                    "until collection item adapters are available."
-                ),
-                id="library-collection-inspector-recovery",
-            ),
-            Static("What this means", classes="destination-section"),
-            Static(
-                "This is a read-only sync dry run. No server writes can run from this screen.",
-                id="library-collection-inspector-sync-meaning",
-            ),
-            Static(selected.sync_status_label, id="library-collection-inspector-sync-status"),
-            Static(selected.sync_status_detail, id="library-collection-inspector-sync-detail"),
         )
 
     def _workspace_handoff_summary_label(self, state: LibraryWorkspaceDepthState) -> str:
@@ -2454,94 +2938,29 @@ class LibraryScreen(BaseAppScreen):
             ),
         )
 
-    def _workspaces_inspector_rows(
-        self,
-        state: LibraryWorkspaceDepthState,
-    ) -> tuple[Static, ...]:
-        return (
-            Static("Handoff status", id="library-inspector-title", classes="destination-section"),
-            Static(state.handoff_label, id="library-workspaces-inspector-handoff"),
-            Static(
-                self._workspace_handoff_blocked_label(state),
-                id="library-workspaces-inspector-blocked",
-            ),
-            Static(
-                self._workspace_handoff_why_label(state),
-                id="library-workspaces-inspector-why",
-            ),
-            Static(
-                self._workspace_handoff_fix_label(state),
-                id="library-workspaces-inspector-fix",
-            ),
-            Static(
-                self._workspace_handoff_action_label(state),
-                id="library-workspaces-inspector-action",
-            ),
-            Static(
-                "Rule: browse/search stay global; staging is workspace-scoped.",
-                id="library-workspaces-inspector-rule",
-            ),
-        )
-
-    def _workspace_handoff_recovery_label(self, state: LibraryWorkspaceDepthState) -> str:
-        if not state.source_rows:
-            workspace_name = state.workspace_name.strip()
-            if workspace_name and workspace_name not in {"unavailable"}:
-                return f"import or assign sources to {workspace_name}"
-            return "import or assign sources to a workspace"
-        workspace_name = state.workspace_name.strip()
-        if workspace_name and workspace_name not in {"Local Default", "unavailable"}:
-            return f"Copy/link blocked sources to {workspace_name}"
-        return "Assign blocked sources to the active workspace"
-
-    def _workspace_handoff_blocked_label(self, state: LibraryWorkspaceDepthState) -> str:
-        if state.context_handoff_enabled:
-            return "Ready: all visible sources can be staged"
-        if not state.source_rows:
-            return "Blocked: no workspace sources"
-        workspace_name = state.workspace_name.strip()
-        if workspace_name and workspace_name not in {"Local Default", "unavailable"}:
-            return f"Blocked: some sources are outside {workspace_name}"
-        return "Blocked: sources need active workspace assignment"
-
-    def _workspace_handoff_fix_label(self, state: LibraryWorkspaceDepthState) -> str:
-        if state.context_handoff_enabled:
-            return "Fix: no action needed"
-        if not state.source_rows:
-            return f"Fix: {self._workspace_handoff_recovery_label(state)}"
-        return f"Fix: {self._workspace_handoff_recovery_label(state)}"
-
-    def _workspace_handoff_why_label(self, state: LibraryWorkspaceDepthState) -> str:
-        if state.context_handoff_enabled:
-            return "Why: all visible sources belong to the active workspace."
-        if not state.source_rows:
-            return "Why: no sources are assigned to this workspace yet."
-        return "Why: at least one visible source belongs to another workspace."
-
-    def _workspace_handoff_action_label(self, state: LibraryWorkspaceDepthState) -> str:
-        if state.context_handoff_enabled:
-            return "Action: Use in Console is available."
-        if not state.source_rows:
-            return "Action: Import sources or assign sources before staging."
-        return "Action: Copy/link blocked sources before staging."
-
-    def _study_handoff_detail_widget(self) -> Vertical:
-        copy = self._study_handoff_copy()
-        recovery_classes = (
-            "ds-recovery-callout"
-            if self._has_local_sources()
-            else "ds-recovery-callout is-blocked"
+    def _study_handoff_detail_widget(self, kind: str) -> Vertical:
+        """Build the handoff canvas body: purpose, carried-forward sources,
+        ownership, snapshot readiness, and the Open action -- five elements,
+        down from the seven-line original (UX wave D1: no duplicated mode/
+        purpose lines, no "Primary action:" line, no WIP roadmap callout).
+        """
+        copy = self._study_handoff_copy(kind)
+        # D2: the ds-recovery-callout warning treatment is for the blocked
+        # (no local sources) state only; ready renders as a plain Static.
+        recovery_kwargs: dict[str, str] = (
+            {} if self._has_local_sources() else {"classes": "ds-recovery-callout is-blocked"}
         )
         action_button_id = {
             "study": "library-open-study",
             "flashcards": "library-open-flashcards",
             "quizzes": "library-open-quizzes",
-        }.get(self._active_mode, "library-open-study")
+        }.get(kind, "library-open-study")
         handoff_toolbar = Horizontal(
             Button(
-                copy["action_label"],
+                copy["button_label"],
                 id=action_button_id,
-                classes="library-canvas-action",
+                # D3: the Open action is the canvas's primary control.
+                classes="library-canvas-action console-action-primary",
                 compact=True,
                 tooltip=(
                     f"Open {copy['action_label']} with the current Library "
@@ -2552,35 +2971,37 @@ class LibraryScreen(BaseAppScreen):
             classes="ds-toolbar",
         )
         handoff_toolbar.styles.height = "auto"
-        return Vertical(
+        children: list[Static | Horizontal] = [
             Static(
-                f"{copy['label']} handoff",
+                copy["purpose"],
                 id="library-study-handoff-purpose",
-                classes="destination-section",
             ),
-            Static(
-                f"Primary action: {copy['action_label']}",
-                id="library-study-handoff-primary-action",
-            ),
-            Static(
-                copy["context"],
-                id="library-study-handoff-context",
-            ),
+        ]
+        if copy["context"]:
+            # D1: omitted entirely (not "No ... will be carried forward.")
+            # when there is no Library source snapshot at all.
+            children.append(
+                Static(
+                    copy["context"],
+                    id="library-study-handoff-context",
+                )
+            )
+        children.append(
             Static(
                 copy["owner"],
                 id="library-study-handoff-owner",
-            ),
-            Static(
-                copy["wip"],
-                id="library-study-handoff-wip",
-                classes="ds-recovery-callout",
-            ),
+            )
+        )
+        children.append(
             Static(
                 copy["recovery"],
                 id="library-study-handoff-recovery",
-                classes=recovery_classes,
-            ),
-            handoff_toolbar,
+                **recovery_kwargs,
+            )
+        )
+        children.append(handoff_toolbar)
+        return Vertical(
+            *children,
             id="library-study-handoff-detail",
             classes="library-rag-region",
         )
@@ -2699,308 +3120,6 @@ class LibraryScreen(BaseAppScreen):
             )
         )
         return widgets
-
-    def _library_action_widgets(
-        self,
-        *,
-        workspace_depth_state: LibraryWorkspaceDepthState,
-        collection_scoped_actions_deferred: bool,
-        handoff_disabled: bool,
-        handoff_tooltip: str,
-        collections_panel_state: LibraryCollectionsPanelState | None = None,
-    ) -> tuple[Any, ...]:
-        if self._active_mode == "workspaces":
-            return self._workspace_action_widgets(
-                workspace_depth_state,
-                handoff_disabled=handoff_disabled,
-                handoff_tooltip=handoff_tooltip,
-            )
-        if self._active_mode == "conversations":
-            handoff_ready = self._conversation_handoff_enabled(workspace_depth_state)
-            recovery_copy = self._conversation_handoff_label(workspace_depth_state)
-            return (
-                Static("Conversation actions", classes="destination-section"),
-                Button(
-                    "Open in Console",
-                    id="library-conversation-open-console",
-                    classes="library-source-action",
-                    disabled=not handoff_ready,
-                    tooltip=(
-                        "Open this conversation as Console context."
-                        if handoff_ready
-                        else recovery_copy
-                    ),
-                ),
-                Static(
-                    (
-                        "Selected conversation can be handed off when workspace policy allows it."
-                        if self._selected_conversation_record()
-                        else "Select a conversation first to enable these actions."
-                    ),
-                    id="library-conversation-action-disabled-reason",
-                ),
-                Button(
-                    "Use as source",
-                    id="library-conversation-use-source",
-                    classes="library-source-action",
-                    disabled=not handoff_ready,
-                    tooltip=(
-                        "Use this conversation as a source for Console/RAG context."
-                        if handoff_ready
-                        else recovery_copy
-                    ),
-                ),
-                Static(
-                    recovery_copy,
-                    id="library-conversation-action-state",
-                    classes="ds-recovery-callout" if handoff_ready else "ds-recovery-callout is-blocked",
-                ),
-            )
-        if self._active_mode == "import-export":
-            return (
-                Static("Import/Export actions", classes="destination-section"),
-                Button(
-                    "Open Ingest",
-                    id="library-import-export-open-ingest",
-                    classes="library-source-action",
-                    tooltip=(
-                        "Open Ingest for files, URLs, transcripts, and source packages. "
-                        "Return to Library to see imported content."
-                    ),
-                ),
-                Static(
-                    "Route: Ingest. Return path: imported material appears in Library inventory.",
-                    id="library-import-export-ingest-route-copy",
-                ),
-                Button(
-                    "Open Media",
-                    id="library-import-export-open-media",
-                    classes="library-source-action",
-                    tooltip="Open Media for full media ingestion, review, and analysis.",
-                ),
-                Static(
-                    "Route: Media. Use when the task is media review, not generic source movement.",
-                    id="library-import-export-media-route-copy",
-                ),
-                Button(
-                    "Export Library sources",
-                    id="library-import-export-export-sources",
-                    classes="library-source-action",
-                    disabled=True,
-                    tooltip="Source-level Library export is not wired yet.",
-                ),
-                Static(
-                    "Blocked: export from this Library panel is not wired yet. Use owner screens where available.",
-                    id="library-import-export-action-blocked",
-                    classes="ds-recovery-callout is-blocked",
-                ),
-            )
-        if self._active_mode == "collections":
-            return (
-                Static("Collection item actions", classes="destination-section"),
-                Static(
-                    "Read/review collection items when a local item adapter is available.",
-                    id="library-collection-actions-local-readiness",
-                ),
-                Static(
-                    "Item actions unavailable until collection items exist.",
-                    id="library-collection-actions-disabled-reason",
-                    classes="ds-recovery-callout is-blocked",
-                ),
-                Static(
-                    "Disabled: collection item Search/RAG, Study, Console handoff, "
-                    "and server sync promotion are not wired yet.",
-                    id="library-collection-actions-wip-reason",
-                    classes="ds-recovery-callout is-blocked",
-                ),
-                Button(
-                    "Study Dashboard",
-                    id="library-open-study",
-                    classes="library-source-action",
-                    disabled=True,
-                    tooltip="Collection-scoped Study is not available yet.",
-                ),
-                Button(
-                    "Flashcards",
-                    id="library-open-flashcards",
-                    classes="library-source-action",
-                    disabled=True,
-                    tooltip="Collection-scoped Flashcards are not available yet.",
-                ),
-                Button(
-                    "Quizzes",
-                    id="library-open-quizzes",
-                    classes="library-source-action",
-                    disabled=True,
-                    tooltip="Collection-scoped Quizzes are not available yet.",
-                ),
-                Button(
-                    "Use in Console",
-                    id="library-use-in-console",
-                    classes="library-source-action",
-                    disabled=True,
-                    tooltip="Collection-scoped Console handoff is not available yet.",
-                ),
-            )
-        if self._active_mode == "search":
-            return ()
-        if self._active_mode in LIBRARY_STUDY_HANDOFF_MODES:
-            copy = self._study_handoff_copy()
-            active_action_id = {
-                "study": "library-open-study",
-                "flashcards": "library-open-flashcards",
-                "quizzes": "library-open-quizzes",
-            }[self._active_mode]
-            recovery_classes = (
-                "ds-recovery-callout"
-                if self._has_local_sources()
-                else "ds-recovery-callout is-blocked"
-            )
-
-            def action_classes(button_id: str) -> str:
-                classes = "library-source-action"
-                if button_id == active_action_id:
-                    classes = f"{classes} is-active"
-                return classes
-
-            return (
-                Static(
-                    f"{copy['label']} actions",
-                    id="library-study-actions-title",
-                    classes="destination-section",
-                ),
-                Static(
-                    (
-                        "Open with the current Library source snapshot."
-                        if self._has_local_sources()
-                        else "Open globally; no Library source snapshot is available."
-                    ),
-                    id="library-study-actions-summary",
-                    classes=recovery_classes,
-                ),
-                Button(
-                    "Study Dashboard",
-                    id="library-open-study",
-                    classes=action_classes("library-open-study"),
-                    tooltip="Open Study globally or with the current Library source snapshot.",
-                ),
-                Button(
-                    "Flashcards",
-                    id="library-open-flashcards",
-                    classes=action_classes("library-open-flashcards"),
-                    tooltip="Open Flashcards globally or with the current Library source snapshot.",
-                ),
-                Button(
-                    "Quizzes",
-                    id="library-open-quizzes",
-                    classes=action_classes("library-open-quizzes"),
-                    tooltip="Open Quizzes globally or with the current Library source snapshot.",
-                ),
-                Button(
-                    "Use in Console",
-                    id="library-use-in-console",
-                    classes="library-source-action",
-                    disabled=handoff_disabled,
-                    tooltip=handoff_tooltip,
-                ),
-            )
-        if self._active_mode == "sources":
-            return (
-                Static(
-                    "Hub actions",
-                    id="library-hub-actions-title",
-                    classes="destination-section",
-                ),
-                Static(
-                    "Selected: none",
-                    id="library-hub-actions-guidance",
-                ),
-                Static(
-                    "Available now: open source modules and owner screens.",
-                    id="library-hub-actions-selection",
-                ),
-                Static(
-                    "Blocked: Use in Console requires workspace-eligible Library content.",
-                    id="library-hub-actions-boundary",
-                    classes="ds-recovery-callout is-blocked",
-                ),
-                Button(
-                    "Use in Console",
-                    id="library-use-in-console",
-                    classes="library-source-action",
-                    disabled=handoff_disabled,
-                    tooltip=handoff_tooltip,
-                ),
-                Static(
-                    "Next action: open a source mode, import content, or create a note.",
-                    id="library-hub-actions-next",
-                ),
-            )
-        return (
-            Static("Knowledge workflow", classes="destination-section"),
-            Static(
-                (
-                    "Collection-scoped Study, Flashcards, Quizzes, and Console "
-                    "are later-stage."
-                    if collection_scoped_actions_deferred
-                    else "Turn Library material into study sessions, flashcards, and quizzes."
-                ),
-                id="library-study-purpose",
-            ),
-            Static(
-                (
-                    "Use Collections to organize source groups locally; scoped "
-                    "execution remains deferred."
-                    if collection_scoped_actions_deferred
-                    else "Study generation entry uses the visible Library source snapshot."
-                ),
-                id="library-study-generation-entry",
-            ),
-            Button(
-                "Study Dashboard",
-                id="library-open-study",
-                classes="library-source-action",
-                disabled=collection_scoped_actions_deferred,
-                tooltip=(
-                    "Collection-scoped Study is not available yet."
-                    if collection_scoped_actions_deferred
-                    else "Open the Study dashboard for due cards, decks, quizzes, and resume actions."
-                ),
-            ),
-            Button(
-                "Flashcards",
-                id="library-open-flashcards",
-                classes="library-source-action",
-                disabled=collection_scoped_actions_deferred,
-                tooltip=(
-                    "Collection-scoped Flashcards are not available yet."
-                    if collection_scoped_actions_deferred
-                    else "Open flashcards for selected or imported Library material."
-                ),
-            ),
-            Button(
-                "Quizzes",
-                id="library-open-quizzes",
-                classes="library-source-action",
-                disabled=collection_scoped_actions_deferred,
-                tooltip=(
-                    "Collection-scoped Quizzes are not available yet."
-                    if collection_scoped_actions_deferred
-                    else "Open quizzes for selected or imported Library material."
-                ),
-            ),
-            Button(
-                "Use in Console",
-                id="library-use-in-console",
-                classes="library-source-action",
-                disabled=handoff_disabled or collection_scoped_actions_deferred,
-                tooltip=(
-                    "Collection-scoped Console handoff is not available yet."
-                    if collection_scoped_actions_deferred
-                    else handoff_tooltip
-                ),
-            ),
-        )
 
     def compose_content(self) -> ComposeResult:
         shell_input = self._build_library_shell_input()
@@ -3148,17 +3267,8 @@ class LibraryScreen(BaseAppScreen):
                         id="library-notes-canvas",
                     )
                 elif shell.canvas_kind == "notes":
-                    source_records = (
-                        self._library_notes_filter_records
-                        if self._library_notes_filter_records is not None
-                        else self._local_source_records.get("notes", ())
-                    )
-                    notes_list_state = build_library_notes_list_state(
-                        sort_notes_records(source_records, self._library_notes_sort),
-                        filter_note=self._library_notes_filter,
-                    )
                     yield LibraryNotesCanvas(
-                        notes_list_state,
+                        self._build_library_notes_state(),
                         sort_mode=self._library_notes_sort,
                         filter_value=self._library_notes_filter,
                         id="library-notes-canvas",
@@ -3167,6 +3277,98 @@ class LibraryScreen(BaseAppScreen):
                     yield LibraryNotesCanvas(
                         mode="create",
                         id="library-notes-canvas",
+                    )
+                elif shell.canvas_kind == "prompts" and self._library_prompts_view == "editor":
+                    if self._library_prompt_conflict_snapshot is not None:
+                        # A save just lost the app-level staleness check (see
+                        # `_save_library_prompt`): recompose from the user's
+                        # own kept text (never the stale `_library_prompt_detail`)
+                        # with the Overwrite/Reload actions surfaced.
+                        yield LibraryPromptsListCanvas(
+                            mode="editor",
+                            editor_state=self._library_prompt_conflict_snapshot,
+                            conflict=True,
+                            dirty=self._library_prompt_dirty,
+                            id="library-prompts-canvas",
+                        )
+                    elif self._library_prompt_detail is None:
+                        yield Static(
+                            "Loading prompt…",
+                            id="library-prompt-loading",
+                            classes="destination-purpose",
+                            markup=False,
+                        )
+                    else:
+                        yield LibraryPromptsListCanvas(
+                            mode="editor",
+                            editor_state=build_prompt_editor_state(self._library_prompt_detail),
+                            status=self._library_prompt_status,
+                            # Task 8b D3: only the name-in-use status backs
+                            # a real "Open existing" affordance -- reusing
+                            # the same canonical copy this compares against
+                            # (not a separate boolean flag) keeps the two
+                            # in lockstep by construction.
+                            show_open_existing=(
+                                self._library_prompt_status
+                                == LIBRARY_PROMPT_SAVE_STATUS_COPY["name-in-use"]
+                            ),
+                            dirty=self._library_prompt_dirty,
+                            id="library-prompts-canvas",
+                        )
+                elif shell.canvas_kind == "prompts":
+                    yield LibraryPromptsListCanvas(
+                        self._build_library_prompts_state(),
+                        sort_mode=self._library_prompts_sort,
+                        filter_value=self._library_prompts_filter,
+                        import_open=self._library_prompts_import_open,
+                        import_path=self._library_prompts_import_path,
+                        import_status=self._library_prompts_import_status,
+                        id="library-prompts-canvas",
+                    )
+                elif shell.canvas_kind == "skills" and self._library_skills_view == "editor":
+                    if self._library_skill_editor_state is None:
+                        yield Static(
+                            "Loading skill…",
+                            id="library-skill-loading",
+                            classes="destination-purpose",
+                            markup=False,
+                        )
+                    else:
+                        editor_state = self._library_skill_editor_state
+                        yield LibrarySkillsListCanvas(
+                            mode="editor",
+                            editor_state=editor_state,
+                            warnings="\n".join(
+                                skill_editor_warning_lines(
+                                    live_name=editor_state.name,
+                                    trust_status=editor_state.trust_status,
+                                    trust_blocked=editor_state.trust_blocked,
+                                )
+                            ),
+                            status=self._library_skill_status,
+                            conflict=self._library_skill_conflict,
+                            active_review=self._library_skill_active_review,
+                            # Same source of truth ``_save_library_skill`` uses
+                            # for its own ``is_create`` -- an empty
+                            # ``_selected_skill_name`` means there is no
+                            # existing skill on disk to rename, so the Name
+                            # Input stays editable. Reached both via a real
+                            # skill row (existing skill, name set) and via
+                            # the Create rail's "New skill" row
+                            # (``_enter_library_skill_create_editor`` leaves
+                            # ``_selected_skill_name`` empty).
+                            is_create=not self._selected_skill_name,
+                            id="library-skills-canvas",
+                        )
+                elif shell.canvas_kind == "skills":
+                    yield LibrarySkillsListCanvas(
+                        self._build_library_skills_state(),
+                        sort_mode=self._library_skills_sort,
+                        filter_value=self._library_skills_filter,
+                        import_open=self._library_skills_import_open,
+                        import_path=self._library_skills_import_path,
+                        import_status=self._library_skills_import_status,
+                        id="library-skills-canvas",
                     )
                 elif shell.canvas_kind == "search":
                     yield LibrarySearchRagPanel(
@@ -3181,8 +3383,35 @@ class LibraryScreen(BaseAppScreen):
                         delete_pending=bool(self._library_collection_pending_delete_id),
                         id="library-collections-panel",
                     )
-                elif shell.canvas_kind == "mode":
-                    yield from self._compose_mode_canvas(shell.canvas_target)
+                elif shell.canvas_kind == "ingest-media":
+                    yield LibraryIngestCanvas(
+                        self._build_library_ingest_state(),
+                        id="library-ingest-canvas",
+                    )
+                elif shell.canvas_kind == "export":
+                    yield LibraryExportCanvas(
+                        self._build_library_export_state(),
+                        id="library-export-canvas",
+                    )
+                elif shell.canvas_kind == "handoff":
+                    # Study/Flashcards/Quizzes rows (L3b Task 8): a first-class
+                    # canvas kind of their own, sourced entirely from
+                    # LIBRARY_STUDY_HANDOFF_MODES. UX wave D1 collapsed this
+                    # to a single header (the row's own title -- "Flashcards"
+                    # / "Study decks" / "Quizzes") plus the consolidated
+                    # handoff detail widget below; the header no longer
+                    # restates the mode name a second, differently-worded way
+                    # (formerly "Flashcards mode" + a duplicated description
+                    # + next-action line).
+                    handoff_copy = LIBRARY_STUDY_HANDOFF_MODES.get(
+                        shell.canvas_target, LIBRARY_STUDY_HANDOFF_MODES["study"]
+                    )
+                    yield Static(
+                        handoff_copy["header"],
+                        id="library-active-mode-title",
+                        classes="destination-section",
+                    )
+                    yield self._study_handoff_detail_widget(shell.canvas_target)
                 else:
                     yield Static(
                         shell.canvas_empty_copy,
@@ -3223,6 +3452,18 @@ class LibraryScreen(BaseAppScreen):
         counts = self._local_source_counts
         known = self._local_source_total_known
         counts_known_yet = self._library_loaded or bool(self._library_lookup_error)
+        prompts_entry = self._local_source_records.get("prompts")
+        prompts_count = (
+            prompts_entry[0]
+            if isinstance(prompts_entry, tuple) and len(prompts_entry) == 2
+            else None
+        )
+        skills_entry = self._local_source_records.get("skills")
+        skills_count = (
+            skills_entry[0]
+            if isinstance(skills_entry, tuple) and len(skills_entry) == 2
+            else None
+        )
         return LibraryShellInput(
             media_count=counts.get("media") if counts_known_yet else None,
             media_known=known.get("media", True),
@@ -3230,6 +3471,18 @@ class LibraryScreen(BaseAppScreen):
             conversations_known=known.get("conversations", True),
             notes_count=counts.get("notes") if counts_known_yet else None,
             notes_known=known.get("notes", True),
+            # Unlike notes/media/conversations, "prompts" has no sample-cap
+            # fallback yet (no paginated fetch backs it in Task 1) -- the
+            # count is either the exact seam result or ``None`` (uncounted
+            # row), never a "+"-suffixed estimate, so ``prompts_known``
+            # stays ``True``.
+            prompts_count=prompts_count if counts_known_yet else None,
+            prompts_known=True,
+            # Same posture as prompts: no sample-cap fallback backs this
+            # count either (a single ``get_context`` call, not a paginated
+            # fetch), so ``skills_known`` stays ``True``.
+            skills_count=skills_count if counts_known_yet else None,
+            skills_known=True,
             collections_count=collections_count,
             runtime_source=active_source,
             server_label=str(server_label) if server_label else None,
@@ -3267,18 +3520,94 @@ class LibraryScreen(BaseAppScreen):
 
     def _build_library_conversations_state(self):
         """Build the conversations canvas display state from local records."""
-        return build_library_conversations_state(
+        state = build_library_conversations_state(
             self._conversation_records(),
             query=self._library_conversation_query,
             selected_id=self._selected_conversation_id,
+            select_mode=self._library_conversations_select_mode,
+            selected_ids=self._library_conversations_row_selection.ids,
         )
+        if self._library_conversations_select_mode:
+            self._library_conversations_row_selection.reconcile(
+                r.conversation_id for r in state.rows
+            )
+        return state
 
     def _build_library_media_state(self) -> LibraryMediaCanvasState:
         """Build the media canvas display state from local records."""
-        return build_library_media_state(
+        state = build_library_media_state(
             self._local_source_records.get("media", ()),
             active_type=self._library_media_type_filter,
             selected_id=self._selected_media_id,
+            select_mode=self._library_media_select_mode,
+            selected_ids=self._library_media_row_selection.ids,
+        )
+        if self._library_media_select_mode:
+            self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
+        return state
+
+    def _build_library_notes_state(self) -> LibraryNotesListState:
+        """Build the notes canvas's list-view display state from local records."""
+        source_records = (
+            self._library_notes_filter_records
+            if self._library_notes_filter_records is not None
+            else self._local_source_records.get("notes", ())
+        )
+        state = build_library_notes_list_state(
+            sort_notes_records(source_records, self._library_notes_sort),
+            filter_note=self._library_notes_filter,
+            select_mode=self._library_notes_select_mode,
+            selected_ids=self._library_notes_row_selection.ids,
+        )
+        if self._library_notes_select_mode:
+            self._library_notes_row_selection.reconcile(r.note_id for r in state.rows)
+        return state
+
+    def _build_library_prompts_state(self):
+        """Build the Library prompts canvas's list-view display state.
+
+        Reads the ``(count, page_records)`` snapshot entry seeded by
+        ``_list_local_source_snapshot`` (Task 1's count seam, Task 3's
+        ``list_prompts`` page fetch) -- ``page_records`` degrades to ``()``
+        whenever the local backend has no ``list_prompts`` seam, the fetch
+        failed, or the snapshot simply hasn't loaded yet, in which case the
+        pure builder below renders an empty list rather than raising.
+        """
+        prompts_entry = self._local_source_records.get("prompts")
+        page_records = (
+            prompts_entry[1]
+            if isinstance(prompts_entry, tuple) and len(prompts_entry) == 2
+            else ()
+        )
+        return build_prompts_list_state(
+            page_records,
+            query=self._library_prompts_filter,
+            sort=self._library_prompts_sort,
+            now=datetime.now(timezone.utc),
+        )
+
+    def _build_library_skills_state(self):
+        """Build the Library skills canvas's list-view display state.
+
+        Reads the ``(count, context_payload)`` snapshot entry seeded by
+        ``_list_local_source_snapshot`` (Task 1's single ``get_context``
+        call, which supplies both the rail count AND this payload) --
+        ``context_payload`` degrades to an empty ``available_skills``/
+        ``blocked_skills`` mapping whenever the local backend has no
+        ``get_context`` seam, the fetch failed, or the snapshot simply
+        hasn't loaded yet, in which case the pure builder below renders an
+        empty list rather than raising.
+        """
+        skills_entry = self._local_source_records.get("skills")
+        context_payload = (
+            skills_entry[1]
+            if isinstance(skills_entry, tuple) and len(skills_entry) == 2
+            else None
+        )
+        return build_skills_list_state(
+            context_payload,
+            query=self._library_skills_filter,
+            sort=self._library_skills_sort,
         )
 
     async def _refresh_library_media_detail(self, media_id: str) -> None:
@@ -3319,7 +3648,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning(f"Failed to load Library media detail for {media_id!r}.", exc_info=True)
+            logger.opt(exception=True).warning(f"Failed to load Library media detail for {media_id!r}.")
             detail = None
         # Discard out-of-order results: if the user has since selected a
         # different media row (or left the viewer), a slower in-flight fetch
@@ -3333,6 +3662,21 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_media_detail = detail if isinstance(detail, Mapping) else None
         self._library_media_highlights = highlights
+        if (
+            self._library_media_detail is None
+            and media_id == self._selected_media_id
+            and self._library_media_view == "viewer"
+        ):
+            # The record backing an opened item vanished between the click
+            # and this fetch resolving (e.g. deleted elsewhere, or a stale
+            # Search/RAG "Open" result) -- mirror the equivalent
+            # "Conversation is unavailable." notify _open_library_item_by_id
+            # gives its conversations branch, and fall back to the list
+            # view instead of leaving an empty/stuck viewer.
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Media item is unavailable.", severity="warning")
+            self._library_media_view = "list"
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -3363,9 +3707,8 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning(
-                f"Failed to load Library media highlights for {media_id!r}.", exc_info=True
-            )
+            logger.opt(exception=True).warning(
+                f"Failed to load Library media highlights for {media_id!r}.")
             return []
         return list(highlights) if isinstance(highlights, list) else []
 
@@ -3411,7 +3754,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning(f"Failed to load Library note detail for {note_id!r}.", exc_info=True)
+            logger.opt(exception=True).warning(f"Failed to load Library note detail for {note_id!r}.")
             detail = None
         # Discard out-of-order results: if the user has since selected a
         # different note (or left the editor), a slower in-flight fetch for
@@ -3495,9 +3838,8 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning(
-                f"Failed to load keywords for Library note {note_id!r}.", exc_info=True
-            )
+            logger.opt(exception=True).warning(
+                f"Failed to load keywords for Library note {note_id!r}.")
             return None
         return list(keywords) if isinstance(keywords, list) else None
 
@@ -3547,6 +3889,957 @@ class LibraryScreen(BaseAppScreen):
         # status/activity above: re-entering the panel re-reads the
         # committed config value.
         self._library_notes_sync_folder_text = None
+
+    def _reset_library_ingest_transient_state(self) -> None:
+        """Clear the ingest canvas's form to defaults on rail re-entry.
+
+        Called on every ``_select_library_rail_row`` switch (mirrors
+        ``_reset_library_notes_sync_transient_state``'s placement) so a
+        stale in-progress form from a previous Ingest visit never
+        reappears when the user comes back to the canvas. The job queue
+        itself is registry-owned and untouched by this reset -- only the
+        local form echo resets.
+        """
+        self._library_ingest_form = LibraryIngestFormState()
+
+    # ----- Export canvas -------------------------------------------------
+
+    @staticmethod
+    def _default_library_export_form() -> dict[str, Any]:
+        """Build a fresh export form echo: today's stamped name, nothing else set."""
+        return {
+            "name": default_export_name(),
+            "description": "",
+            "quality": DEFAULT_MEDIA_QUALITY,
+            "destination": "",
+            "destination_exists": False,
+        }
+
+    def _reset_library_export_transient_state(self, scope: ExportScope | None = None) -> None:
+        """Clear the export canvas's scope/counts/form to defaults on entry.
+
+        Called from both entry points into the export canvas -- the rail
+        row's own ``_select_library_rail_row`` switch (always the default
+        Everything ``scope``) and the browse-canvas "Export…" section
+        actions (``_open_library_export_canvas``, their own pre-scoped
+        ``ExportScope``) -- so neither a stale form from a previous Export
+        visit nor a stale scope/counts pairing from a different section
+        ever reappears. The name field re-stamps today's local date every
+        time (mirrors the ingest form's own from-scratch reset), never
+        carrying a previous visit's edited name forward.
+
+        Also invalidates any export run still executing on its own OS
+        thread (bumps ``_library_export_run_id``) -- navigating away mid-
+        run resets ``running`` to ``False`` for THIS fresh visit, but the
+        abandoned worker keeps running regardless (it cannot be preempted
+        mid-``asyncio.run``); bumping the token here ensures that worker's
+        eventual completion is recognized as stale and cannot stomp
+        whatever the user is looking at by the time it lands. See
+        ``_library_export_run_id``'s docstring in ``__init__``.
+
+        Args:
+            scope: The scope to open the canvas with; defaults to
+                ``ExportScope(kind="everything")`` when omitted.
+        """
+        self._library_export_scope = scope or ExportScope(kind="everything")
+        self._library_export_counts = None
+        self._library_export_form = self._default_library_export_form()
+        self._library_export_running = False
+        self._library_export_error = ""
+        self._library_export_status = ""
+        if self._library_export_cancel_event is not None:
+            self._library_export_cancel_event.set()
+        self._library_export_run_id += 1
+
+    async def _open_library_export_canvas(self, scope: ExportScope) -> None:
+        """Open the export canvas pre-scoped to a browse section's own filter.
+
+        Wired to each browse canvas's "Export…" action (media/
+        conversations/notes) -- mirrors ``_select_library_rail_row``'s
+        dirty-note-flush discipline for switching canvases, but only
+        touches the export-specific state (the rail row's own switch
+        already resets everything else on the way past); the caller's
+        ``scope`` survives untouched (unlike a plain rail-row switch,
+        which always resets to Everything).
+
+        Args:
+            scope: The section-specific scope to open the form with (e.g.
+                ``ExportScope(kind="media", media_type=...)``).
+        """
+        if self._library_export_is_server_mode():
+            # The section "Export..." actions bypass the rail row's own
+            # server-disabled gate, so re-check here (Qodo review): export
+            # reads the LOCAL DBs, so running it while the Library is in
+            # server runtime mode would package the wrong dataset.
+            self.app_instance.notify(
+                LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP, severity="warning"
+            )
+            return
+        await self._flush_library_note_save()
+        if self._library_note_autosave_state == "conflict":
+            return
+        self._library_selected_row_id = LIBRARY_ROW_INGEST_EXPORT
+        self._reset_library_export_transient_state(scope)
+        self.refresh(recompose=True)
+        self._start_library_export_counts_worker()
+
+    def _library_export_is_server_mode(self) -> bool:
+        """True when the Library is in server runtime mode.
+
+        Export packages LOCAL content only (it reads the local media /
+        ChaChaNotes DBs), so both the rail Export row and the section
+        "Export..." actions must refuse to run in server mode.
+        """
+        runtime_state = getattr(
+            getattr(self.app_instance, "runtime_policy", None), "state", None
+        )
+        active_source = str(
+            getattr(runtime_state, "active_source", "local") or "local"
+        ).lower()
+        return active_source == "server"
+
+    def _resolve_library_export_chachanotes_db(self) -> Any:
+        """Return the ChaChaNotes DB handle for export counts.
+
+        Mirrors ``_resolve_library_notes_sync_db``'s exact access path
+        (prefer ``app_instance.chachanotes_db``, fall back to
+        ``notes_service.db``) -- the same canonical DB-access path this
+        screen already uses elsewhere, per the F4 brief's requirement that
+        the counts worker reach the DB the same way the rest of the
+        screen does.
+        """
+        notes_service = getattr(self.app_instance, "notes_service", None)
+        return getattr(self.app_instance, "chachanotes_db", None) or getattr(
+            notes_service, "db", None
+        )
+
+    @staticmethod
+    def _compute_library_export_counts(
+        scope: ExportScope, media_db: Any, chachanotes_db: Any
+    ) -> dict[str, int]:
+        """Run the full-query, uncapped counts for ``scope`` (never a rendered snapshot).
+
+        A quiet-degrade failure (a missing DB seam, an unexpected DB
+        error) reports all-zero counts rather than raising -- the export
+        canvas simply shows "Nothing to export in this scope." rather
+        than crashing the recompose; the failure is still logged.
+        """
+        try:
+            return count_export_scope(scope, media_db, chachanotes_db)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Library export counts failed for scope {scope!r}."
+            )
+            return {"media": 0, "conversations": 0, "notes": 0}
+
+    def _start_library_export_counts_worker(self) -> None:
+        """Kick off the export scope's full-query counts (Task 1's resolver).
+
+        In-memory SQLite connections are thread-local -- only the thread
+        that created/migrated the DB has a working connection (same guard
+        as ``_fetch_library_conversation_by_id`` elsewhere on this
+        screen).
+        When either DB is memory-backed (the test suite's fixtures, and
+        any other future in-memory deployment), the count runs inline on
+        the calling (UI) thread instead of a real worker thread -- a
+        worker thread would only ever see a blank, unmigrated connection.
+        A real (file-backed) deployment always takes the
+        ``group="library_export_counts"`` worker-thread path.
+        """
+        scope = self._library_export_scope
+        media_db = getattr(self.app_instance, "media_db", None)
+        chachanotes_db = self._resolve_library_export_chachanotes_db()
+        if bool(getattr(media_db, "is_memory_db", False)) or bool(
+            getattr(chachanotes_db, "is_memory_db", False)
+        ):
+            counts = self._compute_library_export_counts(scope, media_db, chachanotes_db)
+            self._apply_library_export_counts(scope, counts)
+            return
+        self._run_library_export_counts_worker(scope, media_db, chachanotes_db)
+
+    @work(thread=True, exclusive=True, group="library_export_counts")
+    def _run_library_export_counts_worker(
+        self, scope: ExportScope, media_db: Any, chachanotes_db: Any
+    ) -> None:
+        counts = self._compute_library_export_counts(scope, media_db, chachanotes_db)
+        # ``self.app`` (Textual's own running-App property), not
+        # ``self.app_instance`` -- ``call_from_thread`` needs the App whose
+        # event loop is actually running this screen (see
+        # ``_run_library_notes_sync``'s ``progress_callback`` for the full
+        # reasoning). Guarded the same way: a shutdown mid-worker must
+        # never surface as a crash.
+        try:
+            self.app.call_from_thread(self._apply_library_export_counts, scope, counts)
+        except Exception:
+            # A shutdown/detach mid-marshal can raise RuntimeError OR
+            # Textual's NoApp (which subclasses Exception, not RuntimeError)
+            # -- either way the worker thread must not crash on teardown.
+            pass
+
+    def _apply_library_export_counts(self, scope: ExportScope, counts: dict[str, int]) -> None:
+        """Marshal a landed counts result onto the export form (UI thread).
+
+        Guards against a stale result from a scope the user has since
+        navigated away from (a second "Export…" press, or another rail
+        row entirely, before the first counts worker finished) -- dropped
+        rather than overwriting fresher (or absent) counts.
+
+        Updates the mounted canvas via targeted DOM surgery, NEVER a
+        recompose (mirrors ``handle_library_ingest_path_changed``'s
+        targeted-update discipline): the user may be mid-keystroke in the
+        name/description ``Input`` when the counts land -- on a large
+        library (this feature's whole point) that window is real -- and a
+        recompose would destroy and rebuild the ``Input``, silently
+        dropping keyboard focus (the typed text survives via the form
+        dict; focus does not). Only three widgets can change when counts
+        land, and all three are always-mounted on the export canvas: the
+        scope line's text, the empty-scope helper's text/visibility
+        (display-toggled rather than conditionally composed in
+        ``LibraryExportCanvas.compose`` for exactly this reason), and the
+        Export button's disabled gate. The media/quality rows CANNOT
+        change here: their visibility (``show_media_fields``) derives
+        purely from ``scope.kind``, which is pinned before the worker
+        ever starts -- never from counts.
+
+        Args:
+            scope: The scope the landed ``counts`` were computed for.
+            counts: The landed counts (keys "media"/"conversations"/"notes").
+        """
+        if scope != self._library_export_scope:
+            return
+        self._library_export_counts = counts
+        if not self.is_mounted or self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+            return
+        state = self._build_library_export_state()
+        try:
+            canvas = self.query_one("#library-export-canvas", LibraryExportCanvas)
+        except (NoMatches, QueryError):
+            # Canvas not mounted (yet) -- the state fields above are set,
+            # so whatever composes it next renders the landed counts.
+            return
+        # Keep the canvas's own state snapshot in step with what the
+        # targeted updates below render, so any later widget-level
+        # recompose can never resurrect the stale "Counting…" state.
+        canvas.state = state
+        try:
+            self.query_one("#library-export-scope-line", Static).update(state.scope_line)
+            empty_line = self.query_one("#library-export-empty-line", Static)
+            empty_line.update(state.empty_scope_line)
+            empty_line.display = bool(state.empty_scope_line)
+            self.query_one("#library-export-submit", Button).disabled = (
+                not state.export_enabled
+            )
+        except (NoMatches, QueryError):
+            pass
+
+    def _build_library_export_state(self) -> LibraryExportFormState:
+        """Build the export canvas's full display state from screen fields."""
+        form = self._library_export_form
+        return build_library_export_form_state(
+            scope=self._library_export_scope,
+            counts=self._library_export_counts,
+            name=str(form.get("name", "")),
+            description=str(form.get("description", "")),
+            media_quality=str(form.get("quality", DEFAULT_MEDIA_QUALITY)),
+            destination=str(form.get("destination", "")),
+            destination_exists=bool(form.get("destination_exists", False)),
+            running=self._library_export_running,
+            status_line=self._library_export_status,
+            error_line=self._library_export_error,
+        )
+
+    # ----- Export canvas: execution (Task 3) ------------------------------
+
+    @on(Button.Pressed, "#library-export-submit")
+    def handle_library_export_submit(self, event: Button.Pressed) -> None:
+        """Validate and kick off the chatbook export worker.
+
+        Re-validates on the UI thread (destination chosen, scope non-empty,
+        not already running) rather than trusting the button's ``disabled``
+        state alone. A second press while an export is already running is a
+        guarded no-op here (``self._library_export_running``) -- on top of
+        the button itself being disabled while running and the worker's own
+        ``group="library_export"``/``exclusive=True`` single-flight, this is
+        belt-and-suspenders against a stale/racing ``Pressed`` event.
+
+        The transition INTO ``running`` is the one place this feature uses
+        a full recompose rather than a targeted update (see
+        ``_update_library_export_canvas_after_run``'s docstring for the
+        reverse transition's targeted-update discipline): the user's last
+        action was clicking this button, not typing, so nothing is
+        mid-keystroke -- unlike the counts-landing case Task 2 fixed, or
+        the run-completion case below, where the (long-running) wait window
+        gives the user time to resume typing in the still-editable name/
+        description fields.
+        """
+        event.stop()
+        if self._library_export_running:
+            return
+        form = self._library_export_form
+        destination = str(form.get("destination", "")).strip()
+        counts = self._library_export_counts
+        total = sum(counts.values()) if counts else 0
+        if not destination or total <= 0:
+            return
+        if self._library_export_is_server_mode():
+            # Defense in depth: the rail row and section actions already
+            # gate on server mode, but re-check at submit in case the
+            # runtime source flipped while the form was open (Qodo review).
+            self.app_instance.notify(
+                LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP, severity="warning"
+            )
+            return
+        # Sanitize name/description at the UI boundary before they flow into
+        # the export payload, chatbook manifest, and Artifacts registry
+        # (Qodo review) -- bound length + strip unsafe content via the shared
+        # input_validation helpers, mirroring the media-field path.
+        name = self._safe_text(form.get("name", ""), "Chatbook", max_length=200)
+        description = self._safe_text(form.get("description", ""), "", max_length=2000)
+        media_quality = str(form.get("quality", DEFAULT_MEDIA_QUALITY))
+        self._library_export_running = True
+        self._library_export_error = ""
+        self._library_export_status = f"Exporting… ({total} items)"
+        self._library_export_run_id += 1
+        run_id = self._library_export_run_id
+        self._library_export_cancel_event = threading.Event()
+        cancel_event = self._library_export_cancel_event
+        self.refresh(recompose=True)
+        self._start_library_export_worker(
+            run_id=run_id,
+            scope=self._library_export_scope,
+            name=name,
+            description=description,
+            media_quality=media_quality,
+            destination=destination,
+            cancel_event=cancel_event,
+        )
+
+    @on(Button.Pressed, "#library-export-cancel")
+    def handle_library_export_cancel(self, event: "Button.Pressed") -> None:
+        """Request cancellation of the in-flight export.
+
+        Sets the worker's cancel Event (idempotent) and flips the status line to
+        "Cancelling…". Deliberately does NOT bump _library_export_run_id: the run
+        is still the current, visible one until the worker reports back with the
+        cancelled outcome (see _apply_library_export_cancelled).
+        """
+        if not self._library_export_running:
+            return
+        if event is not None:
+            event.stop()
+        event_obj = self._library_export_cancel_event
+        if event_obj is not None:
+            event_obj.set()
+        self._library_export_status = "Cancelling…"
+        self._refresh_library_export_status_line()
+
+    def _start_library_export_worker(
+        self,
+        *,
+        run_id: int,
+        scope: ExportScope,
+        name: str,
+        description: str,
+        media_quality: str,
+        destination: str,
+        cancel_event: threading.Event,
+    ) -> None:
+        """Resolve selections (memory-DB-safe), then dispatch the real export worker.
+
+        Mirrors ``_start_library_export_counts_worker``'s memory-vs-file-
+        backed DB branch for the id-resolution step specifically: a genuine
+        OS worker thread only ever sees a blank, unmigrated connection for
+        an in-memory-backed DB (``threading.local``), so when either DB is
+        memory-backed, ``resolve_export_selections`` -- a pure, synchronous
+        DB read with no ``asyncio`` involvement -- runs inline on the
+        calling (UI) thread first, exactly like the counts worker's own
+        inline fallback, and the resolved ids are handed to the worker.
+
+        Unlike the counts worker, the ``@work(thread=True)`` dispatch below
+        is never skipped: ``asyncio.run(service.export_chatbook(...))``
+        would raise ("cannot be called from a running event loop") if
+        invoked directly on the UI thread, which already owns Textual's
+        own running event loop. A file-backed deployment defers
+        ``resolve_export_selections`` into that same real thread instead
+        (``preresolved_selections=None``), avoiding a synchronous full-
+        library scan on the UI thread for the common (real, file-backed)
+        case.
+        """
+        media_db = getattr(self.app_instance, "media_db", None)
+        chachanotes_db = self._resolve_library_export_chachanotes_db()
+        preresolved_selections: dict[ContentType, list[str]] | None = None
+        if bool(getattr(media_db, "is_memory_db", False)) or bool(
+            getattr(chachanotes_db, "is_memory_db", False)
+        ):
+            try:
+                preresolved_selections = resolve_export_selections(
+                    scope, media_db, chachanotes_db
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    f"Library export selection resolution failed for scope {scope!r}."
+                )
+                self._apply_library_export_failure(
+                    run_id, f"Failed to resolve export selections: {exc}"
+                )
+                return
+        self._run_library_export_worker(
+            run_id=run_id,
+            scope=scope,
+            name=name,
+            description=description,
+            media_quality=media_quality,
+            destination=destination,
+            media_db=media_db,
+            chachanotes_db=chachanotes_db,
+            preresolved_selections=preresolved_selections,
+            cancel_event=cancel_event,
+        )
+
+    @staticmethod
+    def _build_library_export_payload(
+        *,
+        name: str,
+        description: str,
+        selections: Mapping[ContentType, list[str]],
+        destination: str,
+        media_quality: str,
+    ) -> dict[str, Any]:
+        """Build the ``local_chatbook_service.export_chatbook`` request payload.
+
+        ``include_media`` is spec-critical (F4 plan Global Constraints):
+        it MUST be ``True`` whenever ``ContentType.MEDIA`` is present in
+        ``selections`` -- ``ChatbookCreator`` silently skips all media
+        content otherwise, even when media ids ARE present in
+        ``content_selections``. Since ``resolve_export_selections`` omits
+        a ``ContentType`` key entirely when that source resolves zero ids
+        (see its docstring), keying off simple membership is automatically
+        correct for every scope, including an "everything" scope whose
+        library happens to have no media at all.
+        """
+        return {
+            "name": name,
+            "description": description,
+            "content_selections": dict(selections),
+            "output_path": destination,
+            "media_quality": media_quality,
+            "include_media": ContentType.MEDIA in selections,
+        }
+
+    @staticmethod
+    def _run_library_export_via_service(
+        service: Any,
+        payload: dict[str, Any],
+        *,
+        name: str,
+        description: str,
+        progress_callback=None,
+        cancel_check=None,
+    ) -> dict[str, Any]:
+        """Execute one export through ``service``, synchronously: zip first, registry only on success.
+
+        Runs both of ``service``'s async-signature/sync-body methods
+        through ``asyncio.run`` -- they never touch the app's own event
+        loop, so this is only ever safe to call from a genuine OS thread
+        (never the UI thread, which already owns a running loop). Exposed
+        as its own (non-``@work``) static method so tests can call it
+        directly with a fake ``service`` and assert call ordering /
+        the include_media invariant without booting a real thread.
+
+        ``create_chatbook`` (the registry record) is attempted ONLY when
+        ``export_chatbook`` reports ``success`` -- the F4 plan's Global
+        Constraints' "zip first, registry record only on success". A
+        registry-recording failure AFTER a successful zip does not flip
+        the overall outcome to failure (the artifact genuinely exists on
+        disk; only the bookkeeping failed) -- ``registry_recorded``
+        reports that separately for callers/tests that care.
+
+        Returns a plain dict: ``success``, ``message``, ``path``,
+        ``dependency_info``, ``registry_recorded``.
+        """
+        try:
+            export_result = asyncio.run(service.export_chatbook(
+                payload, progress_callback=progress_callback, cancel_check=cancel_check,
+            ))
+        except Exception as exc:
+            logger.opt(exception=True).warning("Library export service call failed.")
+            return {
+                "success": False,
+                "message": f"Export failed: {exc}",
+                "path": "",
+                "dependency_info": {},
+                "registry_recorded": False,
+                "cancelled": False,
+            }
+
+        if not export_result.get("success"):
+            return {
+                "success": False,
+                "message": str(export_result.get("message") or "Export failed."),
+                "path": export_result.get("path") or payload.get("output_path", ""),
+                "dependency_info": export_result.get("dependency_info") or {},
+                "registry_recorded": False,
+                "cancelled": bool(export_result.get("cancelled", False)),
+            }
+
+        output_path = export_result.get("path") or payload.get("output_path", "")
+        dependency_info = export_result.get("dependency_info") or {}
+        registry_recorded = False
+        try:
+            asyncio.run(
+                service.create_chatbook(
+                    name=name,
+                    description=description,
+                    file_path=output_path,
+                    tags=["library-export"],
+                )
+            )
+            registry_recorded = True
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Library export succeeded but registry recording failed for {output_path!r}."
+            )
+
+        return {
+            "success": True,
+            "message": export_result.get("message") or "",
+            "path": output_path,
+            "dependency_info": dependency_info,
+            "registry_recorded": registry_recorded,
+            "cancelled": False,
+        }
+
+    @work(thread=True, exclusive=True, group="library_export")
+    def _run_library_export_worker(
+        self,
+        *,
+        run_id: int,
+        scope: ExportScope,
+        name: str,
+        description: str,
+        media_quality: str,
+        destination: str,
+        media_db: Any,
+        chachanotes_db: Any,
+        preresolved_selections: dict[ContentType, list[str]] | None,
+        cancel_event: threading.Event | None,
+    ) -> None:
+        if preresolved_selections is not None:
+            selections = preresolved_selections
+        else:
+            try:
+                selections = resolve_export_selections(scope, media_db, chachanotes_db)
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    f"Library export selection resolution failed for scope {scope!r}."
+                )
+                self._marshal_library_export_failure(
+                    run_id, f"Failed to resolve export selections: {exc}"
+                )
+                return
+
+        service = getattr(self.app_instance, "local_chatbook_service", None)
+        if service is None:
+            self._marshal_library_export_failure(
+                run_id, "Chatbook export service unavailable."
+            )
+            return
+
+        payload = self._build_library_export_payload(
+            name=name,
+            description=description,
+            selections=selections,
+            destination=destination,
+            media_quality=media_quality,
+        )
+        throttle = ExportProgressThrottle()
+
+        def _progress_cb(evt) -> None:
+            try:
+                if not throttle.should_emit(evt.phase, evt.current, evt.total, time.monotonic()):
+                    return
+                self.app.call_from_thread(
+                    self._apply_library_export_progress, run_id, evt.phase, evt.current, evt.total,
+                )
+            except Exception:
+                # NoApp/shutdown mid-marshal must not crash the worker.
+                pass
+
+        outcome = self._run_library_export_via_service(
+            service, payload, name=name, description=description,
+            progress_callback=_progress_cb,
+            cancel_check=(cancel_event.is_set if cancel_event is not None else None),
+        )
+        if outcome.get("cancelled"):
+            self._marshal_library_export_cancelled(run_id)
+        elif outcome["success"]:
+            self._marshal_library_export_success(
+                run_id,
+                outcome["path"],
+                outcome["dependency_info"],
+                bool(outcome["registry_recorded"]),
+                outcome["message"],
+            )
+        else:
+            self._marshal_library_export_failure(run_id, outcome["message"])
+
+    def _marshal_library_export_success(
+        self,
+        run_id: int,
+        path: str,
+        dependency_info: Any,
+        registry_recorded: bool,
+        message: str = "",
+    ) -> None:
+        """Marshal a successful run onto the UI thread (called from the worker)."""
+        try:
+            self.app.call_from_thread(
+                self._apply_library_export_success,
+                run_id,
+                path,
+                dependency_info,
+                registry_recorded,
+                message,
+            )
+        except Exception:
+            # A shutdown/detach mid-marshal can raise RuntimeError OR
+            # Textual's NoApp (which subclasses Exception, not RuntimeError)
+            # -- either way the worker thread must not crash on teardown.
+            pass
+
+    def _marshal_library_export_failure(self, run_id: int, message: str) -> None:
+        """Marshal a failed run onto the UI thread (called from the worker)."""
+        try:
+            self.app.call_from_thread(
+                self._apply_library_export_failure, run_id, message
+            )
+        except Exception:
+            # A shutdown/detach mid-marshal can raise RuntimeError OR
+            # Textual's NoApp (which subclasses Exception, not RuntimeError)
+            # -- either way the worker thread must not crash on teardown.
+            pass
+
+    def _marshal_library_export_cancelled(self, run_id: int) -> None:
+        """Marshal a cancelled run onto the UI thread (called from the worker)."""
+        try:
+            self.app.call_from_thread(self._apply_library_export_cancelled, run_id)
+        except Exception:
+            # A shutdown/detach mid-marshal can raise RuntimeError OR
+            # Textual's NoApp (which subclasses Exception, not RuntimeError)
+            # -- either way the worker thread must not crash on teardown.
+            pass
+
+    def _apply_library_export_cancelled(self, run_id: int) -> None:
+        """UI-thread completion for a cancelled run: clear running, show cancelled, return to form."""
+        if run_id != self._library_export_run_id:
+            return
+        self._library_export_running = False
+        self._library_export_status = "Export cancelled."
+        self._library_export_error = ""
+        self._update_library_export_canvas_after_run()
+
+    @staticmethod
+    def _build_library_export_success_message(
+        path: Any, dependency_info: Any, creator_message: Any = ""
+    ) -> str:
+        """Build the success notification text.
+
+        Three pieces, in order:
+
+        1. The destination path (always present), ``escape_markup``'d:
+           Textual notifications render Rich console markup, so a
+           user-chosen path containing ``[...]`` (legal in filenames on
+           any platform) would otherwise mis-render or raise in the
+           markup parser.
+        2. The creator's own ``outcome["message"]`` detail (task-158):
+           ``ChatbookCreator.create_chatbook`` returns a message carrying
+           its own counts (e.g. missing-dependency warnings) that was
+           previously discarded entirely by the caller. Its redundant
+           ``"Chatbook created successfully at <path>"`` prefix -- the
+           path is already the primary notify line above -- is stripped
+           so only the actual detail remains; an unrecognized message
+           shape (e.g. a different service implementation) is kept
+           verbatim rather than guessed at.
+        3. The ``dependency_info.get("auto_included")`` count suffix (the
+           character ids ``ChatbookCreator`` pulled in automatically as
+           conversation dependencies) -- BUT only when the creator detail
+           above does not already state it. ``create_chatbook`` already
+           puts an ``"Auto-included N character dependencies"`` clause
+           into its own message (that clause and ``auto_included`` derive
+           from the same ``self.auto_included_characters`` state), so
+           emitting the suffix on top of a detail that carries that clause
+           would restate the identical fact twice. The suffix therefore
+           only fires when the auto-included count would otherwise go
+           unstated (e.g. an empty creator message, or a creator message
+           whose only detail is a missing-dependency warning).
+        """
+        message = f"Exported chatbook to {escape_markup(str(path))}"
+
+        detail = str(creator_message or "").strip()
+        known_prefix = f"Chatbook created successfully at {path}"
+        if detail.startswith(known_prefix):
+            detail = detail[len(known_prefix):].strip(" .")
+        if detail:
+            message += f": {escape_markup(detail)}"
+
+        auto_included = (
+            dependency_info.get("auto_included")
+            if isinstance(dependency_info, dict)
+            else None
+        )
+        # De-dup: skip the suffix when the surfaced detail already states
+        # the auto-included count (see point 3 above).
+        if auto_included and "auto-included" not in detail.lower():
+            try:
+                count = len(auto_included)
+            except TypeError:
+                count = auto_included
+            message += f" ({count} characters auto-included)"
+
+        return message
+
+    def _apply_library_export_success(
+        self,
+        run_id: int,
+        path: str,
+        dependency_info: Any,
+        registry_recorded: bool,
+        message: str = "",
+    ) -> None:
+        """UI-thread completion: notify, clear running/error, update the form.
+
+        See ``_build_library_export_success_message`` for how the
+        notification text itself (path + creator detail + auto-included
+        count) is assembled.
+
+        ``registry_recorded=False`` (the zip succeeded but the
+        ``create_chatbook`` registry step failed -- see
+        ``_run_library_export_via_service``) fires a SECOND, warning-
+        severity notification: without it the export silently never
+        appears under Artifacts/Home and the user has no way to know why.
+        It fires alongside the primary notification, BEFORE the staleness
+        guard, deliberately: both report persistent facts about what
+        actually happened on disk/in the registry, independent of which
+        canvas the user is now looking at -- and the warning matters MOST
+        for a superseded run, since a user who already navigated away
+        would otherwise never learn the artifact is missing from
+        Artifacts.
+
+        ``run_id`` is compared against the live ``_library_export_run_id``
+        BEFORE any state/DOM mutation: an export genuinely finished, so the
+        notifications always fire, but a run the user has since navigated
+        away from (see ``_library_export_run_id``'s docstring) must not
+        stomp ``_library_export_running``/``_error``/``_status`` or the
+        canvas DOM out from under whatever the user is now looking at.
+        """
+        notify_message = self._build_library_export_success_message(
+            path, dependency_info, message
+        )
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(notify_message, severity="information")
+            if not registry_recorded:
+                notify(
+                    "Export saved, but couldn't be registered — it won't "
+                    "appear under Artifacts.",
+                    severity="warning",
+                )
+        if run_id != self._library_export_run_id:
+            return
+        self._library_export_running = False
+        self._library_export_error = ""
+        self._library_export_status = ""
+        self._update_library_export_canvas_after_run()
+
+    def _apply_library_export_failure(self, run_id: int, message: str) -> None:
+        """UI-thread completion: render the escaped error, clear running, re-enable Export.
+
+        See ``_apply_library_export_success``'s docstring for the
+        ``run_id`` staleness guard -- a superseded run's failure is
+        dropped silently here (no error line to render it into, since the
+        canvas may now belong to a different scope/visit entirely) rather
+        than notified, since surfacing a failure banner for a run the user
+        has already navigated away from and possibly re-run successfully
+        would be actively misleading.
+        """
+        if run_id != self._library_export_run_id:
+            logger.info(
+                f"Library export run {run_id} failed after being superseded "
+                f"(current run {self._library_export_run_id}): {message}"
+            )
+            return
+        self._library_export_running = False
+        self._library_export_status = ""
+        self._library_export_error = escape_markup(str(message))
+        self._update_library_export_canvas_after_run()
+
+    def _apply_library_export_progress(
+        self, run_id: int, phase: str, current: int, total: int
+    ) -> None:
+        """UI-thread progress tick: update the status line in place if this run is current."""
+        if run_id != self._library_export_run_id or not self._library_export_running:
+            return
+        self._library_export_status = format_export_progress_line(phase, current, total)
+        self._refresh_library_export_status_line()
+
+    def _refresh_library_export_status_line(self) -> None:
+        """Update only the #library-export-status-line widget (no recompose)."""
+        if not self.is_mounted or self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+            return
+        try:
+            widget = self.query_one("#library-export-status-line", Static)
+            widget.update(self._library_export_status)
+            widget.display = bool(self._library_export_status)
+        except (NoMatches, QueryError):
+            pass
+
+    def _update_library_export_canvas_after_run(self) -> None:
+        """Targeted DOM update once an export run finishes (success or failure).
+
+        Mirrors ``_apply_library_export_counts``'s targeted-update
+        discipline (Task 2's fix, commit 7793257e): the transition OUT of
+        ``running`` must not recompose. Unlike the Export-press transition
+        INTO ``running`` (a recompose is acceptable there -- see
+        ``handle_library_export_submit``'s docstring), the running window
+        itself can be long enough for the user to resume typing in the
+        name/description ``Input`` while waiting (nothing disables those
+        fields during ``running``) -- a recompose on completion would
+        destroy and rebuild that ``Input`` out from under them, silently
+        dropping keyboard focus. Only the status line, the error line, and
+        the Export button's disabled gate can change here; both lines are
+        unconditionally mounted by ``LibraryExportCanvas.compose`` (display-
+        toggled, never conditionally yielded) specifically so this in-place
+        update always finds them, mirroring the empty-scope helper's own
+        always-mounted precedent from Task 2's fix.
+        """
+        if not self.is_mounted or self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+            return
+        state = self._build_library_export_state()
+        try:
+            canvas = self.query_one("#library-export-canvas", LibraryExportCanvas)
+        except (NoMatches, QueryError):
+            return
+        canvas.state = state
+        try:
+            status_widget = self.query_one("#library-export-status-line", Static)
+            status_widget.update(state.status_line)
+            status_widget.display = bool(state.status_line)
+            error_widget = self.query_one("#library-export-error-line", Static)
+            error_widget.update(state.error_line)
+            error_widget.display = bool(state.error_line)
+            self.query_one("#library-export-submit", Button).disabled = (
+                not state.export_enabled
+            )
+            self.query_one("#library-export-cancel", Button).display = bool(state.running)
+        except (NoMatches, QueryError):
+            pass
+
+    def _library_ingest_registry(self) -> Any:
+        """Return the app's ingest job registry, or ``None`` when absent."""
+        return getattr(self.app_instance, "library_ingest_jobs", None)
+
+    def _handle_library_ingest_registry_changed(self) -> None:
+        """Registry listener: live-recompose the ingest canvas + poke the
+        source snapshot when a job finishes (Task 5).
+
+        Registered against ``self.app_instance.library_ingest_jobs`` in
+        ``on_mount``, removed in ``on_unmount``. Per the registry's own
+        contract (``LibraryIngestJobRegistry._notify_listeners``), this
+        fires synchronously on the UI thread after every successful
+        ``submit``/``mark_parsing``/``mark_writing``/``mark_done``/
+        ``mark_failed``/``requeue`` -- from two different call shapes:
+
+        - **Synchronously inside a message handler.** The "Start ingest"
+          and "Retry" button handlers call ``submit_library_ingest_job``/
+          ``retry_library_ingest_job`` directly, which mutate the registry
+          (firing this listener) *before* the handler's own trailing
+          ``self.refresh(recompose=True)`` runs.
+        - **Marshaled from a background thread**, via ``call_from_thread``
+          for ``mark_parsing``/``mark_writing`` (the F3 parse-pool
+          coordinator, itself invoked from a pool callback thread) and
+          ``mark_done``/``mark_failed`` (the writer's worker thread) --
+          these land outside any message handler, as their own turn of the
+          UI event loop.
+
+        Both shapes are safe to handle with a plain, synchronous
+        ``self.refresh(recompose=True)`` call (no ``call_after_refresh``
+        indirection needed): ``Widget.refresh(recompose=True)`` never
+        recomposes inline -- it only sets ``_recompose_required = True``
+        and schedules the actual (async) ``_check_recompose`` via
+        ``call_next``, which runs on a later turn of the event loop. That
+        makes calling it redundant, or from inside another handler that
+        will also call it, harmless: the flag is idempotent and the
+        second scheduled check becomes a no-op once the first has already
+        cleared it. (Verified by reading
+        ``textual.widget.Widget.refresh``/``_check_recompose`` -- Textual
+        8.2.7.)
+
+        Behavior:
+
+        - Recomposes the canvas ONLY when the ingest canvas is the
+          currently selected rail row -- a job transition must never yank
+          a user looking at a different canvas away from it.
+        - Independently of the canvas recompose, pokes
+          ``_refresh_local_source_snapshot()`` (which updates the rail's
+          ``Media (N)`` count) whenever the registry's done-job count has
+          grown since this screen last checked -- deduped via
+          ``_library_ingest_last_done_count`` so a running/failed
+          transition (or a second notification for the same completed
+          job) never re-triggers the snapshot fetch. This fires
+          regardless of which canvas is selected, since the rail is
+          always visible.
+        - A no-op when the screen isn't mounted -- belt-and-braces
+          alongside ``on_unmount``'s removal (see that method's
+          docstring for why removal can't simply happen earlier, e.g. on
+          suspend). Note ``self.is_mounted`` never flips back to
+          ``False`` after removal in this Textual version -- it only
+          guards a callback that somehow fires before this screen's very
+          first mount -- so ``on_unmount``'s ``remove_listener`` call is
+          what actually prevents post-teardown notifications, not this
+          guard.
+        """
+        if not self.is_mounted:
+            return
+        if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
+            self.refresh(recompose=True)
+        registry = self._library_ingest_registry()
+        counts_fn = getattr(registry, "counts", None)
+        done_count = counts_fn().get("done", 0) if callable(counts_fn) else 0
+        if done_count != self._library_ingest_last_done_count:
+            grew = done_count > self._library_ingest_last_done_count
+            self._library_ingest_last_done_count = done_count
+            if grew:
+                self._refresh_local_source_snapshot()
+
+    def _build_library_ingest_state(self) -> LibraryIngestCanvasState:
+        """Build the ingest canvas's full display state from the live registry + form.
+
+        Reads directly from ``self.app_instance.library_ingest_jobs`` via
+        quiet-degrade ``getattr`` (never assuming the seam exists) rather
+        than caching a screen-owned copy, so every render -- the canvas
+        compose -- sees the registry's current truth, including
+        transitions a live-update listener applies between renders. The
+        Open in Library/Retry/Dismiss row-action handlers do NOT go
+        through this method -- they resolve their target job directly by
+        ``job_id`` from ``registry.jobs()`` (see
+        ``_library_ingest_job_by_id``), never by re-deriving and indexing
+        into a row snapshot, so an async queue mutation between render and
+        click can never mis-target a different job (PR #591 review, F1).
+        """
+        registry = self._library_ingest_registry()
+        jobs_fn = getattr(registry, "jobs", None)
+        jobs = jobs_fn() if callable(jobs_fn) else ()
+        runtime_state = getattr(
+            getattr(self.app_instance, "runtime_policy", None), "state", None
+        )
+        runtime_source = str(getattr(runtime_state, "active_source", "local") or "local")
+        return build_library_ingest_state(
+            jobs,
+            form=self._library_ingest_form,
+            runtime_source=runtime_source,
+            media_db_available=getattr(self.app_instance, "media_db", None) is not None,
+            registry_available=registry is not None,
+        )
 
     def _ensure_library_notes_sync_config_loaded(self) -> None:
         """Seed sync direction/conflict/auto-sync from config on first entry.
@@ -3610,9 +4903,9 @@ class LibraryScreen(BaseAppScreen):
     def _resolve_library_notes_sync_db(self) -> Any:
         """Resolve the per-user ChaChaNotes DB the sync service writes to.
 
-        Mirrors ``NotesSyncPane.on_mount`` (notes_workbench_panes.py) EXACTLY:
-        prefer the app's ``chachanotes_db``, falling back to the notes
-        service's own ``db`` attribute when that is unset.
+        Mirrors the retired standalone Notes screen's sync-pane resolution
+        EXACTLY: prefer the app's ``chachanotes_db``, falling back to the
+        notes service's own ``db`` attribute when that is unset.
         """
         notes_service = getattr(self.app_instance, "notes_service", None)
         return getattr(self.app_instance, "chachanotes_db", None) or getattr(
@@ -3622,9 +4915,9 @@ class LibraryScreen(BaseAppScreen):
     def _arm_library_notes_auto_sync_timer(self) -> None:
         """Start the 300s auto-sync repeating timer if not already running.
 
-        Scoped to this Library screen instance's lifetime (like the
-        standalone ``NotesSyncPane``'s timer) -- it is never persisted or
-        resumed across screen instances; only the ``auto_sync`` boolean
+        Scoped to this Library screen instance's lifetime (like the retired
+        standalone Notes screen's sync-pane timer) -- it is never persisted
+        or resumed across screen instances; only the ``auto_sync`` boolean
         preference is persisted, and is re-armed on the next sync-mode
         entry via ``_ensure_library_notes_sync_config_loaded``.
         """
@@ -3827,7 +5120,7 @@ class LibraryScreen(BaseAppScreen):
         except ConflictError:
             result = False
         except Exception:
-            logger.warning(f"Library note save failed for {note_id!r}.", exc_info=True)
+            logger.opt(exception=True).warning(f"Library note save failed for {note_id!r}.")
             if note_id != self._selected_note_id or self._library_notes_view != "editor":
                 return
             self._library_note_autosave_state = "error"
@@ -3865,6 +5158,28 @@ class LibraryScreen(BaseAppScreen):
                     self._library_note_detail["keywords"] = result["keywords"]
                 elif keywords is not None:
                     self._library_note_detail["keywords"] = keywords
+            # Patch the cached notes-list snapshot too (title + a fresh
+            # last_modified), not just the detail mirror: the list view is
+            # rendered from these records on the next Back-to-list, and
+            # without this it kept showing the pre-save title, stale
+            # relative age, and stale Newest ordering until a full
+            # snapshot refetch landed (2026-07 UAT finding).
+            saved_stamp = datetime.now(timezone.utc).isoformat()
+            self._local_source_records["notes"] = patch_note_records_after_save(
+                self._local_source_records.get("notes", ()),
+                note_id,
+                title=title,
+                modified_at=saved_stamp,
+            )
+            if self._library_notes_filter_records is not None:
+                self._library_notes_filter_records = list(
+                    patch_note_records_after_save(
+                        self._library_notes_filter_records,
+                        note_id,
+                        title=title,
+                        modified_at=saved_stamp,
+                    )
+                )
             self._library_note_dirty = False
             self._library_note_autosave_state = "saved"
             self._update_library_note_meta_static(content=raw_content)
@@ -3928,9 +5243,8 @@ class LibraryScreen(BaseAppScreen):
                 try:
                     await worker.wait()
                 except Exception:
-                    logger.debug(
+                    logger.opt(exception=True).debug(
                         "In-flight note-save worker errored while flushing; continuing.",
-                        exc_info=True,
                     )
         if not self._library_note_dirty:
             return
@@ -3979,9 +5293,8 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"Failed to reload Library note {note_id!r} after a save conflict.",
-                exc_info=True,
             )
             return
         if note_id != self._selected_note_id:
@@ -4050,9 +5363,8 @@ class LibraryScreen(BaseAppScreen):
         except ConflictError:
             result = False
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"Failed to overwrite Library note {note_id!r} after a save conflict.",
-                exc_info=True,
             )
             return
         if note_id != self._selected_note_id:
@@ -4198,8 +5510,8 @@ class LibraryScreen(BaseAppScreen):
     async def _export_library_note(self, export_format: str) -> None:
         """Push the Export dialog for the open Library note.
 
-        Mirrors ``notes_screen._export_current_note``'s dialog flow -- a
-        ``FileSave`` prompt pre-filled with a sanitized default filename,
+        Mirrors the retired standalone Notes screen's export dialog flow --
+        a ``FileSave`` prompt pre-filled with a sanitized default filename,
         whose callback writes the built export content once a path is
         chosen. The export reads the *live* editor widgets (via
         ``_read_library_note_editor_fields``), never the DB, so unlike
@@ -4207,9 +5519,9 @@ class LibraryScreen(BaseAppScreen):
 
         Note: the real ``Third_Party.textual_fspicker.FileSave`` dialog
         only accepts ``location``/``title``/``default_file`` (not the
-        ``default_filename``/``context`` kwargs ``notes_screen.py`` passes
-        it, which would raise ``TypeError`` if that path ever actually
-        ran) -- this uses the dialog's real constructor shape.
+        ``default_filename``/``context`` kwargs the retired screen passed
+        it, which would have raised ``TypeError`` if that path ever
+        actually ran) -- this uses the dialog's real constructor shape.
 
         Args:
             export_format: ``"markdown"`` for the frontmatter export
@@ -4261,8 +5573,8 @@ class LibraryScreen(BaseAppScreen):
         destination, so there is no fixed base directory to constrain it
         to the way ``validate_path``/``safe_join_path`` require -- this is
         the same base-directory-free validator the rest of this codebase
-        already uses for user-chosen save/output paths (e.g.
-        ``notes_screen._import_note_from_path``, ``settings_screen``'s
+        already uses for user-chosen save/output paths (e.g. this screen's
+        note import path, ``settings_screen``'s
         storage-location fields). It rejects null bytes and other
         shell-metacharacter/traversal patterns; a rejected path is a quiet
         warning notice with no write and no crash, same as any other
@@ -4302,9 +5614,8 @@ class LibraryScreen(BaseAppScreen):
                 encoding="utf-8",
             )
         except Exception as exc:
-            logger.warning(
-                f"Error exporting Library note {note_id!r} to '{validated_path}'.", exc_info=True
-            )
+            logger.opt(exception=True).warning(
+                f"Error exporting Library note {note_id!r} to '{validated_path}'.")
             if callable(notify):
                 notify(f"Error exporting note: {type(exc).__name__}", severity="error")
             return
@@ -4338,8 +5649,8 @@ class LibraryScreen(BaseAppScreen):
         Uses the app's ``copy_to_clipboard`` seam (the same
         ``getattr``-gated pattern every other Library handoff/action in
         this screen already uses) rather than importing ``pyperclip``
-        directly the way ``notes_screen._copy_current_note_to_clipboard``
-        does -- that makes this testable via a recorded fake the way the
+        directly the way the retired standalone Notes screen's copy action
+        did -- that makes this testable via a recorded fake the way the
         rest of this screen's actions are, and doesn't add a hard runtime
         dependency on a package that isn't always installed/working.
 
@@ -4364,7 +5675,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             copy_to_clipboard(export_content)
         except Exception as exc:
-            logger.warning(f"Failed to copy Library note {note_id!r} to clipboard.", exc_info=True)
+            logger.opt(exception=True).warning(f"Failed to copy Library note {note_id!r} to clipboard.")
             if callable(notify):
                 notify(f"Error copying note: {type(exc).__name__}", severity="error")
             return
@@ -4376,8 +5687,8 @@ class LibraryScreen(BaseAppScreen):
 
         Mirrors ``_selected_media_handoff_payload``: reads the currently
         open note's live (possibly unsaved) editor fields rather than a
-        list-row selection, matching ``notes_screen._build_note_chat_handoff_payload``'s
-        local-note shape.
+        list-row selection, matching the local-note handoff shape the
+        retired standalone Notes screen staged.
 
         Returns:
             A ``ChatHandoffPayload`` staging the open note as Console
@@ -4433,7 +5744,7 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify("Console handoff is unavailable for Library Notes.", severity="warning")
             return
-        open_chat_with_handoff(payload)
+        open_chat_with_handoff(payload, action_label="Use in Console")
 
     @on(Button.Pressed, "#library-note-use-in-console")
     def handle_library_note_use_in_console(self, event: Button.Pressed) -> None:
@@ -4446,38 +5757,20 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._open_selected_library_note_handoff()
 
-    def _compose_mode_canvas(self, mode: str) -> ComposeResult:
-        """Render the canvas body for a mode row (moved middle-pane content)."""
-        self._active_mode = mode
-        active_mode = LIBRARY_MODES.get(mode, LIBRARY_MODES["sources"])
-        active_mode_copy_visible = mode not in {
-            "collections",
-            "search",
-            "sources",
-            "workspaces",
-        }
-        if active_mode_copy_visible:
-            yield Static(
-                f"{active_mode['label']} mode",
-                id="library-active-mode-title",
-                classes="destination-section",
-            )
-            yield Static(
-                active_mode["description"],
-                id="library-active-mode-description",
-            )
-            yield Static(
-                active_mode["next_action"],
-                id="library-active-mode-next-action",
-            )
-        if mode in LIBRARY_STUDY_HANDOFF_MODES:
-            yield self._study_handoff_detail_widget()
-        elif mode == "import-export":
-            for row in self._import_export_workflow_rows():
-                yield row
-
     def _library_rail_preferences(self):
-        """Read persisted Library rail section preferences."""
+        """Read persisted Library rail section preferences, defensively.
+
+        (C4) Same restart-persistence gap as
+        ``_load_library_search_history``: ``self.app_instance.app_config``
+        (from ``load_settings()``) can come back without a ``library``
+        section at all even when ``config.toml`` has persisted
+        ``[library.rail_state]`` on disk -- so a freshly started app would
+        otherwise always reopen every rail section at its hardcoded
+        default instead of the user's last-chosen open/collapsed state.
+        Falls back to a live ``get_cli_setting("library.rail_state")`` read
+        of the CLI config file when ``app_config`` doesn't already carry a
+        usable ``sections`` dict; ``app_config`` wins whenever it does.
+        """
         app_config = getattr(self.app_instance, "app_config", None)
         raw = None
         if isinstance(app_config, dict):
@@ -4486,6 +5779,18 @@ class LibraryScreen(BaseAppScreen):
                 rail_state = library_config.get("rail_state")
                 if isinstance(rail_state, dict):
                     raw = rail_state.get("sections")
+        if not isinstance(raw, dict):
+            try:
+                # Dotted 1-arg form, same shape as
+                # `_load_library_search_history`'s CLI fallback:
+                # `get_cli_setting("library.rail_state")` returns
+                # `config["library"]["rail_state"]` (the rail_state
+                # sub-dict), not the "sections" dict directly.
+                cli_rail_state = get_cli_setting("library.rail_state")
+            except Exception:
+                cli_rail_state = None
+            if isinstance(cli_rail_state, dict):
+                raw = cli_rail_state.get("sections")
         return coerce_library_rail_preferences(raw)
 
     def _load_library_search_history(self) -> tuple[str, ...]:
@@ -4633,7 +5938,7 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-rail-row")
     async def handle_library_rail_row(self, event: Button.Pressed) -> None:
-        """Dispatch a Library rail row press: navigate, browse, or open a mode."""
+        """Dispatch a Library rail row press: navigate, browse, or open a canvas."""
         event.stop()
         button = event.button
         target_kind = str(getattr(button, "target_kind", "") or "")
@@ -4646,31 +5951,35 @@ class LibraryScreen(BaseAppScreen):
         if target_kind == "canvas":
             if target_id == "conversations":
                 self._library_conversation_query = ""
-            await self._select_library_rail_row(row_id, target_id or "conversations")
+            await self._select_library_rail_row(row_id)
             return
-        if target_kind == "mode":
-            await self._select_library_rail_row(row_id, target_id)
+        if target_kind == "handoff":
+            # Study/Flashcards/Quizzes rows (L3b Task 8): resolves to the
+            # handoff canvas.
+            await self._select_library_rail_row(row_id)
             return
         # Unknown target kind: select the row and recompose from selection.
-        await self._select_library_rail_row(row_id, self._active_mode)
+        await self._select_library_rail_row(row_id)
 
-    async def _select_library_rail_row(self, row_id: str, active_mode: str) -> None:
+    async def _select_library_rail_row(self, row_id: str) -> None:
         """Apply a rail-row selection and recompose the canvas from it.
 
         Shared by the rail-row press handler and in-canvas mode shortcuts so
         that the single source of selection truth (``_library_selected_row_id``)
-        always drives the recomposed canvas -- setting ``_active_mode`` alone is
-        reverted by the next ``refresh(recompose=True)``.
+        always drives the recomposed canvas.
 
         A dirty note edit is flushed first (awaited) so leaving via the rail
-        never silently discards unsaved text; an unresolved save conflict
-        aborts the row switch entirely so the user must resolve it first.
+        never silently discards unsaved text; any unsaved edit surviving the
+        flush aborts the row switch entirely. A dirty prompt edit is vetoed
+        the same way (see ``_flush_library_prompt_save`` -- explicit-Save-
+        only, so there is nothing to flush, only to veto on).
         """
         await self._flush_library_note_save()
-        if self._library_note_autosave_state == "conflict":
+        if self._library_note_dirty:
+            return
+        if not await self._flush_library_prompt_save():
             return
         self._library_selected_row_id = row_id
-        self._active_mode = active_mode
         # A rail-row press is always a fresh entry into a content type, so
         # the media canvas must never resume a previously opened viewer
         # (e.g. Browse Media -> open item -> Browse Conversations -> Browse
@@ -4686,14 +5995,44 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
         self._reset_library_note_editor_state()
+        self._reset_library_prompt_editor_state()
         self._reset_library_notes_sync_transient_state()
+        self._reset_library_ingest_transient_state()
+        # Always resets to the Everything scope (a plain rail-row press,
+        # unlike a browse-canvas "Export…" action, never carries a
+        # section-specific filter) -- see
+        # ``_reset_library_export_transient_state``'s docstring.
+        self._reset_library_export_transient_state()
         self._invalidate_library_workspace_depth_state()
-        if self._active_mode == "collections" and not self._library_collections_loaded:
+        if row_id == LIBRARY_ROW_CREATE_PROMPT:
+            # Task 8b D1: "New prompt" -- applied AFTER
+            # _reset_library_prompt_editor_state() above (which it would
+            # otherwise immediately undo), mirroring the reset-then-set
+            # ordering ``apply_navigation_context``'s notes-create branch
+            # already uses.
+            self._enter_library_prompt_create_editor()
+        if row_id == LIBRARY_ROW_CREATE_SKILL:
+            # Skills sub-project (skills-200 spec, "Create > New skill"):
+            # same shape as the "New prompt" branch immediately above --
+            # ``_enter_library_skill_create_editor`` fully (re)sets every
+            # skill-editor field itself, so it needs no preceding
+            # ``_reset_library_skill_editor_state()`` call here.
+            self._enter_library_skill_create_editor()
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+            and not self._library_collections_loaded
+        ):
             # First Collections entry must load the snapshot the retired chip
             # flow ran; _sync_collections_panel recomposes once records arrive.
             await self._sync_collections_panel(refresh_snapshot=True)
             return
         self.refresh(recompose=True)
+        if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
+            self._start_library_export_counts_worker()
+        if row_id == LIBRARY_ROW_CREATE_PROMPT and self.is_mounted:
+            self.call_after_refresh(self._arm_library_prompt_editor)
+        if row_id == LIBRARY_ROW_CREATE_SKILL and self.is_mounted:
+            self.call_after_refresh(self._arm_library_skill_editor)
 
     @on(Button.Pressed, ".console-rail-section-toggle")
     def handle_library_rail_section_toggle(self, event: Button.Pressed) -> None:
@@ -4716,18 +6055,73 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-conversation-row")
     def handle_library_conversation_row(self, event: Button.Pressed) -> None:
-        """Select a conversation row in the Library conversations canvas.
+        """Select mode: toggle the row's checkbox. Normal mode: select the row.
+
+        In select mode, a row press toggles that row's id in
+        ``_library_conversations_row_selection`` and patches the row's
+        marker, the "N selected" Static, and export-selected's disabled
+        state in place (task-252 Tier 1) -- it never sets the normal-mode
+        selection/detail while in select mode. Outside select mode,
+        behavior is unchanged: selects the conversation and switches the
+        Library rail to the conversations browse row -- a canvas-scoped
+        ``sync_state`` (task-252 Tier 2), not a screen-level recompose;
+        the rail row itself never changes here (this row press is only
+        reachable while already browsing conversations).
 
         Args:
             event: Button press event emitted by a conversation row button.
         """
         event.stop()
         conversation_id = str(getattr(event.button, "conversation_id", "") or "")
+        if self._library_conversations_select_mode:
+            self._library_conversations_row_selection.toggle(conversation_id)
+            _apply_library_row_toggle(
+                self, "conversations", event.button, conversation_id
+            )
+            return
         if conversation_id:
             self._selected_conversation_id = conversation_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
-        self._active_mode = "conversations"
-        self.refresh(recompose=True)
+        _sync_library_canvas(self, "conversations")
+
+    @on(Button.Pressed, "#library-conversations-select-toggle")
+    def handle_library_conversations_select_toggle(self, event: Button.Pressed) -> None:
+        """Enter/exit conversations select mode; clears the selection set (both on enter and exit)."""
+        event.stop()
+        self._library_conversations_select_mode = not self._library_conversations_select_mode
+        self._library_conversations_row_selection.clear()
+        _sync_library_canvas(self, "conversations")
+
+    @on(Button.Pressed, "#library-conversations-select-all")
+    def handle_library_conversations_select_all(self, event: Button.Pressed) -> None:
+        """Select every conversation row currently rendered by the canvas."""
+        event.stop()
+        rows = self._build_library_conversations_state().rows
+        self._library_conversations_row_selection.select_all(
+            r.conversation_id for r in rows
+        )
+        _sync_library_canvas(self, "conversations")
+
+    @on(Button.Pressed, "#library-conversations-select-clear")
+    def handle_library_conversations_select_clear(self, event: Button.Pressed) -> None:
+        """Clear the current conversations selection without leaving select mode."""
+        event.stop()
+        self._library_conversations_row_selection.clear()
+        _sync_library_canvas(self, "conversations")
+
+    @on(Button.Pressed, "#library-conversations-export-selected")
+    async def handle_library_conversations_export_selected(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to the currently selected conversation ids."""
+        event.stop()
+        # Defensive: an empty selection would resolve to a whole-source export
+        # (empty ids == whole source). The button is disabled at 0 selected, so
+        # this is normally unreachable -- guard anyway so a future activation
+        # path can't silently export everything.
+        if not self._library_conversations_row_selection.count:
+            return
+        await self._open_library_export_canvas(
+            self._library_conversations_row_selection.export_scope()
+        )
 
     @on(Button.Pressed, "#library-media-type-filter")
     def handle_library_media_type_filter_pressed(self, event: Button.Pressed) -> None:
@@ -4753,14 +6147,23 @@ class LibraryScreen(BaseAppScreen):
             current_index = 0
         next_index = (current_index + 1) % len(type_options)
         self._library_media_type_filter = type_options[next_index]
+        self._library_media_select_mode = False
+        self._library_media_row_selection.clear()
         self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-media-row")
     def handle_library_media_row(self, event: Button.Pressed) -> None:
-        """Select a media row and open the full Library media viewer.
+        """Select mode: toggle the row's checkbox. Normal mode: open the viewer.
 
-        Switches the media canvas from its list view to the in-canvas
-        viewer, clears any stale detail, and kicks the async detail fetch
+        In select mode, a row press toggles that row's id in
+        ``_library_media_row_selection`` and patches the row's marker, the
+        "N selected" Static, and export-selected's disabled state in
+        place (task-252 Tier 1) -- it never opens the full Library media
+        viewer while in select mode. Outside select mode, behavior is
+        unchanged: switches the media canvas from its list view to the
+        in-canvas viewer (a widget-class swap to ``LibraryMediaViewer``,
+        not this canvas -- out of the Tier 2 sync_state scope), clears
+        any stale detail, and kicks the async detail fetch
         (``_refresh_library_media_detail``); the viewer renders a loading
         line until that worker stores the fetched detail and recomposes.
 
@@ -4769,10 +6172,76 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         media_id = str(getattr(event.button, "media_id", "") or "")
+        if self._library_media_select_mode:
+            self._library_media_row_selection.toggle(media_id)
+            _apply_library_row_toggle(self, "media", event.button, media_id)
+            return
+        self._open_library_media_viewer(media_id)
+
+    @on(Button.Pressed, "#library-media-select-toggle")
+    def handle_library_media_select_toggle(self, event: Button.Pressed) -> None:
+        """Enter/exit media select mode; clears the selection set (both on enter and exit)."""
+        event.stop()
+        self._library_media_select_mode = not self._library_media_select_mode
+        self._library_media_row_selection.clear()
+        _sync_library_canvas(self, "media")
+
+    @on(Button.Pressed, "#library-media-select-all")
+    def handle_library_media_select_all(self, event: Button.Pressed) -> None:
+        """Select every media row currently rendered by the canvas."""
+        event.stop()
+        rows = self._build_library_media_state().rows
+        self._library_media_row_selection.select_all(r.media_id for r in rows)
+        _sync_library_canvas(self, "media")
+
+    @on(Button.Pressed, "#library-media-select-clear")
+    def handle_library_media_select_clear(self, event: Button.Pressed) -> None:
+        """Clear the current media selection without leaving select mode."""
+        event.stop()
+        self._library_media_row_selection.clear()
+        _sync_library_canvas(self, "media")
+
+    @on(Button.Pressed, "#library-media-export-selected")
+    async def handle_library_media_export_selected(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to the currently selected media ids."""
+        event.stop()
+        # Defensive: an empty selection would resolve to a whole-source export
+        # (empty ids == whole source); the button is disabled at 0 selected.
+        if not self._library_media_row_selection.count:
+            return
+        await self._open_library_export_canvas(self._library_media_row_selection.export_scope())
+
+    @on(Button.Pressed, "#library-media-open-viewer")
+    def handle_library_media_open_viewer(self, event: Button.Pressed) -> None:
+        """Open the browse summary's selected media item in the in-Library viewer.
+
+        The browse canvas preview's primary action. Stays entirely inside
+        Library (unlike the full viewer's "Open in Media manager" escape
+        hatch, which navigates to the legacy Media screen) -- hence the
+        "Open in viewer" label (2026-07 UAT relabel).
+
+        Args:
+            event: Button press event emitted by the "Open in viewer" action.
+        """
+        event.stop()
+        self._open_library_media_viewer(self._selected_media_id)
+
+    def _open_library_media_viewer(self, media_id: str) -> None:
+        """Switch the media canvas to the in-canvas viewer for ``media_id``.
+
+        Shared by media-row presses and the browse summary's "Open in
+        viewer" action: resets per-item viewer state, kicks the async
+        detail fetch, and recomposes into the viewer's loading line.
+
+        Args:
+            media_id: The media item to open; an empty id still switches to
+                the viewer without kicking a fetch (mirrors the previous
+                row-press behavior for a row missing its ``media_id``).
+        """
+        media_id = str(media_id or "")
         if media_id:
             self._selected_media_id = media_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-        self._active_mode = "media"
         self._library_media_view = "viewer"
         self._library_media_detail = None
         self._library_media_editing = False
@@ -4801,6 +6270,8 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_notes_sort = next_notes_sort_mode(self._library_notes_sort)
+        self._library_notes_select_mode = False
+        self._library_notes_row_selection.clear()
         self.refresh(recompose=True)
 
     @on(Input.Submitted, "#library-notes-filter")
@@ -4815,6 +6286,8 @@ class LibraryScreen(BaseAppScreen):
         if submitted == self._library_notes_filter:
             return
         self._library_notes_filter = submitted
+        self._library_notes_select_mode = False
+        self._library_notes_row_selection.clear()
         if not submitted:
             self._library_notes_filter_records = None
             self.refresh(recompose=True)
@@ -4854,7 +6327,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning("Library notes filter failed.", exc_info=True)
+            logger.opt(exception=True).warning("Library notes filter failed.")
             return
         if query != self._library_notes_filter:
             return
@@ -4869,17 +6342,3150 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
 
+    @on(Button.Pressed, "#library-prompts-sort")
+    def handle_library_prompts_sort(self, event: Button.Pressed) -> None:
+        """Cycle the Library prompts canvas sort mode (newest/name).
+
+        Unlike the notes filter (which re-fetches via the ``search_notes``
+        seam), the prompts filter/sort are both pure in-memory operations
+        over the already-fetched snapshot page (``_build_library_prompts_state``
+        -> ``build_prompts_list_state``) -- no worker needed, just a
+        recompose.
+
+        Args:
+            event: Button press event emitted by the prompts sort control.
+        """
+        event.stop()
+        try:
+            index = _LIBRARY_PROMPTS_SORT_MODES.index(self._library_prompts_sort)
+        except ValueError:
+            index = -1
+        self._library_prompts_sort = _LIBRARY_PROMPTS_SORT_MODES[
+            (index + 1) % len(_LIBRARY_PROMPTS_SORT_MODES)
+        ]
+        self.refresh(recompose=True)
+
+    @on(Input.Submitted, "#library-prompts-filter")
+    def handle_library_prompts_filter(self, event: Input.Submitted) -> None:
+        """Apply the Library prompts filter on Enter.
+
+        Purely in-memory (see ``handle_library_prompts_sort``'s note): the
+        submitted text is stored and the canvas recomposes, re-running
+        ``build_prompts_list_state`` over the already-fetched snapshot page
+        with the new query -- no service call or worker involved.
+
+        Args:
+            event: Input submission event emitted by the prompts filter box.
+        """
+        event.stop()
+        self._library_prompts_filter = self._safe_text(event.value, max_length=200).strip()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skills-sort")
+    def handle_library_skills_sort(self, event: Button.Pressed) -> None:
+        """Cycle the Library skills canvas sort mode (name/status).
+
+        Same pure in-memory posture as ``handle_library_prompts_sort``: the
+        already-fetched ``get_context`` snapshot payload is re-sorted by
+        ``_build_library_skills_state`` -> ``build_skills_list_state`` on
+        recompose, no worker needed.
+
+        Args:
+            event: Button press event emitted by the skills sort control.
+        """
+        event.stop()
+        try:
+            index = _LIBRARY_SKILLS_SORT_MODES.index(self._library_skills_sort)
+        except ValueError:
+            index = -1
+        self._library_skills_sort = _LIBRARY_SKILLS_SORT_MODES[
+            (index + 1) % len(_LIBRARY_SKILLS_SORT_MODES)
+        ]
+        self.refresh(recompose=True)
+
+    @on(Input.Submitted, "#library-skills-filter")
+    def handle_library_skills_filter(self, event: Input.Submitted) -> None:
+        """Apply the Library skills filter on Enter.
+
+        Purely in-memory (see ``handle_library_skills_sort``'s note): the
+        submitted text is stored and the canvas recomposes, re-running
+        ``build_skills_list_state`` over the already-fetched snapshot
+        payload with the new query -- no service call or worker involved.
+
+        Args:
+            event: Input submission event emitted by the skills filter box.
+        """
+        event.stop()
+        self._library_skills_filter = self._safe_text(event.value, max_length=200).strip()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skills-import")
+    def handle_library_skills_import(self, event: Button.Pressed) -> None:
+        """Open the inline Import row below the skills toolbar.
+
+        Idempotent while already open, mirrors
+        ``handle_library_prompts_import`` exactly: Cancel is the only way
+        to close the row once opened.
+
+        Args:
+            event: Button press event emitted by the "Import…" action.
+        """
+        event.stop()
+        if self._library_skills_import_open:
+            return
+        self._library_skills_import_open = True
+        self._library_skills_import_path = ""
+        self._library_skills_import_status = ""
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skills-import-cancel")
+    def handle_library_skills_import_cancel(self, event: Button.Pressed) -> None:
+        """Close the inline Import row, discarding any typed path/outcome.
+
+        Args:
+            event: Button press event emitted by the Import row's
+                "Cancel" action.
+        """
+        event.stop()
+        self._library_skills_import_open = False
+        self._library_skills_import_path = ""
+        self._library_skills_import_status = ""
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skills-import-browse")
+    def handle_library_skills_import_browse(self, event: Button.Pressed) -> None:
+        """Push a ``FileOpen`` dialog to pick a local SKILL.md file.
+
+        Mirrors ``handle_library_prompts_import_browse``'s dialog flow
+        exactly. The shared ``FileOpen`` dialog has no directory-selection
+        mode, so importing a skill BY ITS FOLDER path still requires
+        typing that path into the Import row's path ``Input`` by hand
+        (see ``_run_library_skills_import``, which accepts either shape).
+
+        Args:
+            event: Button press event emitted by the "Browse…" action.
+        """
+        event.stop()
+
+        async def browse_callback(selected_path: Path | None) -> None:
+            if selected_path is None:
+                return
+            self._library_skills_import_path = str(selected_path)
+            self.refresh(recompose=True)
+
+        self.app.push_screen(
+            FileOpen(title="Import Skill (SKILL.md)"),
+            browse_callback,
+        )
+
+    @on(Input.Changed, "#library-skills-import-path")
+    def handle_library_skills_import_path_changed(self, event: Input.Changed) -> None:
+        """Track the Import row's path text as the user types it (state only).
+
+        Args:
+            event: Input change event emitted by the Import row's path field.
+        """
+        event.stop()
+        self._library_skills_import_path = event.value
+
+    @on(Input.Submitted, "#library-skills-import-path")
+    def handle_library_skills_import_path_submitted(self, event: Input.Submitted) -> None:
+        """Run the import when Enter is pressed in the Import row's path field.
+
+        Args:
+            event: Input submission event emitted by the Import row's
+                path field.
+        """
+        event.stop()
+        self._start_library_skills_import()
+
+    @on(Button.Pressed, "#library-skills-import-run")
+    def handle_library_skills_import_run(self, event: Button.Pressed) -> None:
+        """Run the import when the Import row's "Import" action is pressed.
+
+        Args:
+            event: Button press event emitted by the Import row's
+                "Import" action.
+        """
+        event.stop()
+        self._start_library_skills_import()
+
+    def _start_library_skills_import(self) -> None:
+        """Validate the Import row has a non-blank path, then run the import worker.
+
+        Worker-executed (exclusive, its own group) since it performs file
+        IO plus a service call -- never inline on the UI thread. A blank
+        path is a quiet inline status line, matching
+        ``_start_library_prompts_import``'s equivalent gate.
+        """
+        if self._library_skills_view != "list":
+            return
+        raw_path = self._library_skills_import_path.strip()
+        if not raw_path:
+            self._apply_library_skills_import_status("Please enter a file or folder path.")
+            return
+        self.run_worker(
+            self._run_library_skills_import(raw_path),
+            exclusive=True,
+            group="library_skills_import",
+        )
+
+    def _apply_library_skills_import_status(self, text: str) -> None:
+        """Set the Import row's outcome line and recompose to show it."""
+        self._library_skills_import_status = text
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    async def _run_library_skills_import(self, raw_path: str) -> None:
+        """Import ONE skill from a SKILL.md file path or a skill's own directory.
+
+        Unlike ``_run_library_prompts_import`` (which batch-imports every
+        supported file in a folder), a skill is conceptually ONE directory
+        containing exactly one ``SKILL.md`` -- so this always imports
+        exactly one skill per Import press, landing it TRUST-PENDING
+        (``trust_approved=False``; the review panel is primed the next
+        time this skill's row is opened, since every quarantined/
+        uninitialized trust status already gates the trust panel's
+        "Review changes" action -- see ``skill_trust_review_enabled``).
+
+        Two path shapes are accepted, both resolving to the SAME skill
+        name (the directory's own name) -- this matters because every
+        real skill package (e.g. the ``superpowers`` skillset) is a
+        directory named after the skill containing a file LITERALLY named
+        ``SKILL.md``, so deriving the name from the file's own basename
+        (``local_skills_service._derive_name_from_filename``, which is
+        what a plain ``import_skill_file(..., filename="SKILL.md")`` call
+        would do) would incorrectly produce ``"skill"`` for every import
+        regardless of the real skill's name:
+
+        - A file path whose basename is ``SKILL.md`` (case-insensitive):
+          treated as that file's PARENT directory's skill (the common
+          case for a real skillset laid out one-directory-per-skill).
+        - A directory path containing a top-level ``SKILL.md``: same
+          shape, just already pointing at the directory.
+
+        Both call ``import_skill(name=<directory name>, content=..., ...)``
+        directly (the name is already known, so no filename-derivation
+        guesswork is needed) and thread any FLAT sibling files in that
+        same directory through as ``supporting_files`` (nested
+        subdirectories -- e.g. a ``references/`` folder -- are NOT
+        recursed into: ``local_skills_service``'s own supporting-file
+        model has no nested-path support, so those would either be
+        silently dropped or rejected by the service's own filename
+        pattern; skipping them here keeps this import path's own failure
+        mode explicit rather than surprising).
+
+        Any OTHER file path (e.g. a standalone ``some-skill.md`` not named
+        ``SKILL.md``, or a ``.zip`` export) is imported via
+        ``import_skill_file`` instead, letting the service derive the
+        name from that file's own (already meaningful) basename.
+
+        A folder that does not directly contain a ``SKILL.md`` is
+        reported as an outcome (never silently imports zero skills or
+        guesses at a subdirectory to use) -- batch "import every skill
+        under this folder" is out of this task's scope.
+
+        Args:
+            raw_path: The Import row's typed path (SKILL.md file, skill
+                directory, standalone ``.md`` file, or ``.zip`` export),
+                already known non-blank by the caller.
+        """
+        try:
+            validated_path = validate_path_simple(
+                Path(raw_path).expanduser(), require_exists=True
+            )
+        except ValueError:
+            logger.opt(exception=True).warning(
+                f"Rejected Library skills import path {raw_path!r}."
+            )
+            self._apply_library_skills_import_status("Could not find that file or folder.")
+            return
+
+        service = getattr(self.app_instance, "skills_scope_service", None)
+        import_skill = getattr(service, "import_skill", None)
+        import_skill_file = getattr(service, "import_skill_file", None)
+        if not callable(import_skill) or not callable(import_skill_file):
+            self._apply_library_skills_import_status("Skill import is unavailable.")
+            return
+
+        if validated_path.is_dir():
+            skill_dir = validated_path
+            skill_md_path = self._find_skill_md_in_dir(skill_dir)
+            if skill_md_path is None:
+                self._apply_library_skills_import_status("No SKILL.md found in that folder.")
+                return
+        elif validated_path.name.lower() == _SKILL_MD_FILENAME.lower():
+            skill_dir = validated_path.parent
+            skill_md_path = validated_path
+        else:
+            await self._import_library_skill_from_loose_file(validated_path, import_skill_file)
+            return
+
+        try:
+            content = await asyncio.to_thread(
+                skill_md_path.read_text, encoding="utf-8", errors="strict"
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not read Library skill import file '{skill_md_path}'."
+            )
+            self._apply_library_skills_import_status("Could not read that file.")
+            return
+
+        supporting_files = self._read_library_skill_import_supporting_files(skill_dir, skill_md_path)
+        skill_name = skill_dir.name
+
+        try:
+            await self._run_library_service_call(
+                import_skill,
+                mode="local",
+                name=skill_name,
+                content=content,
+                supporting_files=supporting_files or None,
+                trust_approved=False,
+                isolate_in_worker=True,
+            )
+        except Exception as exc:
+            self._apply_library_skills_import_outcome_from_exception(skill_name, exc)
+            return
+
+        self._apply_library_skills_import_success()
+
+    async def _import_library_skill_from_loose_file(
+        self, file_path: Path, import_skill_file: Any,
+    ) -> None:
+        """Import a standalone ``.md``/``.zip`` file (not named ``SKILL.md``).
+
+        Split out of ``_run_library_skills_import`` for that method's own
+        readability -- this branch has no directory/supporting-files
+        concerns at all, unlike the SKILL.md-directory branch.
+
+        Args:
+            file_path: The standalone file to import (already known to
+                exist and NOT be named ``SKILL.md``).
+            import_skill_file: The bound ``skills_scope_service.import_skill_file``
+                callable.
+        """
+        suffix = file_path.suffix.lower()
+        if suffix == ".zip":
+            content_type = "application/zip"
+            try:
+                data = await asyncio.to_thread(file_path.read_bytes)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Could not read Library skill import file '{file_path}'."
+                )
+                self._apply_library_skills_import_status("Could not read that file.")
+                return
+        elif suffix == ".md":
+            content_type = "text/markdown"
+            try:
+                text = await asyncio.to_thread(
+                    file_path.read_text, encoding="utf-8", errors="strict"
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Could not read Library skill import file '{file_path}'."
+                )
+                self._apply_library_skills_import_status("Could not read that file.")
+                return
+            data = text.encode("utf-8")
+        else:
+            self._apply_library_skills_import_status("Unsupported file type.")
+            return
+
+        try:
+            await self._run_library_service_call(
+                import_skill_file,
+                data,
+                mode="local",
+                filename=file_path.name,
+                content_type=content_type,
+                trust_approved=False,
+                isolate_in_worker=True,
+            )
+        except Exception as exc:
+            self._apply_library_skills_import_outcome_from_exception(
+                self._safe_text(file_path.stem, max_length=64), exc,
+            )
+            return
+
+        self._apply_library_skills_import_success()
+
+    def _apply_library_skills_import_success(self) -> None:
+        """Report a successful single-skill import and refresh the rail/list."""
+        self._library_skills_import_path = ""
+        self._apply_library_skills_import_status(
+            "1 imported · re-review it in the trust panel"
+        )
+        self._refresh_local_source_snapshot()
+
+    def _apply_library_skills_import_outcome_from_exception(
+        self, skill_name: str, exc: Exception,
+    ) -> None:
+        """Translate a failed import call into an honest, specific outcome line.
+
+        Never silently swallowed -- ``local_skill_exists:`` (the only
+        expected "the user tried to re-import a name that's already
+        there" case) is reported as a duplicate-name skip; every OTHER
+        exception (a bad skill name, an invalid supporting-file name, an
+        oversized field, a policy denial, or a plain read/parse failure)
+        is reported as a distinct failure, always clearing the in-flight
+        path so the Import row does not look stuck (mirrors
+        ``_run_library_prompts_import``'s unconditional path-clear at the
+        end of its per-file loop).
+        """
+        logger.opt(exception=True).warning(
+            f"Library skill import failed for {skill_name!r}."
+        )
+        self._library_skills_import_path = ""
+        if "local_skill_exists:" in str(exc):
+            self._apply_library_skills_import_status(
+                f"Skipped — a skill named \"{skill_name}\" already exists."
+            )
+            return
+        self._apply_library_skills_import_status("Could not import that skill.")
+
+    @staticmethod
+    def _find_skill_md_in_dir(directory: Path) -> Path | None:
+        """Return the directory's ``SKILL.md`` file, matched case-insensitively.
+
+        Returns:
+            The matched path, or ``None`` when the directory has no
+            top-level file named ``SKILL.md`` (any case).
+        """
+        exact = directory / _SKILL_MD_FILENAME
+        if exact.is_file():
+            return exact
+        try:
+            children = list(directory.iterdir())
+        except Exception:
+            return None
+        for child in children:
+            if child.is_file() and child.name.lower() == _SKILL_MD_FILENAME.lower():
+                return child
+        return None
+
+    @staticmethod
+    def _read_library_skill_import_supporting_files(
+        skill_dir: Path, skill_md_path: Path,
+    ) -> dict[str, str]:
+        """Read the skill directory's FLAT sibling files as supporting files.
+
+        Only immediate-child FILES are read (mirrors
+        ``local_skills_service._read_supporting_files``'s own flat-only
+        model) -- nested subdirectories (e.g. a real skill's own
+        ``references/`` folder) are skipped entirely rather than
+        recursed into or flattened, since the service's supporting-file
+        name pattern has no path-separator support. A sibling that fails
+        to decode as UTF-8 text (e.g. a binary asset) is skipped
+        individually rather than failing the whole import.
+
+        Args:
+            skill_dir: The skill's own directory.
+            skill_md_path: The directory's ``SKILL.md`` file (excluded
+                from the result).
+
+        Returns:
+            A ``{filename: content}`` mapping of every readable flat
+            sibling file, excluding ``SKILL.md`` itself.
+        """
+        supporting_files: dict[str, str] = {}
+        try:
+            children = sorted(skill_dir.iterdir(), key=lambda item: item.name)
+        except Exception:
+            return supporting_files
+        for child in children:
+            if not child.is_file() or child.resolve() == skill_md_path.resolve():
+                continue
+            try:
+                supporting_files[child.name] = child.read_text(encoding="utf-8", errors="strict")
+            except Exception:
+                logger.debug(f"Skipping unreadable Library skill supporting file '{child}'.")
+                continue
+        return supporting_files
+
+    @on(Button.Pressed, ".library-skill-row")
+    async def handle_library_skill_row(self, event: Button.Pressed) -> None:
+        """Select a skill row and open the in-canvas SKILL.md editor.
+
+        Mirrors ``handle_library_prompt_row``: switches the skills canvas
+        from its list view to the editor, clears any stale detail, and
+        kicks the async detail fetch (``_refresh_library_skill_detail``);
+        ``compose_content`` renders a loading line until that worker stores
+        the fetched detail and recomposes. Works for both trusted and
+        needs-review (blocked) rows alike -- a trust-blocked skill still
+        opens, with the trust panel primed from the fetched detail's
+        ``trust_changed_files``.
+
+        Vetoed while a previously-open skill is dirty (see
+        ``_flush_library_skill_save``): the skill editor is
+        explicit-Save-only (no autosave), so switching rows while dirty
+        would otherwise silently discard the in-progress edit.
+
+        Args:
+            event: Button press event emitted by a skill row button.
+        """
+        event.stop()
+        if not await self._flush_library_skill_save():
+            return
+        skill_name = getattr(event.button, "skill_name", None)
+        self._reset_library_skill_editor_state()
+        if isinstance(skill_name, str):
+            self._selected_skill_name = skill_name
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
+        self._library_skills_view = "editor"
+        if isinstance(skill_name, str):
+            # Exclusive in its own group so rapidly switching rows cancels
+            # the previous in-flight detail fetch instead of letting a
+            # slower older fetch finish and overwrite the newer selection's
+            # editor.
+            self.run_worker(
+                self._refresh_library_skill_detail(skill_name),
+                exclusive=True,
+                group="library_skill_detail",
+            )
+        self.refresh(recompose=True)
+
+    async def _refresh_library_skill_detail(self, skill_name: str) -> None:
+        """Fetch and store the full detail for a selected Library skill.
+
+        Mirrors ``_refresh_library_prompt_detail``: offloads the (possibly
+        blocking) ``get_skill`` service call via ``_run_library_service_call``
+        and recomposes once the fetched detail (or a cleared state) has
+        been stored.
+
+        Args:
+            skill_name: The Library skill name to fetch full detail for.
+        """
+        service = getattr(self.app_instance, "skills_scope_service", None)
+        get_skill = getattr(service, "get_skill", None)
+        if not callable(get_skill):
+            self._library_skill_detail = None
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+        try:
+            detail = await self._run_library_service_call(
+                get_skill,
+                skill_name,
+                mode="local",
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to load Library skill detail for {skill_name!r}."
+            )
+            detail = None
+        # Discard out-of-order results: the same stale-race guard as
+        # ``_refresh_library_prompt_detail``.
+        if skill_name != self._selected_skill_name or self._library_skills_view != "editor":
+            return
+        if not isinstance(detail, Mapping):
+            logger.info(
+                f"Library skill {skill_name!r} is no longer available; returning to list."
+            )
+            self._reset_library_skill_editor_state()
+            self._refresh_local_source_snapshot()
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+        self._apply_library_skill_detail(detail)
+
+    def _apply_library_skill_detail(self, detail: Mapping[str, Any]) -> None:
+        """Store a freshly-fetched skill detail and (re)render the editor.
+
+        Shared by the initial open (``_refresh_library_skill_detail``) and
+        a successful Save (whose response mapping is already a full detail
+        -- see ``_save_library_skill``'s docstring for why no separate
+        "refresh snapshot" fetch is needed there).
+
+        Args:
+            detail: A skill detail mapping shaped like ``get_skill``'s (or
+                a save call's) response.
+        """
+        self._library_skill_detail = dict(detail)
+        self._library_skill_editor_state = build_skill_editor_state(self._library_skill_detail)
+        self._library_skill_original_name = self._library_skill_editor_state.name
+        self._library_skill_dirty = False
+        self._library_skill_status = ""
+        self._library_skill_conflict = False
+        self._library_skill_active_review = None
+        self._library_skill_editor_armed = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_skill_editor)
+
+    def _arm_library_skill_editor(self) -> None:
+        """Enable dirty-tracking once the skill editor's mount-time
+        ``Input.Changed``/``TextArea.Changed`` (fired for the non-empty
+        initial values) has already been delivered, so it is never mistaken
+        for a real edit.
+        """
+        self._library_skill_editor_armed = True
+
+    def _enter_library_skill_create_editor(self) -> None:
+        """Open the in-canvas skill editor on a blank, not-yet-saved record.
+
+        Entered via the Create rail's "New skill" row
+        (``LIBRARY_ROW_CREATE_SKILL``, whose ``target_id`` is ``"skills"``
+        -- the SAME canvas kind Browse > Skills targets), mirroring
+        ``_enter_library_prompt_create_editor``'s "New prompt" row.
+
+        ``_selected_skill_name`` stays ``""``: the sentinel
+        ``_save_library_skill`` already reads (``is_create = not name``)
+        to route its scope-service ``create_skill`` call instead of
+        ``update_skill``, and the sentinel ``compose_content`` reads
+        (``is_create=not self._selected_skill_name``) to keep the Name
+        Input editable (an existing skill's Name Input is disabled --
+        there is no rename primitive).
+
+        ``_library_skill_editor_state`` is built directly from an empty
+        mapping (``build_skill_editor_state({})``) rather than left
+        ``None``: ``compose_content``'s skills-editor branch gates on
+        ``_library_skill_editor_state is None`` to show a "Loading
+        skill…" placeholder while the async detail fetch
+        (``_refresh_library_skill_detail``) is in flight -- there is no
+        fetch for a brand-new record, so leaving it ``None`` would show
+        that placeholder forever.
+        """
+        self._selected_skill_name = ""
+        self._library_skills_view = "editor"
+        self._library_skill_detail = {}
+        self._library_skill_editor_state = build_skill_editor_state({})
+        self._library_skill_original_name = ""
+        self._library_skill_dirty = False
+        self._library_skill_status = ""
+        self._library_skill_conflict = False
+        self._library_skill_active_review = None
+        self._library_skill_editor_armed = False
+
+    def _reset_library_skill_editor_state(self) -> None:
+        """Clear all in-canvas Library skill editor/save/trust state.
+
+        Shared by skill-row selection, Back, delete, and rail-row selection
+        so every exit from the editor leaves save/conflict/trust-review
+        tracking clean for the next skill.
+        """
+        self._library_skills_view = "list"
+        self._library_skill_detail = None
+        self._library_skill_original_name = ""
+        self._library_skill_editor_state = None
+        self._library_skill_dirty = False
+        self._library_skill_status = ""
+        self._library_skill_conflict = False
+        self._library_skill_active_review = None
+        self._library_skill_editor_armed = False
+
+    def _mark_library_skill_dirty(self) -> None:
+        """Record an in-progress skill edit.
+
+        Ignored until ``_library_skill_editor_armed`` is set (see that
+        flag's docstring). Unlike the notes editor, this never arms an
+        autosave timer -- the skill editor is explicit-Save-only.
+        """
+        if not self._library_skill_editor_armed:
+            return
+        self._library_skill_dirty = True
+
+    def _read_library_skill_live_name(self) -> str:
+        """Read the Name Input's current (possibly unsaved) value.
+
+        Falls back to the editor state's own name when the Input isn't
+        mounted (e.g. the conflict banner, which doesn't render the field
+        Inputs).
+        """
+        try:
+            return self.query_one("#library-skill-name", Input).value
+        except (NoMatches, QueryError):
+            state = self._library_skill_editor_state
+            return state.name if state is not None else ""
+
+    def _update_library_skill_warnings_static(self, *, name: str | None = None) -> None:
+        """Targeted update of ``#library-skill-warnings``, no recompose.
+
+        Args:
+            name: The live Name field value to compute the shadow warning
+                against. Defaults to the current editor state's name (used
+                right after a trust action, where the Name field itself
+                hasn't changed).
+        """
+        state = self._library_skill_editor_state
+        if state is None:
+            return
+        if name is None:
+            name = state.name
+        try:
+            warnings_static = self.query_one("#library-skill-warnings", Static)
+        except (NoMatches, QueryError):
+            return
+        lines = skill_editor_warning_lines(
+            live_name=name,
+            trust_status=state.trust_status,
+            trust_blocked=state.trust_blocked,
+        )
+        warnings_static.update("\n".join(lines))
+
+    def _update_library_skill_status_static(self, text: str) -> None:
+        """Targeted update of ``#library-skill-save-status``, no recompose.
+
+        Args:
+            text: The status copy to show (``""`` clears it).
+        """
+        self._library_skill_status = text
+        try:
+            status_static = self.query_one("#library-skill-save-status", Static)
+        except (NoMatches, QueryError):
+            return
+        status_static.update(text)
+
+    def _render_library_skill_trust_panel(self) -> None:
+        """Targeted update of the trust panel's state/changed-files/buttons,
+        no recompose -- called after every trust action and after a
+        successful Save, so an in-progress (unsaved) edit elsewhere in the
+        editor is never discarded by a full rebuild.
+        """
+        state = self._library_skill_editor_state
+        if state is None:
+            return
+        try:
+            self.query_one("#library-skill-trust-state", Static).update(
+                skill_trust_state_line(state.trust_status, state.trust_changed_files)
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
+            self.query_one("#library-skill-trust-review-files", Static).update(
+                ", ".join(
+                    str(item)
+                    for item in ((self._library_skill_active_review or {}).get("changed_files") or [])
+                )
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
+            self.query_one("#library-skill-trust-unlock", Button).disabled = (
+                not skill_trust_unlock_enabled(state.trust_status)
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
+            self.query_one("#library-skill-trust-review", Button).disabled = (
+                not skill_trust_review_enabled(state.trust_status, state.trust_blocked)
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
+            self.query_one("#library-skill-trust-approve", Button).disabled = (
+                self._library_skill_active_review is None
+            )
+        except (NoMatches, QueryError):
+            pass
+
+    @on(Input.Changed, "#library-skill-name")
+    def handle_library_skill_name_changed(self, event: Input.Changed) -> None:
+        """Mark the open skill dirty on a Name edit, and live-refresh the
+        shadow-name warning (unconditionally, not gated by "armed" -- the
+        warning is a plain live read, not a dirty-tracking concern).
+
+        Args:
+            event: Input change event emitted by the editor's Name field.
+        """
+        self._mark_library_skill_dirty()
+        self._update_library_skill_warnings_static(name=event.value)
+
+    @on(Input.Changed, "#library-skill-description")
+    @on(Input.Changed, "#library-skill-argument-hint")
+    @on(Input.Changed, "#library-skill-allowed-tools")
+    @on(Input.Changed, "#library-skill-model")
+    def handle_library_skill_input_changed(self, event: Input.Changed) -> None:
+        """Mark the open skill dirty on a field edit.
+
+        Args:
+            event: Input change event emitted by one of the editor's
+                single-line fields.
+        """
+        self._mark_library_skill_dirty()
+
+    @on(TextArea.Changed, "#library-skill-body")
+    def handle_library_skill_body_changed(self, event: TextArea.Changed) -> None:
+        """Mark the open skill dirty on a Body edit.
+
+        Args:
+            event: Text change event emitted by the editor's Body TextArea.
+        """
+        self._mark_library_skill_dirty()
+
+    def _update_library_skill_toggle_buttons(self) -> None:
+        """Targeted label update for the user-invocable/disable-model/context
+        toggle Buttons, no recompose."""
+        state = self._library_skill_editor_state
+        if state is None:
+            return
+        try:
+            self.query_one("#library-skill-user-invocable", Button).label = (
+                skill_user_invocable_label(state.user_invocable)
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
+            self.query_one("#library-skill-disable-model", Button).label = (
+                skill_disable_model_label(state.disable_model_invocation)
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
+            self.query_one("#library-skill-context", Button).label = (
+                skill_context_toggle_label(state.context)
+            )
+        except (NoMatches, QueryError):
+            pass
+
+    @on(Button.Pressed, "#library-skill-user-invocable")
+    def handle_library_skill_user_invocable_toggle(self, event: Button.Pressed) -> None:
+        """Toggle the open skill's ``user_invocable`` flag.
+
+        Args:
+            event: Button press event emitted by the user-invocable toggle.
+        """
+        event.stop()
+        state = self._library_skill_editor_state
+        if state is None:
+            return
+        self._library_skill_editor_state = dataclasses.replace(
+            state, user_invocable=not state.user_invocable
+        )
+        self._mark_library_skill_dirty()
+        self._update_library_skill_toggle_buttons()
+
+    @on(Button.Pressed, "#library-skill-disable-model")
+    def handle_library_skill_disable_model_toggle(self, event: Button.Pressed) -> None:
+        """Toggle the open skill's ``disable_model_invocation`` flag.
+
+        Args:
+            event: Button press event emitted by the disable-model toggle.
+        """
+        event.stop()
+        state = self._library_skill_editor_state
+        if state is None:
+            return
+        self._library_skill_editor_state = dataclasses.replace(
+            state, disable_model_invocation=not state.disable_model_invocation
+        )
+        self._mark_library_skill_dirty()
+        self._update_library_skill_toggle_buttons()
+
+    @on(Button.Pressed, "#library-skill-context")
+    def handle_library_skill_context_toggle(self, event: Button.Pressed) -> None:
+        """Cycle the open skill's ``context`` field between ``inline``/``fork``.
+
+        Args:
+            event: Button press event emitted by the context cycler.
+        """
+        event.stop()
+        state = self._library_skill_editor_state
+        if state is None:
+            return
+        self._library_skill_editor_state = dataclasses.replace(
+            state, context=next_skill_context(state.context)
+        )
+        self._mark_library_skill_dirty()
+        self._update_library_skill_toggle_buttons()
+
+    def _read_library_skill_editor_fields(
+        self,
+    ) -> tuple[str, str, str, str, str, str] | None:
+        """Read the skill editor's current (possibly unsaved) field values.
+
+        Returns:
+            ``(name, description, argument_hint, allowed_tools_csv, model,
+            body)`` read from the live widgets, or ``None`` if the editor
+            isn't mounted.
+        """
+        try:
+            name = self.query_one("#library-skill-name", Input).value
+            description = self.query_one("#library-skill-description", Input).value
+            argument_hint = self.query_one("#library-skill-argument-hint", Input).value
+            allowed_tools_csv = self.query_one("#library-skill-allowed-tools", Input).value
+            model = self.query_one("#library-skill-model", Input).value
+            body = self.query_one("#library-skill-body", TextArea).text
+        except (NoMatches, QueryError):
+            return None
+        return name, description, argument_hint, allowed_tools_csv, model, body
+
+    @on(Button.Pressed, "#library-skill-save")
+    def handle_library_skill_save(self, event: Button.Pressed) -> None:
+        """Explicitly save the open skill (there is no autosave).
+
+        Args:
+            event: Button press event emitted by the editor's "Save" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._save_library_skill(),
+            exclusive=True,
+            group="library_skill_save",
+        )
+
+    async def _save_library_skill(self) -> None:
+        """Save the open Library skill's current editor text.
+
+        Unlike the prompts editor (whose ``update_prompt_by_id`` has no
+        caller-supplied expected-version parameter, forcing a manual
+        pre-read staleness check), ``LocalSkillsService.update_skill``
+        accepts ``expected_version`` directly and raises
+        ``local_skill_version_conflict:...`` itself on a real mismatch --
+        so this never needs its own pre-read; ``classify_skill_save_error``
+        classifies whatever the real write call raises/returns.
+
+        The create/update response mapping is already a full skill detail
+        (``LocalSkillsService._response_for_record``'s shape, same as
+        ``get_skill``'s), so a successful save's "refresh snapshot" is just
+        rebuilding the editor state from THIS call's own result -- no
+        second service round-trip needed. This is also how the
+        save-marks-needs-review re-quarantine becomes visible without any
+        special-casing: the write never passes ``trust_approved=True``, so
+        a currently-trusted skill's post-save ``trust_status`` in the
+        response is already ``quarantined_modified``.
+        """
+        if self._library_skills_view != "editor":
+            return
+        name = self._selected_skill_name
+        is_create = not name
+        base_state = self._library_skill_editor_state
+        if base_state is None:
+            return
+        fields = self._read_library_skill_editor_fields()
+        if fields is None:
+            return
+        raw_name, raw_description, raw_argument_hint, raw_allowed_tools_csv, raw_model, raw_body = fields
+
+        live_name = self._sanitize_media_field(raw_name, max_length=64)
+        description = self._sanitize_note_content(raw_description, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS)
+        argument_hint = self._sanitize_media_field(raw_argument_hint, max_length=500)
+        allowed_tools_csv = self._sanitize_note_content(raw_allowed_tools_csv, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS)
+        model = self._sanitize_media_field(raw_model, max_length=128)
+        body = self._sanitize_note_content(raw_body, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS)
+
+        if is_create:
+            editor_name = live_name or base_state.name
+        else:
+            # Renaming an existing skill isn't supported -- the service has
+            # no rename primitive, and ``update_skill`` writes under the
+            # ORIGINAL directory name regardless of what the frontmatter's
+            # ``name`` field says. The Name Input is disabled for existing
+            # skills (see ``LibrarySkillsListCanvas._compose_editor``), but
+            # this pins the persisted name defensively too: even if the
+            # live value somehow diverged, the frontmatter written to disk
+            # never does, so a save can never get marked
+            # ``validation_status: "invalid"`` (name != parent directory
+            # name) the way it silently did before this fix.
+            editor_name = base_state.name
+
+        write_state = dataclasses.replace(
+            base_state,
+            name=editor_name,
+            description=description,
+            argument_hint=argument_hint or None,
+            allowed_tools_csv=allowed_tools_csv,
+            model=model or None,
+        )
+        content = compose_skill_markdown(write_state, body=body)
+
+        service = getattr(self.app_instance, "skills_scope_service", None)
+        create_skill = getattr(service, "create_skill", None)
+        update_skill = getattr(service, "update_skill", None)
+
+        result: Any = None
+        exc: Exception | None = None
+        if is_create:
+            if not callable(create_skill):
+                return
+            try:
+                result = await self._run_library_service_call(
+                    create_skill,
+                    mode="local",
+                    name=write_state.name,
+                    content=content,
+                    isolate_in_worker=True,
+                )
+            except Exception as caught:
+                exc = caught
+        else:
+            if not callable(update_skill):
+                return
+            try:
+                result = await self._run_library_service_call(
+                    update_skill,
+                    name,
+                    mode="local",
+                    content=content,
+                    expected_version=base_state.version,
+                    isolate_in_worker=True,
+                )
+            except Exception as caught:
+                exc = caught
+
+        # Discard out-of-order results, same stale-race guard as
+        # ``_refresh_library_skill_detail``/``_save_library_prompt``'s
+        # equivalent ``prompt_id != self._selected_prompt_id`` check --
+        # applied uniformly for creates too (``name`` was already ``""``
+        # at capture time when ``is_create``, so this still lets a
+        # still-in-flight create through as long as nothing else got
+        # selected meanwhile, but bails if a DIFFERENT skill's editor
+        # opened while this create was in flight).
+        if name != self._selected_skill_name or self._library_skills_view != "editor":
+            return
+
+        if exc is not None:
+            logger.opt(exception=True).warning(f"Library skill save failed for {name!r}.")
+            outcome = classify_skill_save_error(None, str(exc), exc)
+        else:
+            outcome = classify_skill_save_error(result, "", None)
+
+        if outcome == "version-conflict":
+            self._enter_library_skill_conflict()
+            return
+        if outcome != "ok":
+            self._update_library_skill_status_static(
+                LIBRARY_SKILL_SAVE_STATUS_COPY.get(outcome, LIBRARY_SKILL_SAVE_STATUS_COPY["error"])
+            )
+            return
+
+        self._apply_library_skill_save_success(result, is_create=is_create)
+
+    def _apply_library_skill_save_success(self, result: Any, *, is_create: bool) -> None:
+        """Apply a successful save's response: rebuild state, clear dirty,
+        show "Saved.", and refresh the trust panel + warnings in place.
+
+        Args:
+            result: The create/update call's response mapping (a full
+                skill detail).
+            is_create: Whether this save created a brand-new skill (adopts
+                the new name as ``_selected_skill_name`` and kicks a
+                snapshot refresh so the rail badge/list pick up the new
+                row).
+        """
+        if not isinstance(result, Mapping):
+            self._update_library_skill_status_static(LIBRARY_SKILL_SAVE_STATUS_COPY["error"])
+            return
+        # Deliberately NOT ``_apply_library_skill_detail`` (which recomposes
+        # + re-arms): recomposing here would remount fresh Input/TextArea
+        # widgets while the editor is still armed, and Textual's spurious
+        # mount-time ``Changed`` event for a non-empty initial value would
+        # immediately re-mark the just-saved skill dirty -- same discipline
+        # ``_save_library_prompt``'s success tail documents.
+        self._library_skill_detail = dict(result)
+        self._library_skill_editor_state = build_skill_editor_state(self._library_skill_detail)
+        self._library_skill_original_name = self._library_skill_editor_state.name
+        self._library_skill_dirty = False
+        if is_create:
+            self._selected_skill_name = self._library_skill_editor_state.name
+            # A brand-new skill changes the list's membership/count, so the
+            # Skills rail badge and list must pick up the new row now --
+            # fire-and-forget, mirrors ``_save_library_prompt``'s equivalent
+            # post-create refresh.
+            self._refresh_local_source_snapshot()
+        self._update_library_skill_status_static(LIBRARY_SKILL_SAVE_STATUS_COPY["ok"])
+        self._update_library_skill_warnings_static(name=self._read_library_skill_live_name())
+        self._render_library_skill_trust_panel()
+
+    def _enter_library_skill_conflict(self) -> None:
+        """Recompose into the save-conflict banner (Reload only -- see the
+        brief's narrower scope vs. the prompts editor's Overwrite+Reload;
+        ``update_skill``'s own ``expected_version`` guard is what raised
+        this, so nothing here needs to preserve/replay the user's kept
+        text the way the prompts conflict path does).
+        """
+        self._library_skill_conflict = True
+        self._library_skill_status = ""
+        self._library_skill_editor_armed = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_skill_editor)
+
+    @on(Button.Pressed, "#library-skill-conflict-reload")
+    def handle_library_skill_conflict_reload(self, event: Button.Pressed) -> None:
+        """Discard the conflicting edit and refetch the skill's fresh detail.
+
+        Args:
+            event: Button press event emitted by the conflict banner's
+                "Reload" action.
+        """
+        event.stop()
+        name = self._selected_skill_name
+        if not name:
+            return
+        self._library_skill_conflict = False
+        self.run_worker(
+            self._refresh_library_skill_detail(name),
+            exclusive=True,
+            group="library_skill_detail",
+        )
+
+    async def _flush_library_skill_save(self) -> bool:
+        """Veto leaving the skill editor while an edit is unsaved.
+
+        Mirrors ``_flush_library_prompt_save`` exactly: the skill editor is
+        explicit-Save-only, so this simply reports whether it is safe to
+        proceed -- ``False`` whenever ``_library_skill_dirty`` is set.
+
+        Returns:
+            ``True`` when there is nothing unsaved (safe to proceed);
+            ``False`` when a dirty edit must be resolved first.
+        """
+        return not self._library_skill_dirty
+
+    @on(Button.Pressed, "#library-skill-back")
+    async def handle_library_skill_back(self, event: Button.Pressed) -> None:
+        """Return the Library skills canvas from the editor to its list view.
+
+        Vetoed while dirty (see ``_flush_library_skill_save``) so Back
+        never silently discards an unsaved edit.
+
+        Args:
+            event: Button press event emitted by the "‹ Back to list" action.
+        """
+        event.stop()
+        if not await self._flush_library_skill_save():
+            return
+        self._reset_library_skill_editor_state()
+        self._refresh_local_source_snapshot()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skill-delete")
+    def handle_library_skill_delete(self, event: Button.Pressed) -> None:
+        """Delete the open skill and return to the list view.
+
+        Confirm-free by design (a single press deletes) -- matches the
+        notes/prompts delete affordance's "dim button, single press
+        acceptable" posture.
+
+        Args:
+            event: Button press event emitted by the editor's "Delete" action.
+        """
+        event.stop()
+        if self._library_skills_view != "editor" or not self._selected_skill_name:
+            return
+        self.run_worker(
+            self._delete_library_skill(self._selected_skill_name),
+            exclusive=True,
+            group="library_skill_delete",
+        )
+
+    async def _delete_library_skill(self, skill_name: str) -> None:
+        """Delete the selected Library skill, then return to the list view.
+
+        Args:
+            skill_name: The Library skill name to delete.
+        """
+        service = getattr(self.app_instance, "skills_scope_service", None)
+        delete_skill = getattr(service, "delete_skill", None)
+        if not callable(delete_skill):
+            self._update_library_skill_status_static("Skill deletion is unavailable.")
+            return
+        state = self._library_skill_editor_state
+        version = state.version if state is not None else None
+        try:
+            result = await self._run_library_service_call(
+                delete_skill,
+                skill_name,
+                mode="local",
+                expected_version=version,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(f"Failed to delete Library skill {skill_name!r}.")
+            if skill_name != self._selected_skill_name or self._library_skills_view != "editor":
+                return
+            self._update_library_skill_status_static("Could not delete this skill.")
+            return
+
+        if skill_name != self._selected_skill_name or self._library_skills_view != "editor":
+            return
+
+        deleted = bool(result.get("deleted", True)) if isinstance(result, Mapping) else bool(result)
+        if not deleted:
+            self._update_library_skill_status_static(
+                "This skill changed elsewhere — refresh and try again."
+            )
+            return
+
+        self._reset_library_skill_editor_state()
+        self._library_skills_filter = ""
+        self._refresh_local_source_snapshot()
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    async def _request_library_skill_trust_passphrase(self) -> str | None:
+        """Push the shared ``SkillTrustPassphraseModal`` and await a passphrase.
+
+        Mirrors ``skills_screen.SkillsScreen._request_skill_trust_passphrase``
+        (reused, not forked): never bootstraps from this editor, so
+        ``confirm_bootstrap`` is always ``False``.
+        """
+        push_screen_wait = getattr(self.app, "push_screen_wait", None)
+        if not callable(push_screen_wait):
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Local skill trust passphrase prompt is unavailable.", severity="warning")
+            return None
+        result = await push_screen_wait(SkillTrustPassphraseModal(confirm_bootstrap=False))
+        if isinstance(result, str) and result:
+            return result
+        return None
+
+    async def _call_library_skill_trust_service(
+        self,
+        method_name: str,
+        *args: Any,
+    ) -> tuple[Any, bool]:
+        """Call a ``local_skill_trust_service`` method off the UI loop.
+
+        Mirrors ``skills_screen.SkillsScreen._call_skill_trust_service``
+        (reused pattern, not forked): every ``SkillTrustService`` method
+        this editor calls is a plain sync method, offloaded via
+        ``asyncio.to_thread``.
+
+        Returns:
+            ``(result, True)`` on success, or ``(None, False)`` on any
+            failure (service unavailable or the call raised).
+        """
+        trust_service = getattr(self.app_instance, "local_skill_trust_service", None)
+        method = getattr(trust_service, method_name, None)
+        if not callable(method):
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Local skill trust service is unavailable.", severity="warning")
+            return None, False
+        try:
+            if inspect.iscoroutinefunction(method):
+                result = await method(*args)
+            else:
+                result = await asyncio.to_thread(method, *args)
+                if inspect.isawaitable(result):
+                    result = await result
+        except Exception as exc:
+            logger.warning(
+                "Local skill trust action failed.",
+                action=method_name,
+                error_type=type(exc).__name__,
+            )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Local skill trust action could not be completed.", severity="warning")
+            return None, False
+        return result, True
+
+    async def _refresh_library_skill_trust_status(self) -> None:
+        """Re-fetch the open skill's trust status and patch the trust panel
+        in place (no recompose -- see ``_render_library_skill_trust_panel``).
+        """
+        name = self._selected_skill_name
+        state = self._library_skill_editor_state
+        if not name or state is None:
+            return
+        result, ok = await self._call_library_skill_trust_service("status_for_skill", name)
+        if not ok or result is None:
+            return
+        if name != self._selected_skill_name or self._library_skills_view != "editor":
+            return
+        self._library_skill_editor_state = dataclasses.replace(
+            self._library_skill_editor_state,
+            trust_status=result.trust_status,
+            trust_blocked=result.trust_blocked,
+            trust_changed_files=tuple(result.changed_files),
+        )
+        self._render_library_skill_trust_panel()
+        self._update_library_skill_warnings_static(name=self._read_library_skill_live_name())
+
+    async def _request_library_skill_trust_bootstrap_passphrase(self) -> str | None:
+        """Push the confirm-passphrase bootstrap modal and await a passphrase.
+
+        Structural twin of ``_request_library_skill_trust_passphrase``: the
+        only difference is which modal it drives -- this one CREATES a
+        brand-new passphrase (twice-entry confirmed by
+        ``SkillTrustBootstrapModal`` itself), the other unlocks an existing
+        one.
+        """
+        push_screen_wait = getattr(self.app, "push_screen_wait", None)
+        if not callable(push_screen_wait):
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Local skill trust passphrase prompt is unavailable.", severity="warning")
+            return None
+        result = await push_screen_wait(SkillTrustBootstrapModal())
+        if isinstance(result, str) and result:
+            return result
+        return None
+
+    @on(Button.Pressed, "#library-skill-trust-setup")
+    def handle_library_skill_trust_setup(self, event: Button.Pressed) -> None:
+        """Bootstrap local skill trust from the editor's first-run setup state.
+
+        Only rendered while ``trust_status == "trust_uninitialized"`` (a
+        brand-new, never-bootstrapped trust store) -- the Phase-1 gate fix
+        for the finding that a fresh install had no live-UI path to create
+        the trust passphrase at all.
+
+        Args:
+            event: Button press event emitted by the trust panel's "Set up
+                skill trust" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._bootstrap_library_skill_trust(),
+            exclusive=True,
+            group="library_skill_trust",
+        )
+
+    async def _bootstrap_library_skill_trust(self) -> None:
+        """Create the initial trust baseline via a confirm-passphrase modal.
+
+        Unlike every other trust action here, ``bootstrap_trust`` is called
+        directly (never preceded by ``unlock_with_passphrase`` -- it takes
+        the new passphrase itself and derives+stores fresh keys). A full
+        recompose follows a successful bootstrap, not the usual targeted
+        ``_render_library_skill_trust_panel`` patch: the panel's layout
+        itself changes shape here, from the first-run setup state to the
+        normal Unlock/Review/Approve row, which a no-recompose patch can't
+        produce since those buttons don't exist in the DOM yet.
+        """
+        if self._library_skills_view != "editor" or self._library_skill_editor_state is None:
+            return
+        passphrase = await self._request_library_skill_trust_bootstrap_passphrase()
+        if passphrase is None:
+            return
+        _, ok = await self._call_library_skill_trust_service("bootstrap_trust", passphrase)
+        if not ok:
+            return
+        name = self._selected_skill_name
+        if name and self._library_skills_view == "editor" and self._library_skill_editor_state is not None:
+            result, status_ok = await self._call_library_skill_trust_service("status_for_skill", name)
+            if (
+                status_ok
+                and result is not None
+                and name == self._selected_skill_name
+                and self._library_skills_view == "editor"
+            ):
+                self._library_skill_editor_state = dataclasses.replace(
+                    self._library_skill_editor_state,
+                    trust_status=result.trust_status,
+                    trust_blocked=result.trust_blocked,
+                    trust_changed_files=tuple(result.changed_files),
+                )
+        self._library_skill_active_review = None
+        self._refresh_local_source_snapshot()
+        if self.is_mounted:
+            # Disarm dirty-tracking before the recompose (mirrors
+            # ``_apply_library_skill_detail``): remounting the Inputs with
+            # their existing values still fires their initial
+            # ``Input.Changed`` -- without this, still-armed dirty-tracking
+            # would misread that as a real edit and wrongly mark the editor
+            # dirty (vetoing the next Back/row-switch for no reason).
+            self._library_skill_dirty = False
+            self._library_skill_editor_armed = False
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_skill_editor)
+
+    @on(Button.Pressed, "#library-skill-trust-unlock")
+    def handle_library_skill_trust_unlock(self, event: Button.Pressed) -> None:
+        """Unlock local skill trust for this session via the passphrase modal.
+
+        Args:
+            event: Button press event emitted by the trust panel's "Unlock"
+                action.
+        """
+        event.stop()
+        self.run_worker(
+            self._unlock_library_skill_trust(),
+            exclusive=True,
+            group="library_skill_trust",
+        )
+
+    async def _unlock_library_skill_trust(self) -> None:
+        if self._library_skills_view != "editor":
+            return
+        passphrase = await self._request_library_skill_trust_passphrase()
+        if passphrase is None:
+            return
+        _, ok = await self._call_library_skill_trust_service("unlock_with_passphrase", passphrase)
+        if ok:
+            await self._refresh_library_skill_trust_status()
+
+    @on(Button.Pressed, "#library-skill-trust-review")
+    def handle_library_skill_trust_review(self, event: Button.Pressed) -> None:
+        """Capture a trust review snapshot for the open (blocked) skill.
+
+        Args:
+            event: Button press event emitted by the trust panel's "Review
+                changes" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._review_library_skill_trust(),
+            exclusive=True,
+            group="library_skill_trust",
+        )
+
+    async def _review_library_skill_trust(self) -> None:
+        if self._library_skills_view != "editor" or not self._selected_skill_name:
+            return
+        name = self._selected_skill_name
+        result, ok = await self._call_library_skill_trust_service("capture_review", name)
+        if not ok or not isinstance(result, Mapping) or not result.get("review_id"):
+            return
+        if name != self._selected_skill_name or self._library_skills_view != "editor":
+            return
+        self._library_skill_active_review = dict(result)
+        self._render_library_skill_trust_panel()
+
+    @on(Button.Pressed, "#library-skill-trust-approve")
+    def handle_library_skill_trust_approve(self, event: Button.Pressed) -> None:
+        """Approve the captured trust review via the passphrase modal.
+
+        Args:
+            event: Button press event emitted by the trust panel's
+                "Approve" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._approve_library_skill_trust(),
+            exclusive=True,
+            group="library_skill_trust",
+        )
+
+    async def _approve_library_skill_trust(self) -> None:
+        if self._library_skills_view != "editor" or self._library_skill_active_review is None:
+            return
+        name = self._selected_skill_name
+        review_id = self._library_skill_active_review.get("review_id")
+        if not review_id:
+            return
+        passphrase = await self._request_library_skill_trust_passphrase()
+        if passphrase is None:
+            return
+        _, unlock_ok = await self._call_library_skill_trust_service(
+            "unlock_with_passphrase", passphrase
+        )
+        if not unlock_ok:
+            return
+        _, ok = await self._call_library_skill_trust_service(
+            "trust_reviewed_snapshot", review_id
+        )
+        if not ok:
+            return
+        if name != self._selected_skill_name or self._library_skills_view != "editor":
+            return
+        self._library_skill_active_review = None
+        await self._refresh_library_skill_trust_status()
+
+    @on(Button.Pressed, "#library-prompts-import")
+    def handle_library_prompts_import(self, event: Button.Pressed) -> None:
+        """Open the inline Import row below the prompts toolbar.
+
+        Idempotent while already open -- pressing Import… again does not
+        close it. Cancel is the only way to close the row once opened,
+        avoiding a confusing double-duty toggle that would also hide a
+        just-shown outcome line.
+
+        Args:
+            event: Button press event emitted by the "Import…" action.
+        """
+        event.stop()
+        if self._library_prompts_import_open:
+            return
+        self._library_prompts_import_open = True
+        self._library_prompts_import_path = ""
+        self._library_prompts_import_status = ""
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-prompts-import-cancel")
+    def handle_library_prompts_import_cancel(self, event: Button.Pressed) -> None:
+        """Close the inline Import row, discarding any typed path/outcome.
+
+        Args:
+            event: Button press event emitted by the Import row's
+                "Cancel" action.
+        """
+        event.stop()
+        self._library_prompts_import_open = False
+        self._library_prompts_import_path = ""
+        self._library_prompts_import_status = ""
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-prompts-import-browse")
+    def handle_library_prompts_import_browse(self, event: Button.Pressed) -> None:
+        """Push a ``FileOpen`` dialog to pick a local file for prompt import
+        (Task 8b D4).
+
+        Mirrors ``handle_library_ingest_browse``'s dialog flow exactly. The
+        shared ``FileOpen`` dialog (``Third_Party/textual_fspicker``) has no
+        directory-selection mode, so this only covers the file case --
+        importing a folder still requires typing its path into the Import
+        row's path ``Input`` by hand.
+
+        Args:
+            event: Button press event emitted by the "Browse…" action.
+        """
+        event.stop()
+
+        async def browse_callback(selected_path: Path | None) -> None:
+            if selected_path is None:
+                return
+            self._library_prompts_import_path = str(selected_path)
+            self.refresh(recompose=True)
+
+        self.app.push_screen(
+            FileOpen(title="Import Prompts (file)"),
+            browse_callback,
+        )
+
+    @on(Input.Changed, "#library-prompts-import-path")
+    def handle_library_prompts_import_path_changed(self, event: Input.Changed) -> None:
+        """Track the Import row's path text as the user types it (state only).
+
+        Args:
+            event: Input change event emitted by the Import row's path field.
+        """
+        event.stop()
+        self._library_prompts_import_path = event.value
+
+    @on(Input.Submitted, "#library-prompts-import-path")
+    def handle_library_prompts_import_path_submitted(self, event: Input.Submitted) -> None:
+        """Run the import when Enter is pressed in the Import row's path field.
+
+        Args:
+            event: Input submission event emitted by the Import row's
+                path field.
+        """
+        event.stop()
+        self._start_library_prompts_import()
+
+    @on(Button.Pressed, "#library-prompts-import-run")
+    def handle_library_prompts_import_run(self, event: Button.Pressed) -> None:
+        """Run the import when the Import row's "Import" action is pressed.
+
+        Args:
+            event: Button press event emitted by the Import row's
+                "Import" action.
+        """
+        event.stop()
+        self._start_library_prompts_import()
+
+    def _start_library_prompts_import(self) -> None:
+        """Validate the Import row has a non-blank path, then run the import worker.
+
+        Worker-executed (exclusive, its own group) since it performs file
+        IO plus one or more service calls per parsed prompt -- never
+        inline on the UI thread. A blank path is a quiet inline status
+        line, matching every other Library form's "nothing to do yet"
+        gate (e.g. ``_submit_library_ingest_form``'s blank-path notice).
+        """
+        if self._library_prompts_view != "list":
+            return
+        raw_path = self._library_prompts_import_path.strip()
+        if not raw_path:
+            self._apply_library_prompts_import_status("Please enter a file or folder path.")
+            return
+        self.run_worker(
+            self._run_library_prompts_import(raw_path),
+            exclusive=True,
+            group="library_prompts_import",
+        )
+
+    def _apply_library_prompts_import_status(self, text: str) -> None:
+        """Set the Import row's outcome line and recompose to show it."""
+        self._library_prompts_import_status = text
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    async def _run_library_prompts_import(self, raw_path: str) -> None:
+        """Import prompts from a file or folder path, skipping duplicate names.
+
+        Deliberately does NOT use
+        ``Prompts_Interop.import_prompts_from_files``: that helper's own
+        write path (``add_or_update_prompt_interop``) hardcodes
+        ``overwrite=True`` with no parameter to opt out, and writes
+        directly through the global interop DB singleton, bypassing
+        ``prompt_scope_service``/``LocalPromptService`` entirely -- both
+        violate this feature's "duplicate name = skip, never overwrite"
+        contract and this codebase's "UI writes only through the scope
+        service" rule. Instead, each supported file is read and parsed via
+        the same module-level parser functions
+        ``import_prompts_from_files`` itself dispatches to
+        (``parse_json_prompts_from_content`` etc. -- see
+        ``_LIBRARY_PROMPT_IMPORT_PARSERS``), and each parsed prompt is
+        created individually through the service layer, mirroring
+        ``_save_library_prompt``'s own duplicate-name pre-check (a
+        ``get_prompt`` lookup by name, ``include_deleted=True``, since
+        ``Prompts.name`` is globally unique regardless of soft-delete
+        state) before ever attempting a write -- a soft-deleted name is
+        treated as "taken" too, matching "never overwrite/suffix".
+
+        A file that fails to read/parse (invalid JSON/YAML, decode error)
+        is logged and skipped WHOLE -- it never partially applies some of
+        its prompts while silently discarding the rest because of a
+        parse-time exception.
+
+        Args:
+            raw_path: The Import row's typed path (file or folder),
+                already known non-blank by the caller.
+        """
+        try:
+            validated_path = validate_path_simple(
+                Path(raw_path).expanduser(), require_exists=True
+            )
+        except ValueError:
+            logger.opt(exception=True).warning(
+                f"Rejected Library prompts import path {raw_path!r}."
+            )
+            self._apply_library_prompts_import_status("Could not find that file or folder.")
+            return
+
+        if validated_path.is_dir():
+            try:
+                files = sorted(
+                    child for child in validated_path.iterdir()
+                    if child.is_file() and child.suffix.lower() in _LIBRARY_PROMPT_IMPORT_PARSERS
+                )
+            except Exception:
+                # Same quiet-status pattern as the per-file read below --
+                # e.g. a folder whose permissions were revoked after the
+                # path-validation check above (TOCTOU) must surface an
+                # honest outcome line, never hang or silently report
+                # "No supported prompt files found."
+                logger.opt(exception=True).warning(
+                    f"Could not enumerate Library prompt import folder '{validated_path}'."
+                )
+                self._apply_library_prompts_import_status("Could not read that folder.")
+                return
+        elif validated_path.is_file():
+            if validated_path.suffix.lower() not in _LIBRARY_PROMPT_IMPORT_PARSERS:
+                self._apply_library_prompts_import_status("Unsupported file type.")
+                return
+            files = [validated_path]
+        else:
+            self._apply_library_prompts_import_status("Could not find that file or folder.")
+            return
+
+        if not files:
+            self._apply_library_prompts_import_status("No supported prompt files found.")
+            return
+
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        get_prompt = getattr(service, "get_prompt", None)
+        save_prompt = getattr(service, "save_prompt", None)
+        if not callable(get_prompt) or not callable(save_prompt):
+            self._apply_library_prompts_import_status("Prompt import is unavailable.")
+            return
+
+        imported = 0
+        skipped = 0
+        failed = 0
+        for file_path in files:
+            parser = _LIBRARY_PROMPT_IMPORT_PARSERS[file_path.suffix.lower()]
+            try:
+                content = await asyncio.to_thread(
+                    file_path.read_text, encoding="utf-8", errors="strict"
+                )
+                parsed_prompts = parser(content)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Could not parse Library prompt import file '{file_path}'; skipping it whole."
+                )
+                continue
+
+            for prompt_data in parsed_prompts:
+                if not isinstance(prompt_data, Mapping):
+                    continue
+                name = self._sanitize_media_field(prompt_data.get("name") or "", max_length=300)
+                if not name:
+                    continue
+                try:
+                    existing = await self._run_library_service_call(
+                        get_prompt,
+                        mode="local",
+                        prompt_identifier=name,
+                        include_deleted=True,
+                        isolate_in_worker=True,
+                    )
+                except Exception:
+                    existing = None
+                if isinstance(existing, Mapping) and existing.get("local_id") is not None:
+                    skipped += 1
+                    continue
+
+                author = self._sanitize_media_field(
+                    prompt_data.get("author") or "", max_length=200
+                ) or None
+                details = self._sanitize_note_content(
+                    prompt_data.get("details") or "", max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+                )
+                system_prompt = self._sanitize_note_content(
+                    prompt_data.get("system_prompt") or "", max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+                )
+                user_prompt = self._sanitize_note_content(
+                    prompt_data.get("user_prompt") or "", max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+                )
+                keywords = [
+                    self._sanitize_media_field(str(kw), max_length=100)
+                    for kw in (prompt_data.get("keywords") or ())
+                    if str(kw).strip()
+                ] or None
+
+                try:
+                    await self._run_library_service_call(
+                        save_prompt,
+                        mode="local",
+                        name=name,
+                        author=author,
+                        details=details,
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        keywords=keywords,
+                        isolate_in_worker=True,
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"Failed to import Library prompt '{name}' from '{file_path}'."
+                    )
+                    failed += 1
+                    continue
+                imported += 1
+
+        self._library_prompts_import_path = ""
+        status = f"{imported} imported · {skipped} skipped (duplicate name)"
+        if failed:
+            status = f"{status} · {failed} failed"
+        self._apply_library_prompts_import_status(status)
+        self._refresh_local_source_snapshot()
+
+    @on(Button.Pressed, ".library-prompt-row")
+    async def handle_library_prompt_row(self, event: Button.Pressed) -> None:
+        """Select a prompt row and open the in-canvas Library prompt editor.
+
+        Switches the prompts canvas from its list view to the editor,
+        clears any stale detail, and kicks the async detail fetch
+        (``_refresh_library_prompt_detail``); ``compose_content`` renders a
+        loading line until that worker stores the fetched detail and
+        recomposes. Mirrors ``handle_library_notes_row``.
+
+        Vetoed while a previously-open prompt is dirty (see
+        ``_flush_library_prompt_save``): the prompt editor is
+        explicit-Save-only (no autosave), so switching rows while dirty
+        would otherwise silently discard the in-progress edit.
+
+        Args:
+            event: Button press event emitted by a prompt row button.
+        """
+        event.stop()
+        if not await self._flush_library_prompt_save():
+            return
+        prompt_id = getattr(event.button, "prompt_id", None)
+        self._reset_library_prompt_editor_state()
+        if isinstance(prompt_id, int):
+            self._selected_prompt_id = prompt_id
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
+        self._library_prompts_view = "editor"
+        if isinstance(prompt_id, int):
+            # Exclusive in its own group so rapidly switching rows cancels
+            # the previous in-flight detail fetch instead of letting a
+            # slower older fetch finish and overwrite the newer selection's
+            # editor.
+            self.run_worker(
+                self._refresh_library_prompt_detail(prompt_id),
+                exclusive=True,
+                group="library_prompt_detail",
+            )
+        self.refresh(recompose=True)
+
+    async def _refresh_library_prompt_detail(self, prompt_id: int) -> None:
+        """Fetch and store the full detail for a selected Library prompt.
+
+        Mirrors ``_refresh_library_note_detail``: offloads the (possibly
+        blocking) ``get_prompt`` service call via ``_run_library_service_call``
+        and recomposes once the fetched detail (or a cleared state) has
+        been stored.
+
+        Unlike notes' ``get_note_detail`` (which never carries keywords, so
+        the editor separately enriches via ``_fetch_library_note_keywords``),
+        the local backend's ``get_prompt`` seam is backed by
+        ``PromptsDatabase.fetch_prompt_details``, which already joins
+        keywords into the returned mapping -- no second enrichment call is
+        needed here.
+
+        Args:
+            prompt_id: The Library prompt id to fetch full detail for.
+        """
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        get_prompt = getattr(service, "get_prompt", None)
+        if not callable(get_prompt):
+            self._library_prompt_detail = None
+            self._library_prompt_version = None
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+        try:
+            detail = await self._run_library_service_call(
+                get_prompt,
+                mode="local",
+                prompt_identifier=prompt_id,
+                include_deleted=True,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to load Library prompt detail for {prompt_id!r}."
+            )
+            detail = None
+        # Discard out-of-order results: the same stale-race guard as
+        # ``_refresh_library_note_detail``.
+        if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+            return
+        if not isinstance(detail, Mapping):
+            logger.info(
+                f"Library prompt {prompt_id!r} is no longer available; returning to list."
+            )
+            self._reset_library_prompt_editor_state()
+            self._refresh_local_source_snapshot()
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+        self._library_prompt_detail = dict(detail)
+        editor_state = build_prompt_editor_state(self._library_prompt_detail)
+        self._library_prompt_original_name = editor_state.name
+        self._library_prompt_version = editor_state.version
+        self._library_prompt_dirty = False
+        self._library_prompt_status = ""
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_editor_armed = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_prompt_editor)
+
+    def _arm_library_prompt_editor(self) -> None:
+        """Enable dirty-tracking once the prompt editor's mount-time
+        ``Input.Changed``/``TextArea.Changed`` (fired for the non-empty
+        initial values) has already been delivered, so it is never mistaken
+        for a real edit.
+        """
+        self._library_prompt_editor_armed = True
+
+    def _enter_library_prompt_create_editor(self) -> None:
+        """Open the in-canvas prompt editor on a blank, not-yet-saved record.
+
+        Entered via the Create rail's "New prompt" row
+        (``LIBRARY_ROW_CREATE_PROMPT``, whose ``target_id`` is ``"prompts"``
+        -- the SAME canvas kind Browse > Prompts targets -- and via the
+        Duplicate action (see ``handle_library_prompt_duplicate``, which
+        pre-fills the blank record from the current prompt's fields after
+        calling this).
+
+        ``_selected_prompt_id`` stays ``None``: the sentinel
+        ``_save_library_prompt`` reads to route its scope-service
+        ``save_prompt`` call into the create path (``prompt_identifier=None``)
+        instead of update, and the sentinel ``prompt_editor_meta_line`` reads
+        to render "New prompt" instead of "Modified … · vN".
+        ``_library_prompt_detail`` is set to ``{}`` (not ``None``) so the
+        editor renders blank fields immediately -- ``None`` would instead
+        show the "Loading prompt…" placeholder the browse-and-fetch path
+        uses while ``_refresh_library_prompt_detail`` is in flight; there is
+        nothing to fetch here.
+        """
+        self._selected_prompt_id = None
+        self._library_prompts_view = "editor"
+        self._library_prompt_detail = {}
+        self._library_prompt_original_name = ""
+        self._library_prompt_version = None
+        self._library_prompt_dirty = False
+        self._library_prompt_status = ""
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_editor_armed = False
+
+    def _reset_library_prompt_editor_state(self) -> None:
+        """Clear all in-canvas Library prompt editor/save state.
+
+        Shared by prompt-row selection, Back, delete, and rail-row
+        selection so every exit from the editor leaves save/conflict
+        tracking clean for the next prompt.
+        """
+        self._library_prompts_view = "list"
+        self._library_prompt_detail = None
+        self._library_prompt_original_name = ""
+        self._library_prompt_version = None
+        self._library_prompt_dirty = False
+        self._library_prompt_status = ""
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_editor_armed = False
+
+    def _mark_library_prompt_dirty(self) -> None:
+        """Record an in-progress prompt edit.
+
+        Ignored until ``_library_prompt_editor_armed`` is set (see that
+        flag's docstring). Unlike the notes editor, this never arms an
+        autosave timer -- the prompt editor is explicit-Save-only.
+
+        Task 8c U6: the dirty flag was previously invisible until the
+        ``flush_pending_work`` veto fired on nav-away. On the False->True
+        transition, this patches ``#library-prompt-meta`` in place (via
+        ``_update_library_prompt_meta_static``, the same targeted-Static
+        pattern ``save-status`` already uses) so the unsaved marker appears
+        immediately -- deliberately NOT a full ``self.refresh(recompose=True)``,
+        which would remount the Input/TextArea fields on every keystroke and
+        re-trigger their spurious mount-time ``Changed`` event. Guarded to
+        the transition only (not every subsequent keystroke) since the
+        flag/marker do not change again until Save or navigation.
+        """
+        if not self._library_prompt_editor_armed:
+            return
+        was_dirty = self._library_prompt_dirty
+        self._library_prompt_dirty = True
+        if not was_dirty:
+            self._update_library_prompt_meta_static()
+
+    @on(Input.Changed, "#library-prompt-name")
+    @on(Input.Changed, "#library-prompt-author")
+    @on(Input.Changed, "#library-prompt-details")
+    @on(Input.Changed, "#library-prompt-keywords")
+    def handle_library_prompt_input_changed(self, event: Input.Changed) -> None:
+        """Mark the open prompt dirty on a field edit.
+
+        Args:
+            event: Input change event emitted by one of the editor's
+                single-line fields.
+        """
+        self._mark_library_prompt_dirty()
+
+    @on(TextArea.Changed, "#library-prompt-system")
+    @on(TextArea.Changed, "#library-prompt-user")
+    def handle_library_prompt_textarea_changed(self, event: TextArea.Changed) -> None:
+        """Mark the open prompt dirty on a System/User prompt edit.
+
+        Args:
+            event: Text change event emitted by one of the editor's
+                ``TextArea`` fields.
+        """
+        self._mark_library_prompt_dirty()
+
+    def _read_library_prompt_editor_fields(
+        self,
+    ) -> tuple[str, str, str, str, str, str] | None:
+        """Read the prompt editor's current (possibly unsaved) field values.
+
+        Returns:
+            ``(name, author, details, system_prompt, user_prompt,
+            keywords_text)`` read from the live widgets, or ``None`` if the
+            editor isn't mounted.
+        """
+        try:
+            name = self.query_one("#library-prompt-name", Input).value
+            author = self.query_one("#library-prompt-author", Input).value
+            details = self.query_one("#library-prompt-details", Input).value
+            keywords_text = self.query_one("#library-prompt-keywords", Input).value
+            system_prompt = self.query_one("#library-prompt-system", TextArea).text
+            user_prompt = self.query_one("#library-prompt-user", TextArea).text
+        except (NoMatches, QueryError):
+            return None
+        return name, author, details, system_prompt, user_prompt, keywords_text
+
+    def _update_library_prompt_status_static(self, text: str) -> None:
+        """Targeted update of ``#library-prompt-save-status``, no recompose.
+
+        Args:
+            text: The status copy to show (``""`` clears it).
+        """
+        self._library_prompt_status = text
+        try:
+            status_static = self.query_one("#library-prompt-save-status", Static)
+        except (NoMatches, QueryError):
+            return
+        status_static.update(text)
+
+    async def _sync_library_prompt_open_existing_button(self, *, show: bool) -> None:
+        """Targeted mount/removal of ``#library-prompt-open-existing`` (Task
+        8b D3), no recompose.
+
+        ``_update_library_prompt_status_static`` (its sibling, called
+        alongside this everywhere a save outcome is classified) never
+        recomposes the editor either -- doing so here would rebuild the
+        fields from the stale ``_library_prompt_detail`` mapping (the
+        just-rejected name-in-use edit was never written there), silently
+        discarding the user's in-progress text. Mirrors
+        ``_refresh_collections_panel_action_state_widgets``'s targeted
+        mount/remove pattern instead.
+
+        Args:
+            show: Whether the button should be present.
+        """
+        existing = list(self.query("#library-prompt-open-existing"))
+        if show and not existing:
+            try:
+                status_static = self.query_one("#library-prompt-save-status", Static)
+            except (NoMatches, QueryError):
+                return
+            parent = status_static.parent
+            if parent is None:
+                return
+            await parent.mount(
+                Button(
+                    "Open existing",
+                    id="library-prompt-open-existing",
+                    classes="library-canvas-action",
+                    compact=True,
+                ),
+                after=status_static,
+            )
+        elif not show and existing:
+            for button in existing:
+                await button.remove()
+
+    async def _apply_library_prompt_save_outcome(self, outcome: str, *, name: str = "") -> None:
+        """Set the save-status text for a classified outcome AND sync the
+        D3 Open-existing affordance to match it, together (no recompose --
+        see ``_sync_library_prompt_open_existing_button``'s docstring).
+
+        Args:
+            outcome: A ``classify_prompt_save_error`` return value.
+            name: The attempted name that produced this outcome. Only
+                meaningful (and only stashed) when ``outcome ==
+                "name-in-use"`` -- captured here, at the moment the status
+                is set, rather than re-derived later from the live Name
+                field by ``_open_library_prompt_colliding_with_current_name``,
+                which can have drifted if the user keeps typing after a
+                failed Save without re-saving (Task 8b Fix wave 1 Minor).
+        """
+        self._library_prompt_name_in_use = name if outcome == "name-in-use" else ""
+        self._update_library_prompt_status_static(
+            LIBRARY_PROMPT_SAVE_STATUS_COPY.get(outcome, LIBRARY_PROMPT_SAVE_STATUS_COPY["error"])
+        )
+        await self._sync_library_prompt_open_existing_button(show=outcome == "name-in-use")
+
+    def _update_library_prompt_meta_static(self) -> None:
+        """Targeted update of ``#library-prompt-meta``, no recompose.
+
+        Re-derives the meta line from ``_library_prompt_detail`` (the
+        just-patched, post-save mirror) via the same pure
+        ``prompt_editor_meta_line`` helper the editor's initial render
+        uses, so a successful save's version bump -- or (Task 8c U6) a
+        dirty-flag flip -- shows up without remounting the ``Input``/
+        ``TextArea`` fields (which would re-arm-race the editor and risk
+        the mount-time ``Changed`` event being mistaken for a fresh edit;
+        see ``_mark_library_prompt_dirty``, this method's other caller).
+        """
+        if not isinstance(self._library_prompt_detail, Mapping):
+            return
+        try:
+            meta_static = self.query_one("#library-prompt-meta", Static)
+        except (NoMatches, QueryError):
+            return
+        meta_static.update(
+            prompt_editor_meta_line(
+                build_prompt_editor_state(self._library_prompt_detail),
+                dirty=self._library_prompt_dirty,
+            )
+        )
+
+    @on(Button.Pressed, "#library-prompt-save")
+    def handle_library_prompt_save(self, event: Button.Pressed) -> None:
+        """Explicitly save the open prompt, bypassing no debounce (there is
+        none -- the prompt editor never autosaves).
+
+        Args:
+            event: Button press event emitted by the editor's "Save" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._save_library_prompt(),
+            exclusive=True,
+            group="library_prompt_save",
+        )
+
+    async def _save_library_prompt(self) -> None:
+        """Save the open Library prompt's current editor text.
+
+        The prompts DB's update seam (``update_prompt_by_id``, reached via
+        ``PromptScopeService.save_prompt``) has no caller-supplied
+        expected-version parameter of its own -- it always re-derives the
+        version to bump from a fresh read inside its own transaction, so it
+        cannot detect "this editor's cached version is stale" by itself.
+        This method does that staleness check itself, via a fresh
+        ``get_prompt`` read, BEFORE attempting the real write.
+
+        Likewise, a rename to another prompt's name needs to distinguish
+        "that name belongs to an active prompt" (name-in-use) from "that
+        name belongs to a soft-deleted prompt" (soft-deleted-name) --
+        outcomes the real ``update_prompt_by_id`` cannot cleanly
+        distinguish either (both ultimately surface as the same
+        ``ConflictError``/wrapped-``DatabaseError`` shape once the actual
+        write is attempted, since ``Prompts.name`` is globally unique
+        regardless of soft-delete state). So a rename is pre-checked by a
+        name lookup too, before ever attempting the write.
+
+        Every branch re-checks that the prompt this save was *for* is still
+        selected (and the editor still showing) before mutating shared
+        state, mirroring ``_save_library_note``'s stale-result guard.
+
+        Task 8b D1: ``prompt_id is None`` (``_selected_prompt_id`` unset) is
+        the create-flow sentinel -- set by
+        ``_enter_library_prompt_create_editor``/``handle_library_prompt_duplicate``,
+        never a stray/invalid state (a browsed prompt always has a real
+        int id). ``save_prompt`` already routes ``prompt_identifier=None``
+        to its own create path (``PromptScopeService.save_prompt``), so the
+        actual write call below is unchanged between create and update --
+        only the pre-checks (the version-staleness read has nothing to
+        check for a not-yet-created prompt) and the post-write bookkeeping
+        (adopting the freshly created id) differ, per ``is_create`` below.
+        """
+        if self._library_prompts_view != "editor":
+            return
+        prompt_id = self._selected_prompt_id
+        is_create = prompt_id is None
+        fields = self._read_library_prompt_editor_fields()
+        if fields is None:
+            return
+        raw_name, raw_author, raw_details, raw_system, raw_user, raw_keywords_text = fields
+
+        name = self._sanitize_media_field(raw_name, max_length=300)
+        author = self._sanitize_media_field(raw_author, max_length=200)
+        details = self._sanitize_note_content(raw_details, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS)
+        system_prompt = self._sanitize_note_content(raw_system, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS)
+        user_prompt = self._sanitize_note_content(raw_user, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS)
+        keywords = self._library_note_keywords_from_input(raw_keywords_text)
+
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        get_prompt = getattr(service, "get_prompt", None)
+        save_prompt = getattr(service, "save_prompt", None)
+        if not callable(get_prompt) or not callable(save_prompt):
+            return
+
+        if name and name != self._library_prompt_original_name:
+            try:
+                candidate = await self._run_library_service_call(
+                    get_prompt,
+                    mode="local",
+                    prompt_identifier=name,
+                    include_deleted=True,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                candidate = None
+            if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+                return
+            candidate_id = candidate.get("local_id") if isinstance(candidate, Mapping) else None
+            if candidate_id is not None and candidate_id != prompt_id:
+                if candidate.get("deleted"):
+                    outcome = classify_prompt_save_error(
+                        None, f"Prompt '{name}' exists but is soft-deleted.", None
+                    )
+                else:
+                    outcome = classify_prompt_save_error(
+                        None, f"Prompt '{name}' already exists.", None
+                    )
+                await self._apply_library_prompt_save_outcome(outcome, name=name)
+                return
+
+        if not is_create:
+            # A not-yet-created prompt has no existing row to have gone
+            # stale -- skip the pre-read entirely rather than calling
+            # ``get_prompt(prompt_identifier=None)`` (which would only
+            # raise, harmlessly swallowed by the ``except`` below, but is
+            # wasted work with no real check to perform).
+            try:
+                fresh = await self._run_library_service_call(
+                    get_prompt,
+                    mode="local",
+                    prompt_identifier=prompt_id,
+                    include_deleted=True,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                fresh = None
+            if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+                return
+            fresh_version = fresh.get("version") if isinstance(fresh, Mapping) else None
+            if (
+                fresh_version is not None
+                and self._library_prompt_version is not None
+                and fresh_version != self._library_prompt_version
+            ):
+                self._enter_library_prompt_conflict(
+                    name=raw_name,
+                    author=raw_author,
+                    details=raw_details,
+                    system_prompt=raw_system,
+                    user_prompt=raw_user,
+                    keywords_text=raw_keywords_text,
+                )
+                return
+
+        try:
+            result = await self._run_library_service_call(
+                save_prompt,
+                mode="local",
+                prompt_identifier=prompt_id,
+                name=name,
+                author=author,
+                details=details,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                keywords=keywords,
+                isolate_in_worker=True,
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Library prompt save failed for {prompt_id!r}.")
+            if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+                return
+            outcome = classify_prompt_save_error(None, str(exc), exc)
+            if outcome == "conflict":
+                # A genuine race the pre-checks above could not see (e.g. a
+                # second app instance or an external writer landing between
+                # this save's pre-read and its real write) -- route into
+                # the SAME conflict banner the pre-check staleness path
+                # uses above, seeded from the same live (raw, unsanitized)
+                # field values, rather than falling through to the generic
+                # error status line.
+                self._enter_library_prompt_conflict(
+                    name=raw_name,
+                    author=raw_author,
+                    details=raw_details,
+                    system_prompt=raw_system,
+                    user_prompt=raw_user,
+                    keywords_text=raw_keywords_text,
+                )
+                return
+            await self._apply_library_prompt_save_outcome(outcome, name=name)
+            return
+
+        if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+            return
+
+        result_id = result.get("local_id") if isinstance(result, Mapping) else (1 if result else None)
+        outcome = classify_prompt_save_error(result_id, "", None)
+        if outcome != "ok":
+            await self._apply_library_prompt_save_outcome(outcome)
+            return
+
+        new_id = result_id if is_create else prompt_id
+        version = result.get("version") if isinstance(result, Mapping) else None
+        self._library_prompt_version = (
+            version if version is not None else (self._library_prompt_version or 0) + 1
+        )
+        patched_detail: dict[str, Any] = (
+            dict(self._library_prompt_detail)
+            if isinstance(self._library_prompt_detail, Mapping)
+            else {}
+        )
+        patched_detail["id"] = new_id
+        patched_detail["name"] = name
+        patched_detail["author"] = author
+        patched_detail["details"] = details
+        patched_detail["system_prompt"] = system_prompt
+        patched_detail["user_prompt"] = user_prompt
+        patched_detail["version"] = self._library_prompt_version
+        if isinstance(result, Mapping):
+            if "keywords" in result:
+                patched_detail["keywords"] = result["keywords"]
+            if result.get("last_modified"):
+                patched_detail["last_modified"] = result["last_modified"]
+        elif keywords is not None:
+            patched_detail["keywords"] = keywords
+        self._library_prompt_detail = patched_detail
+        self._library_prompt_original_name = name
+        self._library_prompt_dirty = False
+        if is_create:
+            # Adopts the freshly created id -- every subsequent save for
+            # this editor session is now an update against a real row (the
+            # `is_create`/staleness-pre-check-skip branches above only ever
+            # apply once, to the create itself).
+            self._selected_prompt_id = new_id
+            # Unlike a plain in-place field update (which defers the
+            # broader snapshot refresh to when the editor is actually left
+            # -- see the comment below), a brand-new prompt changes the
+            # list's membership/count, so the Prompts rail badge and list
+            # must pick up the new row now. Fire-and-forget, mirrors
+            # ``_create_library_note``'s equivalent post-create refresh.
+            self._refresh_local_source_snapshot()
+        # Targeted updates only (no recompose): the fields already hold the
+        # user's just-saved text, so nothing there needs to change -- only
+        # the meta line's version and the status line need to reflect the
+        # save. Mirrors ``_save_library_note``'s discipline (it "never
+        # recomposes, so the TextArea/Input widget instances stay identical
+        # across a save"): recomposing here would remount fresh Input/
+        # TextArea widgets while the editor is still armed, and Textual's
+        # spurious mount-time ``Changed`` event for a non-empty initial
+        # value would immediately re-mark the just-saved prompt dirty.
+        self._update_library_prompt_meta_static()
+        # A prior attempt within this same editor session may have left the
+        # D3 Open-existing button mounted (e.g. a name-in-use retry that
+        # then succeeded with a different name) -- clear it alongside the
+        # "Saved." status, same combined helper the failure branches above
+        # use.
+        await self._apply_library_prompt_save_outcome("ok")
+        # The broader local-source snapshot (rail badge / list ordering) is
+        # deliberately NOT refreshed here -- it would recompose the whole
+        # canvas (see the comment above) while this editor is still open
+        # and armed. It refreshes when the editor is actually left instead
+        # (``handle_library_prompt_back``, delete), the same point notes'
+        # save flow defers its own snapshot patch to.
+
+    def _enter_library_prompt_conflict(
+        self,
+        *,
+        name: str,
+        author: str,
+        details: str,
+        system_prompt: str,
+        user_prompt: str,
+        keywords_text: str,
+    ) -> None:
+        """Recompose into the save-conflict banner, seeded from live text.
+
+        Args:
+            name: The editor's live Name field value at Save time.
+            author: The editor's live Author field value at Save time.
+            details: The editor's live Details field value at Save time.
+            system_prompt: The editor's live System prompt field value.
+            user_prompt: The editor's live User prompt field value.
+            keywords_text: The editor's live Keywords field value.
+        """
+        self._library_prompt_conflict_snapshot = PromptEditorState(
+            prompt_id=self._selected_prompt_id,
+            name=name,
+            author=author,
+            details=details,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            keywords_csv=keywords_text,
+            version=self._library_prompt_version,
+            created="",
+            modified=(
+                self._library_prompt_detail.get("last_modified", "")
+                if isinstance(self._library_prompt_detail, Mapping)
+                else ""
+            ),
+        )
+        self._library_prompt_status = ""
+        self._library_prompt_editor_armed = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_prompt_editor)
+
+    async def _flush_library_prompt_save(self) -> bool:
+        """Veto leaving the prompt editor while an edit is unsaved.
+
+        Unlike the notes editor (autosave debounced on every keystroke),
+        the prompt editor is explicit-Save-only: there is no pending
+        background save to wait for or silently trigger here. This simply
+        reports whether it is safe to proceed -- ``False`` whenever
+        ``_library_prompt_dirty`` is set, so the caller (``flush_pending_work``,
+        prompt-row selection, Back, rail-row selection) aborts the
+        navigation/switch and leaves the user's edit in place for them to
+        explicitly Save or abandon, mirroring the veto shape
+        ``_flush_library_note_save`` gives ``flush_pending_work`` on a
+        genuine save failure.
+
+        Returns:
+            ``True`` when there is nothing unsaved (safe to proceed);
+            ``False`` when a dirty edit must be resolved first.
+        """
+        return not self._library_prompt_dirty
+
+    @on(Button.Pressed, "#library-prompt-insert-console")
+    def handle_library_prompt_insert_console(self, event: Button.Pressed) -> None:
+        """Stage the open prompt's live User prompt text for Console and navigate there.
+
+        ChatHandoffPayload-free direct route (Task 12): unlike this screen's
+        other "Use in Console" actions (notes/media/conversations, which
+        stage a richer, RAG-evidence-aware ``ChatHandoffPayload``), a prompt
+        only ever needs to hand a bare string to the Console composer --
+        appended onto whatever draft already exists there, never replacing
+        it (``TldwCli.stage_console_prompt_insert``).
+
+        Reads the editor's LIVE (possibly-unsaved) User prompt text,
+        mirroring Save's own field read -- what you currently see in the
+        editor is what gets inserted. Refuses while the editor has an
+        unsaved edit: navigating away would otherwise be vetoed by
+        ``_flush_library_prompt_save`` (leaving a staged insert to fire
+        unexpectedly on some later, unrelated Console visit) -- the same
+        "resolve the dirty edit first" rule Back/rail-row selection already
+        enforce.
+
+        Args:
+            event: Button press event emitted by the editor's "Use in
+                Console" action.
+        """
+        event.stop()
+        notify = getattr(self.app_instance, "notify", None)
+        if self._library_prompts_view != "editor":
+            return
+        if self._library_prompt_dirty:
+            if callable(notify):
+                notify(
+                    "Save your changes before using this prompt in Console.",
+                    severity="warning",
+                )
+            return
+        fields = self._read_library_prompt_editor_fields()
+        if fields is None:
+            return
+        _name, _author, _details, _system_prompt, raw_user_prompt, _keywords_text = fields
+        user_prompt = self._sanitize_note_content(
+            raw_user_prompt, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        )
+        if not user_prompt.strip():
+            if callable(notify):
+                notify(
+                    "This prompt has no user prompt text to insert.",
+                    severity="warning",
+                )
+            return
+        stage = getattr(self.app_instance, "stage_console_prompt_insert", None)
+        if not callable(stage):
+            if callable(notify):
+                notify("Console insert is unavailable.", severity="warning")
+            return
+        stage(user_prompt)
+
+    @on(Button.Pressed, "#library-prompt-back")
+    async def handle_library_prompt_back(self, event: Button.Pressed) -> None:
+        """Return the Library prompts canvas from the editor to its list view.
+
+        Vetoed while dirty (see ``_flush_library_prompt_save``) so Back
+        never silently discards an unsaved edit.
+
+        Also kicks the full local-source snapshot refetch (the notes Back
+        handler's same pattern): any save made during this editor visit
+        only patched ``_library_prompt_detail`` in place (see
+        ``_save_library_prompt``, which deliberately skips a broader
+        snapshot refresh while the editor is still open), so the list's
+        ordering/rail badge are only guaranteed fresh once this refetch
+        lands -- safe to fire now since the editor is no longer mounted to
+        be spuriously re-dirtied by the recompose it eventually triggers.
+
+        Args:
+            event: Button press event emitted by the "‹ Back to list" action.
+        """
+        event.stop()
+        if not await self._flush_library_prompt_save():
+            return
+        self._reset_library_prompt_editor_state()
+        self._refresh_local_source_snapshot()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-prompt-export")
+    async def handle_library_prompt_export(self, event: Button.Pressed) -> None:
+        """Export the open prompt as Markdown via a ``FileSave`` dialog.
+
+        Args:
+            event: Button press event emitted by the editor's "Export…" action.
+        """
+        event.stop()
+        await self._export_library_prompt()
+
+    async def _export_library_prompt(self) -> None:
+        """Push the Export dialog for the open Library prompt.
+
+        Mirrors ``_export_library_note`` exactly (see that method's
+        docstring for the full ``FileSave`` constructor-shape rationale):
+        a ``FileSave`` prompt pre-filled with a sanitized default filename,
+        whose callback renders and writes the export once a path is
+        chosen. Reads the *live* editor widgets (via
+        ``_read_library_prompt_editor_fields``), never the DB/detail
+        mapping, so unlike Save there is nothing to flush first -- the
+        export reflects exactly what's on screen, including unsaved edits.
+        """
+        if self._library_prompts_view != "editor" or not self._selected_prompt_id:
+            return
+        fields = self._read_library_prompt_editor_fields()
+        if fields is None:
+            return
+        name, author, details, system_prompt, user_prompt, keywords_text = fields
+        prompt_id = self._selected_prompt_id
+        # Same inline sanitize-for-filename technique as
+        # ``_export_library_note``'s ``safe_title`` -- alnum/space/-/_ only,
+        # falling back to a generic name when that leaves nothing (e.g. a
+        # prompt named entirely in punctuation/emoji).
+        safe_name = "".join(
+            char for char in (name.strip() or "prompt") if char.isalnum() or char in (" ", "-", "_")
+        ).rstrip() or "prompt"
+        default_filename = f"{safe_name}.md"
+        await self.app.push_screen(
+            FileSave(
+                location=str(Path.home()),
+                title="Export Prompt as Markdown",
+                default_file=default_filename,
+            ),
+            callback=lambda path: self.call_after_refresh(
+                self._write_library_prompt_export_file,
+                path,
+                name,
+                author,
+                details,
+                system_prompt,
+                user_prompt,
+                keywords_text,
+                prompt_id,
+            ),
+        )
+
+    def _write_library_prompt_export_file(
+        self,
+        selected_path: Path | None,
+        name: str,
+        author: str,
+        details: str,
+        system_prompt: str,
+        user_prompt: str,
+        keywords_text: str,
+        prompt_id: int,
+    ) -> None:
+        """Write the exported prompt content to the path chosen via ``FileSave``.
+
+        Mirrors ``_write_library_note_export_file`` exactly: runs the
+        dialog-returned path through ``validate_path_simple`` (the same
+        base-directory-free validator this screen uses for every other
+        user-chosen save path) before writing, and is a plain (not async)
+        method since the write is a synchronous ``Path.write_text`` --
+        ``call_after_refresh`` (its only caller) accepts either.
+
+        Args:
+            selected_path: The chosen destination, or ``None`` if the
+                dialog was cancelled.
+            name: The prompt's live (possibly unsaved) name.
+            author: The prompt's live author.
+            details: The prompt's live details text.
+            system_prompt: The prompt's live system-prompt text.
+            user_prompt: The prompt's live user-prompt text.
+            keywords_text: The prompt's live keywords, as a
+                comma-separated string.
+            prompt_id: The prompt's id (used only for logging).
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if not selected_path:
+            if callable(notify):
+                notify("Prompt export cancelled.", severity="information")
+            return
+        try:
+            validated_path = validate_path_simple(selected_path, require_exists=False)
+        except ValueError as exc:
+            logger.warning(
+                f"Rejected Library prompt export path {selected_path!r} for {prompt_id!r}: {exc}"
+            )
+            if callable(notify):
+                notify(f"Rejected export path: {exc}", severity="warning")
+            return
+        keywords = self._library_note_keywords_from_input(keywords_text) or []
+        detail = {
+            "name": name,
+            "author": author,
+            "details": details,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "keywords": keywords,
+        }
+        try:
+            validated_path.write_text(render_prompt_markdown(detail), encoding="utf-8")
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Error exporting Library prompt {prompt_id!r} to '{validated_path}'.")
+            if callable(notify):
+                notify(f"Error exporting prompt: {type(exc).__name__}", severity="error")
+            return
+        if callable(notify):
+            notify(f"Prompt exported successfully to {validated_path.name}", severity="information")
+
+    @on(Button.Pressed, "#library-prompt-duplicate")
+    def handle_library_prompt_duplicate(self, event: Button.Pressed) -> None:
+        """Open the editor on a NEW blank-id record pre-filled from the
+        current prompt's fields (Task 8b U3).
+
+        Reads the *live* editor widgets (never the DB/detail mapping) --
+        same rationale as ``_export_library_prompt``: the duplicate should
+        carry whatever is currently on screen, including unsaved edits, not
+        revert to the last-saved text. The name becomes ``"<name> (copy)"``;
+        the new record is dirty/unsaved by construction (unlike the D1
+        blank-create entry, which starts clean). Reuses the D1 create path
+        on Save (``_selected_prompt_id`` is ``None``, exactly like
+        ``_enter_library_prompt_create_editor``'s sentinel).
+
+        Args:
+            event: Button press event emitted by the editor's "Duplicate" action.
+        """
+        event.stop()
+        if self._library_prompts_view != "editor":
+            return
+        fields = self._read_library_prompt_editor_fields()
+        if fields is None:
+            return
+        name, author, details, system_prompt, user_prompt, keywords_text = fields
+        self._selected_prompt_id = None
+        self._library_prompt_detail = {
+            "name": f"{name} (copy)",
+            "author": author,
+            "details": details,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            # A raw CSV string is a valid `keywords` input for
+            # `build_prompt_editor_state`/`_csv_from_keywords` (it passes a
+            # `str` through verbatim after stripping) -- preserves the live
+            # Keywords field's exact text rather than round-tripping it
+            # through a list.
+            "keywords": keywords_text,
+        }
+        self._library_prompt_original_name = ""
+        self._library_prompt_version = None
+        self._library_prompt_status = ""
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_dirty = True
+        self._library_prompt_editor_armed = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_prompt_editor)
+
+    @on(Button.Pressed, "#library-prompt-delete")
+    def handle_library_prompt_delete(self, event: Button.Pressed) -> None:
+        """Soft-delete the open prompt and return to the list view.
+
+        Confirm-free by design (a single press deletes) -- unlike the
+        notes editor's Delete/Cancel inline confirmation, matching the
+        brief's "dim button, single press acceptable" delete affordance
+        while still sharing the same danger-tier styling class.
+
+        Args:
+            event: Button press event emitted by the editor's "Delete" action.
+        """
+        event.stop()
+        if self._library_prompts_view != "editor" or not self._selected_prompt_id:
+            return
+        self.run_worker(
+            self._delete_library_prompt(self._selected_prompt_id),
+            exclusive=True,
+            group="library_prompt_delete",
+        )
+
+    async def _delete_library_prompt(self, prompt_id: int) -> None:
+        """Delete the selected Library prompt, then return to the list view.
+
+        Calls ``delete_prompt`` through the offloaded service seam. On
+        success, reruns the full local-source snapshot (the same seam the
+        notes delete flow uses) so the list view and the rail's Prompts
+        count both reflect the deletion, then resets the editor state and
+        returns to the list view.
+
+        Args:
+            prompt_id: The Library prompt id to delete.
+        """
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        delete_prompt = getattr(service, "delete_prompt", None)
+        if not callable(delete_prompt):
+            self._update_library_prompt_status_static("Prompt deletion is unavailable.")
+            return
+        try:
+            deleted = await self._run_library_service_call(
+                delete_prompt,
+                mode="local",
+                prompt_identifier=prompt_id,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(f"Failed to delete Library prompt {prompt_id!r}.")
+            if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+                return
+            self._update_library_prompt_status_static("Could not delete this prompt.")
+            return
+
+        # Discard a stale result: the user has since switched to a different
+        # prompt (or left the editor) while this delete was in flight.
+        if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+            return
+
+        if not deleted:
+            # Targeted status update only (no recompose) -- same discipline
+            # as `_save_library_prompt`'s outcome branches: the fields are
+            # unchanged, so remounting them here would spuriously re-dirty
+            # the (armed, still-open) editor via Textual's mount-time
+            # `Changed` event for a non-empty initial value.
+            self._update_library_prompt_status_static(
+                "This prompt changed elsewhere — refresh and try again."
+            )
+            return
+
+        self._reset_library_prompt_editor_state()
+        self._library_prompts_filter = ""
+        # Reuses the same full local-source reload the notes delete flow
+        # uses (already its own exclusive worker via @work) so the list
+        # view and the rail's Prompts count both drop the deleted prompt --
+        # fire-and-forget, not awaited (see `_save_library_prompt`'s
+        # matching comment for why).
+        self._refresh_local_source_snapshot()
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-prompt-open-existing")
+    def handle_library_prompt_open_existing(self, event: Button.Pressed) -> None:
+        """Discard the current unsaved edit and open the prompt whose name
+        collided with it (Task 8b D3).
+
+        Only rendered while the status line shows the name-in-use outcome
+        (see ``compose_content``'s ``show_open_existing`` flag). Unlike
+        every other "leave the editor" action, this deliberately does NOT
+        go through ``_flush_library_prompt_save``'s dirty veto: a
+        name-in-use status implies the very edit that triggered it IS the
+        (still-unsaved) dirty state, so vetoing here would make the button
+        permanently inert. This mirrors the conflict banner's Reload
+        action, which also discards the local edit unconditionally.
+
+        Args:
+            event: Button press event emitted by the "Open existing" action.
+        """
+        event.stop()
+        if self._library_prompts_view != "editor":
+            return
+        self.run_worker(
+            self._open_library_prompt_colliding_with_current_name(),
+            exclusive=True,
+            group="library_prompt_open_existing",
+        )
+
+    async def _open_library_prompt_colliding_with_current_name(self) -> None:
+        """Resolve the name that triggered the name-in-use status to its
+        colliding prompt and open it, replacing the current unsaved edit.
+
+        Task 8b Fix wave 1 (Minor): resolves against
+        ``_library_prompt_name_in_use`` -- the exact name captured when the
+        status was set (see ``_apply_library_prompt_save_outcome`` and
+        ``_return_to_library_prompt_create_draft``) -- rather than
+        re-reading the editor's live Name field. The two can drift: this
+        button (``show_open_existing``) stays mounted for as long as the
+        status line reads name-in-use, but nothing clears that status if
+        the user keeps typing in the Name field without re-saving, so a
+        live re-read could resolve (or fail to resolve) against a name the
+        user has since changed their mind about, not the one that actually
+        collided. Falls back to the live field only if the captured name
+        is unset, for robustness against any future caller that reaches
+        this without going through the two capture points above.
+
+        Args:
+            None.
+        """
+        name = self._library_prompt_name_in_use
+        if not name:
+            fields = self._read_library_prompt_editor_fields()
+            if fields is None:
+                return
+            name = self._sanitize_media_field(fields[0], max_length=300)
+        if not name:
+            return
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        get_prompt = getattr(service, "get_prompt", None)
+        if not callable(get_prompt):
+            return
+        try:
+            candidate = await self._run_library_service_call(
+                get_prompt,
+                mode="local",
+                prompt_identifier=name,
+                include_deleted=False,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to resolve the colliding Library prompt named {name!r}."
+            )
+            return
+        if self._library_prompts_view != "editor":
+            return
+        candidate_id = candidate.get("local_id") if isinstance(candidate, Mapping) else None
+        if candidate_id is None:
+            return
+        self._reset_library_prompt_editor_state()
+        self._selected_prompt_id = candidate_id
+        self._library_prompts_view = "editor"
+        if self.is_mounted:
+            self.refresh(recompose=True)
+        self.run_worker(
+            self._refresh_library_prompt_detail(candidate_id),
+            exclusive=True,
+            group="library_prompt_detail",
+        )
+
+    async def _resolve_library_prompt_conflict(self, *, overwrite: bool) -> None:
+        """Resolve a shown save conflict via the Overwrite or Reload action.
+
+        Both paths silently re-fetch the prompt's current server-side
+        detail first (no "Loading…" placeholder -- the conflict UI stays
+        put while this happens). Mirrors ``_resolve_library_note_conflict``.
+
+        * ``overwrite=True``: take only the fresh ``version`` from that
+          detail and re-save the user's *live* (kept) text with that
+          version.
+        * ``overwrite=False``: discard the local edits and recompose the
+          editor from the freshly fetched detail.
+
+        Either path falls back to the list view when the re-fetch
+        discovers the prompt was deleted elsewhere entirely.
+
+        Task 8b Fix wave 1: ``prompt_id is None`` here is the CREATE-flow
+        sentinel (``_enter_library_prompt_create_editor``), not a "nothing
+        to resolve" state -- a create's own write can raise a genuine
+        ``ConflictError`` too (``_save_library_prompt``'s create-path
+        write, racing another writer for the same name), which routes
+        into this same conflict banner. That case has no existing row of
+        its own to re-fetch a version from or overwrite, so it is
+        delegated to ``_resolve_library_prompt_create_conflict`` instead
+        of falling through this method's update-path body (which assumes
+        a real, previously-persisted ``prompt_id`` throughout). Previously
+        this method's guard (``if not prompt_id: return``) treated the
+        create sentinel as a no-op for BOTH buttons, which also never
+        cleared ``_library_prompt_dirty`` -- permanently trapping the user
+        behind the conflict banner (``_flush_library_prompt_save`` vetoes
+        Back/rail-row/prompt-row/app-tab navigation while dirty).
+
+        Args:
+            overwrite: ``True`` for Overwrite, ``False`` for Reload.
+        """
+        snapshot = self._library_prompt_conflict_snapshot
+        if snapshot is None:
+            return
+        prompt_id = self._selected_prompt_id
+        if prompt_id is None:
+            await self._resolve_library_prompt_create_conflict(
+                overwrite=overwrite, snapshot=snapshot
+            )
+            return
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        get_prompt = getattr(service, "get_prompt", None)
+        if not callable(get_prompt):
+            return
+        try:
+            detail = await self._run_library_service_call(
+                get_prompt,
+                mode="local",
+                prompt_identifier=prompt_id,
+                include_deleted=True,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to reload Library prompt {prompt_id!r} after a save conflict."
+            )
+            return
+        if prompt_id != self._selected_prompt_id:
+            return  # The user navigated away while the re-fetch was in flight.
+
+        if not isinstance(detail, Mapping):
+            logger.info(
+                f"Library prompt {prompt_id!r} is no longer available; returning to list."
+            )
+            self._reset_library_prompt_editor_state()
+            self._refresh_local_source_snapshot()
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+
+        if not overwrite:
+            self._library_prompt_detail = dict(detail)
+            editor_state = build_prompt_editor_state(self._library_prompt_detail)
+            self._library_prompt_original_name = editor_state.name
+            self._library_prompt_version = editor_state.version
+            self._library_prompt_conflict_snapshot = None
+            self._library_prompt_dirty = False
+            self._library_prompt_status = ""
+            self._library_prompt_editor_armed = False
+            if self.is_mounted:
+                self.refresh(recompose=True)
+                self.call_after_refresh(self._arm_library_prompt_editor)
+            return
+
+        fresh_version = build_prompt_editor_state(detail).version
+        if fresh_version is None:
+            return
+        snapshot = self._library_prompt_conflict_snapshot
+        name = self._sanitize_media_field(snapshot.name, max_length=300)
+        author = self._sanitize_media_field(snapshot.author, max_length=200)
+        details = self._sanitize_note_content(snapshot.details, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS)
+        system_prompt = self._sanitize_note_content(
+            snapshot.system_prompt, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        )
+        user_prompt = self._sanitize_note_content(
+            snapshot.user_prompt, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        )
+        keywords = self._library_note_keywords_from_input(snapshot.keywords_csv)
+
+        save_prompt = getattr(service, "save_prompt", None)
+        if not callable(save_prompt):
+            return
+        try:
+            result = await self._run_library_service_call(
+                save_prompt,
+                mode="local",
+                prompt_identifier=prompt_id,
+                name=name,
+                author=author,
+                details=details,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                keywords=keywords,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to overwrite Library prompt {prompt_id!r} after a save conflict."
+            )
+            return
+        if prompt_id != self._selected_prompt_id:
+            return
+
+        version = result.get("version") if isinstance(result, Mapping) else None
+        self._library_prompt_version = version if version is not None else fresh_version + 1
+        patched_detail: dict[str, Any] = (
+            dict(self._library_prompt_detail)
+            if isinstance(self._library_prompt_detail, Mapping)
+            else {}
+        )
+        patched_detail["id"] = prompt_id
+        patched_detail["name"] = name
+        patched_detail["author"] = author
+        patched_detail["details"] = details
+        patched_detail["system_prompt"] = system_prompt
+        patched_detail["user_prompt"] = user_prompt
+        patched_detail["version"] = self._library_prompt_version
+        if isinstance(result, Mapping) and "keywords" in result:
+            patched_detail["keywords"] = result["keywords"]
+        elif keywords is not None:
+            patched_detail["keywords"] = keywords
+        self._library_prompt_detail = patched_detail
+        self._library_prompt_original_name = name
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_dirty = False
+        self._library_prompt_status = LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"]
+        # This recompose swaps the conflict banner's Overwrite/Reload
+        # actions back for the normal action row (a real mode change,
+        # unlike the plain Save success path above), so it also remounts
+        # the Input/TextArea fields -- disarm first (mirroring every other
+        # recompose in this editor) so their spurious mount-time `Changed`
+        # is not mistaken for a fresh edit.
+        self._library_prompt_editor_armed = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_prompt_editor)
+
+    async def _resolve_library_prompt_create_conflict(
+        self, *, overwrite: bool, snapshot: PromptEditorState
+    ) -> None:
+        """Resolve a save conflict raised by the CREATE flow's own write.
+
+        Unlike ``_resolve_library_prompt_conflict``'s update-path handling
+        (which re-fetches ITS row's fresh version to overwrite against, or
+        to reload from), a create has no existing row of its own -- the
+        ``ConflictError`` here means some OTHER prompt now holds the name
+        the user typed (a genuine race ``_save_library_prompt``'s
+        pre-check could not see; see that method's create-path ``except``
+        branch). So there is nothing to re-fetch; recovery is built
+        entirely from ``snapshot``, the conflict banner's kept text:
+
+        * ``overwrite=True``: retries the create with the kept text,
+          unchanged. A repeat "conflict" outcome re-shows this same
+          banner (never a silent no-op); any other outcome (e.g.
+          "name-in-use", "soft-deleted-name", or a generic error) returns
+          to a plain, editable create draft with the kept text still in
+          the fields and an honest status line -- the failed attempt
+          remains open for the user to fix and re-save, exactly like a
+          fresh create's own first-attempt failure.
+        * ``overwrite=False``: abandons the kept text and returns to a
+          fresh, blank create editor (mirrors
+          ``_enter_library_prompt_create_editor``) -- the closest analog
+          to Reload for a record that was never actually saved to reload
+          FROM.
+
+        Both paths clear ``_library_prompt_dirty``/the conflict snapshot,
+        so ``_flush_library_prompt_save`` stops vetoing Back/rail-row/
+        prompt-row/app-tab navigation -- the trap the finding described.
+
+        Args:
+            overwrite: ``True`` for Overwrite, ``False`` for Reload.
+            snapshot: The conflict banner's kept editor state (the
+                create attempt's live field values at Save time).
+        """
+        if not overwrite:
+            self._enter_library_prompt_create_editor()
+            if self.is_mounted:
+                self.refresh(recompose=True)
+                self.call_after_refresh(self._arm_library_prompt_editor)
+            return
+
+        service = getattr(self.app_instance, "prompt_scope_service", None)
+        save_prompt = getattr(service, "save_prompt", None)
+        if not callable(save_prompt):
+            return
+
+        name = self._sanitize_media_field(snapshot.name, max_length=300)
+        author = self._sanitize_media_field(snapshot.author, max_length=200)
+        details = self._sanitize_note_content(snapshot.details, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS)
+        system_prompt = self._sanitize_note_content(
+            snapshot.system_prompt, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        )
+        user_prompt = self._sanitize_note_content(
+            snapshot.user_prompt, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        )
+        keywords = self._library_note_keywords_from_input(snapshot.keywords_csv)
+
+        try:
+            result = await self._run_library_service_call(
+                save_prompt,
+                mode="local",
+                prompt_identifier=None,
+                name=name,
+                author=author,
+                details=details,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                keywords=keywords,
+                isolate_in_worker=True,
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                "Library prompt create-retry failed after a save conflict."
+            )
+            if self._library_prompt_conflict_snapshot is not snapshot:
+                return  # The user navigated away while the retry was in flight.
+            outcome = classify_prompt_save_error(None, str(exc), exc)
+            if outcome == "conflict":
+                # Still colliding -- keep the banner up (same kept text)
+                # rather than a silent no-op for the button just pressed.
+                self._enter_library_prompt_conflict(
+                    name=snapshot.name,
+                    author=snapshot.author,
+                    details=snapshot.details,
+                    system_prompt=snapshot.system_prompt,
+                    user_prompt=snapshot.user_prompt,
+                    keywords_text=snapshot.keywords_csv,
+                )
+                return
+            self._return_to_library_prompt_create_draft(snapshot, outcome)
+            return
+
+        if self._library_prompt_conflict_snapshot is not snapshot:
+            return  # The user navigated away while the retry was in flight.
+
+        result_id = result.get("local_id") if isinstance(result, Mapping) else (1 if result else None)
+        outcome = classify_prompt_save_error(result_id, "", None)
+        if outcome != "ok":
+            self._return_to_library_prompt_create_draft(snapshot, outcome)
+            return
+
+        new_id = result_id
+        version = result.get("version") if isinstance(result, Mapping) else None
+        self._library_prompt_version = version if version is not None else 1
+        patched_detail: dict[str, Any] = {
+            "id": new_id,
+            "name": name,
+            "author": author,
+            "details": details,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "version": self._library_prompt_version,
+        }
+        if isinstance(result, Mapping) and "keywords" in result:
+            patched_detail["keywords"] = result["keywords"]
+        elif keywords is not None:
+            patched_detail["keywords"] = keywords
+        self._library_prompt_detail = patched_detail
+        self._library_prompt_original_name = name
+        self._selected_prompt_id = new_id
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_dirty = False
+        self._library_prompt_status = LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"]
+        self._library_prompt_editor_armed = False
+        # Mirrors `_save_library_prompt`'s own create-success branch: a
+        # brand-new prompt changes the list's membership/count, so the
+        # Prompts rail badge/list must pick up the new row now.
+        self._refresh_local_source_snapshot()
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_prompt_editor)
+
+    def _return_to_library_prompt_create_draft(self, snapshot: PromptEditorState, outcome: str) -> None:
+        """Return from the create-conflict banner to a plain, editable draft.
+
+        Reached when an Overwrite retry (``_resolve_library_prompt_create_conflict``)
+        fails with anything other than a repeat "conflict" -- keeps the
+        user's kept text visible and editable (never silently discarded)
+        with an honest status line, instead of leaving the conflict
+        banner's buttons a dead end.
+
+        Args:
+            snapshot: The conflict banner's kept editor state.
+            outcome: A ``classify_prompt_save_error`` return value (never
+                ``"ok"`` -- callers only reach this on a failed retry).
+        """
+        self._library_prompt_detail = {
+            "name": snapshot.name,
+            "author": snapshot.author,
+            "details": snapshot.details,
+            "system_prompt": snapshot.system_prompt,
+            "user_prompt": snapshot.user_prompt,
+            "keywords": snapshot.keywords_csv,
+        }
+        self._library_prompt_original_name = ""
+        self._library_prompt_version = None
+        self._library_prompt_conflict_snapshot = None
+        self._library_prompt_dirty = True
+        self._library_prompt_status = LIBRARY_PROMPT_SAVE_STATUS_COPY.get(
+            outcome, LIBRARY_PROMPT_SAVE_STATUS_COPY["error"]
+        )
+        # Task 8b Fix wave 1 (Minor): captured here too, same as
+        # `_apply_library_prompt_save_outcome`, so "Open existing" (if this
+        # outcome is "name-in-use") resolves against the name that actually
+        # collided rather than whatever the Name field holds later.
+        self._library_prompt_name_in_use = snapshot.name if outcome == "name-in-use" else ""
+        self._library_prompt_editor_armed = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_prompt_editor)
+
+    @on(Button.Pressed, "#library-prompt-conflict-overwrite")
+    def handle_library_prompt_conflict_overwrite(self, event: Button.Pressed) -> None:
+        """Resolve a shown save conflict by re-saving the kept local edits.
+
+        Args:
+            event: Button press event emitted by the conflict UI's
+                "Overwrite" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._resolve_library_prompt_conflict(overwrite=True),
+            exclusive=True,
+            group="library_prompt_save",
+        )
+
+    @on(Button.Pressed, "#library-prompt-conflict-reload")
+    def handle_library_prompt_conflict_reload(self, event: Button.Pressed) -> None:
+        """Resolve a shown save conflict by discarding local edits.
+
+        Args:
+            event: Button press event emitted by the conflict UI's
+                "Reload" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._resolve_library_prompt_conflict(overwrite=False),
+            exclusive=True,
+            group="library_prompt_save",
+        )
+
     _LIBRARY_NOTE_IMPORT_TITLE_MAX_CHARS = 300
 
     @on(Button.Pressed, "#library-notes-import")
     def handle_library_notes_import(self, event: Button.Pressed) -> None:
         """Push a ``FileOpen`` dialog to import a local file as a new note.
 
-        Mirrors ``notes_screen.handle_import_button``'s dialog flow exactly
-        (the working ``FileOpen`` reference -- unlike ``FileSave``, whose
-        constructor only accepts ``location``/``title``/``default_file``,
+        Mirrors the retired standalone Notes screen's import dialog flow
+        exactly (the working ``FileOpen`` reference -- unlike ``FileSave``,
+        whose constructor only accepts ``location``/``title``/``default_file``,
         ``FileOpen`` here is invoked the same simple ``title=``-only way the
-        standalone screen already relies on). The callback resolves the
+        standalone screen already relied on). The callback resolves the
         chosen path (or ``None`` on cancel) through
         ``_import_library_note_from_path``, which validates, reads, parses,
         and hands off to the existing ``_create_library_note`` seam -- so a
@@ -4907,8 +9513,8 @@ class LibraryScreen(BaseAppScreen):
         a file that cannot be read/decoded, or one larger than
         ``LIBRARY_NOTE_CONTENT_MAX_CHARS`` -- is a quiet warning notice with
         no note created, matching every other Library note failure path in
-        this screen. The file read is offloaded to a thread (mirroring
-        ``notes_screen._import_note_from_path``) and is memory-bounded by a
+        this screen. The file read is offloaded to a thread (mirroring the
+        retired standalone Notes screen's import) and is memory-bounded by a
         pre-read ``st_size`` guard: UTF-8 chars are at most 4 bytes, so any
         file over ``4 * LIBRARY_NOTE_CONTENT_MAX_CHARS`` bytes is guaranteed
         over the char cap and is rejected without reading it at all (no
@@ -4927,14 +9533,14 @@ class LibraryScreen(BaseAppScreen):
         try:
             note_path = validate_path_simple(str(selected_path), require_exists=True)
         except ValueError:
-            logger.warning(f"Rejected Library note import path {selected_path!r}.", exc_info=True)
+            logger.opt(exception=True).warning(f"Rejected Library note import path {selected_path!r}.")
             self._notify_library_note_create_warning("Could not import that file.")
             return
 
         try:
             file_size = note_path.stat().st_size
         except OSError:
-            logger.warning(f"Could not stat Library note import file '{note_path}'.", exc_info=True)
+            logger.opt(exception=True).warning(f"Could not stat Library note import file '{note_path}'.")
             self._notify_library_note_create_warning("Could not import that file.")
             return
         if file_size > LIBRARY_NOTE_CONTENT_MAX_CHARS * 4:
@@ -4950,7 +9556,7 @@ class LibraryScreen(BaseAppScreen):
                 note_path.read_text, encoding="utf-8", errors="strict"
             )
         except (OSError, UnicodeDecodeError):
-            logger.warning(f"Could not read Library note import file '{note_path}'.", exc_info=True)
+            logger.opt(exception=True).warning(f"Could not read Library note import file '{note_path}'.")
             self._notify_library_note_create_warning("Could not import that file.")
             return
 
@@ -4981,7 +9587,7 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         await self._flush_library_note_save()
-        if self._library_note_autosave_state == "conflict":
+        if self._library_note_dirty:
             return
         self._ensure_library_notes_sync_config_loaded()
         self._library_notes_view = "sync"
@@ -5091,8 +9697,9 @@ class LibraryScreen(BaseAppScreen):
         """Toggle auto-sync, persist it, and arm/cancel the repeating timer.
 
         The timer is scoped to this Library screen instance's lifetime --
-        the same scope the standalone ``NotesSyncPane``'s timer had -- not
-        persisted/resumed across screen instances; only the boolean
+        the same scope the retired standalone Notes screen's sync-pane
+        timer had -- not persisted/resumed across screen instances; only
+        the boolean
         preference persists, and is re-armed the next time sync mode is
         entered (``_ensure_library_notes_sync_config_loaded``).
 
@@ -5154,8 +9761,9 @@ class LibraryScreen(BaseAppScreen):
     async def _run_library_notes_sync(self, folder: Path) -> None:
         """Run one notes sync pass against ``folder`` and report the outcome.
 
-        Builds a fresh ``NotesSyncService`` per run (mirroring
-        ``NotesSyncPane.on_mount`` -- see ``_resolve_library_notes_sync_db``)
+        Builds a fresh ``NotesSyncService`` per run (mirroring the retired
+        standalone Notes screen's sync-pane setup -- see
+        ``_resolve_library_notes_sync_db``)
         and calls ``sync_folder`` offloaded onto a worker thread via
         ``_run_library_service_call(..., isolate_in_worker=True)``, since
         the sync engine walks the filesystem and touches the DB
@@ -5281,7 +9889,7 @@ class LibraryScreen(BaseAppScreen):
                     f"{count_noun(len(results.errors), 'error')} during sync",
                 )
         except Exception as exc:
-            logger.error(f"Library notes sync failed (folder={folder}): {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Library notes sync failed (folder={folder}): {exc}")
             self._library_notes_sync_status = sync_status_line("failed", error=str(exc))
             self._library_notes_sync_activity = append_activity(
                 self._library_notes_sync_activity, f"Sync failed: {exc}"
@@ -5291,32 +9899,536 @@ class LibraryScreen(BaseAppScreen):
             if self._library_notes_view == "sync" and self.is_mounted:
                 self.refresh(recompose=True)
 
+    # ----- Ingest canvas -----------------------------------------------
+
+    @on(Input.Changed, "#library-ingest-path")
+    async def handle_library_ingest_path_changed(self, event: Input.Changed) -> None:
+        """Track the ingest path text as the user types it (state only).
+
+        Also live-updates the Start button's disabled state, AND the
+        blank-path quiet line (L3b AB wave, A4), via targeted DOM surgery
+        (mirroring ``update_library_collection_name_input``) rather than a
+        full canvas recompose, so typing never disturbs the Input's cursor
+        position. The quiet line ``Static`` is always mounted by
+        ``LibraryIngestCanvas.compose`` with a fixed one-row height, so
+        this handler only updates its text in place -- never mounts or
+        removes it -- keeping the Start button's position stable across
+        gate-state changes (2026-07 UAT: mount/remove shifted the button
+        ~2 rows on every valid/blank transition).
+
+        Args:
+            event: Input change event emitted by the path field.
+        """
+        event.stop()
+        self._library_ingest_form.path = event.value
+        try:
+            start_button = self.query_one("#library-ingest-start", Button)
+        except (NoMatches, QueryError):
+            return
+        new_state = self._build_library_ingest_state()
+        start_button.disabled = not new_state.start_enabled
+        try:
+            quiet_line = self.query_one("#library-ingest-start-quiet-line", Static)
+        except (NoMatches, QueryError):
+            return
+        quiet_line.update(new_state.start_quiet_line)
+
+    @on(Input.Changed, "#library-ingest-title")
+    def handle_library_ingest_title_changed(self, event: Input.Changed) -> None:
+        """Track the ingest title text as the user types it (state only)."""
+        event.stop()
+        self._library_ingest_form.title = event.value
+
+    @on(Input.Changed, "#library-ingest-author")
+    def handle_library_ingest_author_changed(self, event: Input.Changed) -> None:
+        """Track the ingest author text as the user types it (state only)."""
+        event.stop()
+        self._library_ingest_form.author = event.value
+
+    @on(Input.Changed, "#library-ingest-keywords")
+    def handle_library_ingest_keywords_changed(self, event: Input.Changed) -> None:
+        """Track the ingest keywords text as the user types it (state only)."""
+        event.stop()
+        self._library_ingest_form.keywords = event.value
+
+    @on(Input.Changed, "#library-ingest-chunk-size")
+    def handle_library_ingest_chunk_size_changed(self, event: Input.Changed) -> None:
+        """Track the chunk-size text as typed (display-echo only).
+
+        Parsed and clamped to ``[100, 5000]`` only at submit time (see
+        ``clamp_chunk_size``) -- never here.
+        """
+        event.stop()
+        self._library_ingest_form.chunk_size = event.value
+
+    @on(Button.Pressed, "#library-ingest-browse")
+    def handle_library_ingest_browse(self, event: Button.Pressed) -> None:
+        """Push a ``FileOpen`` dialog to pick a local file to ingest.
+
+        Mirrors ``handle_library_notes_import``'s dialog flow exactly (the
+        working ``FileOpen`` reference, invoked the same simple
+        ``title=``-only way). The callback writes the chosen path straight
+        into the form and recomposes so the Input and the Start button's
+        gate both reflect it immediately; validation still runs at Start
+        so a path typed by hand (not picked via this dialog) is caught
+        too.
+
+        Args:
+            event: Button press event emitted by the "Browse…" action.
+        """
+        event.stop()
+
+        async def browse_callback(selected_path: Path | None) -> None:
+            if selected_path is None:
+                return
+            self._library_ingest_form.path = str(selected_path)
+            self.refresh(recompose=True)
+
+        self.app.push_screen(
+            FileOpen(title="Import Media"),
+            browse_callback,
+        )
+
+    @on(Collapsible.Toggled, "#library-ingest-advanced")
+    def sync_library_ingest_advanced_open(self, event: Collapsible.Toggled) -> None:
+        """Track manual expand/collapse so recomposes preserve the user's choice.
+
+        Mirrors ``sync_library_rag_history_collapsed`` exactly (see that
+        handler's docstring for the full reasoning): ``Collapsible``'s
+        ``collapsed`` reactive is defined with ``init=False``, so
+        ``_watch_collapsed`` -- and therefore this ``Toggled`` message --
+        fires only on an actual *change* of the reactive, never merely from
+        ``compose()`` constructing a fresh ``Collapsible(collapsed=...)``
+        with a value that happens to equal the reactive's own default.
+        Concretely: the widget always passes
+        ``collapsed=not state.form.advanced_open``, and the reactive's
+        default is ``True`` -- so a compose only posts a spurious ``Toggled``
+        when it constructs the panel already-expanded (``advanced_open`` is
+        ``True``, i.e. ``collapsed=False`` differs from the ``True``
+        default), which immediately reasserts the same ``True`` this
+        handler already holds. Every recompose this handler must survive
+        (the analyze/chunk toggles, a registry-listener-driven job
+        transition) is triggered by something OTHER than a manual header
+        click, so this handler is never invoked by them -- only a real
+        user click (or a future programmatic ``collapsible.collapsed =``
+        assignment) fires it, exactly like the history panel's precedent.
+        """
+        event.stop()
+        self._library_ingest_form.advanced_open = not event.collapsible.collapsed
+
+    @on(Button.Pressed, "#library-ingest-analyze-toggle")
+    def handle_library_ingest_analyze_toggle(self, event: Button.Pressed) -> None:
+        """Flip the "Analyze after ingest" form toggle.
+
+        Args:
+            event: Button press event emitted by the analyze toggle.
+        """
+        event.stop()
+        self._library_ingest_form.analyze = not self._library_ingest_form.analyze
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-ingest-chunk-toggle")
+    def handle_library_ingest_chunk_toggle(self, event: Button.Pressed) -> None:
+        """Flip the "Chunk content" form toggle.
+
+        Args:
+            event: Button press event emitted by the chunk toggle.
+        """
+        event.stop()
+        self._library_ingest_form.chunk = not self._library_ingest_form.chunk
+        self.refresh(recompose=True)
+
+    def _notify_library_ingest_warning(self, message: str) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
+
+    @on(Button.Pressed, "#library-ingest-start")
+    def handle_library_ingest_start(self, event: Button.Pressed) -> None:
+        """Validate the form and submit a new Library ingest job.
+
+        Args:
+            event: Button press event emitted by the "Start ingest" action.
+        """
+        event.stop()
+        self._submit_library_ingest_form()
+
+    @on(Input.Submitted, "#library-ingest-path")
+    def handle_library_ingest_path_submitted(self, event: Input.Submitted) -> None:
+        """Submit the ingest form when Enter is pressed in the path field.
+
+        Mirrors the Start ingest button exactly, but only when the Start
+        gate is open (``start_enabled``) -- Enter on a blank path (or with
+        the registry/DB unavailable) stays quiet instead of nagging, since
+        the always-visible gate line already explains the blocker
+        (2026-07 UAT: Enter in a valid path field previously did nothing).
+
+        Args:
+            event: Input submission event emitted by the path field.
+        """
+        event.stop()
+        if not self._build_library_ingest_state().start_enabled:
+            return
+        self._submit_library_ingest_form()
+
+    def _submit_library_ingest_form(self) -> None:
+        """Validate the ingest form and submit a new Library ingest job.
+
+        Shared by the Start ingest button and Enter in the path field. An
+        invalid/missing path is a quiet warning notice, matching every
+        other Library form failure path in this screen; a missing
+        ``submit_library_ingest_job`` seam (registry absent) gets the same
+        treatment. On success, the path AND title fields clear (L3b AB
+        wave, A1) -- title is per-file, so it must not silently reapply to
+        the next file in a batch -- while author/keywords/advanced options
+        persist, since those are batch metadata a user submitting several
+        files in a row shouldn't have to retype for every submission.
+        """
+        form = self._library_ingest_form
+        raw_path = form.path.strip()
+        if not raw_path:
+            self._notify_library_ingest_warning("Please choose a file to ingest.")
+            return
+        from urllib.parse import urlparse
+
+        if urlparse(raw_path).scheme in ("http", "https"):
+            # A URL source: skip the filesystem-existence check entirely --
+            # validate_url is a syntax check, not a network fetch, matching
+            # the file branch's "cheap, local, synchronous" validation cost.
+            if not validate_url(raw_path):
+                self._notify_library_ingest_warning(
+                    "That doesn't look like a valid http(s) URL."
+                )
+                return
+            submitted_source = raw_path
+        else:
+            try:
+                validated_path = validate_path_simple(
+                    Path(raw_path).expanduser(), require_exists=True
+                )
+            except ValueError:
+                logger.opt(exception=True).warning(f"Rejected Library ingest path {raw_path!r}.")
+                self._notify_library_ingest_warning("Could not find that file.")
+                return
+            submitted_source = str(validated_path)
+        submit = getattr(self.app_instance, "submit_library_ingest_job", None)
+        if not callable(submit):
+            self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
+            return
+        submit(
+            source_path=submitted_source,
+            title=self._safe_text(form.title, max_length=300),
+            author=self._safe_text(form.author, max_length=200),
+            keywords=parse_keywords(form.keywords),
+            perform_analysis=form.analyze,
+            chunk_enabled=form.chunk,
+            chunk_size=clamp_chunk_size(form.chunk_size),
+        )
+        form.path = ""
+        form.title = ""
+        self.refresh(recompose=True)
+
+    @staticmethod
+    def _ingest_job_id_from_button(button_id: str | None, prefix: str) -> str | None:
+        """Parse a job id from a Library-ingest row-action button id.
+
+        Row-action buttons (``library-ingest-open-{job_id}``/``-retry-``/
+        ``-dismiss-``) are keyed by the registry-assigned ``job_id``, NOT
+        by row index (PR #591 review, F1): the queue mutates
+        asynchronously between a render and a click (runner completions,
+        retry-supersede, new submissions), so re-deriving a fresh row
+        snapshot and indexing into it at click time can silently resolve
+        to a DIFFERENT job than the one the user actually pressed. A
+        prefix-strip is exact regardless of how the queue has shifted
+        since the button was rendered.
+
+        Args:
+            button_id: The pressed button's ``id``.
+            prefix: The button-id prefix to strip (e.g.
+                ``"library-ingest-open-"``).
+
+        Returns:
+            The job id, or ``None`` when ``button_id`` is missing or
+            doesn't carry the expected prefix (defensive only -- every
+            real row-action button always does).
+        """
+        if not button_id or not button_id.startswith(prefix):
+            return None
+        job_id = button_id[len(prefix):]
+        return job_id or None
+
+    def _library_ingest_job_by_id(self, job_id: str) -> LibraryIngestJob | None:
+        """Resolve a job by id from the live registry snapshot, or ``None``.
+
+        Reads ``registry.jobs()`` fresh on every call (never a cached row
+        list) so a click always resolves against the queue's current
+        truth, including any transition that landed between render and
+        click.
+        """
+        registry = self._library_ingest_registry()
+        jobs_fn = getattr(registry, "jobs", None)
+        jobs = jobs_fn() if callable(jobs_fn) else ()
+        return next((job for job in jobs if job.job_id == job_id), None)
+
+    @on(Button.Pressed, ".library-ingest-open")
+    async def handle_library_ingest_open(self, event: Button.Pressed) -> None:
+        """Open a done ingest job's resulting media item in the Library viewer.
+
+        Args:
+            event: Button press event emitted by an "Open in Library" row action.
+        """
+        event.stop()
+        job_id = self._ingest_job_id_from_button(event.button.id, "library-ingest-open-")
+        if job_id is None:
+            return
+        job = self._library_ingest_job_by_id(job_id)
+        if job is None or job.media_id is None:
+            return
+        await self._open_library_item_by_id("media", str(job.media_id))
+
+    @on(Button.Pressed, ".library-ingest-retry")
+    def handle_library_ingest_retry(self, event: Button.Pressed) -> None:
+        """Requeue a failed ingest job.
+
+        Args:
+            event: Button press event emitted by a "Retry" row action.
+        """
+        event.stop()
+        job_id = self._ingest_job_id_from_button(event.button.id, "library-ingest-retry-")
+        if job_id is None:
+            return
+        retry = getattr(self.app_instance, "retry_library_ingest_job", None)
+        if callable(retry):
+            # ``retry_library_ingest_job``/``LibraryIngestJobRegistry.requeue``
+            # are already id-based and validate state themselves (FAILED,
+            # not already superseded/dismissed) -- a stale or now-wrong-state
+            # job id is a safe no-op, not a mis-targeted retry.
+            retry(job_id)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-ingest-dismiss")
+    def handle_library_ingest_dismiss(self, event: Button.Pressed) -> None:
+        """Dismiss a failed ingest job row (L3b AB wave, B2).
+
+        A thin wrapper over ``LibraryIngestJobRegistry.dismiss`` -- valid
+        only for a ``FAILED`` row; a quiet no-op (mirrors every other
+        Library seam-absent path in this screen) when the registry itself
+        is unavailable. The registry's own listener
+        (``_handle_library_ingest_registry_changed``) already recomposes
+        on a successful dismiss; the trailing ``refresh(recompose=True)``
+        here is redundant-but-harmless belt-and-braces, matching
+        ``handle_library_ingest_retry``.
+
+        Args:
+            event: Button press event emitted by a "Dismiss" row action.
+        """
+        event.stop()
+        job_id = self._ingest_job_id_from_button(event.button.id, "library-ingest-dismiss-")
+        if job_id is None:
+            return
+        registry = self._library_ingest_registry()
+        dismiss = getattr(registry, "dismiss", None)
+        if callable(dismiss):
+            # Same id-based no-op safety as retry above -- ``dismiss`` only
+            # ever acts on a currently-FAILED, not-yet-hidden job_id.
+            dismiss(job_id)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-ingest-clear-finished")
+    def handle_library_ingest_clear_finished(self, event: Button.Pressed) -> None:
+        """Clear every done+failed ingest job in one shot (L3b AB wave, B2).
+
+        A thin wrapper over ``LibraryIngestJobRegistry.clear_finished``; a
+        quiet no-op when the registry itself is unavailable (matching
+        ``handle_library_ingest_dismiss``/``handle_library_ingest_retry``).
+
+        Args:
+            event: Button press event emitted by the "Clear finished" action.
+        """
+        event.stop()
+        registry = self._library_ingest_registry()
+        clear_finished = getattr(registry, "clear_finished", None)
+        if callable(clear_finished):
+            clear_finished()
+        self.refresh(recompose=True)
+
+    # ----- Export canvas: section entry points --------------------------
+
+    @on(Button.Pressed, "#library-media-export")
+    async def handle_library_media_export(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to the media list's current type filter.
+
+        Args:
+            event: Button press event emitted by the media canvas's
+                "Export…" action.
+        """
+        event.stop()
+        await self._open_library_export_canvas(
+            ExportScope(kind="media", media_type=self._library_media_type_filter)
+        )
+
+    @on(Button.Pressed, "#library-conversations-export")
+    async def handle_library_conversations_export(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to Conversations.
+
+        Args:
+            event: Button press event emitted by the conversations
+                canvas's "Export…" action.
+        """
+        event.stop()
+        await self._open_library_export_canvas(ExportScope(kind="conversations"))
+
+    @on(Button.Pressed, "#library-notes-export")
+    async def handle_library_notes_export(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to Notes.
+
+        Args:
+            event: Button press event emitted by the notes list canvas's
+                "Export…" action.
+        """
+        event.stop()
+        await self._open_library_export_canvas(ExportScope(kind="notes"))
+
+    # ----- Export canvas: form fields ------------------------------------
+
+    @on(Input.Changed, "#library-export-name")
+    def handle_library_export_name_changed(self, event: Input.Changed) -> None:
+        """Track the export name text as the user types it (state only)."""
+        event.stop()
+        self._library_export_form["name"] = event.value
+
+    @on(Input.Changed, "#library-export-description")
+    def handle_library_export_description_changed(self, event: Input.Changed) -> None:
+        """Track the export description text as the user types it (state only)."""
+        event.stop()
+        self._library_export_form["description"] = event.value
+
+    @on(Button.Pressed, "#library-export-quality")
+    def handle_library_export_quality_cycle(self, event: Button.Pressed) -> None:
+        """Cycle the media-quality control to its next option.
+
+        Mirrors ``handle_library_media_type_filter_pressed``'s cycle-
+        button convention -- see ``next_media_quality``'s docstring for
+        why this isn't a ``Select``.
+
+        Args:
+            event: Button press event emitted by the quality control.
+        """
+        event.stop()
+        self._library_export_form["quality"] = next_media_quality(
+            str(self._library_export_form.get("quality", DEFAULT_MEDIA_QUALITY))
+        )
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-export-destination")
+    def handle_library_export_choose_destination(self, event: Button.Pressed) -> None:
+        """Push a ``FileSave`` dialog to pick the export's destination path.
+
+        Mirrors ``_export_library_note``'s dialog flow: a sanitized
+        default filename derived from the export name field, callback via
+        ``call_after_refresh`` so the write-path runs after this handler
+        returns. ``FileSave`` DOES have overwrite handling of its own
+        (``can_overwrite: bool = True`` -- ``False`` blocks picking an
+        existing file outright), but its default imposes no friction, and
+        more importantly it can only ever judge the RAW picked path: the
+        creator coerces the suffix to ``.zip``, so the path that must be
+        confirmed for overwrite is the *normalized* one, which the dialog
+        never sees. The form therefore owns overwrite confirmation of the
+        normalized path (see ``_apply_library_export_destination``), and
+        the dialog is deliberately left at its permissive default rather
+        than ``can_overwrite=False`` (which would wrongly block picking
+        ``report.zip`` even though the user is knowingly replacing it,
+        while failing to block picking ``report`` when ``report.zip``
+        exists).
+
+        Args:
+            event: Button press event emitted by the "Choose destination…"
+                action.
+        """
+        event.stop()
+        raw_name = str(self._library_export_form.get("name", "")).strip() or "chatbook"
+        safe_name = "".join(
+            char for char in raw_name if char.isalnum() or char in (" ", "-", "_")
+        ).rstrip() or "chatbook"
+        self.app.push_screen(
+            FileSave(
+                location=str(Path.home()),
+                title="Choose Export Destination",
+                default_file=f"{safe_name}.zip",
+            ),
+            callback=lambda path: self.call_after_refresh(
+                self._apply_library_export_destination, path
+            ),
+        )
+
+    def _apply_library_export_destination(self, selected_path: Path | None) -> None:
+        """Validate, ``.zip``-normalize, and apply a ``FileSave``-picked destination.
+
+        Runs the dialog-returned path through ``validate_path_simple``
+        (same base-directory-free validator ``_write_library_note_export_file``
+        uses for any user-chosen save path) BEFORE normalizing its suffix
+        to ``.zip`` -- and normalizes BEFORE checking whether it already
+        exists, so the overwrite line the form shows always names the
+        actual path that will be written, never the raw picked one (the
+        F4 design spec's explicit ordering: "normalized to .zip BEFORE any
+        overwrite confirmation").
+
+        Args:
+            selected_path: The chosen destination, or ``None`` if the
+                dialog was cancelled.
+        """
+        if not selected_path:
+            return
+        try:
+            validated_path = validate_path_simple(selected_path, require_exists=False)
+        except ValueError as exc:
+            logger.warning(
+                f"Rejected Library export destination {selected_path!r}: {exc}"
+            )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(f"Rejected export destination: {exc}", severity="warning")
+            return
+        normalized_path = normalize_export_destination(validated_path)
+        self._library_export_form["destination"] = str(normalized_path)
+        self._library_export_form["destination_exists"] = normalized_path.exists()
+        self.refresh(recompose=True)
+
     @on(Button.Pressed, ".library-notes-row")
     async def handle_library_notes_row(self, event: Button.Pressed) -> None:
-        """Select a note row and open the in-canvas Library note editor.
+        """Select mode: toggle the row's checkbox. Normal mode: open the editor.
 
-        Switches the notes canvas from its list view to the editor, clears
-        any stale detail, and kicks the async detail fetch
+        Flushes any dirty edit from a previously-open note first (awaited,
+        regardless of select mode) so switching notes -- or entering select
+        mode -- never silently discards unsaved text; an unsaved edit
+        surviving the flush aborts either path.
+
+        In select mode, a row press toggles that row's id in
+        ``_library_notes_row_selection`` and patches the row's marker, the
+        "N selected" Static, and export-selected's disabled state in
+        place (task-252 Tier 1) -- it never opens the in-canvas Library
+        note editor while in select mode. Outside select mode, behavior
+        is unchanged: switches the notes canvas from its list view to the
+        editor, clears any stale detail, and kicks the async detail fetch
         (``_refresh_library_note_detail``); ``compose_content`` renders a
         loading line until that worker stores the fetched detail and
         recomposes. Mirrors ``handle_library_media_row``.
-
-        Flushes any dirty edit from a previously-open note first (awaited)
-        so switching notes never silently discards unsaved text; an
-        unresolved save conflict aborts the switch so it can be resolved.
 
         Args:
             event: Button press event emitted by a note row button.
         """
         event.stop()
         await self._flush_library_note_save()
-        if self._library_note_autosave_state == "conflict":
+        if self._library_note_dirty:
             return
         note_id = str(getattr(event.button, "note_id", "") or "")
+        if self._library_notes_select_mode:
+            self._library_notes_row_selection.toggle(note_id)
+            _apply_library_row_toggle(self, "notes", event.button, note_id)
+            return
         if note_id:
             self._selected_note_id = note_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-        self._active_mode = "notes"
         self._library_notes_view = "editor"
         self._library_note_detail = None
         self._library_note_version = None
@@ -5338,22 +10450,91 @@ class LibraryScreen(BaseAppScreen):
             )
         self.refresh(recompose=True)
 
+    @on(Button.Pressed, "#library-notes-select-toggle")
+    async def handle_library_notes_select_toggle(self, event: Button.Pressed) -> None:
+        """Enter/exit notes select mode; clears the selection set (both on enter and exit).
+
+        Flushes any dirty edit first (awaited) so entering select mode
+        never strands a dirty note edit mid-save -- select mode is only
+        reachable from the notes list view, but the flush stays
+        unconditional here to mirror ``handle_library_notes_row``'s
+        always-flush-first behavior.
+
+        Still a full ``self.refresh(recompose=True)`` (task-252 leaves
+        this un-converted, unlike its conversations/media equivalents):
+        ``LibraryNotesCanvas`` has no ``sync_state`` hook -- its
+        constructor's own ``sync_state`` parameter (the unrelated
+        notes-sync-panel display state) shadows that method name. See
+        ``_sync_library_canvas``'s docstring and task-252's
+        Implementation Notes inventory.
+
+        Args:
+            event: Button press event emitted by the notes canvas's
+                Select/Done toggle.
+        """
+        event.stop()
+        await self._flush_library_note_save()
+        self._library_notes_select_mode = not self._library_notes_select_mode
+        self._library_notes_row_selection.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-select-all")
+    def handle_library_notes_select_all(self, event: Button.Pressed) -> None:
+        """Select every note row currently rendered by the canvas.
+
+        Full recompose, not converted -- see
+        ``handle_library_notes_select_toggle``'s docstring.
+        """
+        event.stop()
+        rows = self._build_library_notes_state().rows
+        self._library_notes_row_selection.select_all(r.note_id for r in rows)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-select-clear")
+    def handle_library_notes_select_clear(self, event: Button.Pressed) -> None:
+        """Clear the current notes selection without leaving select mode.
+
+        Full recompose, not converted -- see
+        ``handle_library_notes_select_toggle``'s docstring.
+        """
+        event.stop()
+        self._library_notes_row_selection.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-export-selected")
+    async def handle_library_notes_export_selected(self, event: Button.Pressed) -> None:
+        """Open the export canvas scoped to the currently selected note ids."""
+        event.stop()
+        # Defensive: an empty selection would resolve to a whole-source export
+        # (empty ids == whole source); the button is disabled at 0 selected.
+        if not self._library_notes_row_selection.count:
+            return
+        await self._open_library_export_canvas(self._library_notes_row_selection.export_scope())
+
     @on(Button.Pressed, "#library-note-back")
     async def handle_library_note_back(self, event: Button.Pressed) -> None:
         """Return the Library notes canvas from the editor to its list view.
 
         Flushes a dirty edit first (awaited) so Back never silently
-        discards unsaved text; an unresolved save conflict aborts the
-        navigation so the user resolves it via Overwrite/Reload first.
+        discards unsaved text; an unsaved edit surviving the flush aborts the
+        navigation.
+
+        Also kicks the full local-source snapshot refetch (the same
+        exclusive worker the delete/create flows already use) so the list's
+        relative ages, ordering, and the rail's Notes badge reflect any
+        edit saved during this editor visit from the DB's own truth -- the
+        immediate recompose below renders the save-time in-memory patch
+        (see ``_save_library_note``), and the refetch then confirms it.
 
         Args:
             event: Button press event emitted by the "‹ Back to list" action.
         """
         event.stop()
         await self._flush_library_note_save()
-        if self._library_note_autosave_state == "conflict":
+        if self._library_note_dirty:
             return
         self._reset_library_note_editor_state()
+        self._refresh_local_source_snapshot()
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-note-delete")
@@ -5367,16 +10548,15 @@ class LibraryScreen(BaseAppScreen):
         is pressed.
 
         Flushes a dirty edit first (awaited) so the version the confirmed
-        delete sends is never stale; an unresolved save conflict aborts
-        entering the confirm state so the user resolves it via
-        Overwrite/Reload first, same as Back and note-row selection.
+        delete sends is never stale; an unsaved edit surviving the flush
+        aborts entering the confirm state, same as Back and note-row selection.
 
         Args:
             event: Button press event emitted by the editor's "Delete" action.
         """
         event.stop()
         await self._flush_library_note_save()
-        if self._library_note_autosave_state == "conflict":
+        if self._library_note_dirty:
             return
         self._library_note_confirming_delete = True
         self._library_note_editor_armed = False
@@ -5476,9 +10656,8 @@ class LibraryScreen(BaseAppScreen):
         except ConflictError:
             deleted = False
         except Exception:
-            logger.warning(
-                f"Failed to delete Library note {note_id!r}.", exc_info=True
-            )
+            logger.opt(exception=True).warning(
+                f"Failed to delete Library note {note_id!r}.")
             if note_id != self._selected_note_id or self._library_notes_view != "editor":
                 return
             self._library_note_confirming_delete = False
@@ -5591,8 +10770,8 @@ class LibraryScreen(BaseAppScreen):
         odd template can never break the create view for the others.
 
         ``{date}``/``{time}``/``{datetime}`` placeholders are resolved
-        against the current time, mirroring the standalone Notes screen's
-        ``notes_screen._create_local_note_from_template`` substitution
+        against the current time, mirroring the retired standalone Notes
+        screen's template substitution
         (same placeholder names, same ``strftime`` formats). Unlike that
         flow -- which notifies and aborts the create on a malformed
         placeholder -- resolution here is per-key: an unknown
@@ -5689,7 +10868,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning("Library note create failed.", exc_info=True)
+            logger.opt(exception=True).warning("Library note create failed.")
             self._notify_library_note_create_warning("Could not create the note.")
             return
 
@@ -5701,7 +10880,6 @@ class LibraryScreen(BaseAppScreen):
 
         self._selected_note_id = created_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-        self._active_mode = "notes"
         self._library_notes_view = "editor"
         self._library_note_detail = None
         self._library_note_version = None
@@ -5876,9 +11054,8 @@ class LibraryScreen(BaseAppScreen):
                     media_id, title=title, author=author, url=url, keywords=keywords
                 )
             except Exception:
-                logger.warning(
-                    f"Failed to save Library media edit for {media_id!r}.", exc_info=True
-                )
+                logger.opt(exception=True).warning(
+                    f"Failed to save Library media edit for {media_id!r}.")
                 self._notify_library_media_edit_warning(
                     "Could not save media changes; showing the latest saved version."
                 )
@@ -6010,9 +11187,8 @@ class LibraryScreen(BaseAppScreen):
                 )
                 deleted = True
             except Exception:
-                logger.warning(
-                    f"Failed to delete Library media item {media_id!r}.", exc_info=True
-                )
+                logger.opt(exception=True).warning(
+                    f"Failed to delete Library media item {media_id!r}.")
                 self._notify_library_media_delete_warning(
                     "Could not delete this media item."
                 )
@@ -6125,9 +11301,8 @@ class LibraryScreen(BaseAppScreen):
                     isolate_in_worker=True,
                 )
             except Exception:
-                logger.warning(
-                    f"Failed to add Library media highlight for {media_id!r}.", exc_info=True
-                )
+                logger.opt(exception=True).warning(
+                    f"Failed to add Library media highlight for {media_id!r}.")
                 self._notify_library_media_highlight_warning("Could not add this highlight.")
         else:
             self._notify_library_media_highlight_warning("Highlights are unavailable.")
@@ -6171,9 +11346,8 @@ class LibraryScreen(BaseAppScreen):
                     isolate_in_worker=True,
                 )
             except Exception:
-                logger.warning(
-                    f"Failed to delete Library media highlight {highlight_id!r}.", exc_info=True
-                )
+                logger.opt(exception=True).warning(
+                    f"Failed to delete Library media highlight {highlight_id!r}.")
                 self._notify_library_media_highlight_warning("Could not delete this highlight.")
         else:
             self._notify_library_media_highlight_warning("Highlights are unavailable.")
@@ -6352,9 +11526,8 @@ class LibraryScreen(BaseAppScreen):
                     isolate_in_worker=True,
                 )
             except Exception:
-                logger.warning(
+                logger.opt(exception=True).warning(
                     f"Failed to toggle Library media read-it-later state for {media_id!r}.",
-                    exc_info=True,
                 )
                 self._notify_library_media_read_later_warning(
                     "Could not update read-it-later status."
@@ -6476,9 +11649,8 @@ class LibraryScreen(BaseAppScreen):
                     isolate_in_worker=True,
                 )
             except Exception:
-                logger.warning(
-                    f"Failed to save Library media analysis for {media_id!r}.", exc_info=True
-                )
+                logger.opt(exception=True).warning(
+                    f"Failed to save Library media analysis for {media_id!r}.")
                 self._notify_library_media_analysis_warning(
                     "Could not save analysis changes; showing the latest saved version."
                 )
@@ -6499,10 +11671,15 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-open")
     def handle_library_media_open(self, event: Button.Pressed) -> None:
-        """Hand off the selected media item to the Media screen.
+        """Hand off to the legacy Media manager screen.
+
+        Only the full in-Library viewer's action row carries this button
+        now -- it genuinely navigates away from Library, so its "Open in
+        Media manager" label is honest. The browse summary's in-Library
+        action is ``#library-media-open-viewer`` ("Open in viewer") instead.
 
         Args:
-            event: Button press event emitted by the "Open in Media" action.
+            event: Button press event emitted by the "Open in Media manager" action.
         """
         event.stop()
         self.post_message(NavigateToScreen("media"))
@@ -6526,7 +11703,7 @@ class LibraryScreen(BaseAppScreen):
         query = self._safe_text(event.value, max_length=LIBRARY_RAG_QUERY_MAX_LENGTH)
         self._library_rag_query = query
         self._library_rag_mode = "search"
-        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH, "search")
+        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH:
             # A dirty note editor sitting in an unresolved save conflict
             # aborts the row switch (`_select_library_rail_row` returns
@@ -6580,6 +11757,8 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_conversation_query = self._safe_text(event.value, max_length=200)
+        self._library_conversations_select_mode = False
+        self._library_conversations_row_selection.clear()
         self.refresh(recompose=True)
         self.call_after_refresh(self._focus_library_conversations_filter)
 
@@ -6596,364 +11775,19 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
 
-    @on(Button.Pressed, ".library-mode-chip")
-    async def switch_library_mode(self, event: Button.Pressed) -> None:
-        mode_id = LIBRARY_MODE_BY_BUTTON_ID.get(event.button.id or "")
-        if mode_id is None:
-            return
-        event.stop()
-        await self._set_active_mode(mode_id)
-
-    async def _set_active_mode(self, mode_id: str) -> None:
-        if mode_id == self._active_mode:
-            return
-        self._active_mode = mode_id
-        self._invalidate_library_workspace_depth_state()
-        await self._refresh_active_mode_widgets()
-
-    def _legacy_workbench_present(self) -> bool:
-        """Whether the retired 3-pane workbench chrome is still mounted.
-
-        The Library shell replaces the mode strip + contract grid with a rail +
-        canvas. The legacy granular sync helpers below target ids that no longer
-        render, so they early-return through this guard and navigation flows
-        instead go through a full ``refresh(recompose=True)``.
-        """
-        return bool(self.query("#library-source-detail"))
-
-    async def _refresh_active_mode_widgets(self) -> None:
-        if not self._legacy_workbench_present():
-            self.refresh(recompose=True)
-            return
-        active_mode = self._active_mode_contract()
-        source_column_title, detail_column_title, inspector_column_title = self._active_column_titles()
-        self.query_one("#library-status-row", Static).update(self._status_row_copy())
-        self.query_one("#library-source-browser-title", Static).update(source_column_title)
-        self.query_one("#library-source-detail-title", Static).update(detail_column_title)
-        self.query_one("#library-source-inspector-title", Static).update(inspector_column_title)
-        active_mode_copy_visible = self._active_mode not in {
-            "collections",
-            "search",
-            "sources",
-            "workspaces",
-        }
-        self.query_one("#library-active-mode-title", Static).update(
-            f"{active_mode['label']} mode" if active_mode_copy_visible else ""
-        )
-        self.query_one("#library-active-mode-description", Static).update(
-            active_mode["description"] if active_mode_copy_visible else ""
-        )
-        self.query_one("#library-active-mode-next-action", Static).update(
-            active_mode["next_action"] if active_mode_copy_visible else ""
-        )
-        self.query_one("#library-active-mode-title", Static).display = active_mode_copy_visible
-        self.query_one("#library-active-mode-description", Static).display = active_mode_copy_visible
-        self.query_one("#library-active-mode-next-action", Static).display = active_mode_copy_visible
-        local_snapshot_regions = list(self.query("#library-local-snapshot-region"))
-        if local_snapshot_regions:
-            local_snapshot_regions[0].display = self._should_show_local_snapshot_region()
-        for mode_id, mode in LIBRARY_MODES.items():
-            if not mode.get("show_in_strip", True):
-                continue
-            self.query_one(f"#{mode['button_id']}", Button).set_class(
-                mode_id == self._active_mode,
-                "is-active",
-            )
-        active_source_action_id = self._active_source_action_id()
-        for button_id in (
-            "library-open-notes",
-            "library-open-media",
-            "library-open-conversations",
-            "library-open-import-export",
-            "library-open-search",
-            "library-open-collections",
-        ):
-            buttons = list(self.query(f"#{button_id}"))
-            if buttons:
-                buttons[0].set_class(button_id == active_source_action_id, "is-active")
-        await self._sync_source_module_actions()
-        workspace_depth_state = self._library_workspace_depth_state(refresh=True)
-        self.query_one("#library-workspace-scope", Static).update(
-            self._library_workspace_scope_label(workspace_depth_state)
-        )
-        await self._sync_local_snapshot_region(workspace_depth_state)
-        await self._sync_study_handoff_detail()
-        await self._sync_search_rag_panel(workspace_depth_state=workspace_depth_state)
-        await self._sync_collections_panel(refresh_snapshot=True)
-        await self._sync_workspaces_panel(workspace_depth_state)
-        await self._sync_action_region(workspace_depth_state)
-
-    async def _sync_source_module_actions(self) -> None:
-        """Rebuild source-map actions so active-mode owned action IDs stay unique."""
-        if not self.query("#library-source-browser"):
-            return
-        browser = self.query_one("#library-source-browser", Vertical)
-        source_title = self.query_one("#library-source-browser-title", Static)
-        quick_actions_title = self.query_one("#library-quick-actions-title", Static)
-        children = list(browser.children)
-        action_widgets: list[Any] = []
-        collect = False
-        for child in children:
-            if child is source_title:
-                collect = True
-                continue
-            if child is quick_actions_title:
-                break
-            if collect:
-                action_widgets.append(child)
-        for widget in action_widgets:
-            await widget.remove()
-        await browser.mount(*self._source_module_action_widgets(), before=quick_actions_title)
-
-    async def _sync_search_rag_panel(
-        self,
-        *,
-        workspace_depth_state: LibraryWorkspaceDepthState | None = None,
-    ) -> None:
-        if not self._legacy_workbench_present():
-            return
-        mounted_widgets = list(self.query("#library-search-rag-panel"))
-        for widget in mounted_widgets:
-            await widget.remove()
-        if self._active_mode != "search":
-            await self._sync_inspector_mode_region(
-                None,
-                workspace_depth_state=workspace_depth_state,
-            )
-            return
-        panel_state = self._library_rag_panel_state()
-        detail = self.query_one("#library-source-detail", Vertical)
-        await detail.mount(
-            LibrarySearchRagPanel(panel_state, id="library-search-rag-panel"),
-            after="#library-source-detail-title",
-        )
-        await self._sync_inspector_mode_region(panel_state)
-
-    async def _sync_study_handoff_detail(self) -> None:
-        if not self._legacy_workbench_present():
-            return
-        mounted_widgets = list(self.query("#library-study-handoff-detail"))
-        for widget in mounted_widgets:
-            await widget.remove()
-        if self._active_mode not in LIBRARY_STUDY_HANDOFF_MODES:
-            return
-        detail = self.query_one("#library-source-detail", Vertical)
-        await detail.mount(
-            self._study_handoff_detail_widget(),
-            after="#library-active-mode-next-action",
-        )
-
-    async def _sync_inspector_mode_region(
-        self,
-        panel_state: LibraryRagPanelState | None,
-        *,
-        workspace_depth_state: LibraryWorkspaceDepthState | None = None,
-    ) -> None:
-        regions = list(self.query("#library-inspector-mode-region"))
-        if not regions:
-            return
-        region = regions[0]
-        await region.remove_children()
-        if panel_state is not None:
-            await region.mount(
-                LibrarySearchRagInspectorPanel(
-                    panel_state,
-                    id="library-rag-inspector",
-                    classes="library-rag-region",
-                )
-            )
-            return
-        if self._active_mode == "collections":
-            for row in self._collections_inspector_rows(self._library_collections_panel_state()):
-                await region.mount(row)
-            return
-        if self._active_mode == "workspaces":
-            state = workspace_depth_state or self._library_workspace_depth_state()
-            for row in self._workspaces_inspector_rows(state):
-                await region.mount(row)
-            return
-        if self._active_mode == "conversations":
-            state = workspace_depth_state or self._library_workspace_depth_state()
-            selected = self._selected_conversation_record()
-            await region.mount(
-                Static("Conversation inspector", id="library-inspector-title", classes="destination-section")
-            )
-            if selected is None:
-                await region.mount(
-                    Static(
-                        "No conversation selected.",
-                        id="library-conversation-inspector-empty",
-                    )
-                )
-                await region.mount(
-                    Static(
-                        "Select a saved conversation to inspect metadata and handoff eligibility.",
-                        id="library-conversation-inspector-empty-next-action",
-                    )
-                )
-                return
-            _, record = selected
-            for row in (
-                Static(
-                    self._source_title("conversations", record),
-                    id="library-conversation-inspector-title",
-                ),
-                Static(
-                    self._conversation_message_count_label(record),
-                    id="library-conversation-inspector-message-count",
-                ),
-                Static(
-                    "Source authority: local",
-                    id="library-conversation-inspector-authority",
-                ),
-                Static(
-                    self._conversation_handoff_label(state),
-                    id="library-conversation-inspector-handoff",
-                ),
-                Static(
-                    "Owner: Console/Conversations retains editing and saved-history management.",
-                    id="library-conversation-inspector-owner",
-                ),
-            ):
-                await region.mount(row)
-            return
-        if self._active_mode == "import-export":
-            for row in self._import_export_inspector_rows():
-                await region.mount(row)
-            return
-        state = workspace_depth_state or self._library_workspace_depth_state()
-        for row in self._hub_inspector_rows(state):
-            await region.mount(row)
-
-    async def _sync_local_snapshot_region(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState,
-    ) -> None:
-        regions = list(self.query("#library-local-snapshot-region"))
-        if not regions:
-            return
-        region = regions[0]
-        # Textual removes children asynchronously; wait before remounting reused IDs.
-        await region.remove_children()
-        if not self._should_show_local_snapshot_region():
-            return
-        if not self._library_loaded:
-            await region.mount(
-                Static(
-                    "Loading local Library sources...",
-                    id="library-source-loading",
-                )
-            )
-            return
-        if self._library_lookup_error:
-            recovery_state = self._library_lookup_recovery_state
-            await region.mount(
-                Static(
-                    self._library_lookup_error,
-                    id=(
-                        recovery_state.stable_selector
-                        if recovery_state is not None
-                        else "library-source-error"
-                    ),
-                )
-            )
-            return
-        if self._active_mode == "conversations":
-            for row in self._conversation_browser_rows(workspace_depth_state):
-                await region.mount(row)
-            return
-        if self._active_mode == "import-export":
-            for row in self._import_export_workflow_rows():
-                await region.mount(row)
-            return
-        if not self._has_local_sources():
-            await region.mount(Static(LIBRARY_EMPTY_COPY, id="library-source-empty"))
-            await region.mount(
-                Static(
-                    LIBRARY_EMPTY_NEXT_ACTION_COPY,
-                    id="library-source-empty-next-action",
-                )
-            )
-
     async def _sync_collections_panel(self, *, refresh_snapshot: bool = False) -> None:
-        if not self._legacy_workbench_present():
-            if self._active_mode != "collections":
-                self._library_collection_pending_delete_id = ""
-                return
-            if refresh_snapshot:
-                await self._refresh_library_collections_snapshot()
-            self.refresh(recompose=True)
-            return
-        for widget in list(self.query("#library-collections-panel")):
-            await widget.remove()
-        if self._active_mode != "collections":
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS:
             self._library_collection_pending_delete_id = ""
             return
         if refresh_snapshot:
             await self._refresh_library_collections_snapshot()
-        status_rows = list(self.query("#library-status-row"))
-        if status_rows:
-            status_rows[0].update(self._status_row_copy())
-        panel_state = self._library_collections_panel_state()
-        detail = self.query_one("#library-source-detail", Vertical)
-        await detail.mount(
-            LibraryCollectionsPanel(
-                panel_state,
-                name_value=self._library_collection_name_input,
-                description_value=self._library_collection_description_input,
-                delete_pending=bool(self._library_collection_pending_delete_id),
-                id="library-collections-panel",
-            ),
-            after="#library-active-mode-next-action",
-        )
-        await self._sync_inspector_mode_region(None)
-
-    async def _sync_workspaces_panel(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState | None = None,
-    ) -> None:
-        if not self._legacy_workbench_present():
-            return
-        for widget in list(self.query("#library-workspaces-depth-panel")):
-            await widget.remove()
-        if self._active_mode != "workspaces":
-            return
-        state = workspace_depth_state or self._library_workspace_depth_state()
-        detail = self.query_one("#library-source-detail", Vertical)
-        panel = Vertical(id="library-workspaces-depth-panel")
-        await detail.mount(panel, after="#library-source-detail-title")
-        for row in self._workspaces_detail_rows(state):
-            await panel.mount(row)
-        await self._sync_inspector_mode_region(None)
-
-    async def _sync_action_region(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState | None = None,
-    ) -> None:
-        regions = list(self.query("#library-action-region"))
-        if not regions:
-            return
-        region = regions[0]
-        await region.remove_children()
-        workspace_depth_state = workspace_depth_state or self._library_workspace_depth_state()
-        handoff_disabled, handoff_tooltip = self._workspace_handoff_action_state(
-            workspace_depth_state
-        )
-        for widget in self._library_action_widgets(
-            workspace_depth_state=workspace_depth_state,
-            collection_scoped_actions_deferred=self._active_mode == "collections",
-            handoff_disabled=handoff_disabled,
-            handoff_tooltip=handoff_tooltip,
-            collections_panel_state=(
-                self._library_collections_panel_state()
-                if self._active_mode == "collections"
-                else None
-            ),
-        ):
-            await region.mount(widget)
+        self.refresh(recompose=True)
 
     async def _refresh_collections_panel_action_state_widgets(self) -> None:
-        if self._active_mode != "collections" or not list(self.query("#library-collections-panel")):
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS
+            or not list(self.query("#library-collections-panel"))
+        ):
             return
 
         panel_state = self._library_collections_panel_state()
@@ -6995,7 +11829,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             records = await self._run_library_service_call(list_collections)
         except Exception:
-            logger.warning("Failed to load Library Collections.", exc_info=True)
+            logger.opt(exception=True).warning("Failed to load Library Collections.")
             self._library_collections_records = ()
             self._library_sync_profile_summary = None
             self._library_collections_loaded = True
@@ -7057,7 +11891,7 @@ class LibraryScreen(BaseAppScreen):
                 ),
             )
         except Exception:
-            logger.warning("Failed to load Library Collections sync dry-run state.", exc_info=True)
+            logger.opt(exception=True).warning("Failed to load Library Collections sync dry-run state.")
             return tuple(records)
 
         latest_report = latest_mirror_record["report"] if latest_mirror_record else None
@@ -7155,7 +11989,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning("Failed to load Sync v2 profile summary.", exc_info=True)
+            logger.opt(exception=True).warning("Failed to load Sync v2 profile summary.")
             return None
         return summary if isinstance(summary, Mapping) else None
 
@@ -7203,8 +12037,10 @@ class LibraryScreen(BaseAppScreen):
     async def open_import_export_from_library_rag(self, event: Button.Pressed) -> None:
         event.stop()
         # Drive the shell selection so the recomposed canvas resolves to the
-        # Import/Export mode; flipping _active_mode alone reverts on recompose.
-        await self._select_library_rail_row("ingest-import-export", "import-export")
+        # Ingest canvas. The Import/Export row/mode this used to target is
+        # retired -- the Ingest ▸ Import media canvas row is its only
+        # surviving successor.
+        await self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
 
     @on(Button.Pressed, "#library-rag-mode-toggle")
     def cycle_library_rag_mode(self, event: Button.Pressed) -> None:
@@ -7462,25 +12298,48 @@ class LibraryScreen(BaseAppScreen):
         actions reuse.
 
         Args:
-            source_type: ``"media"``, ``"notes"``, or ``"conversations"``.
+            source_type: ``"media"``, ``"notes"``, ``"conversations"``, or
+                ``"prompt"`` (singular -- distinct from the "prompts"
+                scope-toggle/source key; see ``_OPEN_SOURCE_TYPE_MAP``).
                 Any other value (including empty) is a no-op -- defensive
                 only, since the Open action is only rendered for rows with
                 resolvable provenance (``LibraryRagResultRow.can_open``).
             record_id: The item's id within its source type.
         """
-        if not record_id or source_type not in ("media", "notes", "conversations"):
+        if not record_id or source_type not in ("media", "notes", "conversations", "prompt"):
+            return
+
+        if source_type == "prompt":
+            if not await self._flush_library_prompt_save():
+                return
+            try:
+                parsed_prompt_id = int(record_id)
+            except (TypeError, ValueError):
+                return
+            # Mirrors handle_library_prompt_row's full state-set exactly so
+            # the recomposed canvas lands on a clean editor, never a stale
+            # one carried over from a previously opened prompt.
+            self._reset_library_prompt_editor_state()
+            self._selected_prompt_id = parsed_prompt_id
+            self._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
+            self._library_prompts_view = "editor"
+            self.run_worker(
+                self._refresh_library_prompt_detail(parsed_prompt_id),
+                exclusive=True,
+                group="library_prompt_detail",
+            )
+            self.refresh(recompose=True)
             return
 
         if source_type == "media":
             await self._flush_library_note_save()
-            if self._library_note_autosave_state == "conflict":
+            if self._library_note_dirty:
                 return
             # Mirrors handle_library_media_row's full state-set EXACTLY so
             # the recomposed canvas lands on a clean viewer, never a stale
             # one carried over from a previously opened item.
             self._selected_media_id = record_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-            self._active_mode = "media"
             self._library_media_view = "viewer"
             self._library_media_detail = None
             self._library_media_editing = False
@@ -7499,14 +12358,13 @@ class LibraryScreen(BaseAppScreen):
 
         if source_type == "notes":
             await self._flush_library_note_save()
-            if self._library_note_autosave_state == "conflict":
+            if self._library_note_dirty:
                 return
             # Reset first for a clean slate (also stops any autosave timer,
             # clears dirty/conflict/preview state), then apply the actual
             # open-target fields -- equivalent final state to the note_id
             # navigation-context branch's inline field-by-field reset.
             self._reset_library_note_editor_state()
-            self._active_mode = "notes"
             self._library_notes_view = "editor"
             self._selected_note_id = record_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
@@ -7544,7 +12402,7 @@ class LibraryScreen(BaseAppScreen):
         # entering Conversations via the rail; _select_library_rail_row
         # itself does not touch it.
         self._library_conversation_query = ""
-        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS, "conversations")
+        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
 
     async def _fetch_library_conversation_by_id(
         self, conversation_id: str
@@ -7582,9 +12440,8 @@ class LibraryScreen(BaseAppScreen):
                     get_conversation_by_id, conversation_id, include_deleted=False
                 )
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"Failed to fetch Library conversation {conversation_id!r} by id.",
-                exc_info=True,
             )
             return None
         return record if isinstance(record, Mapping) else None
@@ -7604,7 +12461,7 @@ class LibraryScreen(BaseAppScreen):
 
     def action_library_rag_use_in_console(self) -> None:
         """Keyboard shortcut for staging selected Search/RAG evidence in Console."""
-        if self._active_mode != "search":
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH:
             return
         self._stage_library_rag_result_in_console()
 
@@ -7683,7 +12540,10 @@ class LibraryScreen(BaseAppScreen):
         # when a search settles with nothing to show. Every other refresh
         # path leaves the user's manual expand/collapse alone.
         self._library_rag_history_collapsed = bool(self._library_rag_results)
-        if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH
+            or not self.query("#library-search-rag-panel")
+        ):
             return
         await self._refresh_search_rag_panel_state_widgets(force_history_collapse=True)
 
@@ -7692,13 +12552,13 @@ class LibraryScreen(BaseAppScreen):
         *,
         force_history_collapse: bool = False,
     ) -> None:
-        if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH
+            or not self.query("#library-search-rag-panel")
+        ):
             return
 
         panel_state = self._library_rag_panel_state()
-        status_rows = list(self.query("#library-status-row"))
-        if status_rows:
-            status_rows[0].update(self._status_row_copy())
 
         await self._refresh_library_rag_query_status_widgets(panel_state)
 
@@ -7722,6 +12582,22 @@ class LibraryScreen(BaseAppScreen):
             panel_state,
             force_collapsed=panel_state.history_collapsed if force_history_collapse else None,
         )
+        # `force_history_collapse` is only set True from the results-arrival
+        # transition in `_apply_library_rag_search_outcome` -- every other
+        # refresh trigger (scope toggle, mode toggle, evidence selection)
+        # passes the default False. Reuse that same signal (C2) to scroll
+        # the Evidence heading back into view once results just landed.
+        # Deliberately done LAST, after every widget mutation above
+        # (results *and* history) has settled: mounting/removing the
+        # history rows also changes the panel's virtual size, and a scroll
+        # issued before that would just get overridden by it.
+        if force_history_collapse and panel_state.results:
+            try:
+                self.query_one(
+                    "#library-rag-results-heading", Static
+                ).scroll_visible(animate=False)
+            except NoMatches:
+                pass
 
     async def _refresh_library_rag_query_status_widgets(
         self,
@@ -7847,60 +12723,7 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _library_rag_scope_summary(panel_state: LibraryRagPanelState) -> str:
-        counts = {option.source_type: option.count for option in panel_state.scope.options}
-        return (
-            "Scope: all local"
-            f" | Notes {counts.get('notes', 0)}"
-            f" | Media {counts.get('media', 0)}"
-            f" | Conversations {counts.get('conversations', 0)}"
-        )
-
-    @on(Button.Pressed, "#library-open-notes")
-    async def open_notes(self, event: Button.Pressed) -> None:
-        """Switch to the Notes canvas in-place.
-
-        Part of the retired 3-pane workbench chrome (see
-        ``_legacy_workbench_present``): ``#library-open-notes`` is no
-        longer composed by the current rail + canvas shell, so this
-        handler is unreachable in practice, mirroring ``open_media``/
-        ``open_conversations``. Kept in sync with the shell's native
-        (non-route) mode-switch pattern regardless, since the standalone
-        Notes screen this used to hand off to via
-        ``NavigateToScreen("notes")`` has been retired.
-        """
-        event.stop()
-        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES, "notes")
-
-    @on(Button.Pressed, "#library-open-media")
-    def open_media(self) -> None:
-        self.post_message(NavigateToScreen("media"))
-
-    @on(Button.Pressed, "#library-open-conversations")
-    async def open_conversations(self, event: Button.Pressed) -> None:
-        event.stop()
-        await self._set_active_mode("conversations")
-
-    @on(Button.Pressed, "#library-conversations-open-console-empty")
-    def open_console_from_empty_conversations(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(NavigateToScreen("chat"))
-
-    @on(Button.Pressed, ".library-conversation-select")
-    async def select_library_conversation(self, event: Button.Pressed) -> None:
-        event.stop()
-        raw_id = event.button.id or ""
-        try:
-            index = int(raw_id.rsplit("-", 1)[-1])
-        except ValueError:
-            return
-        records = self._conversation_records()
-        if index < 0 or index >= len(records):
-            return
-        self._selected_conversation_id = self._conversation_record_id(records[index], index)
-        workspace_depth_state = self._library_workspace_depth_state(refresh=True)
-        await self._sync_local_snapshot_region(workspace_depth_state)
-        await self._sync_inspector_mode_region(None, workspace_depth_state=workspace_depth_state)
-        await self._sync_action_region(workspace_depth_state)
+        return LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
 
     def _open_selected_conversation_handoff(self) -> None:
         workspace_state = self._library_workspace_depth_state()
@@ -7919,7 +12742,7 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify("Console handoff is unavailable for Library Conversations.", severity="warning")
             return
-        open_chat_with_handoff(payload)
+        open_chat_with_handoff(payload, action_label="Use in Console")
 
     @on(Button.Pressed, "#library-conversation-open-console")
     def open_selected_conversation_in_console(self, event: Button.Pressed) -> None:
@@ -7961,32 +12784,17 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify("Console handoff is unavailable for Library Media.", severity="warning")
             return
-        open_chat_with_handoff(payload)
+        open_chat_with_handoff(payload, action_label="Use in Console")
 
     @on(Button.Pressed, "#library-media-use-in-chat")
     def use_media_in_chat(self, event: Button.Pressed) -> None:
-        """Handle the media viewer's "Use in Chat" action.
+        """Handle the media viewer's "Use in Console" action.
 
         Args:
-            event: Button press event emitted by the viewer's "Use in Chat" action.
+            event: Button press event emitted by the viewer's "Use in Console" action.
         """
         event.stop()
         self._open_selected_media_handoff()
-
-    @on(Button.Pressed, "#library-open-import-export")
-    async def open_import_export(self, event: Button.Pressed) -> None:
-        event.stop()
-        await self._set_active_mode("import-export")
-
-    @on(Button.Pressed, "#library-import-export-open-ingest")
-    def open_import_export_ingest(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(NavigateToScreen("ingest"))
-
-    @on(Button.Pressed, "#library-import-export-open-media")
-    def open_import_export_media(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(NavigateToScreen("media"))
 
     @on(Button.Pressed, "#library-workspace-import-sources")
     def open_workspace_import_sources(self) -> None:
@@ -8015,27 +12823,17 @@ class LibraryScreen(BaseAppScreen):
             )
             registry_service.set_active_workspace(workspace_id)
         except Exception:
-            logger.warning("Failed to create local Library workspace", exc_info=True)
+            logger.opt(exception=True).warning("Failed to create local Library workspace")
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Local workspace could not be created.", severity="error")
             return
 
         self._invalidate_library_workspace_depth_state()
-        await self._refresh_active_mode_widgets()
+        self.refresh(recompose=True)
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(f"Created local workspace {workspace_name}.", severity="information")
-
-    @on(Button.Pressed, "#library-open-search")
-    async def open_search_mode(self, event: Button.Pressed) -> None:
-        event.stop()
-        await self._set_active_mode("search")
-
-    @on(Button.Pressed, "#library-open-collections")
-    async def open_collections_mode(self, event: Button.Pressed) -> None:
-        event.stop()
-        await self._set_active_mode("collections")
 
     def _open_study_section(self, initial_section: str = "dashboard") -> None:
         open_study_screen = getattr(self.app_instance, "open_study_screen", None)
@@ -8098,5 +12896,6 @@ class LibraryScreen(BaseAppScreen):
                 source_owner="local",
                 source_selector_state="local",
                 metadata=self._source_snapshot_metadata(),
-            )
+            ),
+            action_label="Use in Console",
         )

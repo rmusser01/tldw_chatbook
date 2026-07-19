@@ -326,7 +326,7 @@ class EvaluationBrowserScreen(Screen):
             if self.view_mode == "manage" and mode == "local":
                 targets = await scope.list_targets(mode=mode, limit=200)
         except Exception as exc:
-            logger.error("Failed to load evaluation browser data", exc_info=True)
+            logger.opt(exception=True).error("Failed to load evaluation browser data")
             context.update(f"{mode.title()} backend load failed: {exc}")
             self._set_empty_tables()
             if self.nav_bar:
@@ -372,7 +372,7 @@ class EvaluationBrowserScreen(Screen):
         try:
             runs = await scope.list_runs(mode=mode, eval_id=evaluation_id, limit=200)
         except Exception as exc:
-            logger.error("Failed to load evaluation runs for {}", evaluation_id, exc_info=True)
+            logger.opt(exception=True).error("Failed to load evaluation runs for {}", evaluation_id)
             self._clear_runs_table(error_message=str(exc))
             self._notify(f"Failed to load evaluation runs: {exc}", severity="error")
             return
@@ -432,7 +432,7 @@ class EvaluationBrowserScreen(Screen):
                 run_name=run_name,
             )
         except Exception as exc:
-            logger.error("Failed to create evaluation run", exc_info=True)
+            logger.opt(exception=True).error("Failed to create evaluation run")
             self._notify(f"Failed to create run: {exc}", severity="error")
             return
 
@@ -553,7 +553,7 @@ class EvaluationBrowserScreen(Screen):
         try:
             artifacts = await scope.get_run_artifacts(mode=mode, run_id=run_id)
         except Exception as exc:
-            logger.error("Failed to load run artifacts for {}", run_id, exc_info=True)
+            logger.opt(exception=True).error("Failed to load run artifacts for {}", run_id)
             self._notify(f"Failed to load run detail: {exc}", severity="error")
             return
 

@@ -15,6 +15,7 @@ Key Features:
 #
 # Imports
 import base64
+import inspect
 import json
 import logging
 import os
@@ -123,7 +124,6 @@ PROVIDER_PARAM_MAP = {
     'openai': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -149,7 +149,6 @@ PROVIDER_PARAM_MAP = {
     'anthropic': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',
         'system_message': 'system_prompt',
         'streaming': 'streaming',
@@ -166,8 +165,7 @@ PROVIDER_PARAM_MAP = {
     'cohere': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
         'system_message': 'system_prompt',
         'streaming': 'streaming',
         'model': 'model',
@@ -185,12 +183,13 @@ PROVIDER_PARAM_MAP = {
     'groq': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
         'system_message': 'system_message',
         'streaming': 'streaming',
         'maxp': 'maxp',
         'model':'model', # Groq also uses top_p, handled by chat_with_groq
+        'tools': 'tools',
+        'tool_choice': 'tool_choice',
         'max_tokens': 'max_tokens',
         'logit_bias': 'logit_bias',
         'presence_penalty': 'presence_penalty',
@@ -199,8 +198,7 @@ PROVIDER_PARAM_MAP = {
     'openrouter': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
         'system_message': 'system_message',
         'streaming': 'streaming',
         'topp': 'top_p',
@@ -224,12 +222,13 @@ PROVIDER_PARAM_MAP = {
     'deepseek': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
         'system_message': 'system_message',
         'streaming': 'streaming',
         'topp': 'topp',
         'model':'model',
+        'tools': 'tools',
+        'tool_choice': 'tool_choice',
         'max_tokens': 'max_tokens',
         'seed': 'seed',
         'stop': 'stop',
@@ -241,8 +240,7 @@ PROVIDER_PARAM_MAP = {
     'mistral': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
         'system_message': 'system_message',
         'streaming': 'streaming',
         'topp': 'topp',
@@ -256,8 +254,7 @@ PROVIDER_PARAM_MAP = {
     'mistralai': {  # Same mapping as 'mistral'
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
         'system_message': 'system_message',
         'streaming': 'streaming',
         'topp': 'topp',
@@ -271,8 +268,7 @@ PROVIDER_PARAM_MAP = {
     'google': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
         'system_message': 'system_message',
         'streaming': 'streaming',
         'topp': 'topp',
@@ -287,8 +283,7 @@ PROVIDER_PARAM_MAP = {
     'huggingface': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
+        'temp': 'temp',  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
         'system_message': 'system_message',
         'streaming': 'streaming',
         'model':'model',
@@ -300,9 +295,8 @@ PROVIDER_PARAM_MAP = {
     },
     'llama_cpp': { # Has api_url as a positional argument which needs special handling if not None
         'api_key': 'api_key',
+        'temp': 'temp',  # audit task-286: was a dead 'temperature' key (temp silently dropped); handler takes temp
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
-        'temperature': 'temperature',
         'system_message': 'system_prompt',
         'streaming': 'streaming',
         'topp': 'top_p',
@@ -326,8 +320,7 @@ PROVIDER_PARAM_MAP = {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
         'llm_fixed_tokens_kobold': 'fixed_tokens_mode', # Added
-        'prompt': 'custom_prompt_input',
-        'temperature': 'temp',
+        'temp': 'temp',  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
         'system_message': 'system_message',
         'streaming': 'streaming',
         'topp': 'top_p',
@@ -340,9 +333,8 @@ PROVIDER_PARAM_MAP = {
     },
     'oobabooga': { # api_url also a consideration like llama.cpp
         'api_key': 'api_key',
+        'temp': 'temp',  # audit task-286: was a dead 'temperature' key (temp silently dropped); handler takes temp
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
-        'temperature': 'temperature',
         'system_message': 'system_prompt', # often part of messages or specific param
         'streaming': 'streaming',
         'topp': 'top_p',
@@ -354,7 +346,7 @@ PROVIDER_PARAM_MAP = {
         'stop': 'stop',
         'response_format': 'response_format',
         'n': 'n',
-        'user_identifier': 'user',
+        'user_identifier': 'user_identifier',
         'logit_bias': 'logit_bias',
         'presence_penalty': 'presence_penalty',
         'frequency_penalty': 'frequency_penalty',
@@ -362,8 +354,7 @@ PROVIDER_PARAM_MAP = {
     'tabbyapi': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_input',
-        'temp': 'temperature',
+        'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
         'topp': 'top_p',
@@ -375,7 +366,7 @@ PROVIDER_PARAM_MAP = {
         'stop': 'stop',
     },
     'vllm': { # vllm_api_url consideration
-                'api_key': 'api_key', 'messages_payload': 'input_data', 'prompt': 'custom_prompt_input',
+                'api_key': 'api_key', 'messages_payload': 'input_data',
         'temp': 'temperature', 'system_message': 'system_prompt', 'streaming': 'streaming',
         'topp': 'top_p', 'topk': 'top_k', 'minp': 'min_p', 'model': 'model',
         'max_tokens': 'max_tokens',
@@ -388,12 +379,11 @@ PROVIDER_PARAM_MAP = {
         'frequency_penalty': 'frequency_penalty',
         'logprobs': 'logprobs',
         'top_logprobs': 'top_logprobs',
-        'user_identifier': 'user',
+        'user_identifier': 'user_identifier',
     },
     'local-llm': {
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temp': 'temperature',
+        'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
         'topp': 'top_p',
@@ -407,7 +397,6 @@ PROVIDER_PARAM_MAP = {
     'ollama': { # api_url consideration
         'api_key': 'api_key', # api_key is not used by ollama directly, url is more important
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt', # This is 'prompt' for generate, 'messages' for chat
         'temp': 'temperature',
         'system_message': 'system_message', # Part of request body
         'streaming': 'streaming',
@@ -424,7 +413,6 @@ PROVIDER_PARAM_MAP = {
     'aphrodite': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
         'temp': 'temperature',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -441,12 +429,11 @@ PROVIDER_PARAM_MAP = {
         'presence_penalty': 'presence_penalty',
         'frequency_penalty': 'frequency_penalty',
         'logprobs': 'logprobs',
-        'user_identifier': 'user',
+        'user_identifier': 'user_identifier',
     },
     'custom-openai-api': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -459,7 +446,7 @@ PROVIDER_PARAM_MAP = {
         'stop': 'stop',
         'response_format': 'response_format',
         'n': 'n',
-        'user_identifier': 'user',
+        'user_identifier': 'user_identifier',
         'tools': 'tools',
         'tool_choice': 'tool_choice',
         'logit_bias': 'logit_bias',
@@ -471,7 +458,6 @@ PROVIDER_PARAM_MAP = {
     'custom-openai-api-2': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -481,7 +467,7 @@ PROVIDER_PARAM_MAP = {
         'stop': 'stop',
         'response_format': 'response_format',
         'n': 'n',
-        'user_identifier': 'user',
+        'user_identifier': 'user_identifier',
         'tools': 'tools',
         'tool_choice': 'tool_choice',
         'logit_bias': 'logit_bias',
@@ -493,7 +479,6 @@ PROVIDER_PARAM_MAP = {
     'mlx_lm': {
         'api_key': 'api_key', # chat_with_mlx_lm doesn't use it, but map for consistency if passed via chat_api_call
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg', # This would be caught by **kwargs in chat_with_mlx_lm if passed
         'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -523,8 +508,7 @@ PROVIDER_PARAM_MAP = {
     'local_llamacpp': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
-        'temperature': 'temperature',
+        'temp': 'temp',  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
         'system_message': 'system_prompt',
         'streaming': 'streaming',
         'topp': 'top_p',
@@ -543,8 +527,7 @@ PROVIDER_PARAM_MAP = {
     'local_llamafile': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
-        'temperature': 'temperature',
+        'temp': 'temp',  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
         'system_message': 'system_prompt',
         'streaming': 'streaming',
         'topp': 'top_p',
@@ -563,7 +546,6 @@ PROVIDER_PARAM_MAP = {
     'local_ollama': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
         'temp': 'temperature',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -580,7 +562,6 @@ PROVIDER_PARAM_MAP = {
     'local_vllm': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_input',
         'temp': 'temperature',
         'system_message': 'system_prompt',
         'streaming': 'streaming',
@@ -602,7 +583,6 @@ PROVIDER_PARAM_MAP = {
     'local_mlx_lm': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -627,7 +607,6 @@ PROVIDER_PARAM_MAP = {
     'moonshot': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -647,7 +626,6 @@ PROVIDER_PARAM_MAP = {
     'zai': {
         'api_key': 'api_key',
         'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
         'temp': 'temp',
         'system_message': 'system_message',
         'streaming': 'streaming',
@@ -772,44 +750,18 @@ def chat_api_call(
     # Construct kwargs for the handler function based on the map
     # This requires careful mapping and ensuring the handler functions are adapted.
 
-    # Generic parameters available from chat_api_call signature
+    # Generic parameters available from chat_api_call, derived from the
+    # function's own signature so the dispatcher can never drift from it —
+    # a hand-maintained dict here previously allowed map keys that existed
+    # on the signature but were still silently dropped (PR #668 review).
     available_generic_params = {
-        'api_key': api_key,
-        'messages_payload': messages_payload, # This is the core change
-        'temp': temp,
-        'system_message': system_message,
-        'streaming': streaming,
-        'minp': minp,
-        'maxp': maxp, # Will be mapped to top_p by some providers
-        'model': model,
-        'topk': topk,
-        'topp': topp, # Will be mapped to top_p by some providers
-        'logprobs': logprobs,
-        'top_logprobs': top_logprobs,
-        'logit_bias': logit_bias,
-        'presence_penalty': presence_penalty,
-        'frequency_penalty': frequency_penalty,
-        'tools': tools,
-        'tool_choice': tool_choice,
-        'max_tokens': max_tokens,
-        'seed': seed,
-        'stop': stop,
-        'response_format': response_format,
-        'n': n,
-        'user_identifier': user_identifier,
-        'reasoning_effort': reasoning_effort,
-        'reasoning_summary': reasoning_summary,
-        'verbosity': verbosity,
-        'thinking_effort': thinking_effort,
-        'thinking_budget_tokens': thinking_budget_tokens,
-        'llm_fixed_tokens_kobold': llm_fixed_tokens_kobold # Added
+        name: value for name, value in locals().items()
+        if name in _CHAT_API_GENERIC_PARAMS
     }
 
     for generic_param_name, provider_param_name in params_map.items():
         if generic_param_name in available_generic_params and available_generic_params[generic_param_name] is not None:
             call_kwargs[provider_param_name] = available_generic_params[generic_param_name]
-        if generic_param_name == 'prompt' and endpoint_lower == 'cohere':
-             pass # Specific handling for Cohere's prompt is assumed to be within chat_with_cohere
 
     if call_kwargs.get(params_map.get('api_key', 'api_key')):
          logger.info("Debug - Chat API Call - API key provided.")
@@ -848,7 +800,7 @@ def chat_api_call(
 
         # Log safely first
         try:
-            logger.opt(exception=False).error("{}. Details: {}", log_message_base, error_text[:500])
+            logger.error("{}. Details: {}", log_message_base, error_text[:500])
         except Exception as log_e:
             logger.error(f"Error during logging HTTPError details: {log_e}")
 
@@ -871,7 +823,7 @@ def chat_api_call(
                                message=f"Unexpected HTTP status {status_code} from {endpoint_lower}. Detail: {error_text[:200]}",
                                status_code=status_code)
     except requests.exceptions.RequestException as e:
-        logger.error(f"Network error connecting to {endpoint_lower}: {e}", exc_info=False)
+        logger.error(f"Network error connecting to {endpoint_lower}: {e}")
         raise ChatProviderError(provider=endpoint_lower, message=f"Network error: {e}", status_code=504)
     except (ChatAuthenticationError, ChatRateLimitError, ChatBadRequestError, ChatConfigurationError, ChatProviderError,
             ChatAPIError) as e_chat_direct:
@@ -887,7 +839,7 @@ def chat_api_call(
         )
         raise e_chat_direct  # Re-raise the specific error
     except (ValueError, TypeError, KeyError) as e:
-        logger.error(f"Value/Type/Key error during chat API call setup for {endpoint_lower}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Value/Type/Key error during chat API call setup for {endpoint_lower}: {e}")
         error_type = "Configuration/Parameter Error"
         if "Unsupported API endpoint" in str(e):
             raise ChatConfigurationError(provider=endpoint_lower, message=f"Unsupported API endpoint: {endpoint_lower}")
@@ -899,6 +851,12 @@ def chat_api_call(
         raise ChatAPIError(provider=endpoint_lower,
                            message=f"An unexpected internal error occurred in chat_api_call for {endpoint_lower}: {str(e)}",
                            status_code=500)
+
+
+_CHAT_API_GENERIC_PARAMS = frozenset(
+    inspect.signature(chat_api_call).parameters) - {"api_endpoint"}
+"""The dispatcher's generic parameter names — the single source of truth is
+``chat_api_call``'s own signature (see ``available_generic_params``)."""
 
 
 def chat(

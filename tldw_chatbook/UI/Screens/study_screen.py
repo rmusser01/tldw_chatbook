@@ -917,7 +917,7 @@ class StudyScreen(BaseAppScreen):
             elif db is not None and hasattr(db, "get_due_flashcards"):
                 due_count = len(list(db.get_due_flashcards(limit=25) or []))
         except Exception:
-            logger.debug("Failed to load Study due counts", exc_info=True)
+            logger.opt(exception=True).debug("Failed to load Study due counts")
 
         recent_decks: list[str] = []
         try:
@@ -934,7 +934,7 @@ class StudyScreen(BaseAppScreen):
                     for deck in list(db.list_decks(limit=3, offset=0) or [])[:3]
                 ]
         except Exception:
-            logger.debug("Failed to load Study deck recents", exc_info=True)
+            logger.opt(exception=True).debug("Failed to load Study deck recents")
 
         recent_quizzes: list[str] = []
         try:
@@ -952,7 +952,7 @@ class StudyScreen(BaseAppScreen):
                     for quiz in self._normalize_records(quizzes)[:3]
                 ]
         except Exception:
-            logger.debug("Failed to load Study quiz recents", exc_info=True)
+            logger.opt(exception=True).debug("Failed to load Study quiz recents")
 
         self._dashboard_due_count = due_count
         self._recent_deck_titles = recent_decks

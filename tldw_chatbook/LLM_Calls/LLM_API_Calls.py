@@ -262,7 +262,7 @@ def _responses_stream_to_chat_sse(response, *, model: str):
             elif event_type == "error":
                 yield f"data: {payload_text}\n\n"
     except requests.exceptions.RequestException as exc:
-        logger.error("OpenAI Responses: stream connection error: %s", exc, exc_info=True)
+        logger.opt(exception=True).error("OpenAI Responses: stream connection error: %s", exc)
         yield (
             "data: "
             + json.dumps({"error": {"message": f"Stream connection error: {exc}"}})
@@ -365,10 +365,10 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
             # Fallback if raise_for_status doesn't cover it (it should)
             raise ValueError(f"OpenAI Embeddings: Failed to retrieve. Status code: {response.status_code}")
     except requests.RequestException as e:
-        logger.error(f"OpenAI Embeddings: Error making API request: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"OpenAI Embeddings: Error making API request: {str(e)}")
         raise ValueError(f"OpenAI Embeddings: Error making API request: {str(e)}")
     except Exception as e:
-        logger.error(f"OpenAI Embeddings: Unexpected error: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"OpenAI Embeddings: Unexpected error: {str(e)}")
         raise ValueError(f"OpenAI Embeddings: Unexpected error occurred: {str(e)}")
 
 
@@ -560,12 +560,12 @@ def chat_with_openai(
                             # OpenAI's SSE usually includes double newlines.
                             yield line if line.endswith("\n") else line + "\n"
                 except requests.exceptions.RequestException as e_request:
-                    logger.error(f"OpenAI: RequestException during stream: {e_request}", exc_info=True)
+                    logger.opt(exception=True).error(f"OpenAI: RequestException during stream: {e_request}")
                     error_content = json.dumps({"error": {"message": f"Stream connection error: {str(e_request)}",
                                                           "type": "openai_stream_error"}})
                     yield f"data: {error_content}\n\n" # Yield as SSE error
                 except Exception as e_stream:
-                    logger.error(f"OpenAI: Error during stream iteration: {e_stream}", exc_info=True)
+                    logger.opt(exception=True).error(f"OpenAI: Error during stream iteration: {e_stream}")
                     error_content = json.dumps({"error": {"message": f"Stream iteration error: {str(e_stream)}",
                                                           "type": "openai_stream_error"}})
                     yield f"data: {error_content}\n\n" # Yield as SSE error
@@ -665,7 +665,7 @@ def chat_with_openai(
             "model": final_model,
             "error_type": "network"
         })
-        logger.error(f"OpenAI RequestException: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"OpenAI RequestException: {e}")
         raise
     except Exception as e: # Catch any other unexpected error
         # Log unexpected error metrics
@@ -674,8 +674,69 @@ def chat_with_openai(
             "model": final_model,
             "error_type": "unexpected"
         })
-        logger.error(f"OpenAI: Unexpected error in chat_with_openai: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"OpenAI: Unexpected error in chat_with_openai: {e}")
         raise ChatProviderError(provider="openai", message=f"Unexpected error: {e}")
+
+
+def _anthropic_block_index(event: dict) -> int | None:
+    """Best-effort parse of an SSE event's content-block ``index``.
+
+    Anthropic always sends an int, but a malformed event must not abort an
+    otherwise-valid stream (PR #659 review): non-int-castable values yield
+    None and the caller skips the event.
+
+    Args:
+        event: A decoded Anthropic SSE event payload.
+
+    Returns:
+        The block index, or None when absent/unparseable.
+    """
+    raw = event.get("index", 0)
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and raw.strip().isdigit():
+        return int(raw.strip())
+    return None
+
+
+def _anthropic_tools_payload(tools: list) -> list:
+    """Convert OpenAI function-format tool entries to Anthropic's format.
+
+    Entries already in Anthropic shape (carrying ``input_schema``) pass
+    through untouched — the handler's historical contract. Non-dict junk is
+    dropped.
+
+    Args:
+        tools: The ``tools`` list as received (OpenAI or Anthropic shaped).
+
+    Returns:
+        Anthropic-format entries: ``{"name", "description", "input_schema"}``.
+    """
+    converted = []
+    for entry in tools or []:
+        if not isinstance(entry, dict):
+            continue
+        function = entry.get("function")
+        if entry.get("type") == "function" and isinstance(function, dict):
+            name = str(function.get("name") or "").strip()
+            if not name:
+                # Anthropic rejects empty tool names — dropping the entry
+                # keeps the failure local instead of a provider 400
+                # (PR #659 review).
+                continue
+            parameters = function.get("parameters")
+            if not isinstance(parameters, dict) or not parameters:
+                parameters = {"type": "object", "properties": {}}
+            converted.append({
+                "name": name,
+                "description": str(function.get("description") or ""),
+                "input_schema": parameters,
+            })
+        else:
+            converted.append(entry)
+    return converted
 
 
 def chat_with_anthropic(
@@ -729,6 +790,76 @@ def chat_with_anthropic(
     for msg in input_data:
         role = msg.get("role")
         content = msg.get("content")
+        if role == "tool":
+            # OpenAI tool-result convention -> Anthropic tool_result block.
+            # Consecutive tool results coalesce into ONE user turn: they all
+            # answer the same assistant tool_use turn, and Anthropic requires
+            # alternating roles (task-263 AC#2).
+            block = {"type": "tool_result",
+                     "tool_use_id": str(msg.get("tool_call_id") or ""),
+                     "content": str(content or "")}
+            last = anthropic_messages[-1] if anthropic_messages else None
+            if (last is not None and last.get("role") == "user"
+                    and isinstance(last.get("content"), list)
+                    and any(isinstance(b, dict) and b.get("type") == "tool_result"
+                            for b in last["content"])):
+                last["content"].append(block)
+            else:
+                anthropic_messages.append({"role": "user", "content": [block]})
+            continue
+        if role == "assistant" and msg.get("tool_calls"):
+            # OpenAI assistant tool_calls echo -> Anthropic tool_use blocks
+            # (text block first when the turn also carried visible content).
+            # Guards mirror native_tools.parse_native_tool_calls: the live
+            # Anthropic API rejects both an empty "content": [] array and a
+            # tool_use block with an empty "name", so a call only converts
+            # when it has a dict `function` with a non-empty stripped
+            # `name` (task-263 review). Build the candidate blocks first —
+            # if every call is junk, fall through to the plain content
+            # handling below instead of sending a blocks-only message.
+            tool_use_blocks = []
+            for call in msg.get("tool_calls") or []:
+                if not isinstance(call, dict):
+                    continue
+                function = call.get("function")
+                if not isinstance(function, dict):
+                    continue
+                name = str(function.get("name") or "").strip()
+                if not name:
+                    continue
+                raw_args = function.get("arguments")
+                tool_input = raw_args if isinstance(raw_args, dict) else {}
+                if isinstance(raw_args, str) and raw_args.strip():
+                    try:
+                        parsed = json.loads(raw_args)
+                    except json.JSONDecodeError:
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        tool_input = parsed
+                tool_use_blocks.append({"type": "tool_use",
+                                        "id": str(call.get("id") or ""),
+                                        "name": name,
+                                        "input": tool_input})
+            if tool_use_blocks:
+                blocks = []
+                if isinstance(content, str) and content.strip():
+                    blocks.append({"type": "text", "text": content})
+                elif isinstance(content, list):
+                    # List-form (multimodal) content: keep its text parts —
+                    # dropping them would silently lose visible text that
+                    # accompanied the tool calls (PR #659 review).
+                    for part in content:
+                        if (isinstance(part, dict)
+                                and part.get("type") == "text"
+                                and isinstance(part.get("text"), str)
+                                and part["text"].strip()):
+                            blocks.append({"type": "text",
+                                           "text": part["text"]})
+                blocks.extend(tool_use_blocks)
+                anthropic_messages.append({"role": "assistant", "content": blocks})
+                continue
+            # else: no valid tool_use blocks survived the guards above —
+            # fall through to the plain user/assistant content handling.
         if role not in ["user", "assistant"]:
             logger.warning(f"Anthropic: Skipping message with unsupported role: {role}")
             continue
@@ -787,7 +918,7 @@ def chat_with_anthropic(
             "Anthropic: omitting temperature/top_p/top_k because thinking is enabled."
         )
     if stop_sequences is not None: data["stop_sequences"] = stop_sequences
-    if tools is not None: data["tools"] = tools # Assuming 'tools' is already in Anthropic's required format
+    if tools is not None: data["tools"] = _anthropic_tools_payload(tools)
     if thinking_config is not None: data["thinking"] = thinking_config
 
     api_url = anthropic_config.get('api_base_url', 'https://api.anthropic.com/v1').rstrip('/') + '/messages'
@@ -817,6 +948,13 @@ def chat_with_anthropic(
                 # Note: Anthropic event types: message_start, content_block_start, content_block_delta, content_block_stop, message_delta, message_stop
                 # We primarily care about content_block_delta for text and message_delta/message_stop for finish_reason.
 
+                # task-263: map Anthropic tool_use content-block indexes to
+                # 0-based OpenAI tool_calls positions (Anthropic's index also
+                # counts text blocks; OpenAI consumers key fragments by
+                # tool-call position — see the gateway's _ToolCallAccumulator).
+                tool_call_positions = {}
+                next_tool_position = 0
+
                 try:
                     for line_bytes in response.iter_lines():  # iter_lines gives bytes
                         line = line_bytes.decode('utf-8').strip()
@@ -835,10 +973,35 @@ def chat_with_anthropic(
                                 finish_reason = None
                                 tool_calls_delta = None  # For future tool streaming
 
-                                if anthropic_event.get("type") == "content_block_delta":
+                                if anthropic_event.get("type") == "content_block_start":
+                                    block = anthropic_event.get("content_block") or {}
+                                    if block.get("type") == "tool_use":
+                                        index = _anthropic_block_index(anthropic_event)
+                                        if index is None:
+                                            continue
+                                        position = next_tool_position
+                                        next_tool_position += 1
+                                        tool_call_positions[index] = position
+                                        tool_calls_delta = [{
+                                            "index": position,
+                                            "id": str(block.get("id") or ""),
+                                            "type": "function",
+                                            "function": {
+                                                "name": str(block.get("name") or ""),
+                                                "arguments": ""},
+                                        }]
+                                elif anthropic_event.get("type") == "content_block_delta":
                                     delta = anthropic_event.get("delta", {})
                                     if delta.get("type") == "text_delta":
                                         delta_content = delta.get("text")
+                                    elif delta.get("type") == "input_json_delta":
+                                        index = _anthropic_block_index(anthropic_event)
+                                        if index in tool_call_positions:
+                                            tool_calls_delta = [{
+                                                "index": tool_call_positions[index],
+                                                "function": {"arguments":
+                                                             delta.get("partial_json", "")},
+                                            }]
                                 elif anthropic_event.get("type") == "message_delta":
                                     finish_reason_anth = anthropic_event.get("delta", {}).get("stop_reason")
                                     # usage_anth = anthropic_event.get("usage") # Can capture usage here
@@ -873,10 +1036,10 @@ def chat_with_anthropic(
                             except json.JSONDecodeError:
                                 logger.warning(f"Anthropic Stream: Could not decode JSON: {event_data_str}")
                 except requests.exceptions.ChunkedEncodingError as e: # ... error handling ...
-                    logger.error(f"Anthropic: ChunkedEncodingError during stream: {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"Anthropic: ChunkedEncodingError during stream: {e}")
                     yield f"data: {json.dumps({'error': {'message': f'Stream connection error: {str(e)}', 'type': 'anthropic_stream_error'}})}\n\n"
                 except Exception as e: # ... error handling ...
-                    logger.error(f"Anthropic: Error during stream iteration: {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"Anthropic: Error during stream iteration: {e}")
                     yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e)}', 'type': 'anthropic_stream_error'}})}\n\n"
                 finally:
                     yield "data: [DONE]\n\n"
@@ -893,14 +1056,34 @@ def chat_with_anthropic(
                     if part.get("type") == "text":
                         assistant_content_parts.append(part.get("text", ""))
             full_assistant_content = "\n".join(assistant_content_parts).strip()
+            tool_call_entries = []
+            for part in response_data.get("content") or []:
+                if isinstance(part, dict) and part.get("type") == "tool_use":
+                    tool_call_entries.append({
+                        "id": str(part.get("id") or ""),
+                        "type": "function",
+                        "function": {
+                            "name": str(part.get("name") or ""),
+                            "arguments": json.dumps(part.get("input") or {}),
+                        },
+                    })
             finish_reason_map = {"end_turn": "stop", "max_tokens": "length", "stop_sequence": "stop", "tool_use": "tool_calls"} # Added tool_use
             openai_finish_reason = finish_reason_map.get(response_data.get("stop_reason"), response_data.get("stop_reason"))
+            if openai_finish_reason == "tool_calls" and not tool_call_entries:
+                # stop_reason claimed tool_use but the body carried no
+                # tool_use blocks — never emit the self-contradictory
+                # finish_reason="tool_calls" with no message.tool_calls
+                # (PR #659 review).
+                openai_finish_reason = "stop"
+            message_payload = {"role": "assistant", "content": full_assistant_content}
+            if tool_call_entries:
+                message_payload["tool_calls"] = tool_call_entries
             normalized_response = {
                 "id": response_data.get("id", f"anthropic-{time.time_ns()}"),
                 "object": "chat.completion",
                 "created": int(time.time()),
                 "model": response_data.get("model", current_model),
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": full_assistant_content},
+                "choices": [{"index": 0, "message": message_payload,
                              "finish_reason": openai_finish_reason}],
                 "usage": response_data.get("usage")
             }
@@ -968,7 +1151,7 @@ def chat_with_anthropic(
             "model": current_model,
             "error_type": "unexpected_error"
         })
-        logger.error(f"Anthropic: Unexpected error: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Anthropic: Unexpected error: {e}")
         raise ChatProviderError(provider="anthropic", message=f"Unexpected error: {e}")
 
 
@@ -1210,7 +1393,7 @@ def chat_with_cohere(
                 except requests.exceptions.ChunkedEncodingError as e:
                     logger.warning(f"Cohere stream: ChunkedEncodingError: {e}. Stream may have been interrupted.")
                 except Exception as e_stream:
-                    logger.error(f"Cohere stream: Error during streaming: {e_stream}", exc_info=True)
+                    logger.opt(exception=True).error(f"Cohere stream: Error during streaming: {e_stream}")
                 finally:  # Ensure [DONE] is sent if loop terminates unexpectedly
                     if not stream_properly_closed:
                         logger.warning("Cohere stream generator loop finished without explicit 'stream-end'.")
@@ -1306,7 +1489,7 @@ def chat_with_cohere(
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, 'status_code', 500)
         error_text = getattr(e.response, 'text', str(e))
-        logger.error(f"Cohere API call HTTPError to {COHERE_CHAT_URL} status {status_code}. Details: {error_text[:500]}", exc_info=False)
+        logger.error(f"Cohere API call HTTPError to {COHERE_CHAT_URL} status {status_code}. Details: {error_text[:500]}")
         
         # Log HTTP error metrics
         duration = time.time() - start_time
@@ -1328,7 +1511,7 @@ def chat_with_cohere(
         else: # 5xx
             raise ChatProviderError(provider="cohere", message=f"Server error (Status {status_code}). Detail: {error_text[:200]}", status_code=status_code)
     except requests.exceptions.RequestException as e: # Includes ReadTimeout, ConnectionError etc.
-        logger.error(f"Cohere API request failed (network error) for {COHERE_CHAT_URL}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Cohere API request failed (network error) for {COHERE_CHAT_URL}: {e}")
         
         # Log network error metrics
         duration = time.time() - start_time
@@ -1343,7 +1526,7 @@ def chat_with_cohere(
         # This will catch the ReadTimeout after retries are exhausted
         raise ChatProviderError(provider="cohere", message=f"Network error after retries: {e}", status_code=504) # 504 for gateway timeout like
     except Exception as e:
-        logger.error(f"Cohere API call: Unexpected error: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Cohere API call: Unexpected error: {e}")
         
         # Log unexpected error metrics
         duration = time.time() - start_time
@@ -1460,7 +1643,7 @@ def chat_with_deepseek(
                             if line and line.strip():  # DeepSeek provides OpenAI-compatible SSE
                                 yield line if line.endswith("\n") else line + "\n"
                     except Exception as e_stream:
-                        logger.error(f"DeepSeek: Error during stream iteration: {e_stream}", exc_info=True)
+                        logger.opt(exception=True).error(f"DeepSeek: Error during stream iteration: {e_stream}")
                         yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e_stream)}', 'type': 'deepseek_stream_error'}})}\n\n"
                     finally:
                         yield "data: [DONE]\n\n"
@@ -1524,6 +1707,75 @@ def chat_with_deepseek(
         raise ChatProviderError(provider="deepseek", message=f"Unexpected error: {e}")
 
 
+def _google_tools_payload(tools: list) -> list:
+    """Wrap OpenAI function-format tool entries as Gemini functionDeclarations.
+
+    Entries already Gemini-shaped (carrying ``functionDeclarations`` /
+    ``function_declarations`` or other non-OpenAI keys) pass through
+    untouched. OpenAI entries with a blank name are dropped locally —
+    Gemini rejects empty tool names (task-263 review precedent).
+
+    Args:
+        tools: The ``tools`` list as received (OpenAI or Gemini shaped).
+
+    Returns:
+        A Gemini ``tools`` list; OpenAI entries collapse into ONE
+        ``{"functionDeclarations": [...]}`` entry, passthrough entries keep
+        their positions.
+    """
+    declarations = []
+    passthrough = []
+    for entry in tools or []:
+        if not isinstance(entry, dict):
+            continue
+        function = entry.get("function")
+        if entry.get("type") == "function" and isinstance(function, dict):
+            name = str(function.get("name") or "").strip()
+            if not name:
+                continue
+            parameters = function.get("parameters")
+            if not isinstance(parameters, dict) or not parameters:
+                parameters = {"type": "object", "properties": {}}
+            declarations.append({
+                "name": name,
+                "description": str(function.get("description") or ""),
+                "parameters": parameters,
+            })
+        else:
+            passthrough.append(entry)
+    result = list(passthrough)
+    if declarations:
+        result.append({"functionDeclarations": declarations})
+    return result
+
+
+def _google_function_response(name: str, content) -> dict:
+    """Build a Gemini functionResponse part from an OpenAI tool result.
+
+    Gemini requires ``response`` to be a JSON OBJECT: dict-parseable string
+    content is used directly; anything else wraps as ``{"result": <str>}``.
+
+    Args:
+        name: The function name this result answers (Gemini pairs by name
+            plus position — it has no call ids).
+        content: The tool result content (string, typically).
+
+    Returns:
+        ``{"functionResponse": {"name": ..., "response": {...}}}``.
+    """
+    response = None
+    if isinstance(content, str) and content.strip():
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            response = parsed
+    if response is None:
+        response = {"result": str(content or "")}
+    return {"functionResponse": {"name": name, "response": response}}
+
+
 def chat_with_google(
         input_data: List[Dict[str, Any]],
         model: Optional[str] = None,
@@ -1556,9 +1808,94 @@ def chat_with_google(
     log_counter("google_api_request", labels={"model": current_model, "streaming": str(current_streaming)})
 
     gemini_contents = []
+    tool_call_names: Dict[str, str] = {}
+    last_function_call_names: List[str] = []
+    consecutive_tool_results = 0
     for msg in input_data:
         role = msg.get("role")
         content = msg.get("content")
+
+        if role == "tool":
+            name = tool_call_names.get(str(msg.get("tool_call_id") or ""))
+            if name is None:
+                # Positional fallback: pair the nth consecutive result with
+                # the nth functionCall of the preceding model turn (Gemini
+                # pairs by name + order; it has no call ids).
+                name = (last_function_call_names[consecutive_tool_results]
+                        if consecutive_tool_results < len(last_function_call_names)
+                        else "")
+            if not name:
+                # Unpairable result (id miss + positional fallback
+                # exhausted): Gemini rejects empty tool names, so emitting
+                # it would 400 the whole request — skip just this part
+                # (PR #662 review).
+                logger.warning(
+                    "Google Gemini: dropping unpairable tool result "
+                    f"(tool_call_id={str(msg.get('tool_call_id') or '')!r})")
+                consecutive_tool_results += 1
+                continue
+            part = _google_function_response(name, content)
+            consecutive_tool_results += 1
+            last = gemini_contents[-1] if gemini_contents else None
+            if (last is not None and last.get("role") == "user"
+                    and isinstance(last.get("parts"), list)
+                    and any("functionResponse" in p for p in last["parts"]
+                            if isinstance(p, dict))):
+                last["parts"].append(part)
+            else:
+                gemini_contents.append({"role": "user", "parts": [part]})
+            continue
+        consecutive_tool_results = 0
+        if role == "assistant" and msg.get("tool_calls"):
+            parts = []
+            if isinstance(content, str) and content.strip():
+                parts.append({"text": content})
+            elif isinstance(content, list):
+                # List-form (multimodal) content: keep its text parts —
+                # dropping them would silently lose visible text that
+                # accompanied the tool calls (same bug class as the
+                # anthropic sibling, PR #659 review).
+                for part in content:
+                    if (isinstance(part, dict)
+                            and part.get("type") == "text"
+                            and isinstance(part.get("text"), str)
+                            and part["text"].strip()):
+                        parts.append({"text": part["text"]})
+            call_names = []
+            for call in msg.get("tool_calls") or []:
+                if not isinstance(call, dict):
+                    continue
+                function = call.get("function") or {}
+                if not isinstance(function, dict):
+                    continue
+                name = str(function.get("name") or "").strip()
+                if not name:
+                    continue
+                raw_args = function.get("arguments")
+                args = raw_args if isinstance(raw_args, dict) else {}
+                if isinstance(raw_args, str) and raw_args.strip():
+                    try:
+                        parsed = json.loads(raw_args)
+                    except json.JSONDecodeError:
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        args = parsed
+                tool_call_names[str(call.get("id") or "")] = name
+                call_names.append(name)
+                part = {"functionCall": {"name": name, "args": args}}
+                signature = (call.get("google_thought_signature")
+                             or call.get("thoughtSignature"))
+                if signature:
+                    # Echo Gemini 3 thought signatures back verbatim —
+                    # required for tools on current models (live-gate 400).
+                    part["thoughtSignature"] = str(signature)
+                parts.append(part)
+            if call_names:
+                last_function_call_names = call_names
+                gemini_contents.append({"role": "model", "parts": parts})
+                continue
+            # All-junk tool_calls: fall through to plain content handling.
+
         gemini_role = "user" if role == "user" else "model" if role == "assistant" else None
         if not gemini_role:
             continue
@@ -1590,7 +1927,7 @@ def chat_with_google(
     payload = {"contents": gemini_contents}
     if generation_config: payload["generationConfig"] = generation_config
     if system_message: payload["system_instruction"] = {"parts": [{"text": system_message}]}
-    if tools: payload["tools"] = tools
+    if tools: payload["tools"] = _google_tools_payload(tools)
 
     stream_suffix = ":streamGenerateContent?alt=sse" if current_streaming else ":generateContent"
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}{stream_suffix}"
@@ -1626,6 +1963,10 @@ def chat_with_google(
                 nonlocal response
                 completion_id = f"chatcmpl-gemini-{time.time_ns()}"
                 created_ts = int(time.time())
+                # task-266: 0-based running position across the whole stream
+                # for synthesizing OpenAI tool_calls[].index (Gemini streams
+                # functionCall parts WHOLE, one complete fragment per call).
+                next_tool_position = 0
                 try:
                     for line in response.iter_lines(decode_unicode=True):
                         if line and line.strip().startswith('data:'):
@@ -1637,10 +1978,41 @@ def chat_with_google(
                                 if candidates:
                                     candidate = candidates[0]
                                     chunk_text = ""
+                                    chunk_tool_calls = []
                                     if candidate.get('content', {}).get('parts', []):
                                         for part in candidate['content']['parts']:
                                             if 'text' in part:
                                                 chunk_text += part.get('text', '')
+                                            if isinstance(part, dict) and 'functionCall' in part:
+                                                fc = part.get('functionCall')
+                                                if not isinstance(fc, dict):
+                                                    # Malformed part: skip it —
+                                                    # never abort an otherwise-
+                                                    # valid stream (task-263
+                                                    # sibling bug class).
+                                                    continue
+                                                name = str(fc.get('name') or '').strip()
+                                                if not name:
+                                                    continue
+                                                fragment = {
+                                                    "index": next_tool_position,
+                                                    "id": f"call_gemini_{time.time_ns()}_{next_tool_position}",
+                                                    "type": "function",
+                                                    "function": {
+                                                        "name": name,
+                                                        "arguments": json.dumps(
+                                                            fc['args'] if isinstance(fc.get('args'), dict) else {}),
+                                                    },
+                                                }
+                                                # Gemini 3 thought signature:
+                                                # must round-trip (see the
+                                                # non-streaming parser note).
+                                                signature = (part.get('thoughtSignature')
+                                                             or part.get('thought_signature'))
+                                                if signature:
+                                                    fragment["google_thought_signature"] = str(signature)
+                                                chunk_tool_calls.append(fragment)
+                                                next_tool_position += 1
                                     raw_finish_reason = candidate.get("finishReason")
                                     openai_finish_reason = None
                                     if raw_finish_reason:
@@ -1651,6 +2023,8 @@ def chat_with_google(
                                     delta_payload_for_choice = {}
                                     if chunk_text:
                                         delta_payload_for_choice["content"] = chunk_text
+                                    if chunk_tool_calls:
+                                        delta_payload_for_choice["tool_calls"] = chunk_tool_calls
                                     if delta_payload_for_choice or openai_finish_reason:
                                         openai_sse_choice = {"index": 0, "delta": delta_payload_for_choice}
                                         if openai_finish_reason:
@@ -1665,10 +2039,10 @@ def chat_with_google(
                             except json.JSONDecodeError:
                                 logger.warning(f"Google Gemini: Could not decode JSON line: {json_str}")
                 except requests.exceptions.ChunkedEncodingError as e:
-                    logger.error(f"Google Gemini: ChunkedEncodingError during stream: {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"Google Gemini: ChunkedEncodingError during stream: {e}")
                     yield f"data: {json.dumps({'error': {'message': f'Stream connection error: {str(e)}', 'type': 'gemini_stream_error'}})}\n\n"
                 except Exception as e_stream:
-                    logger.error(f"Google Gemini: Error during stream iteration: {e_stream}", exc_info=True)
+                    logger.opt(exception=True).error(f"Google Gemini: Error during stream iteration: {e_stream}")
                     yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e_stream)}', 'type': 'gemini_stream_error'}})}\n\n"
                 finally:
                     yield "data: [DONE]\n\n"
@@ -1690,15 +2064,32 @@ def chat_with_google(
                         if "text" in part:
                             assistant_content += part.get("text", "")
                         if "functionCall" in part:
+                            fc = part.get("functionCall")
+                            if not isinstance(fc, dict):
+                                # Malformed part: skip it — never crash the
+                                # parser (PR #662 review; mirrors the
+                                # streaming guard).
+                                continue
                             if tool_calls is None: tool_calls = []
-                            tool_calls.append({
+                            entry = {
                                 "id": f"call_gemini_{time.time_ns()}_{len(tool_calls)}",
                                 "type": "function",
                                 "function": {
-                                    "name": part["functionCall"].get("name"),
-                                    "arguments": json.dumps(part["functionCall"].get("args", {}))
+                                    "name": fc.get("name"),
+                                    "arguments": json.dumps(
+                                        fc.get("args") if isinstance(fc.get("args"), dict) else {})
                                 }
-                            })
+                            }
+                            # Gemini 3-family models REQUIRE the part's
+                            # thoughtSignature to be echoed back verbatim on
+                            # the follow-up request (live-gate 400 without
+                            # it). Carry it opaquely on the OpenAI-shape
+                            # entry; the request converter re-attaches it.
+                            signature = (part.get("thoughtSignature")
+                                         or part.get("thought_signature"))
+                            if signature:
+                                entry["google_thought_signature"] = str(signature)
+                            tool_calls.append(entry)
                 raw_finish_reason = candidate.get("finishReason")
                 if raw_finish_reason:
                     fr_map = {"MAX_TOKENS": "length", "STOP": "stop", "SAFETY": "content_filter",
@@ -1752,7 +2143,7 @@ def chat_with_google(
     except requests.exceptions.HTTPError as e:
         status_code = e.response.status_code if e.response is not None else 500
         error_text = e.response.text if e.response is not None else "No response text"
-        logger.error(f"Google Gemini API call HTTPError {status_code}. Details: {error_text[:500]}", exc_info=False)
+        logger.error(f"Google Gemini API call HTTPError {status_code}. Details: {error_text[:500]}")
         
         # Log HTTP error metrics
         duration = time.time() - start_time
@@ -1790,7 +2181,7 @@ def chat_with_google(
         })
         raise ChatProviderError(provider="google", message=f"Network error: {str(e)}", status_code=504) from e
     except Exception as e:
-        logger.error(f"Google Gemini: Unexpected error: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Google Gemini: Unexpected error: {e}")
         
         # Log unexpected error metrics
         duration = time.time() - start_time
@@ -1921,10 +2312,10 @@ def chat_with_groq(
                             if line and line.strip():  # Groq provides OpenAI-compatible SSE
                                 yield line if line.endswith("\n") else line + "\n"
                     except requests.exceptions.ChunkedEncodingError as e:  # ... error handling ...
-                        logger.error(f"Groq: ChunkedEncodingError: {e}", exc_info=True)
+                        logger.opt(exception=True).error(f"Groq: ChunkedEncodingError: {e}")
                         yield f"data: {json.dumps({'error': {'message': f'Stream error: {str(e)}', 'type': 'groq_stream_error'}})}\n\n"
                     except Exception as e:  # ... error handling ...
-                        logger.error(f"Groq: Stream iteration error: {e}", exc_info=True)
+                        logger.opt(exception=True).error(f"Groq: Stream iteration error: {e}")
                         yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e)}', 'type': 'groq_stream_error'}})}\n\n"
                     finally:
                         yield "data: [DONE]\n\n"
@@ -2203,7 +2594,7 @@ def chat_with_huggingface(
                 except requests.exceptions.ChunkedEncodingError as e_chunked:
                     logger.error(f"HuggingFace stream: ChunkedEncodingError during streaming: {e_chunked}")
                 except Exception as e_stream:
-                    logger.error(f"HuggingFace stream: Unexpected error during streaming: {e_stream}", exc_info=True)
+                    logger.opt(exception=True).error(f"HuggingFace stream: Unexpected error during streaming: {e_stream}")
                 finally:
                     if response:
                         response.close() # Ensure response is closed
@@ -2247,7 +2638,7 @@ def chat_with_huggingface(
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, 'status_code', 500)
         error_text = getattr(e.response, 'text', str(e))
-        logger.error(f"HuggingFace API call failed to {api_url} with status {status_code}. Details: {error_text[:500]}", exc_info=False)
+        logger.error(f"HuggingFace API call failed to {api_url} with status {status_code}. Details: {error_text[:500]}")
         
         # Log HTTP error metrics
         duration = time.time() - start_time
@@ -2271,7 +2662,7 @@ def chat_with_huggingface(
         else: # 5xx
             raise ChatProviderError(provider="huggingface", message=f"Server error (Status {status_code}) from {api_url}. Detail: {error_text[:200]}", status_code=status_code)
     except requests.exceptions.RequestException as e: # Covers DNS, Connection, Timeout errors
-        logger.error(f"HuggingFace API request failed to {api_url} (network error): {e}", exc_info=True)
+        logger.opt(exception=True).error(f"HuggingFace API request failed to {api_url} (network error): {e}")
         
         # Log network error metrics
         duration = time.time() - start_time
@@ -2285,7 +2676,7 @@ def chat_with_huggingface(
         })
         raise ChatProviderError(provider="huggingface", message=f"Network error connecting to {api_url}: {e}", status_code=504) # 504 for timeout/gateway like
     except Exception as e:
-        logger.error(f"HuggingFace API call to {api_url}: Unexpected error: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"HuggingFace API call to {api_url}: Unexpected error: {e}")
         
         # Log unexpected error metrics
         duration = time.time() - start_time
@@ -2851,12 +3242,12 @@ def chat_with_moonshot(
                                 # Pass through Moonshot's SSE lines directly (OpenAI compatible)
                                 yield line if line.endswith("\n") else line + "\n"
                     except requests.exceptions.ChunkedEncodingError as e_chunk:
-                        logger.error(f"Moonshot: ChunkedEncodingError during stream: {e_chunk}", exc_info=True)
+                        logger.opt(exception=True).error(f"Moonshot: ChunkedEncodingError during stream: {e_chunk}")
                         error_content = json.dumps({"error": {"message": f"Stream connection error: {str(e_chunk)}",
                                                               "type": "moonshot_stream_error"}})
                         yield f"data: {error_content}\n\n"
                     except Exception as e_stream:
-                        logger.error(f"Moonshot: Error during stream iteration: {e_stream}", exc_info=True)
+                        logger.opt(exception=True).error(f"Moonshot: Error during stream iteration: {e_stream}")
                         error_content = json.dumps({"error": {"message": f"Stream iteration error: {str(e_stream)}",
                                                               "type": "moonshot_stream_error"}})
                         yield f"data: {error_content}\n\n"
@@ -2939,7 +3330,7 @@ def chat_with_moonshot(
             "model": final_model,
             "error_type": "network"
         })
-        logger.error(f"Moonshot RequestException: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Moonshot RequestException: {e}")
         raise
     except Exception as e:
         # Log unexpected error metrics
@@ -2948,7 +3339,7 @@ def chat_with_moonshot(
             "model": final_model,
             "error_type": "unexpected"
         })
-        logger.error(f"Moonshot: Unexpected error in chat_with_moonshot: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Moonshot: Unexpected error in chat_with_moonshot: {e}")
         raise ChatProviderError(provider="moonshot", message=f"Unexpected error: {e}")
 
 def chat_with_zai(
@@ -3076,10 +3467,10 @@ def chat_with_zai(
                                 # Z.AI provides OpenAI-compatible SSE
                                 yield line if line.endswith("\n") else line + "\n"
                     except requests.exceptions.ChunkedEncodingError as e:
-                        logger.error(f"Z.AI: ChunkedEncodingError: {e}", exc_info=True)
+                        logger.opt(exception=True).error(f"Z.AI: ChunkedEncodingError: {e}")
                         yield f"data: {json.dumps({'error': {'message': f'Stream error: {str(e)}', 'type': 'zai_stream_error'}})}\n\n"
                     except Exception as e:
-                        logger.error(f"Z.AI: Stream iteration error: {e}", exc_info=True)
+                        logger.opt(exception=True).error(f"Z.AI: Stream iteration error: {e}")
                         yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e)}', 'type': 'zai_stream_error'}})}\n\n"
                     finally:
                         yield "data: [DONE]\n\n"
@@ -3165,7 +3556,7 @@ def chat_with_zai(
             "model": current_model,
             "error_type": "network"
         })
-        logger.error(f"Z.AI RequestException: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Z.AI RequestException: {e}")
         raise ChatProviderError(provider="zai", message=f"Network error: {str(e)}")
     
     except Exception as e:
@@ -3175,7 +3566,7 @@ def chat_with_zai(
             "model": current_model,
             "error_type": "unexpected"
         })
-        logger.error(f"Z.AI: Unexpected error in chat_with_zai: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Z.AI: Unexpected error in chat_with_zai: {e}")
         raise ChatProviderError(provider="zai", message=f"Unexpected error: {e}")
 
 

@@ -15,6 +15,9 @@ from textual.containers import VerticalScroll
 
 # Local Imports
 from ..DB.ChaChaNotes_DB import ConflictError as ChaChaConflictError, CharactersRAGDBError
+# NOTE: LibraryScreen is imported lazily inside on_import_success_notes (not at
+# module scope) -- event handlers and UI screens import each other, so a
+# top-level import here risks a circular import at load time (PR #599 review).
 from ..Utils.note_importers import note_importer_registry, ParsedNote
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 from .ingest_utils import (
@@ -75,7 +78,7 @@ IGNORE_WHEN_COPYING_END
         logger.error(f"UI component not found for note preview update: {e}")
         app.notify("Error updating note preview UI.", severity="error")
     except Exception as e:
-        logger.error(f"Unexpected error updating note preview: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error updating note preview: {e}")
         app.notify("Unexpected error during note preview update.", severity="error")
 
 
@@ -124,7 +127,7 @@ def _parse_single_note_file_for_preview(file_path: Path, app_ref: 'TldwCli', imp
             "error": str(e)
         })
     except Exception as e:
-        logger.error(f"Unexpected error parsing note file {file_path}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error parsing note file {file_path}: {e}")
         preview_notes.append({
             "filename": file_path.name,
             "title": f"Error: {file_path.name}",
@@ -334,8 +337,7 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
                             "template_key": key
                         })
                     except Exception as e:
-                        logger.error(f"Error importing template '{note_data['title']}' from {file_path}: {e}",
-                                     exc_info=True)
+                        logger.opt(exception=True).error(f"Error importing template '{note_data['title']}' from {file_path}: {e}")
                         results.append({
                             "file_path": str(file_path),
                             "note_title": note_data["title"],
@@ -385,7 +387,7 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
                             "note_id": note_id
                         })
                     except (ChaChaConflictError, CharactersRAGDBError, ValueError) as e:
-                        logger.error(f"Error importing note '{note_data['title']}' from {file_path}: {e}", exc_info=True)
+                        logger.opt(exception=True).error(f"Error importing note '{note_data['title']}' from {file_path}: {e}")
                         results.append({
                             "file_path": str(file_path),
                             "note_title": note_data["title"],
@@ -393,8 +395,7 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
                             "message": f"DB/Input error: {type(e).__name__} - {str(e)[:100]}"
                         })
                     except Exception as e:
-                        logger.error(f"Unexpected error importing note '{note_data['title']}' from {file_path}: {e}",
-                                     exc_info=True)
+                        logger.opt(exception=True).error(f"Unexpected error importing note '{note_data['title']}' from {file_path}: {e}")
                         results.append({
                             "file_path": str(file_path),
                             "note_title": note_data["title"],
@@ -441,8 +442,6 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
             # For templates, we need to reload the templates in the notes event handler
             app.notify("Templates will be available after restarting the application.", severity="information", timeout=10)
         else:
-            #app.call_later(load_and_display_notes_handler, app)
-            app.call_later(app.refresh_notes_tab_after_ingest)
             try:
                 # Make sure to query the collapsible before creating the Toggled event instance
                 chat_notes_collapsible_widget = app.query_one("#chat-notes-collapsible", Collapsible)
@@ -450,9 +449,29 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
             except QueryError:
                 logger.error("Failed to find #chat-notes-collapsible widget for refresh after note import.")
 
+            # T167: the Library notes canvas composes fresh on every visit
+            # (so a later visit already sees the imported notes), but if
+            # Library is *already* the mounted/active screen while the
+            # import runs, nothing else pokes it to reload -- so its list
+            # would silently go stale until the user navigates away and
+            # back. Trigger its local-source snapshot refresh directly,
+            # guarded with isinstance since the active screen is usually
+            # NOT Library (e.g. the user is on the Ingest tab importing).
+            screen = getattr(app, "screen", None)
+            # Lazy import: avoids a module-load circular import between event
+            # handlers and UI screens (PR #599 review).
+            from ..UI.Screens.library_screen import LibraryScreen
+            if isinstance(screen, LibraryScreen):
+                try:
+                    screen._refresh_local_source_snapshot()
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Failed to refresh Library notes snapshot after note import."
+                    )
+
     def on_import_failure_notes(error: Exception):
         import_type = "template" if import_as_templates else "note"
-        logger.error(f"{import_type.capitalize()} import worker failed critically: {error}", exc_info=True)
+        logger.opt(exception=True).error(f"{import_type.capitalize()} import worker failed critically: {error}")
         try:
             status_area_cb_fail = app.query_one("#ingest-notes-import-status-area", TextArea)
             current_text = status_area_cb_fail.text
@@ -462,8 +481,29 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
             logger.error("Failed to find #ingest-notes-import-status-area in on_import_failure_notes.")
         app.notify(f"{import_type.capitalize()} import CRITICALLY failed: {error}", severity="error", timeout=10)
 
+    async def _run_note_import_worker_and_dispatch() -> List[Dict[str, Any]]:
+        # T167: `on_import_success_notes`/`on_import_failure_notes` above
+        # were previously dead code -- nothing in this module or app.py's
+        # generic worker-state dispatch (`on_worker_state_changed` ->
+        # `WorkerHandlerRegistry`, whose only groups are "api_calls",
+        # "ollama_api", "model_download", "transformers_download") ever
+        # invoked them for the "file_operations" group this worker runs
+        # in, so the post-import status-area summary, the chat-notes
+        # sidebar refresh, and (now) the Library notes-canvas refresh
+        # never actually fired. Since this worker is a plain coroutine
+        # (no `thread=True`), it runs on the main event loop, so calling
+        # these UI-touching callbacks directly here -- rather than relying
+        # on that dead dispatch path -- is safe.
+        try:
+            results = await import_worker_notes()
+        except Exception as e:
+            on_import_failure_notes(e)
+            raise
+        on_import_success_notes(results)
+        return results
+
     app.run_worker(
-        import_worker_notes,
+        _run_note_import_worker_and_dispatch,
         name="note_import_worker",
         group="file_operations",
         description="Importing selected note files."

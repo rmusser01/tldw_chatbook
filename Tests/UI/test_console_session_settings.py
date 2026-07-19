@@ -30,9 +30,12 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     ChatScreen,
 )
 from tldw_chatbook.UI.Screens import provider_model_resolution
+from tldw_chatbook.Chat.local_server_discovery import LocalModelProbeResult
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     MODAL_BODY_MIN_HEIGHT,
     MODAL_CONTROL_HEIGHT,
+    MODEL_DISCOVER_BUTTON_ID,
+    MODEL_DISCOVER_STATUS_ID,
     ConsoleSettingsInput,
     ConsoleSettingsModal,
     _settings_screen_region,
@@ -3449,3 +3452,763 @@ async def test_console_model_switch_preserves_explicit_session_overrides() -> No
         assert updated_settings.temperature == 0.33
         assert updated_settings.top_p == 0.9
         assert updated_settings.streaming is False
+
+
+# --- task-177: readiness must follow Settings saves without an app restart ---
+
+
+def _disk_loaded_snapshot(**overrides) -> dict:
+    """Snapshot shaped like a real ``load_settings()`` boot config."""
+    snapshot = {
+        "general": {},
+        "logging": {},
+        "splash_screen": {},
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    snapshot.update(overrides)
+    return snapshot
+
+
+def test_provider_readiness_config_refreshes_disk_loaded_snapshot(monkeypatch) -> None:
+    app = _build_test_app()
+    app.app_config = _disk_loaded_snapshot()
+    console = ChatScreen(app)
+    fresh = _disk_loaded_snapshot(api_settings={"openai": {"api_key": "sk-fresh"}})
+    monkeypatch.setattr(chat_screen_module, "load_settings", lambda: fresh)
+
+    assert console._provider_readiness_app_config() is fresh
+
+
+def test_provider_readiness_config_honors_injected_test_snapshot(monkeypatch) -> None:
+    """Fakes without the disk-loaded marker sections stay authoritative."""
+    app = _build_test_app()
+    app.app_config = {"api_settings": {"openai": {"api_key": "injected"}}}
+    console = ChatScreen(app)
+
+    def _fail_load_settings():
+        raise AssertionError("load_settings must not be consulted for injected snapshots")
+
+    monkeypatch.setattr(chat_screen_module, "load_settings", _fail_load_settings)
+
+    assert console._provider_readiness_app_config() is app.app_config
+
+
+def test_provider_readiness_config_falls_back_when_load_settings_fails(monkeypatch) -> None:
+    app = _build_test_app()
+    app.app_config = _disk_loaded_snapshot()
+    console = ChatScreen(app)
+
+    def _boom():
+        raise RuntimeError("disk unavailable")
+
+    monkeypatch.setattr(chat_screen_module, "load_settings", _boom)
+
+    assert console._provider_readiness_app_config() is app.app_config
+
+
+def test_console_readiness_unblocks_after_provider_save_without_restart(
+    monkeypatch, tmp_path
+) -> None:
+    """Save a provider key via the config API after boot; readiness must see it.
+
+    Mirrors the live UAT failure: Settings saved the key, the config module
+    cache reloaded, but Console kept reading the boot-time ``app_config``
+    snapshot until restart.
+    """
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    config_path = tmp_path / "console-readiness-config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    config_module.load_settings(force_reload=True)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    try:
+        app = _build_test_app()
+        # Boot-time snapshot: disk-loaded shape, but captured before the save.
+        app.app_config = _disk_loaded_snapshot()
+        console = ChatScreen(app)
+        settings = ConsoleSessionSettings(provider="openai", model="gpt-4o")
+
+        readiness_before = build_console_settings_readiness(
+            settings,
+            app_config=console._provider_readiness_app_config(),
+            environ={},
+        )
+        assert readiness_before.native_send_supported is False
+
+        # The Settings screen save path: config API write + cache reload.
+        assert config_module.save_setting_to_cli_config(
+            "api_settings.openai", "api_key", "sk-saved-after-boot"
+        )
+
+        readiness_after = build_console_settings_readiness(
+            settings,
+            app_config=console._provider_readiness_app_config(),
+            environ={},
+        )
+        assert readiness_after.native_send_supported is True
+        assert readiness_after.label == "Ready"
+        # The stale snapshot alone would still be blocked - proving the fresh
+        # read (not the snapshot) unblocked readiness.
+        readiness_stale = build_console_settings_readiness(
+            settings,
+            app_config=app.app_config,
+            environ={},
+        )
+        assert readiness_stale.native_send_supported is False
+    finally:
+        config_module.load_settings(force_reload=True)
+        config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+
+# --- task-178: settings modal persistence affordance, boolean streaming, focus artifact ---
+
+
+def _basic_modal(settings: ConsoleSessionSettings, app: "ModalHarness", **kwargs) -> ConsoleSettingsModal:
+    return ConsoleSettingsModal(
+        settings=settings,
+        app_config=app.app_config,
+        providers_models=kwargs.pop("providers_models", {"llama_cpp": ["model-a"]}),
+        context_estimate=kwargs.pop(
+            "context_estimate", ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
+        ),
+        can_save=kwargs.pop("can_save", True),
+        **kwargs,
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_streaming_is_boolean_toggle() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a", streaming=False)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(_basic_modal(settings, app), callback=app.capture_saved_settings)
+        await pilot.pause()
+        toggle = app.screen.query_one("#console-settings-streaming", Button)
+        assert str(toggle.label) == "Off"
+
+        toggle.press()
+        await pilot.pause()
+        assert str(toggle.label) == "On"
+
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.streaming is True
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_enumerated_inputs_list_accepted_values() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(_basic_modal(settings, app), callback=app.capture_saved_settings)
+        await pilot.pause()
+        placeholders = {
+            "console-settings-reasoning-effort": "none, minimal, low, medium, high, xhigh",
+            "console-settings-reasoning-summary": "auto, concise, detailed, none",
+            "console-settings-verbosity": "low, medium, high",
+            "console-settings-thinking-effort": "off, low, medium, high, xhigh, max",
+        }
+        for input_id, expected in placeholders.items():
+            assert app.screen.query_one(f"#{input_id}", Input).placeholder == expected
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_scope_line_names_session_and_default_scopes() -> None:
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        CONSOLE_SETTINGS_SCOPE_COPY,
+    )
+
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(_basic_modal(settings, app), callback=app.capture_saved_settings)
+        await pilot.pause()
+        scope = app.screen.query_one("#console-settings-scope", Static)
+        assert str(scope.renderable) == CONSOLE_SETTINGS_SCOPE_COPY
+        assert "session" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
+        assert "default" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_save_as_default_writes_through_config(monkeypatch) -> None:
+    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
+
+    captured: list[dict] = []
+
+    def fake_save(sections):
+        captured.append(sections)
+        return True
+
+    monkeypatch.setattr(modal_module, "save_settings_to_cli_config", fake_save)
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9099",
+        temperature=0.6,
+        streaming=False,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(_basic_modal(settings, app), callback=app.capture_saved_settings)
+        await pilot.pause()
+        await pilot.click("#console-settings-save-default")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.model == "model-a"
+    assert len(captured) == 1
+    sections = captured[0]
+    provider_section = sections["api_settings.llama_cpp"]
+    assert provider_section["model"] == "model-a"
+    # llama_cpp already persists its endpoint under api_url in ModalHarness config.
+    assert provider_section["api_url"] == "http://127.0.0.1:9099"
+    assert provider_section["temperature"] == 0.6
+    # Streaming persists on the canonical chat_defaults key (bridged legacy key),
+    # and the provider itself becomes the default (PR #606 review finding:
+    # chat_defaults.provider is the ONLY source of the default provider).
+    assert sections["chat_defaults"] == {"streaming": False, "provider": "llama_cpp"}
+    # Never persist None-valued optionals.
+    assert "min_p" not in provider_section
+    assert "seed" not in provider_section
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_save_as_default_failure_keeps_modal_open(monkeypatch) -> None:
+    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY,
+    )
+
+    monkeypatch.setattr(modal_module, "save_settings_to_cli_config", lambda sections: False)
+    app = ModalHarness()
+    app.saved_settings = ConsoleSessionSettings(provider="openai", model="sentinel")
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(_basic_modal(settings, app), callback=app.capture_saved_settings)
+        await pilot.pause()
+        await pilot.click("#console-settings-save-default")
+        await pilot.pause()
+        error = app.screen.query_one("#console-settings-error", Static)
+        assert str(error.renderable) == CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY
+        # Modal stays open (dismiss would pop it and fire the callback).
+        assert isinstance(app.screen, ConsoleSettingsModal)
+        await pilot.click("#console-settings-cancel")
+
+    assert app.saved_settings is None
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_body_scroll_container_is_not_focusable() -> None:
+    """The focused scroll body painted stray focus-outline fragments ("|")
+    through the section margins with the real app CSS; keeping it out of the
+    focus chain removes the artifact and lands first focus on a real control."""
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(_basic_modal(settings, app), callback=app.capture_saved_settings)
+        await pilot.pause()
+        body = app.screen.query_one("#console-settings-body", ScrollableContainer)
+        assert body.can_focus is False
+        assert app.focused is not body
+
+
+# --- task-177 live regression: REAL journey (boot -> Settings save -> Console) ---
+
+
+def _build_live_config_test_app():
+    """Real TldwCli booted against the REAL (test-sandboxed) config file.
+
+    Unlike ``_build_test_app`` this does NOT stub ``load_settings`` /
+    ``get_cli_setting``: ``app.app_config`` is the genuine template config from
+    the sandbox ``TLDW_CONFIG_PATH``, so the disk-loaded snapshot path (and the
+    stale-snapshot bug it guards against) is exercised end to end.
+    """
+    import tempfile
+    from contextlib import ExitStack
+    from unittest.mock import MagicMock, patch
+
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+
+    user_data_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-live-config-test-"))
+
+    def fake_runtime_policy(app):
+        context = SimpleNamespace(
+            state=RuntimeSourceState(active_source="local", server_configured=True),
+            persist=lambda: None,
+        )
+        app.runtime_policy = context
+        app.current_runtime_source = "local"
+        app.current_runtime_backend = "local"
+        return context
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None)
+        )
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.ServerNotesWorkspaceService.from_config",
+                return_value=MagicMock(),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.ServerCharacterPersonaService.from_config",
+                return_value=MagicMock(),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                TldwCli,
+                "_init_notes_service",
+                lambda self, _user: setattr(self, "notes_service", None),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                TldwCli,
+                "_init_prompts_service",
+                lambda self: setattr(self, "prompts_service_initialized", False),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                TldwCli,
+                "_init_providers_models",
+                lambda self: setattr(self, "providers_models", {}),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                TldwCli,
+                "_init_media_db",
+                lambda self: (
+                    setattr(self, "media_db", None),
+                    setattr(self, "_media_types_for_ui", ["All Media"]),
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.load_runtime_policy_for_app",
+                side_effect=fake_runtime_policy,
+            )
+        )
+        for db_path_getter in (
+            "get_notifications_db_path",
+            "get_subscriptions_db_path",
+            "get_research_db_path",
+            "get_writing_db_path",
+        ):
+            stack.enter_context(
+                patch(f"tldw_chatbook.app.{db_path_getter}", return_value=":memory:")
+            )
+        stack.enter_context(
+            patch("tldw_chatbook.app.get_user_data_dir", return_value=user_data_dir)
+        )
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.get_workspaces_db_path",
+                return_value=user_data_dir / "workspaces.sqlite",
+            )
+        )
+        return TldwCli()
+
+
+async def _wait_for_screen(app, pilot, screen_type_name: str, *, attempts: int = 250):
+    for _ in range(attempts):
+        if type(app.screen).__name__ == screen_type_name:
+            return app.screen
+        await pilot.pause(0.02)
+    raise AssertionError(
+        f"Never reached {screen_type_name}; current screen: {type(app.screen).__name__}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_journey_settings_save_unblocks_console_without_restart(
+    monkeypatch,
+) -> None:
+    """Live-UAT regression: boot -> blocked Console -> Settings save -> Console.
+
+    Mirrors the exact live failure: the Settings adapter saves
+    chat_defaults.provider/model + the llama.cpp endpoint (config caches reload),
+    the user clicks the Console nav tab (fresh ChatScreen composes, prior screen
+    state restores), and the setup card must NOT still be blocking.
+    """
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.Widgets.Console import ConsoleSetupModal
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
+    # Prime the sandbox template config and keep the boot fast/deterministic.
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    assert config_module.save_setting_to_cli_config("splash_screen", "enabled", False)
+    config_module.load_settings(force_reload=True)
+
+    app = _build_live_config_test_app()
+    # Sanity: the boot snapshot must look disk-loaded (markers present) so the
+    # fresh-config branch is the one under test.
+    assert ChatScreen._console_config_snapshot_is_disk_loaded(app.app_config)
+
+    async with app.run_test(size=(180, 50)) as pilot:
+        # 1) First-run landing: Console blocked on the template OpenAI default.
+        app.post_message(NavigateToScreen("chat"))
+        console = await _wait_for_screen(app, pilot, "ChatScreen")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        assert console._build_console_setup_card_state().mode == "card"
+
+        # 2) Leave Console (screen state, including session settings, is saved).
+        app.post_message(NavigateToScreen("home"))
+        await _wait_for_screen(app, pilot, "HomeScreen")
+
+        # 3) The real Settings save path (same three values as the live run).
+        adapter = SettingsConfigAdapter()
+        assert adapter.save_values(
+            "chat_defaults",
+            {"provider": "llama_cpp", "model": "Qwen3-Coder-Test.gguf"},
+        )
+        assert adapter.save_values(
+            "api_settings.llama_cpp",
+            {"api_url": "http://127.0.0.1:9099"},
+        )
+
+        # 4) Back to Console: a fresh ChatScreen composes and restores state.
+        app.post_message(NavigateToScreen("chat"))
+        console = await _wait_for_screen(app, pilot, "ChatScreen")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+
+        card_state = console._build_console_setup_card_state()
+        assert card_state.mode != "card", (
+            "Setup card still blocking after a provider save; "
+            f"steps={[(step.state, step.label) for step in card_state.steps]}"
+        )
+        settings, readiness = console._active_console_settings_readiness()
+        assert settings.provider == "llama_cpp"
+        assert readiness.native_send_supported is True
+
+        # The blocking modal must clear once guidance syncs.
+        for _ in range(100):
+            modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+            if not modal.is_blocking:
+                break
+            await pilot.pause(0.02)
+        assert not console.query_one("#console-setup-modal", ConsoleSetupModal).is_blocking
+
+
+def test_console_resolution_view_suppresses_boot_echo_reactives(monkeypatch) -> None:
+    """Post-save, reactives echoing the boot template defaults must not win."""
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+
+    app = _build_test_app()
+    app.app_config = _disk_loaded_snapshot(
+        chat_defaults={"provider": "OpenAI", "model": "gpt-4o"}
+    )
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4o"
+    console = ChatScreen(app)
+    fresh = _disk_loaded_snapshot(
+        chat_defaults={"provider": "llama_cpp", "model": "Qwen3-Test.gguf"},
+        api_settings={"llama_cpp": {"api_url": "http://127.0.0.1:9099"}},
+    )
+    monkeypatch.setattr(chat_screen_module, "load_settings", lambda: fresh)
+
+    provider, model = console._effective_console_provider_model()
+    assert provider_config_key(str(provider)) == "llama_cpp"
+    assert str(model) == "Qwen3-Test.gguf"
+
+    # A reactive value the user actually changed (differs from the boot echo)
+    # still wins over fresh chat_defaults.
+    app.chat_api_provider_value = "Anthropic"
+    provider_after_user_pick, _model = console._effective_console_provider_model()
+    assert provider_config_key(str(provider_after_user_pick)) == "anthropic"
+
+
+def test_console_stale_default_refresh_respects_user_marked_settings() -> None:
+    """Blocked derived defaults refresh; explicit user selections never do."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "local-model"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "local-model"},
+        "openai": {"api_key": ""},
+    }
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+
+    user_choice = ConsoleSessionSettings(provider="openai", model="gpt-4o", source="user")
+    store.replace_session_settings(session.id, user_choice)
+    assert console._ensure_active_console_session_settings() == user_choice
+
+    stale_derived = ConsoleSessionSettings(provider="openai", model="gpt-4o")
+    store.replace_session_settings(session.id, stale_derived)
+    refreshed = console._ensure_active_console_session_settings()
+    assert refreshed.provider == "llama_cpp"
+    assert refreshed.source == "derived"
+
+
+def test_console_stale_default_refresh_preserves_applied_system_prompt() -> None:
+    """Final-review Finding 3: the stale-default refresh must not silently
+    discard an already-applied `/system` prompt.
+
+    `set_session_system_prompt` (Task 13) keeps ``source == "derived"`` and
+    adds no message, so a message-less session where the user ran
+    `/system <name>` while its default provider was blocked (e.g. an empty
+    OpenAI API key) -- then later fixed the provider in Settings -- used to
+    have its applied ``system_prompt`` clobbered by ``fresh_defaults`` on the
+    very next settings read, since defaults never seed ``system_prompt``.
+    """
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "local-model"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "local-model"},
+        "openai": {"api_key": ""},
+    }
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+
+    # Blocked derived defaults (openai, no key) -- as if snapshotted on a
+    # fresh, never-configured session -- with a `/system` prompt applied
+    # before any message was sent.
+    stale_derived_with_system_prompt = ConsoleSessionSettings(
+        provider="openai", model="gpt-4o", system_prompt="Be concise."
+    )
+    store.replace_session_settings(session.id, stale_derived_with_system_prompt)
+
+    refreshed = console._ensure_active_console_session_settings()
+
+    assert refreshed.provider == "llama_cpp", "the provider/model default refresh must still happen"
+    assert refreshed.system_prompt == "Be concise."
+    # The store itself must carry the preserved prompt forward too, not just
+    # the returned snapshot.
+    assert store.session_settings(session.id).system_prompt == "Be concise."
+
+
+# --- task-188/191: provider display names + Discover models -----------------
+
+
+def _select_labels(select: Select) -> set[str]:
+    options = getattr(select, "options", None)
+    if options is None:
+        options = getattr(select, "_options", [])
+    labels: set[str] = set()
+    for option in options:
+        prompt = getattr(option, "prompt", None)
+        if prompt is None and isinstance(option, tuple) and option:
+            prompt = option[0]
+        if prompt is not None:
+            labels.add(str(getattr(prompt, "plain", prompt)))
+    return labels
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_labels_use_catalog_display_names() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        labels = _select_labels(provider_select)
+        values = _select_values(provider_select)
+
+    # Labels render shared-catalog display names; values stay raw config keys.
+    assert "llama.cpp" in labels
+    assert "OpenAI" in labels
+    assert "Ollama" in labels
+    assert "llama_cpp" not in labels
+    assert {"llama_cpp", "openai", "ollama"}.issubset(values)
+
+
+class _RecordingProber:
+    def __init__(self, result: LocalModelProbeResult) -> None:
+        self.result = result
+        self.calls: list[tuple[str, str]] = []
+
+    async def __call__(self, base_url: str, provider_key: str) -> LocalModelProbeResult:
+        self.calls.append((base_url, provider_key))
+        return self.result
+
+
+async def _wait_for_discover_status(app, pilot, fragment: str) -> Static:
+    status = app.screen.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
+    for _ in range(60):
+        if fragment in str(status.renderable):
+            return status
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"discover status never showed {fragment!r}; last: {str(status.renderable)!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_discover_models_success_swaps_input_for_select() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model=None)
+    prober = _RecordingProber(
+        LocalModelProbeResult(
+            ok=True,
+            base_url="http://127.0.0.1:9099",
+            model_ids=("srv-a", "srv-b"),
+        )
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                model_prober=prober,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
+        await _wait_for_discover_status(app, pilot, "Found 2 models at http://127.0.0.1:9099.")
+
+        assert prober.calls == [("http://127.0.0.1:9099", "llama_cpp")]
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        assert model_select.display is True
+        assert model_select.disabled is False
+        assert _select_values(model_select) == {"srv-a", "srv-b"}
+        assert model_select.value == "srv-a"
+        # Free-text fallback stays available after discovery.
+        model_custom = app.screen.query_one("#console-settings-model-custom", Button)
+        assert model_custom.display is True
+        assert model_custom.disabled is False
+
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.model == "srv-a"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_discover_models_failure_shows_inline_copy() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model=None)
+    prober = _RecordingProber(
+        LocalModelProbeResult(
+            ok=False,
+            base_url="http://127.0.0.1:9099",
+            detail="No models endpoint at http://127.0.0.1:9099.",
+        )
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                model_prober=prober,
+            )
+        )
+        await pilot.pause()
+
+        discover = app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        discover.press()
+        await _wait_for_discover_status(
+            app, pilot, "No models endpoint at http://127.0.0.1:9099."
+        )
+
+        # Honest inline line, button usable again, manual entry still works.
+        assert discover.disabled is False
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        assert model_input.display is True
+        assert model_input.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_discover_button_only_for_url_based_providers() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4.1"], "llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        discover = app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        assert discover.display is False
+        assert discover.disabled is True
+
+        app.screen.query_one("#console-settings-provider", Select).value = "llama_cpp"
+        await pilot.pause()
+        assert discover.display is True
+        assert discover.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_discover_rejects_invalid_endpoint_url() -> None:
+    """PR #608 review: user-entered endpoint must pass shared URL validation
+    before any network probe; the prober must never be called."""
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        MODEL_DISCOVER_INVALID_URL_COPY,
+    )
+
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model=None,
+        base_url="http://[not-a-valid-url",
+    )
+    prober = _RecordingProber(
+        LocalModelProbeResult(ok=True, base_url="", model_ids=("x",))
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                model_prober=prober,
+            )
+        )
+        await pilot.pause()
+
+        discover = app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        discover.press()
+        await _wait_for_discover_status(app, pilot, MODEL_DISCOVER_INVALID_URL_COPY)
+
+    assert prober.calls == []

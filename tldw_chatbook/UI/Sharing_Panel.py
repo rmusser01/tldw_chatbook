@@ -248,7 +248,7 @@ class SharingPanel(ScrollableContainer):
             result = await self._maybe_await(operation(mode="server", **kwargs))
             self._render_payload(title, result if result is not None else {})
         except Exception as exc:
-            logger.error(f"Server Sharing operation failed: {operation_name}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Server Sharing operation failed: {operation_name}: {exc}")
             self.query_one("#sharing-status", Static).update(f"Error: {exc}")
             self.notify(f"Server Sharing operation failed: {exc}", severity="error")
 

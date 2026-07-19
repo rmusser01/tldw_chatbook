@@ -122,6 +122,34 @@ def test_local_store_rejects_blank_profile_writes_before_persistence(tmp_path):
     assert not (tmp_path / "local_mcp_store.json").exists()
 
 
+def test_local_store_rejects_colon_bearing_profile_id(tmp_path):
+    """I3: `HubTool.tool_id` packs `server_key` and tool name into one
+    `"::"`-delimited string (`f"local:{profile_id}::{tool_name}"`), and
+    callers partition it back apart on the first `"::"`. A profile id
+    containing its own `":"` (e.g. "a::b") corrupts that partition --
+    `"local:a::b::search"` splits into server_key "local:a" / tool
+    "b::search" instead of the intended profile "a::b" / tool "search" --
+    silently routing execution to the wrong server. Reject at save time."""
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+
+    with pytest.raises(ValueError, match="profile_id"):
+        store.save_profile(LocalExternalMCPProfile(profile_id="a::b", command="python"))
+
+    with pytest.raises(ValueError, match="profile_id"):
+        store.save_profile(LocalExternalMCPProfile(profile_id="a:b", command="python"))
+
+    assert not (tmp_path / "local_mcp_store.json").exists()
+
+
+def test_local_store_rejects_whitespace_embedding_profile_id(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+
+    with pytest.raises(ValueError, match="profile_id"):
+        store.save_profile(LocalExternalMCPProfile(profile_id="a b", command="python"))
+
+    assert not (tmp_path / "local_mcp_store.json").exists()
+
+
 def test_local_store_rejects_blank_governance_rule_writes_before_persistence(tmp_path):
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
 

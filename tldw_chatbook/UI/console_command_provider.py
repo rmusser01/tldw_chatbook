@@ -40,6 +40,12 @@ class ConsoleCommandProvider(Provider):
             ("Console: Session settings…",
              screen.action_open_console_session_settings,
              "Open the full session settings modal"),
+            ("Console: Insert prompt…",
+             screen.action_open_console_prompt_insert,
+             "Browse saved prompts and insert one (/prompt)"),
+            ("Console: Edit system prompt",
+             screen.action_open_console_system_prompt_editor,
+             "Edit this session's system prompt (/system)"),
         )
 
     async def discover(self) -> Hits:

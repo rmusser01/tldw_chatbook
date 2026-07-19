@@ -121,6 +121,9 @@ local_transformers = ["transformers"]
 mcp = [
     "mcp[cli]>=1.0.0",
 ]
+svg = [
+    "cairosvg",  # SVG rasterization for image attachments; needs the cairo C library (e.g. `brew install cairo`)
+]
 pdf = [
     "pymupdf",
     "pymupdf4llm",
@@ -387,9 +390,8 @@ all-tools = [
 
 # This creates a command-line script called 'tldw-chatbook'
 [project.scripts]
-# Points to the main function in your tldw_chatbook package's app module.
-# Structure: project_root/tldw_chatbook/app.py, function main_cli_runner
-tldw-cli = "tldw_chatbook.app:main_cli_runner"
+# Loads the full app only when the command is invoked.
+tldw-cli = "tldw_chatbook.cli:main_cli_runner"
 # Direct web server entry point
 tldw-serve = "tldw_chatbook.Web_Server.serve:main"
 

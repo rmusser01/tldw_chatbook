@@ -273,8 +273,13 @@ class RAGHealthChecker:
     def check_system_resources_health(self) -> ComponentHealth:
         """Check system resources health."""
         try:
-            # Get system metrics
-            cpu_percent = psutil.cpu_percent(interval=0.1)
+            # Get system metrics. interval=None is non-blocking -- psutil
+            # keeps its own module-level cache of the last sample for
+            # system-wide cpu_percent(), so this compares against that
+            # instead of sleeping the calling thread for 100ms
+            # (see task-248 / performance audit finding A3). First call in
+            # the process's lifetime returns 0.0; later calls are accurate.
+            cpu_percent = psutil.cpu_percent(interval=None)
             memory = psutil.virtual_memory()
             disk = psutil.disk_usage('/')
             

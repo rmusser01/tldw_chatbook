@@ -32,6 +32,106 @@ class FileIngestionError(Exception):
     pass
 
 
+class PermanentIngestError(FileIngestionError):
+    """A parse/fetch failure that will fail identically on retry (bad URL,
+    4xx, non-HTML content, empty extraction, missing extractor dependency).
+    ``classify_parse_failure`` maps this to a permanent (non-retryable) job.
+    """
+
+
+_VIDEO_URL_HOSTS = ("youtube.com", "youtu.be", "vimeo.com", "dailymotion.com")
+_VIDEO_EXTS = (".mp4", ".avi", ".mkv", ".mov", ".webm", ".flv", ".wmv", ".m4v", ".mpg", ".mpeg")
+_AUDIO_EXTS = (".mp3", ".m4a", ".wav", ".flac", ".ogg", ".aac", ".wma", ".opus")
+_TRACKING_PARAMS = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "gclid", "fbclid", "igshid", "mc_cid", "mc_eid", "ref", "ref_src",
+})
+
+
+def _is_http_url(source: str) -> bool:
+    from urllib.parse import urlparse
+    try:
+        return urlparse(source).scheme in ("http", "https")
+    except Exception:
+        return False
+
+
+def classify_ingest_source(source: str) -> str:
+    """Classify an ingest source into a media type.
+
+    For an http/https URL: a known video host or a video-extension path ->
+    ``"video"``; an audio-extension path -> ``"audio"``; otherwise
+    ``"article"``. For any non-URL source, delegate to ``detect_file_type``.
+
+    Args:
+        source: A local file path or an http/https URL to classify.
+
+    Returns:
+        str: The media type -- ``"video"``, ``"audio"``, or ``"article"`` for
+        a URL; for a file path, whatever ``detect_file_type`` returns
+        (``"pdf"``, ``"document"``, ``"audio"``, ...).
+
+    Raises:
+        FileIngestionError: If ``source`` is a non-URL path whose extension is
+            not a recognized ingestible type (propagated from
+            ``detect_file_type``).
+    """
+    from urllib.parse import urlparse
+    source = str(source)
+    if _is_http_url(source):
+        parsed = urlparse(source)
+        host = (parsed.hostname or "").lower()
+        path = parsed.path.lower()
+        if any(host == h or host.endswith("." + h) for h in _VIDEO_URL_HOSTS) or path.endswith(_VIDEO_EXTS):
+            return "video"
+        if path.endswith(_AUDIO_EXTS):
+            return "audio"
+        return "article"
+    return detect_file_type(source)
+
+
+def canonicalize_url(url: str) -> str:
+    """Canonicalize a URL to a stable, clean stored value.
+
+    Lowercases the scheme and host, drops a default port (80/443) and the URL
+    fragment, strips a trailing slash (except at the root), removes common
+    tracking parameters (``utm_*``, ``gclid``, ``fbclid``, ...), and sorts the
+    remaining query parameters so the same logical URL always canonicalizes to
+    an identical string.
+
+    Args:
+        url: The URL to canonicalize -- typically the post-redirect
+            ``resp.url`` from a successful fetch.
+
+    Returns:
+        str: The canonicalized URL.
+
+    Raises:
+        PermanentIngestError: If the URL carries a non-integer port (a
+            malformed URL that fails identically on every retry).
+    """
+    from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or "https").lower()
+    host = (parsed.hostname or "").lower()
+    netloc = host
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        # urllib raises ValueError for a non-integer port (e.g. ":foo").
+        raise PermanentIngestError(f"Invalid URL port: {url}") from exc
+    if port and not ((scheme == "https" and port == 443) or (scheme == "http" and port == 80)):
+        netloc = f"{host}:{port}"
+    path = parsed.path or "/"
+    if len(path) > 1 and path.endswith("/"):
+        path = path.rstrip("/")
+    query = urlencode(sorted(
+        (k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+        if k.lower() not in _TRACKING_PARAMS
+    ))
+    return urlunparse((scheme, netloc, path, "", query, ""))
+
+
 def detect_file_type(file_path: Union[str, Path]) -> str:
     """
     Detect the type of file based on its extension.
@@ -40,7 +140,7 @@ def detect_file_type(file_path: Union[str, Path]) -> str:
         file_path: Path to the file
         
     Returns:
-        File type as string: 'pdf', 'document', 'ebook', 'xml', 'plaintext', 'html'
+        File type as string: 'pdf', 'document', 'ebook', 'plaintext', 'html'
         
     Raises:
         FileIngestionError: If file type is not supported
@@ -59,10 +159,6 @@ def detect_file_type(file_path: Union[str, Path]) -> str:
     # E-book files
     elif extension in ['.epub', '.mobi', '.azw', '.azw3', '.fb2']:
         return 'ebook'
-    
-    # XML files
-    elif extension in ['.xml', '.rss', '.atom']:
-        return 'xml'
     
     # HTML files (web articles)
     elif extension in ['.html', '.htm']:
@@ -83,7 +179,7 @@ def detect_file_type(file_path: Union[str, Path]) -> str:
     else:
         raise FileIngestionError(
             f"Unsupported file type: {extension}. "
-            f"Supported types: PDF, DOCX, ODT, RTF, EPUB, MOBI, AZW, FB2, XML, HTML, TXT, MD, "
+            f"Supported types: PDF, DOCX, ODT, RTF, EPUB, MOBI, AZW, FB2, HTML, TXT, MD, "
             f"MP3, M4A, WAV, FLAC, OGG, AAC, MP4, AVI, MKV, MOV, WEBM"
         )
 
@@ -99,7 +195,6 @@ def get_supported_extensions() -> Dict[str, List[str]]:
         'pdf': ['.pdf'],
         'document': ['.doc', '.docx', '.odt', '.rtf'],
         'ebook': ['.epub', '.mobi', '.azw', '.azw3', '.fb2'],
-        'xml': ['.xml', '.rss', '.atom'],
         'html': ['.html', '.htm'],
         'plaintext': ['.txt', '.md', '.markdown', '.rst', '.log', '.csv'],
         'audio': ['.mp3', '.m4a', '.wav', '.flac', '.ogg', '.aac', '.wma', '.opus'],
@@ -107,79 +202,125 @@ def get_supported_extensions() -> Dict[str, List[str]]:
     }
 
 
-def ingest_local_file(
-    file_path: Union[str, Path],
-    media_db: MediaDatabase,
-    title: Optional[str] = None,
-    author: Optional[str] = None,
-    keywords: Optional[List[str]] = None,
-    custom_prompt: Optional[str] = None,
-    system_prompt: Optional[str] = None,
-    perform_analysis: bool = False,
-    api_name: Optional[str] = None,
-    api_key: Optional[str] = None,
-    chunk_options: Optional[Dict[str, Any]] = None,
-    metadata: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
+def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Ingest a local file into the Media database.
-    
+    Parse a local file into a picklable payload, performing no database I/O.
+
+    This is the pre-DB half of ``ingest_local_file`` (F3 parallel-parse
+    split): file-type detection, per-type extraction (PDF/document/ebook/
+    audio/video/HTML/plaintext), and result normalization. It never touches
+    ``media_db`` -- audio/video extraction is routed through
+    ``LocalAudioProcessor``/``LocalVideoProcessor`` with ``media_db=None``
+    specifically so this holds for those types too, which otherwise support
+    an internal "write while parsing" path. That also FIXES a live
+    pre-split bug in the old single-function ``ingest_local_file`` (the
+    exact mechanism verified empirically against the real DB methods): for
+    audio/video, the processor's internal ``_store_in_database`` step wrote
+    ONE degraded media row first -- bare-path URL (its ``input_ref``, not
+    ``file://``-prefixed), processor-metadata title, no keywords. The
+    pipeline's own ``add_media_with_keywords`` call (``url="file://..."``)
+    then hit the CONTENT-HASH dedup fallback, matched that degraded row,
+    took the "already exists, overwrite not enabled" branch, and returned
+    ``(None, None, ...)`` -- so every real audio/video local ingest
+    returned ``media_id=None``, and even ``app.py``'s
+    ``get_media_by_url("file://...")`` recovery missed, because the
+    surviving row's URL was the bare path. With the processors never
+    handed a DB, the degraded row is never written, the pipeline's write
+    is the first (and only) insert, and a real ``media_id`` comes back.
+    Regression-locked by
+    ``Tests/Local_Ingestion/test_ingest_parse_worker.py``'s
+    ``test_ingest_local_file_audio_returns_real_media_id``.
+
+    This makes the function safe to run inside a spawned worker process
+    (see ``ingest_parse_worker.run_parse_job``): its return value is plain,
+    picklable data, and pairing it with ``persist_parsed_media`` is the
+    *only* place the resulting content is written to the database.
+
     Args:
-        file_path: Path to the file to ingest
-        media_db: MediaDatabase instance to store the content
-        title: Optional title override (defaults to filename)
-        author: Optional author name
-        keywords: Optional list of keywords
-        custom_prompt: Optional custom prompt for analysis
-        system_prompt: Optional system prompt for analysis
-        perform_analysis: Whether to perform analysis (summarization)
-        api_name: API provider name for analysis (if enabled)
-        api_key: API key for analysis provider (if needed)
-        chunk_options: Dictionary with chunking options:
-            - method: 'semantic', 'tokens', 'paragraphs', 'sentences', 'words', 'ebook_chapters'
-            - size: chunk size (default varies by method)
-            - overlap: chunk overlap (default varies by method)
-            - adaptive: use adaptive chunking (bool)
-            - multi_level: use multi-level chunking (bool)
-            - language: language code for semantic chunking
-        metadata: Additional metadata to store with the media
-        
+        file_path: Path to the file to parse.
+        options: Dict of ingestion options -- see ``ingest_parse_worker``'s
+            module docstring for the full schema. Recognized keys (all
+            optional): ``title``, ``author``, ``keywords``,
+            ``custom_prompt``, ``system_prompt``, ``perform_analysis``,
+            ``api_name``, ``api_key``, ``chunk_options``, ``metadata`` --
+            mirroring ``ingest_local_file``'s keyword arguments of the
+            same names.
+
     Returns:
-        Dictionary with ingestion results:
-            - media_id: ID of the created media entry
-            - title: Title of the media
-            - author: Author of the media
-            - content_length: Length of extracted content
-            - chunks_created: Number of chunks created
-            - keywords: Keywords associated with the media
-            - analysis: Analysis results (if performed)
-            - error: Error message (if any)
-            
+        A payload dict consumed by ``persist_parsed_media``:
+            - media_type: Media type string used for the DB write (e.g.
+              'pdf', 'document', 'ebook', 'plaintext', 'html', 'audio',
+              'video').
+            - file_type: Same value as ``media_type`` -- kept as a
+              separate key for parity with ``ingest_local_file``'s
+              historical return dict.
+            - title, author: Extracted (or override) title/author.
+            - content: Extracted text content.
+            - keywords: Combined list of caller-supplied and
+              extracted keywords.
+            - url: The ``file://`` URL passed to ``add_media_with_keywords``.
+            - analysis_content: Analysis/summary text (empty string if
+              ``perform_analysis`` was ``False`` or produced nothing).
+            - chunks: Pre-computed chunks (``list[dict]``), or ``None`` when
+              none were produced (chunking is then left to the DB layer).
+            - chunk_options: The (possibly defaulted) chunking options
+              dict, or ``None``.
+            - metadata: Extra metadata dict (mirrors
+              ``ingest_local_file``'s current behavior, where this is
+              computed but not actually forwarded to
+              ``add_media_with_keywords``, which has no such parameter --
+              preserved as-is rather than silently starting to pass it).
+            - file_path: ``str(file_path)`` (not absolutized -- the
+              absolutized form only ever appears in ``url``).
+
     Raises:
-        FileIngestionError: If ingestion fails
-        FileNotFoundError: If file doesn't exist
+        FileNotFoundError: If the file doesn't exist.
+        FileIngestionError: If the file type is unsupported (message starts
+            with "Unsupported file type"), or if processing fails for any
+            other reason (message is
+            ``f"Failed to ingest {file_type} file: {inner}"`` -- matching
+            ``ingest_local_file``'s historical wrapping so composed callers
+            see identical error text regardless of whether the failure
+            originated during parsing or persistence).
     """
-    file_path = Path(file_path)
-    
-    # Validate file exists
-    if not file_path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
-    
-    # Detect file type
-    try:
-        file_type = detect_file_type(file_path)
-    except FileIngestionError as e:
-        logger.error(f"Unsupported file type: {file_path} - {e}")
-        raise
-    
+    raw_source = str(file_path)
+    is_url = _is_http_url(raw_source)
+    if is_url:
+        # URL source: skip the file-path machinery entirely.
+        file_type = classify_ingest_source(raw_source)   # "article" | "audio" | "video"
+        source_url = raw_source                            # article branch overrides w/ canonical
+        # keep file_path as the raw URL string so the audio/video branches'
+        # `str(file_path)` passes the URL straight to the URL-accepting processor.
+    else:
+        file_path = Path(file_path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+        try:
+            file_type = detect_file_type(file_path)
+        except FileIngestionError as e:
+            logger.error(f"Unsupported file type: {file_path} - {e}")
+            raise
+        source_url = f"file://{file_path.absolute()}"
+
+    title = options.get('title')
+    author = options.get('author')
+    keywords = options.get('keywords')
+    custom_prompt = options.get('custom_prompt')
+    system_prompt = options.get('system_prompt')
+    perform_analysis = options.get('perform_analysis', False)
+    api_name = options.get('api_name')
+    api_key = options.get('api_key')
+    chunk_options = options.get('chunk_options')
+    metadata = options.get('metadata')
+
     # Set default values
     if title is None:
-        title = file_path.stem
+        title = raw_source if is_url else file_path.stem
     if keywords is None:
         keywords = []
     if chunk_options is None:
         chunk_options = {}
-    
+
     # Prepare common parameters
     common_params = {
         'title': title,
@@ -275,9 +416,16 @@ def ingest_local_file(
             )
             
         elif file_type == 'audio':
-            # Initialize audio processor
-            audio_processor = LocalAudioProcessor(media_db)
-            
+            # Initialize audio processor. media_db is intentionally None:
+            # this function performs no database I/O (see docstring). A
+            # real media_db here would make the processor write a degraded
+            # row of its own first (bare-path URL, no keywords), which the
+            # pipeline's later add_media_with_keywords call then matches
+            # via content-hash dedup and no-ops against -- returning
+            # media_id=None for every audio ingest (see the docstring's
+            # bug-mechanism paragraph and the regression test named there).
+            audio_processor = LocalAudioProcessor(None)
+
             # Process single audio file
             results = audio_processor.process_audio_files(
                 inputs=[str(file_path)],
@@ -322,9 +470,10 @@ def ingest_local_file(
                 raise FileIngestionError("Audio processing returned no results")
                 
         elif file_type == 'video':
-            # Initialize video processor
-            video_processor = LocalVideoProcessor(media_db)
-            
+            # Initialize video processor. media_db is intentionally None --
+            # see the matching comment in the 'audio' branch above.
+            video_processor = LocalVideoProcessor(None)
+
             # Process single video file
             results = video_processor.process_videos(
                 inputs=[str(file_path)],
@@ -416,12 +565,22 @@ def ingest_local_file(
                 'chunks': [],  # Chunking will be handled by the database
                 'analysis': ''
             }
-        
-        # Check if processing was successful
-        if not result or 'error' in result:
+
+        elif file_type == 'article':
+            from .web_article_ingestion import extract_article_for_ingest
+            result = extract_article_for_ingest(raw_source, options)
+            source_url = result.get('url', source_url)     # canonical post-redirect URL
+
+        # Check if processing was successful. NOTE: some processors (e.g.
+        # ``process_pdf``) always initialize an ``'error'`` key (defaulting
+        # to ``None``) in their result dict, so ``'error' in result`` is
+        # ALWAYS ``True`` -- even on a clean success -- and previously
+        # raised ``FileIngestionError`` for every single PDF. Truthiness
+        # (``result.get('error')``) is the correct check.
+        if not result or result.get('error'):
             error_msg = result.get('error', 'Unknown error') if result else 'Processing returned no result'
             raise FileIngestionError(f"Failed to process {file_type} file: {error_msg}")
-        
+
         # Extract content and metadata
         content = result.get('content', '')
         extracted_title = result.get('title', title)
@@ -429,52 +588,194 @@ def ingest_local_file(
         extracted_keywords = result.get('keywords', [])
         chunks = result.get('chunks', [])
         analysis = result.get('analysis', '')
-        
+
         # Combine keywords
         all_keywords = list(set(keywords + extracted_keywords))
-        
-        # Add custom metadata
+
+        # Add custom metadata. NOTE: media_metadata is computed for parity
+        # with ingest_local_file's pre-F3 behavior but is NOT forwarded to
+        # add_media_with_keywords (persist_parsed_media), which has no such
+        # parameter -- that was already true before this split (a
+        # pre-existing no-op), preserved here rather than silently starting
+        # to pass it.
         media_metadata = result.get('metadata', {})
         if metadata:
             media_metadata.update(metadata)
-        media_metadata['ingestion_method'] = 'local_file'
-        media_metadata['file_path'] = str(file_path)
+        # Preserve how the source was ingested so metadata consumers can tell
+        # a web-article extraction from a local-file parse (don't clobber the
+        # extractor's 'web_article' marker with 'local_file').
+        if is_url:
+            media_metadata['ingestion_method'] = 'web_article' if file_type == 'article' else 'url_download'
+        else:
+            media_metadata['ingestion_method'] = 'local_file'
+        media_metadata['file_path'] = raw_source if is_url else str(file_path)
         media_metadata['file_type'] = file_type
-        
-        # Store in database
+
+        return {
+            'media_type': file_type,
+            'file_type': file_type,
+            'title': extracted_title,
+            'author': extracted_author,
+            'content': content,
+            'keywords': all_keywords,
+            'url': source_url,
+            'analysis_content': analysis,
+            'chunks': chunks if chunks else None,
+            'chunk_options': chunk_options if chunk_options else None,
+            'metadata': media_metadata,
+            'file_path': raw_source if is_url else str(file_path),
+        }
+
+    except PermanentIngestError:
+        # keep the permanent classification intact for classify_parse_failure
+        raise
+    except Exception as e:
+        logger.error(f"Error parsing {file_type} file {file_path}: {e}")
+        raise FileIngestionError(f"Failed to ingest {file_type} file: {str(e)}")
+
+
+def persist_parsed_media(
+    payload: Dict[str, Any],
+    media_db: MediaDatabase,
+) -> tuple[Optional[int], Optional[str], str]:
+    """
+    Persist a payload produced by ``parse_local_file_for_ingest`` to the Media database.
+
+    This is the post-parse half of ``ingest_local_file`` (F3 parallel-parse
+    split): the single ``add_media_with_keywords`` call plus its logging
+    and ingestion-date stamping. It is the *only* place in the ingest
+    pipeline that writes to ``media_db``, and is meant to always run on the
+    single Library ingest writer thread (never inside a parse worker
+    process, which never receives a real ``media_db`` at all).
+
+    Args:
+        payload: The dict returned by ``parse_local_file_for_ingest``.
+        media_db: The ``MediaDatabase`` instance to write to.
+
+    Returns:
+        ``(media_id, media_uuid, message)`` -- exactly
+        ``MediaDatabase.add_media_with_keywords``'s return value.
+
+    Raises:
+        FileIngestionError: If the database write fails. The message is
+            ``f"Failed to ingest {file_type} file: {inner}"``, matching
+            ``ingest_local_file``'s historical wrapping (which, before this
+            split, wrapped both the parse and the DB-write steps with this
+            same message shape) so composed callers see identical error
+            text regardless of which stage failed.
+    """
+    file_type = payload['file_type']
+    try:
         logger.debug(f"Storing {file_type} content in database...")
         # Note: add_media_with_keywords returns tuple: (media_id, media_uuid, message)
         media_id, media_uuid, message = media_db.add_media_with_keywords(
-            title=extracted_title,
-            media_type=file_type,
-            content=content,
-            keywords=all_keywords,
-            url=f"file://{file_path.absolute()}",
-            analysis_content=analysis,
-            author=extracted_author,
+            title=payload['title'],
+            media_type=payload['media_type'],
+            content=payload['content'],
+            keywords=payload['keywords'],
+            url=payload['url'],
+            analysis_content=payload['analysis_content'],
+            author=payload['author'],
             ingestion_date=datetime.now().strftime('%Y-%m-%d'),
-            chunks=chunks if chunks else None,
-            chunk_options=chunk_options if chunk_options else None
+            chunks=payload['chunks'],
+            chunk_options=payload['chunk_options'],
         )
-        
         logger.info(f"Successfully ingested {file_type} file with media_id: {media_id}")
-        
-        # Return results
-        return {
-            'media_id': media_id,
-            'title': extracted_title,
-            'author': extracted_author,
-            'content_length': len(content),
-            'chunks_created': len(chunks),
-            'keywords': all_keywords,
-            'analysis': analysis,
-            'file_type': file_type,
-            'file_path': str(file_path)
-        }
-        
+        return media_id, media_uuid, message
     except Exception as e:
-        logger.error(f"Error ingesting {file_type} file {file_path}: {e}")
+        logger.error(f"Error persisting {file_type} file {payload.get('file_path')}: {e}")
         raise FileIngestionError(f"Failed to ingest {file_type} file: {str(e)}")
+
+
+def ingest_local_file(
+    file_path: Union[str, Path],
+    media_db: MediaDatabase,
+    title: Optional[str] = None,
+    author: Optional[str] = None,
+    keywords: Optional[List[str]] = None,
+    custom_prompt: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    perform_analysis: bool = False,
+    api_name: Optional[str] = None,
+    api_key: Optional[str] = None,
+    chunk_options: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Ingest a local file into the Media database.
+
+    Composes ``parse_local_file_for_ingest`` (extraction, no DB I/O) with
+    ``persist_parsed_media`` (the single ``add_media_with_keywords``
+    write) -- see those two functions for the pipeline split the F3
+    parallel-parse worker pool relies on. This function's signature,
+    return shape, and error behavior are unchanged by that split; it
+    remains the single programmatic entry point used by
+    ``batch_ingest_files``, ``quick_ingest``, the server ingest path, and
+    (pre-F3-pool) the app's queue-runner.
+
+    Args:
+        file_path: Path to the file to ingest
+        media_db: MediaDatabase instance to store the content
+        title: Optional title override (defaults to filename)
+        author: Optional author name
+        keywords: Optional list of keywords
+        custom_prompt: Optional custom prompt for analysis
+        system_prompt: Optional system prompt for analysis
+        perform_analysis: Whether to perform analysis (summarization)
+        api_name: API provider name for analysis (if enabled)
+        api_key: API key for analysis provider (if needed)
+        chunk_options: Dictionary with chunking options:
+            - method: 'semantic', 'tokens', 'paragraphs', 'sentences', 'words', 'ebook_chapters'
+            - size: chunk size (default varies by method)
+            - overlap: chunk overlap (default varies by method)
+            - adaptive: use adaptive chunking (bool)
+            - multi_level: use multi-level chunking (bool)
+            - language: language code for semantic chunking
+        metadata: Additional metadata to store with the media
+
+    Returns:
+        Dictionary with ingestion results:
+            - media_id: ID of the created media entry
+            - title: Title of the media
+            - author: Author of the media
+            - content_length: Length of extracted content
+            - chunks_created: Number of chunks created
+            - keywords: Keywords associated with the media
+            - analysis: Analysis results (if performed)
+            - error: Error message (if any)
+
+    Raises:
+        FileIngestionError: If ingestion fails
+        FileNotFoundError: If file doesn't exist
+    """
+    file_path = Path(file_path)
+    options = {
+        'title': title,
+        'author': author,
+        'keywords': keywords,
+        'custom_prompt': custom_prompt,
+        'system_prompt': system_prompt,
+        'perform_analysis': perform_analysis,
+        'api_name': api_name,
+        'api_key': api_key,
+        'chunk_options': chunk_options,
+        'metadata': metadata,
+    }
+    payload = parse_local_file_for_ingest(str(file_path), options)
+    media_id, _media_uuid, _message = persist_parsed_media(payload, media_db)
+
+    chunks = payload['chunks']
+    return {
+        'media_id': media_id,
+        'title': payload['title'],
+        'author': payload['author'],
+        'content_length': len(payload['content']),
+        'chunks_created': len(chunks) if chunks else 0,
+        'keywords': payload['keywords'],
+        'analysis': payload['analysis_content'],
+        'file_type': payload['file_type'],
+        'file_path': payload['file_path'],
+    }
 
 
 def batch_ingest_files(

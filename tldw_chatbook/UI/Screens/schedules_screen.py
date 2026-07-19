@@ -91,9 +91,8 @@ class SchedulesScreen(BaseAppScreen):
                 has_recent_work=has_recent_work,
             )
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Failed to load Schedules Console follow item from Home active-work adapter.",
-                exc_info=True,
             )
             return None
         for item in tuple(getattr(dashboard_input, "active_work_items", ()) or ()):
@@ -113,9 +112,8 @@ class SchedulesScreen(BaseAppScreen):
         try:
             output_listing = list_outputs(schedule_id=None, limit=1, offset=0)
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Failed to load Schedules Console launch context from local reading digest outputs.",
-                exc_info=True,
             )
             return None
         items = output_listing.get("items") if isinstance(output_listing, Mapping) else None

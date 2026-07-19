@@ -15,6 +15,7 @@ from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
 )
+from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 from Tests.UI.test_destination_shells import (
@@ -242,7 +243,7 @@ async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query
         visible_text = _visible_text(screen)
 
         assert query_input.value == ""
-        assert str(run_button.label) == "Run Search/RAG"
+        assert str(run_button.label) == "Run"
         assert run_button.disabled is True
         assert "Enter a question or search query" in str(run_button.tooltip)
         assert not screen.query(".library-rag-result-action")
@@ -255,7 +256,7 @@ async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query
         assert not screen.query("#library-rag-run-disabled-reason")
         assert "Blocked: enter a question or search query." not in visible_text
         assert "Blocked | Enter a question before running retrieval." not in visible_text
-        assert "Scope: all local | Notes 1 | Media 1 | Conversations 1" in visible_text
+        assert "Scope: all local sources" in visible_text
         # A4: the retired-workbench shortcuts line is gone; Enter-to-run
         # keeps working (covered by the keyboard-enter pilot below).
         assert not screen.query("#library-rag-query-shortcuts")
@@ -283,7 +284,7 @@ async def test_library_search_rag_task_loop_orders_query_before_scope_and_result
         assert child_ids.index("library-rag-source-scope") < child_ids.index(
             "library-rag-results"
         )
-        assert "Scope: all local | Notes 1 | Media 1 | Conversations 1" in _visible_text(screen)
+        assert "Scope: all local sources" in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -302,18 +303,40 @@ async def test_library_search_rag_empty_sources_has_mode_local_blocked_status() 
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
         visible_text = _visible_text(screen)
-        assert "No sources." in visible_text
-        assert "Recovery checklist" in visible_text
-        assert "1. Import Library sources." in visible_text
-        assert "2. Run Search/RAG." in visible_text
-        assert "3. Select evidence, then Use in Console." in visible_text
+        # (task-185) The no-sources state is ONE quiet gate line plus the
+        # single Open Import media action -- the old 8-line recovery dump,
+        # its checklist, the "Select at least one source." query line, and
+        # the Evidence empty-state hints must not stack on top of it.
+        gate_line = screen.query_one("#library-rag-scope-recovery", Static)
+        assert (
+            str(gate_line.renderable)
+            == "No Library sources yet — import media or create notes, then search."
+        )
+        assert "No Library sources yet" in visible_text
+        assert "Recovery checklist" not in visible_text
+        assert "Owner: Library source index." not in visible_text
+        assert "Unavailable: Library Search/RAG." not in visible_text
+        assert "1. Import Library sources." not in visible_text
+        assert "Select at least one source." not in visible_text
         assert "Why: Enter a question or search query." not in visible_text
+        assert "No evidence yet. Run Search/RAG to populate results." not in visible_text
+        assert (
+            "Add or import sources, run a query, then select evidence for Console."
+            not in visible_text
+        )
+        assert not screen.query("#library-rag-results-empty")
+        assert not screen.query("#library-rag-evidence-empty-guidance")
+        # The quiet-line slot stays mounted (empty) so the Run button's
+        # position is stable, but it carries no second guidance layer.
+        quiet_line = screen.query_one("#library-rag-query-quiet-line", Static)
+        assert str(quiet_line.renderable) == ""
         recovery_button = screen.query_one("#library-rag-open-import-export", Button)
-        assert str(recovery_button.label) == "Open Import/Export"
-        assert recovery_button.tooltip == "Open Library Import/Export to add sources."
-        # Pressing this button drives the shell selection to the Import/Export
-        # row so the recomposed canvas renders that mode; the canvas-switch
-        # behavior itself is covered by test_library_shell.py.
+        assert str(recovery_button.label) == "Open Import media"
+        assert recovery_button.tooltip == "Open Library Import media to add sources."
+        # Pressing this button drives the shell selection to the Ingest ▸
+        # Import media canvas row (the Import/Export row/mode it used to
+        # target is retired); the canvas-switch behavior itself is covered
+        # by test_library_shell.py.
 
 
 @pytest.mark.asyncio
@@ -337,6 +360,11 @@ async def test_library_search_rag_query_updates_action_and_survives_recompose() 
         assert run_button.disabled is False
         assert str(run_button.tooltip) == ""
         assert len(screen.query("#library-rag-query-recovery")) == 0
+        # (task-185) The gate helper's one-row slot stays mounted (empty)
+        # once the query is valid, so the Run button never shifts when the
+        # "Enter a question or search query." line clears.
+        quiet_line = screen.query_one("#library-rag-query-quiet-line", Static)
+        assert str(quiet_line.renderable) == ""
 
         screen.refresh(recompose=True)
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
@@ -532,7 +560,10 @@ async def test_library_search_rag_selected_result_evidence_metadata() -> None:
         await _wait_for_evidence_selected(screen, pilot, "Incident Review")
 
         visible_text = _visible_text(screen)
-        assert "note | workspace-a | 1 citation | eligible" in visible_text
+        # UX wave M5: humanized badge composition -- "eligible" contributes
+        # nothing (only a "blocked" -> "excluded from context" badge is
+        # shown), joined with " · " instead of "|".
+        assert "note · workspace-a · 1 citation" in visible_text
         assert screen.query_one("#library-rag-use-selected-in-console", Button).disabled is False
         assert "Expired credential caused the incident." in visible_text
         assert "Citations: Incident Review p.2" in visible_text
@@ -814,7 +845,7 @@ async def test_library_search_rag_worker_completion_ignores_unmounted_screen(mon
     # mount guard is the sole thing preventing the DOM refresh. The code under
     # test refreshes via _refresh_search_rag_panel_state_widgets (not the stale
     # _sync_search_rag_panel), so that is the method the test must poison.
-    screen._active_mode = "search"
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
     screen._library_rag_query = "Find evidence"
     monkeypatch.setattr(screen, "query", lambda *args, **kwargs: [object()])
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 # Imports
 import functools
 import logging
+from loguru import logger as _loguru_fallback_logger
 import os
 import shlex
 import subprocess
@@ -46,12 +47,12 @@ def _update_onnx_log(app_instance: "TldwCli", message: str) -> None:
     except QueryError:
         app_instance.loguru_logger.error("Failed to query #onnx-log-output to write message.")
     except Exception as e:
-        app_instance.loguru_logger.error(f"Error writing to ONNX log: {e}", exc_info=True)
+        app_instance.loguru_logger.opt(exception=True).error(f"Error writing to ONNX log: {e}")
 
 
 def run_onnx_server_worker(app_instance: "TldwCli", command: List[str]) -> str | None:
     """Background worker to run a generic ONNX server script and stream its output."""
-    logger = getattr(app_instance, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app_instance, "loguru_logger", _loguru_fallback_logger)
     quoted_command = ' '.join(shlex.quote(c) for c in command)
     logger.info(f"ONNX WORKER starting with command: {quoted_command}")
 
@@ -95,7 +96,7 @@ def run_onnx_server_worker(app_instance: "TldwCli", command: List[str]) -> str |
         raise
     except Exception as err:
         msg = f"CRITICAL ERROR in ONNX worker: {err} (Command: {quoted_command})"
-        logger.error(msg, exc_info=True)
+        logger.opt(exception=True).error(msg)
         app_instance.call_from_thread(_update_onnx_log, app_instance, f"[bold red]{msg}[/]\n")
         raise
     finally:
@@ -153,7 +154,7 @@ async def handle_onnx_browse_model_button_pressed(app: "TldwCli", event: Button.
 
 async def handle_start_onnx_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
     """Handles the 'Start ONNX Server' button press."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to start ONNX server.")
 
     log_output_widget: Optional[RichLog] = None
@@ -198,10 +199,10 @@ async def handle_start_onnx_server_button_pressed(app: "TldwCli", event: Button.
         app.notify("ONNX server starting…")
 
     except QueryError as e:
-        logger.error(f"UI Error starting ONNX server: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"UI Error starting ONNX server: {e}")
         app.notify("Error accessing ONNX UI elements.", severity="error")
     except Exception as e:
-        logger.error(f"Error starting ONNX server: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error starting ONNX server: {e}")
         if log_output_widget:
             log_output_widget.write(f"An unexpected error occurred: {e}")
         app.notify(f"An unexpected error occurred: {e}", severity="error")
@@ -209,7 +210,7 @@ async def handle_start_onnx_server_button_pressed(app: "TldwCli", event: Button.
 
 async def handle_stop_onnx_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
     """Handles the 'Stop ONNX Server' button press."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to stop ONNX server.")
 
     log_output_widget: Optional[RichLog] = None
@@ -238,10 +239,10 @@ async def handle_stop_onnx_server_button_pressed(app: "TldwCli", event: Button.P
             app.onnx_server_process = None
 
     except QueryError as e:
-        logger.error(f"UI Error stopping ONNX server: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"UI Error stopping ONNX server: {e}")
         app.notify("Error accessing ONNX UI elements.", severity="error")
     except Exception as e:
-        logger.error(f"Error stopping ONNX server: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error stopping ONNX server: {e}")
         if log_output_widget:
             log_output_widget.write(f"An unexpected error occurred: {e}")
         app.notify(f"An unexpected error occurred: {e}", severity="error")

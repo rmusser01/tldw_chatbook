@@ -260,7 +260,13 @@ class NotesInteropService:
             log_counter("notes_library_delete_note_error", labels={"error_type": type(e).__name__})
             raise
 
-    def search_notes(self, user_id: str, search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def search_notes(
+        self,
+        user_id: str,
+        search_term: str,
+        limit: int = 10,
+        fts_match_query: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         start_time = time.time()
         log_counter("notes_library_search_notes_attempt", labels={
             "search_term_length": str(len(search_term)),
@@ -269,7 +275,10 @@ class NotesInteropService:
         try:
             db = self._get_db(user_id)
             # Similar to list_notes, if search should be user-specific, CharactersRAGDB.search_notes needs adjustment.
-            results = db.search_notes(search_term=search_term, limit=limit)
+            # Forward the caller-built MATCH expression only when provided so
+            # plain callers keep the exact legacy call shape.
+            fts_kwargs = {"fts_match_query": fts_match_query} if fts_match_query is not None else {}
+            results = db.search_notes(search_term=search_term, limit=limit, **fts_kwargs)
             
             # Log metrics
             duration = time.time() - start_time

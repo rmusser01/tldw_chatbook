@@ -83,7 +83,7 @@ async def _update_prompt_preview_display(app: 'TldwCli') -> None:
         logger.error(f"UI component not found for prompt preview update: {e}")
         app.notify("Error updating prompt preview UI.", severity="error")
     except Exception as e:
-        logger.error(f"Unexpected error updating prompt preview: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error updating prompt preview: {e}")
         app.notify("Unexpected error during preview update.", severity="error")
 
 
@@ -126,7 +126,7 @@ def _parse_single_prompt_file_for_preview(file_path: Path, app_ref: 'TldwCli') -
         app_ref.notify(f"Error parsing {file_path.name}: Invalid format.", severity="warning", timeout=7)
         return [{"name": f"Error parsing {file_path.name}", "details": str(e)}]
     except Exception as e:
-        logger.error(f"Unexpected error reading/parsing {file_path} for preview: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error reading/parsing {file_path} for preview: {e}")
         app_ref.notify(f"Error reading {file_path.name}.", severity="error", timeout=7)
         return [{"name": f"Error reading {file_path.name}", "details": str(e)}]
 
@@ -168,7 +168,7 @@ async def _handle_prompt_file_selected_callback(app: 'TldwCli', selected_path: O
         except QueryError:
             logger.error("Could not find #ingest-prompts-selected-files-list ListView to update.")
         except Exception as e_lv:
-            logger.error(f"Error updating prompt list view: {e_lv}", exc_info=True)
+            logger.opt(exception=True).error(f"Error updating prompt list view: {e_lv}")
 
         # Parse this file and add to overall preview list
         parsed_prompts_from_file = _parse_single_prompt_file_for_preview(selected_path, app)
@@ -254,7 +254,7 @@ async def handle_ingest_prompts_import_now_button_pressed(app: 'TldwCli', event:
             logger.info(f"--- import_worker_target (Prompts) FINISHED, results count: {len(results)} ---")
             return results  # Return the results
         except Exception as e_worker:
-            logger.error(f"Exception inside import_worker_target (Prompts): {e_worker}", exc_info=True)
+            logger.opt(exception=True).error(f"Exception inside import_worker_target (Prompts): {e_worker}")
             # To signal an error to the worker system, you should re-raise the exception
             # or return a specific error indicator if you want to handle it differently
             # in on_worker_state_changed. For now, re-raising is simpler.
@@ -314,8 +314,7 @@ async def handle_ingest_prompts_import_now_button_pressed(app: 'TldwCli', event:
         except QueryError:
             logger.error("Failed to find #prompt-import-status-area in process_prompt_import_success.")
         except Exception as e_load_text:
-            logger.error(f"Error during status_area_cb.load_text in process_prompt_import_success: {e_load_text}",
-                         exc_info=True)
+            logger.opt(exception=True).error(f"Error during status_area_cb.load_text in process_prompt_import_success: {e_load_text}")
 
         app.notify(f"Prompt import finished. Success: {successful_imports}, Failed: {failed_imports}", timeout=8)
         logger.info(f"Prompt import summary: {summary.strip()}")
@@ -328,7 +327,7 @@ async def handle_ingest_prompts_import_now_button_pressed(app: 'TldwCli', event:
         if worker_name != "prompt_import_worker":
             return
 
-        logger.error(f"--- process_prompt_import_failure CALLED for worker {worker_name}: {error} ---", exc_info=True)
+        logger.opt(exception=True).error(f"--- process_prompt_import_failure CALLED for worker {worker_name}: {error} ---")
         try:
             status_area_cb_fail = app.query_one("#prompt-import-status-area", TextArea)
             current_text = status_area_cb_fail.text
@@ -338,17 +337,23 @@ async def handle_ingest_prompts_import_now_button_pressed(app: 'TldwCli', event:
             logger.error("Failed to find #prompt-import-status-area in process_prompt_import_failure.")
         app.notify(f"Prompt import failed: {str(error)[:100]}", severity="error", timeout=10)
 
-    # Store these handlers on the app instance temporarily or pass them via a different mechanism
-    # For simplicity here, we'll assume app.py's on_worker_state_changed will call them.
-    # A more robust way is to make these methods of a class or use a dispatch dictionary in app.py.
-    app.prompt_import_success_handler = process_prompt_import_success
-    app.prompt_import_failure_handler = process_prompt_import_failure
+    async def _run_prompt_import_worker_and_dispatch():
+        # Task 172: the file_operations worker group has no worker-state
+        # handler, so process_prompt_import_success/_failure were never
+        # invoked. This worker is a plain coroutine (no thread=True), so it
+        # runs on the main event loop -- dispatching the callbacks directly
+        # here (as T167 did for notes) is safe.
+        try:
+            results = await import_worker_target()
+        except Exception as e:
+            process_prompt_import_failure(e, "prompt_import_worker")
+            raise
+        process_prompt_import_success(results, "prompt_import_worker")
+        return results
 
-    # Run the worker
     app.run_worker(
-        import_worker_target,  # The async callable
+        _run_prompt_import_worker_and_dispatch,
         name="prompt_import_worker",  # Crucial for identifying the worker later
         group="file_operations",
         description="Importing selected prompt files."
-        # No on_success or on_failure here
     )

@@ -105,7 +105,7 @@ async def perform_media_sidebar_search(app: 'TldwCli', search_term: str = ""):
                     loguru_logger.warning(f"Skipping non-dictionary item from DB search results: {item_dict}")
 
     except Exception as e:
-        loguru_logger.error(f"Exception during media search: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Exception during media search: {e}")
         app.notify(f"Error during media search: {e}", severity="error")
         await results_list_view.clear()
         # FIX: Await the async append method.
@@ -276,7 +276,7 @@ async def perform_media_search(app: 'TldwCli'):
                     loguru_logger.warning(f"Skipping non-dictionary item from DB search results: {item_dict}")
 
     except Exception as e:
-        loguru_logger.error(f"Exception during media search: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Exception during media search: {e}")
         app.notify(f"Error during media search: {e}", severity="error")
         await results_list_view.clear()
         # FIX: Await the async append method.

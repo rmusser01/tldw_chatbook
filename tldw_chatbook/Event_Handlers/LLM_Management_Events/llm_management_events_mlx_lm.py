@@ -5,6 +5,7 @@ from __future__ import annotations
 #
 import functools
 import logging
+from loguru import logger as _loguru_fallback_logger
 import os
 import shlex
 import subprocess
@@ -45,12 +46,12 @@ def _update_mlx_log(app_instance: "TldwCli", message: str) -> None:
     except QueryError:
         app_instance.loguru_logger.error("Failed to query #mlx-log-output to write message.")
     except Exception as e:
-        app_instance.loguru_logger.error(f"Error writing to MLX-LM log: {e}", exc_info=True)
+        app_instance.loguru_logger.opt(exception=True).error(f"Error writing to MLX-LM log: {e}")
 
 
 def run_mlx_lm_server_worker(app_instance: "TldwCli", command: List[str]) -> str | None:
     """Background worker to run the MLX-LM server and stream its output."""
-    logger = getattr(app_instance, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app_instance, "loguru_logger", _loguru_fallback_logger)
     quoted_command = ' '.join(shlex.quote(c) for c in command)
     logger.info(f"MLX-LM WORKER starting with command: {quoted_command}")
 
@@ -94,7 +95,7 @@ def run_mlx_lm_server_worker(app_instance: "TldwCli", command: List[str]) -> str
         raise
     except Exception as err:
         msg = f"CRITICAL ERROR in MLX-LM worker: {err} (Command: {quoted_command})"
-        logger.error(msg, exc_info=True)
+        logger.opt(exception=True).error(msg)
         app_instance.call_from_thread(_update_mlx_log, app_instance, f"[bold red]{msg}[/]\n")
         raise
     finally:
@@ -110,7 +111,7 @@ def run_mlx_lm_server_worker(app_instance: "TldwCli", command: List[str]) -> str
 
 async def handle_mlx_lm_nav_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
     """Handle the MLX-LM navigation button press."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("MLX-LM nav button pressed.")
 
     try:
@@ -132,13 +133,13 @@ async def handle_mlx_lm_nav_button_pressed(app: "TldwCli", event: Button.Pressed
         start_button.disabled = is_running
         stop_button.disabled = not is_running
     except QueryError as e:
-        logger.error(f"QueryError in handle_mlx_lm_nav_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"QueryError in handle_mlx_lm_nav_button_pressed: {e}")
         app.notify("Error switching to MLX-LM view: Could not find required UI elements.", severity="error")
 
 
 async def handle_start_mlx_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
     """Starts the MLX-LM server using a non-blocking worker."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to start MLX-LM server.")
 
     log_output_widget: Optional[RichLog] = None
@@ -186,10 +187,10 @@ async def handle_start_mlx_server_button_pressed(app: "TldwCli", event: Button.P
         )
         app.notify("MLX-LM server starting…")
     except QueryError as e:
-        logger.error(f"UI Error starting MLX server: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"UI Error starting MLX server: {e}")
         app.notify("Error accessing MLX-LM UI elements.", severity="error")
     except Exception as e:
-        logger.error(f"Error starting MLX-LM server: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error starting MLX-LM server: {e}")
         if log_output_widget:
             log_output_widget.write(f"An unexpected error occurred: {e}")
         app.notify(f"An unexpected error occurred: {e}", severity="error")
@@ -197,7 +198,7 @@ async def handle_start_mlx_server_button_pressed(app: "TldwCli", event: Button.P
 
 async def handle_stop_mlx_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
     """Stops the MLX-LM server process if it is running."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to stop MLX-LM server.")
 
     from tldw_chatbook.Local_Inference.mlx_lm_inference_local import stop_mlx_lm_server
@@ -221,17 +222,17 @@ async def handle_stop_mlx_server_button_pressed(app: "TldwCli", event: Button.Pr
                 app.mlx_server_process = None
 
     except QueryError as e:
-        logger.error(f"UI Error stopping MLX server: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"UI Error stopping MLX server: {e}")
         app.notify("Error accessing MLX-LM UI elements.", severity="error")
     except Exception as e:
-        logger.error(f"Error stopping MLX-LM server: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error stopping MLX-LM server: {e}")
         if log_output_widget:
             log_output_widget.write(f"An unexpected error occurred while stopping the server: {e}")
         app.notify(f"An unexpected error occurred: {e}", severity="error")
 
 async def handle_mlx_browse_model_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
     """Handle the MLX-LM browse model button press."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("MLX-LM browse model button pressed.")
 
     # Define filters for model files or directories

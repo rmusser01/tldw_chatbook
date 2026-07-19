@@ -13,6 +13,7 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.Chat.console_glyphs import GLYPH_ACTIVE
 from tldw_chatbook.Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
@@ -119,7 +120,7 @@ def _section_state(
         workspace_id="ws-a",
         collapsed=collapsed,
         query=query,
-        selected_summary="Conversation 2 - saved workspace",
+        selected_summary="Conversation 2 - saved chat",
         rows=conversation_rows,
         workspace_total_count=rows,
         result_total_count=None,
@@ -260,6 +261,31 @@ def _base_grouped_workspace_state(
         acp_handoff_detail=state.acp_handoff_detail,
         acp_handoff_audit=state.acp_handoff_audit,
     )
+
+
+def test_console_conversation_status_labels_use_saved_chat_vocabulary() -> None:
+    """Persisted-but-not-archived chats read "saved chat" everywhere.
+
+    Membership roles ("workspace-thread"/"workspace") and the default
+    persisted conversation state ("in-progress") all describe the same
+    user-visible thing: a chat saved locally that is not open in a tab.
+    Library Browse ▸ Conversations lists the same records, so these labels
+    must not contradict its copy (task-179 vocabulary alignment).
+    """
+    detail = ConsoleWorkspaceContextTray._conversation_detail_status
+    status = ConsoleWorkspaceContextTray._conversation_status
+
+    assert detail("workspace-thread") == "saved chat"
+    assert detail("workspace") == "saved chat"
+    assert detail("in-progress") == "saved chat"
+    assert detail("active") == "active session"
+    assert detail("open") == "open session"
+
+    assert status("workspace-thread") == "saved"
+    assert status("workspace") == "saved"
+    assert status("in-progress") == "saved"
+    assert status("active") == "active"
+    assert status("open") == "open"
 
 
 def test_console_workspace_conversation_section_state_defaults() -> None:
@@ -569,7 +595,7 @@ async def test_console_workspace_conversations_render_bounded_expanded_section()
         await pilot.pause()
 
         assert _static_plain(console, "#console-workspace-conversations-title") == "Conversations (8)"
-        assert _static_plain(console, "#console-workspace-selected-conversation") == "Conversation 2 - saved workspace"
+        assert _static_plain(console, "#console-workspace-selected-conversation") == "Conversation 2 - saved chat"
         assert len(console.query("#console-workspace-conversation-search")) == 1
         assert len(console.query("#console-workspace-conversation-search-clear")) == 1
         assert len(console.query("#console-new-workspace-conversation")) == 1
@@ -594,7 +620,7 @@ async def test_console_workspace_conversations_collapsed_shows_selected_summary_
         await pilot.pause()
 
         assert _static_plain(console, "#console-workspace-conversations-title") == "Conversations (8)"
-        assert _static_plain(console, "#console-workspace-selected-conversation") == "Conversation 2 - saved workspace"
+        assert _static_plain(console, "#console-workspace-selected-conversation") == "Conversation 2 - saved chat"
         assert len(console.query("#console-workspace-conversation-search")) == 0
         assert len(console.query("#console-workspace-conversations")) == 0
         assert len(console.query("#console-new-workspace-conversation")) == 0
@@ -625,7 +651,7 @@ async def test_console_workspace_legacy_conversation_toggle_collapses_and_expand
         assert _static_plain(
             console,
             "#console-workspace-selected-conversation",
-        ) == "Conversation 2 - saved workspace"
+        ) == "Conversation 2 - saved chat"
         assert app.app_config["console"]["conversation_section"]["ws-a"][
             "collapsed"
         ] is True
@@ -1194,6 +1220,33 @@ async def test_console_workspace_context_renders_server_readiness_handoff_and_ac
 
 @pytest.mark.asyncio
 async def test_console_workspace_context_syncs_active_conversation_marker() -> None:
+    """The active-row glyph marks whichever row is the live native session.
+
+    task-195 root cause: this test predates two later, unrelated changes
+    that invalidated its original form: (1) 0cb02fa5 replaced the literal
+    ``"> "`` marker with the shared glyph language's ``GLYPH_ACTIVE``
+    (``"▸ "``) -- a deliberate rename this test never picked up; and
+    (2) a667ffbd added the grouped conversation browser, which renders a
+    *second*, independently-selected native-session placeholder row
+    alongside the workspace-membership row. Driving the marker purely
+    through ``sync_shell_bar_from_session_data`` with a ``ChatSessionData``
+    that is not bound to any real native session (as the old test did)
+    leaves that placeholder stuck showing the active glyph too, producing
+    two "active" rows for one conversation -- not a genuine product
+    regression, since ``sync_shell_bar_from_session_data``'s only
+    production caller (``ChatTabContainer.ActiveSessionChanged``) is not
+    reachable from the Console screen (``ChatTabContainer`` is only
+    mounted by the legacy ``Chat_Window``/``Chat_Window_Enhanced``).
+
+    The real, reachable way Console marks a conversation active is
+    ``ConsoleChatStore.restore_persisted_session`` (see
+    ``ChatScreen`` resume-saved-conversation flow), which binds the
+    native session's ``persisted_conversation_id`` so it merges with the
+    membership row into a single selected row -- exactly the contract
+    ``test_console_send_after_workspace_switch_persists_to_selected_workspace``
+    (Tests/UI/test_console_native_chat_flow.py, the "shared-open-chat"
+    case) already locks in. This test now drives the marker the same way.
+    """
     app = _build_test_app()
     service = app.workspace_registry_service
     service.create_workspace(workspace_id="ws-a", name="Research Sprint")
@@ -1211,12 +1264,27 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
 
+        store = console._ensure_console_chat_store()
+        store.restore_persisted_session(
+            title="Planning thread",
+            workspace_id="ws-a",
+            persisted_conversation_id="conv-1",
+            messages=(),
+        )
+
         console.sync_shell_bar_from_session_data(
             ChatSessionData(tab_id="tab-1", conversation_id="conv-1")
         )
         await pilot.pause()
 
-        assert "> Planning thread" in _visible_text(console)
+        row_texts = _conversation_row_texts(console)
+        active_row_texts = [
+            text for text in row_texts if text.startswith(f"{GLYPH_ACTIVE} ")
+        ]
+        assert active_row_texts == [
+            text for text in active_row_texts if "Planning thread" in text
+        ]
+        assert len(active_row_texts) == 1
 
 
 @pytest.mark.asyncio
@@ -1326,3 +1394,71 @@ def test_console_workspace_conversation_subsection_styles_are_declared() -> None
     assert "overflow-y: auto" not in list_block
     assert "scrollbar-size:" not in list_block
     assert "#console-left-rail-body:focus {" in css
+
+
+def test_console_workspace_aggregate_height_pins_badge_row_cost() -> None:
+    """Aggregate row height includes badge row up-charge.
+
+    Regression: row height calculation must sum plain (3px) and badge (4px)
+    rows correctly. Under-counting silently overlaps rows on non-scrolling
+    Vertical containers.
+    """
+    from tldw_chatbook.Widgets.Console.console_workspace_context import (
+        ConsoleWorkspaceContextTray,
+    )
+    from tldw_chatbook.Workspaces.conversation_browser_state import (
+        ConsoleConversationBrowserRow,
+    )
+
+    # Plain row (no subagent_count): costs 3px (base 3 + delta 0).
+    # Badge row (subagent_count > 0): costs 4px (base 3 + delta 1).
+    plain_rows = tuple(
+        ConsoleConversationBrowserRow(
+            row_key=f"plain-{i}",
+            conversation_id=f"conv-plain-{i}",
+            native_session_id=None,
+            title=f"Plain row {i}",
+            status="workspace-thread",
+            selected=False,
+            subagent_count=0,
+            scope_type="workspace",
+            workspace_id="ws-a",
+            workspace_label="Workspace A",
+            updated_label="1d",
+            star_enabled=True,
+            starred=False,
+        )
+        for i in range(3)
+    )
+    badge_rows = tuple(
+        ConsoleConversationBrowserRow(
+            row_key=f"badge-{i}",
+            conversation_id=f"conv-badge-{i}",
+            native_session_id=None,
+            title=f"Badge row {i}",
+            status="workspace-thread",
+            selected=False,
+            subagent_count=1,  # Has badge.
+            scope_type="workspace",
+            workspace_id="ws-a",
+            workspace_label="Workspace A",
+            updated_label="1d",
+            star_enabled=True,
+            starred=False,
+        )
+        for i in range(2)
+    )
+    mixed_rows = plain_rows + badge_rows
+
+    # Expected sum: 3 plain rows * 3px/row + 2 badge rows * 4px/row = 17px.
+    expected_height = 3 * 3 + 2 * 4
+    actual_height = ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+        mixed_rows
+    )
+
+    assert actual_height == expected_height == 17
+    assert actual_height == ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+        plain_rows
+    ) + ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+        badge_rows
+    )

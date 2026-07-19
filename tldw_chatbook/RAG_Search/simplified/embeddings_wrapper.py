@@ -451,7 +451,7 @@ class EmbeddingsServiceWrapper:
         except Exception as e:
             self._errors_count += 1
             log_counter("embeddings_creation_error", labels={"error": type(e).__name__})
-            logger.error(f"Failed to create embeddings: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to create embeddings: {e}")
             raise RuntimeError(f"Embedding creation failed: {e}") from e
 
     def _get_empty_embedding_dimension(self) -> int:
@@ -529,7 +529,7 @@ class EmbeddingsServiceWrapper:
         except Exception as e:
             self._errors_count += 1
             log_counter("embeddings_async_creation_error", labels={"error": type(e).__name__})
-            logger.error(f"Failed to create embeddings asynchronously: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to create embeddings asynchronously: {e}")
             raise RuntimeError(f"Async embedding creation failed: {e}") from e
     
     def create_embedding(self, text: str) -> np.ndarray:
@@ -610,7 +610,7 @@ class EmbeddingsServiceWrapper:
             logger.info(f"Prefetched models: {model_ids} in {load_time:.2f}s, memory used: {memory_used:.1f}MB")
         except Exception as e:
             log_counter("embeddings_prefetch_error", labels={"error": type(e).__name__})
-            logger.error(f"Failed to prefetch models: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to prefetch models: {e}")
     
     def get_metrics(self) -> Dict[str, Any]:
         """Get service metrics for monitoring."""

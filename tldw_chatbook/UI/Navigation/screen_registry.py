@@ -65,7 +65,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     "workflows": ScreenRoute("workflows", "workflows", "tldw_chatbook.UI.Screens.workflows_screen", "WorkflowsScreen"),
     "mcp": ScreenRoute("mcp", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"),
     "acp": ScreenRoute("acp", "acp", "tldw_chatbook.UI.Screens.acp_screen", "ACPScreen"),
-    "skills": ScreenRoute("skills", "skills", "tldw_chatbook.UI.Screens.skills_screen", "SkillsScreen"),
     "settings": ScreenRoute("settings", "settings", "tldw_chatbook.UI.Screens.settings_screen", "SettingsScreen"),
     "ingest": ScreenRoute("ingest", "ingest", "tldw_chatbook.UI.Screens.media_ingest_screen", "MediaIngestScreen"),
     "coding": ScreenRoute("coding", "coding", "tldw_chatbook.UI.Screens.coding_screen", "CodingScreen"),
@@ -87,7 +86,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     "stts": ScreenRoute("stts", "stts", "tldw_chatbook.UI.Screens.stts_screen", "STTSScreen"),
     "study": ScreenRoute("study", "study", "tldw_chatbook.UI.Screens.study_screen", "StudyScreen"),
     "writing": ScreenRoute("writing", "writing", "tldw_chatbook.UI.Screens.writing_screen", "WritingScreen"),
-    "research": ScreenRoute("research", "research", "tldw_chatbook.UI.Screens.research_screen", "ResearchScreen"),
     "chatbooks": ScreenRoute("chatbooks", "chatbooks", "tldw_chatbook.UI.Screens.chatbooks_screen", "ChatbooksScreen"),
     "subscriptions": ScreenRoute(
         "subscriptions",
@@ -107,6 +105,31 @@ _SCREEN_ALIASES = {
     # route id still resolve to a real screen (Library) instead of erroring
     # or silently falling back to Chat.
     "notes": "library",
+    # The Personas "prompts" mode chip is retired (Task 7): prompt
+    # management now lives entirely inside Library. Existing startup
+    # configs / callers using the legacy "prompts" route id resolve to
+    # Library instead of Personas.
+    "prompts": "library",
+    # The standalone Skills tab is retired (Skills sub-project Task 5):
+    # skill management now lives entirely inside Library (its own Skills
+    # rail row, built in Tasks 1-4). Existing startup configs / callers
+    # using the legacy "skills" route id resolve to Library instead of the
+    # standalone SkillsScreen -- mirrors the "notes"/"prompts" aliases
+    # above exactly. ``skills_screen.py``/``SkillsScreen`` are NOT deleted:
+    # the class is still directly exercised by its own destination-shell
+    # test suite, and its trust passphrase modal is reused by the Library
+    # skill editor's trust panel (Task 4).
+    "skills": "library",
+    # The orphan "research" screen registration is removed (Task 255, from
+    # the 2026-07-12 RAG module audit): no shell destination or navigation
+    # call ever targeted it, and the Workbench route inventory already maps
+    # research -> library. TAB_RESEARCH remains in ALL_TABS (command palette
+    # direct command) and startup configs may still say "research", so the
+    # route id resolves to Library instead of dead-ending -- mirrors the
+    # "notes"/"prompts"/"skills" aliases above. ``Research_Window.py`` /
+    # ``Research_Modules/`` are intentionally NOT deleted here; that is a
+    # separate, larger decision.
+    "research": "library",
 }
 
 

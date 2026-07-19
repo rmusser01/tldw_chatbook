@@ -224,7 +224,7 @@ class CCPCharacterHandler:
             self._notify(str(exc))
             return {}
         except Exception:
-            logger.error("Error loading chat greetings", exc_info=True)
+            logger.opt(exception=True).error("Error loading chat greetings")
             self._notify("Failed to load chat greetings.", severity="error")
             return {}
 
@@ -246,7 +246,7 @@ class CCPCharacterHandler:
             self._notify(str(exc))
             return {}
         except Exception:
-            logger.error("Error selecting chat greeting", exc_info=True)
+            logger.opt(exception=True).error("Error selecting chat greeting")
             self._notify("Failed to select chat greeting.", severity="error")
             return {}
 
@@ -264,7 +264,7 @@ class CCPCharacterHandler:
             self._notify(str(exc))
             return {}
         except Exception:
-            logger.error("Error loading chat presets", exc_info=True)
+            logger.opt(exception=True).error("Error loading chat presets")
             self._notify("Failed to load chat presets.", severity="error")
             return {}
 
@@ -282,7 +282,7 @@ class CCPCharacterHandler:
             self._notify(str(exc))
             return {}
         except Exception:
-            logger.error("Error creating chat preset", exc_info=True)
+            logger.opt(exception=True).error("Error creating chat preset")
             self._notify("Failed to create chat preset.", severity="error")
             return {}
 
@@ -304,7 +304,7 @@ class CCPCharacterHandler:
             self._notify(str(exc))
             return {}
         except Exception:
-            logger.error("Error updating chat preset", exc_info=True)
+            logger.opt(exception=True).error("Error updating chat preset")
             self._notify("Failed to update chat preset.", severity="error")
             return {}
 
@@ -322,7 +322,7 @@ class CCPCharacterHandler:
             self._notify(str(exc))
             return {}
         except Exception:
-            logger.error("Error deleting chat preset", exc_info=True)
+            logger.opt(exception=True).error("Error deleting chat preset")
             self._notify("Failed to delete chat preset.", severity="error")
             return {}
     
@@ -345,7 +345,7 @@ class CCPCharacterHandler:
             logger.info(f"Refreshed character list with {len(options)} characters")
             
         except Exception as e:
-            logger.error(f"Error refreshing character list: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error refreshing character list: {e}")
     
     async def handle_load_character(self) -> None:
         """Load the selected character."""
@@ -359,7 +359,7 @@ class CCPCharacterHandler:
                 logger.warning("No character selected to load")
                 
         except Exception as e:
-            logger.error(f"Error loading selected character: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error loading selected character: {e}")
     
     async def load_character(self, character_id: CharacterId) -> None:
         """Load a character and display the card (async wrapper).
@@ -412,7 +412,7 @@ class CCPCharacterHandler:
                 logger.error(f"Failed to load character {character_id}")
                 
         except Exception as e:
-            logger.error(f"Error loading character {character_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error loading character {character_id}: {e}")
     
     def _display_character_card(self) -> None:
         """Display character card in the UI."""
@@ -468,7 +468,7 @@ class CCPCharacterHandler:
             logger.debug(f"Displayed character card for {data.get('name', 'Unknown')}")
             
         except Exception as e:
-            logger.error(f"Error displaying character card: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error displaying character card: {e}")
     
     def _update_field(self, selector: str, value: str) -> None:
         """Update a Static field."""
@@ -522,7 +522,7 @@ class CCPCharacterHandler:
             self._populate_editor_fields()
             
         except Exception as e:
-            logger.error(f"Error switching to character editor: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error switching to character editor: {e}")
     
     def _populate_editor_fields(self) -> None:
         """Populate the character editor fields with current data."""
@@ -571,7 +571,7 @@ class CCPCharacterHandler:
             self._set_input_value("#ccp-editor-char-avatar-input", data.get("avatar", ""))
             
         except Exception as e:
-            logger.error(f"Error populating editor fields: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error populating editor fields: {e}")
     
     def _set_input_value(self, selector: str, value: str) -> None:
         """Set an Input widget's value."""
@@ -597,7 +597,7 @@ class CCPCharacterHandler:
             await self.save_character_data(character_data)
 
         except Exception as e:
-            logger.error(f"Error saving character: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error saving character: {e}")
 
     async def save_character_data(self, character_data: Dict[str, Any]) -> None:
         """Save character data from the current editor widget."""
@@ -621,7 +621,7 @@ class CCPCharacterHandler:
                 )
                 
         except Exception as e:
-            logger.error(f"Error saving character: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error saving character: {e}")
     
     def _gather_editor_data(self) -> Dict[str, Any]:
         """Gather all data from the editor fields."""
@@ -671,7 +671,7 @@ class CCPCharacterHandler:
                 data["image"] = self.pending_image_data
             
         except Exception as e:
-            logger.error(f"Error gathering editor data: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error gathering editor data: {e}")
         
         return data
     
@@ -710,7 +710,7 @@ class CCPCharacterHandler:
                 logger.error(f"Failed to update character {character_id}")
                 
         except Exception as e:
-            logger.error(f"Error updating character: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error updating character: {e}")
     
     def _create_character(self, data: Dict[str, Any]) -> None:
         """Create a new character (sync worker method)."""
@@ -736,7 +736,7 @@ class CCPCharacterHandler:
                 logger.error("Failed to create new character")
                 
         except Exception as e:
-            logger.error(f"Error creating character: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error creating character: {e}")
     
     async def handle_delete_character(self) -> None:
         """Delete the current character."""
@@ -772,7 +772,7 @@ class CCPCharacterHandler:
                 logger.error(f"Failed to delete character {self.current_character_id}")
                 
         except Exception as e:
-            logger.error(f"Error deleting character: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error deleting character: {e}")
     
     async def handle_import(self) -> None:
         """Handle import request - prompts for file selection."""
@@ -825,7 +825,7 @@ class CCPCharacterHandler:
                 logger.error(f"Failed to import character from {file_path}")
                 
         except Exception as e:
-            logger.error(f"Error importing character: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error importing character: {e}")
     
     async def handle_export_character(self) -> None:
         """Export the current character."""
@@ -851,7 +851,7 @@ class CCPCharacterHandler:
                 logger.error(f"Failed to export character {self.current_character_id}")
                 
         except Exception as e:
-            logger.error(f"Error exporting character: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error exporting character: {e}")
     
     async def handle_generate_field(self, field_name: str) -> None:
         """Generate a character field using AI.
@@ -872,4 +872,4 @@ class CCPCharacterHandler:
             logger.info(f"Requested AI generation for field: {field_name}")
             
         except Exception as e:
-            logger.error(f"Error requesting field generation: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error requesting field generation: {e}")

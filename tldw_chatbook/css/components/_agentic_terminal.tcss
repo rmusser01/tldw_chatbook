@@ -300,10 +300,220 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-primary;
 }
 
+ConsolePromptPickerModal {
+    align: center middle;
+}
+
+#console-prompt-picker-modal {
+    width: 76;
+    max-width: 95%;
+    height: auto;
+    max-height: 85%;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    padding: 1 2;
+}
+
+#console-prompt-picker-filter {
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-prompt-picker-filter:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+#console-prompt-picker-results {
+    height: auto;
+    max-height: 20;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+}
+
+.console-prompt-picker-row {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.console-prompt-picker-row-highlighted {
+    border: tall $ds-action-focus;
+    background: $ds-input-focus-bg;
+    text-style: bold;
+}
+
+.console-prompt-picker-row-blocked {
+    color: $ds-text-muted;
+}
+
+#console-prompt-picker-reason {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    background: $ds-status-error 10%;
+    color: $ds-text-primary;
+}
+
+#console-prompt-picker-empty {
+    height: auto;
+    margin: 1 0;
+    color: $ds-text-muted;
+}
+
+ConsoleSkillPickerModal {
+    align: center middle;
+}
+
+#console-skill-picker-modal {
+    width: 76;
+    max-width: 95%;
+    height: auto;
+    max-height: 85%;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    padding: 1 2;
+}
+
+#console-skill-picker-filter {
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-skill-picker-filter:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+#console-skill-picker-results {
+    height: auto;
+    max-height: 20;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+}
+
+.console-skill-picker-row {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.console-skill-picker-row-highlighted {
+    border: tall $ds-action-focus;
+    background: $ds-input-focus-bg;
+    text-style: bold;
+}
+
+#console-skill-picker-empty {
+    height: auto;
+    margin: 1 0;
+    color: $ds-text-muted;
+}
+
+ConsoleSystemPromptModal {
+    align: center middle;
+}
+
+#console-system-prompt-modal {
+    width: 84;
+    max-width: 95%;
+    height: 32;
+    max-height: 90%;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    padding: 1 2;
+}
+
+.console-system-prompt-row {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.console-system-prompt-label {
+    width: 8;
+    min-width: 8;
+    max-width: 8;
+    height: 1;
+    min-height: 1;
+    content-align: left middle;
+}
+
+#console-system-prompt-scope {
+    color: $ds-text-muted;
+}
+
+#console-system-prompt-text {
+    width: 100%;
+    height: 1fr;
+    min-height: 10;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-system-prompt-text:focus {
+    border: tall $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+}
+
+#console-system-prompt-name {
+    width: 1fr;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-system-prompt-save-status {
+    color: $ds-text-muted;
+}
+
+.console-system-prompt-actions {
+    height: 3;
+    min-height: 3;
+    align-horizontal: right;
+}
+
+#console-system-prompt-clear,
+#console-system-prompt-cancel,
+#console-system-prompt-apply {
+    width: 12;
+    min-width: 12;
+    height: 3;
+    min-height: 3;
+}
+
 #home-dashboard,
 #console-shell,
 #library-shell,
-#notes-shell,
 #artifacts-shell,
 #personas-shell,
 #watchlists-collections-shell,
@@ -319,7 +529,6 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 #home-title,
 #console-title,
 #library-title,
-#notes-title,
 #artifacts-title,
 #personas-title,
 #watchlists-collections-title,
@@ -343,7 +552,6 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 #mcp-purpose,
 #console-status-row,
 #library-status-row,
-#notes-mode-strip,
 #console-mode-bar,
 #artifacts-mode-strip,
 #personas-mode-strip,
@@ -538,15 +746,13 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     border: none;
 }
 
-/* Review flashcards is the primary action on the due-flashcards canvas --
-   mirrors .console-action-primary's accent treatment (the project's live
-   "primary action button" convention) so it doesn't read as same-weight as
-   the neighboring next-action button (e.g. Import Library sources). */
-#home-review-flashcards {
-    background: $ds-action-focus 35%;
-    color: $ds-text-primary;
-    text-style: bold;
-}
+/* Canvas actions gain .console-action-primary (mirrors the project's live
+   "primary action button" convention) when they are the primary control
+   for the currently selected row -- see HomeScreen._home_action_button /
+   HomeCanvasState.primary_control_id. No id-scoped rule here anymore: the
+   primary control follows selection (Retry when failed, Approve when
+   approval-pending, Review flashcards when the due-flashcards row is
+   selected, Open details otherwise), not one permanently-accented button. */
 
 #library-shell-grid {
     padding: 0 1;
@@ -720,6 +926,23 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-primary;
 }
 
+/* Same look as .library-notes-row: prompts list rows (library_prompts_canvas.py). */
+.library-prompt-row {
+    width: 100%;
+    min-width: 0;
+    height: 2;
+    min-height: 2;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
 /* "From a template" group label: separates the primary Blank note action
    from the template rows (same top-rule section grammar as the media
    viewer's Content/Analysis/Highlights headers). */
@@ -799,6 +1022,269 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-muted;
 }
 
+/* Prompts list canvas (library_prompts_canvas.py): same look as the notes
+   list's header/filter/empty siblings above -- visual parity, not a
+   separate design. */
+#library-prompts-header {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    content-align: left middle;
+}
+
+#library-prompts-filter {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-prompts-filter:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-prompts-empty {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+/* Toolbar Import… row (library_prompts_canvas.py, Task 5): the path Input
+   matches the filter box's field look; the outcome line is muted like the
+   editor's save-status Static. */
+#library-prompts-import-path {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-prompts-import-path:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-prompts-import-status {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+/* Toolbar Import… row (library_skills_canvas.py, Task 5): the path Input
+   matches the filter box's field look; the outcome line is muted like the
+   editor's save-status Static. */
+#library-skills-import-path {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-skills-import-path:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-skills-import-status {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+/* Skills list canvas (library_skills_canvas.py, Task 3): same look as the
+   prompts list's header/filter/empty/row siblings above -- visual parity,
+   not a separate design. */
+.library-skill-row {
+    width: 100%;
+    min-width: 0;
+    height: 2;
+    min-height: 2;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+/* Needs-review (trust-blocked) skills stay selectable -- the trust panel
+   needs them visible -- but render dim, same modifier-class pattern as
+   ``.console-prompt-picker-row-blocked``. */
+.library-skill-row-blocked {
+    color: $ds-text-muted;
+}
+
+/* Row secondary line: the flags/description Static rendered right below
+   each skill row's Button. Same muted tier as every other secondary/empty
+   line in this canvas family. */
+.library-skill-row-secondary {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+#library-skills-header {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    content-align: left middle;
+}
+
+#library-skills-filter {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-skills-filter:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-skills-empty {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+/* Skill detail/trust editor (library_skills_canvas.py, Task 4): Name/
+   Description/Argument hint/Allowed tools/Model share the SAME field look
+   as the prompt editor's own Inputs (visual parity, not a separate
+   design) -- dual-pinned against #library-prompt-name in
+   test_library_skills_canvas.py. */
+#library-skill-name,
+#library-skill-description,
+#library-skill-argument-hint,
+#library-skill-allowed-tools,
+#library-skill-model {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-skill-name:focus,
+#library-skill-description:focus,
+#library-skill-argument-hint:focus,
+#library-skill-allowed-tools:focus,
+#library-skill-model:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* Bounded editor: same floor/ceiling as #library-prompt-system/-user so the
+   Body TextArea stays compact instead of ballooning to fill the canvas. */
+#library-skill-body {
+    height: auto;
+    min-height: 6;
+    max-height: 14;
+    margin: 0 0 1 0;
+}
+
+#library-skill-supporting,
+#library-skill-save-status,
+#library-skill-conflict-copy {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
+/* Warnings line (shadow-name / save-marks-needs-review): a warning tier
+   color, not muted -- unlike the read-only supporting-files/status lines
+   above, these are actionable, attention-worthy copy. */
+#library-skill-warnings {
+    width: 100%;
+    height: auto;
+    color: $ds-status-warning;
+    margin: 0 0 1 0;
+}
+
+/* Trust panel: state line dims while blocked/needs-review, same modifier-
+   class pattern as .library-skill-row-blocked above. The changed-files
+   line under it is muted like every other secondary line in this canvas
+   family. */
+#library-skill-trust-state {
+    width: 100%;
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+#library-skill-trust-state.library-skill-trust-state-blocked {
+    color: $ds-text-muted;
+}
+
+#library-skill-trust-review-files {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
+/* First-run trust setup state (Fix wave, Skills Phase-1 gate FIX 2): the
+   explanation line replacing the normal changed-files line while
+   ``trust_status == "trust_uninitialized"``. Same muted secondary-line
+   look as #library-skill-trust-review-files above -- informational, not a
+   warning tier (unlike #library-skill-warnings). */
+#library-skill-trust-setup-explanation {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
 #library-notes-create-header {
     width: 100%;
     min-width: 0;
@@ -866,6 +1352,79 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 
 #library-note-conflict-copy,
 #library-note-delete-confirm-copy {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
+/* Prompt editor (library_prompts_canvas.py): same field/meta/conflict look
+   as the note editor's siblings above -- visual parity, not a separate
+   design. Name/Author/Details/Keywords are single-line Inputs; System
+   prompt/User prompt are the bounded TextAreas below. */
+#library-prompt-name,
+#library-prompt-author,
+#library-prompt-details,
+#library-prompt-keywords {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-prompt-name:focus,
+#library-prompt-author:focus,
+#library-prompt-details:focus,
+#library-prompt-keywords:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* Dim one-line field labels above each Input/TextArea -- the prompt editor
+   has several ambiguous text fields (unlike the note editor's single body),
+   so each needs its own caption; muted like the note editor's meta line. */
+.library-prompt-field-label {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+}
+
+/* One-line dim hint under the System prompt/User prompt labels (Task 8c
+   U7): explains the two-part prompt model to a new user. Same muted tier
+   as .library-prompt-field-label above; the trailing margin separates it
+   from the TextArea beneath it. */
+.library-prompt-field-hint {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
+/* Bounded editors: same floor/ceiling as #library-note-body so System/User
+   prompt stay compact instead of ballooning to fill the canvas. */
+#library-prompt-system,
+#library-prompt-user {
+    height: auto;
+    min-height: 6;
+    max-height: 14;
+    margin: 0 0 1 0;
+}
+
+#library-prompt-meta {
+    width: 100%;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
+#library-prompt-conflict-copy,
+#library-prompt-save-status {
     width: 100%;
     height: auto;
     color: $ds-text-muted;
@@ -943,9 +1502,8 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-muted;
 }
 
-/* Failed status gets the same error color already used elsewhere in this
-   file (e.g. Button.notes-delete-action) -- status is the headline, so a
-   failure must read as unambiguously bad. */
+/* Failed status gets the standard $ds-status-error color -- status is the
+   headline, so a failure must read as unambiguously bad. */
 #library-notes-sync-status.library-notes-sync-status-failed {
     color: $ds-status-error;
 }
@@ -959,6 +1517,178 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     min-height: 1;
     margin: 0 0 1 0;
     color: $ds-text-disabled;
+}
+
+/* Ingest canvas: local-file ingest form + job queue. Mirrors the notes
+   sync panel's render-safe stacked shape (VerticalScroll root -- L3a
+   clipping lesson -- no Select, no Horizontal mixing 1fr + fixed-width
+   children). */
+#library-ingest-header {
+    width: 100%;
+    text-style: bold;
+    color: $ds-text-primary;
+    margin: 0 0 1 0;
+}
+
+.library-ingest-quiet-line {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
+.library-ingest-field {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.library-ingest-field:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* Accent treatment mirrors #library-notes-sync-run / .console-action-primary
+   (the project's live "primary action button" convention) so Start ingest
+   reads as the one button that matters on this canvas. */
+#library-ingest-start {
+    margin-top: 1;
+    background: $ds-action-focus 35%;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-ingest-start:disabled {
+    background: $ds-surface-raised;
+    color: $ds-text-disabled;
+    text-style: none;
+}
+
+#library-ingest-queue-heading {
+    width: 100%;
+    text-style: bold;
+    color: $ds-text-primary;
+    border-top: solid $ds-grid-line;
+    padding: 1 0 0 0;
+    margin: 1 0 1 0;
+}
+
+#library-ingest-queue-counts {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
+#library-ingest-queue-empty {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+}
+
+.library-ingest-row {
+    width: 100%;
+    height: auto;
+    margin: 0 0 1 0;
+    color: $ds-text-primary;
+}
+
+/* (L3b AB wave, A3) A row followed by action button(s) (Open in Library /
+   Retry / Dismiss) trims its own bottom margin to 0 -- the actions
+   wrapper's own `.library-ingest-row-actions` margin below supplies the
+   spacing instead (tight gap above, blank line below), so the button(s)
+   read as belonging to THIS row rather than the row underneath it. Plain
+   rows (queued/running, or a defensively action-less done row) keep the
+   base `.library-ingest-row` bottom margin for normal row-to-row
+   spacing. */
+.library-ingest-row-with-actions {
+    margin: 0 0 0 0;
+}
+
+/* (L5, fix batch F1b) The wrapper around a row's action button(s) --
+   Retry+Dismiss on a failed row, or Open in Library alone on a done row
+   (the two never coexist on the same row). Carries the spacing the
+   individual `.library-ingest-row-action` buttons used to carry alone
+   (A3, above) now applied once to the whole group: indented 2 cells so it
+   visually nests under its row, no gap above (tight to the row it
+   belongs to, whose own margin is trimmed via
+   `.library-ingest-row-with-actions` above), one blank line below before
+   whatever comes next (another row, or "Clear finished"). `height: auto`
+   keeps it from inheriting `Horizontal`'s `1fr` default, which would
+   otherwise fight every other row for the VerticalScroll's height. */
+.library-ingest-row-actions {
+    height: auto;
+    margin: 0 0 1 2;
+}
+
+/* Shared by every per-row action button (Open in Library / Retry /
+   Dismiss) inside `.library-ingest-row-actions` above -- now just a small
+   right gap between same-row siblings (Retry from Dismiss) so the pair
+   reads as two distinct buttons rather than running together; the
+   wrapper itself supplies the row's own indent/top/bottom spacing. */
+.library-ingest-row-action {
+    margin: 0 1 0 0;
+}
+
+/* (L3b AB wave, B2) "Clear finished" sits below every queue row -- a top
+   margin separates it from the last row's own action button instead of
+   reading as one more per-row action. */
+#library-ingest-clear-finished {
+    margin-top: 1;
+}
+
+/* Export canvas (F4 Task 2): in-canvas chatbook export form. Own classes
+   rather than reusing `.library-ingest-*` -- the two canvases' CSS stays
+   independently discoverable even though the rules mirror the ingest
+   canvas's field/quiet-line styling exactly. */
+.library-export-quiet-line {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
+.library-export-field {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.library-export-field:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* Accent treatment mirrors #library-ingest-start / .console-action-primary
+   (the project's live "primary action button" convention) so Export
+   chatbook reads as the one button that matters on this canvas. */
+#library-export-submit {
+    margin-top: 1;
+    background: $ds-action-focus 35%;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-export-submit:disabled {
+    background: $ds-surface-raised;
+    color: $ds-text-disabled;
+    text-style: none;
 }
 
 #library-media-title {
@@ -1630,6 +2360,31 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-muted;
 }
 
+.console-agent-section-line {
+    height: 1;
+    color: $ds-text-primary;
+}
+
+.console-agent-section-steps,
+.console-agent-section-subagents {
+    height: auto;
+    color: $ds-text-muted;
+    text-style: dim;
+}
+
+.console-agent-drilldown-back {
+    margin-top: 1;
+}
+
+#console-rail-system-line {
+    height: 1;
+    color: $ds-text-primary;
+}
+
+#console-rail-system-line.console-rail-system-line-dim {
+    color: $ds-text-muted;
+}
+
 .console-inspector-group-heading {
     height: 1;
     min-height: 1;
@@ -2022,6 +2777,15 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     text-style: bold underline;
 }
 
+.console-transcript-message-tool {
+    color: $ds-text-muted;
+    text-style: dim italic;
+}
+
+.console-transcript-message-system {
+    color: $ds-text-muted;
+}
+
 .console-transcript-action-row {
     height: 3;
     min-height: 3;
@@ -2171,6 +2935,7 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-muted;
 }
 
+/* Console's rendered frame color (#6f7782) — see chat_screen.CONSOLE_FRAME_COLOR. */
 .console-setup-modal-card {
     layer: console-setup-card;
     width: 62;
@@ -2331,31 +3096,6 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 }
 
 
-#notes-status-row {
-    width: 1fr;
-    min-width: 0;
-    height: $ds-destination-compact-strip-height;
-    min-height: $ds-destination-compact-strip-height;
-    text-align: right;
-    color: $ds-text-muted;
-}
-
-Button.notes-mode-chip {
-    width: auto;
-    min-width: $ds-library-mode-chip-min-width;
-    height: $ds-library-mode-chip-height;
-    min-height: $ds-library-mode-chip-height;
-    padding: 0 1;
-    border: none;
-}
-
-.notes-mode-chip:focus {
-    outline: none;
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-}
-
 #artifacts-workbench,
 #personas-workbench,
 #watchlists-workbench,
@@ -2372,20 +3112,6 @@ Button.notes-mode-chip {
     overflow: hidden;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
-}
-
-/* Notes mode regions hold framed panes (Console rail framing), so the
-   regions themselves stay chrome-free like Console's main area. */
-#notes-mode-region-notes,
-#notes-mode-region-sync,
-#notes-mode-region-templates {
-    height: 1fr;
-    min-height: 20;
-    padding: 0;
-    margin: 0;
-    overflow: hidden;
-    border: none;
-    background: transparent;
 }
 
 #artifacts-list-pane,
@@ -2762,7 +3488,8 @@ Button.settings-category-button.settings-secondary-search-match {
     border: none;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
-    text-style: bold underline;
+    /* No underline: it made placeholder copy read as a link (task-185). */
+    text-style: bold;
     outline: none;
 }
 
@@ -2848,6 +3575,13 @@ Button.settings-category-button.settings-secondary-search-match {
 }
 
 .settings-provider-manual-hidden {
+    display: none;
+}
+
+/* task-189: generation-profile rows a provider does not support are hidden
+   entirely; the Generation defaults disclosure shows one summary line instead
+   of per-row "Unavailable for <provider>" placeholders. */
+.settings-gated-profile-hidden {
     display: none;
 }
 
@@ -2959,278 +3693,6 @@ Button.settings-category-button.settings-secondary-search-match {
     min-height: 1;
 }
 
-/* Notes form controls mirror the Console settings control language exactly:
-   quiet tall-bordered inputs, single-row flattened selects, accent focus. */
-#notes-shell Input {
-    height: 3;
-    min-height: 3;
-    padding: 0 1;
-    border: tall $ds-grid-line;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-}
-
-#notes-shell Input:focus {
-    border: tall $ds-input-focus-accent;
-    outline: none;
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-#notes-shell Input > .input--cursor {
-    background: $ds-input-focus-accent;
-    color: $ds-surface-panel;
-}
-
-#notes-shell Select {
-    height: 1;
-    min-height: 1;
-    border: none;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-}
-
-#notes-shell Select > SelectCurrent {
-    width: 1fr;
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    padding: 0 1;
-    border: none;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-    content-align: left middle;
-}
-
-#notes-shell Select > SelectCurrent Static#label {
-    width: 1fr;
-    height: 1;
-    background: transparent;
-    color: $ds-text-primary;
-}
-
-#notes-shell Select > SelectCurrent .arrow {
-    background: transparent;
-    color: $ds-text-muted;
-}
-
-#notes-shell Select:focus {
-    border: none;
-    border-bottom: none;
-    outline: solid $ds-input-focus-accent;
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-}
-
-#notes-shell TextArea {
-    border: tall $ds-surface-panel;
-    background: $ds-surface-panel;
-    scrollbar-size: 1 1;
-    scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
-    scrollbar-color-active: $ds-action-focus;
-}
-
-#notes-shell TextArea:focus {
-    border: tall $ds-input-focus-accent;
-    outline: none;
-}
-
-/* The keywords editor reads as a form control, not an editor surface. */
-#notes-shell TextArea.notes-keywords-textarea {
-    border: tall $ds-grid-line;
-    background: $ds-surface-raised;
-}
-
-
-#notes-shell ListView {
-    border: none;
-    background: $ds-surface-panel;
-    padding: 0;
-    scrollbar-size: 1 1;
-    scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
-    scrollbar-color-active: $ds-action-focus;
-}
-
-Button.notes-delete-action {
-    color: $ds-status-error;
-}
-
-/* Docked Notes action bar mirrors the Console composer chrome. */
-#notes-action-bar {
-    height: 3;
-    min-height: 3;
-    max-height: 3;
-    padding: 0 1;
-    margin: 0;
-    border: round #6f7782;
-    background: $ds-surface-panel;
-    align: left middle;
-}
-
-.notes-action-bar-group {
-    width: 100%;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    align: left middle;
-}
-
-.notes-action-bar-spacer {
-    width: 1fr;
-    min-width: 0;
-    height: 1;
-}
-
-.notes-action-bar-group Button {
-    height: 1;
-    min-height: 1;
-    margin-left: 1;
-}
-
-/* Sync mode: framed setup form + Console-transcript-style activity log. */
-#notes-sync-pane {
-    height: 1fr;
-    min-height: 0;
-    padding: 0;
-    border: none;
-    background: transparent;
-}
-
-#notes-sync-setup {
-    width: 44;
-    min-width: 30;
-    height: 100%;
-    padding: 0 1;
-    margin: 0 1 0 0;
-    border: solid #6f7782;
-    background: $ds-surface-panel;
-}
-
-#notes-sync-activity {
-    width: 1fr;
-    min-width: 0;
-    height: 100%;
-    padding: 0 1;
-    border: solid #6f7782;
-    background: $ds-surface-panel;
-}
-
-.notes-sync-field-label {
-    height: 1;
-    min-height: 1;
-    margin-top: 1;
-    color: $ds-text-muted;
-    text-style: bold;
-}
-
-.notes-sync-auto-label {
-    width: auto;
-    height: 1;
-    min-height: 1;
-    color: $ds-text-muted;
-    text-style: bold;
-}
-
-#notes-sync-activity-log {
-    height: 1fr;
-    min-height: 0;
-    scrollbar-size: 1 1;
-    scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
-    scrollbar-color-active: $ds-action-focus;
-}
-
-.notes-sync-activity-line {
-    height: auto;
-    min-height: 1;
-    color: $ds-text-muted;
-}
-
-.notes-sync-activity-line.activity-success {
-    color: $ds-status-ready;
-}
-
-.notes-sync-activity-line.activity-error {
-    color: $ds-status-error;
-}
-
-/* Templates mode: framed list beside a framed full-height preview. */
-#notes-templates-pane {
-    height: 1fr;
-    min-height: 0;
-    padding: 0;
-    border: none;
-    background: transparent;
-}
-
-#notes-templates-list-pane {
-    width: 36;
-    min-width: 24;
-    height: 100%;
-    padding: 0 1;
-    margin: 0 1 0 0;
-    border: solid #6f7782;
-    background: $ds-surface-panel;
-}
-
-#notes-template-preview-pane {
-    width: 1fr;
-    min-width: 0;
-    height: 100%;
-    padding: 0 1;
-    border: solid #6f7782;
-    background: $ds-surface-panel;
-}
-
-#notes-template-preview-scroll {
-    height: 1fr;
-    min-height: 0;
-    scrollbar-size: 1 1;
-    scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
-    scrollbar-color-active: $ds-action-focus;
-}
-
-/* Navigator scope lists stay dense and top-aligned like Console rails. */
-#notes-navigator-pane ListView {
-    height: auto;
-    min-height: 1;
-    max-height: 10;
-}
-
-/* Sort row: the global `Select { width: 100%; }` rule would otherwise
-   inflate the select and push the order toggle out of the row. */
-#notes-sort-row {
-    height: 1;
-    min-height: 1;
-    margin-bottom: 1;
-    align: left middle;
-}
-
-#notes-sort-row > Static {
-    width: 6;
-    min-width: 6;
-    color: $ds-text-muted;
-}
-
-#notes-sort-row Select {
-    width: 1fr;
-    min-width: 0;
-    margin: 0;
-}
-
-#notes-sort-row Button {
-    margin-left: 1;
-}
-
-
 #library-source-inspector {
     width: 2fr;
     min-width: 0;
@@ -3242,28 +3704,6 @@ Button.notes-delete-action {
     overflow-y: auto;
 }
 
-/* Console's rendered frame color (#6f7782) — see chat_screen.CONSOLE_FRAME_COLOR. */
-#notes-navigator-pane,
-#notes-inspector-pane {
-    width: 2fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 20;
-    padding: 1;
-    border: solid #6f7782;
-    background: $ds-surface-panel;
-    overflow-y: auto;
-}
-
-#notes-navigator-pane,
-#notes-inspector-pane {
-    scrollbar-size: 1 1;
-    scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
-    scrollbar-color-active: $ds-action-focus;
-}
-
 #library-source-detail {
     width: 5fr;
     min-width: 0;
@@ -3273,21 +3713,6 @@ Button.notes-delete-action {
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
     overflow-y: auto;
-}
-
-#notes-editor-pane {
-    width: 5fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 20;
-    padding: 1;
-    border: solid #6f7782;
-    background: $ds-surface-panel;
-    overflow-y: auto;
-}
-
-#notes-editor-pane {
-    overflow-y: hidden;
 }
 
 .ds-shortcut-bar {
@@ -3329,8 +3754,6 @@ Button.notes-delete-action {
     text-style: bold;
 }
 
-.library-mode-chip.is-active,
-.notes-mode-chip.is-active,
 .personas-mode-chip.is-active {
     border: none;
     background: $ds-focus-bg;
@@ -3338,8 +3761,6 @@ Button.notes-delete-action {
     text-style: bold underline;
 }
 
-.library-mode-chip.is-active:focus,
-.notes-mode-chip.is-active:focus,
 .personas-mode-chip.is-active:focus {
     outline: none;
     border: none;
@@ -3823,4 +4244,259 @@ ListItem.personas-library-row.is-active.-highlight {
 .source-dry-run {
     border: dashed $ds-grid-line;
     color: $ds-text-muted;
+}
+
+/* --- MCP Hub (Phase 1 workbench) ------------------------------------- */
+
+#mcp-mode-strip Button.mcp-mode-chip {
+    width: auto;
+    min-width: 10;
+    height: 1;
+    padding: 0 1;
+    border: none;
+}
+
+#mcp-mode-strip .mcp-mode-chip.is-active {
+    text-style: bold underline;
+}
+
+/* A1: focus must not impersonate .is-active above (bold underline). Kept in
+   lockstep with the lower-specificity baseline copy in MCPScreen.DEFAULT_CSS
+   (mcp_screen.py) -- see that copy's comment for why it uses raw
+   $surface/$text/$text-muted tokens instead of these $ds- aliases. */
+#mcp-mode-strip .mcp-mode-chip:focus,
+#mcp-mode-strip .mcp-mode-chip:hover:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+    outline: none;
+}
+
+#mcp-mode-strip .mcp-mode-chip.is-active:focus,
+#mcp-mode-strip .mcp-mode-chip.is-active:hover:focus {
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: bold underline;
+    outline: none;
+}
+
+#mcp-hub-rail {
+    width: 3fr;
+    min-width: 24;
+}
+
+#mcp-hub-rail .mcp-rail-heading {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+}
+
+/* Override border away from the generic `.is-active` rule (`border: round
+   $ds-action-focus`, earlier in this sheet). Button.mcp-rail-row rows are
+   fixed at height 1 (see MCPRail.DEFAULT_CSS); a round border needs at
+   least 2 lines to render, so on a height-1 button it consumes the row's
+   only line and the content area collapses to height 0 -- the label never
+   renders, leaving a blank bordered box for the selected row. Mirrors the
+   sibling `.mcp-mode-chip.is-active` rule below (and MCPScreen.DEFAULT_CSS's
+   copy of it), which already carries this same `border: none` override. */
+#mcp-hub-rail Button.mcp-rail-row.is-active {
+    border: none;
+    text-style: bold;
+}
+
+#mcp-hub-canvas {
+    width: 5fr;
+    min-width: 38;
+}
+
+#mcp-hub-inspector {
+    width: 3fr;
+    min-width: 28;
+}
+
+/* A5: the row wrapping the aggregate summary's colored glyph + neutral
+   sentence (kept in lockstep with the width rules in
+   MCPServersMode.DEFAULT_CSS, mcp_servers_mode.py -- required in EVERY
+   harness, not just the bundled one: without an explicit width split, both
+   Static children of the Horizontal default to 1fr/full-width and the
+   second one renders entirely off-screen). */
+#mcp-overview-summary-row,
+#mcp-detail-title {
+    height: 1;
+    min-height: 1;
+}
+
+#mcp-overview-callouts .ds-recovery-callout {
+    margin-top: 1;
+}
+
+/* A2: disabled inspector action buttons must stay legible. The generic
+   `Button:disabled` rule above (from _buttons.tcss, same "user CSS" tier as
+   this file -- see MCPInspector.DEFAULT_CSS's matching rule and comment for
+   why a widget-level DEFAULT_CSS override alone can never win this fight)
+   stacks `opacity: 50%` on `$text-disabled` on a dark surface, which reads
+   as functionally invisible on top of `.console-action-secondary`. Restore
+   full opacity and use a dim-but-still-readable color instead. */
+#mcp-hub-inspector Button.mcp-inspector-action:disabled {
+    opacity: 100%;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: none;
+}
+
+#mcp-hub-inspector Button.mcp-inspector-action:disabled:hover {
+    opacity: 100%;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: none;
+}
+
+/* A3: same Button center-default lesson as Button.mcp-rail-row
+   (MCPRail.DEFAULT_CSS) and Button.mcp-callout below -- left-align the
+   inspector's action stack. Kept in lockstep with the baseline copy in
+   MCPInspector.DEFAULT_CSS (mcp_inspector.py). */
+Button.mcp-inspector-action {
+    text-align: left;
+    content-align: left middle;
+}
+
+/* --- MCP Hub Phase 2 ------------------------------------------------- */
+.mcp-status-ready { color: $ds-status-ready; }
+.mcp-status-warning { color: $ds-status-warning; }
+.mcp-status-error { color: $ds-status-error; }
+.mcp-status-info { color: $ds-status-info; }
+
+.ds-info-callout {
+    border: round $ds-status-info;
+    background: $ds-status-info 10%;
+    padding: 0 1;
+    height: auto;
+}
+
+Button.mcp-callout {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    /* Button defaults BOTH text-align AND content-align to center (see
+       Textual's own Button.DEFAULT_CSS, and the same lesson documented on
+       Button.mcp-rail-row in MCPRail.DEFAULT_CSS) -- text-align alone does
+       not left-align a one-line Button label; without content-align the
+       whole callout line still rendered centered under the table. */
+    text-align: left;
+    content-align: left middle;
+}
+
+#mcp-servers-form {
+    height: auto;
+    min-height: 0;
+}
+
+/* Kept in lockstep with the baseline copy in MCPServersMode.DEFAULT_CSS
+   (mcp_servers_mode.py) -- T7 (P3 UX batch) gave the overview table
+   `height: auto; max-height: 70%;` so it hugs its own row count instead of
+   a `1fr` table ballooning to fill the pane and stranding
+   #mcp-overview-callouts dozens of rows below its last row (same bug class
+   as #mcp-detail-builtin-toggles below). Without this bundle-layer copy,
+   app-loaded CSS cascading on top of DEFAULT_CSS could silently
+   reintroduce that regression. */
+#mcp-servers-table {
+    height: auto;
+    max-height: 70%;
+}
+
+/* Kept in lockstep with the baseline copy in MCPToolsMode.DEFAULT_CSS
+   (mcp_tools_mode.py) -- same fix, same rationale, as #mcp-servers-table
+   immediately above. */
+#mcp-tools-table {
+    height: auto;
+    max-height: 70%;
+}
+
+/* T9 (P4): kept in lockstep with the baseline copy in
+   MCPPermissionsMode.DEFAULT_CSS (mcp_permissions_mode.py) -- same fix,
+   same rationale, as #mcp-servers-table/#mcp-tools-table above: the matrix
+   hugs its own row count instead of ballooning to fill the canvas, leaving
+   room for the policy-preview strip below it. */
+#mcp-perm-table {
+    height: auto;
+    max-height: 70%;
+}
+
+/* T9 (P4): kept in lockstep with the baseline copy in
+   MCPPermissionsMode.DEFAULT_CSS -- the policy-preview strip below the
+   matrix is a single Static (a sentence or two at most); without this,
+   Vertical's own default sizing could let it compete with the matrix table
+   above for the canvas's remaining space instead of hugging its own
+   content, same bug class as #mcp-detail-builtin-toggles/#mcp-import-list
+   below. */
+#mcp-perm-preview {
+    height: auto;
+    min-height: 0;
+}
+
+/* Defect 1 fix (QA round mcp-hub-phase3-2026-07): kept in lockstep with the
+   baseline copy in MCPToolsMode.DEFAULT_CSS (mcp_tools_mode.py), but here
+   it's load-bearing, not just defensive. Textual's cascade always treats
+   every CSS_PATH-sourced rule (this bundle) as higher priority than any
+   widget's own DEFAULT_CSS, regardless of selector specificity -- so
+   _conversations.tcss's global, unscoped `Select { width: 100%; }` rule
+   (intended for a completely different screen's sidebar forms) was
+   silently winning over MCPToolsMode's own, far more specific override,
+   collapsing the filter-server Select to a 0x0 region against its
+   `width: auto` slot parent (the sibling filter Input already claims the
+   full bar at `width: 1fr`). This copy must live in the bundle itself,
+   with equal-or-higher specificity than that bare rule, to actually win. */
+#mcp-tools-filter-server-slot Select {
+    width: 28;
+}
+
+/* Kept in lockstep with the baseline copy in MCPServersMode.DEFAULT_CSS
+   (mcp_servers_mode.py) -- without an explicit height override here too,
+   Textual's Vertical default (height: 1fr) expands this container to fill
+   the rest of #mcp-detail-scroll, pushing its sibling "Copy client config"
+   Button roughly 800px below the built-in enable/expose checkboxes it
+   should sit directly under. QA defect 1, mcp-hub-phase2-2026-07 round. */
+#mcp-detail-builtin-toggles {
+    height: auto;
+    min-height: 0;
+}
+
+#mcp-detail-toolbar Button {
+    height: 1;
+    min-height: 1;
+    border: none;
+}
+
+/* A1: kept in lockstep with the baseline copy in MCPImportPanel.DEFAULT_CSS
+   (mcp_profile_form.py) -- without an explicit height override here too,
+   Textual's Vertical default (height: 1fr) expands this container to
+   consume whatever vertical space the panel has left, stranding the
+   sibling "Import N servers"/Cancel action row far below the preview list
+   on a real terminal window (same bug class as #mcp-detail-builtin-toggles,
+   QA defect 1, mcp-hub-phase2-2026-07 round). */
+#mcp-import-list {
+    height: auto;
+    min-height: 0;
+}
+
+/* T7 (P3 UX batch): quiet focus treatment for the hub's scrollable content
+   panes. Both are VerticalScroll (can_focus=True by default, via
+   ScrollableContainer) and, without a rule here, fall back to the generic
+   `*:focus { outline: solid $ds-focus-accent; }` fallback (core/_reset.tcss)
+   -- a heavy boxed cue for panes that just scroll read-only detail text /
+   the legacy Advanced form. Mirrors the idiom already established for
+   Console content panes elsewhere in this file (#console-left-rail-body:
+   focus, #console-workspace-context:focus, #console-workspace-
+   conversations:focus): drop the outline/border and shift the background
+   instead, so keyboard focus stays visible without boxing the pane. Uses
+   $ds-surface-panel (this codebase's quiet-surface token) rather than
+   Textual's built-in $boost, which nothing else in this design system
+   references. */
+#mcp-detail-scroll:focus,
+#mcp-adv-scroll:focus {
+    outline: none;
+    border: none;
+    background: $ds-surface-panel;
 }

@@ -3,6 +3,8 @@ import inspect
 import pytest
 
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, MessageAttachment
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
@@ -89,6 +91,68 @@ class TestChatPersistenceService:
         assert variant_after["is_selected_variant"] == variant_before["is_selected_variant"]
         assert variant_after["total_variants"] == variant_before["total_variants"]
         assert variant_after["feedback"] == variant_before["feedback"]
+
+    def test_update_message_content_with_none_image_data_preserves_persisted_image(
+        self, db_instance: CharactersRAGDB
+    ):
+        """A metadata-only edit (image bytes unavailable, e.g. failed rehydration)
+        must not NULL out an image that is already persisted for the message."""
+        service = ChatPersistenceService(db_instance)
+        conversation_id = service.create_conversation(assistant_kind="persona", assistant_id="planner")
+
+        message_id = db_instance.add_message({
+            "id": "msg-with-image",
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "original",
+            "image_data": b"\x89PNG-bytes",
+            "image_mime_type": "image/png",
+            "client_id": db_instance.client_id,
+        })
+
+        # Simulate the Console store editing a message whose in-memory image
+        # bytes were never rehydrated (e.g. after a failed screen-state
+        # restore), so it calls update_message_content with image_data=None.
+        service.update_message_content(
+            message_id=message_id,
+            content="edited",
+            image_data=None,
+            image_mime_type=None,
+        )
+
+        message = db_instance.get_message_by_id(message_id)
+        assert message["content"] == "edited"
+        assert message["image_data"] == b"\x89PNG-bytes"
+        assert message["image_mime_type"] == "image/png"
+
+    def test_update_message_content_with_new_image_data_replaces_persisted_image(
+        self, db_instance: CharactersRAGDB
+    ):
+        """Passing real image bytes must still update the persisted image."""
+        service = ChatPersistenceService(db_instance)
+        conversation_id = service.create_conversation(assistant_kind="persona", assistant_id="planner")
+
+        message_id = db_instance.add_message({
+            "id": "msg-with-image-2",
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "original",
+            "image_data": b"\x89PNG-old-bytes",
+            "image_mime_type": "image/png",
+            "client_id": db_instance.client_id,
+        })
+
+        service.update_message_content(
+            message_id=message_id,
+            content="edited",
+            image_data=b"\x89PNG-new-bytes",
+            image_mime_type="image/png",
+        )
+
+        message = db_instance.get_message_by_id(message_id)
+        assert message["content"] == "edited"
+        assert message["image_data"] == b"\x89PNG-new-bytes"
+        assert message["image_mime_type"] == "image/png"
 
     def test_save_history_soft_deletes_messages_removed_from_resave(self, db_instance: CharactersRAGDB):
         service = ChatPersistenceService(db_instance)
@@ -248,6 +312,66 @@ class TestChatPersistenceService:
         assert conversation["assistant_kind"] == assistant_kind
         assert conversation["assistant_id"] == assistant_id
 
+    def test_create_conversation_persists_system_prompt(self, db_instance: CharactersRAGDB):
+        service = ChatPersistenceService(db_instance)
+
+        conversation_id = service.create_conversation(
+            assistant_kind="generic",
+            assistant_id="console",
+            conversation_title="Console chat",
+            system_prompt="Answer as a pirate.",
+        )
+
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["system_prompt"] == "Answer as a pirate."
+
+    def test_create_conversation_defaults_system_prompt_to_none(self, db_instance: CharactersRAGDB):
+        service = ChatPersistenceService(db_instance)
+
+        conversation_id = service.create_conversation(
+            assistant_kind="generic",
+            assistant_id="console",
+            conversation_title="Console chat without prompt",
+        )
+
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["system_prompt"] is None
+
+    def test_update_conversation_system_prompt_round_trips_through_real_db(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        conversation_id = service.create_conversation(
+            assistant_kind="generic",
+            assistant_id="console",
+            conversation_title="Console chat",
+        )
+
+        result = service.update_conversation_system_prompt(
+            conversation_id=conversation_id,
+            system_prompt="Be terse and cite sources.",
+        )
+
+        assert result is True
+        reloaded = db_instance.get_conversation_by_id(conversation_id)
+        assert reloaded["system_prompt"] == "Be terse and cite sources."
+
+        # A second, independent read (simulating a fresh load/reopen) sees
+        # the same persisted value.
+        reloaded_again = db_instance.get_conversation_by_id(conversation_id)
+        assert reloaded_again["system_prompt"] == "Be terse and cite sources."
+
+    def test_update_conversation_system_prompt_raises_for_missing_conversation(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+
+        with pytest.raises(ValueError, match="not found"):
+            service.update_conversation_system_prompt(
+                conversation_id="missing-conversation",
+                system_prompt="Anything",
+            )
+
     def test_workspace_conversation_requires_existing_workspace(
         self,
         db_instance: CharactersRAGDB,
@@ -352,3 +476,304 @@ class TestChatPersistenceService:
         assert "Args:" in docstring
         assert "Returns:" in docstring
         assert "Raises:" in docstring
+
+    def test_create_message_splits_position_zero_and_rest(self, db_instance: CharactersRAGDB):
+        service = ChatPersistenceService(db_instance)
+        conv_id = service.create_conversation(
+            assistant_kind="generic", assistant_id="console",
+            conversation_title="t", workspace_id=None, scope_type="global",
+        )
+        attachments = [
+            {"position": 0, "data": b"img-0", "mime_type": "image/png", "display_name": "a.png"},
+            {"position": 1, "data": b"img-1", "mime_type": "image/jpeg", "display_name": "b.jpg"},
+            {"position": 2, "data": b"img-2", "mime_type": "image/png", "display_name": "c.png"},
+        ]
+        msg_id = service.create_message(
+            conversation_id=conv_id, sender="user", content="multi",
+            image_data=None, image_mime_type=None, attachments=attachments,
+        )
+        row = db_instance.get_message_by_id(msg_id)
+        assert row["image_data"] == b"img-0"
+        assert row["image_mime_type"] == "image/png"
+        extra = db_instance.get_attachments_for_messages([msg_id])[msg_id]
+        assert [r["position"] for r in extra] == [1, 2]
+        assert extra[0]["data"] == b"img-1"
+        # The service-level batch read is a passthrough to the DB method.
+        assert service.get_attachments_for_messages([msg_id]) == {msg_id: extra}
+
+    def test_update_without_attachments_leaves_table_and_columns_alone(self, db_instance: CharactersRAGDB):
+        service = ChatPersistenceService(db_instance)
+        conv_id = service.create_conversation(
+            assistant_kind="generic", assistant_id="console",
+            conversation_title="t", workspace_id=None, scope_type="global",
+        )
+        msg_id = service.create_message(
+            conversation_id=conv_id, sender="user", content="multi",
+            image_data=None, image_mime_type=None,
+            attachments=[
+                {"position": 0, "data": b"img-0", "mime_type": "image/png", "display_name": "a.png"},
+                {"position": 1, "data": b"img-1", "mime_type": "image/png", "display_name": "b.png"},
+            ],
+        )
+        service.update_message_content(
+            message_id=msg_id, content="edited",
+            image_data=None, image_mime_type=None,
+        )
+        row = db_instance.get_message_by_id(msg_id)
+        assert row["content"] == "edited"
+        assert row["image_data"] == b"img-0"
+        assert db_instance.get_attachments_for_messages([msg_id])[msg_id][0]["data"] == b"img-1"
+
+    def test_update_with_position_zero_only_rewrites_columns_and_clears_table(
+        self, db_instance: CharactersRAGDB
+    ):
+        """An explicit attachments list is an authoritative rewrite: a list
+        with no >= 1 positions still calls through to the table write so
+        stale rows are cleared (empty-list DELETE+INSERT)."""
+        service = ChatPersistenceService(db_instance)
+        conv_id = service.create_conversation(
+            assistant_kind="generic", assistant_id="console",
+            conversation_title="t", workspace_id=None, scope_type="global",
+        )
+        msg_id = service.create_message(
+            conversation_id=conv_id, sender="user", content="multi",
+            image_data=None, image_mime_type=None,
+            attachments=[
+                {"position": 0, "data": b"img-0", "mime_type": "image/png", "display_name": "a.png"},
+                {"position": 1, "data": b"img-1", "mime_type": "image/png", "display_name": "b.png"},
+            ],
+        )
+        service.update_message_content(
+            message_id=msg_id, content="rewritten",
+            image_data=None, image_mime_type=None,
+            attachments=[
+                {"position": 0, "data": b"img-new", "mime_type": "image/jpeg", "display_name": "new.jpg"},
+            ],
+        )
+        row = db_instance.get_message_by_id(msg_id)
+        assert row["content"] == "rewritten"
+        assert row["image_data"] == b"img-new"
+        assert row["image_mime_type"] == "image/jpeg"
+        assert db_instance.get_attachments_for_messages([msg_id]) == {}
+
+    def test_create_message_rolls_back_row_when_attachment_write_fails(
+        self, db_instance: CharactersRAGDB, monkeypatch
+    ):
+        """The message insert and the >=1 attachment-table write must be one
+        atomic unit: a failure writing the table must roll back the row."""
+        service = ChatPersistenceService(db_instance)
+        conv_id = service.create_conversation(
+            assistant_kind="generic", assistant_id="console",
+            conversation_title="t", workspace_id=None, scope_type="global",
+        )
+
+        def _boom(message_id, rows):
+            raise RuntimeError("attachment write failed")
+
+        monkeypatch.setattr(db_instance, "set_message_attachments", _boom)
+        with pytest.raises(RuntimeError, match="attachment write failed"):
+            service.create_message(
+                conversation_id=conv_id, sender="user", content="multi",
+                image_data=None, image_mime_type=None,
+                message_id="msg-atomic-create",
+                attachments=[
+                    {"position": 0, "data": b"img-0", "mime_type": "image/png", "display_name": "a.png"},
+                    {"position": 1, "data": b"img-1", "mime_type": "image/png", "display_name": "b.png"},
+                ],
+            )
+        # get_message_by_id returns None for a missing row (per its contract),
+        # proving the INSERT rolled back with the failed attachment write.
+        assert db_instance.get_message_by_id("msg-atomic-create") is None
+
+    def test_update_rolls_back_content_and_columns_when_attachment_write_fails(
+        self, db_instance: CharactersRAGDB, monkeypatch
+    ):
+        """The message-row update and the >=1 attachment-table rewrite must be
+        one atomic unit: a table-write failure rolls back content and the
+        legacy image columns."""
+        service = ChatPersistenceService(db_instance)
+        conv_id = service.create_conversation(
+            assistant_kind="generic", assistant_id="console",
+            conversation_title="t", workspace_id=None, scope_type="global",
+        )
+        msg_id = service.create_message(
+            conversation_id=conv_id, sender="user", content="before",
+            image_data=b"img-old", image_mime_type="image/png",
+        )
+
+        def _boom(message_id, rows):
+            raise RuntimeError("attachment write failed")
+
+        monkeypatch.setattr(db_instance, "set_message_attachments", _boom)
+        with pytest.raises(RuntimeError, match="attachment write failed"):
+            service.update_message_content(
+                message_id=msg_id, content="after",
+                image_data=None, image_mime_type=None,
+                attachments=[
+                    {"position": 0, "data": b"img-new", "mime_type": "image/jpeg", "display_name": "n.jpg"},
+                    {"position": 1, "data": b"img-1", "mime_type": "image/png", "display_name": "b.png"},
+                ],
+            )
+        row = db_instance.get_message_by_id(msg_id)
+        assert row["content"] == "before"
+        assert row["image_data"] == b"img-old"
+        assert row["image_mime_type"] == "image/png"
+
+    def test_update_skips_attachment_write_when_row_update_returns_false(
+        self, db_instance: CharactersRAGDB, monkeypatch
+    ):
+        """``update_message`` returning a falsy result (optimistic-lock miss
+        reported without an exception, e.g. from a future/alternate db
+        implementation) must short-circuit before ``set_message_attachments``
+        runs. Without the guard, attachments would be rewritten even though
+        the content/version update did not take -- attachments and content
+        would drift out of sync."""
+        service = ChatPersistenceService(db_instance)
+        conv_id = service.create_conversation(
+            assistant_kind="generic", assistant_id="console",
+            conversation_title="t", workspace_id=None, scope_type="global",
+        )
+        msg_id = service.create_message(
+            conversation_id=conv_id, sender="user", content="before",
+            image_data=None, image_mime_type=None,
+            attachments=[
+                {"position": 0, "data": b"img-0", "mime_type": "image/png", "display_name": "a.png"},
+                {"position": 1, "data": b"img-1", "mime_type": "image/png", "display_name": "b.png"},
+            ],
+        )
+
+        set_attachments_calls = []
+        original_set_attachments = db_instance.set_message_attachments
+
+        def _tracking_set_attachments(message_id, rows):
+            set_attachments_calls.append((message_id, rows))
+            return original_set_attachments(message_id, rows)
+
+        monkeypatch.setattr(db_instance, "set_message_attachments", _tracking_set_attachments)
+        monkeypatch.setattr(db_instance, "update_message", lambda *args, **kwargs: False)
+
+        result = service.update_message_content(
+            message_id=msg_id, content="after",
+            image_data=None, image_mime_type=None,
+            attachments=[
+                {"position": 0, "data": b"img-new", "mime_type": "image/jpeg", "display_name": "n.jpg"},
+                {"position": 1, "data": b"img-1-new", "mime_type": "image/png", "display_name": "b2.png"},
+            ],
+        )
+
+        assert result is False
+        assert set_attachments_calls == []
+        # The message_attachments table must be untouched -- still the
+        # original position-1 row, not the rewritten one.
+        extra = db_instance.get_attachments_for_messages([msg_id])[msg_id]
+        assert extra[0]["data"] == b"img-1"
+
+    # -- Regression coverage for the #217 P0 live crash --------------------
+    #
+    # ``ConsoleChatStore``'s persistence tests all wire in **kwargs-based
+    # fakes (see ``RecordingPersistence`` in test_console_chat_store.py).
+    # Those fakes silently swallowed a call shape the REAL
+    # ``ChatPersistenceService.create_message`` rejected outright: the
+    # store's multi-attachment branch omitted the keyword-only
+    # ``image_data``/``image_mime_type`` arguments, which used to have no
+    # defaults, so a real send with >= 2 attachments raised
+    # ``TypeError: create_message() missing 2 required keyword-only
+    # arguments: 'image_data' and 'image_mime_type'`` and crashed the whole
+    # app. The store->fake seam never exercised the store against the real
+    # service, so the gap went undetected. The tests below wire a REAL
+    # ``ChatPersistenceService`` (backed by the ``db_instance`` fixture's
+    # real in-memory-file SQLite) into ``ConsoleChatStore`` and drive
+    # ``append_message(..., persist=True)`` -- the exact call path that
+    # crashed live -- for zero, one, and two-or-more attachments.
+
+    def test_console_store_real_service_persists_zero_attachment_message(
+        self, db_instance: CharactersRAGDB
+    ):
+        """A plain text message (no attachments) persists cleanly through a
+        real ``ChatPersistenceService`` wired into ``ConsoleChatStore``."""
+        service = ChatPersistenceService(db_instance)
+        store = ConsoleChatStore(persistence=service)
+        session = store.ensure_session()
+
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="hello",
+            persist=True,
+        )
+
+        assert message.persisted_message_id is not None
+        row = db_instance.get_message_by_id(message.persisted_message_id)
+        assert row["content"] == "hello"
+        assert row["image_data"] is None
+        assert row["image_mime_type"] is None
+        assert db_instance.get_attachments_for_messages([message.persisted_message_id]) == {}
+
+    def test_console_store_real_service_persists_single_attachment_message(
+        self, db_instance: CharactersRAGDB
+    ):
+        """A single attachment stays on the pre-split scalar columns (the
+        store's ``len(attachments) > 1`` gate never engages split
+        addressing for exactly one attachment); the real service must
+        accept that call shape too."""
+        service = ChatPersistenceService(db_instance)
+        store = ConsoleChatStore(persistence=service)
+        session = store.ensure_session()
+
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="one file",
+            attachments=(
+                MessageAttachment(
+                    data=b"img-0", mime_type="image/png", display_name="a.png", position=0
+                ),
+            ),
+            persist=True,
+        )
+
+        assert message.persisted_message_id is not None
+        row = db_instance.get_message_by_id(message.persisted_message_id)
+        assert row["image_data"] == b"img-0"
+        assert row["image_mime_type"] == "image/png"
+        assert db_instance.get_attachments_for_messages([message.persisted_message_id]) == {}
+
+    def test_console_store_real_service_persists_multi_attachment_message(
+        self, db_instance: CharactersRAGDB
+    ):
+        """The exact P0 live-crash call path: sending >= 2 attachments
+        through ``ConsoleChatStore.append_message(..., persist=True)``
+        against a REAL ``ChatPersistenceService`` must not raise. Legacy
+        columns hold position 0; the ``message_attachments`` table holds
+        positions >= 1."""
+        service = ChatPersistenceService(db_instance)
+        store = ConsoleChatStore(persistence=service)
+        session = store.ensure_session()
+
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="two files",
+            attachments=(
+                MessageAttachment(
+                    data=b"img-0", mime_type="image/png", display_name="a.png", position=0
+                ),
+                MessageAttachment(
+                    data=b"img-1", mime_type="image/jpeg", display_name="b.jpg", position=1
+                ),
+            ),
+            persist=True,
+        )
+
+        assert message.persisted_message_id is not None
+        row = db_instance.get_message_by_id(message.persisted_message_id)
+        # The real service derives the legacy columns from attachments[0],
+        # overriding the store's explicit None scalars.
+        assert row["image_data"] == b"img-0"
+        assert row["image_mime_type"] == "image/png"
+        extra = db_instance.get_attachments_for_messages([message.persisted_message_id])[
+            message.persisted_message_id
+        ]
+        assert [entry["position"] for entry in extra] == [1]
+        assert extra[0]["data"] == b"img-1"
+        assert extra[0]["display_name"] == "b.jpg"

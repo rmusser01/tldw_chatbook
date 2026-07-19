@@ -261,7 +261,7 @@ def with_loading(
                 # Show error notification
                 if notify and hasattr(self.window, 'notify'):
                     self.window.notify(f"❌ {error_text}: {str(e)}", severity="error", timeout=4)
-                logger.error(f"Error in {func.__name__}: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Error in {func.__name__}: {e}")
                 raise
                 
             finally:

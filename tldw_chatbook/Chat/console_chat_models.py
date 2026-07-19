@@ -137,6 +137,10 @@ class ConsoleProviderSelection:
     thinking_effort: str | None = None
     thinking_budget_tokens: int | None = None
     streaming: bool = True
+    #: Optional per-session system prompt to prepend to provider messages.
+    #: Not used for readiness resolution; carried through so the controller
+    #: can build provider messages from a single selection snapshot.
+    system_prompt: str | None = None
     workspace_context: ConsoleWorkspaceContext = field(default_factory=ConsoleWorkspaceContext)
 
 
@@ -174,6 +178,16 @@ class ConsoleRunState:
         return self.status is ConsoleRunStatus.STREAMING
 
 
+@dataclass(frozen=True)
+class MessageAttachment:
+    """One attachment carried by a Console message (position 0 = legacy slot)."""
+
+    data: bytes | None
+    mime_type: str
+    display_name: str
+    position: int
+
+
 @dataclass
 class ConsoleChatMessage:
     """A native Console transcript message."""
@@ -186,6 +200,10 @@ class ConsoleChatMessage:
     persisted_message_id: str | None = None
     variants: "ConsoleVariantSet | None" = None
     feedback: ConsoleMessageFeedback | None = None
+    image_data: bytes | None = None
+    image_mime_type: str | None = None
+    attachment_label: str | None = None
+    attachments: tuple["MessageAttachment", ...] = ()
 
 
 @dataclass(frozen=True)

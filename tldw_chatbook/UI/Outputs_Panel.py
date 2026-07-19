@@ -295,7 +295,7 @@ class OutputsPanel(ScrollableContainer):
             result = await self._maybe_await(operation(mode="server", **kwargs))
             self._render_payload(status_title, result if result is not None else {})
         except Exception as exc:
-            logger.error(f"Server Outputs operation failed: {operation_name}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Server Outputs operation failed: {operation_name}: {exc}")
             self.query_one("#outputs-status", Static).update(f"Error: {exc}")
             self.notify(f"Server Outputs operation failed: {exc}", severity="error")
 

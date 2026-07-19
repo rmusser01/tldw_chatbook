@@ -50,10 +50,6 @@ RAG_SEARCH_WINDOW = ROOT / "tldw_chatbook/UI/Views/RAGSearch/search_rag_window.p
 EMOJI_PICKER = ROOT / "tldw_chatbook/Widgets/emoji_picker.py"
 ENHANCED_FILE_PICKER = ROOT / "tldw_chatbook/Widgets/enhanced_file_picker.py"
 MODEL_CARD_VIEWER = ROOT / "tldw_chatbook/Widgets/HuggingFace/model_card_viewer.py"
-NOTES_TOOLBAR = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_toolbar.py"
-NOTES_EDITOR = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_editor_widget.py"
-NOTES_SYNC = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_sync_widget.py"
-NOTES_SYNC_IMPROVED = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_sync_widget_improved.py"
 CONSOLE_MODAL_FILES = (
     ROOT / "tldw_chatbook/Widgets/Console/console_settings_modal.py",
     ROOT / "tldw_chatbook/Widgets/Console/console_edit_message_modal.py",
@@ -111,6 +107,15 @@ def css_selectors(text: str) -> list[str]:
         selector_text = prefix[selector_start : match.start()]
         selectors.extend(item.strip() for item in selector_text.split(",") if item.strip())
     return selectors
+
+
+def css_selectors_contain_class(
+    selectors: list[str],
+    class_selector: str,
+) -> bool:
+    """Return whether selectors contain an exact CSS class token."""
+    token = re.compile(rf"{re.escape(class_selector)}(?![\w-])")
+    return any(token.search(selector) is not None for selector in selectors)
 
 
 def css_block(text: str, selector: str) -> str:
@@ -676,34 +681,26 @@ def test_console_composer_action_availability_states_are_visually_distinct():
         assert "$error" not in stop_active
 
 
-def test_library_mode_chip_active_states_use_selected_focus_contracts():
-    """``.library-mode-chip:focus`` (the retired mode-strip's own focus rule)
-    was removed once the Library screen stopped rendering any widget with
-    that class (see Task 7's rail/canvas rework); ``.notes-mode-chip:focus``
-    keeps that contract. ``.library-mode-chip.is-active``/``:focus`` are
-    untouched (still shared with ``.notes-mode-chip``/``.personas-mode-chip``
-    and out of this retirement's scope), so those assertions stay."""
+def test_library_mode_chip_selector_is_retired_from_focus_contracts():
+    """Retired Library and Notes mode-chip selectors stay absent."""
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
         BUNDLE.read_text(encoding="utf-8"),
     ):
-        assert ".library-mode-chip:focus" not in css_selectors(text)
+        selectors = css_selectors(text)
+        assert not css_selectors_contain_class(selectors, ".library-mode-chip")
+        assert not css_selectors_contain_class(selectors, ".notes-mode-chip")
 
-        active = css_block(text, ".library-mode-chip.is-active")
-        assert_readable_selected_state_contract(active)
-        # Chips are one row tall; selection reads through background/underline,
-        # not a border that would consume the single content row.
-        assert "border: none;" in active
-        assert "background: $ds-focus-bg;" in active
 
-        active_focus = css_block(text, ".library-mode-chip.is-active:focus")
-        assert_non_obscuring_focus(active_focus)
-        assert active_focus != active
-        assert "border: none;" in active_focus
-        assert "$primary" not in active_focus
-        assert "$accent" not in active_focus
-        assert "background: $ds-focus-bg;" in active_focus
-        assert "color: $ds-focus-fg;" in active_focus
+def test_css_class_selector_matching_uses_token_boundaries():
+    assert css_selectors_contain_class(
+        [".notes-mode-chip:focus", ".foo.notes-mode-chip.is-active"],
+        ".notes-mode-chip",
+    )
+    assert not css_selectors_contain_class(
+        [".legacy-notes-mode-chip-help", ".notes-mode-chip-help"],
+        ".notes-mode-chip",
+    )
 
 
 def test_console_composer_focus_uses_thin_input_treatment():
@@ -858,7 +855,11 @@ def test_settings_compact_input_focus_preserves_single_row_content():
     assert "outline: solid" not in block
     assert "background: $ds-input-focus-bg;" in block
     assert "color: $ds-text-primary;" in block
-    assert "text-style: bold underline;" in block
+    # Underline was dropped deliberately (2026-07-11 UAT): underlined
+    # placeholders read as snake_case tokens. Bold + background still
+    # satisfies the non-obscuring focus contract (no border/outline rows).
+    assert "text-style: bold;" in block
+    assert "underline" not in block
 
 
 def test_settings_compact_select_uses_non_clipping_row_contract():
@@ -1673,48 +1674,6 @@ def test_huggingface_model_card_selected_file_row_is_readable():
         "ModelCardViewer .file-item.selected:hover",
     ):
         assert_readable_inline_selected_state_contract(css_block(text, selector))
-
-
-def test_notes_toolbar_active_toggle_uses_readable_active_contract():
-    text = NOTES_TOOLBAR.read_text(encoding="utf-8")
-    assert_readable_inline_selected_state_contract(
-        css_block(text, "NotesToolbar Button.toggle.active")
-    )
-
-
-def test_notes_editor_focus_uses_stable_thin_input_contract():
-    from tldw_chatbook.Widgets.Note_Widgets.notes_editor_widget import NotesEditorWidget
-
-    text = NotesEditorWidget.DEFAULT_CSS
-    base = css_block(text, "NotesEditorWidget")
-    focus = css_block(text, "NotesEditorWidget:focus")
-    assert_stable_solid_border_geometry(base, focus)
-    assert "outline: heavy" not in focus
-    assert "border: solid $surface-lighten-1;" in focus
-    assert "border-bottom: solid $surface-lighten-1;" in focus
-    assert "background: $surface;" in focus
-    assert "color: $text;" in focus
-    assert "$primary" not in focus
-    assert "$accent" not in focus
-    assert "$error" not in focus
-    assert "$warning" not in focus
-
-
-def test_notes_sync_progress_active_states_are_readable():
-    for path, selector in (
-        (NOTES_SYNC, "SyncProgressWidget.active"),
-        (NOTES_SYNC_IMPROVED, "SyncProgressSection.active"),
-    ):
-        block = css_block(path.read_text(encoding="utf-8"), selector)
-        assert "display: block;" in block
-        assert "outline: heavy" not in block
-        assert "$primary" not in block
-        assert "$accent" not in block
-        assert "$warning" not in block
-        assert "$error" not in block
-        assert "background: $surface;" in block
-        assert "border: solid $surface-lighten-1;" in block
-        assert "color: $text;" in block
 
 
 def test_search_rag_query_input_focus_targets_rendered_input_without_jitter():

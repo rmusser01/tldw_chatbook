@@ -589,6 +589,22 @@ class LocalSkillsService:
         payload["blocked_skills"] = blocked
         return payload
 
+    async def count_skills(self) -> int:
+        """Return the total managed skills count, trusted plus needs-review.
+
+        Reuses ``get_context`` so the count always matches what it would
+        enumerate: both the trusted ``available_skills`` population and the
+        ``blocked_skills`` (trust needs-review) population, per the Skills
+        spec's blocked-skills visibility rule -- a skill pending trust
+        review is still a managed skill even though it can't be invoked
+        yet.
+
+        Returns:
+            ``len(available_skills) + len(blocked_skills)``.
+        """
+        ctx = await self.get_context()
+        return len(ctx.get("available_skills") or []) + len(ctx.get("blocked_skills") or [])
+
     async def get_skill(self, skill_name: str) -> dict[str, Any]:
         self._enforce("skills.detail.local")
         records = self._load_index()

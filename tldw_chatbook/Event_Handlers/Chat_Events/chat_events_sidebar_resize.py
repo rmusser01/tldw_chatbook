@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 async def handle_sidebar_shrink(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle shrinking the right sidebar width."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     try:
         current_width = app.chat_right_sidebar_width
         new_width = max(15, current_width - 5)  # Minimum 15% width
@@ -40,12 +40,12 @@ async def handle_sidebar_shrink(app: 'TldwCli', event: Button.Pressed) -> None:
         
         logger.debug(f"Sidebar width decreased to {new_width}%")
     except Exception as e:
-        logger.error(f"Error shrinking sidebar: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error shrinking sidebar: {e}")
 
 
 async def handle_sidebar_expand(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle expanding the right sidebar width."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug(f"handle_sidebar_expand called from file: {__file__}")
     try:
         current_width = app.chat_right_sidebar_width
@@ -69,7 +69,7 @@ async def handle_sidebar_expand(app: 'TldwCli', event: Button.Pressed) -> None:
         
         logger.debug(f"Sidebar width increased to {new_width}%")
     except Exception as e:
-        logger.error(f"Error expanding sidebar: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error expanding sidebar: {e}")
         logger.error(f"Exception type: {type(e)}")
         logger.error(f"Exception occurred in file: {__file__}")
 

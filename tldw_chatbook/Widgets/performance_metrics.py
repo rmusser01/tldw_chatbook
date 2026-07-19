@@ -192,8 +192,16 @@ class PerformanceMetricsWidget(Widget):
         try:
             current_time = time.time()
             
-            # Get system metrics
-            cpu_percent = self.process.cpu_percent(interval=0.1)
+            # Get system metrics. interval=None is non-blocking -- it compares
+            # against psutil's last recorded CPU-times sample for this
+            # process rather than sleeping to measure a fresh window.
+            # interval=0.1 would sleep the calling thread (this is Textual's
+            # event loop, called from a sync set_interval(2.0) callback) for
+            # 100ms every tick. The tradeoff: the very first call after
+            # construction returns 0.0 (no prior sample yet) -- harmless
+            # here since this widget polls every UPDATE_INTERVAL seconds
+            # indefinitely, so the next tick is accurate.
+            cpu_percent = self.process.cpu_percent(interval=None)
             memory_info = self.process.memory_info()
             memory_mb = memory_info.rss / 1024 / 1024
             memory_percent = self.process.memory_percent()

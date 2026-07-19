@@ -113,7 +113,7 @@ def initialize_interop(db_path: Union[str, Path], client_id: str) -> None:
         _client_id_global = client_id
         logger.info("Prompts Interop Library initialized successfully.")
     except (DatabaseError, SchemaError, ValueError) as e:
-        logger.critical(f"Failed to initialize PromptsDatabase for interop: {e}", exc_info=True)
+        logger.opt(exception=True).critical(f"Failed to initialize PromptsDatabase for interop: {e}")
         _db_instance = None # Ensure it's None if init fails
         raise
 
@@ -151,7 +151,7 @@ def shutdown_interop() -> None:
             # This will close the connection for the current thread
             _db_instance.close_connection()
         except Exception as e:
-            logger.error(f"Error during Prompts Interop Library shutdown (closing current thread's connection): {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error during Prompts Interop Library shutdown (closing current thread's connection): {e}")
         _db_instance = None
         _db_path_global = None
         _client_id_global = None
@@ -303,11 +303,12 @@ def search_prompts(search_query: Optional[str],
                    search_fields: Optional[List[str]] = None,
                    page: int = 1,
                    results_per_page: int = 20,
-                   include_deleted: bool = False
+                   include_deleted: bool = False,
+                   fts_match_query: Optional[str] = None,
                    ) -> Tuple[List[Dict[str, Any]], int]:
     """Searches prompts using FTS. See PromptsDatabase.search_prompts for details."""
     db = get_db_instance()
-    return db.search_prompts(search_query, search_fields, page, results_per_page, include_deleted)
+    return db.search_prompts(search_query, search_fields, page, results_per_page, include_deleted, fts_match_query)
 
 # --- Sync Log Access Methods ---
 def get_sync_log_entries(since_change_id: int = 0, limit: Optional[int] = None) -> List[Dict]:
@@ -496,6 +497,17 @@ def parse_yaml_prompts_from_content(content: str) -> List[Dict[str, Any]]:
         raise ValueError(f"Could not process YAML data: {e}")
 
 
+# A line that IS a "### WORD ###" section header, used as the per-section
+# capture's terminator below. Deliberately distinct from a body line that
+# merely CONTAINS "###" mid-line (which must NOT terminate a section's
+# capture): the leading `[ \t]*` (never `\s*`, which would also match
+# newlines and let this fragment span multiple lines) pins the "###" to
+# the start of the line the outer pattern's own `\r?\n` already stepped
+# onto, and the whole fragment must be followed by end-of-line/string, not
+# just appear somewhere later in the text.
+_MD_SECTION_HEADER_LINE_RE = r"[ \t]*###[ \t]*[A-Za-z][A-Za-z0-9_]*[ \t]*###[ \t]*"
+
+
 def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
     """
     Parses Markdown content with custom '### SECTION_NAME ###' headers
@@ -551,7 +563,25 @@ def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
         if section_header == "TITLE":  # Already handled
             continue
 
-        pattern = rf"^\s*###\s*{section_header}\s*###\s*\n(.*?)(?=(?:\n\s*###|$))"
+        # Fix wave 1 (Task 5 review): the terminator used to be a bare `$`
+        # under `re.MULTILINE`, which matches before EVERY newline in that
+        # mode (not just end-of-string) -- so a multi-line value was
+        # truncated after its first line, always. It also used a greedy
+        # `\s*\n` between the header's closing `###` and the captured
+        # value, which could backtrack-swallow a blank value line's own
+        # newline whenever another section followed, bleeding the blank
+        # value's capture into the *next* section's literal header text.
+        # Now: the header line itself only consumes horizontal whitespace
+        # (`[ \t]*`) before its own `\r?\n` (never eating the following
+        # line), and the capture's only valid stopping points are "right
+        # before the next actual `### WORD ###` header line" or true
+        # end-of-string (`\Z`) -- a body line that merely CONTAINS `###`
+        # mid-line does not match `_MD_SECTION_HEADER_LINE_RE` and so does
+        # not terminate the capture.
+        pattern = (
+            rf"^[ \t]*###[ \t]*{section_header}[ \t]*###[ \t]*\r?\n"
+            rf"(.*?)(?=\r?\n{_MD_SECTION_HEADER_LINE_RE}(?:\r?\n|\Z)|\Z)"
+        )
         match = re.search(pattern, content, re.MULTILINE | re.DOTALL | re.IGNORECASE)
         if match:
             section_text = match.group(1).strip()
@@ -688,7 +718,7 @@ def import_prompts_from_files(
             results.append({"file_path": file_path_str, "status": "failure", "message": f"Parsing error: {e}"})
             continue
         except Exception as e:
-            logger.error(f"Unexpected error reading or parsing {file_path_str}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error reading or parsing {file_path_str}: {e}")
             results.append({"file_path": file_path_str, "status": "failure", "message": f"Read/Parse error: {e}"})
             continue
 
@@ -742,7 +772,7 @@ def import_prompts_from_files(
                     "message": f"Database error: {type(e).__name__} - {e}"
                 })
             except Exception as e:
-                logger.error(f"Unexpected error importing prompt '{prompt_name}' from {file_path_str}: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Unexpected error importing prompt '{prompt_name}' from {file_path_str}: {e}")
                 results.append({
                     "file_path": file_path_str,
                     "prompt_name": prompt_name,
@@ -1096,9 +1126,9 @@ User for no name.
 
 
     except (DatabaseError, SchemaError, InputError, ConflictError, RuntimeError, ValueError) as e:
-        logger.error(f"An error occurred during interop example: {type(e).__name__} - {e}", exc_info=True)
+        logger.opt(exception=True).error(f"An error occurred during interop example: {type(e).__name__} - {e}")
     except Exception as e:
-        logger.error(f"An unexpected error occurred: {type(e).__name__} - {e}", exc_info=True)
+        logger.opt(exception=True).error(f"An unexpected error occurred: {type(e).__name__} - {e}")
     finally:
         logger.info("\n--- Shutting Down Interop Library ---")
         shutdown_interop()

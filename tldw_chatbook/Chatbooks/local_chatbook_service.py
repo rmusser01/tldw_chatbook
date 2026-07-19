@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 from tldw_chatbook.tldw_api.prompt_chatbook_schemas import ChatbookImportRequest
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
@@ -22,6 +23,10 @@ class LocalChatbookService:
     def __init__(self, db_paths: dict[str, str] | None = None, *, registry_path: str | Path | None = None):
         self.db_paths = db_paths or {}
         self.registry_path = Path(registry_path).expanduser() if registry_path is not None else self._default_registry_path()
+        # Guards every load -> mutate -> save span against overlapping registry
+        # read-modify-writes from concurrent OS threads (e.g. two overlapping
+        # `asyncio.run(...)` exports on separate `@work(thread=True)` workers).
+        self._registry_lock = threading.Lock()
 
     def _default_registry_path(self) -> Path:
         for key in ("Prompts", "ChaChaNotes", "Media"):
@@ -181,63 +186,72 @@ class LocalChatbookService:
         metadata: dict[str, Any] | None = None,
         **extra: Any,
     ) -> dict[str, Any]:
-        registry = self._load_registry()
-        chatbook_id = int(registry["next_id"])
-        now = self._utc_now()
-        record = {
-            "id": str(chatbook_id),
-            "chatbook_id": chatbook_id,
-            "name": str(name),
-            "description": str(description or ""),
-            "file_path": str(file_path) if file_path is not None else None,
-            "tags": self._coerce_string_list(tags),
-            "categories": self._coerce_string_list(categories),
-            "metadata": self._coerce_metadata(metadata),
-            "created_at": now,
-            "updated_at": now,
-        }
-        if extra:
-            record["metadata"].update({key: value for key, value in extra.items() if value is not None})
-        registry["records"].append(record)
-        registry["next_id"] = chatbook_id + 1
-        self._save_registry(registry)
+        with self._registry_lock:
+            registry = self._load_registry()
+            chatbook_id = int(registry["next_id"])
+            now = self._utc_now()
+            record = {
+                "id": str(chatbook_id),
+                "chatbook_id": chatbook_id,
+                "name": str(name),
+                "description": str(description or ""),
+                "file_path": str(file_path) if file_path is not None else None,
+                "tags": self._coerce_string_list(tags),
+                "categories": self._coerce_string_list(categories),
+                "metadata": self._coerce_metadata(metadata),
+                "created_at": now,
+                "updated_at": now,
+            }
+            if extra:
+                record["metadata"].update({key: value for key, value in extra.items() if value is not None})
+            registry["records"].append(record)
+            registry["next_id"] = chatbook_id + 1
+            self._save_registry(registry)
         return self._record_copy(record)
 
     async def update_chatbook(self, chatbook_id: int | str, **fields: Any) -> dict[str, Any]:
-        registry = self._load_registry()
-        record = self._find_record(registry, chatbook_id)
-        if "name" in fields:
-            record["name"] = str(fields["name"])
-        if "description" in fields:
-            record["description"] = str(fields["description"] or "")
-        if "file_path" in fields:
-            file_path = fields["file_path"]
-            record["file_path"] = str(file_path) if file_path is not None else None
-        if "tags" in fields:
-            record["tags"] = self._coerce_string_list(fields["tags"])
-        if "categories" in fields:
-            record["categories"] = self._coerce_string_list(fields["categories"])
-        if "metadata" in fields:
-            record["metadata"] = self._coerce_metadata(fields["metadata"])
-        record["updated_at"] = self._utc_now()
-        self._save_registry(registry)
+        with self._registry_lock:
+            registry = self._load_registry()
+            record = self._find_record(registry, chatbook_id)
+            if "name" in fields:
+                record["name"] = str(fields["name"])
+            if "description" in fields:
+                record["description"] = str(fields["description"] or "")
+            if "file_path" in fields:
+                file_path = fields["file_path"]
+                record["file_path"] = str(file_path) if file_path is not None else None
+            if "tags" in fields:
+                record["tags"] = self._coerce_string_list(fields["tags"])
+            if "categories" in fields:
+                record["categories"] = self._coerce_string_list(fields["categories"])
+            if "metadata" in fields:
+                record["metadata"] = self._coerce_metadata(fields["metadata"])
+            record["updated_at"] = self._utc_now()
+            self._save_registry(registry)
         return self._record_copy(record)
 
     async def delete_chatbook(self, chatbook_id: int | str) -> bool:
-        registry = self._load_registry()
-        wanted = str(chatbook_id)
-        remaining = [
-            record
-            for record in registry["records"]
-            if str(record.get("chatbook_id")) != wanted and str(record.get("id")) != wanted
-        ]
-        if len(remaining) == len(registry["records"]):
-            raise KeyError(f"Local chatbook not found: {chatbook_id}")
-        registry["records"] = remaining
-        self._save_registry(registry)
+        with self._registry_lock:
+            registry = self._load_registry()
+            wanted = str(chatbook_id)
+            remaining = [
+                record
+                for record in registry["records"]
+                if str(record.get("chatbook_id")) != wanted and str(record.get("id")) != wanted
+            ]
+            if len(remaining) == len(registry["records"]):
+                raise KeyError(f"Local chatbook not found: {chatbook_id}")
+            registry["records"] = remaining
+            self._save_registry(registry)
         return True
 
-    async def export_chatbook(self, request_data: Any) -> dict[str, Any]:
+    async def export_chatbook(
+        self,
+        request_data: Any,
+        *,
+        progress_callback: Optional[Callable[[Any], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> dict[str, Any]:
         payload = self._as_dict(request_data)
         output_path = payload.pop("output_path", None)
         if output_path is None:
@@ -255,13 +269,17 @@ class LocalChatbookService:
             include_embeddings=bool(payload.get("include_embeddings", False)),
             tags=payload.get("tags") or [],
             categories=payload.get("categories") or [],
+            progress_callback=progress_callback,
+            cancel_check=cancel_check,
         )
+        cancelled = bool(dependency_info.get("cancelled", False)) if isinstance(dependency_info, dict) else False
         return {
             "success": success,
             "message": message,
             "path": str(output_path),
             "dependency_info": dependency_info,
             "name": payload.get("name") or Path(output_path).stem,
+            "cancelled": cancelled,
         }
 
     async def import_chatbook(self, chatbook_file_path: str | Path, request_data: Any) -> dict[str, Any]:

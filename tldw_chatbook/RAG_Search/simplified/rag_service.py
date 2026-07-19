@@ -291,6 +291,7 @@ class RAGService:
                     **metadata,
                     "doc_id": doc_id,
                     "doc_title": title,
+                    "chunk_id": chunk_ids[i],
                     "chunk_index": i,
                     "chunk_start": chunk.get("start_char", 0),
                     "chunk_end": chunk.get("end_char", len(chunk["text"])),
@@ -332,7 +333,7 @@ class RAGService:
             
         except Exception as e:
             log_counter("rag_document_index_error", labels={"error": type(e).__name__})
-            logger.error(f"Failed to index document {doc_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to index document {doc_id}: {e}")
             return IndexingResult(
                 doc_id=doc_id,
                 chunks_created=0,
@@ -576,7 +577,7 @@ class RAGService:
             
         except Exception as e:
             log_counter("rag_search_error", labels={"type": search_type, "error": type(e).__name__})
-            logger.error(f"[{correlation_id}] Search failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{correlation_id}] Search failed: {e}")
             raise
     
     def search_sync(self, query: str, **kwargs) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
@@ -718,7 +719,7 @@ class RAGService:
             return results
             
         except Exception as e:
-            logger.error(f"Keyword search failed for query '{query}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Keyword search failed for query '{query}': {e}")
             # Log additional context for debugging
             logger.debug(f"Search parameters: top_k={top_k}, include_citations={include_citations}")
             # Return empty list on error to maintain compatibility

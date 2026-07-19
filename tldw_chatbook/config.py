@@ -670,9 +670,9 @@ def load_settings(force_reload: bool = False) -> Dict:
     except FileNotFoundError:
         logger.warning(f"Primary TOML Config file not found at {primary_config_toml_path}. Proceeding without it.")
     except tomllib.TOMLDecodeError as e:
-        logger.error(f"Error decoding primary TOML config file {primary_config_toml_path}: {e}. Proceeding with potentially empty base config.", exc_info=True)
+        logger.opt(exception=True).error(f"Error decoding primary TOML config file {primary_config_toml_path}: {e}. Proceeding with potentially empty base config.")
     except Exception as e:
-        logger.error(f"An unexpected error occurred while loading primary TOML {primary_config_toml_path}: {e}. Proceeding with potentially empty base config.", exc_info=True)
+        logger.opt(exception=True).error(f"An unexpected error occurred while loading primary TOML {primary_config_toml_path}: {e}. Proceeding with potentially empty base config.")
 
     # 2. Load the user-specific CLI config file (as potential overrides or additions).
     # Tests and embedded runtimes can override this path with TLDW_CONFIG_PATH.
@@ -684,10 +684,10 @@ def load_settings(force_reload: bool = False) -> Dict:
                 user_override_config_data = tomllib.load(f)
             logger.info(f"Successfully loaded user-specific CLI TOML config from: {str(user_cli_config_toml_path)}")
         except tomllib.TOMLDecodeError as e:
-            logger.error(f"Error decoding user-specific CLI TOML config file {user_cli_config_toml_path}: {e}. User overrides will not be applied from this file.", exc_info=True)
+            logger.opt(exception=True).error(f"Error decoding user-specific CLI TOML config file {user_cli_config_toml_path}: {e}. User overrides will not be applied from this file.")
             user_override_config_data = {} # Ensure it's empty if decode fails, to prevent merging bad data
         except Exception as e:
-            logger.error(f"An unexpected error occurred while loading user-specific CLI TOML {user_cli_config_toml_path}: {e}. User overrides will not be applied from this file.", exc_info=True)
+            logger.opt(exception=True).error(f"An unexpected error occurred while loading user-specific CLI TOML {user_cli_config_toml_path}: {e}. User overrides will not be applied from this file.")
             user_override_config_data = {} # Ensure it's empty on other errors
     else:
         logger.info(f"User-specific CLI TOML config file not found at {user_cli_config_toml_path}. No user overrides will be applied from this file.")
@@ -1504,6 +1504,13 @@ base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint
 # Default auth token can be stored here, or leave empty if user must always provide
 auth_token = "default-secret-key-for-single-user"
 
+[library]
+# Parallel ingest parse workers. Default: min(3, cpu-1). Uncomment to override.
+# ingest_parse_workers = 3
+# Max concurrent heavy (audio/video transcription) parses; document parses fan
+# out past this cap to fill the remaining pool workers. Default: 1.
+# ingest_heavy_lane_max_workers = 1
+
 [splash_screen]
 # Splash screen configuration for startup animations
 # See Docs/Examples/SPLASH_SCREENS_CATALOG.md for all available splash screens
@@ -1770,6 +1777,8 @@ local_mlx_lm = ["None"]
     streaming = false
 
     # --- Local Providers ---
+    # Local providers default to streaming = true so slow generations render
+    # incrementally instead of timing out on one long blocking completion.
     [api_settings.llama_cpp] # Matches key in [providers]
     api_key_env_var = "LLAMA_CPP_API_KEY" # If you set one on the server
     # api_key = ""
@@ -1783,7 +1792,7 @@ local_mlx_lm = ["None"]
     timeout = 300
     retries = 1
     retry_delay = 2
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.oobabooga] # Matches key in [providers]
@@ -1798,7 +1807,7 @@ local_mlx_lm = ["None"]
     timeout = 300
     retries = 1
     retry_delay = 2
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.koboldcpp] # Matches key in [providers]
@@ -1813,7 +1822,7 @@ local_mlx_lm = ["None"]
     timeout = 300
     retries = 1
     retry_delay = 2
-    streaming = false # Kobold streaming is non-standard, handle carefully
+    streaming = true # Kobold streaming is non-standard, handle carefully
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.ollama]
@@ -1828,7 +1837,7 @@ local_mlx_lm = ["None"]
     timeout = 300 # Longer timeout for local models
     retries = 1
     retry_delay = 2
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.vllm] # Matches key in [providers]
@@ -1843,7 +1852,7 @@ local_mlx_lm = ["None"]
     timeout = 300
     retries = 1
     retry_delay = 2
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.aphrodite] # Matches key in [providers]
@@ -1858,7 +1867,7 @@ local_mlx_lm = ["None"]
     timeout = 300
     retries = 1
     retry_delay = 2
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.tabbyapi] # Matches key in [providers]
@@ -1873,7 +1882,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 3
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.custom] # Matches key in [providers]
@@ -1917,7 +1926,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.local_llamafile] # Matches key in [providers]
@@ -1931,7 +1940,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.local_llamacpp] # Matches key in [providers]
@@ -1946,7 +1955,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.local_vllm] # Matches key in [providers]
@@ -1961,7 +1970,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.local_ollama] # Matches key in [providers]
@@ -1976,7 +1985,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.local_onnx] # Matches key in [providers]
@@ -1990,7 +1999,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.local_transformers] # Matches key in [providers]
@@ -2004,7 +2013,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.local_mlx_lm] # Matches key in [providers]
@@ -2018,7 +2027,7 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 2
     retry_delay = 5
-    streaming = false
+    streaming = true
     system_prompt = "You are a helpful AI assistant"
     # ... etc ...
 
@@ -2045,7 +2054,7 @@ max_size_mb = 10.0
 auto_resize = true
 resize_max_dimension = 2048
 save_location = "~/Downloads"
-supported_formats = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]
+supported_formats = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif", ".svg"]
 
 [chat.images.terminal_overrides]
 kitty = "regular"
@@ -2816,10 +2825,10 @@ def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str
             # Decrypt config if encryption is enabled
             loaded_config = decrypt_config_section(loaded_config)
         except tomllib.TOMLDecodeError as e:
-            logger.error(f"Error decoding CLI TOML config file {config_path}: {e}. Using internal defaults + any previous successful load.", exc_info=True)
+            logger.opt(exception=True).error(f"Error decoding CLI TOML config file {config_path}: {e}. Using internal defaults + any previous successful load.")
             # `loaded_config` remains the programmatic defaults in this case.
         except Exception as e:
-            logger.error(f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load.", exc_info=True)
+            logger.opt(exception=True).error(f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load.")
             # `loaded_config` remains the programmatic defaults.
 
     _CONFIG_CACHE = loaded_config
@@ -2957,7 +2966,7 @@ def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]])
                 # Consider creating a backup of the corrupt file for the user.
                 return False
             except Exception as e:
-                logger.error(f"Unexpected error reading {config_path}: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Unexpected error reading {config_path}: {e}")
                 return False
 
         try:
@@ -2990,7 +2999,7 @@ def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]])
 
             return True
         except (IOError, OSError, toml.TomlDecodeError) as e:
-            logger.error(f"Failed to write updated config to {config_path}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to write updated config to {config_path}: {e}")
             return False
 
 
@@ -3019,7 +3028,7 @@ def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
             logger.error(f"Corrupted config file at {config_path}. Cannot delete from it. Error: {e}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error reading {config_path}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error reading {config_path}: {e}")
             return False
 
         current_level: Any = config_data
@@ -3055,7 +3064,7 @@ def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
 
             return True
         except (IOError, OSError, toml.TomlDecodeError) as e:
-            logger.error(f"Failed to write updated config to {config_path}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to write updated config to {config_path}: {e}")
             return False
 
 
@@ -3086,10 +3095,24 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
 # --- CLI Setting Getter ---
 def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
     """Helper to get a specific setting from the loaded CLI configuration.
-    
+
     Can be called in two ways:
     1. get_cli_setting("section", "key", default)  # Traditional format
     2. get_cli_setting("section.key", default)     # Dotted format
+
+    Dotted sections/keys that miss the flat top-level lookup are resolved
+    against the nested TOML tree (``[chat.images]`` loads as
+    ``config["chat"]["images"]``); a flat top-level hit always wins.
+
+    Args:
+        section: Top-level section name, or a dotted path into nested tables.
+        key: Setting key within the section; in the dotted call shape this
+            positional slot may carry the default instead.
+        default: Value returned when the setting cannot be resolved.
+
+    Returns:
+        The resolved setting value, or ``default`` when the section/key does
+        not exist.
     """
     config = load_cli_config_and_ensure_existence() # Ensures config is loaded
     
@@ -3114,8 +3137,25 @@ def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
         else:
             return default
     
-    # Use `config.get(section, {})` to safely access potentially missing sections
+    # Flat lookup first: preserves every previously-working shape bit-for-bit
+    # (a literal dotted top-level key, while impossible from TOML, wins).
     section_data = config.get(section)
+    if isinstance(section_data, dict) and isinstance(key, str) and key in section_data:
+        return section_data[key]
+    # Nested fallback: TOML `[chat.images]` loads as config["chat"]["images"],
+    # never config["chat.images"], so dotted sections/keys that miss the flat
+    # lookup are resolved by walking the real tree segment by segment.
+    if (
+        isinstance(section, str)
+        and isinstance(key, str)
+        and ("." in section or "." in key)
+    ):
+        node: Any = config
+        for part in (*section.split("."), *key.split(".")):
+            if not isinstance(node, dict) or part not in node:
+                return default
+            node = node[part]
+        return node
     if isinstance(section_data, dict):
         return section_data.get(key, default)
     # If section is not a dict or not found, return default
@@ -3594,6 +3634,14 @@ def get_library_collections_db_path() -> Path:
         db_path = user_dir / "tldw_chatbook_library_collections.db"
     return db_path
 
+def get_library_ingest_jobs_db_path() -> Path:
+    custom_path = get_cli_setting("database", "library_ingest_jobs_db_path", None)
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("library_ingest_jobs_db_path"):
+        db_path = validate_path_simple(Path(str(custom_path)).expanduser(), require_exists=False).resolve()
+    else:
+        db_path = get_user_data_dir() / "tldw_chatbook_library_ingest_jobs.db"
+    return db_path
+
 def get_workspaces_db_path() -> Path:
     custom_path = get_cli_setting("database", "workspaces_db_path", None)
     if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("workspaces_db_path"):
@@ -3653,7 +3701,7 @@ def get_cli_log_file_path() -> Path:
     try:
         log_file_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as e:
-        logger.error(f"Could not create log directory {log_file_path.parent}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Could not create log directory {log_file_path.parent}: {e}")
     return log_file_path
 
 
@@ -3680,7 +3728,7 @@ def get_model_cache_dir() -> Path:
     try:
         cache_path.mkdir(parents=True, exist_ok=True)
     except OSError as e:
-        logger.error(f"Could not create model cache directory {cache_path}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Could not create model cache directory {cache_path}: {e}")
     
     return cache_path
 
@@ -3701,7 +3749,7 @@ def initialize_all_databases():
         chachanotes_db = CharactersRAGDB(db_path=chachanotes_path, client_id=CLI_APP_CLIENT_ID)
         logger.success(f"ChaChaNotes_DB initialized successfully at {chachanotes_path}")
     except Exception as e:
-        logger.error(f"Failed to initialize ChaChaNotes_DB at {chachanotes_path}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Failed to initialize ChaChaNotes_DB at {chachanotes_path}: {e}")
         chachanotes_db = None
     # Prompts DB
     prompts_path = get_prompts_db_path()
@@ -3710,7 +3758,7 @@ def initialize_all_databases():
         prompts_db = PromptsDatabase(db_path=prompts_path, client_id=CLI_APP_CLIENT_ID)
         logger.success(f"Prompts_DB initialized successfully at {prompts_path}")
     except Exception as e:
-        logger.error(f"Failed to initialize Prompts_DB at {prompts_path}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Failed to initialize Prompts_DB at {prompts_path}: {e}")
         prompts_db = None
     # Media DB
     media_path = get_media_db_path()
@@ -3719,7 +3767,7 @@ def initialize_all_databases():
         media_db = MediaDatabase(db_path=media_path, client_id=CLI_APP_CLIENT_ID)
         logger.success(f"Media_DB_v2 initialized successfully at {media_path}")
     except Exception as e:
-        logger.error(f"Failed to initialize Media_DB_v2 at {media_path}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Failed to initialize Media_DB_v2 at {media_path}: {e}")
         media_db = None
     logger.info("CLI database initialization complete.")
 
@@ -3743,7 +3791,7 @@ def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
             )
             logger.success(f"ChaChaNotes_DB lazy-initialized successfully at {chachanotes_path}")
         except Exception as e:
-            logger.error(f"Failed to lazy-initialize ChaChaNotes_DB at {chachanotes_path}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to lazy-initialize ChaChaNotes_DB at {chachanotes_path}: {e}")
             chachanotes_db = None
     return chachanotes_db
 
@@ -3766,7 +3814,7 @@ def get_prompts_db_lazy() -> Optional[PromptsDatabase]:
             )
             logger.success(f"Prompts_DB lazy-initialized successfully at {prompts_path}")
         except Exception as e:
-            logger.error(f"Failed to lazy-initialize Prompts_DB at {prompts_path}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to lazy-initialize Prompts_DB at {prompts_path}: {e}")
             prompts_db = None
     return prompts_db
 
@@ -3781,7 +3829,7 @@ def get_media_db_lazy() -> Optional[MediaDatabase]:
             media_db = MediaDatabase(db_path=media_path, client_id=CLI_APP_CLIENT_ID)
             logger.success(f"Media_DB_v2 lazy-initialized successfully at {media_path}")
         except Exception as e:
-            logger.error(f"Failed to lazy-initialize Media_DB_v2 at {media_path}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to lazy-initialize Media_DB_v2 at {media_path}: {e}")
             media_db = None
     return media_db
 
@@ -3822,7 +3870,7 @@ try:
     default_api_endpoint = settings.get('llm_api_settings', {}).get('default_api', 'openai')
     logger.info(f"Default API Endpoint (from config.py global scope): {default_api_endpoint}")
 except Exception as e:
-    logger.error(f"Critical error setting default_api_endpoint in config.py global scope: {str(e)}", exc_info=True)
+    logger.opt(exception=True).error(f"Critical error setting default_api_endpoint in config.py global scope: {str(e)}")
     default_api_endpoint = "openai"  # Fallback
 
 # --- Optional: Export individual variables if needed (generally prefer using settings dict) ---

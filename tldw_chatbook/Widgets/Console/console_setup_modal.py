@@ -30,6 +30,7 @@ import random
 from dataclasses import dataclass
 from typing import Any
 
+from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.timer import Timer
@@ -37,6 +38,7 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_SETUP_CARD_TITLE,
+    ConsoleDetectedServerAction,
     ConsoleSetupCardState,
     ConsoleSetupStep,
 )
@@ -45,6 +47,8 @@ from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequeste
 
 CONSOLE_SETUP_MODAL_STEP_COUNT = 3
 CONSOLE_SETUP_MODAL_ACTION_ID = "console-setup-modal-action"
+CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID = "console-setup-modal-detected-action"
+CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION = "use-detected-local-server"
 CONSOLE_SETUP_MODAL_BACKDROP_ID = "console-setup-modal-snow"
 _DEFAULT_ACTION_LABEL = "Choose model"
 _DEFAULT_ACTION_TOOLTIP = "Choose the provider and model for this Console session."
@@ -242,8 +246,14 @@ class ConsoleSetupModal(Vertical):
         self._card_state = ConsoleSetupCardState(mode="quiet")
         self._action_label = _DEFAULT_ACTION_LABEL
         self._action_tooltip = _DEFAULT_ACTION_TOOLTIP
+        self._detected_action: ConsoleDetectedServerAction | None = None
         # Hidden until a card-mode state is synced in.
         self.display = False
+
+    @property
+    def detected_server_action(self) -> ConsoleDetectedServerAction | None:
+        """Return the currently offered detected-local-server action."""
+        return self._detected_action
 
     @property
     def is_blocking(self) -> bool:
@@ -287,6 +297,15 @@ class ConsoleSetupModal(Vertical):
             action.tooltip = self._action_tooltip
             action.display = blocking
             yield action
+            detected = Button(
+                self._detected_action_label(),
+                id=CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID,
+                classes="console-setup-modal-action console-setup-modal-detected-action",
+                compact=True,
+            )
+            detected.tooltip = self._detected_action_tooltip()
+            detected.display = blocking and self._detected_action is not None
+            yield detected
 
     def on_mount(self) -> None:
         self._sync_snow_timer()
@@ -336,6 +355,7 @@ class ConsoleSetupModal(Vertical):
                 self.query_one(selector).display = blocking
             except Exception:
                 continue
+        self._sync_detected_action_button()
         try:
             action = self.query_one(f"#{CONSOLE_SETUP_MODAL_ACTION_ID}", Button)
         except Exception:
@@ -343,6 +363,47 @@ class ConsoleSetupModal(Vertical):
         action.label = self._action_label
         action.tooltip = self._action_tooltip
         action.display = blocking
+
+    def sync_detected_server_action(
+        self,
+        action: ConsoleDetectedServerAction | None,
+    ) -> None:
+        """Offer (or withdraw) the detected-local-server secondary action.
+
+        Args:
+            action: Affordance built by ``build_console_detected_server_action``
+                or ``None`` when no detected server should be offered.
+        """
+        self._detected_action = action if isinstance(action, ConsoleDetectedServerAction) else None
+        if self.is_mounted:
+            self._sync_detected_action_button()
+
+    def _sync_detected_action_button(self) -> None:
+        """Refresh the secondary detected-server button in place."""
+        try:
+            detected = self.query_one(
+                f"#{CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID}", Button
+            )
+        except Exception:
+            return
+        detected.label = self._detected_action_label()
+        detected.tooltip = self._detected_action_tooltip()
+        detected.display = self.is_blocking and self._detected_action is not None
+
+    def _detected_action_label(self) -> str:
+        """Return the escaped label for the detected-server button."""
+        if self._detected_action is None:
+            return ""
+        # Server-derived text (provider display + endpoint) must never be
+        # interpreted as console markup inside a Button label.
+        return escape_markup(self._detected_action.label)
+
+    def _detected_action_tooltip(self) -> str:
+        """Return the escaped tooltip for the detected-server button."""
+        if self._detected_action is None:
+            return ""
+        # Tooltips render markup too; model ids/urls must stay literal.
+        return escape_markup(self._detected_action.tooltip)
 
     def focus_primary_action(self) -> None:
         """Move focus to the modal's primary action button while blocking."""
@@ -354,7 +415,13 @@ class ConsoleSetupModal(Vertical):
             return
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Route the primary action through the owning Workbench screen."""
+        """Route card actions through the owning Workbench screen."""
+        if event.button.id == CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID:
+            event.stop()
+            self.post_message(
+                WorkbenchActionRequested(CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION)
+            )
+            return
         if event.button.id != CONSOLE_SETUP_MODAL_ACTION_ID:
             return
         event.stop()

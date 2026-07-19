@@ -125,13 +125,13 @@ async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
                     "nav-console",
                     "chat",
                     "ChatScreen",
-                    ("Console", "Live work sources"),
+                    ("Console", "Transcript / Event Stream"),
                 ),
                 (
                     "nav-library",
                     "library",
                     "LibraryScreen",
-                    ("Library", "Import/Export Sources", "Search/RAG"),
+                    ("Library", "Import / Export", "Search / RAG"),
                 ),
                 (
                     "nav-settings",

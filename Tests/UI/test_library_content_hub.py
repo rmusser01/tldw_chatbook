@@ -327,7 +327,7 @@ async def test_library_navigation_context_opens_requested_conversation() -> None
         )
 
         visible = _visible_text(screen)
-        assert getattr(screen, "_active_mode") == "conversations"
+        assert getattr(screen, "_library_selected_row_id") == "browse-conversations"
         assert getattr(screen, "_selected_conversation_id") == "chat-2"
         assert "Design Review" in visible
         assert "Planning Chat" in visible
@@ -347,7 +347,7 @@ async def test_library_navigation_context_opens_requested_valid_mode() -> None:
         screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_MODE: "search"})
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
-        assert getattr(screen, "_active_mode") == "search"
+        assert getattr(screen, "_library_selected_row_id") == "browse-search"
         assert str(screen.query_one("#library-header-line").renderable) == "Library | Local"
         assert screen.query_one("#library-row-browse-search", Button).has_class(
             "library-rail-row-selected"
@@ -374,45 +374,54 @@ async def test_library_conversations_empty_state_is_honest_and_blocks_actions() 
         await _wait_for_selector(screen, pilot, "#library-conversations-status")
 
         status = str(screen.query_one("#library-conversations-status").renderable)
-        assert status == "No saved conversations yet. Save a Console chat and it appears here."
+        assert status == "No conversations yet. Chat in Console and it appears here."
         assert not screen.query(".library-conversation-row")
         assert screen.query_one("#library-conversation-preview").display is False
 
 
 @pytest.mark.asyncio
-async def test_library_import_export_opens_native_workflow_with_clear_boundaries() -> None:
-    """The Import/Export mode canvas (``_import_export_workflow_rows``) still
-    explains ownership boundaries. The dedicated "Open Ingest"/"Open Media"/
-    "Export Library sources" action buttons lived only in the retired
-    ``#library-action-region`` (3-pane) and have no rail successor yet; the
-    generic Ingest rail row (``#library-row-ingest-import-media``) already
-    covers screen-level Ingest navigation."""
+async def test_library_conversations_snapshot_requests_all_scopes() -> None:
+    """The Library conversations snapshot must span workspace-scoped rows.
+
+    Console chats persisted inside a workspace session are stored with
+    ``scope_type='workspace'``; the service's default scope is 'global',
+    which made Library Browse ▸ Conversations show "(0)" while the Console
+    rail listed the same chats. The screen must explicitly request
+    ``scope_type='all'``.
+    """
     app = _build_test_app()
-    _seed_library_content(app)
-    seen_routes: list[str] = []
-    host = DestinationHarness(app, "library", seen_routes)
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    conversation_service = StaticLibraryConversationScopeService(
+        [
+            {
+                "title": "Console workspace chat",
+                "conversation_id": "chat-ws-1",
+                "message_count": 4,
+                "workspace_id": "ws-chats",
+                "updated_at": "2026-07-01T10:00:00Z",
+            }
+        ]
+    )
+    app.chat_conversation_scope_service = conversation_service
+    host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_shell_ready(screen, pilot)
-        screen.query_one("#library-row-ingest-import-export", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-import-export-workflow-title")
 
-        visible = _visible_text(screen)
-        assert getattr(screen, "_active_mode") == "import-export"
-        assert seen_routes == []
-        assert "Library Import/Export Workflow" in visible
-        assert "Library owns source acquisition framing; Ingest and Media own deeper file handling." in visible
-        assert "Import source material" in visible
-        assert "Imported material returns here as notes, media, conversations, or indexed sources." in visible
-        assert "Full Media ingestion and review stays in Media." in visible
-        assert "Artifact export stays in Artifacts." in visible
-        assert "Generic file management stays outside Library." in visible
-        assert "Export is not wired here yet." in visible
-        assert "Return path: come back to Library after import to see new hub inventory." in visible
-        assert screen.query_one("#library-row-ingest-import-export", Button).has_class(
-            "library-rail-row-selected"
+        assert conversation_service.calls, "Library never fetched conversations"
+        for call in conversation_service.calls:
+            assert call.get("scope_type") == "all"
+
+        screen.query_one("#library-row-browse-conversations", Button).press()
+        await _wait_for_library_conversation_selection(
+            screen,
+            pilot,
+            "chat-ws-1",
+            "Console workspace chat",
         )
+        assert "Console workspace chat" in _visible_text(screen)
 
 
 @pytest.mark.asyncio

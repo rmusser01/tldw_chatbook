@@ -42,7 +42,6 @@ DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
     "workflows": ("#workflows-shell",),
     "mcp": ("#mcp-shell", "#unified-mcp-panel"),
     "acp": ("#acp-shell",),
-    "skills": ("#skills-shell",),
     "settings": ("#settings-shell",),
 }
 TERMINAL_SIZE_MATRIX = (

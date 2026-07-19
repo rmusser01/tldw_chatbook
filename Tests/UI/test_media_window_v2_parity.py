@@ -271,6 +271,145 @@ async def test_media_window_backend_change_clears_selected_record_and_viewer():
     window.viewer_panel.clear_display.assert_called_once()
 
 
+# --- T165: cross-visit restore re-populates the viewer + highlights the row -
+#
+# ``apply_restored_view_state`` used to set the scalars and re-run the list
+# search but deliberately left the viewer empty and the row unhighlighted.
+# These exercise the full restore -> re-run search -> resolve -> detail
+# fetch pipeline end-to-end, so they mount a real ``MediaWindow`` in a
+# running app (unlike the unit-style ``_build_media_window`` tests above) --
+# the resolution step defers through ``call_after_refresh``, which needs an
+# actual running message pump to deliver.
+
+
+@pytest.mark.asyncio
+async def test_media_window_restored_selection_fetches_detail_and_highlights_row():
+    """A cross-visit restore with a still-live ``selected_media_id`` must
+    re-populate the viewer panel and highlight the matching list row --
+    the same effect a live click on that row produces -- not just re-run
+    the list search and leave the viewer empty.
+    """
+    scope_service = Mock()
+    scope_service.search_media = AsyncMock(
+        return_value={
+            "items": [
+                {"id": "media-1", "title": "Kept Item", "type": "video", "backend": "local"},
+                {"id": "media-2", "title": "Other Item", "type": "video", "backend": "local"},
+            ],
+            "total": 2,
+        }
+    )
+    scope_service.get_media_detail = AsyncMock(
+        return_value={
+            "id": "media-1",
+            "backend": "local",
+            "source_id": "1",
+            "title": "Kept Item",
+            "content": "restored body",
+        }
+    )
+    app_instance = SimpleNamespace(
+        _media_types_for_ui=["All Media"],
+        media_runtime_state=MediaRuntimeState(runtime_backend="local"),
+        media_reading_scope_service=scope_service,
+        notify=Mock(),
+        media_db=None,
+    )
+
+    class MediaWindowApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield MediaWindow(app_instance)
+
+    app = MediaWindowApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        window = app.query_one(MediaWindow)
+
+        window.apply_restored_view_state(
+            {
+                "active_media_type": "all-media",
+                "search_term": "",
+                "keyword_filter": "",
+                "selected_media_id": "media-1",
+            }
+        )
+
+        for _ in range(100):
+            if window.viewer_panel.media_data is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Restored selection never fetched the media detail.")
+
+        assert window.viewer_panel.media_data.get("id") == "media-1"
+        assert window.viewer_panel.media_data.get("content") == "restored body"
+        assert window.list_panel.selected_id == "media-1"
+        # The viewer is shown (not the empty state) once a restored
+        # selection's detail lands -- mirrors ``_show_viewer``.
+        assert "hidden" not in window.viewer_panel.classes
+
+
+@pytest.mark.asyncio
+async def test_media_window_restored_selection_with_stale_id_degrades_without_crash():
+    """A restored ``selected_media_id`` for a record deleted while the user
+    was away must degrade gracefully: the re-run search will not return
+    it, so nothing is highlighted and no detail fetch fires -- no crash,
+    no permanent loading placeholder, viewer stays in its untouched empty
+    state.
+    """
+    scope_service = Mock()
+    scope_service.search_media = AsyncMock(
+        return_value={
+            "items": [{"id": "media-2", "title": "Still Here", "type": "video", "backend": "local"}],
+            "total": 1,
+        }
+    )
+    scope_service.get_media_detail = AsyncMock(
+        side_effect=AssertionError("get_media_detail must not be called for a stale restored id")
+    )
+    app_instance = SimpleNamespace(
+        _media_types_for_ui=["All Media"],
+        media_runtime_state=MediaRuntimeState(runtime_backend="local"),
+        media_reading_scope_service=scope_service,
+        notify=Mock(),
+        media_db=None,
+    )
+
+    class MediaWindowApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield MediaWindow(app_instance)
+
+    app = MediaWindowApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        window = app.query_one(MediaWindow)
+
+        window.apply_restored_view_state(
+            {
+                "active_media_type": "all-media",
+                "search_term": "",
+                "keyword_filter": "",
+                "selected_media_id": "media-ghost",
+            }
+        )
+
+        for _ in range(80):
+            await pilot.pause(0.02)
+            if window.list_panel.items:
+                break
+        else:
+            raise AssertionError("Restored search for a stale id never completed.")
+
+        # Give a wrongly-fired fetch a further beat to show up before
+        # asserting it never did.
+        for _ in range(20):
+            await pilot.pause(0.02)
+
+        assert window.viewer_panel.media_data is None
+        assert window.list_panel.selected_id is None
+        scope_service.get_media_detail.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_media_window_selection_uses_scope_service_detail_and_runtime_state():
     scope_service = Mock()

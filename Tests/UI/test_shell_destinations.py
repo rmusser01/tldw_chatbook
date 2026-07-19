@@ -31,6 +31,7 @@ def test_legacy_routes_resolve_to_master_destinations():
         "ingest": ("library", "ingest"),
         "search": ("library", "search"),
         "study": ("library", "study"),
+        "prompts": ("library", "prompts"),
         "chatbooks": ("artifacts", "chatbooks"),
         "ccp": ("personas", "personas"),
         "conversation": ("library", "conversation"),
@@ -46,10 +47,21 @@ def test_legacy_routes_resolve_to_master_destinations():
 
 
 def test_ccp_legacy_routes_resolve_to_personas_destination():
-    for legacy in ("ccp", "characters", "prompts", "conversations_characters_prompts"):
+    for legacy in ("ccp", "characters", "conversations_characters_prompts"):
         resolved = resolve_shell_route(legacy)
         assert resolved.destination_id == "personas"
         assert resolved.canonical_route == "personas"
+
+
+def test_prompts_legacy_route_resolves_to_library_destination():
+    """The Personas "prompts" mode chip is retired (Task 7): the legacy
+    "prompts" route now re-points to Library, mirroring "notes" -- unlike
+    the other Personas legacy routes above, it keeps its own route id as
+    the canonical route rather than collapsing to "personas".
+    """
+    resolved = resolve_shell_route("prompts")
+    assert resolved.destination_id == "library"
+    assert resolved.canonical_route == "prompts"
 
 
 def test_ccp_screen_route_loads_personas_screen():

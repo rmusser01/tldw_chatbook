@@ -68,7 +68,7 @@ class DBStatusManager:
             logger.info(f"Successfully updated DB sizes in AppFooterStatus: {status_string}")
             
         except Exception as e:
-            logger.error(f"Error updating DB sizes in AppFooterStatus: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error updating DB sizes in AppFooterStatus: {e}")
             if db_status_widget:  # Check again in case it became None somehow
                 db_status_widget.update_db_sizes_display("Error loading DB sizes")
     
@@ -97,7 +97,7 @@ class DBStatusManager:
             from tldw_chatbook.Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
             await update_chat_token_counter(self.app)
         except Exception as e:
-            logger.error(f"Error updating token count: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error updating token count: {e}")
             if db_status_widget:
                 db_status_widget.update_token_count("Token count error")
     

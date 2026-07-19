@@ -8,6 +8,7 @@ import time
 from typing import TYPE_CHECKING, Generator, Any, Union
 #
 # 3rd-Party Imports
+from loguru import logger as _loguru_fallback_logger
 from rich.text import Text
 from rich.markup import escape as escape_markup
 from textual.message import Message
@@ -61,7 +62,7 @@ class StreamDone(Message):
 ########################################################################################################################
 async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.StateChanged) -> None:
     """Handles completion/failure of background API workers (chat calls and suggestions)."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', _loguru_fallback_logger)
     worker_name = event.worker.name or "Unknown Worker"
     worker_state = event.state  # Get state from event
     logger.debug(f"Worker '{worker_name}' state changed to {worker_state}")
@@ -129,7 +130,7 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                 app.notify("AI returned an empty suggestion.", severity="warning")
 
         elif worker_state is WorkerState.ERROR:
-            logger.error(f"Worker 'respond_for_me_worker' failed: {event.worker.error}", exc_info=event.worker.error)
+            logger.opt(exception=event.worker.error).error(f"Worker 'respond_for_me_worker' failed: {event.worker.error}")
             app.notify(f"Failed to generate suggestion: {str(event.worker.error)[:100]}", severity="error", timeout=5)
 
         # Re-enable the "Respond for Me" button which is done in chat_events.py's finally block.
@@ -342,9 +343,8 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                                 
                             final_display_text_obj = Text(original_text_for_storage)  # Use Text() for plain text
                         except (KeyError, IndexError, TypeError) as e_parse:
-                            logger.error(
-                                f"Error parsing non-streaming dict result: {e_parse}. Resp: {worker_result_content}",
-                                exc_info=True)
+                            logger.opt(exception=True).error(
+                                f"Error parsing non-streaming dict result: {e_parse}. Resp: {worker_result_content}")
                             original_text_for_storage = "[AI: Error parsing successful response structure.]"
                             final_display_text_obj = Text.from_markup(
                                 f"[bold red]{escape_markup(original_text_for_storage)}[/]")
@@ -435,14 +435,14 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                                             )
                                             logger.debug(f"Saved tool results message to DB with ID: {tool_result_db_id}")
                                         except Exception as e:
-                                            logger.error(f"Error saving tool messages to DB: {e}", exc_info=True)
+                                            logger.opt(exception=True).error(f"Error saving tool messages to DB: {e}")
                                     
                                     # Import and use the streaming continue function
                                     from ..Event_Handlers.Chat_Events.chat_streaming_events import _continue_conversation_with_tools
                                     await _continue_conversation_with_tools(app, results, tool_calls)
                                     
                                 except Exception as e:
-                                    logger.error(f"Error executing tools: {e}", exc_info=True)
+                                    logger.opt(exception=True).error(f"Error executing tools: {e}")
                                     app.notify(f"Tool execution error: {str(e)}", severity="error")
                             else:
                                 logger.warning("Could not find chat container for mounting tool widgets")
@@ -616,7 +616,7 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                                                 )
                                                 
                                             except Exception as e:
-                                                logger.error(f"Failed to create regeneration variant: {e}", exc_info=True)
+                                                logger.opt(exception=True).error(f"Failed to create regeneration variant: {e}")
                                         
                                         # Clear regeneration tracking
                                         delattr(app, 'regenerating_message_widget')
@@ -628,14 +628,14 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                             else:
                                 logger.error(f"Failed to save non-streamed AI message to DB (no ID returned).")
                         except (CharactersRAGDBError, InputError) as e_save_ai_ns:
-                            logger.error(f"Failed to save non-streamed AI message to DB: {e_save_ai_ns}", exc_info=True)
+                            logger.opt(exception=True).error(f"Failed to save non-streamed AI message to DB: {e_save_ai_ns}")
 
                     app.current_ai_message_widget = None  # Clear for non-streaming
 
             elif worker_state is WorkerState.ERROR:
                 error_from_worker = event.worker.error
-                logger.error(f"Worker '{worker_name}' failed with an unhandled exception in worker target function.",
-                             exc_info=error_from_worker)
+                logger.opt(exception=error_from_worker).error(
+                    f"Worker '{worker_name}' failed with an unhandled exception in worker target function.")
                 error_message_str = f"AI System Error: Worker failed unexpectedly.\nDetails: {str(error_from_worker)}"
                 escaped_error_for_display = escape_markup(error_message_str)
                 ai_message_widget.message_text = error_message_str
@@ -670,15 +670,14 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                     except QueryError:
                         logger.debug(f"Could not focus input #{prefix}-input after API call, widget might not exist.")
                     except Exception as e_final_focus:
-                        logger.error(f"Error focusing input after API call processing: {e_final_focus}", exc_info=True)
+                        logger.opt(exception=True).error(f"Error focusing input after API call processing: {e_final_focus}")
 
             # Button state is now handled in app.py's on_worker_state_changed method
             # The send button toggles between send/stop states based on worker state
 
         except QueryError as qe_outer:
-            logger.error(
-                f"QueryError in handle_api_call_worker_state_changed for '{worker_name}': {qe_outer}. Widget might have been removed.",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"QueryError in handle_api_call_worker_state_changed for '{worker_name}': {qe_outer}. Widget might have been removed.")
             if app.current_ai_message_widget and app.current_ai_message_widget.is_mounted:
                 try:
                     await app.current_ai_message_widget.remove()
@@ -724,7 +723,7 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
     posts StreamingChunk and StreamDone messages, and returns a specific string value.
     If core_chat_function returns a direct result (non-streaming), this function returns it as is.
     """
-    logger = getattr(app_instance, 'loguru_logger', logging)
+    logger = getattr(app_instance, 'loguru_logger', _loguru_fallback_logger)
     start_time = time.time()
     
     # Extract relevant parameters for metrics
@@ -855,7 +854,7 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
                         except json.JSONDecodeError as e_json:
                             logger.warning(f"SSE Stream: JSON parsing error for chunk in '{api_endpoint}', model '{model_name}': {e_json}. Chunk: >>{json_str[:100]}<<")
                         except Exception as e_parse:
-                            logger.error(f"SSE Stream: Error processing JSON data in '{api_endpoint}', model '{model_name}': {e_parse}. Data: >>{json_str[:100]}<<", exc_info=True)
+                            logger.opt(exception=True).error(f"SSE Stream: Error processing JSON data in '{api_endpoint}', model '{model_name}': {e_parse}. Data: >>{json_str[:100]}<<")
 
                     elif line.startswith("event:"):
                         event_type = line[len("event:"):].strip()

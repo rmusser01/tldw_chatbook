@@ -461,27 +461,40 @@ def test_console_workspace_state_treats_none_memberships_as_empty() -> None:
     assert state.conversation_empty_copy == "No conversations in this workspace yet."
 
 
-def test_console_workspace_state_logs_registry_failures(monkeypatch) -> None:
+def test_console_workspace_state_logs_registry_failures() -> None:
     class FailingRegistryService:
         def get_active_workspace(self) -> WorkspaceRecord:
             raise RuntimeError("workspace db unavailable")
 
-    warnings: list[tuple[tuple[object, ...], dict[str, object]]] = []
-
-    class FakeLogger:
-        def warning(self, *args, **kwargs) -> None:
-            warnings.append((args, kwargs))
-
-    monkeypatch.setattr(display_state, "logger", FakeLogger(), raising=False)
-
-    state = build_console_workspace_state(
-        registry_service=FailingRegistryService(),
-        current_conversation=None,
+    # Capture through a real loguru sink: the call site uses
+    # `logger.opt(exception=True)` (loguru's traceback capture -- the stdlib
+    # `exc_info=True` kwarg is a silent no-op under loguru), and `.opt()`
+    # returns a fresh logger that a fake's `.warning` would never see.
+    records = []
+    sink_id = display_state.logger.add(
+        lambda message: records.append(message.record), level="WARNING"
     )
+    try:
+        state = build_console_workspace_state(
+            registry_service=FailingRegistryService(),
+            current_conversation=None,
+        )
+    finally:
+        display_state.logger.remove(sink_id)
 
     assert state.workspace_label == "No workspace selected"
-    assert warnings
-    assert warnings[0][1].get("exc_info") is True
+    matching = [
+        record
+        for record in records
+        if "Failed to read active workspace for Console context rail"
+        in record["message"]
+    ]
+    assert matching
+    # The traceback must actually be attached to the record now -- strictly
+    # stronger than the old assertion that the (no-op) exc_info kwarg was
+    # merely passed along.
+    assert matching[0]["exception"] is not None
+    assert matching[0]["exception"].type is RuntimeError
 
 
 def test_library_workspace_depth_state_preserves_visibility_but_blocks_cross_workspace_context(

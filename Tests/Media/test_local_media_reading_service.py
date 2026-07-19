@@ -94,6 +94,15 @@ class SpyReadItLaterDb:
         return ([{"id": media_id} for media_id in (media_ids_filter or [])], len(media_ids_filter or []))
 
 
+class OverrideRecordingDb:
+    def __init__(self):
+        self.search_calls = []
+
+    def search_media_db(self, **kwargs):
+        self.search_calls.append(kwargs)
+        return [], 0
+
+
 def test_local_service_search_media_uses_db_backed_saved_filter_spy():
     db = SpyReadItLaterDb()
     service = LocalMediaReadingService(db)
@@ -105,6 +114,28 @@ def test_local_service_search_media_uses_db_backed_saved_filter_spy():
     assert [item["id"] for item in payload["items"]] == [2]
     assert payload["items"][0]["is_read_it_later"] is True
     assert payload["items"][0]["saved_at"] == "2026-04-21T10:00:00Z"
+
+
+def test_local_service_forwards_distinct_fts_match_query():
+    db = OverrideRecordingDb()
+    service = LocalMediaReadingService(db)
+
+    service.search_media(
+        query="what caused the outage?",
+        fts_match_query='"what" "caused" "the" "outage?"',
+    )
+
+    assert db.search_calls[0]["search_query"] == "what caused the outage?"
+    assert db.search_calls[0]["fts_match_query"] == '"what" "caused" "the" "outage?"'
+
+
+def test_local_service_omits_absent_match_override_for_legacy_db_adapter():
+    db = SpyReadItLaterDb()
+
+    payload = LocalMediaReadingService(db).search_media(query="legacy query")
+
+    assert payload["items"] == []
+    assert db.search_calls[0]["search_query"] == "legacy query"
 
 
 def test_local_service_search_media_uses_db_backed_saved_filter(memory_db_factory):
@@ -208,6 +239,45 @@ def test_local_service_direct_media_management_round_trips(memory_db_factory):
     assert deleted_again == {"ok": True, "media_id": media_id}
     assert permanent == {"ok": True, "media_id": media_id}
     assert after_permanent["items"] == []
+
+
+def test_local_service_list_media_items_carries_last_modified_for_list_card_age(memory_db_factory):
+    """Regression test for the Library browse-list "Updated: unknown" bug (UX wave M3).
+
+    Root cause: ``get_paginated_files`` only selected ``id, title, type``
+    (no timestamp column), so ``_build_local_media_list_response`` had
+    nothing to carry into the item dict feeding the Library Browse -> Media
+    list -- even though the full-detail viewer path (``get_media_by_id`` /
+    ``SELECT *``) has always exposed ``last_modified`` for the very same
+    record. This pins the fetch/mapping fix: ``list_media_items`` output now
+    carries ``last_modified``, and feeding that record straight into
+    ``build_library_media_state`` (the same pure state builder the Library
+    screen uses) yields a real age instead of a bare type/"unknown".
+    """
+    from tldw_chatbook.Library.library_media_state import build_library_media_state
+
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Roadmap Notes",
+        content="Body text",
+        media_type="document",
+        keywords=[],
+    )
+    detail = db.get_media_by_id(media_id)
+    service = LocalMediaReadingService(db)
+
+    listed = service.list_media_items(page=1, results_per_page=10)
+
+    item = next(entry for entry in listed["items"] if entry["id"] == media_id)
+    # ``get_media_by_id`` (SELECT *) returns a parsed ``datetime`` for the
+    # DATETIME column; the paginated-list path stringifies it (matching
+    # what a JSON-safe API response needs) -- compare on the string form.
+    assert item["last_modified"] == str(detail["last_modified"])
+
+    state = build_library_media_state([item])
+    row = next(row for row in state.rows if row.media_id == str(media_id))
+    assert row.secondary != "document"
+    assert row.secondary.startswith("document · ")
 
 
 def test_local_service_update_media_item_persists_library_edit_fields_without_version(memory_db_factory):

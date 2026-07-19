@@ -3,6 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Chat import console_chat_controller as controller_module
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
@@ -99,6 +101,16 @@ class EmptyStreamingGateway(StreamingGateway):
 class EmptyHeartbeatStreamingGateway(StreamingGateway):
     async def stream_chat(self, resolution, messages):
         yield ""
+
+
+def _last_failed_assistant(store, session_id=None):
+    """Return the newest failed assistant message (skips failure system rows)."""
+    messages = store.messages_for_session(session_id or store.active_session_id)
+    return next(
+        message
+        for message in reversed(messages)
+        if message.role is ConsoleMessageRole.ASSISTANT and message.status == "failed"
+    )
 
 
 class FakePersistence:
@@ -247,6 +259,7 @@ def test_update_provider_selection_updates_all_selection_fields() -> None:
         thinking_effort="low",
         thinking_budget_tokens=2048,
         streaming=False,
+        system_prompt="Session system prompt.",
     )
 
     controller.update_provider_selection(selection)
@@ -269,6 +282,7 @@ def test_update_provider_selection_updates_all_selection_fields() -> None:
     assert controller.thinking_effort == "low"
     assert controller.thinking_budget_tokens == 2048
     assert controller.streaming is False
+    assert controller.system_prompt == "Session system prompt."
     assert controller._provider_selection().seed == 99
     assert controller._provider_selection().reasoning_effort == "high"
     assert controller._provider_selection().thinking_budget_tokens == 2048
@@ -352,6 +366,65 @@ async def test_submit_draft_sanitizes_user_text_before_storage_and_provider_send
 
 
 @pytest.mark.asyncio
+async def test_submit_draft_prepends_system_prompt_message():
+    """Native Console submit prepends a session's system prompt when set."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        system_prompt="Answer only in French.",
+    )
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is True
+    assert gateway.messages_seen == [
+        {"role": "system", "content": "Answer only in French."},
+        {"role": "user", "content": "hello"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_omits_system_message_when_prompt_is_blank():
+    """A whitespace-only system prompt is treated as no system prompt."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        system_prompt="   ",
+    )
+
+    await controller.submit_draft("hello")
+
+    assert gateway.messages_seen == [{"role": "user", "content": "hello"}]
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_preserves_system_prompt_formatting_verbatim():
+    """`strip()` is used only to decide "is this blank" -- the system
+    message content sent to the provider must be the prompt exactly as
+    set, leading/trailing whitespace and internal blank lines included."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    formatted_prompt = "  line1\n\n  line2  "
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        system_prompt=formatted_prompt,
+    )
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is True
+    assert gateway.messages_seen == [
+        {"role": "system", "content": formatted_prompt},
+        {"role": "user", "content": "hello"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_controller_provider_selection_includes_sampling_settings() -> None:
     gateway = CapturingGateway()
     store = ConsoleChatStore()
@@ -366,6 +439,7 @@ async def test_controller_provider_selection_includes_sampling_settings() -> Non
         top_k=20,
         max_tokens=300,
         streaming=False,
+        system_prompt="Session system prompt.",
     )
 
     await controller.submit_draft("hello")
@@ -376,6 +450,7 @@ async def test_controller_provider_selection_includes_sampling_settings() -> Non
     assert gateway.selection.top_k == 20
     assert gateway.selection.max_tokens == 300
     assert gateway.selection.streaming is False
+    assert gateway.selection.system_prompt == "Session system prompt."
 
 
 @pytest.mark.asyncio
@@ -687,13 +762,28 @@ async def test_submit_draft_marks_assistant_failed_when_stream_errors():
     messages = store.messages_for_session(store.active_session_id)
     assert result.accepted is True
     assert result.should_clear_draft is True
-    assert messages[-1].content.startswith("partial")
-    assert "Provider stream failed: llama.cpp stream failed" in messages[-1].content
-    assert messages[-1].status == "failed"
+    assistant = messages[1]
+    assert assistant.role is ConsoleMessageRole.ASSISTANT
+    # The provider error must never be written into assistant content (it is
+    # persisted and replayed to the model as conversation context).
+    assert assistant.content == "partial"
+    assert "Provider stream failed" not in assistant.content
+    assert assistant.status == "failed"
+    # The failure instead renders as a transcript-only system row.
+    system_row = messages[-1]
+    assert system_row.role is ConsoleMessageRole.SYSTEM
+    assert system_row.content.startswith("Provider stream failed:")
+    assert "llama.cpp stream failed" in system_row.content
     assert controller.run_state.status is ConsoleRunStatus.FAILED
     assert "stream failed" in controller.run_state.visible_copy
-    assert persistence.updated_messages[-1]["message_id"] == messages[-1].persisted_message_id
-    assert "Provider stream failed: llama.cpp stream failed" in persistence.updated_messages[-1]["content"]
+    assert result.visible_copy == system_row.content
+    assert persistence.updated_messages[-1]["message_id"] == assistant.persisted_message_id
+    assert persistence.updated_messages[-1]["content"] == "partial"
+    persisted_contents = [
+        str(entry.get("content", ""))
+        for entry in [*persistence.created_messages, *persistence.updated_messages]
+    ]
+    assert not any("Provider stream failed" in content for content in persisted_contents)
 
 
 @pytest.mark.asyncio
@@ -703,7 +793,7 @@ async def test_retry_failed_message_streams_replacement_from_original_turn():
     failing = FailingStreamingGateway()
     controller = ConsoleChatController(store=store, provider_gateway=failing)
     await controller.submit_draft("hello")
-    failed_id = store.messages_for_session(store.active_session_id)[-1].id
+    failed_id = _last_failed_assistant(store).id
 
     controller.provider_gateway = StreamingGateway()
     result = await controller.retry_message(failed_id)
@@ -721,7 +811,7 @@ async def test_retry_rejects_failed_message_from_inactive_session():
     controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
     await controller.submit_draft("hello")
     first_session_id = store.active_session_id
-    failed_id = store.messages_for_session(first_session_id)[-1].id
+    failed_id = _last_failed_assistant(store, first_session_id).id
     store.create_session(title="Chat 2")
 
     controller.provider_gateway = StreamingGateway()
@@ -739,7 +829,7 @@ async def test_retry_failed_message_records_retrying_then_streaming_transition()
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
     await controller.submit_draft("hello")
-    failed_id = store.messages_for_session(store.active_session_id)[-1].id
+    failed_id = _last_failed_assistant(store).id
 
     observed = []
 
@@ -761,7 +851,11 @@ async def test_retry_failed_message_records_retrying_then_streaming_transition()
 async def test_retry_failed_continuation_message_ends_provider_payload_with_user_instruction():
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        system_prompt="Answer only in French.",
+    )
     session = store.ensure_session()
     store.append_message(
         session.id,
@@ -785,6 +879,7 @@ async def test_retry_failed_continuation_message_ends_provider_payload_with_user
 
     assert result.accepted is True
     assert gateway.messages_seen == [
+        {"role": "system", "content": "Answer only in French."},
         {"role": "user", "content": "Prompt"},
         {"role": "assistant", "content": "Seed"},
         {"role": "user", "content": "Continue and extend the selected message."},
@@ -796,7 +891,7 @@ async def test_retry_keeps_failed_content_if_replacement_fails_before_first_chun
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
     await controller.submit_draft("hello")
-    failed = store.messages_for_session(store.active_session_id)[-1]
+    failed = _last_failed_assistant(store)
 
     controller.provider_gateway = FailingBeforeChunkGateway()
     result = await controller.retry_message(failed.id)
@@ -829,7 +924,7 @@ async def test_retry_keeps_failed_content_if_replacement_stream_is_empty():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
     await controller.submit_draft("hello")
-    failed = store.messages_for_session(store.active_session_id)[-1]
+    failed = _last_failed_assistant(store)
 
     controller.provider_gateway = EmptyStreamingGateway()
     result = await controller.retry_message(failed.id)
@@ -846,7 +941,7 @@ async def test_retry_ignores_empty_heartbeat_before_empty_replacement_stream_end
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
     await controller.submit_draft("hello")
-    failed = store.messages_for_session(store.active_session_id)[-1]
+    failed = _last_failed_assistant(store)
 
     controller.provider_gateway = EmptyHeartbeatStreamingGateway()
     result = await controller.retry_message(failed.id)
@@ -882,7 +977,11 @@ async def test_continue_from_message_streams_new_assistant_turn_after_selected_m
 async def test_continue_from_assistant_message_ends_provider_payload_with_user_instruction():
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        system_prompt="Answer only in French.",
+    )
     session = store.ensure_session()
     store.append_message(
         session.id,
@@ -899,6 +998,7 @@ async def test_continue_from_assistant_message_ends_provider_payload_with_user_i
 
     assert result.accepted is True
     assert gateway.messages_seen == [
+        {"role": "system", "content": "Answer only in French."},
         {"role": "user", "content": "Prompt"},
         {"role": "assistant", "content": "Seed"},
         {"role": "user", "content": "Continue and extend the selected message."},
@@ -946,7 +1046,11 @@ async def test_regenerate_message_streams_new_selected_variant():
 async def test_regenerate_continuation_message_ends_provider_payload_with_user_instruction():
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        system_prompt="Answer only in French.",
+    )
     session = store.ensure_session()
     store.append_message(
         session.id,
@@ -968,6 +1072,7 @@ async def test_regenerate_continuation_message_ends_provider_payload_with_user_i
 
     assert result.accepted is True
     assert gateway.messages_seen == [
+        {"role": "system", "content": "Answer only in French."},
         {"role": "user", "content": "Prompt"},
         {"role": "assistant", "content": "Seed"},
         {"role": "user", "content": "Continue and extend the selected message."},
@@ -1021,3 +1126,301 @@ async def test_submit_draft_does_not_retitle_after_first_send():
     await controller.submit_draft("second message must not retitle")
 
     assert controller.store.sessions()[0].title == first_title
+
+
+def test_describe_stream_failure_classifies_common_errors():
+    from tldw_chatbook.Chat.console_chat_controller import describe_stream_failure
+
+    assert "timed out" in describe_stream_failure(asyncio.TimeoutError())
+    assert "timed out" in describe_stream_failure(TimeoutError())
+    assert "connection refused" in describe_stream_failure(ConnectionRefusedError())
+    assert "could not connect" in describe_stream_failure(ConnectionError("boom"))
+
+    class FakeHTTPStatusError(Exception):
+        def __init__(self):
+            super().__init__("")
+            self.response = SimpleNamespace(status_code=502)
+
+    assert "HTTP 502" in describe_stream_failure(FakeHTTPStatusError())
+    # str(exc) alone was empty in the live failure ("[failed]"); the class
+    # name must always be present so the copy is never blank.
+    empty_detail = describe_stream_failure(RuntimeError())
+    assert empty_detail == "RuntimeError error"
+    with_detail = describe_stream_failure(RuntimeError("llama.cpp stream failed"))
+    assert with_detail == "RuntimeError error (llama.cpp stream failed)"
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_invokes_accepted_hook_after_acceptance_only():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    accepted_calls = []
+    controller.on_submission_accepted = lambda: accepted_calls.append(True)
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is True
+    assert accepted_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_does_not_invoke_accepted_hook_when_blocked():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=BlockedGateway())
+    accepted_calls = []
+    controller.on_submission_accepted = lambda: accepted_calls.append(True)
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is False
+    assert accepted_calls == []
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_accepted_hook_failure_does_not_break_run():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    def broken_hook():
+        raise RuntimeError("composer vanished")
+
+    controller.on_submission_accepted = broken_hook
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is True
+    assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_regenerate_failure_adds_system_row_without_touching_variants():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    await controller.submit_draft("hello")
+    messages = store.messages_for_session(store.active_session_id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+
+    controller.provider_gateway = FailingStreamingGateway()
+
+    class FailingBeforeAnyChunkGateway(StreamingGateway):
+        async def stream_chat(self, resolution, messages):
+            if getattr(resolution, "never_yield", False):
+                yield ""
+            raise RuntimeError("regen exploded")
+
+    controller.provider_gateway = FailingBeforeAnyChunkGateway()
+    result = await controller.regenerate_message(assistant.id)
+
+    assert result.accepted is True
+    assert "Provider stream failed:" in result.visible_copy
+    assert "regen exploded" in result.visible_copy
+    refreshed = store.get_message(assistant.id)
+    assert refreshed.content == "hello"
+    assert "Provider stream failed" not in refreshed.content
+    system_row = store.messages_for_session(store.active_session_id)[-1]
+    assert system_row.role is ConsoleMessageRole.SYSTEM
+    assert "regen exploded" in system_row.content
+    assert controller.run_state.status is ConsoleRunStatus.FAILED
+
+
+def _pending_image(name="photo.png", data=b"\x89PNG-bytes"):
+    return PendingAttachment(
+        file_path=f"/tmp/{name}",
+        display_name=name,
+        file_type="image",
+        insert_mode="attachment",
+        data=data,
+        mime_type="image/png",
+        original_size=len(data),
+        processed_size=len(data),
+    )
+
+
+def test_submit_draft_sends_image_parts_when_vision_capable(monkeypatch):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    session = store.ensure_session()
+    store.set_pending_attachment(session.id, _pending_image())
+
+    result = asyncio.run(controller.submit_draft("what is this?"))
+
+    assert result.accepted
+    user_payload = gateway.messages_seen[-1]
+    assert user_payload["role"] == "user"
+    assert isinstance(user_payload["content"], list)
+    assert user_payload["content"][0] == {"type": "text", "text": "what is this?"}
+    assert user_payload["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert store.pending_attachment(session.id) is None  # consumed on send
+
+
+def test_submit_draft_blocks_pending_image_on_non_vision_model(monkeypatch):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: False)
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=RecordingStreamingGateway(), model="text-model"
+    )
+    session = store.ensure_session()
+    store.set_pending_attachment(session.id, _pending_image())
+
+    result = asyncio.run(controller.submit_draft("look at this"))
+
+    assert not result.accepted
+    assert "can't accept images" in result.visible_copy
+    assert store.pending_attachment(session.id) is not None  # kept for model switch
+
+
+def test_image_only_draft_is_sendable(monkeypatch):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    session = store.ensure_session()
+    store.set_pending_attachment(session.id, _pending_image())
+
+    result = asyncio.run(controller.submit_draft(""))
+
+    assert result.accepted
+    user_payload = gateway.messages_seen[-1]
+    assert [part["type"] for part in user_payload["content"]] == ["image_url"]
+
+
+def test_history_images_capped_to_most_recent(monkeypatch):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 1)
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    session = store.ensure_session()
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="first",
+        image_data=b"img-1", image_mime_type="image/png",
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="second",
+        image_data=b"img-2", image_mime_type="image/png",
+    )
+
+    asyncio.run(controller.submit_draft("and now?"))
+
+    contents = [m["content"] for m in gateway.messages_seen if m["role"] == "user"]
+    assert contents[0] == "first"           # over budget → text only
+    assert isinstance(contents[1], list)    # most recent image kept
+    assert contents[2] == "and now?"
+
+
+def test_non_vision_history_stays_plain_strings(monkeypatch):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: False)
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="text-model")
+    session = store.ensure_session()
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="had an image",
+        image_data=b"img-1", image_mime_type="image/png",
+    )
+
+    asyncio.run(controller.submit_draft("plain follow-up"))
+
+    for message in gateway.messages_seen:
+        assert isinstance(message["content"], str)
+
+
+def test_submit_stages_all_pendings_and_clears(monkeypatch):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    session = store.ensure_session()
+    store.add_pending_attachment(session.id, _pending_image("a.png"))
+    store.add_pending_attachment(session.id, _pending_image("b.png"))
+
+    result = asyncio.run(controller.submit_draft("two pics"))
+
+    assert result.accepted
+    user_payload = gateway.messages_seen[-1]
+    image_parts = [p for p in user_payload["content"] if p["type"] == "image_url"]
+    assert len(image_parts) == 2
+    assert store.pending_attachments(session.id) == []
+    messages = store.messages_for_session(session.id)
+    user_message = [m for m in messages if m.role is ConsoleMessageRole.USER][-1]
+    assert len(user_message.attachments) == 2
+    assert user_message.image_data is not None  # mirror holds
+
+
+def test_image_budget_counts_images_newest_first(monkeypatch):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 3)
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    session = store.ensure_session()
+    from tldw_chatbook.Chat.console_chat_models import MessageAttachment
+
+    def _atts(n, tag):
+        return tuple(
+            MessageAttachment(data=f"{tag}-{i}".encode(), mime_type="image/png",
+                              display_name=f"{tag}{i}.png", position=i)
+            for i in range(n)
+        )
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER,
+                         content="older", attachments=_atts(2, "old"))
+    store.append_message(session.id, role=ConsoleMessageRole.USER,
+                         content="newer", attachments=_atts(2, "new"))
+
+    asyncio.run(controller.submit_draft("go"))
+
+    user_payloads = [m for m in gateway.messages_seen if m["role"] == "user"]
+    # newest ("newer") gets both images; "older" gets 1 (budget 3), oldest first-dropped.
+    newer = user_payloads[1]
+    older = user_payloads[0]
+    newer_images = [p for p in newer["content"] if p["type"] == "image_url"] if isinstance(newer["content"], list) else []
+    older_images = [p for p in older["content"] if p["type"] == "image_url"] if isinstance(older["content"], list) else []
+    assert len(newer_images) == 2
+    assert len(older_images) == 1
+    # Budget-rule resolution: reservation walks messages newest-first, but a
+    # partially-budgeted message emits its images in POSITION order up to the
+    # reserved count -- "older" keeps its position-0 image ("old-0"), not its
+    # newest-added one.
+    import base64
+
+    decoded = base64.b64decode(older_images[0]["image_url"]["url"].split(",", 1)[1])
+    assert decoded == b"old-0"
+
+
+def test_history_image_with_empty_mime_type_falls_back_to_default_mime(monkeypatch):
+    """A resumed message can carry an attachment with ``mime_type=""`` (e.g.
+    ``_console_messages_from_conversation_tree`` falls back to ``""`` when
+    the persisted ``image_mime_type`` column is NULL). The provider payload
+    builder must never emit a bare ``data:;base64,...`` URL for it -- that
+    is an invalid data URI most providers reject outright. It must fall
+    back to the same default mime the send-time staging path already uses
+    (``pending.mime_type or "image/png"`` in this module, and
+    ``image_mime_type or "image/png"`` in ``ConsoleChatStore.append_message``)."""
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway, model="vision-model")
+    session = store.ensure_session()
+    from tldw_chatbook.Chat.console_chat_models import MessageAttachment
+
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="resumed image",
+        attachments=(
+            MessageAttachment(data=b"img-bytes", mime_type="", display_name="a.png", position=0),
+        ),
+    )
+
+    asyncio.run(controller.submit_draft("what is this?"))
+
+    user_payloads = [m for m in gateway.messages_seen if m["role"] == "user"]
+    resumed_payload = user_payloads[0]
+    image_parts = [p for p in resumed_payload["content"] if p["type"] == "image_url"]
+    assert len(image_parts) == 1
+    url = image_parts[0]["image_url"]["url"]
+    assert not url.startswith("data:;base64,")
+    assert url.startswith("data:image/")

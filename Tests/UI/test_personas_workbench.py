@@ -147,7 +147,7 @@ class TestWorkbenchShell:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             title = screen.query_one("#personas-title", Static)
-            assert "Personas" in str(title.renderable)
+            assert "Roleplay" in str(title.renderable)
             assert "ds-destination-header" in title.classes
             assert screen.query_one("#personas-mode-strip")
             assert screen.query_one("#personas-library-pane")
@@ -346,21 +346,68 @@ class TestWorkbenchShell:
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             assert "Personas: 1" in str(status.renderable)
-            await pilot.click("#personas-mode-prompts")
+            # "prompts" is retired from the Personas mode strip (Task 7):
+            # "dictionaries" is the next still-unwired placeholder mode.
+            await pilot.click("#personas-mode-dictionaries")
             await pilot.pause()
-            assert "Mode: Prompts" in str(status.renderable)
+            assert "Mode: Dictionaries" in str(status.renderable)
 
     async def test_placeholder_modes_show_placeholder_panel(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            await pilot.click("#personas-mode-prompts")
+            # Lore is the one remaining planned mode: dictionaries shipped in
+            # Roleplay P1a and prompts are retired to the Library (Task 7).
+            await pilot.click("#personas-mode-lore")
             await pilot.pause()
-            assert screen.state.active_mode == "prompts"
+            assert screen.state.active_mode == "lore"
             placeholder = screen.query_one("#personas-mode-placeholder", Static)
             assert placeholder.display is True
-            assert "not available yet" in str(placeholder.renderable)
-            assert "is-active" in screen.query_one("#personas-mode-prompts", Button).classes
+            # Roleplay P0 copy: planned modes read "Coming soon" with a purpose line.
+            assert "Coming soon" in str(placeholder.renderable)
+            assert "is-active" in screen.query_one("#personas-mode-lore", Button).classes
+
+    async def test_mode_chips_are_self_explaining_and_mark_coming_soon(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            lore_chip = screen.query_one("#personas-mode-lore", Button)
+            assert lore_chip.tooltip == "Lore — world facts injected on keywords."
+            assert "soon" in str(lore_chip.label).lower()
+            char_chip = screen.query_one("#personas-mode-characters", Button)
+            assert "soon" not in str(char_chip.label).lower()
+
+    async def test_coming_soon_mode_shows_inviting_copy(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await screen._apply_mode("lore")
+            await pilot.pause()
+            body = str(screen.query_one("#personas-mode-placeholder", Static).renderable)
+            assert "coming soon" in body.lower()
+            assert "not available yet" not in body.lower()
+
+    async def test_title_reframed_to_roleplay_keeps_state_suffix(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            assert str(screen.query_one("#personas-title", Static).renderable).startswith("Roleplay")
+            # dynamic suffix still appends in create mode
+            screen._edit_mode = "create"
+            screen._update_title()
+            await pilot.pause()
+            title = str(screen.query_one("#personas-title", Static).renderable)
+            assert title.startswith("Roleplay") and "New character" in title
+
+    async def test_purpose_shows_active_mode_descriptor_and_updates_on_switch(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            purpose = screen.query_one("#personas-purpose", Static)
+            assert "who the AI plays" in str(purpose.renderable)   # characters is the default mode
+            await screen._apply_mode("personas")
+            await pilot.pause()
+            assert "who you are" in str(screen.query_one("#personas-purpose", Static).renderable)
 
 
 class TestCharacterSelectionAndEdit:
@@ -3853,9 +3900,11 @@ class TestKeyboardInteraction:
             await pilot.pause()
             assert screen.state.active_mode == "personas"
             # ]/[ cycle through the strip order from the active mode.
+            # "prompts" is retired from the strip (Task 7), so "dictionaries"
+            # is next after "personas".
             await pilot.press("right_square_bracket")
             await pilot.pause()
-            assert screen.state.active_mode == "prompts"
+            assert screen.state.active_mode == "dictionaries"
             await pilot.press("left_square_bracket")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
@@ -4053,7 +4102,7 @@ class TestDirtyTracking:
             # already carries "Source: Local").
             assert (
                 str(title.renderable)
-                == "Personas | Behavior profiles for chat and agents | Ready"
+                == "Roleplay | Author the pieces that shape a chat | Ready"
             )
 
     async def test_active_row_gets_unsaved_badge(

@@ -259,7 +259,7 @@ class _StdioJSONRPCConnection:
             except ProcessLookupError:
                 pass
             except Exception:
-                logger.debug("Failed to terminate MCP subprocess cleanly", exc_info=True)
+                logger.opt(exception=True).debug("Failed to terminate MCP subprocess cleanly")
 
             try:
                 await asyncio.wait_for(self.process.wait(), timeout=_TERMINATE_TIMEOUT_SECONDS)
@@ -269,7 +269,7 @@ class _StdioJSONRPCConnection:
                 except ProcessLookupError:
                     pass
                 except Exception:
-                    logger.debug("Failed to kill MCP subprocess cleanly", exc_info=True)
+                    logger.opt(exception=True).debug("Failed to kill MCP subprocess cleanly")
                 try:
                     await self.process.wait()
                 except Exception:
@@ -360,7 +360,7 @@ class _StdioJSONRPCConnection:
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.debug("MCP stderr reader exited with error", exc_info=True)
+            logger.opt(exception=True).debug("MCP stderr reader exited with error")
 
     async def _handle_incoming_payload(self, payload: Any) -> None:
         if isinstance(payload, list):

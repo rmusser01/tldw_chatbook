@@ -4,31 +4,13 @@ import pytest
 
 from tldw_chatbook.UI.Research_Modules.research_controller import ResearchController
 from tldw_chatbook.UI.Research_Window import ResearchWindow
-from tldw_chatbook.UI.Screens.research_screen import ResearchScreen
 
-
-def test_research_screen_composes_research_window():
-    app = SimpleNamespace(research_scope_service=object())
-    screen = ResearchScreen(app)
-
-    widgets = list(screen.compose_content())
-
-    assert len(widgets) == 1
-    assert isinstance(widgets[0], ResearchWindow)
-
-
-def test_research_screen_round_trips_window_state():
-    app = SimpleNamespace(research_scope_service=object())
-    screen = ResearchScreen(app)
-    window = ResearchWindow(app)
-    window.restore_state({"source": "server"})
-    screen.query_one = lambda *_args, **_kwargs: window
-
-    state = screen.save_state()
-    screen.restore_state({"source": "local"})
-
-    assert state == {"source": "server"}
-    assert window.save_state() == {"source": "local"}
+# NOTE: ``ResearchScreen`` (UI/Screens/research_screen.py) and its screen
+# registration were removed in Task 255 -- the route was an orphan with no
+# shell destination or navigation entry point, and the "research" route id
+# now aliases to Library. ``ResearchWindow``/``ResearchController`` below
+# remain in the tree (their removal is a separate decision), so their
+# behavior stays covered here.
 
 
 class FakeResearchScopeService:

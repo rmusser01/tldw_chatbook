@@ -44,7 +44,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import threading
 import logging
-from typing import List, Dict, Optional, Any, Union, Set, Tuple
+from typing import List, Dict, Optional, Any, Union, Set, Tuple, Sequence
 
 from loguru import logger
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
@@ -54,7 +54,8 @@ from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 # Third-Party Libraries
 #
 # Local Imports
-from .sql_validation import validate_table_name, validate_column_name  
+from .sql_validation import validate_table_name, validate_column_name
+from .sql_logging import preview_params
 #
 ########################################################################################################################
 #
@@ -62,6 +63,12 @@ from .sql_validation import validate_table_name, validate_column_name
 
 DEFAULT_RUNTIME_BACKEND = "local"
 DEFAULT_DISCOVERY_OWNER = "general_chat"
+
+# Sentinel scope for conversation listing that spans every persisted scope
+# ('global' and all workspaces). This is a QUERY-only scope: conversations are
+# still stored as 'global' or 'workspace'. Used by the Library Browse ▸
+# Conversations snapshot so Console workspace chats are listed and counted.
+CONVERSATION_SCOPE_ALL = "all"
 
 # --- Custom Exceptions ---
 class CharactersRAGDBError(Exception):
@@ -133,7 +140,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 17  # Adds local-only conversation marks.
+    _CURRENT_SCHEMA_VERSION = 20  # Adds per-conversation metadata (P1e).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2106,7 +2113,243 @@ UPDATE db_schema_version
    AND version = 16;
 """
 
-    def __init__(self, db_path: Union[str, Path], client_id: str, 
+    # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v17_to_v18_conversation_system_prompt.sql.
+    _MIGRATE_V17_TO_V18_SQL = """
+ALTER TABLE conversations ADD COLUMN system_prompt TEXT;
+
+DROP TRIGGER IF EXISTS conversations_sync_create;
+DROP TRIGGER IF EXISTS conversations_sync_update;
+DROP TRIGGER IF EXISTS conversations_sync_delete;
+DROP TRIGGER IF EXISTS conversations_sync_undelete;
+
+CREATE TRIGGER conversations_sync_create
+AFTER INSERT ON conversations BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'create',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,
+                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
+                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
+                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+CREATE TRIGGER conversations_sync_update
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = NEW.deleted AND (
+     OLD.title IS NOT NEW.title OR
+     OLD.rating IS NOT NEW.rating OR
+     OLD.forked_from_message_id IS NOT NEW.forked_from_message_id OR
+     OLD.parent_conversation_id IS NOT NEW.parent_conversation_id OR
+     OLD.character_id IS NOT NEW.character_id OR
+     OLD.assistant_kind IS NOT NEW.assistant_kind OR
+     OLD.assistant_id IS NOT NEW.assistant_id OR
+     OLD.persona_memory_mode IS NOT NEW.persona_memory_mode OR
+     OLD.scope_type IS NOT NEW.scope_type OR
+     OLD.workspace_id IS NOT NEW.workspace_id OR
+     OLD.state IS NOT NEW.state OR
+     OLD.topic_label IS NOT NEW.topic_label OR
+     OLD.topic_label_source IS NOT NEW.topic_label_source OR
+     OLD.topic_last_tagged_at IS NOT NEW.topic_last_tagged_at OR
+     OLD.topic_last_tagged_message_id IS NOT NEW.topic_last_tagged_message_id OR
+     OLD.cluster_id IS NOT NEW.cluster_id OR
+     OLD.source IS NOT NEW.source OR
+     OLD.external_ref IS NOT NEW.external_ref OR
+     OLD.runtime_backend IS NOT NEW.runtime_backend OR
+     OLD.discovery_owner IS NOT NEW.discovery_owner OR
+     OLD.discovery_entity_id IS NOT NEW.discovery_entity_id OR
+     OLD.system_prompt IS NOT NEW.system_prompt OR
+     OLD.last_modified IS NOT NEW.last_modified OR
+     OLD.version IS NOT NEW.version)
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,
+                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
+                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
+                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+CREATE TRIGGER conversations_sync_delete
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = 0 AND NEW.deleted = 1
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'delete',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'deleted',NEW.deleted,'last_modified',NEW.last_modified,
+                     'version',NEW.version,'client_id',NEW.client_id));
+END;
+
+CREATE TRIGGER conversations_sync_undelete
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = 1 AND NEW.deleted = 0
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,
+                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
+                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
+                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+UPDATE db_schema_version
+   SET version = 18
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 17;
+"""
+
+    # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v19_to_v20_conversation_metadata.sql.
+    _MIGRATE_V19_TO_V20_SQL = """
+DROP TRIGGER IF EXISTS conversations_sync_create;
+DROP TRIGGER IF EXISTS conversations_sync_update;
+DROP TRIGGER IF EXISTS conversations_sync_delete;
+DROP TRIGGER IF EXISTS conversations_sync_undelete;
+
+CREATE TRIGGER conversations_sync_create
+AFTER INSERT ON conversations BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'create',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,
+                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
+                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
+                     'metadata',NEW.metadata,
+                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+CREATE TRIGGER conversations_sync_update
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = NEW.deleted AND (
+     OLD.title IS NOT NEW.title OR
+     OLD.rating IS NOT NEW.rating OR
+     OLD.forked_from_message_id IS NOT NEW.forked_from_message_id OR
+     OLD.parent_conversation_id IS NOT NEW.parent_conversation_id OR
+     OLD.character_id IS NOT NEW.character_id OR
+     OLD.assistant_kind IS NOT NEW.assistant_kind OR
+     OLD.assistant_id IS NOT NEW.assistant_id OR
+     OLD.persona_memory_mode IS NOT NEW.persona_memory_mode OR
+     OLD.scope_type IS NOT NEW.scope_type OR
+     OLD.workspace_id IS NOT NEW.workspace_id OR
+     OLD.state IS NOT NEW.state OR
+     OLD.topic_label IS NOT NEW.topic_label OR
+     OLD.topic_label_source IS NOT NEW.topic_label_source OR
+     OLD.topic_last_tagged_at IS NOT NEW.topic_last_tagged_at OR
+     OLD.topic_last_tagged_message_id IS NOT NEW.topic_last_tagged_message_id OR
+     OLD.cluster_id IS NOT NEW.cluster_id OR
+     OLD.source IS NOT NEW.source OR
+     OLD.external_ref IS NOT NEW.external_ref OR
+     OLD.runtime_backend IS NOT NEW.runtime_backend OR
+     OLD.discovery_owner IS NOT NEW.discovery_owner OR
+     OLD.discovery_entity_id IS NOT NEW.discovery_entity_id OR
+     OLD.system_prompt IS NOT NEW.system_prompt OR
+     OLD.metadata IS NOT NEW.metadata OR
+     OLD.last_modified IS NOT NEW.last_modified OR
+     OLD.version IS NOT NEW.version)
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,
+                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
+                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
+                     'metadata',NEW.metadata,
+                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+CREATE TRIGGER conversations_sync_delete
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = 0 AND NEW.deleted = 1
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'delete',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'deleted',NEW.deleted,'last_modified',NEW.last_modified,
+                     'version',NEW.version,'client_id',NEW.client_id));
+END;
+
+CREATE TRIGGER conversations_sync_undelete
+AFTER UPDATE ON conversations
+WHEN OLD.deleted = 1 AND NEW.deleted = 0
+BEGIN
+  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
+  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
+         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
+                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
+                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
+                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
+                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
+                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
+                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
+                     'source',NEW.source,'external_ref',NEW.external_ref,
+                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
+                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
+                     'metadata',NEW.metadata,
+                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
+                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
+END;
+
+UPDATE db_schema_version
+   SET version = 20
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 19;
+"""
+
+    # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql.
+    _MIGRATE_V18_TO_V19_SQL = """
+CREATE TABLE IF NOT EXISTS message_attachments(
+  message_id   TEXT    NOT NULL REFERENCES messages(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  position     INTEGER NOT NULL CHECK (position >= 1),
+  data         BLOB    NOT NULL,
+  mime_type    TEXT    NOT NULL,
+  display_name TEXT    NOT NULL DEFAULT '',
+  PRIMARY KEY (message_id, position)
+);
+CREATE INDEX IF NOT EXISTS idx_message_attachments_message ON message_attachments(message_id);
+UPDATE db_schema_version
+   SET version = 19
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 18;
+"""
+
+    def __init__(self, db_path: Union[str, Path], client_id: str,
                  check_integrity_on_startup: bool = False):
         """
         Initializes the CharactersRAGDB instance.
@@ -2162,12 +2405,11 @@ UPDATE db_schema_version
             
             logger.debug(f"CharactersRAGDB initialization completed successfully for {self.db_path_str}")
         except (CharactersRAGDBError, sqlite3.Error) as e:
-            logger.critical(f"FATAL: DB Initialization failed for {self.db_path_str}: {e}", exc_info=True)
+            logger.opt(exception=True).critical(f"FATAL: DB Initialization failed for {self.db_path_str}: {e}")
             self.close_connection()  # Attempt to clean up
             raise CharactersRAGDBError(f"Database initialization failed: {e}") from e
         except Exception as e:
-            logger.critical(f"FATAL: Unexpected error during DB Initialization for {self.db_path_str}: {e}",
-                            exc_info=True)
+            logger.opt(exception=True).critical(f"FATAL: Unexpected error during DB Initialization for {self.db_path_str}: {e}")
             self.close_connection()
             raise CharactersRAGDBError(f"Unexpected database initialization error: {e}") from e
 
@@ -2218,7 +2460,7 @@ UPDATE db_schema_version
                 logger.debug(
                     f"Opened/Reopened SQLite connection to {self.db_path_str} (Journal: {conn.execute('PRAGMA journal_mode;').fetchone()[0]}) for thread {threading.get_ident()}")
             except sqlite3.Error as e:
-                logger.error(f"Failed to connect to database {self.db_path_str}: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Failed to connect to database {self.db_path_str}: {e}")
                 self._local.conn = None
                 raise CharactersRAGDBError(f"Failed to connect to database '{self.db_path_str}': {e}") from e
         return self._local.conn
@@ -2320,13 +2562,13 @@ UPDATE db_schema_version
             logger.info(f"Database backup successful from '{self.db_path_str}' to '{str(backup_db_path_obj)}'")
             return True
         except ValueError as ve: # Catch specific ValueError for path mismatch first
-            logger.error(f"ValueError during database backup: {ve}", exc_info=True)
+            logger.opt(exception=True).error(f"ValueError during database backup: {ve}")
             return False
         except sqlite3.Error as e:
-            logger.error(f"SQLite error during database backup: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"SQLite error during database backup: {e}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error during database backup: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error during database backup: {e}")
             return False
         finally:
             if backup_conn:
@@ -2391,8 +2633,16 @@ UPDATE db_schema_version
         conn = self.get_connection()
         try:
             cursor = conn.cursor()
-            #if logger.isEnabledFor(logging.DEBUG):  # Avoid formatting query/params if not debugging
-            logger.debug(f"Executing SQL (script={script}): {query[:300]}... Params: {str(params)[:200]}...")
+            # Lazy + BLOB-safe: loguru has no isEnabledFor(), so the guard
+            # against formatting query/params when not debugging is
+            # `opt(lazy=True)` with callables instead of an eager f-string --
+            # the lambda (and preview_params' truncation) only runs if a sink
+            # actually admits DEBUG. See DB/sql_logging.py.
+            logger.opt(lazy=True).debug(
+                "Executing SQL (script={}): {}",
+                lambda: script,
+                lambda: f"{query[:300]}... Params: {preview_params(params)}",
+            )
 
             if script:
                 cursor.executescript(query)
@@ -2447,7 +2697,7 @@ UPDATE db_schema_version
                 "error_type": "database_error"
             })
             
-            logger.error(f"Query execution failed: {query[:300]}... Error: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Query execution failed: {query[:300]}... Error: {e}")
             raise CharactersRAGDBError(f"Query execution failed: {e}") from e
 
     def execute_many(self, query: str, params_list: List[tuple], *, commit: bool = False) -> Optional[sqlite3.Cursor]:
@@ -2486,7 +2736,7 @@ UPDATE db_schema_version
                 raise ConflictError(message=f"Unique constraint violation during batch: {e}") from e
             raise CharactersRAGDBError(f"Database constraint violation during batch: {e}") from e
         except sqlite3.Error as e:
-            logger.error(f"Execute Many failed: {query[:150]}... Error: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Execute Many failed: {query[:150]}... Error: {e}")
             raise CharactersRAGDBError(f"Execute Many failed: {e}") from e
 
     # --- Transaction Context ---
@@ -2530,7 +2780,7 @@ UPDATE db_schema_version
         except sqlite3.Error as e:
             if "no such table" in str(e).lower() and "db_schema_version" in str(e).lower():
                 return 0
-            logger.error(f"Could not determine database schema version for '{self._SCHEMA_NAME}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Could not determine database schema version for '{self._SCHEMA_NAME}': {e}")
             raise SchemaError(f"Could not determine schema version for '{self._SCHEMA_NAME}': {e}") from e
 
     def _apply_schema_v4(self, conn: sqlite3.Connection):
@@ -2561,12 +2811,12 @@ UPDATE db_schema_version
                     f"[{self._SCHEMA_NAME} V4] Schema version update check failed. Expected 4, got: {final_version}")
             logger.info(f"[{self._SCHEMA_NAME} V4] Schema 4 applied and version confirmed for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V4] Schema application failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V4] Schema application failed: {e}")
             raise SchemaError(f"DB schema V4 setup failed for '{self._SCHEMA_NAME}': {e}") from e
         except SchemaError:
             raise
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V4] Unexpected error during schema V4 application: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V4] Unexpected error during schema V4 application: {e}")
             raise SchemaError(f"Unexpected error applying schema V4 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v4_to_v5(self, conn: sqlite3.Connection):
@@ -2598,10 +2848,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V4→V5] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V4→V5] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V4→V5] Migration failed: {e}")
             raise SchemaError(f"Migration from V4 to V5 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V4→V5] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V4→V5] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V4 to V5 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v5_to_v6(self, conn: sqlite3.Connection):
@@ -2633,10 +2883,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V5→V6] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V5→V6] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V5→V6] Migration failed: {e}")
             raise SchemaError(f"Migration from V5 to V6 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V5→V6] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V5→V6] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V5 to V6 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v6_to_v7(self, conn: sqlite3.Connection):
@@ -2668,10 +2918,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V6→V7] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V6→V7] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V6→V7] Migration failed: {e}")
             raise SchemaError(f"Migration from V6 to V7 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V6→V7] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V6→V7] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V6 to V7 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v8_to_v9(self, conn: sqlite3.Connection):
@@ -2703,10 +2953,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V8→V9] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V8→V9] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V8→V9] Migration failed: {e}")
             raise SchemaError(f"Migration from V8 to V9 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V8→V9] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V8→V9] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V8 to V9 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v9_to_v10(self, conn: sqlite3.Connection):
@@ -2738,10 +2988,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V9→V10] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V9→V10] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V9→V10] Migration failed: {e}")
             raise SchemaError(f"Migration from V9 to V10 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V9→V10] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V9→V10] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V9 to V10 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v10_to_v11(self, conn: sqlite3.Connection):
@@ -2773,10 +3023,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V10→V11] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V10→V11] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V10→V11] Migration failed: {e}")
             raise SchemaError(f"Migration from V10 to V11 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V10→V11] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V10→V11] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V10 to V11 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v11_to_v12(self, conn: sqlite3.Connection):
@@ -2808,10 +3058,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V11→V12] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V11→V12] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V11→V12] Migration failed: {e}")
             raise SchemaError(f"Migration from V11 to V12 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V11→V12] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V11→V12] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V11 to V12 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v12_to_v13(self, conn: sqlite3.Connection):
@@ -2834,10 +3084,10 @@ UPDATE db_schema_version
 
             logger.info(f"[{self._SCHEMA_NAME} V12→V13] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V12→V13] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V12→V13] Migration failed: {e}")
             raise SchemaError(f"Migration from V12 to V13 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V12→V13] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V12→V13] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V12 to V13 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v13_to_v14(self, conn: sqlite3.Connection):
@@ -2859,10 +3109,10 @@ UPDATE db_schema_version
 
             logger.info(f"[{self._SCHEMA_NAME} V13→V14] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V13→V14] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V13→V14] Migration failed: {e}")
             raise SchemaError(f"Migration from V13 to V14 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V13→V14] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V13→V14] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V13 to V14 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v14_to_v15(self, conn: sqlite3.Connection):
@@ -2884,10 +3134,10 @@ UPDATE db_schema_version
 
             logger.info(f"[{self._SCHEMA_NAME} V14→V15] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V14→V15] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V14→V15] Migration failed: {e}")
             raise SchemaError(f"Migration from V14 to V15 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V14→V15] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V14→V15] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V14 to V15 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v15_to_v16(self, conn: sqlite3.Connection):
@@ -2943,10 +3193,10 @@ UPDATE db_schema_version
 
             logger.info(f"[{self._SCHEMA_NAME} V15→V16] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V15→V16] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V15→V16] Migration failed: {e}")
             raise SchemaError(f"Migration from V15 to V16 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V15→V16] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V15→V16] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V15 to V16 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v16_to_v17(self, conn: sqlite3.Connection):
@@ -2969,11 +3219,102 @@ UPDATE db_schema_version
 
             logger.info(f"[{self._SCHEMA_NAME} V16→V17] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V16→V17] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V16→V17] Migration failed: {e}")
             raise SchemaError(f"Migration from V16 to V17 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V16→V17] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V16→V17] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V16 to V17 for '{self._SCHEMA_NAME}': {e}") from e
+
+    def _migrate_from_v17_to_v18(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 17 to version 18.
+
+        This migration adds a nullable ``system_prompt`` column to
+        ``conversations`` for the native Console per-session system prompt
+        feature, and redefines the ``conversations_sync_*`` triggers so edits
+        to the new column are reflected in ``sync_log``.
+        """
+        logger.info(f"Migrating schema from V17 to V18 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            conn.executescript(self._MIGRATE_V17_TO_V18_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V17→V18] Migration script executed.")
+
+            final_version = self._get_db_version(conn)
+            if final_version != 18:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V17→V18] Migration version check failed. Expected 18, got: {final_version}"
+                )
+
+            logger.info(f"[{self._SCHEMA_NAME} V17→V18] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V17→V18] Migration failed: {e}")
+            raise SchemaError(f"Migration from V17 to V18 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V17→V18] Unexpected error during migration: {e}")
+            raise SchemaError(f"Unexpected error migrating from V17 to V18 for '{self._SCHEMA_NAME}': {e}") from e
+
+    def _migrate_from_v19_to_v20(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 19 to version 20.
+
+        This migration adds a nullable ``metadata`` column to
+        ``conversations`` for storing conversation-specific runtime metadata
+        (e.g., active_dictionaries), and redefines the ``conversations_sync_*``
+        triggers so edits to the new column are reflected in ``sync_log``.
+        """
+        logger.info(f"Migrating schema from V19 to V20 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            # Idempotent column add: SQLite has no ``ADD COLUMN IF NOT EXISTS``, so
+            # skip the ALTER when a replayed/partial migration already left the
+            # column in place (mirrors the v18->v19 ``CREATE TABLE IF NOT EXISTS``).
+            existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+            if "metadata" not in existing_columns:
+                conn.execute("ALTER TABLE conversations ADD COLUMN metadata TEXT")
+            conn.executescript(self._MIGRATE_V19_TO_V20_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V19→V20] Migration script executed.")
+
+            final_version = self._get_db_version(conn)
+            if final_version != 20:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V19→V20] Migration version check failed. Expected 20, got: {final_version}"
+                )
+
+            logger.info(f"[{self._SCHEMA_NAME} V19→V20] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V19→V20] Migration failed: {e}")
+            raise SchemaError(f"Migration from V19 to V20 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V19→V20] Unexpected error during migration: {e}")
+            raise SchemaError(f"Unexpected error migrating from V19 to V20 for '{self._SCHEMA_NAME}': {e}") from e
+
+    def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 18 to version 19.
+
+        This migration adds the ``message_attachments`` table for storing
+        extra Console message attachments (positions >= 1; position 0
+        remains in ``messages.image_data``/``image_mime_type``). No sync
+        triggers are added here; sync wiring is tracked separately
+        (TASK-220).
+        """
+        logger.info(f"Migrating schema from V18 to V19 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            conn.executescript(self._MIGRATE_V18_TO_V19_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V18→V19] Migration script executed.")
+
+            final_version = self._get_db_version(conn)
+            if final_version != 19:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V18→V19] Migration version check failed. Expected 19, got: {final_version}"
+                )
+
+            logger.info(f"[{self._SCHEMA_NAME} V18→V19] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V18→V19] Migration failed: {e}")
+            raise SchemaError(f"Migration from V18 to V19 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V18→V19] Unexpected error during migration: {e}")
+            raise SchemaError(f"Unexpected error migrating from V18 to V19 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
         """
@@ -3004,10 +3345,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V7→V8] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V7→V8] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V7→V8] Migration failed: {e}")
             raise SchemaError(f"Migration from V7 to V8 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V7→V8] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V7→V8] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V7 to V8 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _initialize_schema(self):
@@ -3060,6 +3401,9 @@ UPDATE db_schema_version
                     14: self._migrate_from_v14_to_v15,
                     15: self._migrate_from_v15_to_v16,
                     16: self._migrate_from_v16_to_v17,
+                    17: self._migrate_from_v17_to_v18,
+                    18: self._migrate_from_v18_to_v19,
+                    19: self._migrate_from_v19_to_v20,
                 }
 
                 if current_db_version == 0:
@@ -3084,10 +3428,10 @@ UPDATE db_schema_version
                     f"Database schema '{self._SCHEMA_NAME}' successfully initialized/migrated to version {final_version_check}.")
 
         except (SchemaError, sqlite3.Error) as e:
-            logger.error(f"Schema initialization/migration failed for '{self._SCHEMA_NAME}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Schema initialization/migration failed for '{self._SCHEMA_NAME}': {e}")
             raise SchemaError(f"Schema initialization/migration for '{self._SCHEMA_NAME}' failed: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected error during schema initialization for '{self._SCHEMA_NAME}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error during schema initialization for '{self._SCHEMA_NAME}': {e}")
             raise CharactersRAGDBError(f"Unexpected error applying schema for '{self._SCHEMA_NAME}': {e}") from e
 
     # --- Internal Helpers ---
@@ -3695,10 +4039,10 @@ UPDATE db_schema_version
                 "status": "error",
                 "error_type": "integrity_error"
             })
-            logger.critical(f"DATABASE IntegrityError during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}", exc_info=True)
+            logger.opt(exception=True).critical(f"DATABASE IntegrityError during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}")
             raise CharactersRAGDBError(f"Database integrity error during single update: {e}") from e
         except sqlite3.DatabaseError as e:
-            logger.critical(f"DATABASE ERROR during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}", exc_info=True)
+            logger.opt(exception=True).critical(f"DATABASE ERROR during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}")
             raise CharactersRAGDBError(f"Database error during single update: {e}") from e
         except ConflictError:  # Re-raise ConflictErrors from _get_current_db_version or manual checks
             # Log error metrics
@@ -3713,16 +4057,14 @@ UPDATE db_schema_version
                 "error_type": "version_conflict"
             })
             
-            logger.warning(f"ConflictError during update_character_card for ID {character_id}.",
-                           exc_info=False)  # exc_info=True if needed
+            logger.warning(f"ConflictError during update_character_card for ID {character_id}.")  # exc_info=True if needed
             raise
         except InputError:  # Should not happen if initial `if not card_data:` check is there.
-            logger.warning(f"InputError during update_character_card for ID {character_id}.", exc_info=False)
+            logger.warning(f"InputError during update_character_card for ID {character_id}.")
             raise
         except Exception as e:  # Catch any other unexpected Python errors
-            logger.error(
-                f"Unexpected Python error in update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"Unexpected Python error in update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}")
             raise CharactersRAGDBError(f"Unexpected error updating character card: {e}") from e
 
     def soft_delete_character_card(self, character_id: int, expected_version: int) -> Optional[bool]:
@@ -3842,9 +4184,8 @@ UPDATE db_schema_version
                 "status": "error",
                 "error_type": "database_error"
             })
-            logger.error(
-                f"Database error soft-deleting character card ID {character_id} (expected v{expected_version}): {e}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"Database error soft-deleting character card ID {character_id} (expected v{expected_version}): {e}")
             raise
 
     def delete_character_card(self, character_id: int) -> bool:
@@ -3878,7 +4219,7 @@ UPDATE db_schema_version
             logger.error(f"Conflict error deleting character card ID {character_id}: {e}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error deleting character card ID {character_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error deleting character card ID {character_id}: {e}")
             raise CharactersRAGDBError(f"Error deleting character card: {e}") from e
 
     @staticmethod
@@ -3974,9 +4315,8 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.error(
+            logger.opt(exception=True).error(
                 f"Database error restoring character card ID {character_id} (expected v{expected_version}): {e}",
-                exc_info=True,
             )
             raise
 
@@ -4026,6 +4366,34 @@ UPDATE db_schema_version
             stripped = value.strip()
             return stripped if stripped else None
         return str(value)
+
+    @staticmethod
+    def _fts_prefix_match_expression(term: str) -> str:
+        """Build a quoted FTS5 prefix-match expression from a raw user query.
+
+        FTS5 ``MATCH`` treats its argument as its own mini query language --
+        bare ``"``, ``*``, ``-``, and bareword operators like ``AND``/``OR``
+        are all syntactically meaningful. A user-typed search string is not
+        meant to be interpreted as an FTS5 query expression, just searched
+        for as literal text (token/prefix matched), so it is wrapped as an
+        FTS5 double-quoted string literal -- embedded ``"`` doubled per FTS5
+        string-literal escaping -- with a trailing ``*`` for prefix
+        matching, e.g. ``foo"bar`` -> ``"foo""bar"*``.
+
+        Unlike ``LIKE '%term%'`` (arbitrary substring, including mid-word),
+        this matches whole tokens or a prefix of the last token -- e.g.
+        "testing" is found by "test" but not by "esting". Callers relying on
+        mid-word substring matches should not assume FTS parity with LIKE.
+
+        Args:
+            term: Raw user-typed search text (already normalized/stripped).
+
+        Returns:
+            An FTS5 MATCH expression string: the term as a double-quoted
+            FTS5 string literal with a trailing ``*`` for prefix matching.
+        """
+        escaped = term.replace('"', '""')
+        return f'"{escaped}"*'
 
     def _normalize_conversation_state(self, state: Optional[str]) -> str:
         if state is None:
@@ -4249,6 +4617,7 @@ UPDATE db_schema_version
             discovery_owner=conv_data.get("discovery_owner"),
             discovery_entity_id=conv_data.get("discovery_entity_id"),
         )
+        system_prompt = self._normalize_nullable_text(conv_data.get('system_prompt'))
 
         now = self._get_current_utc_timestamp_iso()
         query = """
@@ -4256,16 +4625,16 @@ UPDATE db_schema_version
                                            character_id, assistant_kind, assistant_id, persona_memory_mode, \
                                            scope_type, workspace_id, state, topic_label, topic_label_source, \
                                            topic_last_tagged_at, topic_last_tagged_message_id, cluster_id, source, external_ref, \
-                                           runtime_backend, discovery_owner, discovery_entity_id, \
+                                           runtime_backend, discovery_owner, discovery_entity_id, system_prompt, \
                                            title, rating, created_at, last_modified, client_id, version, deleted) \
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
                 """ # created_at added
         params = (
             conv_id, root_id, conv_data.get('forked_from_message_id'),
             conv_data.get('parent_conversation_id'), character_id, assistant_kind, assistant_id, persona_memory_mode,
             scope_type, workspace_id, state, topic_label, topic_label_source,
             topic_last_tagged_at, topic_last_tagged_message_id, cluster_id, source, external_ref,
-            runtime_backend, discovery_owner, discovery_entity_id,
+            runtime_backend, discovery_owner, discovery_entity_id, system_prompt,
             conv_data.get('title'), conv_data.get('rating'),
             now, now, client_id # created_at, last_modified, client_id
         )
@@ -4391,10 +4760,10 @@ UPDATE db_schema_version
             
             return conversations
         except CharactersRAGDBError as e:
-            logger.error(f"Database error listing all active conversations: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Database error listing all active conversations: {e}")
             raise  # Re-raise the specific error
         except Exception as e:  # Catch any other unexpected errors
-            logger.error(f"Unexpected error listing all active conversations: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error listing all active conversations: {e}")
             raise CharactersRAGDBError(f"Unexpected error listing conversations: {e}") from e
 
     def get_conversation_by_id(self, conversation_id: str, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
@@ -4542,9 +4911,19 @@ UPDATE db_schema_version
         offset: int = 0,
         **_: Any,
     ) -> Tuple[List[Dict[str, Any]], int, float]:
-        normalized_scope, normalized_workspace_id = self._normalize_scope(scope_type, workspace_id)
-        clauses: List[str] = ["scope_type = ?"]
-        params: List[Any] = [normalized_scope]
+        clauses: List[str] = []
+        params: List[Any] = []
+        if str(scope_type or "").strip().lower() == CONVERSATION_SCOPE_ALL:
+            # "all" spans global- and workspace-scoped conversations in one
+            # page/count (the Library Browse ▸ Conversations snapshot seam);
+            # a workspace_id would silently contradict that, so reject it.
+            if self._normalize_nullable_text(workspace_id) is not None:
+                raise InputError("workspace_id must be omitted when scope_type is 'all'.")
+            normalized_workspace_id = None
+        else:
+            normalized_scope, normalized_workspace_id = self._normalize_scope(scope_type, workspace_id)
+            clauses.append("scope_type = ?")
+            params.append(normalized_scope)
 
         effective_client_id = self.client_id if client_id is None else client_id
         if effective_client_id is not None:
@@ -4581,17 +4960,31 @@ UPDATE db_schema_version
 
         normalized_query = self._normalize_nullable_text(query)
         if normalized_query is not None:
+            # Message-content matching goes through messages_fts (kept in
+            # sync by triggers -- see schema ~line 326) instead of a
+            # correlated leading-wildcard substring scan against the raw
+            # messages.content column: that was index-hostile, re-scanning
+            # every candidate conversation's messages per call (task-249 /
+            # performance audit finding A4). Title and id= matching are
+            # unchanged.
             clauses.append(
                 "("
                 "title LIKE ? OR id = ? OR EXISTS ("
-                "SELECT 1 FROM messages m "
+                "SELECT 1 FROM messages_fts fts "
+                "JOIN messages m ON fts.rowid = m.rowid "
                 "WHERE m.conversation_id = conversations.id "
                 "AND m.deleted = 0 "
-                "AND m.content LIKE ?"
+                # NOTE: the hidden-column form (`fts.messages_fts MATCH`) is
+                # deliberate — the bare-alias form (`fts MATCH ?`) fails with
+                # "no such column: fts" inside this correlated EXISTS+JOIN
+                # (verified against the test suite); both forms are
+                # documented FTS5.
+                "AND fts.messages_fts MATCH ?"
                 "))"
             )
             like_query = f"%{normalized_query}%"
-            params.extend([like_query, normalized_query, like_query])
+            fts_query = self._fts_prefix_match_expression(normalized_query)
+            params.extend([like_query, normalized_query, fts_query])
 
         where_clause = " AND ".join(clauses) if clauses else "1 = 1"
         count_query = f"SELECT COUNT(*) as total FROM conversations WHERE {where_clause}"
@@ -4609,6 +5002,47 @@ UPDATE db_schema_version
         cursor = self.execute_query(page_query, page_params)
         rows = [dict(row) for row in cursor.fetchall()]
         return rows, total, 0.0
+
+    def get_all_conversation_ids(self) -> List[str]:
+        """Return every non-deleted conversation id owned by this client (no page cap).
+
+        Mirrors the WHERE clause `search_conversations_page` builds for the
+        Library's conversations snapshot fetch: the Library screen calls
+        `ChatConversationService.list_conversations(mode="local", scope_type="all",
+        limit=..., offset=0)`, which spans both 'global' and 'workspace'
+        scoped conversations (Console chats persisted inside a workspace
+        session are workspace-scoped); `search_conversations_page` then
+        also scopes to `client_id = self.client_id` (its default when no
+        explicit `client_id` is passed) and excludes soft-deleted rows
+        (`deleted = 0`). This method issues the same client/deleted filter,
+        but returns the full id list instead of a `limit`/`offset` page --
+        the truncation-proof source for Library chatbook export
+        (`Library/library_export_scope.py`): the Library conversations
+        canvas only ever renders a capped snapshot
+        (`LIBRARY_SOURCE_PAGE_SIZES["conversations"]` rows), and resolving
+        an export from that rendered snapshot would silently drop everything
+        past the cap for a library larger than the page size.
+
+        Returns:
+            List[str]: Every matching conversation id, in ascending id order.
+
+        Raises:
+            CharactersRAGDBError: For database errors.
+        """
+        query = (
+            "SELECT id FROM conversations "
+            "WHERE client_id = ? AND deleted = 0 "
+            "ORDER BY id ASC"
+        )
+        try:
+            cursor = self.execute_query(query, (self.client_id,))
+            return [row["id"] for row in cursor.fetchall()]
+        except CharactersRAGDBError as e:
+            logger.error(
+                f"Database error listing all conversation ids "
+                f"(client_id={self.client_id!r}, scope_type='all'): {e}"
+            )
+            raise
 
     def count_messages_for_conversation(
         self,
@@ -4766,7 +5200,8 @@ UPDATE db_schema_version
         `version` is incremented, `last_modified` updated to current UTC time,
         and `client_id` set to the DB instance's `client_id`.
 
-        Updatable fields from `update_data`: 'title', 'rating'. Other fields are ignored.
+        Updatable fields from `update_data`: 'title', 'rating', 'metadata' (expects a
+        JSON string). Other fields are ignored.
         If `update_data` is empty or contains no updatable fields, metadata (version,
         last_modified, client_id) is still updated if the version check passes.
 
@@ -4802,7 +5237,7 @@ UPDATE db_schema_version
                            persona_memory_mode, scope_type, workspace_id, state, topic_label,
                            topic_label_source, topic_last_tagged_at, topic_last_tagged_message_id,
                            cluster_id, source, external_ref,
-                           runtime_backend, discovery_owner, discovery_entity_id
+                           runtime_backend, discovery_owner, discovery_entity_id, system_prompt
                     FROM conversations
                     WHERE id = ?
                     """,
@@ -4892,6 +5327,10 @@ UPDATE db_schema_version
                 if 'external_ref' in update_data:
                     external_ref = self._normalize_nullable_text(update_data.get('external_ref'))
 
+                system_prompt = current_state['system_prompt']
+                if 'system_prompt' in update_data:
+                    system_prompt = self._normalize_nullable_text(update_data.get('system_prompt'))
+
                 if runtime_update_requested:
                     runtime_backend, discovery_owner, discovery_entity_id = self._normalize_conversation_runtime_visibility(
                         runtime_backend=update_data.get("runtime_backend", current_state["runtime_backend"]),
@@ -4912,6 +5351,9 @@ UPDATE db_schema_version
                 if 'rating' in update_data:
                     fields_to_update_sql.append("rating = ?")
                     params_for_set_clause.append(update_data.get('rating'))
+                if 'metadata' in update_data:                       # ADDED (P1e)
+                    fields_to_update_sql.append("metadata = ?")     # ADDED
+                    params_for_set_clause.append(update_data.get('metadata'))  # ADDED
                 if assistant_update_requested:
                     fields_to_update_sql.extend([
                         "assistant_kind = ?",
@@ -4947,6 +5389,9 @@ UPDATE db_schema_version
                 if 'external_ref' in update_data:
                     fields_to_update_sql.append("external_ref = ?")
                     params_for_set_clause.append(external_ref)
+                if 'system_prompt' in update_data:
+                    fields_to_update_sql.append("system_prompt = ?")
+                    params_for_set_clause.append(system_prompt)
                 if runtime_update_requested:
                     fields_to_update_sql.extend([
                         "runtime_backend = ?",
@@ -4984,13 +5429,12 @@ UPDATE db_schema_version
         except InputError:
             raise
         except CharactersRAGDBError as e:
-            logger.error(
+            logger.opt(exception=True).error(
                 f"Application-level database error in update_conversation for ID {conversation_id}: {e}",
-                exc_info=True,
             )
             raise
         except Exception as e:
-            logger.error(f"Unexpected Python error in update_conversation for ID {conversation_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected Python error in update_conversation for ID {conversation_id}: {e}")
             raise CharactersRAGDBError(f"Unexpected error during update_conversation: {e}") from e
 
     def soft_delete_conversation(self, conversation_id: str, expected_version: int) -> Optional[bool]:
@@ -5065,9 +5509,8 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.error(
-                f"Database error soft-deleting conversation ID {conversation_id} (expected v{expected_version}): {e}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"Database error soft-deleting conversation ID {conversation_id} (expected v{expected_version}): {e}")
             raise
 
     def restore_conversation(self, conversation_id: str, expected_version: int) -> Optional[bool]:
@@ -5142,9 +5585,8 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.error(
+            logger.opt(exception=True).error(
                 f"Database error restoring conversation ID {conversation_id} (expected v{expected_version}): {e}",
-                exc_info=True,
             )
             raise
 
@@ -5368,6 +5810,82 @@ UPDATE db_schema_version
             logger.error(f"Database error fetching message ID {message_id}: {e}")
             raise
 
+    def set_message_attachments(self, message_id: str, rows: list[dict]) -> None:
+        """Replace the extra attachments (positions >= 1) for a message.
+
+        Position 0 lives in ``messages.image_data``/``image_mime_type``; this
+        table only holds positions >= 1. Runs DELETE + INSERT in one
+        transaction.
+
+        Args:
+            message_id: Target message UUID.
+            rows: Dicts with ``position`` (>= 1), ``data``, ``mime_type``,
+                ``display_name``.
+
+        Raises:
+            ValueError: If any row has position < 1.
+            CharactersRAGDBError: On database errors.
+        """
+        for row in rows:
+            if int(row.get("position", 0)) < 1:
+                raise ValueError("message_attachments positions start at 1.")
+        with self.transaction() as cursor:
+            cursor.execute(
+                "DELETE FROM message_attachments WHERE message_id = ?", (message_id,)
+            )
+            cursor.executemany(
+                "INSERT INTO message_attachments (message_id, position, data, mime_type, display_name)"
+                " VALUES (?, ?, ?, ?, ?)",
+                [
+                    (
+                        message_id,
+                        int(row["position"]),
+                        row["data"],
+                        row["mime_type"],
+                        row.get("display_name", ""),
+                    )
+                    for row in rows
+                ],
+            )
+
+    def get_attachments_for_messages(
+        self, message_ids: "Sequence[str]"
+    ) -> dict[str, list[dict]]:
+        """Batch-fetch extra attachments (positions >= 1) for messages.
+
+        Args:
+            message_ids: Message UUIDs to fetch for.
+
+        Returns:
+            Mapping of message_id to position-ordered attachment row dicts
+            (``position``, ``data``, ``mime_type``, ``display_name``); ids
+            with no rows are absent.
+        """
+        ids = [str(m) for m in message_ids if m]
+        if not ids:
+            return {}
+        result: dict[str, list[dict]] = {}
+        with self.transaction() as cursor:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start : start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor.execute(
+                    "SELECT message_id, position, data, mime_type, display_name"
+                    f" FROM message_attachments WHERE message_id IN ({placeholders})"
+                    " ORDER BY message_id, position",
+                    chunk,
+                )
+                for row in cursor.fetchall():
+                    result.setdefault(row["message_id"], []).append(
+                        {
+                            "position": row["position"],
+                            "data": row["data"],
+                            "mime_type": row["mime_type"],
+                            "display_name": row["display_name"],
+                        }
+                    )
+        return result
+
     def get_messages_for_conversation(self, conversation_id: str, limit: int = 100, offset: int = 0,
                                       order_by_timestamp: str = "ASC") -> List[Dict[str, Any]]:
         """
@@ -5566,16 +6084,14 @@ UPDATE db_schema_version
                     f"Updated message ID {message_id} from version {expected_version} to version {next_version_val}. Fields updated: {fields_to_update_sql if fields_to_update_sql else 'None'}")
                 return True
         except sqlite3.IntegrityError as e:
-            logger.error(f"SQLite integrity error updating message ID {message_id} (expected v{expected_version}): {e}",
-                         exc_info=True)
+            logger.opt(exception=True).error(f"SQLite integrity error updating message ID {message_id} (expected v{expected_version}): {e}")
             raise CharactersRAGDBError(f"Database integrity error updating message: {e}") from e
         except ConflictError:
             raise
         except InputError: # Should not be raised from here directly, but for completeness
             raise
         except CharactersRAGDBError as e:
-            logger.error(f"Database error updating message ID {message_id} (expected v{expected_version}): {e}",
-                         exc_info=True)
+            logger.opt(exception=True).error(f"Database error updating message ID {message_id} (expected v{expected_version}): {e}")
             raise
 
     def soft_delete_message(self, message_id: str, expected_version: int) -> Optional[bool]:
@@ -5648,8 +6164,7 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.error(f"Database error soft-deleting message ID {message_id} (expected v{expected_version}): {e}",
-                         exc_info=True)
+            logger.opt(exception=True).error(f"Database error soft-deleting message ID {message_id} (expected v{expected_version}): {e}")
             raise
 
     def update_message_feedback(self, message_id: str, feedback: str, expected_version: int) -> bool:
@@ -5774,7 +6289,7 @@ UPDATE db_schema_version
         except InputError:
             raise
         except Exception as e:
-            logger.error(f"Error creating message variant: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error creating message variant: {e}")
             raise CharactersRAGDBError(f"Failed to create message variant: {e}") from e
     
     def get_message_variants(self, message_id: str) -> List[Dict[str, Any]]:
@@ -5816,7 +6331,7 @@ UPDATE db_schema_version
                 return variants
                 
         except Exception as e:
-            logger.error(f"Error getting message variants: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error getting message variants: {e}")
             raise CharactersRAGDBError(f"Failed to get message variants: {e}") from e
     
     def select_message_variant(self, variant_id: str) -> bool:
@@ -5866,7 +6381,7 @@ UPDATE db_schema_version
         except InputError:
             raise
         except Exception as e:
-            logger.error(f"Error selecting message variant: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error selecting message variant: {e}")
             raise CharactersRAGDBError(f"Failed to select message variant: {e}") from e
 
     def search_messages_by_content(self, content_query: str, conversation_id: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
@@ -6213,18 +6728,16 @@ UPDATE db_schema_version
                     raise ConflictError(
                         f"Cannot update {table_name} ID {item_id}: {db_unique_col_name} '{val}' already exists.",
                         entity=table_name, entity_id=val) from e
-            logger.error(
-                f"SQLite integrity error during update of {table_name} ID {item_id} (expected version {expected_version}): {e}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"SQLite integrity error during update of {table_name} ID {item_id} (expected version {expected_version}): {e}")
             raise CharactersRAGDBError(f"Database integrity error updating {table_name} ({item_id}): {e}") from e
         except ConflictError:
             raise
         except InputError: # Should be caught by callers if they check 'update_data' emptiness first
             raise
         except CharactersRAGDBError as e:
-            logger.error(
-                f"Database error updating {table_name} ID {item_id} (expected version {expected_version}): {e}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"Database error updating {table_name} ID {item_id} (expected version {expected_version}): {e}")
             raise
         # No implicit return None, function should return True or raise.
 
@@ -6319,9 +6832,8 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:  # Catches sqlite3.Error from conn.execute
-            logger.error(
-                f"Database error soft-deleting {table_name} ID {item_id} (expected version {expected_version}): {e}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"Database error soft-deleting {table_name} ID {item_id} (expected version {expected_version}): {e}")
             raise
         # No implicit return None.
 
@@ -6670,6 +7182,34 @@ UPDATE db_schema_version
         row = cursor.fetchone()
         return int(row["cnt"] if row else 0)
 
+    def get_all_note_ids(self) -> List[str]:
+        """Return every non-deleted note id (no page cap).
+
+        Mirrors ``list_notes``'/``count_notes``' visibility exactly:
+        ``deleted = 0`` only. Notes are not ``client_id``-scoped the way
+        conversations are -- ``_list_generic_items`` (which backs
+        ``list_notes``) never filters on ``client_id`` -- so this method
+        doesn't either. This is the truncation-proof source for Library
+        chatbook export (``Library/library_export_scope.py``): the Library
+        notes canvas only ever renders a capped snapshot
+        (``LIBRARY_SOURCE_PAGE_SIZES["notes"]`` rows), and resolving an
+        export from that rendered snapshot would silently drop everything
+        past the cap for a library larger than the page size.
+
+        Returns:
+            The full list of non-deleted note ids, in ascending id order.
+
+        Raises:
+            CharactersRAGDBError: For database errors.
+        """
+        query = "SELECT id FROM notes WHERE deleted = 0 ORDER BY id ASC"
+        try:
+            cursor = self.execute_query(query)
+            return [row["id"] for row in cursor.fetchall()]
+        except CharactersRAGDBError as e:
+            logger.error(f"Database error listing all note ids: {e}")
+            raise
+
     def update_note(self, note_id: str, update_data: Dict[str, Any], expected_version: int) -> Optional[bool]:
         if not update_data:
             raise InputError("No data provided for note update.")
@@ -6734,8 +7274,7 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:  # Catches sqlite3.Error
-            logger.error(f"Database error updating note ID {note_id} (expected v{expected_version}): {e}",
-                         exc_info=True)
+            logger.opt(exception=True).error(f"Database error updating note ID {note_id} (expected v{expected_version}): {e}")
             raise
 
     def soft_delete_note(self, note_id: str, expected_version: int) -> Optional[bool]:
@@ -6785,15 +7324,28 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.error(f"Database error soft-deleting note ID {note_id} (expected v{expected_version}): {e}",
-                         exc_info=True)
+            logger.opt(exception=True).error(f"Database error soft-deleting note ID {note_id} (expected v{expected_version}): {e}")
             raise
 
-    def search_notes(self, search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Searches notes_fts (title and content). Corrected JOIN condition."""
+    def search_notes(
+        self,
+        search_term: str,
+        limit: int = 10,
+        fts_match_query: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Searches notes_fts (title and content). Corrected JOIN condition.
+
+        Args:
+            search_term: Plain user search text, matched as a literal phrase.
+            limit: Maximum number of notes to return.
+            fts_match_query: Optional caller-built FTS5 MATCH expression (must
+                already be injection-safe, e.g. Library keyword search's
+                quoted plural/singular-widened query). When provided it
+                replaces the default whole-phrase quoting of `search_term`.
+        """
         # FTS5 requires wrapping terms with special characters in double quotes
         # to be treated as a literal phrase.
-        safe_search_term = f'"{search_term}"'
+        safe_search_term = fts_match_query if fts_match_query else f'"{search_term}"'
 
         query = """
                 SELECT main.*
@@ -6863,10 +7415,10 @@ UPDATE db_schema_version
                 f"{operation.capitalize()}ed {link_table}: {col1_name}={col1_val}, {col2_name}={col2_val}. Rows affected: {rows_affected}")
             return rows_affected > 0
         except sqlite3.Error as e: # Catch SQLite specific errors from conn.execute
-            logger.error(f"SQLite error during {operation} for {link_table} ({col1_name}={col1_val}, {col2_name}={col2_val}): {e}", exc_info=True)
+            logger.opt(exception=True).error(f"SQLite error during {operation} for {link_table} ({col1_name}={col1_val}, {col2_name}={col2_val}): {e}")
             raise CharactersRAGDBError(f"Database error during {operation} for {link_table}: {e}") from e
         except CharactersRAGDBError as e: # Catch custom errors like InputError
-            logger.error(f"Application error during {operation} for {link_table}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Application error during {operation} for {link_table}: {e}")
             raise
 
 
@@ -9250,15 +9802,14 @@ class TransactionContextManager:
                     self.conn.commit()
                     logger.debug(f"Transaction (outermost) committed successfully on thread {threading.get_ident()}.")
                 except sqlite3.Error as commit_err:
-                    logger.error(f"Failed to commit transaction on thread {threading.get_ident()}: {commit_err}", exc_info=True)
+                    logger.opt(exception=True).error(f"Failed to commit transaction on thread {threading.get_ident()}: {commit_err}")
                     # Attempt rollback after failed commit
                     try:
                         self.conn.rollback()
                         logger.debug(f"Rollback after failed commit successful on thread {threading.get_ident()}.")
                     except sqlite3.Error as rb_err_after_commit_fail:
-                        logger.critical(
-                            f"Rollback after failed commit also FAILED on thread {threading.get_ident()}: {rb_err_after_commit_fail}",
-                            exc_info=True)
+                        logger.opt(exception=True).critical(
+                            f"Rollback after failed commit also FAILED on thread {threading.get_ident()}: {rb_err_after_commit_fail}")
                     # Re-raise the commit error so the caller knows the transaction failed.
                     # Encapsulate it if it's not already a DB-specific error from our library.
                     if not isinstance(commit_err, CharactersRAGDBError):
@@ -9272,9 +9823,8 @@ class TransactionContextManager:
                     logger.debug(
                         f"Transaction (outermost) rolled back due to exception ({exc_type.__name__}) on thread {threading.get_ident()}.")
                 except sqlite3.Error as rollback_err:
-                    logger.error(
-                        f"Failed to rollback transaction after exception on thread {threading.get_ident()}: {rollback_err}",
-                        exc_info=True)
+                    logger.opt(exception=True).error(
+                        f"Failed to rollback transaction after exception on thread {threading.get_ident()}: {rollback_err}")
                     # If rollback also fails, we wrap both errors
                     raise CharactersRAGDBError(
                         f"Rollback failed after exception: {rollback_err}. Original exception: {exc_val}") from rollback_err

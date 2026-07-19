@@ -53,7 +53,7 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "library",
         "Workspaces, source material, imports, notes, media, conversations, Study, flashcards, quizzes, and Search/RAG.",
         "Browse Workspaces, imports, notes, media, Study, flashcards, quizzes, search, and source material.",
-        ("notes", "media", "ingest", "search", "conversation", "study"),
+        ("notes", "media", "ingest", "search", "conversation", "study", "prompts", "skills"),
         navigation_priority=30,
     ),
     ShellDestination(
@@ -68,9 +68,9 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "personas",
         "Personas",
         "personas",
-        "Characters, personas, prompts, dictionaries, and behavior profiles.",
+        "Characters, personas, dictionaries, and behavior profiles.",
         "Manage behavior profiles and persona context.",
-        ("ccp", "conversations_characters_prompts", "characters", "prompts"),
+        ("ccp", "conversations_characters_prompts", "characters"),
     ),
     ShellDestination(
         "watchlists_collections",
@@ -112,13 +112,6 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "Manage ACP agents and sessions.",
     ),
     ShellDestination(
-        "skills",
-        "Skills",
-        "skills",
-        "Agent Skills packs, discovery, validation, and attachments.",
-        "Browse, import, validate, and attach skills.",
-    ),
-    ShellDestination(
         "settings",
         "Settings",
         "settings",
@@ -144,6 +137,13 @@ _ROUTABLE_LEGACY_ROUTES = {
     "subscriptions",
     "tools_settings",
     "customize",
+    # Personas "prompts" mode chip retirement (Task 7): keep the legacy
+    # route id as its own canonical route under Library, mirroring "notes".
+    "prompts",
+    # Standalone Skills tab retirement (Skills sub-project Task 5): keep
+    # the legacy route id as its own canonical route under Library,
+    # mirroring "notes"/"prompts" above.
+    "skills",
 }
 
 _CANONICAL_ROUTE_OVERRIDES = {

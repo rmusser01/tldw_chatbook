@@ -146,14 +146,7 @@ class MediaDetailsWidget(Container):
                         ],
                         default_value="words"
                     )
-                    
-                    yield from create_form_field(
-                        "Enable Late Chunking",
-                        f"enable-late-chunking-{self.type_slug}",
-                        "checkbox",
-                        default_value=False
-                    )
-            
+
             # Action buttons
             with Horizontal(classes="chunking-actions"):
                 yield Button("Save Config", id=f"save-chunking-{self.type_slug}", variant="primary")
@@ -573,15 +566,13 @@ class MediaDetailsWidget(Container):
             chunk_size = self.query_one(f"#chunk-size-{self.type_slug}", Input).value
             chunk_overlap = self.query_one(f"#chunk-overlap-{self.type_slug}", Input).value
             chunk_method = self.query_one(f"#chunk-method-{self.type_slug}", Select).value
-            enable_late = self.query_one(f"#enable-late-chunking-{self.type_slug}", Checkbox).value
-            
+
             # Build configuration
             config = {
                 "template": template if template != "default" else None,
                 "chunk_size": int(chunk_size) if chunk_size else 400,
                 "chunk_overlap": int(chunk_overlap) if chunk_overlap else 100,
-                "method": chunk_method,
-                "enable_late_chunking": enable_late
+                "method": chunk_method
             }
             
             # Save using the service
@@ -633,8 +624,7 @@ class MediaDetailsWidget(Container):
             self.query_one(f"#chunk-size-{self.type_slug}", Input).value = "400"
             self.query_one(f"#chunk-overlap-{self.type_slug}", Input).value = "100"
             self.query_one(f"#chunk-method-{self.type_slug}", Select).value = "words"
-            self.query_one(f"#enable-late-chunking-{self.type_slug}", Checkbox).value = False
-            
+
             # Clear database config using the service
             if self.media_data and self.chunking_service:
                 self.chunking_service.clear_document_config(self.media_data['id'])
@@ -718,8 +708,7 @@ class MediaDetailsWidget(Container):
                 self.query_one(f"#chunk-size-{self.type_slug}", Input).value = str(config.get('chunk_size', 400))
                 self.query_one(f"#chunk-overlap-{self.type_slug}", Input).value = str(config.get('chunk_overlap', 100))
                 self.query_one(f"#chunk-method-{self.type_slug}", Select).value = config.get('method', 'words')
-                self.query_one(f"#enable-late-chunking-{self.type_slug}", Checkbox).value = config.get('enable_late_chunking', False)
-                
+
                 # Update display
                 self._update_chunking_display(config)
             else:

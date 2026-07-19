@@ -1887,7 +1887,8 @@ class ToolsSettingsWindow(Container):
         ))
         
         image_widgets.append(Label("Supported Formats (comma-separated):", classes="form-label"))
-        formats = chat_images_config.get("supported_formats", [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"])
+        from tldw_chatbook.Chat.attachment_core import DEFAULT_SUPPORTED_IMAGE_FORMATS
+        formats = chat_images_config.get("supported_formats", list(DEFAULT_SUPPORTED_IMAGE_FORMATS))
         formats_str = ", ".join(formats) if isinstance(formats, list) else str(formats)
         image_widgets.append(Input(
             value=formats_str,

@@ -302,7 +302,7 @@ class KokoroTTSBackend(LocalTTSBackend):
             logger.info("KokoroTTSBackend: ONNX backend initialized successfully")
             
         except Exception as e:
-            logger.error(f"KokoroTTSBackend: Failed to initialize ONNX backend: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"KokoroTTSBackend: Failed to initialize ONNX backend: {e}")
             self.use_onnx = False
     
     @property
@@ -397,7 +397,7 @@ class KokoroTTSBackend(LocalTTSBackend):
             logger.info("KokoroTTSBackend: PyTorch backend initialized (model loading deferred)")
             
         except Exception as e:
-            logger.error(f"KokoroTTSBackend: Failed to initialize PyTorch backend: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"KokoroTTSBackend: Failed to initialize PyTorch backend: {e}")
             raise
     
     async def generate_speech_stream(
@@ -758,7 +758,7 @@ class KokoroTTSBackend(LocalTTSBackend):
                     yield b""
                     
         except Exception as e:
-            logger.error(f"KokoroTTSBackend: Error during ONNX generation: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"KokoroTTSBackend: Error during ONNX generation: {e}")
             yield f"ERROR: Kokoro generation failed - {str(e)}".encode('utf-8')
     
     def _parse_voice_config(self, voice_str: str) -> Dict[str, Any]:
@@ -1124,7 +1124,7 @@ class KokoroTTSBackend(LocalTTSBackend):
                 )
             
         except Exception as e:
-            logger.error(f"KokoroTTSBackend: PyTorch generation failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"KokoroTTSBackend: PyTorch generation failed: {e}")
             raise ValueError(f"Kokoro PyTorch generation failed: {str(e)}")
     
     def _split_text_for_pytorch(self, text: str, max_tokens: int = 150) -> list[str]:

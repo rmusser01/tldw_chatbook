@@ -428,7 +428,7 @@ class SearchWindow(Container):
                 severity="information",
             )
         except Exception as exc:
-            logger.error(f"Web Search failed: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Web Search failed: {exc}")
             self.app_instance.notify(f"Web Search failed: {exc}", severity="error")
 
     @on(SearchResult.UseInChatRequested)

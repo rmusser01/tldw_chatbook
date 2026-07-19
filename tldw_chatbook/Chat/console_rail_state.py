@@ -11,7 +11,7 @@ from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPS
 
 CONSOLE_RAIL_LEFT_DEFAULT_OPEN = True
 CONSOLE_RAIL_RIGHT_DEFAULT_OPEN = False
-CONSOLE_RAIL_SECTION_IDS = ("session", "context", "model", "details")
+CONSOLE_RAIL_SECTION_IDS = ("session", "context", "model", "details", "agent")
 CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
 CONSOLE_RAIL_CONTEXT_LABEL = f"Context {GLYPH_COLLAPSED}"
 CONSOLE_RAIL_INSPECTOR_LABEL = f"{GLYPH_COLLAPSE_LEFT} Inspector"
@@ -34,6 +34,7 @@ _WORKSPACE_FALLBACK_LABELS = {
 _INACTIVE_STAGED_SUMMARIES = {
     "no live work item is staged",
     "no staged work",
+    "no sources attached",
 }
 _NEGATIVE_READINESS_TERMS = {
     "blocked",
@@ -71,6 +72,7 @@ class ConsoleRailPreferences:
     context_open: bool = True
     model_open: bool = True
     details_open: bool = False
+    agent_open: bool = False
 
 
 @dataclass(frozen=True)
@@ -101,6 +103,7 @@ class ConsoleRailState:
     context_open: bool = True
     model_open: bool = True
     details_open: bool = False
+    agent_open: bool = False
 
 
 def _sanitize_key_part(value: Any) -> str:
@@ -240,6 +243,7 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
         context_open=_coerce_bool(raw.get("context_open"), defaults.context_open),
         model_open=_coerce_bool(raw.get("model_open"), defaults.model_open),
         details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
+        agent_open=_coerce_bool(raw.get("agent_open"), defaults.agent_open),
     )
 
 
@@ -254,6 +258,7 @@ def serialize_console_rail_preferences(
         "context_open": bool(preferences.context_open),
         "model_open": bool(preferences.model_open),
         "details_open": bool(preferences.details_open),
+        "agent_open": bool(preferences.agent_open),
     }
 
 
@@ -459,4 +464,5 @@ def build_console_rail_state(
         context_open=preferences.context_open,
         model_open=preferences.model_open,
         details_open=preferences.details_open,
+        agent_open=preferences.agent_open,
     )

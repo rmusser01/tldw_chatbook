@@ -295,8 +295,7 @@ def setup_ccp_enhancements(ccp_window):
         )
         
     except Exception as e:
-        logger.error(
+        logger.opt(exception=True).error(
             f"Failed to setup Personas handler enhancements for "
             f"screen_type={screen_type} handlers={detected_handlers}: {e}",
-            exc_info=True,
         )

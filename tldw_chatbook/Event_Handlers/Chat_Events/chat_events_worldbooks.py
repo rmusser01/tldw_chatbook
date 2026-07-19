@@ -68,7 +68,7 @@ async def handle_worldbook_search_input(app: 'TldwCli', search_term: str) -> Non
         loguru_logger.error(f"Error querying world book UI elements: {e}")
         app.notify(f"Error accessing world book UI: {e}", severity="error")
     except Exception as e:
-        loguru_logger.error(f"Exception during world book search: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Exception during world book search: {e}")
         app.notify(f"Error during world book search: {e}", severity="error")
 
 
@@ -120,7 +120,7 @@ async def handle_worldbook_add_button(app: 'TldwCli') -> None:
             app.notify("Failed to add world book to conversation", severity="error")
             
     except Exception as e:
-        loguru_logger.error(f"Error adding world book: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error adding world book: {e}")
         app.notify(f"Error adding world book: {e}", severity="error")
 
 
@@ -167,7 +167,7 @@ async def handle_worldbook_remove_button(app: 'TldwCli') -> None:
             app.notify("Failed to remove world book from conversation", severity="error")
             
     except Exception as e:
-        loguru_logger.error(f"Error removing world book: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error removing world book: {e}")
         app.notify(f"Error removing world book: {e}", severity="error")
 
 
@@ -223,7 +223,7 @@ async def refresh_active_worldbooks(app: 'TldwCli') -> None:
     except QueryError as e:
         loguru_logger.error(f"Error querying active world books UI: {e}")
     except Exception as e:
-        loguru_logger.error(f"Error refreshing active world books: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error refreshing active world books: {e}")
 
 
 async def handle_worldbook_selection(app: 'TldwCli', list_view_id: str) -> None:
@@ -280,7 +280,7 @@ async def handle_worldbook_selection(app: 'TldwCli', list_view_id: str) -> None:
     except QueryError as e:
         loguru_logger.error(f"Error handling world book selection: {e}")
     except Exception as e:
-        loguru_logger.error(f"Error displaying world book details: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error displaying world book details: {e}")
 
 
 async def handle_worldbook_enable_checkbox(app: 'TldwCli', enabled: bool) -> None:
@@ -299,7 +299,7 @@ async def handle_worldbook_enable_checkbox(app: 'TldwCli', enabled: bool) -> Non
         app.notify(f"World info processing {status}", severity="information")
         
     except Exception as e:
-        loguru_logger.error(f"Error updating world info setting: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error updating world info setting: {e}")
         app.notify(f"Error updating world info setting: {e}", severity="error")
 
 

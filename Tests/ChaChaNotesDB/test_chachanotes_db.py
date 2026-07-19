@@ -184,6 +184,74 @@ class TestDBInitialization:
         with pytest.raises(CharactersRAGDBError, match=expected_message_part):
             CharactersRAGDB(db_path, client_id)
 
+    def test_fresh_db_creates_conversations_system_prompt_column(self, db_path, client_id):
+        db = CharactersRAGDB(db_path, client_id)
+        conn = db.get_connection()
+
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        assert "system_prompt" in columns
+
+        version_row = conn.execute(
+            "SELECT version FROM db_schema_version WHERE schema_name = ?",
+            (db._SCHEMA_NAME,),
+        ).fetchone()
+        assert version_row["version"] == db._CURRENT_SCHEMA_VERSION
+        db.close_connection()
+
+    def test_conversations_migrate_from_v17_to_v18_adds_system_prompt_column(self, db_path, client_id):
+        db = CharactersRAGDB(db_path, client_id)
+        conn = db.get_connection()
+
+        # Simulate a v17-shaped DB: drop the sync triggers that reference the
+        # new column (SQLite refuses to drop a column referenced by a
+        # trigger), drop the column itself, then roll the recorded schema
+        # version back to 17 so re-opening replays the V17->V18 migration.
+        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_create")
+        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_update")
+        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_delete")
+        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_undelete")
+        conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
+        conn.execute(
+            "UPDATE db_schema_version SET version = 17 WHERE schema_name = ?",
+            (db._SCHEMA_NAME,),
+        )
+        conn.commit()
+        db.close_connection()
+
+        migrated = CharactersRAGDB(db_path, client_id)
+        migrated_conn = migrated.get_connection()
+
+        version_row = migrated_conn.execute(
+            "SELECT version FROM db_schema_version WHERE schema_name = ?",
+            (migrated._SCHEMA_NAME,),
+        ).fetchone()
+        assert version_row["version"] == migrated._CURRENT_SCHEMA_VERSION
+
+        columns = {row["name"] for row in migrated_conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        assert "system_prompt" in columns
+
+        # The redefined sync trigger must fire (and include the new column)
+        # on a system_prompt-only update.
+        char_id = migrated.add_character_card(_create_sample_card_data("MigrationCheck"))
+        conv_id = migrated.add_conversation({"character_id": char_id, "title": "Migration check"})
+        before_log_count = migrated_conn.execute(
+            "SELECT COUNT(*) AS n FROM sync_log WHERE entity = 'conversations' AND entity_id = ?",
+            (conv_id,),
+        ).fetchone()["n"]
+        current = migrated.get_conversation_by_id(conv_id)
+        migrated.update_conversation(
+            conv_id,
+            {"system_prompt": "Migrated prompt."},
+            expected_version=current["version"],
+        )
+        after_log_count = migrated_conn.execute(
+            "SELECT COUNT(*) AS n FROM sync_log WHERE entity = 'conversations' AND entity_id = ?",
+            (conv_id,),
+        ).fetchone()["n"]
+        assert after_log_count == before_log_count + 1
+        assert migrated.get_conversation_by_id(conv_id)["system_prompt"] == "Migrated prompt."
+        migrated.close_connection()
+
 
 class TestCharacterCards:
     def test_add_character_card(self, db_instance: CharactersRAGDB):
@@ -379,6 +447,78 @@ class TestConversationsAndMessages:
         assert len(db_instance.search_conversations_by_title(updated_title)) == 1
         assert len(db_instance.search_conversations_by_title(initial_title)) == 0, "FTS should not find the old title"
 
+    def test_add_conversation_defaults_system_prompt_to_none(self, db_instance: CharactersRAGDB, char_id):
+        conv_id = db_instance.add_conversation({"character_id": char_id, "title": "NoSystemPrompt"})
+
+        retrieved = db_instance.get_conversation_by_id(conv_id)
+        assert retrieved["system_prompt"] is None
+
+    def test_add_conversation_persists_system_prompt(self, db_instance: CharactersRAGDB, char_id):
+        conv_id = db_instance.add_conversation({
+            "character_id": char_id,
+            "title": "WithSystemPrompt",
+            "system_prompt": "  Be concise.  ",
+        })
+
+        retrieved = db_instance.get_conversation_by_id(conv_id)
+        assert retrieved["system_prompt"] == "Be concise."
+
+    def test_update_conversation_sets_system_prompt_and_bumps_version(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        conv_id = db_instance.add_conversation({"character_id": char_id, "title": "UpdateSystemPrompt"})
+        original = db_instance.get_conversation_by_id(conv_id)
+
+        result = db_instance.update_conversation(
+            conv_id,
+            {"system_prompt": "Speak like a pirate."},
+            expected_version=original["version"],
+        )
+
+        assert result is True
+        updated = db_instance.get_conversation_by_id(conv_id)
+        assert updated["system_prompt"] == "Speak like a pirate."
+        assert updated["version"] == original["version"] + 1
+
+    def test_update_conversation_clears_system_prompt_with_none(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        conv_id = db_instance.add_conversation({
+            "character_id": char_id,
+            "title": "ClearSystemPrompt",
+            "system_prompt": "Initial prompt.",
+        })
+        original = db_instance.get_conversation_by_id(conv_id)
+
+        db_instance.update_conversation(
+            conv_id,
+            {"system_prompt": None},
+            expected_version=original["version"],
+        )
+
+        updated = db_instance.get_conversation_by_id(conv_id)
+        assert updated["system_prompt"] is None
+
+    def test_update_conversation_preserves_system_prompt_when_untouched(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        conv_id = db_instance.add_conversation({
+            "character_id": char_id,
+            "title": "PreserveSystemPrompt",
+            "system_prompt": "Keep me around.",
+        })
+        original = db_instance.get_conversation_by_id(conv_id)
+
+        db_instance.update_conversation(
+            conv_id,
+            {"title": "PreserveSystemPromptRenamed"},
+            expected_version=original["version"],
+        )
+
+        updated = db_instance.get_conversation_by_id(conv_id)
+        assert updated["title"] == "PreserveSystemPromptRenamed"
+        assert updated["system_prompt"] == "Keep me around."
+
     def test_soft_delete_conversation_and_fts(self, db_instance: CharactersRAGDB, char_id):
         conv_title_for_delete_test = "DeleteConvForFTS"
         conv_id = db_instance.add_conversation({"character_id": char_id, "title": conv_title_for_delete_test})
@@ -430,6 +570,60 @@ class TestConversationsAndMessages:
     #         assert msg_id is not None
 
 
+class TestGetAllConversationIds:
+    """``get_all_conversation_ids`` -- the truncation-proof id source for
+    Library chatbook export (see ``Library/library_export_scope.py``).
+
+    Mirrors the WHERE clause ``search_conversations_page`` builds for the
+    Library's conversations snapshot fetch (``ChatConversationService.
+    list_conversations`` with ``scope_type='all'``, spanning global- and
+    workspace-scoped rows): ``client_id = ? AND deleted = 0``, but with no
+    page cap.
+    """
+
+    def test_returns_all_non_deleted_conversation_ids(self, db_instance: CharactersRAGDB):
+        conv_id_1 = db_instance.add_conversation({"title": "Conv 1"})
+        conv_id_2 = db_instance.add_conversation({"title": "Conv 2"})
+        conv_to_delete = db_instance.add_conversation({"title": "Conv to delete"})
+        deleted_record = db_instance.get_conversation_by_id(conv_to_delete)
+        db_instance.soft_delete_conversation(conv_to_delete, expected_version=deleted_record["version"])
+
+        ids = db_instance.get_all_conversation_ids()
+
+        assert set(ids) == {conv_id_1, conv_id_2}
+
+    def test_includes_workspace_scoped_conversations(self, db_instance: CharactersRAGDB):
+        """Console chats persisted inside a workspace session are workspace-scoped
+        and must be exportable, matching the Library's all-scope listing (task-179)."""
+        global_id = db_instance.add_conversation({"title": "Global conv"})
+        workspace_id = db_instance.add_conversation(
+            {"title": "Workspace conv", "scope_type": "workspace", "workspace_id": "ws-1"}
+        )
+
+        ids = db_instance.get_all_conversation_ids()
+
+        assert set(ids) == {global_id, workspace_id}
+
+    def test_excludes_conversations_from_a_different_client_id(self, db_instance: CharactersRAGDB):
+        own_id = db_instance.add_conversation({"title": "Own conv"})
+        db_instance.add_conversation({"title": "Other client conv", "client_id": "some-other-client"})
+
+        ids = db_instance.get_all_conversation_ids()
+
+        assert ids == [own_id]
+
+    def test_returns_every_row_beyond_a_50_row_page_cap(self, db_instance: CharactersRAGDB):
+        """The Library conversations snapshot caps at 50 rows -- this DB method must not."""
+        seeded_ids = [db_instance.add_conversation({"title": f"Conv {i}"}) for i in range(55)]
+
+        ids = db_instance.get_all_conversation_ids()
+
+        assert set(ids) == set(seeded_ids)
+        assert len(ids) == 55
+
+    def test_empty_db_returns_empty_list(self, db_instance: CharactersRAGDB):
+        assert db_instance.get_all_conversation_ids() == []
+
 
 class TestNotesAndKeywords:
     def test_add_and_update_note(self, db_instance: CharactersRAGDB):
@@ -478,6 +672,40 @@ class TestNotesAndKeywords:
 
         # Test idempotency of unlinking
         assert db_instance.unlink_conversation_from_keyword(conv_id, kw_id) is False
+
+
+class TestGetAllNoteIds:
+    """``get_all_note_ids`` -- the truncation-proof id source for Library
+    chatbook export (see ``Library/library_export_scope.py``).
+
+    Mirrors ``list_notes``'/``count_notes``' visibility: ``deleted = 0``
+    only -- notes are not ``client_id``-scoped the way conversations are
+    (``_list_generic_items`` never filters on ``client_id``) -- but with no
+    page cap.
+    """
+
+    def test_returns_all_non_deleted_note_ids(self, db_instance: CharactersRAGDB):
+        note_id_1 = db_instance.add_note("Note 1", "Content 1")
+        note_id_2 = db_instance.add_note("Note 2", "Content 2")
+        note_to_delete = db_instance.add_note("Note to delete", "Content 3")
+        deleted_record = db_instance.get_note_by_id(note_to_delete)
+        db_instance.soft_delete_note(note_to_delete, expected_version=deleted_record["version"])
+
+        ids = db_instance.get_all_note_ids()
+
+        assert set(ids) == {note_id_1, note_id_2}
+
+    def test_returns_every_row_beyond_a_100_row_page_cap(self, db_instance: CharactersRAGDB):
+        """The Library notes snapshot caps at 100 rows -- this DB method must not."""
+        seeded_ids = [db_instance.add_note(f"Note {i}", f"Content {i}") for i in range(105)]
+
+        ids = db_instance.get_all_note_ids()
+
+        assert set(ids) == set(seeded_ids)
+        assert len(ids) == 105
+
+    def test_empty_db_returns_empty_list(self, db_instance: CharactersRAGDB):
+        assert db_instance.get_all_note_ids() == []
 
 
 class TestSyncLog:
@@ -566,3 +794,78 @@ class TestTransactions:
 
         assert len(db_instance.list_character_cards()) == initial_count
         assert db_instance.get_character_card_by_name("TransRollback") is None
+
+
+def _make_conversation_with_message(db):
+    conv_id = db.add_conversation({"title": "att", "client_id": db.client_id})
+    msg_id = db.add_message(
+        {
+            "conversation_id": conv_id,
+            "sender": "user",
+            "content": "hello",
+            "client_id": db.client_id,
+        }
+    )
+    return conv_id, msg_id
+
+
+class TestMessageAttachmentsTable:
+    def test_schema_v19_creates_empty_attachments_table(self, db_instance):
+        with db_instance.transaction() as cursor:
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='message_attachments'"
+            )
+            assert cursor.fetchone() is not None
+            cursor.execute("SELECT COUNT(*) FROM message_attachments")
+            assert cursor.fetchone()[0] == 0
+
+    def test_set_and_batch_get_attachments(self, db_instance):
+        _conv, msg_id = _make_conversation_with_message(db_instance)
+        rows = [
+            {"position": 1, "data": b"img-1", "mime_type": "image/png", "display_name": "a.png"},
+            {"position": 2, "data": b"img-2", "mime_type": "image/jpeg", "display_name": "b.jpg"},
+        ]
+        db_instance.set_message_attachments(msg_id, rows)
+
+        fetched = db_instance.get_attachments_for_messages([msg_id])
+        assert list(fetched.keys()) == [msg_id]
+        assert [r["position"] for r in fetched[msg_id]] == [1, 2]
+        assert fetched[msg_id][0]["data"] == b"img-1"
+        assert fetched[msg_id][1]["display_name"] == "b.jpg"
+
+        # Replace semantics: a second set replaces, not appends.
+        db_instance.set_message_attachments(
+            msg_id,
+            [{"position": 1, "data": b"img-3", "mime_type": "image/png", "display_name": "c.png"}],
+        )
+        fetched = db_instance.get_attachments_for_messages([msg_id])
+        assert [r["display_name"] for r in fetched[msg_id]] == ["c.png"]
+
+    def test_position_zero_rejected(self, db_instance):
+        _conv, msg_id = _make_conversation_with_message(db_instance)
+        import sqlite3 as _sqlite3
+
+        import pytest as _pytest
+
+        with _pytest.raises((ValueError, _sqlite3.IntegrityError, Exception)):
+            db_instance.set_message_attachments(
+                msg_id,
+                [{"position": 0, "data": b"x", "mime_type": "image/png", "display_name": "z.png"}],
+            )
+
+    def test_hard_delete_cascades_attachments(self, db_instance):
+        _conv, msg_id = _make_conversation_with_message(db_instance)
+        db_instance.set_message_attachments(
+            msg_id,
+            [{"position": 1, "data": b"img", "mime_type": "image/png", "display_name": "a.png"}],
+        )
+        with db_instance.transaction() as cursor:
+            cursor.execute("DELETE FROM messages WHERE id = ?", (msg_id,))
+            cursor.execute(
+                "SELECT COUNT(*) FROM message_attachments WHERE message_id = ?", (msg_id,)
+            )
+            assert cursor.fetchone()[0] == 0
+
+    def test_get_attachments_empty_and_unknown_ids(self, db_instance):
+        assert db_instance.get_attachments_for_messages([]) == {}
+        assert db_instance.get_attachments_for_messages(["nope"]) == {}

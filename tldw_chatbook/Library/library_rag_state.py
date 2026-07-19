@@ -22,13 +22,14 @@ LIBRARY_RAG_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
     ("notes", "Notes"),
     ("media", "Media"),
     ("conversations", "Conversations"),
+    ("prompts", "Prompts"),
     ("workspaces", "Workspaces"),
     ("collections", "Collections"),
 )
 # The subset of LIBRARY_RAG_SOURCE_TYPES with a real per-source toggle in the
 # Search canvas scope region (B2): workspaces/collections have no retrieval
 # seam of their own yet, so they get no toggle row.
-LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = ("notes", "media", "conversations")
+LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = ("notes", "media", "conversations", "prompts")
 LIBRARY_RAG_DEFAULT_TOP_K = 5
 LIBRARY_RAG_RUN_ACTION_ID = "library-rag-run-query"
 LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID = "library-rag-use-in-console"
@@ -37,6 +38,12 @@ LIBRARY_RAG_EMPTY_STATE_SELECTOR = "library-rag-empty-state"
 LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON = (
     "Run a query and select usable evidence before sending to Console."
 )
+# The "#library-rag-scope-summary" strip text. One source of truth shared by
+# the panel's compose path (library_search_rag_panel._scope_summary) and the
+# screen's incremental refresh path (LibraryScreen._library_rag_scope_summary)
+# so the two can't drift apart. Per-source counts are deliberately absent --
+# the scope toggle buttons directly below the strip already carry them (L6).
+LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY = "Scope: all local sources"
 LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
 LIBRARY_RAG_DISPLAY_MAX_LENGTH = 1_000
 LIBRARY_RAG_SNIPPET_MAX_LENGTH = 4_000
@@ -68,12 +75,26 @@ LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS = 200
 # `blocked_is_no_scope` below can key off them directly.
 _EMPTY_QUERY_DISABLED_REASON = "Enter a question or search query."
 _NO_SCOPE_DISABLED_REASON = "Select at least one Library source."
+# The whole no-sources presentation (L3a quiet-gate principle): ONE muted
+# line plus the single "Open Import media" action -- never the old
+# Unavailable/Why/Next/Recovery/Owner dump plus checklist, whose internal
+# jargon ("Owner: Library source index") regressed the 2026-07 core-loop UAT.
+LIBRARY_RAG_NO_SOURCES_GATE_COPY = (
+    "No Library sources yet — import media or create notes, then search."
+)
+_NO_SOURCES_NEXT_ACTION = "Import media or create notes, then search."
 LIBRARY_RAG_SEARCHING_LABEL = "Searching…"
 _OPEN_SOURCE_TYPE_MAP = {
     "note": "notes", "notes": "notes",
     "media": "media", "media_chunk": "media",
     "conversation": "conversations", "conversations": "conversations",
     "chat": "conversations",
+    # Deliberately singular, unlike the other three (whose canonical/open
+    # value coincides with the plural scope-toggle key "prompts"):
+    # `_open_library_item_by_id`'s dispatch key for prompts is "prompt" (see
+    # its docstring), distinct from the "prompts" scope-toggle/source key
+    # used for search selection and the rail row.
+    "prompt": "prompt",
 }
 
 
@@ -284,6 +305,7 @@ class LibraryRagScopeState:
         notes: Any = 0,
         media: Any = 0,
         conversations: Any = 0,
+        prompts: Any = 0,
         workspaces: Any = 0,
         collections: Any = 0,
         selected: Sequence[str] | None = None,
@@ -295,6 +317,7 @@ class LibraryRagScopeState:
             notes: Available note source count.
             media: Available media source count.
             conversations: Available conversation source count.
+            prompts: Available prompt source count.
             workspaces: Available workspace source count.
             collections: Available collection source count.
             selected: Selected source type IDs. `None` selects all available sources;
@@ -309,6 +332,7 @@ class LibraryRagScopeState:
             "notes": _coerce_non_negative_int(notes),
             "media": _coerce_non_negative_int(media),
             "conversations": _coerce_non_negative_int(conversations),
+            "prompts": _coerce_non_negative_int(prompts),
             "workspaces": _coerce_non_negative_int(workspaces),
             "collections": _coerce_non_negative_int(collections),
         }
@@ -339,22 +363,9 @@ class LibraryRagScopeState:
         status = "ready"
         if total_count == 0:
             status = "blocked"
-            recovery_copy = "\n".join(
-                (
-                    _recovery_copy(
-                        status_label="No sources",
-                        unavailable_what="Library Search/RAG",
-                        why="No Library sources are available for retrieval",
-                        next_action="Add or import Library sources before querying",
-                        recovery_action="Library Import/Export",
-                        owner="Library source index",
-                    ),
-                    "Recovery checklist",
-                    "1. Import Library sources.",
-                    "2. Run Search/RAG.",
-                    "3. Select evidence, then Use in Console.",
-                )
-            )
+            # A single quiet gate line (plus the scope region's one
+            # "Open Import media" action) is the entire no-sources state.
+            recovery_copy = LIBRARY_RAG_NO_SOURCES_GATE_COPY
         elif not any(option.selected for option in options):
             status = "blocked"
             recovery_copy = _recovery_copy(
@@ -511,7 +522,7 @@ class LibraryRagQueryState:
             include_citations=include_citations,
             status="ready" if enabled else "blocked",
             run_action=LibraryRagActionState(
-                label="Run Search/RAG",
+                label="Run",
                 enabled=enabled,
                 widget_id=LIBRARY_RAG_RUN_ACTION_ID,
                 disabled_reason=disabled_reason,
@@ -650,15 +661,29 @@ class LibraryRagResultRow:
 
     @property
     def row_badge_label(self) -> str:
-        """One-line source authority summary for result list scanning."""
-        return " | ".join(
-            (
-                self.source_type_badge_label,
-                self.workspace_badge_label,
-                self.citation_count_badge_label,
-                self.eligibility_badge_label,
-            )
-        )
+        """One-line source authority summary for result list scanning.
+
+        Humanized composition (UX wave M5): badges that would only restate
+        the default/no-signal case are dropped rather than listed
+        unconditionally, and the remainder is joined with the app-wide
+        " · " separator (not "|"). The source-type badge always appears;
+        the workspace badge is dropped when it is the default "all
+        workspaces"; the citation-count badge appears only when there are
+        citations; eligibility contributes nothing when "eligible" and
+        "excluded from context" when "blocked". Examples: "media",
+        "media · 2 citations", "media · excluded from context". The
+        individual badge properties above are unchanged -- other call
+        sites/tests depend on their current behavior.
+        """
+        parts = [self.source_type_badge_label]
+        workspace_label = self.workspace_badge_label
+        if workspace_label != "all workspaces":
+            parts.append(workspace_label)
+        if len(self.citations) > 0:
+            parts.append(self.citation_count_badge_label)
+        if self.eligibility_badge_label == "blocked":
+            parts.append("excluded from context")
+        return " · ".join(parts)
 
     @property
     def source_identity_label(self) -> str:
@@ -810,6 +835,7 @@ class LibraryRagPanelState:
             notes=counts.get("notes", 0),
             media=counts.get("media", 0),
             conversations=counts.get("conversations", 0),
+            prompts=counts.get("prompts", 0),
             workspaces=counts.get("workspaces", 0),
             collections=counts.get("collections", 0),
             selected=selected_source_types,
@@ -1010,6 +1036,8 @@ def _result_id(source_id: str, chunk_id: str, title: str) -> str:
 
 
 def _blocked_next_action(recovery_copy: str) -> str:
+    if recovery_copy == LIBRARY_RAG_NO_SOURCES_GATE_COPY:
+        return _NO_SOURCES_NEXT_ACTION
     for line in recovery_copy.splitlines():
         if line.startswith("Next: "):
             return line.removeprefix("Next: ")

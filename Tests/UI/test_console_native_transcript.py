@@ -11,6 +11,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleVariantSet,
+    MessageAttachment,
 )
 from tldw_chatbook.Chat.console_message_actions import (
     ConsoleMessageActionService,
@@ -68,7 +69,7 @@ def save_as_modal_destinations() -> list[ConsoleSaveDestination]:
         ConsoleSaveDestination(
             label="Note",
             available=False,
-            reason="WIP: save as Note is not wired yet.",
+            reason="Notes service is not ready in this session.",
         ),
     ]
 
@@ -485,7 +486,7 @@ async def test_console_transcript_escape_collapses_selected_action_row():
 
 
 @pytest.mark.asyncio
-async def test_save_as_modal_lists_available_and_wip_destinations():
+async def test_save_as_modal_lists_available_and_unavailable_destinations():
     app = SaveAsModalHarness()
 
     async with app.run_test(size=(100, 30)) as pilot:
@@ -494,8 +495,9 @@ async def test_save_as_modal_lists_available_and_wip_destinations():
         text = _visible_text(app.screen)
 
     assert "Chatbook" in text
-    assert "Note" in text
-    assert "WIP: save as Note is not wired yet." in text
+    assert "Note (unavailable)" in text
+    assert "Notes service is not ready in this session." in text
+    assert "WIP" not in text
 
 
 @pytest.mark.asyncio
@@ -506,7 +508,7 @@ async def test_save_as_modal_available_destination_is_clickable_control():
             ConsoleSaveDestination(
                 label="Note",
                 available=False,
-                reason="WIP: save as Note is not wired yet.",
+                reason="Notes service is not ready in this session.",
             ),
         ]
     )
@@ -517,7 +519,7 @@ async def test_save_as_modal_available_destination_is_clickable_control():
         text = _visible_text(app.screen)
 
         assert destination_button.disabled is False
-        assert "Note [WIP]" in text
+        assert "Note (unavailable)" in text
         assert not app.screen.query("#console-save-as-destination-note")
 
         await pilot.click("#console-save-as-destination-chatbook")
@@ -583,3 +585,275 @@ async def test_console_tab_reaches_major_console_screen_regions():
     assert "console-native-transcript" in seen_focus_ids
     assert "console-native-composer" in seen_focus_ids
     assert "console-inspector-rail-open" in seen_focus_ids
+
+
+def test_console_streaming_assistant_row_shows_generating_placeholder_until_first_token():
+    """Between send-accepted and first token the assistant row must not be empty."""
+    from tldw_chatbook.Widgets.Console.console_transcript import (
+        CONSOLE_GENERATING_PLACEHOLDER,
+        _message_body,
+        _message_render_text,
+    )
+
+    pending = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        id="m-generating",
+        status="streaming",
+    )
+    assert _message_body(pending) == CONSOLE_GENERATING_PLACEHOLDER
+    rendered = _message_render_text(pending, selected=False)
+    assert CONSOLE_GENERATING_PLACEHOLDER in rendered.plain
+
+    # First streamed token replaces the placeholder immediately.
+    started = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Once",
+        id="m-generating",
+        status="streaming",
+    )
+    assert _message_body(started) == "Once [streaming]"
+
+    # Other terminal statuses keep their existing suffix rendering.
+    failed = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        id="m-failed",
+        status="failed",
+    )
+    assert _message_body(failed) == "[failed]"
+
+
+def test_image_message_row_renders_chip_line():
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="what is this?",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+        attachment_label="photo.png · 11 B",
+    )
+    rendered = _message_render_text(message, selected=False)
+    assert "🖼 photo.png · 11 B" in rendered.plain
+
+
+def test_image_only_message_row_renders_chip_without_body():
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    rendered = _message_render_text(message, selected=False)
+    assert "🖼" in rendered.plain
+
+
+def test_save_image_action_only_offered_for_image_messages():
+    service = ConsoleMessageActionService()
+    plain = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="text")
+    with_image = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="pic",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    plain_ids = [action.action_id for action in service.available_actions(plain)]
+    image_ids = [action.action_id for action in service.available_actions(with_image)]
+    assert "save-image" not in plain_ids
+    assert "save-image" in image_ids
+
+    result = service.dispatch("save-image", with_image)
+    assert result.status == "completed"
+    assert result.visible_copy == "Saving image to disk."
+
+
+def test_image_chip_falls_back_to_mime_and_size_without_label():
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="",
+        image_data=b"x" * 2048,
+        image_mime_type="image/png",
+    )
+    rendered = _message_render_text(message, selected=False)
+    assert "🖼 image/png · 2 KB" in rendered.plain
+
+
+def test_image_chip_metadata_only_keeps_bare_mime():
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_mime_type="image/png",
+    )
+    rendered = _message_render_text(message, selected=False)
+    assert "🖼 image/png" in rendered.plain
+
+
+def test_multi_attachment_message_renders_chip_per_attachment():
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="three pics",
+    )
+    message.attachments = (
+        MessageAttachment(data=b"1", mime_type="image/png", display_name="a.png", position=0),
+        MessageAttachment(data=b"22", mime_type="image/jpeg", display_name="b.jpg", position=1),
+        MessageAttachment(data=None, mime_type="image/png", display_name="", position=2),
+    )
+    message.image_data = b"1"
+    message.image_mime_type = "image/png"
+    message.attachment_label = "a.png"
+
+    rendered = _message_render_text(message, selected=False)
+    plain = rendered.plain
+    assert "🖼 a.png" in plain
+    assert "🖼 b.jpg" in plain
+    assert plain.count("🖼") == 3  # dataless third falls back to mime label
+
+
+def _image_row_spec(message_id: str, mode: str = "pixels"):
+    from PIL import Image as PILImage
+    from rich_pixels import Pixels
+
+    from tldw_chatbook.Chat.console_image_view import ConsoleImageRowSpec
+
+    pil = PILImage.new("RGB", (16, 16), (10, 120, 40))
+    return ConsoleImageRowSpec(
+        message_id=message_id,
+        mode=mode,
+        pixels=Pixels.from_image(pil) if mode == "pixels" else None,
+        pil=pil if mode == "graphics" else None,
+    )
+
+
+def test_transcript_emits_image_row_when_spec_present():
+    transcript = ConsoleTranscript()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    transcript.set_messages([message])
+    transcript.set_image_specs({message.id: _image_row_spec(message.id)})
+
+    rows = transcript._transcript_rows()
+    kinds = [row.kind for row in rows]
+    assert "image" in kinds
+    image_row = next(row for row in rows if row.kind == "image")
+    assert image_row.key == f"image:{message.id}"
+    assert image_row.signature == ("image", message.id, "pixels")
+    # Order: message row immediately precedes its image row.
+    message_index = kinds.index("message")
+    assert kinds[message_index + 1] == "image"
+
+
+def test_transcript_omits_image_row_without_spec_or_when_hidden():
+    transcript = ConsoleTranscript()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    transcript.set_messages([message])
+    # No specs set at all -> no image rows (unmounted-test posture).
+    assert all(row.kind != "image" for row in transcript._transcript_rows())
+    # Hidden mode is expressed by the screen simply omitting the spec.
+    transcript.set_image_specs({})
+    assert all(row.kind != "image" for row in transcript._transcript_rows())
+
+
+def test_image_row_signature_stable_across_streaming_ticks():
+    transcript = ConsoleTranscript()
+    user = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    assistant = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="", status="streaming"
+    )
+    transcript.set_messages([user, assistant])
+    transcript.set_image_specs({user.id: _image_row_spec(user.id)})
+
+    first = next(r for r in transcript._transcript_rows() if r.kind == "image")
+    assistant.content = "more streamed text"
+    transcript.set_messages([user, assistant])
+    second = next(r for r in transcript._transcript_rows() if r.kind == "image")
+    assert first.signature == second.signature
+
+
+def test_image_row_widget_builds_for_both_modes():
+    transcript = ConsoleTranscript()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    transcript.set_messages([message])
+
+    transcript.set_image_specs({message.id: _image_row_spec(message.id, "pixels")})
+    pixels_row = next(r for r in transcript._transcript_rows() if r.kind == "image")
+    pixels_widget = transcript._build_row_widget(pixels_row, track=False)
+    assert pixels_widget.id == f"console-image-{message.id}"
+
+    transcript.set_image_specs({message.id: _image_row_spec(message.id, "graphics")})
+    graphics_row = next(r for r in transcript._transcript_rows() if r.kind == "image")
+    graphics_widget = transcript._build_row_widget(graphics_row, track=False)
+    assert graphics_widget.id == f"console-image-{message.id}"
+    assert graphics_widget.styles.max_width.value == 80
+    assert graphics_widget.styles.max_height.value == 40
+
+
+def test_image_row_rebuild_tracked_on_mode_change():
+    transcript = ConsoleTranscript()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="look",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    transcript.set_messages([message])
+    transcript.set_image_specs({message.id: _image_row_spec(message.id, "pixels")})
+    rows = transcript._transcript_rows()
+    image_row = next(r for r in rows if r.kind == "image")
+    widget = transcript._build_row_widget(image_row, track=True)
+    assert transcript.row_build_counts()[f"image:{message.id}"] == 1
+
+    transcript.set_image_specs({message.id: _image_row_spec(message.id, "graphics")})
+    new_row = next(r for r in transcript._transcript_rows() if r.kind == "image")
+    assert new_row.signature != image_row.signature
+    updated = transcript._update_row_widget(widget, new_row)
+    assert updated is not widget
+    assert transcript.row_build_counts()[f"image:{message.id}"] == 2
+
+
+def test_toggle_image_view_action_offered_and_dispatched_for_image_messages():
+    service = ConsoleMessageActionService()
+    plain = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="text")
+    with_image = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="pic",
+        image_data=b"\x89PNG-bytes",
+        image_mime_type="image/png",
+    )
+    plain_ids = [action.action_id for action in service.available_actions(plain)]
+    image_ids = [action.action_id for action in service.available_actions(with_image)]
+    assert "toggle-image-view" not in plain_ids
+    assert "toggle-image-view" in image_ids
+    assert image_ids.index("toggle-image-view") < image_ids.index("save-image")
+
+    result = service.dispatch("toggle-image-view", with_image)
+    assert result.status == "completed"
+    assert result.visible_copy == "Toggled image view."
+    assert result.target_message_id == with_image.id

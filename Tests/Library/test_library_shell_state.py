@@ -1,5 +1,12 @@
-from tldw_chatbook.Constants import TAB_INGEST
+import pytest
+
 from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
+    LIBRARY_ROW_BROWSE_PROMPTS,
+    LIBRARY_ROW_BROWSE_SKILLS,
+    LIBRARY_ROW_CREATE_PROMPT,
+    LIBRARY_ROW_CREATE_SKILL,
+    LIBRARY_ROW_INGEST_EXPORT,
     LibraryShellInput,
     build_library_shell_state,
 )
@@ -8,39 +15,48 @@ from tldw_chatbook.Library.library_shell_state import (
 def test_shell_sections_rows_and_targets_are_fixed():
     shell = build_library_shell_state(LibraryShellInput(
         media_count=17, conversations_count=128, notes_count=42, collections_count=5,
+        prompts_count=9, skills_count=3,
     ))
     assert shell.header_line == "Library | Local"
     assert [s.section_id for s in shell.sections] == ["browse", "create", "ingest"]
-    assert [s.title for s in shell.sections] == ["Browse", "Create", "Ingest"]
+    assert [s.title for s in shell.sections] == ["Browse", "Create", "Import / Export"]
     browse = shell.sections[0]
     assert [r.row_id for r in browse.rows] == [
-        "browse-media", "browse-conversations", "browse-notes", "browse-collections",
-        "browse-search",
+        "browse-media", "browse-conversations", "browse-notes", LIBRARY_ROW_BROWSE_PROMPTS,
+        LIBRARY_ROW_BROWSE_SKILLS, "browse-collections", "browse-search",
     ]
     assert [r.title for r in browse.rows] == [
-        "Media", "Conversations", "Notes", "Collections", "Search / RAG"
+        "Media", "Conversations", "Notes", "Prompts", "Skills", "Collections", "Search / RAG"
     ]
-    assert browse.rows[4].target_kind == "canvas" and browse.rows[4].target_id == "search"
-    assert browse.rows[4].count is None
-    assert browse.rows[3].target_kind == "canvas" and browse.rows[3].target_id == "collections"
+    assert browse.rows[6].target_kind == "canvas" and browse.rows[6].target_id == "search"
+    assert browse.rows[6].count is None
+    assert browse.rows[5].target_kind == "canvas" and browse.rows[5].target_id == "collections"
     conv = browse.rows[1]
     assert (conv.target_kind, conv.target_id, conv.count) == ("canvas", "conversations", 128)
     media = browse.rows[0]
     assert (media.target_kind, media.target_id) == ("canvas", "media")
     notes = browse.rows[2]
     assert (notes.target_kind, notes.target_id, notes.count) == ("canvas", "notes", 42)
+    prompts = browse.rows[3]
+    assert (prompts.target_kind, prompts.target_id, prompts.count) == ("canvas", "prompts", 9)
+    skills = browse.rows[4]
+    assert (skills.target_kind, skills.target_id, skills.count) == ("canvas", "skills", 3)
     create_ids = [r.row_id for r in shell.sections[1].rows]
-    assert create_ids == ["create-note", "create-study", "create-flashcards", "create-quizzes"]
+    assert create_ids == [
+        "create-note", LIBRARY_ROW_CREATE_PROMPT, LIBRARY_ROW_CREATE_SKILL,
+        "create-study", "create-flashcards", "create-quizzes",
+    ]
     assert [r.title for r in shell.sections[1].rows] == [
-        "New note", "Study decks", "Flashcards", "Quizzes"
+        "New note", "New prompt", "New skill", "Study decks", "Flashcards", "Quizzes"
     ]
     assert (shell.sections[1].rows[0].target_kind, shell.sections[1].rows[0].target_id) == (
         "canvas", "notes-create",
     )
     ingest = shell.sections[2]
-    assert [r.title for r in ingest.rows] == ["Import media", "Import / Export"]
-    assert ingest.rows[0].target_id == TAB_INGEST
-    assert (ingest.rows[1].target_kind, ingest.rows[1].target_id) == ("mode", "import-export")
+    assert [r.title for r in ingest.rows] == ["Import media", "Export"]
+    assert (ingest.rows[0].target_kind, ingest.rows[0].target_id) == ("canvas", "ingest-media")
+    assert (ingest.rows[1].target_kind, ingest.rows[1].target_id) == ("canvas", "export")
+    assert ingest.rows[1].disabled is False
     assert all(r.count is None for r in shell.sections[1].rows)
 
 
@@ -66,9 +82,28 @@ def test_media_selection_yields_media_canvas():
     assert shell.selected_row_id == "browse-media"
 
 
-def test_mode_selection_yields_mode_canvas():
+def test_handoff_selection_yields_handoff_canvas():
+    # create-study/-flashcards/-quizzes are "handoff" rows (L3b Task 8), not
+    # legacy "mode" rows: their canvas_kind is the dedicated "handoff" kind,
+    # with canvas_target carrying which of the three handoffs is active.
     shell = build_library_shell_state(LibraryShellInput(), selected_row_id="create-flashcards")
-    assert (shell.canvas_kind, shell.canvas_target) == ("mode", "flashcards")
+    assert (shell.canvas_kind, shell.canvas_target) == ("handoff", "flashcards")
+
+
+@pytest.mark.parametrize(
+    ("row_id", "expected_target"),
+    [
+        ("create-study", "study"),
+        ("create-flashcards", "flashcards"),
+        ("create-quizzes", "quizzes"),
+    ],
+)
+def test_handoff_rows_target_handoff_kind_and_carry_their_target_id(row_id, expected_target):
+    shell = build_library_shell_state(LibraryShellInput(), selected_row_id=row_id)
+    row = next(r for r in shell.sections[1].rows if r.row_id == row_id)
+    assert row.target_kind == "handoff"
+    assert row.target_id == expected_target
+    assert (shell.canvas_kind, shell.canvas_target) == ("handoff", expected_target)
 
 
 def test_browse_search_selection_yields_search_canvas():
@@ -100,6 +135,27 @@ def test_browse_notes_row_targets_notes_canvas():
     assert shell.selected_row_id == "browse-notes"
 
 
+def test_browse_prompts_row_targets_prompts_canvas():
+    # Task 1 (count seam + rail row): the row is inert-but-selectable --
+    # canvas_kind resolves to "prompts" via the generic "canvas" target_kind
+    # branch, but the screen has no dedicated "prompts" render branch yet,
+    # so it falls through to the placeholder-empty canvas (a later task
+    # adds the real list canvas).
+    shell = build_library_shell_state(
+        LibraryShellInput(prompts_count=9), selected_row_id=LIBRARY_ROW_BROWSE_PROMPTS
+    )
+    prompts_row = next(
+        r
+        for section in shell.sections
+        for r in section.rows
+        if r.row_id == LIBRARY_ROW_BROWSE_PROMPTS
+    )
+    assert prompts_row.target_kind == "canvas"
+    assert prompts_row.target_id == "prompts"
+    assert (shell.canvas_kind, shell.canvas_target) == ("prompts", "")
+    assert shell.selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+
+
 def test_create_note_row_targets_notes_create_canvas():
     shell = build_library_shell_state(LibraryShellInput(), selected_row_id="create-note")
     row = next(
@@ -111,13 +167,90 @@ def test_create_note_row_targets_notes_create_canvas():
     assert shell.selected_row_id == "create-note"
 
 
-def test_screen_and_unknown_rows_resolve_to_empty_canvas():
+def test_create_prompt_row_targets_prompts_canvas():
+    # Task 8b D1: the "New prompt" row reuses the SAME canvas kind
+    # ("prompts") Browse > Prompts targets -- the screen distinguishes the
+    # two by view state (`_library_prompts_view`), not by a separate canvas
+    # kind, mirroring the brief's "a `prompts` editor view ... prompt_id=None
+    # sentinel" design.
+    shell = build_library_shell_state(LibraryShellInput(), selected_row_id=LIBRARY_ROW_CREATE_PROMPT)
+    row = next(
+        r for section in shell.sections for r in section.rows if r.row_id == LIBRARY_ROW_CREATE_PROMPT
+    )
+    assert row.target_kind == "canvas"
+    assert row.target_id == "prompts"
+    assert (shell.canvas_kind, shell.canvas_target) == ("prompts", "")
+    assert shell.selected_row_id == LIBRARY_ROW_CREATE_PROMPT
+
+
+def test_create_skill_row_targets_skills_canvas():
+    # Skills sub-project (skills-200 spec, "Create > New skill"): mirrors
+    # ``test_create_prompt_row_targets_prompts_canvas`` exactly -- the row
+    # reuses the SAME canvas kind ("skills") Browse > Skills targets, the
+    # screen distinguishes the two by ``_selected_skill_name`` being empty
+    # (view state), not by a separate canvas kind.
+    shell = build_library_shell_state(LibraryShellInput(), selected_row_id=LIBRARY_ROW_CREATE_SKILL)
+    row = next(
+        r for section in shell.sections for r in section.rows if r.row_id == LIBRARY_ROW_CREATE_SKILL
+    )
+    assert row.target_kind == "canvas"
+    assert row.target_id == "skills"
+    assert row.title == "New skill"
+    assert (shell.canvas_kind, shell.canvas_target) == ("skills", "")
+    assert shell.selected_row_id == LIBRARY_ROW_CREATE_SKILL
+
+
+def test_unknown_rows_resolve_to_empty_canvas():
     # browse-notes and create-note used to be "screen" rows resolving to an
     # empty canvas; they now target real canvases (see the two tests above).
-    # ingest-import-media remains the surviving "screen" row.
-    for row_id in ("ingest-import-media", "nope", ""):
+    # ingest-import-media is likewise now a "canvas" row (see the test
+    # below) -- no row remains "screen"-kind, so only unknown/empty
+    # selections still land on the empty landing canvas.
+    for row_id in ("nope", ""):
         shell = build_library_shell_state(LibraryShellInput(), selected_row_id=row_id)
         assert shell.canvas_kind == "empty", row_id
+
+
+def test_ingest_import_media_selection_yields_ingest_media_canvas():
+    shell = build_library_shell_state(
+        LibraryShellInput(), selected_row_id="ingest-import-media"
+    )
+    assert (shell.canvas_kind, shell.canvas_target) == ("ingest-media", "")
+    assert shell.selected_row_id == "ingest-import-media"
+
+
+def test_ingest_export_selection_yields_export_canvas():
+    shell = build_library_shell_state(
+        LibraryShellInput(), selected_row_id=LIBRARY_ROW_INGEST_EXPORT
+    )
+    assert (shell.canvas_kind, shell.canvas_target) == ("export", "")
+    assert shell.selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+
+
+def test_export_row_enabled_when_runtime_source_is_local():
+    shell = build_library_shell_state(LibraryShellInput(runtime_source="local"))
+    export_row = next(
+        r for section in shell.sections for r in section.rows if r.row_id == LIBRARY_ROW_INGEST_EXPORT
+    )
+    assert export_row.disabled is False
+    assert export_row.disabled_tooltip == ""
+
+
+def test_export_row_disabled_with_tooltip_when_runtime_source_is_server():
+    shell = build_library_shell_state(
+        LibraryShellInput(runtime_source="server", server_label="lab-box")
+    )
+    export_row = next(
+        r for section in shell.sections for r in section.rows if r.row_id == LIBRARY_ROW_INGEST_EXPORT
+    )
+    assert export_row.disabled is True
+    assert export_row.disabled_tooltip == LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP
+    # Every other row stays enabled -- the gate is Export-specific, not a
+    # blanket server-mode lockout of the whole rail.
+    other_rows = [
+        r for section in shell.sections for r in section.rows if r.row_id != LIBRARY_ROW_INGEST_EXPORT
+    ]
+    assert all(r.disabled is False for r in other_rows)
 
 
 def test_server_header_line():

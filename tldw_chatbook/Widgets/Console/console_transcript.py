@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Iterable, Literal
+from typing import Iterable, Literal, Mapping
 
+from loguru import logger
+from PIL import Image as PILImage
+from rich_pixels import Pixels
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
@@ -14,7 +17,12 @@ from textual.events import Click, Key
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_image_view import (
+    PIXELS_MAX_COLS,
+    PIXELS_MAX_LINES,
+    ConsoleImageRowSpec,
+)
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, ConsoleMessageActionService
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
@@ -23,6 +31,7 @@ from tldw_chatbook.Chat.console_onboarding_state import (
 
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
+CONSOLE_GENERATING_PLACEHOLDER = "Generating…"
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL = "Choose model"
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP = (
     "Choose the provider and model for this Console session."
@@ -34,6 +43,8 @@ _ACTION_TOOLTIPS = {
     "copy": "Copy this message to the clipboard.",
     "edit": "Edit this message before continuing the thread.",
     "save-as": "Choose a destination for this message, such as Chatbook or Note.",
+    "toggle-image-view": "Cycle image view: pixels, graphics, hidden.",
+    "save-image": "Save image to disk.",
     "retry": "Retry the failed response.",
     "regenerate": "Generate another assistant variant for this turn.",
     "continue": "Continue and extend the selected message.",
@@ -68,9 +79,77 @@ def _message_body(message: ConsoleChatMessage) -> str:
         content = message.variants.current.content
     else:
         content = message.content
+    if message.status == "streaming" and not content.strip():
+        # Between send-accepted and the first streamed token the assistant row
+        # has no content; show a visible generating state instead of an empty
+        # row (local models can take 30-90s to first token).
+        return CONSOLE_GENERATING_PLACEHOLDER
     if message.status in {"streaming", "stopped", "failed"}:
         return f"{content} [{message.status}]".strip()
     return content
+
+
+def _is_generating_placeholder_body(message: ConsoleChatMessage, body: str) -> bool:
+    """Return True when the rendered body is the pre-first-token placeholder."""
+    return message.status == "streaming" and body == CONSOLE_GENERATING_PLACEHOLDER
+
+
+def _human_size(size: int) -> str:
+    """Format a byte count for display, matching ``attachment_core._format_size``.
+
+    Kept as a small local helper (rather than importing ``attachment_core``)
+    to keep this widget free of that dependency.
+    """
+    if size >= 1024 * 1024:
+        return f"{size / 1024 / 1024:.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.0f} KB"
+    return f"{size} B"
+
+
+def _message_image_chip_legacy(message: ConsoleChatMessage) -> str | None:
+    """Return the placeholder chip line for a message carrying an image.
+
+    ``attachment_label`` (e.g. "photo.png · 11 B") only exists in
+    memory/screen-state -- the DB stores just ``image_data`` +
+    ``image_mime_type``, so a message resumed from the DB has no label. When
+    the raw bytes are available, synthesize a "{mime} · {size}" label instead
+    of falling back to a bare MIME type. When only metadata was restored
+    (``image_data`` is ``None``), keep the bare-mime fallback.
+    """
+    if message.image_data is None and not message.image_mime_type:
+        return None
+    if message.attachment_label:
+        label = message.attachment_label
+    elif message.image_data is not None:
+        mime = message.image_mime_type or "image"
+        label = f"{mime} · {_human_size(len(message.image_data))}"
+    else:
+        label = message.image_mime_type or "image"
+    return f"🖼 {label}"
+
+
+def _message_attachment_chips(message: ConsoleChatMessage) -> list[str]:
+    """Return one placeholder chip line per attachment (position order).
+
+    If no attachments are present, fall back to the legacy image chip logic
+    (zero-attachment behavior unchanged).
+    """
+    attachments = getattr(message, "attachments", ()) or ()
+    if not attachments:
+        legacy = _message_image_chip_legacy(message)
+        return [legacy] if legacy else []
+    chips: list[str] = []
+    for attachment in attachments:
+        if attachment.display_name:
+            chips.append(f"🖼 {attachment.display_name}")
+        elif attachment.data is not None:
+            chips.append(
+                f"🖼 {attachment.mime_type or 'image'} · {_human_size(len(attachment.data))}"
+            )
+        else:
+            chips.append(f"🖼 {attachment.mime_type or 'image'}")
+    return chips
 
 
 def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Content:
@@ -91,15 +170,22 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
     """
     role_label = _message_role_label(message)
     body = _message_body(message)
+    chips = _message_attachment_chips(message)
+    if chips:
+        chip_lines = "\n".join(chips)
+        body = f"{body}\n{chip_lines}" if body else chip_lines
+    body_part: tuple[str, str] | str = body
+    if _is_generating_placeholder_body(message, body):
+        body_part = (body, "dim")
     if not selected and "\n" not in body and len(body) <= 120:
-        return Content.assemble((role_label, "dim"), "  ", body)
-    return Content.assemble((role_label, "dim"), "\n", body)
+        return Content.assemble((role_label, "dim"), "  ", body_part)
+    return Content.assemble((role_label, "dim"), "\n", body_part)
 
 
 @dataclass(frozen=True)
 class _TranscriptRow:
     key: str
-    kind: Literal["rule", "message", "actions", "action-help", "empty"]
+    kind: Literal["rule", "message", "image", "actions", "action-help", "empty"]
     signature: tuple
     message: ConsoleChatMessage | None = None
     selected: bool = False
@@ -107,6 +193,7 @@ class _TranscriptRow:
     action_label: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
     action_tooltip: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
     card_state: ConsoleSetupCardState | None = None
+    image_spec: "ConsoleImageRowSpec | None" = None
 
 
 class ConsoleTranscriptMessage(Static):
@@ -119,6 +206,11 @@ class ConsoleTranscriptMessage(Static):
         classes = "console-transcript-message"
         if selected:
             classes = f"{classes} console-transcript-message-selected"
+        role = message.role
+        if role is ConsoleMessageRole.TOOL:
+            classes = f"{classes} console-transcript-message-tool"
+        elif role is ConsoleMessageRole.SYSTEM:
+            classes = f"{classes} console-transcript-message-system"
         super().__init__(
             _message_render_text(message, selected=selected),
             id=f"console-message-{message.id}",
@@ -293,6 +385,7 @@ class ConsoleTranscript(VerticalScroll):
         self._row_widgets: dict[str, Widget] = {}
         self._row_signatures: dict[str, tuple] = {}
         self._row_build_counts: dict[str, int] = {}
+        self._image_specs: dict[str, ConsoleImageRowSpec] = {}
 
     def compose(self) -> ComposeResult:
         self._row_widgets.clear()
@@ -310,6 +403,16 @@ class ConsoleTranscript(VerticalScroll):
         message_ids = {message.id for message in self._messages}
         if self.selected_message_id not in message_ids:
             self.selected_message_id = None
+
+    def set_image_specs(self, specs: Mapping[str, ConsoleImageRowSpec]) -> None:
+        """Replace the prebuilt inline-image row payloads keyed by message ID.
+
+        Args:
+            specs: Mapping of message ID to its prepared image-row payload.
+                Messages absent from the mapping render no image row (covers
+                hidden mode, unprepared cache, and metadata-only messages).
+        """
+        self._image_specs = dict(specs)
 
     def sync_empty_state(
         self,
@@ -531,6 +634,17 @@ class ConsoleTranscript(VerticalScroll):
                     selected=selected,
                 )
             )
+            image_spec = self._image_specs.get(message.id)
+            if image_spec is not None:
+                rows.append(
+                    _TranscriptRow(
+                        key=f"image:{message.id}",
+                        kind="image",
+                        signature=("image", message.id, image_spec.mode),
+                        message=message,
+                        image_spec=image_spec,
+                    )
+                )
             if selected:
                 rows.append(
                     _TranscriptRow(
@@ -647,9 +761,45 @@ class ConsoleTranscript(VerticalScroll):
             )
         if row.kind == "message" and row.message is not None:
             return ConsoleTranscriptMessage(row.message, selected=row.selected)
+        if row.kind == "image" and row.image_spec is not None:
+            return self._image_row_widget(row.image_spec)
         if row.kind == "actions" and row.message is not None:
             return self._action_row(row.message)
         raise ValueError(f"Unsupported transcript row: {row}")
+
+    def _image_row_widget(self, spec: ConsoleImageRowSpec) -> Widget:
+        """Build the mounted widget for one inline-image row."""
+        widget: Widget | None = None
+        if spec.mode == "graphics" and spec.pil is not None:
+            try:
+                from textual_image.widget import Image as _GraphicsImage
+
+                widget = _GraphicsImage(spec.pil, id=f"console-image-{spec.message_id}")
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "textual-image unavailable; falling back to pixels row."
+                )
+                widget = None
+        if widget is None:
+            pixels = spec.pixels
+            if pixels is None and spec.pil is not None:
+                # Graphics import failed and nothing was cached: thumbnail a
+                # copy before building, mirroring the cache's bounded build
+                # (`ConsoleImageRenderCache.get_pixels`) so this fallback
+                # never runs `Pixels.from_image` on the full ≤1024px image.
+                scaled = spec.pil.copy()
+                scaled.thumbnail(
+                    (PIXELS_MAX_COLS, PIXELS_MAX_LINES * 2), PILImage.Resampling.LANCZOS
+                )
+                pixels = Pixels.from_image(scaled)
+            widget = Static(
+                pixels if pixels is not None else "",
+                id=f"console-image-{spec.message_id}",
+            )
+        widget.add_class("console-transcript-image")
+        widget.styles.max_width = 80
+        widget.styles.max_height = 40
+        return widget
 
     def _update_row_widget(self, widget: Widget, row: _TranscriptRow) -> Widget:
         if row.kind == "message" and row.message is not None and isinstance(widget, ConsoleTranscriptMessage):

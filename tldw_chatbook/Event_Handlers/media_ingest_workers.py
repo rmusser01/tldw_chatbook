@@ -27,7 +27,7 @@ async def handle_tldw_api_worker_failure(app: 'TldwCli', event: 'Worker.StateCha
     media_type = worker_name.replace("tldw_api_processing_", "")
     error = event.worker.error
 
-    logger.error(f"TLDW API request worker failed for {media_type}: {error}", exc_info=True)
+    logger.opt(exception=True).error(f"TLDW API request worker failed for {media_type}: {error}")
 
     try:
         loading_indicator = app.query_one(f"#tldw-api-loading-indicator-{media_type}", LoadingIndicator)
@@ -85,7 +85,7 @@ async def handle_tldw_api_worker_success(app: 'TldwCli', event: 'Worker.StateCha
         logger.error(f"UI component not found in on_worker_success for {media_type}: {e_ui}")
         return
     except Exception as e:
-        logger.error(f"Error resetting UI state in worker success handler: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error resetting UI state in worker success handler: {e}")
         return
 
     # --- Pre-flight Checks and Context Retrieval ---
@@ -189,7 +189,7 @@ async def handle_tldw_api_worker_success(app: 'TldwCli', event: 'Worker.StateCha
                     error_count += 1
 
             except Exception as e_ingest:
-                logger.error(f"Error ingesting item '{item_result.input_ref}' into local DB: {e_ingest}", exc_info=True)
+                logger.opt(exception=True).error(f"Error ingesting item '{item_result.input_ref}' into local DB: {e_ingest}")
                 error_count += 1
         else:
             logger.error(f"API processing error for '{item_result.input_ref}': {item_result.error}")

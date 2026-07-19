@@ -14,12 +14,61 @@ from unittest.mock import Mock, patch, AsyncMock
 from datetime import datetime
 
 # Import the module to test
+import builtins
+
 from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import (
     get_page_title,
     scrape_article,
     scrape_and_no_summarize_then_ingest,
-    ContentMetadataHandler
+    ContentMetadataHandler,
+    parse_csv_urls,
 )
+
+
+class TestParseCsvUrlsPandasGuard:
+    """parse_csv_urls must degrade gracefully when pandas can't be imported."""
+
+    def test_returns_empty_dict_when_find_spec_true_but_import_fails(self, monkeypatch, tmp_path):
+        """A broken/partial pandas install (find_spec succeeds, import raises)
+        must return {} rather than propagating ImportError, matching the prior
+        module-scope try/except behavior.
+
+        Args:
+            monkeypatch: pytest fixture used to force PANDAS_AVAILABLE and to
+                make ``import pandas`` raise ImportError.
+            tmp_path: pytest fixture; a real CSV path that is never read because
+                the pandas import fails first.
+        """
+        import tldw_chatbook.Web_Scraping.Article_Extractor_Lib as mod
+
+        # Simulate find_spec("pandas") having succeeded at import time.
+        monkeypatch.setattr(mod, "PANDAS_AVAILABLE", True)
+
+        real_import = builtins.__import__
+
+        def _fail_pandas(name, *args, **kwargs):
+            if name == "pandas" or name.startswith("pandas."):
+                raise ImportError("simulated broken pandas install")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _fail_pandas)
+
+        csv_path = tmp_path / "urls.csv"
+        csv_path.write_text("url\nhttps://example.com\n", encoding="utf-8")
+
+        assert parse_csv_urls(str(csv_path)) == {}
+
+    def test_returns_empty_dict_when_pandas_unavailable(self, monkeypatch, tmp_path):
+        """When PANDAS_AVAILABLE is False the function short-circuits to {}.
+
+        Args:
+            monkeypatch: pytest fixture used to force PANDAS_AVAILABLE False.
+            tmp_path: pytest fixture; an unused CSV path.
+        """
+        import tldw_chatbook.Web_Scraping.Article_Extractor_Lib as mod
+
+        monkeypatch.setattr(mod, "PANDAS_AVAILABLE", False)
+        assert parse_csv_urls(str(tmp_path / "nope.csv")) == {}
 
 
 class TestURLValidation:

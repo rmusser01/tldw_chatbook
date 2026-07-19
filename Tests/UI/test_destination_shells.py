@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.app import App
-from textual.widgets import Button, Checkbox, Select, Static, TextArea
+from textual.app import App, ComposeResult
+from textual.widgets import Button, Checkbox, Select, Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_unified_mcp_panel import FakeUnifiedMCPService
@@ -19,7 +19,13 @@ from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboard
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
+from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
+from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
+from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.UI.MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.acp_screen import ACPScreen
 from tldw_chatbook.UI.Screens.destination_recovery import DestinationRecoveryState
@@ -976,7 +982,7 @@ def _custom_policy_recovery_state(exc, *, unavailable_what, stable_selector, pol
         # of the generic "source material" phrasing artifacts/personas use.
         ("library", "#library-header-line", "content type"),
         ("artifacts", "#artifacts-title", "generated"),
-        ("personas", "#personas-title", "behavior"),
+        ("personas", "#personas-title", "who the ai plays"),
     ],
 )
 @pytest.mark.asyncio
@@ -1227,7 +1233,7 @@ async def test_watchlists_collections_preserves_safe_comparison_titles_and_rejec
 
 
 @pytest.mark.asyncio
-async def test_library_exposes_source_sections_and_import_export_boundary():
+async def test_library_exposes_source_sections_and_ingest_media_canvas():
     app = _build_test_app()
     host = DestinationHarness(app, "library")
 
@@ -1237,26 +1243,26 @@ async def test_library_exposes_source_sections_and_import_export_boundary():
 
         # The retired hub's per-source open buttons and mode-search chip are
         # dead; the rail rows are the surviving reachable surface for the
-        # same source sections and Search/RAG mode.
+        # same source sections and Search/RAG mode. The placeholder
+        # Import/Export row is gone outright (see the inventory verdict);
+        # Import media is now a first-class canvas row.
         for selector in [
             "#library-row-browse-notes",
             "#library-row-browse-media",
             "#library-row-browse-conversations",
-            "#library-row-ingest-import-export",
+            "#library-row-ingest-import-media",
             "#library-row-browse-search",
         ]:
             assert screen.query_one(selector)
+        assert not screen.query("#library-row-ingest-import-export")
 
-        # The Import/Export ownership-boundary copy survives on the mode
-        # canvas reached from the Ingest ▸ Import/Export row.
-        screen.query_one("#library-row-ingest-import-export", Button).press()
+        # Pressing Ingest ▸ Import media mounts the real ingest canvas
+        # (L3b Task 4) in place.
+        screen.query_one("#library-row-ingest-import-media", Button).press()
         await pilot.pause()
         await pilot.pause()
 
-        assert (
-            "Library owns source acquisition framing; Ingest and Media own deeper file handling."
-            in _visible_text(screen)
-        )
+        assert screen.query_one("#library-ingest-canvas")
 
 
 @pytest.mark.asyncio
@@ -1318,6 +1324,9 @@ async def test_library_destination_lists_local_source_snapshot_from_services():
         "mode": "local",
         "limit": library_page_sizes.get("conversations"),
         "offset": 0,
+        # Library lists conversations across scopes so Console workspace
+        # chats appear alongside global ones (task-179).
+        "scope_type": "all",
     }
 
 
@@ -1591,7 +1600,7 @@ async def test_library_media_action_switches_to_native_mode_without_route_handof
         screen.query_one("#library-row-browse-media", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-canvas")
 
-        assert getattr(screen, "_active_mode") == "media"
+        assert getattr(screen, "_library_selected_row_id") == "browse-media"
         assert screen.query_one("#library-media-canvas")
 
     assert seen_routes == []
@@ -1619,7 +1628,6 @@ async def test_library_notes_action_switches_to_canvas_without_route_handoff():
         await _wait_for_selector(screen, pilot, "#library-notes-canvas")
 
         assert getattr(screen, "_library_selected_row_id") == "browse-notes"
-        assert getattr(screen, "_active_mode") == "notes"
         assert screen.query_one("#library-notes-canvas")
 
     assert seen_routes == []
@@ -1645,14 +1653,22 @@ async def test_library_conversations_action_switches_to_native_mode_without_rout
         screen.query_one("#library-row-browse-conversations", Button).press()
         await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
 
-        assert getattr(screen, "_active_mode") == "conversations"
+        assert getattr(screen, "_library_selected_row_id") == "browse-conversations"
         assert screen.query_one("#library-conversations-canvas")
 
     assert seen_routes == []
 
 
 @pytest.mark.asyncio
-async def test_library_import_export_action_switches_to_native_mode_without_route_handoff():
+async def test_library_ingest_import_media_row_mounts_ingest_canvas():
+    """The Ingest ▸ Import/Export row (and its native "import-export" mode
+    switch) is retired outright -- the row is deleted, not merely re-routed.
+    Ingest ▸ Import media is now a first-class canvas row: pressing it
+    mounts the real ingest canvas (L3b Task 4) in place rather than either
+    switching to a retired mode or deep-linking to the standalone Ingest
+    screen (the prior ``NavigateToScreen("ingest")`` behavior covered by
+    the retired
+    ``test_library_import_export_dedicated_import_action_emits_ingest_route``)."""
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
@@ -1663,39 +1679,13 @@ async def test_library_import_export_action_switches_to_native_mode_without_rout
     async with host.run_test(size=(160, 40)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        # The retired #library-open-import-export button is dead; the
-        # Ingest ▸ Import/Export rail row is the surviving trigger for the
-        # same native mode switch.
-        screen.query_one("#library-row-ingest-import-export", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-import-export-workflow-title")
+        assert not screen.query("#library-row-ingest-import-export")
+        screen.query_one("#library-row-ingest-import-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-ingest-canvas")
 
-        assert getattr(screen, "_active_mode") == "import-export"
-        assert "Import/Export mode" in _visible_text(screen)
+        assert getattr(screen, "_library_selected_row_id") == "ingest-import-media"
 
     assert seen_routes == []
-
-
-@pytest.mark.asyncio
-async def test_library_import_export_dedicated_import_action_emits_ingest_route():
-    app = _build_test_app()
-    app.notes_scope_service = StaticLibraryNotesScopeService([])
-    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
-    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
-    seen_routes = []
-    host = DestinationHarness(app, "library", seen_routes)
-
-    async with host.run_test(size=(160, 40)) as pilot:
-        screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
-        # The in-canvas #library-import-export-open-ingest button lived only
-        # in the never-mounted #library-action-region and is dead; the
-        # always-reachable Ingest ▸ Import media rail row is the surviving
-        # trigger for the same Ingest route (no Import/Export mode entry
-        # required first -- the rail row is visible regardless of mode).
-        screen.query_one("#library-row-ingest-import-media", Button).press()
-        await _wait_for_route(seen_routes, "ingest", pilot)
-
-    assert seen_routes[-1] == "ingest"
 
 
 @pytest.mark.asyncio
@@ -1715,7 +1705,7 @@ async def test_library_search_action_switches_to_search_mode_without_route_hando
         screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
-        assert getattr(screen, "_active_mode") == "search"
+        assert getattr(screen, "_library_selected_row_id") == "browse-search"
 
     assert seen_routes == []
 
@@ -2305,7 +2295,14 @@ async def test_unwired_destination_actions_are_disabled_with_honest_copy(route, 
 
 
 @pytest.mark.asyncio
-async def test_mcp_destination_embeds_unified_mcp_management_panel():
+async def test_mcp_destination_embeds_mcp_workbench():
+    """MCP screen now hosts the rail/canvas/inspector workbench, not the legacy panel.
+
+    Realigned from the retired `test_mcp_destination_embeds_unified_mcp_management_panel`
+    (Task 8 replaced the embedded `UnifiedMCPPanel` with `MCPWorkbench`). Same product
+    intent — the MCP destination embeds its management surface directly, with no
+    "open elsewhere" escape hatch and no "not embedded" placeholder copy.
+    """
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
 
@@ -2313,49 +2310,74 @@ async def test_mcp_destination_embeds_unified_mcp_management_panel():
         await pilot.pause(0.1)
         screen = _active_destination_screen(host)
 
-        assert screen.query_one(UnifiedMCPPanel)
-        assert screen.query_one("#unified-mcp-source", Select)
-        assert screen.query_one("#unified-mcp-server-target", Select)
-        assert screen.query_one("#unified-mcp-scope", Select)
-        assert screen.query_one("#unified-mcp-section", Select)
-        assert screen.query_one("#unified-mcp-action", Select)
-        assert screen.query_one("#unified-mcp-action-payload", TextArea)
-        assert screen.query_one("#unified-mcp-action-run", Button)
+        workbench = screen.query_one(MCPWorkbench)
+        assert workbench is screen.workbench
+        assert screen.query_one("#mcp-hub-rail", MCPRail)
+        assert screen.query_one("#mcp-hub-canvas")
+        assert screen.query_one("#mcp-hub-inspector", MCPInspector)
+        assert not screen.query(UnifiedMCPPanel)
         assert not screen.query("#mcp-open-management")
         assert "Unified MCP management is not embedded in this shell yet." not in _visible_text(screen)
 
 
 @pytest.mark.asyncio
 async def test_mcp_destination_labels_server_first_workbench_columns():
+    """The rail/canvas/inspector triad is mounted with its documented pane roles.
+
+    Realigned from the retired `UnifiedMCPPanel` 3-column labels test (that
+    embed shape no longer exists). Same product intent — a server-first
+    workbench with clearly delineated panes — verified against the new
+    `#mcp-hub-rail` / `#mcp-hub-canvas` / `#mcp-hub-inspector` landmarks: the
+    rail lists servers, the canvas hosts the mode content, the inspector is
+    present and explains readiness.
+    """
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await _wait_for_selector(_active_destination_screen(host), pilot, "#unified-mcp-action-readiness")
+        await _wait_for_selector(_active_destination_screen(host), pilot, "#mcp-hub-rail")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
-        assert "Servers + Scope" in text
-        assert "Server Detail" in text
-        assert "Readiness + Actions" in text
+        rail = screen.query_one("#mcp-hub-rail", MCPRail)
+        canvas = screen.query_one("#mcp-hub-canvas")
+        inspector = screen.query_one("#mcp-hub-inspector", MCPInspector)
+
+        assert "destination-workbench-pane" in rail.classes
+        assert "destination-workbench-pane" in canvas.classes
+        assert "destination-workbench-pane" in inspector.classes
+
+        # Rail lists servers: the "All servers" row plus at least the
+        # built-in server (always present for the default local source).
+        rail_rows = list(rail.query("Button.mcp-rail-row"))
+        assert len(rail_rows) >= 2
+        assert any("All servers" in str(row.label) for row in rail_rows)
+
+        # Inspector is present and explains readiness (not a bare shell).
+        assert "Inspector" in text
+        assert "Select an item to inspect." in text
+
         assert "Manage MCP servers, scoped tools, permissions, and audit readiness." in text
-        assert "Section" in text
-        assert "try Inventory" not in text
-        assert "Column 1:" not in text
-        assert "Column 2:" not in text
-        assert "Column 3:" not in text
-        assert screen.query_one("#mcp-column-divider-left").has_class("mcp-column-resize-handle")
-        assert screen.query_one("#mcp-column-divider-right").has_class("mcp-column-resize-handle")
-        assert screen.query_one("#mcp-column-divider-left").tooltip == "Resize columns"
-        assert screen.query_one("#mcp-column-divider-right").tooltip == "Resize columns"
-        assert "Blocked" in text
-        assert "Select Section: Inventory" in text
-        assert "Run Action disabled" in text
-        assert "Payload (JSON)" not in text
 
 
 @pytest.mark.asyncio
 async def test_mcp_destination_restores_unified_mcp_view_state_after_mount(tmp_path):
+    """Restoring a legacy `unified_mcp_view_state` blob must not crash and must carry over.
+
+    Realigned from the retired `UnifiedMCPPanel.context` assertions (that
+    object no longer exists). Same product intent — a saved legacy view
+    survives the Task 8 rewire — verified against the new surface:
+
+    - Mounting with a restored `scope="team"` must not crash, even though
+      Phase 1's rail only offers a Personal scope option to select from
+      (fix A clamps the rail's DISPLAY, not the tracked state).
+    - `selected_source` carries over into the workbench's live state.
+    - The workbench keeps tracking the true restored scope
+      (`get_view_state()["scope"] == "team"`) despite the rail's clamped
+      display.
+    - `save_state()` emits the NEW `mcp_hub_view_state` key, reflecting the
+      restored values.
+    """
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
         [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
@@ -2377,31 +2399,152 @@ async def test_mcp_destination_restores_unified_mcp_view_state_after_mount(tmp_p
     )
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
-        panel = _active_destination_screen(host).query_one(UnifiedMCPPanel)
+        screen = _active_destination_screen(host)
+        workbench = screen.query_one(MCPWorkbench)
 
-        assert panel.context.selected_source == "server"
-        assert panel.context.selected_active_server_id == "server-a"
-        assert panel.context.selected_scope == "team"
-        assert panel.context.selected_scope_ref == "21"
-        assert panel.context.selected_section == "inventory"
+        # Restore applies asynchronously (source switch + scope assignment
+        # span an await boundary inside `_switch_source()`); wait for both
+        # to land rather than racing a fixed sleep.
+        deadline = time.monotonic() + 2.0
+        view_state = workbench.get_view_state()
+        while time.monotonic() < deadline and not (
+            view_state["source"] == "server" and view_state["scope"] == "team"
+        ):
+            await pilot.pause(0.01)
+            view_state = workbench.get_view_state()
+        assert view_state["source"] == "server"  # selected_source carried over
+        assert view_state["scope"] == "team"  # true restored scope still tracked
+
+        # Mounting did not crash; the rail rendered despite the restored
+        # scope value ("team") not being among Phase 1's Personal-only
+        # scope options. The rail recomposes when state settles, and the
+        # mounted Select applies its initial value on its own deferred
+        # `_on_mount` — wait for that to land instead of reading mid-flight.
+        rail = screen.query_one("#mcp-hub-rail", MCPRail)
+        deadline = time.monotonic() + 2.0
+        scope_select = None
+        while time.monotonic() < deadline:
+            try:
+                scope_select = rail.query_one("#mcp-rail-scope-select", Select)
+            except Exception:
+                scope_select = None
+            if scope_select is not None and scope_select.value is not Select.NULL:
+                break
+            await pilot.pause(0.01)
+        assert rail.is_mounted
+        assert scope_select is not None
+        assert scope_select.value == "personal"  # clamped display (fix A)
+
+        saved = screen.save_state()
+        assert saved["mcp_hub_view_state"]["source"] == "server"
+        assert saved["mcp_hub_view_state"]["scope"] == "team"
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_permissions_and_tools_tooltips_are_current():
+    """UX batch item 1: the Permissions/Tools mode chip tooltips used to say
+    "(arrives in a later phase)" even after both modes shipped real canvases
+    (`MCPPermissionsMode`/`MCPToolsMode`) -- stale copy that actively misled
+    the user about what pressing the chip would do."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        tools_chip = screen.query_one("#mcp-mode-tools", Button)
+        permissions_chip = screen.query_one("#mcp-mode-permissions", Button)
+        assert tools_chip.tooltip == "Tools mode: browse and test scoped MCP tools."
+        assert permissions_chip.tooltip == (
+            "Permissions mode: set Allow / Ask / Off per tool. "
+            "Space cycles the selected row."
+        )
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_mode_chip_syncs_to_restored_mode():
+    """I2 regression: chips are composed with Servers active and are only
+    otherwise kept in sync by `MCPScreen._activate_mode()` (a click or
+    keybinding). A restore that changes the active mode (e.g. a saved
+    `mode: "tools"`) must also sync the chip highlight -- otherwise the
+    Tools canvas renders under a highlighted Servers chip.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(
+        app,
+        "mcp",
+        restored_state={"mcp_hub_view_state": {"mode": "tools"}},
+    )
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        workbench = screen.query_one(MCPWorkbench)
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and workbench.active_mode != "tools":
+            await pilot.pause(0.01)
+
+        assert workbench.active_mode == "tools"
+        tools_chip = screen.query_one("#mcp-mode-tools", Button)
+        servers_chip = screen.query_one("#mcp-mode-servers", Button)
+        assert tools_chip.has_class("is-active")
+        assert not servers_chip.has_class("is-active")
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_mode_chip_syncs_on_inspector_hub_action():
+    """I2 follow-up: inspector hub actions also change the mode without going
+    through `MCPScreen._activate_mode()` -- "Open tool catalog"/"Open audit"
+    call `MCPWorkbench.set_mode()` directly from
+    `on_mcp_inspector_hub_action_requested`. The chip highlight must follow
+    that path too, not just click/keybinding/restore, so `set_mode` itself is
+    the single emission point for the mode-change notification.
+    """
+    from tldw_chatbook.MCP.readiness import HubAction
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        workbench = screen.query_one(MCPWorkbench)
+        inspector = screen.query_one(MCPInspector)
+        assert workbench.active_mode == "servers"
+
+        inspector.post_message(
+            MCPInspector.HubActionRequested(HubAction.OPEN_TOOL_CATALOG, None)
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert workbench.active_mode == "tools"
+        tools_chip = screen.query_one("#mcp-mode-tools", Button)
+        servers_chip = screen.query_one("#mcp-mode-servers", Button)
+        assert tools_chip.has_class("is-active")
+        assert not servers_chip.has_class("is-active")
 
 
 @pytest.mark.asyncio
 async def test_mcp_destination_runtime_refresh_uses_exclusive_worker(monkeypatch):
+    """Runtime backend changes refresh the workbench via a named, exclusive worker.
+
+    Realigned from the retired `FakePanel`/`screen.mcp_panel` seam (Task 8
+    replaced the embedded panel with `screen.workbench`, whose refresh entry
+    point is `reload()` rather than `load_context()`). Same product intent —
+    a single, named, exclusive worker refreshes the MCP surface on runtime
+    backend change — verified against the new seam.
+    """
     app = _build_test_app()
     screen = MCPScreen(app)
     scheduled = {}
 
-    class FakePanel:
-        async def load_context(self):
+    class FakeWorkbench:
+        async def reload(self) -> None:
             return None
 
     def capture_worker(coro, **kwargs):
         scheduled["kwargs"] = kwargs
         coro.close()
 
-    screen.mcp_panel = FakePanel()
+    screen.workbench = FakeWorkbench()
     monkeypatch.setattr(screen, "run_worker", capture_worker)
 
     await screen.handle_runtime_backend_changed("server")
@@ -2409,6 +2552,249 @@ async def test_mcp_destination_runtime_refresh_uses_exclusive_worker(monkeypatch
     assert scheduled["kwargs"]["name"] == "mcp-screen-runtime-refresh"
     assert scheduled["kwargs"]["group"] == "mcp-screen-runtime-refresh"
     assert scheduled["kwargs"]["exclusive"] is True
+
+
+def test_mcp_screen_bindings_include_add_refresh_and_test_tool_shortcuts():
+    """T13/T8: `a`/`r`/`t` map to the documented actions, all hidden from the
+    Footer widget's own binding list (`show=False`) -- the Phase 2 footer
+    shortcut hint (`MCP_SHORTCUTS`) documents them instead."""
+    bindings = {b.key: b for b in MCPScreen.BINDINGS}
+    assert bindings["a"].action == "mcp_add_server"
+    assert bindings["a"].show is False
+    assert bindings["r"].action == "mcp_refresh"
+    assert bindings["r"].show is False
+    assert bindings["t"].action == "mcp_test_tool"
+    assert bindings["t"].show is False
+
+
+def test_mcp_destination_manual_refresh_uses_exclusive_worker(monkeypatch):
+    """T13: the `r` keybinding reloads the workbench through the SAME
+    exclusive worker group `handle_runtime_backend_changed()` uses, so a
+    manual refresh and a runtime-triggered one cannot run concurrently.
+    """
+    app = _build_test_app()
+    screen = MCPScreen(app)
+    scheduled = {}
+
+    class FakeWorkbench:
+        async def reload(self) -> None:
+            return None
+
+    def capture_worker(coro, **kwargs):
+        scheduled["kwargs"] = kwargs
+        coro.close()
+
+    screen.workbench = FakeWorkbench()
+    monkeypatch.setattr(screen, "run_worker", capture_worker)
+
+    screen.action_mcp_refresh()
+
+    assert scheduled["kwargs"]["name"] == "mcp-screen-manual-refresh"
+    assert scheduled["kwargs"]["group"] == "mcp-screen-runtime-refresh"
+    assert scheduled["kwargs"]["exclusive"] is True
+
+
+def test_mcp_destination_add_server_binding_switches_mode_and_schedules_worker(monkeypatch):
+    """T13: the `a` keybinding switches to Servers mode and dispatches
+    `MCPWorkbench.open_add_server_form()` via a named, exclusive worker.
+    The form's own T9 gate/notify behavior when server-source mutations are
+    unavailable is unit-tested directly against
+    `MCPWorkbench.open_add_server_form()` in test_mcp_workbench.py.
+    """
+    app = _build_test_app()
+    screen = MCPScreen(app)
+    scheduled = {}
+
+    class FakeWorkbench:
+        def __init__(self) -> None:
+            self.active_mode = "tools"
+            self.mode_calls: list[str] = []
+
+        def set_mode(self, mode: str) -> None:
+            self.mode_calls.append(mode)
+            self.active_mode = mode
+
+        async def open_add_server_form(self) -> None:
+            return None
+
+    def capture_worker(coro, **kwargs):
+        scheduled["kwargs"] = kwargs
+        coro.close()
+
+    screen.workbench = FakeWorkbench()
+    monkeypatch.setattr(screen, "run_worker", capture_worker)
+
+    screen.action_mcp_add_server()
+
+    assert screen.workbench.mode_calls == ["servers"]
+    assert scheduled["kwargs"]["name"] == "mcp-screen-add-server"
+    assert scheduled["kwargs"]["group"] == "mcp-screen-add-server"
+    assert scheduled["kwargs"]["exclusive"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_add_server_binding_opens_real_form_end_to_end():
+    """T13: end-to-end (real `MCPScreen` + `MCPWorkbench`, no fakes) --
+    pressing the `a` keybinding's action switches to Servers mode and opens
+    the local-source Add-server form, mounting `#mcp-servers-form` visibly.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#mcp-hub-rail")
+        # Start on a non-servers mode so the binding's own mode switch is observable.
+        screen.action_mcp_mode("tools")
+        await pilot.pause()
+        assert screen.workbench.active_mode == "tools"
+
+        screen.action_mcp_add_server()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.workbench.active_mode == "servers"
+        canvas = screen.query_one(MCPServersMode)
+        assert canvas.query_one("#mcp-servers-form").display is True
+
+
+def test_mcp_destination_test_tool_binding_schedules_worker(monkeypatch):
+    """T8: the `t` keybinding dispatches `MCPWorkbench.open_test_for_
+    selected_tool()` via a named, exclusive worker -- mirrors
+    `action_mcp_add_server`'s dispatch pattern
+    (`test_mcp_destination_add_server_binding_switches_mode_and_schedules_
+    worker`). Unlike that action, the Tools-mode switch happens INSIDE
+    `open_test_for_selected_tool()` itself (see its own docstring) rather
+    than synchronously in the screen action, so there's no `mode_calls`
+    side effect to assert here before the (never-run, closed) coroutine --
+    the real mode switch + panel-open path is covered end-to-end below.
+    """
+    app = _build_test_app()
+    screen = MCPScreen(app)
+    scheduled = {}
+
+    class FakeWorkbench:
+        async def open_test_for_selected_tool(self) -> None:
+            return None
+
+    def capture_worker(coro, **kwargs):
+        scheduled["kwargs"] = kwargs
+        coro.close()
+
+    screen.workbench = FakeWorkbench()
+    monkeypatch.setattr(screen, "run_worker", capture_worker)
+
+    screen.action_mcp_test_tool()
+
+    assert scheduled["kwargs"]["name"] == "mcp-screen-test-tool"
+    assert scheduled["kwargs"]["group"] == "mcp-screen-test-tool"
+    assert scheduled["kwargs"]["exclusive"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_test_tool_binding_opens_panel_for_selected_tool_end_to_end():
+    """T8: end-to-end (real `MCPScreen` + `MCPWorkbench` + `MCPInspector`,
+    no fakes) -- with a tool already selected in the inspector, pressing the
+    `t` keybinding's action opens the SAME Test Tool panel the button's own
+    press handler mounts (`MCPInspector._mount_test_tool_panel()`, reused
+    via `open_test_panel()`). No selection -> notify is unit-tested
+    directly against `MCPWorkbench.open_test_for_selected_tool()` in
+    test_mcp_workbench.py, mirroring how T13's gated add-server notify path
+    is tested at the workbench layer rather than re-tested here.
+    """
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#mcp-hub-rail")
+        screen.action_mcp_mode("tools")
+        await pilot.pause()
+
+        tool = HubTool(
+            name="search", server_key="local:docs", server_label="docs",
+            source="local", description="Search docs", tags=(),
+            input_schema=None, executable=True, stale=False,
+        )
+        screen.workbench._last_hub_tools = [tool]
+        await screen.workbench.on_mcp_tools_mode_tool_selected(
+            MCPToolsMode.ToolSelected(tool.tool_id)
+        )
+        await pilot.pause()
+
+        screen.action_mcp_test_tool()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.workbench.active_mode == "tools"
+        panel = screen.query_one("#mcp-inspector-test-panel")
+        assert panel.display is not False
+        assert screen.query_one("#mcp-inspector-test-tool", Button).disabled is True
+
+
+class MCPFooterHarness(App):
+    """Mirrors `test_console_workbench_contract.py`'s `ConsoleFooterHarness`
+    for the MCP destination: composes a real `AppFooterStatus` alongside the
+    pushed screen so `MCPScreen._register_footer_shortcuts()`'s
+    `self.app.query_one(AppFooterStatus)` resolves."""
+
+    def __init__(self, app_instance):
+        super().__init__()
+        self.app_instance = app_instance
+
+    def compose(self) -> ComposeResult:
+        yield AppFooterStatus(id="app-footer-status")
+
+    async def on_mount(self) -> None:
+        await self.push_screen(MCPScreen(self.app_instance))
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_registers_footer_workbench_shortcuts():
+    """T13: mounting the MCP destination registers its Phase 2 footer
+    shortcut hint (source="mcp") -- same contract Console established
+    (`test_console_registers_footer_workbench_shortcuts`).
+    """
+    app = _build_test_app()
+    host = MCPFooterHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#mcp-shell")
+        footer = host.query_one(AppFooterStatus)
+
+        assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend_resume():
+    """T13: shortcuts clear when another screen suspends the MCP destination
+    (e.g. the mcpServers-import file picker pushed on top) and re-register
+    once that overlay pops back to the MCP screen.
+    """
+    from textual.screen import Screen as TextualScreen
+
+    app = _build_test_app()
+    host = MCPFooterHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#mcp-shell")
+        footer = host.query_one(AppFooterStatus)
+        assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
+
+        overlay = TextualScreen()
+        await host.push_screen(overlay)
+        await pilot.pause()
+        assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+
+        await host.pop_screen()
+        await pilot.pause()
+        assert footer.shortcut_text == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
 
 
 def test_skills_screen_public_initializer_is_typed():
@@ -3070,7 +3456,11 @@ async def test_settings_destination_uses_three_column_workbench_contract():
         assert "Storage" in text
         assert "Privacy" in text
         assert "Console paste collapse" in text
-        assert "Mutation replay: disabled" in text
+        assert (
+            "Saves apply to your local config file. Nothing is sent to a server "
+            "unless you run Manual sync yourself." in text
+        )
+        assert "Mutation replay: disabled" not in text
         assert "runtime MCP, ACP, and tool control stay in their own destinations" in text
         assert "Column 1:" not in text
         assert "Column 2:" not in text

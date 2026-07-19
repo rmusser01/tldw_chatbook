@@ -1143,6 +1143,8 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         prompts.collections.update.server
         prompts.delete.local
         prompts.delete.server
+        prompts.detail.local
+        prompts.detail.server
         prompts.health.detail.server
         prompts.keywords.create.server
         prompts.keywords.delete.server

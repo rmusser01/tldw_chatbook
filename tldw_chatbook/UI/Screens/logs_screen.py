@@ -119,4 +119,4 @@ class LogsScreen(BaseAppScreen):
                     
         except Exception as e:
             self.app.notify(f"Error copying logs: {str(e)}", title="Error", severity="error", timeout=6)
-            logger.error(f"Failed to copy logs: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to copy logs: {e}")

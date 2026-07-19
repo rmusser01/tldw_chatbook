@@ -91,7 +91,7 @@ class CCPPersonaHandler:
             if hasattr(editor, "load_persona"):
                 editor.load_persona(persona_data)
         except Exception:
-            logger.debug("Persona editor widget unavailable during load", exc_info=True)
+            logger.opt(exception=True).debug("Persona editor widget unavailable during load")
 
     async def refresh_persona_list(
         self, *, raise_on_unavailable: bool = False
@@ -124,7 +124,7 @@ class CCPPersonaHandler:
         try:
             personas = await service.list_persona_profiles(mode=self._current_mode())
         except ValueError:
-            logger.debug("Persona list unavailable in current mode", exc_info=True)
+            logger.opt(exception=True).debug("Persona list unavailable in current mode")
             if raise_on_unavailable:
                 raise
             self.persona_list = []
@@ -139,7 +139,7 @@ class CCPPersonaHandler:
                 if hasattr(widget, "update_persona_list"):
                     widget.update_persona_list(self.persona_list)
             except Exception:
-                logger.debug("Sidebar persona list update skipped", exc_info=True)
+                logger.opt(exception=True).debug("Sidebar persona list update skipped")
 
         return self.persona_list
 
@@ -161,7 +161,7 @@ class CCPPersonaHandler:
             self._notify(str(exc))
             return
         except Exception:
-            logger.error("Error loading persona {}", persona_id, exc_info=True)
+            logger.opt(exception=True).error("Error loading persona {}", persona_id)
             self._notify("Failed to load persona profile.", severity="error")
             return
 
@@ -258,7 +258,7 @@ class CCPPersonaHandler:
             self._notify(str(exc))
             return
         except Exception:
-            logger.error("Error saving persona profile", exc_info=True)
+            logger.opt(exception=True).error("Error saving persona profile")
             self._notify("Failed to save persona profile.", severity="error")
             return
 
@@ -298,7 +298,7 @@ class CCPPersonaHandler:
             self._notify(str(exc))
             return {}
         except Exception:
-            logger.error("Error loading chat greetings", exc_info=True)
+            logger.opt(exception=True).error("Error loading chat greetings")
             self._notify("Failed to load chat greetings.", severity="error")
             return {}
 
@@ -320,7 +320,7 @@ class CCPPersonaHandler:
             self._notify(str(exc))
             return {}
         except Exception:
-            logger.error("Error selecting chat greeting", exc_info=True)
+            logger.opt(exception=True).error("Error selecting chat greeting")
             self._notify("Failed to select chat greeting.", severity="error")
             return {}
 
@@ -338,7 +338,7 @@ class CCPPersonaHandler:
             self._notify(str(exc))
             return {}
         except Exception:
-            logger.error("Error loading chat presets", exc_info=True)
+            logger.opt(exception=True).error("Error loading chat presets")
             self._notify("Failed to load chat presets.", severity="error")
             return {}
 
@@ -356,7 +356,7 @@ class CCPPersonaHandler:
             self._notify(str(exc))
             return {}
         except Exception:
-            logger.error("Error creating chat preset", exc_info=True)
+            logger.opt(exception=True).error("Error creating chat preset")
             self._notify("Failed to create chat preset.", severity="error")
             return {}
 
@@ -378,7 +378,7 @@ class CCPPersonaHandler:
             self._notify(str(exc))
             return {}
         except Exception:
-            logger.error("Error updating chat preset", exc_info=True)
+            logger.opt(exception=True).error("Error updating chat preset")
             self._notify("Failed to update chat preset.", severity="error")
             return {}
 
@@ -396,6 +396,6 @@ class CCPPersonaHandler:
             self._notify(str(exc))
             return {}
         except Exception:
-            logger.error("Error deleting chat preset", exc_info=True)
+            logger.opt(exception=True).error("Error deleting chat preset")
             self._notify("Failed to delete chat preset.", severity="error")
             return {}

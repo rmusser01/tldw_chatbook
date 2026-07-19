@@ -67,9 +67,21 @@ class ConsoleMessageActionService:
         ("variant-next", ">"),
     )
     _FAILED_RETRY_ACTIONS: tuple[tuple[str, str], ...] = (("retry", "Try"),)
+    _IMAGE_VIEW_ACTIONS: tuple[tuple[str, str], ...] = (("toggle-image-view", "View"),)
+    _SAVE_IMAGE_ACTIONS: tuple[tuple[str, str], ...] = (("save-image", "Save Image"),)
 
-    def __init__(self, *, available_save_destinations: set[str] | None = None) -> None:
+    @staticmethod
+    def _has_image(message: ConsoleChatMessage) -> bool:
+        return message.image_data is not None or bool(message.image_mime_type)
+
+    def __init__(
+        self,
+        *,
+        available_save_destinations: set[str] | None = None,
+        unavailable_save_reasons: dict[str, str] | None = None,
+    ) -> None:
         self.available_save_destinations = set(available_save_destinations or ())
+        self.unavailable_save_reasons = dict(unavailable_save_reasons or {})
 
     @classmethod
     def _base_actions_with(cls, inserted: tuple[tuple[str, str], ...]) -> list[tuple[str, str]]:
@@ -87,6 +99,12 @@ class ConsoleMessageActionService:
         completed_actions = list(self._COMPLETED_ACTIONS)
         if message.variants is not None:
             completed_actions = self._base_actions_with(self._VARIANT_NAV_ACTIONS)
+        if self._has_image(message):
+            completed_actions = (
+                completed_actions
+                + list(self._IMAGE_VIEW_ACTIONS)
+                + list(self._SAVE_IMAGE_ACTIONS)
+            )
         if message.status == "failed":
             return [
                 ConsoleMessageAction(action_id, label)
@@ -122,17 +140,22 @@ class ConsoleMessageActionService:
         return labels
 
     def save_as_destinations(self, message: ConsoleChatMessage) -> list[ConsoleSaveDestination]:
-        """Return Save as destinations, including explicit WIP/unavailable entries."""
+        """Return Save as destinations, including explicit unavailable entries."""
         _ = message
         labels = ("Chatbook", "Note", "Media", "Prompt")
-        return [
-            ConsoleSaveDestination(
-                label=label,
-                available=label in self.available_save_destinations,
-                reason="" if label in self.available_save_destinations else f"WIP: save as {label} is not wired yet.",
+        destinations: list[ConsoleSaveDestination] = []
+        for label in labels:
+            available = label in self.available_save_destinations
+            reason = ""
+            if not available:
+                reason = (
+                    self.unavailable_save_reasons.get(label)
+                    or f"Save as {label} is not available in this session."
+                )
+            destinations.append(
+                ConsoleSaveDestination(label=label, available=available, reason=reason)
             )
-            for label in labels
-        ]
+        return destinations
 
     def dispatch(self, action_id: str, message: ConsoleChatMessage) -> ConsoleActionResult:
         """Dispatch a pure action result without touching UI or persistence."""
@@ -208,6 +231,20 @@ class ConsoleMessageActionService:
                 visible_copy="Continuing from selected message.",
                 target_message_id=message.id,
                 target_content=target_content,
+            )
+        if action_id == "toggle-image-view":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Toggled image view.",
+                target_message_id=message.id,
+            )
+        if action_id == "save-image":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Saving image to disk.",
+                target_message_id=message.id,
             )
         return ConsoleActionResult(
             action_id=action_id,

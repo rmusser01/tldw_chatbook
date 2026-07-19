@@ -395,7 +395,7 @@ class ToolExecutor:
         
         except Exception as e:
             error_msg = f"Tool execution failed: {str(e)}"
-            logger.error(f"Tool {tool_name} - {error_msg}", exc_info=True)
+            logger.opt(exception=True).error(f"Tool {tool_name} - {error_msg}")
             execution_record["status"] = "error"
             execution_record["error"] = error_msg
             execution_record["end_time"] = datetime.now().isoformat()

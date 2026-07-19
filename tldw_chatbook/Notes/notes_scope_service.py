@@ -684,14 +684,28 @@ class NotesScopeService:
         user_id: Optional[str] = None,
         workspace_id: Optional[str] = None,
         workspace_notes: Optional[Sequence[dict[str, Any]]] = None,
+        fts_match_query: Optional[str] = None,
     ) -> Any:
+        """Route a notes search to the scope's backing service.
+
+        Args:
+            fts_match_query: Optional pre-built FTS5 MATCH string for the
+                local-notes seam (e.g. Library keyword search's
+                plural/singular-widened query). Ignored for server and
+                workspace scopes; when omitted the local backend keeps its
+                exact-phrase behavior.
+        """
         normalized_scope = self._normalize_scope(scope)
         self._enforce_policy(self._note_action_id(normalized_scope, "list"))
         if normalized_scope == ScopeType.LOCAL_NOTE:
+            # Forward only when provided so existing local backends (and
+            # test fakes) without the parameter keep working unchanged.
+            local_kwargs = {"fts_match_query": fts_match_query} if fts_match_query is not None else {}
             return self.local_notes_service.search_notes(
                 self._require_user_id(user_id),
                 query,
                 limit=limit,
+                **local_kwargs,
             )
         if normalized_scope == ScopeType.SERVER_NOTE:
             return await self.server_service.search_server_notes(

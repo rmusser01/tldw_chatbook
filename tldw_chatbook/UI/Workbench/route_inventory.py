@@ -24,7 +24,6 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "workflows": "workflows",
     "mcp": "mcp",
     "acp": "acp",
-    "skills": "skills",
     "settings": "settings",
     "ingest": "library",
     "coding": "console",
@@ -32,7 +31,12 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "ccp": "personas",
     "conversations_characters_prompts": "personas",
     "characters": "personas",
-    "prompts": "personas",
+    # The Personas "prompts" mode chip is retired (Task 7): the legacy
+    # "prompts" route re-points to Library, like "notes" below.
+    "prompts": "library",
+    # The standalone Skills tab is retired (Skills sub-project Task 5): the
+    # legacy "skills" route re-points to Library, like "notes"/"prompts".
+    "skills": "library",
     "media": "library",
     "notes": "library",
     "search": "library",
@@ -46,6 +50,9 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "stts": "settings",
     "study": "library",
     "writing": "artifacts_writing",
+    # The orphan "research" screen registration is removed (Task 255): the
+    # route id survives only as TAB_RESEARCH plus a screen_registry alias
+    # that resolves to Library, matching this owner mapping.
     "research": "library",
     "chatbooks": "artifacts",
     "subscriptions": "watchlists_collections",

@@ -105,6 +105,18 @@ def test_console_provider_selection_carries_sampling_settings() -> None:
     assert selection.streaming is False
 
 
+def test_console_provider_selection_system_prompt_defaults_to_none_and_can_be_set() -> None:
+    default_selection = ConsoleProviderSelection(provider="llama_cpp")
+    assert default_selection.system_prompt is None
+
+    selection = ConsoleProviderSelection(
+        provider="llama_cpp",
+        explicit_model="m",
+        system_prompt="Session system prompt.",
+    )
+    assert selection.system_prompt == "Session system prompt."
+
+
 def test_chat_message_defaults_to_complete_status():
     message = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hello")
 
