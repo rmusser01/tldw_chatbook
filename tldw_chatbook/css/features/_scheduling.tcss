@@ -1,0 +1,4 @@
+#schedules-workbench { layout: horizontal; height: 100%; }
+#schedules-list-pane { width: 30%; border-right: solid $ds-grid-line; }
+#schedules-detail-pane { width: 45%; border-right: solid $ds-grid-line; }
+#schedules-inspector-pane { width: 25%; }
