@@ -37,7 +37,7 @@ logger = logger.bind(module="Chat_Functions")
 
 #
 # Local Imports
-from .Chat_Deps import (
+from .Chat_Deps import (  # noqa: E402
     ChatBadRequestError,
     ChatConfigurationError,
     ChatAPIError,
@@ -45,13 +45,13 @@ from .Chat_Deps import (
     ChatRateLimitError,
     ChatAuthenticationError,
 )
-from tldw_chatbook.DB.ChaChaNotes_DB import (
+from tldw_chatbook.DB.ChaChaNotes_DB import (  # noqa: E402
     CharactersRAGDB,
     InputError,
     ConflictError,
     CharactersRAGDBError,
 )
-from tldw_chatbook.LLM_Calls.LLM_API_Calls import (
+from tldw_chatbook.LLM_Calls.LLM_API_Calls import (  # noqa: E402
     chat_with_openai,
     chat_with_anthropic,
     chat_with_cohere,
@@ -64,7 +64,7 @@ from tldw_chatbook.LLM_Calls.LLM_API_Calls import (
     chat_with_moonshot,
     chat_with_zai,
 )
-from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (
+from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (  # noqa: E402
     chat_with_aphrodite,
     chat_with_local_llm,
     chat_with_ollama,
@@ -77,10 +77,10 @@ from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (
     chat_with_custom_openai_2,
     chat_with_mlx_lm,
 )
-from tldw_chatbook.Utils.Utils import generate_unique_filename, logging
-from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
-from tldw_chatbook.config import load_settings
-from .chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Utils.Utils import generate_unique_filename, logging  # noqa: E402
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
+from tldw_chatbook.config import load_settings  # noqa: E402
+from .chat_persistence_service import ChatPersistenceService  # noqa: E402
 #
 ####################################################################################################
 #
@@ -2498,7 +2498,7 @@ def update_chat_content(
 #
 # Chat Dictionary Functions - Moved to Character_Chat/Chat_Dictionary_Lib.py
 # Import the functions for backward compatibility
-from ..Character_Chat.Chat_Dictionary_Lib import (
+from ..Character_Chat.Chat_Dictionary_Lib import (  # noqa: E402
     ChatDictionary,
     parse_user_dict_markdown_file,
     process_user_input,

@@ -99,9 +99,9 @@ EBOOK_PROCESSING_AVAILABLE = EBOOKLIB_AVAILABLE and DEFUSEDXML_AVAILABLE
 # only load when LLM analysis is actually invoked, not just from parsing an
 # ebook. See the analysis call sites below for the deferred imports.
 # Moved chunking imports to be lazy to avoid circular dependency
-from ..Metrics.metrics_logger import log_counter, log_histogram
-from loguru import logger
-from ..Utils.optional_deps import get_safe_import
+from ..Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
+from loguru import logger  # noqa: E402
+from ..Utils.optional_deps import get_safe_import  # noqa: E402
 #
 #######################################################################################################################
 # Function Definitions

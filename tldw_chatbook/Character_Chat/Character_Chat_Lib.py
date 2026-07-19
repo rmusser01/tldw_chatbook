@@ -25,13 +25,13 @@ from loguru import logger
 logger = logger.bind(module="Character_Chat_Lib")
 #
 # Local Imports
-from tldw_chatbook.DB.ChaChaNotes_DB import (
+from tldw_chatbook.DB.ChaChaNotes_DB import (  # noqa: E402
     CharactersRAGDB,
     CharactersRAGDBError,
     ConflictError,
     InputError,
 )
-from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.Utils.path_validation import validate_path  # noqa: E402
 
 #
 ###############################################

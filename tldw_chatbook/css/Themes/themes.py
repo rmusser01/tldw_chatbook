@@ -677,7 +677,7 @@ ghost_in_the_shell_theme = Theme(
     },
 )
 
-from textual.theme import Theme
+from textual.theme import Theme  # noqa: E402
 
 # 1. Theme: "Retro Mint Chip" (Light)
 # A refreshing light theme with minty greens, chocolate browns, and creamy off-whites.

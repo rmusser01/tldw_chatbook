@@ -128,7 +128,7 @@ def test_chat_message_defaults_to_complete_status():
     assert message.id
 
 
-from tldw_chatbook.Chat.console_chat_models import (
+from tldw_chatbook.Chat.console_chat_models import (  # noqa: E402
     CONSOLE_AUTO_TITLE_MAX_LENGTH,
     derive_console_session_title,
     is_default_console_session_title,

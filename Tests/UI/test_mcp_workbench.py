@@ -748,7 +748,7 @@ async def test_set_initial_view_state_during_inflight_reload_applies_pending_sta
         assert len(apply_calls) == 1
 
 
-from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
+from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen  # noqa: E402
 
 
 class _StubApp:

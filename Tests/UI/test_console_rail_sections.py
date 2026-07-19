@@ -505,11 +505,11 @@ async def test_setup_backdrop_no_resume_intent_stays_paused_after_mount():
 # Console session switcher modal (Ctrl+K).
 # ---------------------------------------------------------------------------
 
-from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
+from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (  # noqa: E402
     ConsoleSessionSwitcherModal,
     ConsoleSwitcherChoice,
 )
-from tldw_chatbook.Workspaces.conversation_browser_state import (
+from tldw_chatbook.Workspaces.conversation_browser_state import (  # noqa: E402
     ConsoleConversationBrowserInputRow,
 )
 

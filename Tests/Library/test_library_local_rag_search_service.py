@@ -1246,7 +1246,7 @@ async def test_prompts_deselected_yields_zero_prompt_rows(real_prompts_app):
 # the deterministic mock embedding backend, published as the process-wide
 # shared service, queried end-to-end through run_library_rag_search.
 
-from tldw_chatbook.Utils.optional_deps import (
+from tldw_chatbook.Utils.optional_deps import (  # noqa: E402
     embeddings_rag_deps_installed as _deps_installed,
 )
 

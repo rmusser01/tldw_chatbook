@@ -420,4 +420,4 @@ async def store_documents_with_parents(
 
 
 # Re-export the original helper for backward compatibility
-from .indexing_helpers import generate_embeddings_batch
+from .indexing_helpers import generate_embeddings_batch  # noqa: E402

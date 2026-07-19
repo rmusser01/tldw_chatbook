@@ -7,11 +7,11 @@ This module provides the main MCP server that exposes tldw_chatbook's functional
 through the Model Context Protocol.
 """
 
-import asyncio
-import ast
-from pathlib import Path
-from typing import Dict, List, Optional, Any
-from datetime import datetime
+import asyncio  # noqa: E402
+import ast  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Dict, List, Optional, Any  # noqa: E402
+from datetime import datetime  # noqa: E402
 
 # Import MCP server components conditionally
 try:
@@ -24,7 +24,7 @@ except ImportError:
     MCP_AVAILABLE = False
     FastMCP = None
 
-from loguru import logger
+from loguru import logger  # noqa: E402
 
 
 def _first_doc_line(value: str | None) -> str:

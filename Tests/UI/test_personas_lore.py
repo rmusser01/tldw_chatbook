@@ -491,11 +491,11 @@ async def test_tryit_bracket_tag_content_not_backslash_escaped():
 # real CharactersRAGDB (tmp_path) through WorldBookManager and mount the real
 # PersonasScreen against it.
 
-from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
-from tldw_chatbook.Character_Chat.world_info_processor import WorldInfoProcessor
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
-from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager  # noqa: E402
+from tldw_chatbook.Character_Chat.world_info_processor import WorldInfoProcessor  # noqa: E402
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB  # noqa: E402
+from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen  # noqa: E402
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus  # noqa: E402
 
 
 @pytest.fixture

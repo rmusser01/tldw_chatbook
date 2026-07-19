@@ -2,10 +2,10 @@ from __future__ import annotations
 
 """Remote-only scope seam for server reminders and notification feeds."""
 
-import inspect
-from collections.abc import Mapping
-from enum import Enum
-from typing import Any
+import inspect  # noqa: E402
+from collections.abc import Mapping  # noqa: E402
+from enum import Enum  # noqa: E402
+from typing import Any  # noqa: E402
 
 
 class ServerNotificationBackend(str, Enum):

@@ -6,19 +6,19 @@ import pytest
 
 # Skip this entire module since tldw_Server_API is not available in this codebase
 pytest.skip("tldw_Server_API not available in this codebase", allow_module_level=True)
-from fastapi import FastAPI, status
-from fastapi.testclient import TestClient
-from unittest.mock import MagicMock
-from typing import Dict, Any
-from datetime import datetime, timezone
-import uuid
+from fastapi import FastAPI, status  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from unittest.mock import MagicMock  # noqa: E402
+from typing import Dict, Any  # noqa: E402
+from datetime import datetime, timezone  # noqa: E402
+import uuid  # noqa: E402
 
 #
 # Third-Party Imports
 #
 # Local Imports
-from tldw_Server_API.app.api.v1.endpoints import notes as notes_router_module
-from tldw_Server_API.app.core.DB_Management.ChaChaNotes_DB import (
+from tldw_Server_API.app.api.v1.endpoints import notes as notes_router_module  # noqa: E402
+from tldw_Server_API.app.core.DB_Management.ChaChaNotes_DB import (  # noqa: E402
     CharactersRAGDBError as Actual_CharactersRAGDBError,
     InputError as Actual_InputError,
     ConflictError as Actual_ConflictError,

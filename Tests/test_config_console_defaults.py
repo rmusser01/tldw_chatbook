@@ -7,7 +7,7 @@ import tomllib
 from loguru import logger
 
 CONFIG_PATH_BEFORE_CONFIG_IMPORT = os.environ.get("TLDW_CONFIG_PATH")
-from tldw_chatbook import config as config_module
+from tldw_chatbook import config as config_module  # noqa: E402
 
 
 LOCAL_STREAMING_PROVIDER_SECTIONS = (

@@ -190,7 +190,7 @@ if TYPE_CHECKING:
 logger = logger.bind(module="SearchRAGWindow")
 
 # Import event handler mixin
-from .search_event_handlers import SearchEventHandlersMixin
+from .search_event_handlers import SearchEventHandlersMixin  # noqa: E402
 
 
 class SearchRAGWindow(SearchEventHandlersMixin, Container):

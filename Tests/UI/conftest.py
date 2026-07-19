@@ -24,13 +24,13 @@ _BOOTSTRAP_CONFIG_PATH = _BOOTSTRAP_CONFIG_ROOT / "config" / "config.toml"
 _BOOTSTRAP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
 
-import pytest
-import pytest_asyncio
-from typing import TypeVar
-from contextlib import asynccontextmanager
+import pytest  # noqa: E402
+import pytest_asyncio  # noqa: E402
+from typing import TypeVar  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
 
-from textual.app import App
-from textual.widget import Widget
+from textual.app import App  # noqa: E402
+from textual.widget import Widget  # noqa: E402
 
 # Import test utilities
 

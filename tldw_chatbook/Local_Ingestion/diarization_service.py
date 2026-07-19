@@ -71,7 +71,7 @@ _sklearn_modules = None
 _torchaudio = None
 
 # Local imports
-from ..config import get_cli_setting
+from ..config import get_cli_setting  # noqa: E402
 
 
 # Enums and Constants

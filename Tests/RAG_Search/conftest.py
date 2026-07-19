@@ -28,7 +28,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 # Initialize dependencies before imports
-from tldw_chatbook.Utils.optional_deps import (
+from tldw_chatbook.Utils.optional_deps import (  # noqa: E402
     initialize_dependency_checks,
     DEPENDENCIES_AVAILABLE,
 )

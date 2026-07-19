@@ -417,7 +417,7 @@ def test_dashboard_counts_parsing_and_writing_ingest_items_as_running():
     assert {row.title for row in running_section.rows} == {"report.pdf", "notes.txt"}
 
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone  # noqa: E402
 
 
 _NOW = datetime(2026, 7, 4, 12, 0, 0, tzinfo=timezone.utc)

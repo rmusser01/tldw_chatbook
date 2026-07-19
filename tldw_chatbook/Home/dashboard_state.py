@@ -5,22 +5,22 @@ from __future__ import annotations
 HOME_PRIMARY_ACTION_ID = "home-primary-action"
 """Widget/control id of the Home canvas primary action button."""
 
-from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from dataclasses import dataclass, replace  # noqa: E402
+from datetime import datetime, timezone  # noqa: E402
 
-from rich.markup import escape as escape_markup
+from rich.markup import escape as escape_markup  # noqa: E402
 
-from tldw_chatbook.Constants import (
+from tldw_chatbook.Constants import (  # noqa: E402
     TAB_LLM,
     TAB_SETTINGS,
     TAB_STUDY,
     get_tab_display_label,
 )
-from tldw_chatbook.UI.Navigation.shell_destinations import (
+from tldw_chatbook.UI.Navigation.shell_destinations import (  # noqa: E402
     get_shell_destination,
     resolve_shell_route,
 )
-from tldw_chatbook.Workspaces.conversation_browser_state import (
+from tldw_chatbook.Workspaces.conversation_browser_state import (  # noqa: E402
     format_console_relative_age,
 )
 

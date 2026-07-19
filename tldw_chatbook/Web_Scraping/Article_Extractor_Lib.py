@@ -84,7 +84,7 @@ TimeoutError = Exception
 async_playwright = None
 sync_playwright = None
 
-import requests
+import requests  # noqa: E402
 
 TRAFILATURA_AVAILABLE = importlib.util.find_spec("trafilatura") is not None
 trafilatura = None
@@ -159,12 +159,12 @@ except ImportError:
 # lazily inside scrape_and_summarize_multiple(), only when summarization is
 # actually requested, so a plain `import tldw_chatbook.app` doesn't eagerly
 # load it.
-from tldw_chatbook.Metrics.metrics_logger import log_histogram, log_counter
-from tldw_chatbook.Logging_Config import logging
-from tldw_chatbook.DB.Client_Media_DB_v2 import ingest_article_to_db_new
-from tldw_chatbook.Utils.input_validation import validate_url
-from tldw_chatbook.Utils.secure_temp_files import secure_temp_file, get_temp_manager
-from tldw_chatbook.Web_Scraping.exceptions import (
+from tldw_chatbook.Metrics.metrics_logger import log_histogram, log_counter  # noqa: E402
+from tldw_chatbook.Logging_Config import logging  # noqa: E402
+from tldw_chatbook.DB.Client_Media_DB_v2 import ingest_article_to_db_new  # noqa: E402
+from tldw_chatbook.Utils.input_validation import validate_url  # noqa: E402
+from tldw_chatbook.Utils.secure_temp_files import secure_temp_file, get_temp_manager  # noqa: E402
+from tldw_chatbook.Web_Scraping.exceptions import (  # noqa: E402
     InvalidURLError,
     NetworkError,
     BrowserError,
@@ -190,7 +190,7 @@ MAX_CONCURRENT_SCRAPERS = 5  # Configurable limit
 scraping_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SCRAPERS)
 
 # Thread-local event loop storage for proper async/sync handling
-import threading
+import threading  # noqa: E402
 
 _thread_local = threading.local()
 

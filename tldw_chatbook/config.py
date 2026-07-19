@@ -3616,7 +3616,7 @@ def _target_config_section(config_data: Dict[str, Any], section: str) -> Dict[st
 # Eagerly created at import (single-threaded), so every caller shares one
 # lock. Lazy init would let the first two concurrent workers each build a
 # separate lock and defeat serialization on the first write.
-import threading as _threading
+import threading as _threading  # noqa: E402
 
 _CONFIG_FILE_LOCK = _threading.Lock()
 

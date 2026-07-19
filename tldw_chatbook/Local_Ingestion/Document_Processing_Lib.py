@@ -63,9 +63,9 @@ except ImportError:
     RTF_AVAILABLE = False
 #
 # Import Local
-from ..config import get_cli_setting
-from ..Metrics.metrics_logger import log_counter
-from loguru import logger
+from ..config import get_cli_setting  # noqa: E402
+from ..Metrics.metrics_logger import log_counter  # noqa: E402
+from loguru import logger  # noqa: E402
 
 # NOTE: `analyze` (LLM_Calls.Summarization_General_Lib) is intentionally NOT
 # imported at module level -- it pulls in nltk (via Chunk_Lib) and should

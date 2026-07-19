@@ -18,12 +18,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 # Import RAG components
-from tldw_chatbook.RAG_Search.simplified import (
+from tldw_chatbook.RAG_Search.simplified import (  # noqa: E402
     create_rag_service,
     create_rag_service_from_config,
     RAGConfig,
 )
-from tldw_chatbook.RAG_Search.simplified.enhanced_rag_service_v2 import (
+from tldw_chatbook.RAG_Search.simplified.enhanced_rag_service_v2 import (  # noqa: E402
     EnhancedRAGServiceV2,
 )
 

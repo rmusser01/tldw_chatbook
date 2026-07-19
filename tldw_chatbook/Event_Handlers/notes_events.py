@@ -135,7 +135,7 @@ def _parse_note_from_file_content(
 #
 # --- Template Definitions ---
 
-from pathlib import Path
+from pathlib import Path  # noqa: E402
 
 
 def load_note_templates():

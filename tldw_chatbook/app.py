@@ -347,56 +347,56 @@ from .UI.Screens.study_scope_models import StudyScopeContext
 USE_REBUILT_INGEST = True
 INGEST_NAV_BUTTON_IDS: list[str] = []
 INGEST_VIEW_IDS: list[str] = []
-from .UI.Tools_Settings_Window import ToolsSettingsWindow
-from .UI.console_command_provider import ConsoleCommandProvider
-from tldw_chatbook.Chat_Grammars_Interop import (
+from .UI.Tools_Settings_Window import ToolsSettingsWindow  # noqa: E402
+from .UI.console_command_provider import ConsoleCommandProvider  # noqa: E402
+from tldw_chatbook.Chat_Grammars_Interop import (  # noqa: E402
     ChatGrammarsScopeService,
     LocalChatGrammarsService,
     ServerChatGrammarsService,
 )
-from tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService
-from tldw_chatbook.Companion_Interop import (
+from tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService  # noqa: E402
+from tldw_chatbook.Companion_Interop import (  # noqa: E402
     CompanionScopeService,
     ServerCompanionService,
 )
-from tldw_chatbook.Collections_Interop import (
+from tldw_chatbook.Collections_Interop import (  # noqa: E402
     CollectionsFeedsScopeService,
     ServerCollectionsFeedsService,
 )
-from tldw_chatbook.External_Connectors_Interop import (
+from tldw_chatbook.External_Connectors_Interop import (  # noqa: E402
     ConnectorsScopeService,
     ServerConnectorsService,
 )
-from tldw_chatbook.Feedback_Interop import (
+from tldw_chatbook.Feedback_Interop import (  # noqa: E402
     FeedbackScopeService,
     LocalFeedbackService,
     ServerFeedbackService,
 )
-from tldw_chatbook.Kanban_Interop import (
+from tldw_chatbook.Kanban_Interop import (  # noqa: E402
     KanbanScopeService,
     LocalKanbanService,
     ServerKanbanService,
 )
-from tldw_chatbook.LLM_Provider_Catalog import (
+from tldw_chatbook.LLM_Provider_Catalog import (  # noqa: E402
     LLMProviderCatalogScopeService,
     LocalLLMProviderCatalogService,
     ServerLLMProviderCatalogService,
 )
-from tldw_chatbook.Media import (
+from tldw_chatbook.Media import (  # noqa: E402
     LocalMediaReadingService,
     MediaReadingScopeService,
     ServerMediaReadingService,
 )
-from tldw_chatbook.Meetings_Interop import MeetingsScopeService, ServerMeetingsService
-from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
-from tldw_chatbook.MCP.local_store import LocalMCPStore
-from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
-from tldw_chatbook.MCP.server_unified_service import ServerUnifiedMCPService
-from tldw_chatbook.MCP.unified_context_store import UnifiedMCPContextStore
-from tldw_chatbook.MCP.unified_control_plane_service import (
+from tldw_chatbook.Meetings_Interop import MeetingsScopeService, ServerMeetingsService  # noqa: E402
+from tldw_chatbook.MCP.local_control_service import LocalMCPControlService  # noqa: E402
+from tldw_chatbook.MCP.local_store import LocalMCPStore  # noqa: E402
+from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore  # noqa: E402
+from tldw_chatbook.MCP.server_unified_service import ServerUnifiedMCPService  # noqa: E402
+from tldw_chatbook.MCP.unified_context_store import UnifiedMCPContextStore  # noqa: E402
+from tldw_chatbook.MCP.unified_control_plane_service import (  # noqa: E402
     UnifiedMCPControlPlaneService,
 )
-from tldw_chatbook.Notifications import (
+from tldw_chatbook.Notifications import (  # noqa: E402
     ClientNotificationsDB,
     ClientNotificationsService,
     EventStateRepository,
@@ -404,19 +404,19 @@ from tldw_chatbook.Notifications import (
     NotificationDispatchService,
     ServerNotificationsService,
 )
-from tldw_chatbook.Outputs_Interop import OutputsScopeService, ServerOutputsService
-from tldw_chatbook.Personalization_Interop import (
+from tldw_chatbook.Outputs_Interop import OutputsScopeService, ServerOutputsService  # noqa: E402
+from tldw_chatbook.Personalization_Interop import (  # noqa: E402
     PersonalizationScopeService,
     ServerPersonalizationService,
 )
-from tldw_chatbook.Prompt_Management.prompt_scope_service import (
+from tldw_chatbook.Prompt_Management.prompt_scope_service import (  # noqa: E402
     build_prompt_scope_service,
 )
-from tldw_chatbook.Prompt_Studio_Interop import (
+from tldw_chatbook.Prompt_Studio_Interop import (  # noqa: E402
     PromptStudioScopeService,
     ServerPromptStudioService,
 )
-from tldw_chatbook.Research_Interop import (
+from tldw_chatbook.Research_Interop import (  # noqa: E402
     LocalResearchSearchService,
     LocalResearchService,
     ResearchSearchScopeService,
@@ -424,109 +424,109 @@ from tldw_chatbook.Research_Interop import (
     ServerResearchSearchService,
     ServerResearchService,
 )
-from tldw_chatbook.Server_Runtime_Interop import (
+from tldw_chatbook.Server_Runtime_Interop import (  # noqa: E402
     ServerRuntimeScopeService,
     ServerRuntimeService,
 )
-from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
-from tldw_chatbook.Skills_Interop import (
+from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService  # noqa: E402
+from tldw_chatbook.Skills_Interop import (  # noqa: E402
     LocalSkillsService,
     ServerSkillsService,
     SkillTrustService,
     SkillsScopeService,
 )
-from tldw_chatbook.Skills_Interop.skill_trust_store import (
+from tldw_chatbook.Skills_Interop.skill_trust_store import (  # noqa: E402
     SkillTrustStore,
     build_default_skill_trust_key_cache,
     build_skill_trust_marker_store_with_fallback,
 )
-from tldw_chatbook.Sync_Interop import (
+from tldw_chatbook.Sync_Interop import (  # noqa: E402
     LocalFirstSyncService,
     ManualSyncControlService,
     ServerSyncService,
     SyncScopeService,
     SyncStateRepository,
 )
-from tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService
-from tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService
-from tldw_chatbook.MCP_Governance_Interop import (
+from tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService  # noqa: E402
+from tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService  # noqa: E402
+from tldw_chatbook.MCP_Governance_Interop import (  # noqa: E402
     MCPGovernanceScopeService,
     ServerMCPGovernanceService,
 )
-from tldw_chatbook.User_Governance_Interop import (
+from tldw_chatbook.User_Governance_Interop import (  # noqa: E402
     ServerUserGovernanceService,
     UserGovernanceScopeService,
 )
-from tldw_chatbook.Web_Clipper_Interop import (
+from tldw_chatbook.Web_Clipper_Interop import (  # noqa: E402
     ServerWebClipperService,
     WebClipperScopeService,
 )
-from tldw_chatbook.Web_Scraping_Interop import (
+from tldw_chatbook.Web_Scraping_Interop import (  # noqa: E402
     ServerWebScrapingService,
     WebScrapingScopeService,
 )
-from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
-from tldw_chatbook.Writing_Interop import (
+from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService  # noqa: E402
+from tldw_chatbook.Writing_Interop import (  # noqa: E402
     LocalWritingService,
     ServerWritingService,
     WritingScopeService,
 )
-from tldw_chatbook.Subscriptions import (
+from tldw_chatbook.Subscriptions import (  # noqa: E402
     LocalWatchlistsService,
     ServerWatchlistsService,
     WatchlistScopeService,
 )
-from tldw_chatbook.Translation_Interop import (
+from tldw_chatbook.Translation_Interop import (  # noqa: E402
     ServerTranslationService,
     TranslationScopeService,
 )
-from tldw_chatbook.Voice_Assistant_Interop import (
+from tldw_chatbook.Voice_Assistant_Interop import (  # noqa: E402
     ServerVoiceAssistantService,
     VoiceAssistantScopeService,
 )
-from tldw_chatbook.Evaluations_Interop import (
+from tldw_chatbook.Evaluations_Interop import (  # noqa: E402
     EvaluationScopeService,
     LocalEvaluationsService,
     ServerEvaluationsService,
 )
-from tldw_chatbook.runtime_policy.bootstrap import (
+from tldw_chatbook.runtime_policy.bootstrap import (  # noqa: E402
     add_runtime_policy_snapshot,
     build_runtime_api_client,
     load_runtime_policy_for_app,
     reconcile_saved_screen_state,
     set_authoritative_runtime_source,
 )
-from tldw_chatbook.runtime_policy.server_capabilities import (
+from tldw_chatbook.runtime_policy.server_capabilities import (  # noqa: E402
     ActiveServerCapabilityService,
 )
-from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider
-from tldw_chatbook.runtime_policy.server_credentials import (
+from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider  # noqa: E402
+from tldw_chatbook.runtime_policy.server_credentials import (  # noqa: E402
     CredentialStoreUnavailable,
     UnavailableServerCredentialStore,
     build_default_server_credential_store,
 )
-from tldw_chatbook.runtime_policy.server_event_scope import (
+from tldw_chatbook.runtime_policy.server_event_scope import (  # noqa: E402
     event_principal_id_from_active_context,
 )
-from tldw_chatbook.runtime_policy.server_parity_state import (
+from tldw_chatbook.runtime_policy.server_parity_state import (  # noqa: E402
     ServerParityStateRepositories,
     build_server_parity_state_repositories,
 )
-from tldw_chatbook.runtime_policy.engine import PolicyEngine
-from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
-from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
-from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState
-from tldw_chatbook.state import AppState
-from tldw_chatbook.Auth_Account_Interop import (
+from tldw_chatbook.runtime_policy.engine import PolicyEngine  # noqa: E402
+from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer  # noqa: E402
+from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY  # noqa: E402
+from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState  # noqa: E402
+from tldw_chatbook.state import AppState  # noqa: E402
+from tldw_chatbook.Auth_Account_Interop import (  # noqa: E402
     AuthAccountScopeService,
     ServerAuthAccountService,
 )
-from tldw_chatbook.Audio_Services_Interop import (
+from tldw_chatbook.Audio_Services_Interop import (  # noqa: E402
     AudioServicesScopeService,
     LocalAudioServicesService,
     ServerAudioServicesService,
 )
-from .Evals.eval_orchestrator import EvaluationOrchestrator
+from .Evals.eval_orchestrator import EvaluationOrchestrator  # noqa: E402
 
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import MCPUnifiedClient

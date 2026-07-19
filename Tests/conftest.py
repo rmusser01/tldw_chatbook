@@ -23,15 +23,15 @@ _BOOTSTRAP_CONFIG_PATH = _BOOTSTRAP_CONFIG_ROOT / "config" / "config.toml"
 _BOOTSTRAP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
 
-import pytest
-import pytest_asyncio
-from loguru import logger
-import asyncio
-from unittest.mock import MagicMock, AsyncMock
-import sqlite3
-import sys
-import gc
-import warnings
+import pytest  # noqa: E402
+import pytest_asyncio  # noqa: E402
+from loguru import logger  # noqa: E402
+import asyncio  # noqa: E402
+from unittest.mock import MagicMock, AsyncMock  # noqa: E402
+import sqlite3  # noqa: E402
+import sys  # noqa: E402
+import gc  # noqa: E402
+import warnings  # noqa: E402
 
 # Add project root to Python path for consistent imports
 PROJECT_ROOT = Path(__file__).parent.parent

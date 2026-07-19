@@ -32,13 +32,13 @@ except ImportError:
 EmbeddingFactory = None
 EmbeddingConfigSchema = None
 
-from tldw_chatbook.Metrics.metrics_logger import (
+from tldw_chatbook.Metrics.metrics_logger import (  # noqa: E402
     log_counter,
     log_histogram,
     log_gauge,
     timeit,
 )
-from .circuit_breaker import (
+from .circuit_breaker import (  # noqa: E402
     get_circuit_breaker,
     CircuitBreakerConfig,
     CircuitBreakerOpenError,

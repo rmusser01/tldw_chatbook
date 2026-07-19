@@ -388,7 +388,7 @@ async def bulk_ingest_subscription_items(
 
 
 # Custom message types for progress updates
-from textual.message import Message
+from textual.message import Message  # noqa: E402
 
 
 class SubscriptionIngestProgress(Message):

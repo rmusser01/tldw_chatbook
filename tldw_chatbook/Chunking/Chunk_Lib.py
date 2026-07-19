@@ -89,15 +89,15 @@ def _ensure_nltk():
 
 #
 # Import Local
-from tldw_chatbook.config import get_cli_setting
-from .language_chunkers import LanguageChunkerFactory
-from .token_chunker import create_token_chunker
-from .chunking_templates import (
+from tldw_chatbook.config import get_cli_setting  # noqa: E402
+from .language_chunkers import LanguageChunkerFactory  # noqa: E402
+from .token_chunker import create_token_chunker  # noqa: E402
+from .chunking_templates import (  # noqa: E402
     ChunkingTemplateManager,
     ChunkingPipeline,
     ChunkingTemplate,
 )
-from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
 
 
 #

@@ -98,10 +98,10 @@ def _ensure_local_video_processor():
 
 
 # Import database
-from ..DB.Client_Media_DB_v2 import MediaDatabase
+from ..DB.Client_Media_DB_v2 import MediaDatabase  # noqa: E402
 
 # Import metrics
-from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
 
 
 class FileIngestionError(Exception):

@@ -20,10 +20,10 @@ sys.stdout = open(os.devnull, "w")
 sys.stderr = open(os.devnull, "w")
 
 # Now safe to import other modules
-import json
-import base64
-import io
-import traceback
+import json  # noqa: E402
+import base64  # noqa: E402
+import io  # noqa: E402
+import traceback  # noqa: E402
 
 # Create a writer using the saved stdout file descriptor
 # This bypasses the Python-level redirection

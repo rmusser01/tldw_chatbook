@@ -1187,7 +1187,7 @@ def test_append_message_touches_session_updated_at():
     assert datetime.fromisoformat(touched) >= datetime.fromisoformat(original)
 
 
-from tldw_chatbook.Chat.attachment_core import PendingAttachment
+from tldw_chatbook.Chat.attachment_core import PendingAttachment  # noqa: E402
 
 
 def _image_attachment(name="photo.png"):
@@ -1295,8 +1295,8 @@ def test_editing_message_content_does_not_wipe_persisted_image():
     assert persistence.updated[-1]["image_mime_type"] == "image/png"
 
 
-from tldw_chatbook.Chat.console_chat_models import MessageAttachment
-from tldw_chatbook.Chat.console_chat_store import MAX_PENDING_ATTACHMENTS
+from tldw_chatbook.Chat.console_chat_models import MessageAttachment  # noqa: E402
+from tldw_chatbook.Chat.console_chat_store import MAX_PENDING_ATTACHMENTS  # noqa: E402
 
 
 def _att(name="a.png", data=b"img", position=1):

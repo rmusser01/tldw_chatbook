@@ -407,4 +407,4 @@ class MediaListPanel(Container):
 
 
 # Import at end to avoid circular dependency
-from .media_search_panel import MediaSearchEvent
+from .media_search_panel import MediaSearchEvent  # noqa: E402

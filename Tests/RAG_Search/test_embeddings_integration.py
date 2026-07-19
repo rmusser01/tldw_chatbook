@@ -29,10 +29,10 @@ def reset_circuit_breakers():
 
 
 # Import test markers from conftest
-import numpy as np
+import numpy as np  # noqa: E402
 
 # Import from the same directory using relative import
-from .conftest import (
+from .conftest import (  # noqa: E402
     requires_embeddings,
     requires_chromadb,
     create_mock_embedding_factory,
