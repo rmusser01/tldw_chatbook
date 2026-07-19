@@ -6,6 +6,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, DataTable, Static
 
+from tldw_chatbook.Scheduling.events import DeleteTaskRequested
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind, TaskStatus
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.scheduling.task_detail import (
@@ -412,3 +413,106 @@ async def test_load_tasks_service_error_clears_stale_rows():
             "#scheduling-task-detail-empty-state", Static
         )
         assert "No scheduled tasks yet" in empty_state.visual.plain
+
+
+
+@pytest.mark.asyncio
+async def test_delete_confirmation_runs_delete_requested_flow():
+    """Confirming the delete dialog triggers the full DeleteTaskRequested flow."""
+    app = WorkbenchTestAppWithRecordingService()
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+        detail.request_delete()
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, DeleteConfirmationDialog)
+        pilot.app.screen.dismiss(True)
+        await pilot.pause()
+        # Wait for the delete worker and the follow-up refresh.
+        await pilot.app.screen.load_tasks()
+        await pilot.pause()
+
+        assert pilot.app.scheduling_service.deleted_ids == ["task-1"]
+
+
+class RecordingMockSchedulingService:
+    """Stub service that records delete calls and their arguments."""
+
+    def __init__(self, fail_delete: bool = False):
+        self.deleted_ids: list[str] = []
+        self.fail_delete = fail_delete
+        self._deleted = False
+
+    async def list_reminders(self):
+        if self._deleted:
+            return []
+        return [
+            ReminderTask(
+                id="task-1",
+                title="Test",
+                schedule_kind=ScheduleKind.ONE_TIME,
+                run_at=datetime.now(timezone.utc),
+                next_run_at=datetime.now(timezone.utc),
+            )
+        ]
+
+    async def delete_reminder(self, task_id: str) -> None:
+        if self.fail_delete:
+            raise RuntimeError("delete failed")
+        self.deleted_ids.append(task_id)
+        self._deleted = True
+
+
+class WorkbenchTestAppWithRecordingService(App):
+    """Test app with a recording scheduling service."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.scheduling_service = RecordingMockSchedulingService()
+
+
+@pytest.mark.asyncio
+async def test_workbench_deletes_task_and_notifies_on_success():
+    """The workbench calls delete_reminder and surfaces a success notification."""
+    app = WorkbenchTestAppWithRecordingService()
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        task = pilot.app.screen._tasks[0]
+        pilot.app.screen.post_message(DeleteTaskRequested(task))
+        await pilot.pause()
+        # Wait for the exclusive delete worker to finish and refresh.
+        await pilot.app.screen.load_tasks()
+        await pilot.pause()
+
+        assert pilot.app.scheduling_service.deleted_ids == ["task-1"]
+        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+        assert table.row_count == 0
+
+
+@pytest.mark.asyncio
+async def test_workbench_notifies_on_delete_failure():
+    """The workbench surfaces an error notification when delete_reminder fails."""
+    app = WorkbenchTestAppWithRecordingService()
+    app.scheduling_service.fail_delete = True
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        task = pilot.app.screen._tasks[0]
+        pilot.app.screen.post_message(DeleteTaskRequested(task))
+        await pilot.pause()
+        # Wait for the exclusive delete worker to finish.
+        await pilot.app.screen.load_tasks()
+        await pilot.pause()
+
+        assert pilot.app.scheduling_service.deleted_ids == []
+        table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+        assert table.row_count == 1

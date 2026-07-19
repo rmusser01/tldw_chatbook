@@ -166,12 +166,6 @@ class TaskDetail(Vertical):
     """Render the selected reminder task's core details and actions."""
 
     DEFAULT_CSS = """
-    #scheduling-task-detail-header {
-        text-style: bold;
-        padding: 0 0 0 0;
-        margin-bottom: 1;
-    }
-
     #scheduling-task-detail-metadata {
         height: auto;
         padding: 0;
@@ -191,26 +185,6 @@ class TaskDetail(Vertical):
 
     .scheduling-detail-value {
         color: $text;
-    }
-
-    #scheduling-task-detail-lifecycle {
-        height: auto;
-        padding: 1 0 0 0;
-        margin: 0;
-    }
-
-    #scheduling-task-detail-lifecycle Button {
-        margin: 0 1 0 0;
-    }
-
-    #schedules-follow-in-console {
-        margin-top: 1;
-    }
-
-    #scheduling-task-detail-empty-state {
-        color: $text-muted;
-        text-align: center;
-        padding: 2 1;
     }
     """
 
@@ -360,11 +334,6 @@ class TaskInspector(Vertical):
     """Render sync, conflict, and last-run metadata for a task."""
 
     DEFAULT_CSS = """
-    #scheduling-task-inspector-header {
-        text-style: bold;
-        padding-bottom: 1;
-    }
-
     #scheduling-inspector-metadata {
         height: auto;
     }
@@ -386,18 +355,6 @@ class TaskInspector(Vertical):
         color: $text;
         width: 1fr;
         height: auto;
-    }
-
-    #scheduling-conflict-card {
-        padding: 0;
-        height: auto;
-    }
-
-    #scheduling-conflict-card.conflict {
-        border: solid $error;
-        padding: 1;
-        color: $error;
-        background: $error 10%;
     }
     """
 

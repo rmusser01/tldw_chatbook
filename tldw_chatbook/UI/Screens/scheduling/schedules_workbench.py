@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from textual import on, work
+from rich.text import Text
+from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -23,6 +25,9 @@ from .task_detail import (
     _humanize_schedule_kind,
     status_badge_text,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.app import TldwCli
 
 
 logger = logger.bind(module="SchedulesWorkbench")
@@ -47,7 +52,7 @@ class SchedulesWorkbench(BaseAppScreen):
         ("ctrl+s", "sync now"),
     )
 
-    def __init__(self, app_instance, screen_name: str = "schedules", **kwargs):
+    def __init__(self, app_instance: "TldwCli", screen_name: str = "schedules", **kwargs):
         super().__init__(app_instance, screen_name, **kwargs)
         self._scheduling_service = getattr(app_instance, "scheduling_service", None)
         self._tasks: list[ReminderTask] = []
@@ -83,13 +88,13 @@ class SchedulesWorkbench(BaseAppScreen):
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
         self.run_worker(self.load_tasks, exclusive=True)
-        self.set_timer(0.01, self._refresh_console_context)
 
     async def load_tasks(self) -> None:
         """Fetch reminders from the scheduling service and populate the table."""
         service = self._scheduling_service
         if service is None:
             logger.debug("No scheduling_service available; cannot load tasks")
+            await self._refresh_console_context()
             return
 
         try:
@@ -107,6 +112,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 None, queue_empty=True
             )
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
+            await self._refresh_console_context()
             return
 
         self._tasks = list(tasks)
@@ -132,6 +138,8 @@ class SchedulesWorkbench(BaseAppScreen):
             self.query_one("#scheduling-task-detail", TaskDetail).set_task(None, queue_empty=True)
             self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
 
+        await self._refresh_console_context()
+
     @on(DataTable.RowHighlighted)
     def _on_task_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """Update the detail pane when the user highlights a task row."""
@@ -150,20 +158,15 @@ class SchedulesWorkbench(BaseAppScreen):
         self.query_one("#scheduling-task-detail", TaskDetail).set_task(task)
         self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
 
-    @work(exclusive=True, thread=True)
-    def _refresh_console_context(self) -> None:
-        """Load the latest Schedules Console-follow context in the background."""
-        latest_console_item = self._latest_console_follow_item_from_adapter()
+    async def _refresh_console_context(self) -> None:
+        """Load the latest Schedules Console-follow context."""
+        latest_console_item = await self._latest_console_follow_item_from_adapter()
         latest_console_launch = None
         if latest_console_item is None:
-            latest_console_launch = self._latest_reading_digest_console_launch()
-        self.app.call_from_thread(
-            self._apply_console_context,
-            latest_console_item,
-            latest_console_launch,
-        )
+            latest_console_launch = await self._latest_reading_digest_console_launch()
+        self._apply_console_context(latest_console_item, latest_console_launch)
 
-    def _latest_console_follow_item_from_adapter(self):
+    async def _latest_console_follow_item_from_adapter(self) -> Any | None:
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
         build_dashboard_input = getattr(adapter, "build_dashboard_input", None)
         if not callable(build_dashboard_input):
@@ -175,6 +178,8 @@ class SchedulesWorkbench(BaseAppScreen):
                 providers_models=providers,
                 has_recent_work=has_recent_work,
             )
+            if inspect.isawaitable(dashboard_input):
+                dashboard_input = await dashboard_input
         except Exception:
             logger.opt(exception=True).warning(
                 "Failed to load Schedules Console follow item from Home active-work adapter.",
@@ -189,13 +194,15 @@ class SchedulesWorkbench(BaseAppScreen):
                 return item
         return None
 
-    def _latest_reading_digest_console_launch(self) -> dict[str, Any] | None:
+    async def _latest_reading_digest_console_launch(self) -> dict[str, Any] | None:
         service = getattr(self.app_instance, "local_media_reading_service", None)
         list_outputs = getattr(service, "list_reading_digest_outputs", None)
         if not callable(list_outputs):
             return None
         try:
             output_listing = list_outputs(schedule_id=None, limit=1, offset=0)
+            if inspect.isawaitable(output_listing):
+                output_listing = await output_listing
         except Exception:
             logger.opt(exception=True).warning(
                 "Failed to load Schedules Console launch context from local reading digest outputs.",
