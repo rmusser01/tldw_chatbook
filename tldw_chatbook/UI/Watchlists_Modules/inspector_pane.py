@@ -115,6 +115,10 @@ class InspectorPane(Vertical):
 
     @staticmethod
     def _entity_type(entity: dict[str, Any]) -> str:
+        # Alert rules are most specifically identified by their backend kind or
+        # rule id; check them first so they are never mistaken for items.
+        if entity.get("entity_kind") == "watchlist_alert_rule" or "rule_id" in entity:
+            return "rule"
         if "source_type" in entity or "url" in entity:
             return "source"
         if "status" in entity and ("found_count" in entity or "processed_count" in entity):

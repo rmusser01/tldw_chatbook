@@ -9,6 +9,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch
 
+from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from .inspector_pane import CheckNowRequested, PreviewRequested
 
 
@@ -220,18 +221,31 @@ class SourcesPane(Vertical):
         event.stop()
 
     def _submit_create_form(self) -> None:
-        name = self.query_one("#sources-create-name", Input).value.strip()
-        url = self.query_one("#sources-create-url", Input).value.strip()
+        name = sanitize_string(self.query_one("#sources-create-name", Input).value.strip(), max_length=255)
+        url = sanitize_string(self.query_one("#sources-create-url", Input).value.strip(), max_length=2000)
         if not name:
             self.app.notify("Source name is required.", severity="error")
+            return
+        if not validate_text_input(name, max_length=255):
+            self.app.notify("Source name contains invalid characters or is too long.", severity="error")
             return
         if not url:
             self.app.notify("Source URL is required.", severity="error")
             return
+        if not validate_url(url):
+            self.app.notify("Source URL must be a valid http(s) URL.", severity="error")
+            return
         source_type = str(self.query_one("#sources-create-type", Select).value or "rss")
         active = self.query_one("#sources-create-active", Switch).value
-        tags_text = self.query_one("#sources-create-tags", Input).value.strip()
-        tags = [tag.strip() for tag in tags_text.split(",") if tag.strip()] if tags_text else []
+        tags_text = sanitize_string(self.query_one("#sources-create-tags", Input).value.strip(), max_length=1000)
+        raw_tags = [tag.strip() for tag in tags_text.split(",") if tag.strip()] if tags_text else []
+        tags: list[str] = []
+        for tag in raw_tags:
+            clean = sanitize_string(tag, max_length=100)
+            if clean and validate_text_input(clean, max_length=100):
+                tags.append(clean)
+            else:
+                self.app.notify(f"Tag '{tag}' was skipped due to invalid content.", severity="warning")
         self.post_message(
             CreateSourceRequested(
                 {
