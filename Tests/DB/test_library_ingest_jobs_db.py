@@ -2,7 +2,7 @@ import sqlite3
 import pytest
 
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
-from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry
+from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry, _job_from_row
 
 
 def _db(tmp_path):
@@ -55,4 +55,76 @@ def test_state_check_constraint_rejects_bad_state(tmp_path):
         conn.execute(
             "INSERT INTO ingest_jobs (seq, job_id, source_path, state) VALUES (1,'x','/p','bogus')"
         )
+    db.close()
+
+
+def test_db_migration_v1_to_v2(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL);
+        INSERT INTO schema_version (version) VALUES (1);
+
+        CREATE TABLE ingest_jobs (
+            seq INTEGER PRIMARY KEY,
+            job_id TEXT UNIQUE NOT NULL,
+            source_path TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            author TEXT NOT NULL DEFAULT '',
+            keywords TEXT NOT NULL DEFAULT '[]',
+            perform_analysis INTEGER NOT NULL DEFAULT 0,
+            chunk_enabled INTEGER NOT NULL DEFAULT 0,
+            chunk_size INTEGER NOT NULL DEFAULT 0,
+            state TEXT NOT NULL CHECK (state IN ('queued','parsing','writing','done','failed')),
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            detected_type TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT '',
+            finished_at_wall TEXT NOT NULL DEFAULT '',
+            media_id INTEGER,
+            superseded INTEGER NOT NULL DEFAULT 0,
+            dismissed INTEGER NOT NULL DEFAULT 0,
+            permanent INTEGER NOT NULL DEFAULT 0
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO ingest_jobs (seq, job_id, source_path, state) VALUES (1, 'ingest-job-1', '/a.mp3', 'queued')"
+    )
+    conn.commit()
+    conn.close()
+
+    db = LibraryIngestJobsDB(db_path)
+    rows = db.all_jobs()
+    assert len(rows) == 1
+    assert rows[0]["ingest_options"] == "{}"
+    assert rows[0]["error_detail"] is None
+    assert rows[0]["progress"] is None
+    assert rows[0]["content_hash"] is None
+    db.close()
+
+
+def test_job_round_trip_with_json_columns(tmp_path):
+    reg = LibraryIngestJobRegistry()
+    job = reg.submit(source_path="/a.pdf", title="A")
+    job.ingest_options = {"pdf": {"engine": "pymupdf"}}
+    job.progress = {"message": "50%"}
+    job.error_detail = {"category": "unsupported_file_type", "message": "nope"}
+    job.content_hash = "abc123"
+
+    db = _db(tmp_path)
+    db.upsert_job(job)
+    rows = db.all_jobs()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["ingest_options"] == '{"pdf": {"engine": "pymupdf"}}'
+    assert row["progress"] == '{"message": "50%"}'
+    assert row["error_detail"] == '{"category": "unsupported_file_type", "message": "nope"}'
+    assert row["content_hash"] == "abc123"
+
+    restored = _job_from_row(row)
+    assert restored.ingest_options == {"pdf": {"engine": "pymupdf"}}
+    assert restored.progress == {"message": "50%"}
+    assert restored.error_detail == {"category": "unsupported_file_type", "message": "nope"}
+    assert restored.content_hash == "abc123"
     db.close()

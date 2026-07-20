@@ -741,24 +741,23 @@ def load_settings(force_reload: bool = False) -> Dict:
     # If [API] exists in the user's CLI config, it would have merged with/overridden the CLI defaults' [API]
     # Same applies to all other sections retrieved below.
 
-    paths_section = get_toml_section("Paths")
-    logging_section_server = get_toml_section("Logging")
-    processing_section = get_toml_section("Processing")
-    chunking_section = get_toml_section("Chunking")
-    embeddings_section = get_toml_section("Embeddings")
-    embedding_config_section = get_toml_section(
-        "embedding_config"
-    )  # Get the [embedding_config] table
-    chat_dicts_section = get_toml_section("ChatDictionaries")
-    auto_save_section = get_toml_section("AutoSave")
-    stt_settings_section = get_toml_section("STTSettings")
-    tts_settings_section = get_toml_section("TTSSettings")
-    search_engines_section = get_toml_section("SearchEngines")
-    search_settings_section = get_toml_section("SearchSettings")
-    web_scraper_section = get_toml_section("WebScraper")
-    confluence_section = get_toml_section("Confluence")
-    get_toml_section("FileValidation")
-    get_toml_section("providers")  # Get the [providers] table
+    paths_section = get_toml_section('Paths')
+    logging_section_server = get_toml_section('Logging')
+    processing_section = get_toml_section('Processing')
+    chunking_section = get_toml_section('Chunking')
+    embeddings_section = get_toml_section('Embeddings')
+    embedding_config_section = get_toml_section('embedding_config')  # Get the [embedding_config] table
+    chat_dicts_section = get_toml_section('ChatDictionaries')
+    auto_save_section = get_toml_section('AutoSave')
+    stt_settings_section = get_toml_section('STTSettings')
+    tts_settings_section = get_toml_section('TTSSettings')
+    search_engines_section = get_toml_section('SearchEngines')
+    search_settings_section = get_toml_section('SearchSettings')
+    web_scraper_section = get_toml_section('WebScraper')
+    confluence_section = get_toml_section('Confluence')
+    file_validation_section = get_toml_section('FileValidation')
+    providers_section_from_toml = get_toml_section('providers')  # Get the [providers] table
+    library_section = get_toml_section('library')
 
     final_api_settings = get_toml_section("api_settings")
     final_logging_settings = get_toml_section("logging")
@@ -1840,8 +1839,20 @@ def load_settings(force_reload: bool = False) -> Dict:
         "APP_DATABASE_CONFIG": {**DEFAULT_DATABASE_CONFIG, **app_database_config},
         "APP_RAG_SEARCH_CONFIG": {**DEFAULT_RAG_SEARCH_CONFIG, **app_rag_search_config},
         "acp": get_toml_section("acp"),
-        "COMPREHENSIVE_CONFIG_RAW": toml_config_data,  # Store the raw TOML data if needed
-        "OPENAI_API_KEY": openai_api_key,  # Top-level convenience access
+
+        "library": {
+            "ingest_directory_scan_limit": coerce_int_setting(
+                library_section.get("ingest_directory_scan_limit", 1000),
+                1000,
+                minimum=1,
+            ),
+            "ingest_options": library_section.get("ingest_options", {})
+            if isinstance(library_section.get("ingest_options"), dict)
+            else {},
+        },
+
+        "COMPREHENSIVE_CONFIG_RAW": toml_config_data, # Store the raw TOML data if needed
+        "OPENAI_API_KEY": openai_api_key, # Top-level convenience access
     }
 
     # Bridge TTSSettings defaults into APP_TTS_CONFIG for runtime use
@@ -2152,11 +2163,16 @@ base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint
 auth_token = "default-secret-key-for-single-user"
 
 [library]
+# Maximum files scanned when analysing a directory for Library ingestion.
+ingest_directory_scan_limit = 1000
 # Parallel ingest parse workers. Default: min(3, cpu-1). Uncomment to override.
 # ingest_parse_workers = 3
 # Max concurrent heavy (audio/video transcription) parses; document parses fan
 # out past this cap to fill the remaining pool workers. Default: 1.
 # ingest_heavy_lane_max_workers = 1
+
+# Per-type ingestion options are persisted here by the Library ingest canvas.
+[library.ingest_options]
 
 [splash_screen]
 # Splash screen configuration for startup animations

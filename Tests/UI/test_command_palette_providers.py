@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 try:
     # First try to import the base Provider class from textual
-    from textual.command import Provider  # noqa: F401
+    from textual.command import Provider
 
     # Then try to import from the app
     from tldw_chatbook.app import (
@@ -36,32 +36,30 @@ try:
         CharacterProvider,
         MediaProvider,
         DeveloperProvider,
+        LibraryIngestProvider,
+        TldwCli,
     )
     from tldw_chatbook.Constants import (
         ALL_TABS,
-        TAB_CHAT,
-        TAB_CCP,
-        TAB_MEDIA,
-        TAB_SEARCH,
-        TAB_INGEST,
-        TAB_TOOLS_SETTINGS,
-        TAB_LLM,
-        TAB_LOGS,
-        TAB_STATS,
-        TAB_EVALS,
-        TAB_CODING,
-        TAB_STTS,
-        TAB_MCP,
-        TAB_SETTINGS,
-        TAB_STUDY,
-        TAB_WATCHLISTS_COLLECTIONS,
-        TAB_LIBRARY,
+        TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH,
+        TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS,
+        TAB_STATS, TAB_EVALS, TAB_CODING, TAB_STTS, TAB_MCP,
+        TAB_SETTINGS, TAB_STUDY, TAB_WATCHLISTS_COLLECTIONS, TAB_LIBRARY,
         LIBRARY_NAV_CONTEXT_NOTES_CREATE,
-        get_tab_display_label,
+        LIBRARY_NAV_CONTEXT_INGEST,
+        get_tab_display_label
     )
+    from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
     IMPORTS_AVAILABLE = True
+
+    ALL_PROVIDERS = [
+        cmd for cmd in TldwCli.COMMANDS
+        if isinstance(cmd, type)
+        and issubclass(cmd, Provider)
+        and cmd is not ConsoleCommandProvider
+    ]
 except ImportError as e:
     print(f"Import error: {e}")
     IMPORTS_AVAILABLE = False
@@ -71,12 +69,8 @@ except ImportError as e:
         def __init__(self):
             self.app = None
             self.matcher = None
-
-        async def search(self, query):
-            return []
-
-        async def discover(self):
-            return []
+        async def search(self, query): return []
+        async def discover(self): return []
 
     ThemeProvider = DummyProvider
     TabNavigationProvider = DummyProvider
@@ -86,7 +80,9 @@ except ImportError as e:
     CharacterProvider = DummyProvider
     MediaProvider = DummyProvider
     DeveloperProvider = DummyProvider
-
+    LibraryIngestProvider = DummyProvider
+    ALL_PROVIDERS = []
+    
     # Constants
     TAB_CHAT = "chat"
     TAB_CCP = "conversations_characters_prompts"
@@ -797,6 +793,87 @@ class TestMediaProvider:
 
 
 @requires_imports
+class TestLibraryIngestProvider:
+    """Test suite for the Library ingest command palette provider."""
+
+    @pytest.fixture
+    def library_ingest_provider(self, mock_app):
+        """Create a LibraryIngestProvider instance with a mock app."""
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        provider = LibraryIngestProvider(screen=mock_screen)
+        mock_matcher = MagicMock()
+        mock_matcher.match = MagicMock(return_value=1.0)
+        mock_matcher.highlight = MagicMock(side_effect=lambda text: text)
+        provider.matcher = MagicMock(return_value=mock_matcher)
+        return provider
+
+    @pytest.mark.asyncio
+    async def test_search_ingest_returns_exactly_one_hit(self, library_ingest_provider):
+        """Searching for 'ingest' returns exactly one Library ingest hit."""
+        hits = []
+        async for hit in library_ingest_provider.search("ingest"):
+            hits.append(hit)
+
+        assert len(hits) == 1
+        assert hits[0].text == "Library: Ingest content…"
+        assert "Open Library" in hits[0].help
+
+    @pytest.mark.asyncio
+    async def test_discover_includes_library_ingest(self, library_ingest_provider):
+        """discover() includes the Library ingest command."""
+        hits = []
+        async for hit in library_ingest_provider.discover():
+            hits.append(hit)
+
+        assert len(hits) == 1
+        assert hits[0].text == "Library: Ingest content…"
+
+    @pytest.mark.asyncio
+    async def test_search_unmatched_query_returns_no_hits(self, library_ingest_provider):
+        """A query that does not match the command returns no hits."""
+        library_ingest_provider.matcher = MagicMock(
+            return_value=MagicMock(match=MagicMock(return_value=0.0), highlight=lambda text: text)
+        )
+        hits = []
+        async for hit in library_ingest_provider.search("xyz"):
+            hits.append(hit)
+
+        assert len(hits) == 0
+
+    def test_open_library_ingest_navigates_to_library_with_context(
+        self, library_ingest_provider
+    ):
+        """The callback routes to the Library screen with the ingest context."""
+        library_ingest_provider.handle_library_ingest_action("open_library_ingest")
+
+        message = library_ingest_provider.app.post_message.call_args.args[0]
+        assert isinstance(message, NavigateToScreen)
+        assert message.screen_name == TAB_LIBRARY
+        assert message.screen_context == {LIBRARY_NAV_CONTEXT_INGEST: True}
+        library_ingest_provider.app.notify.assert_called_once()
+
+    def test_unknown_action_id_does_not_post_navigation(self, library_ingest_provider):
+        """An unknown action id is handled safely and posts no navigation."""
+        library_ingest_provider.handle_library_ingest_action("unknown_action")
+
+        library_ingest_provider.app.post_message.assert_not_called()
+        library_ingest_provider.app.notify.assert_not_called()
+
+    def test_handle_action_failure_notifies_error(self, library_ingest_provider):
+        """A navigation failure is surfaced as an error notification."""
+        library_ingest_provider.app.post_message.side_effect = Exception("nav error")
+
+        library_ingest_provider.handle_library_ingest_action("open_library_ingest")
+
+        library_ingest_provider.app.notify.assert_called_once()
+        call_args = library_ingest_provider.app.notify.call_args
+        assert call_args[1]["severity"] == "error"
+        assert "Failed to open Library ingest" in call_args[0][0]
+        assert "nav error" in call_args[0][0]
+
+
+@requires_imports
 class TestCharacterProvider:
     """Test suite for CharacterProvider functionality."""
 
@@ -892,16 +969,7 @@ class TestCommandPaletteIntegration:
 
     def test_all_providers_have_required_methods(self):
         """Test that all providers implement required methods."""
-        providers = [
-            ThemeProvider,
-            TabNavigationProvider,
-            LLMProviderProvider,
-            QuickActionsProvider,
-            SettingsProvider,
-            CharacterProvider,
-            MediaProvider,
-            DeveloperProvider,
-        ]
+        providers = ALL_PROVIDERS
 
         # Create mock screen for provider initialization
         mock_screen = MagicMock()
@@ -929,16 +997,7 @@ class TestCommandPaletteIntegration:
         mock_screen = MagicMock()
         mock_screen.app = mock_app
 
-        providers = [
-            ThemeProvider(screen=mock_screen),
-            TabNavigationProvider(screen=mock_screen),
-            LLMProviderProvider(screen=mock_screen),
-            QuickActionsProvider(screen=mock_screen),
-            SettingsProvider(screen=mock_screen),
-            CharacterProvider(screen=mock_screen),
-            MediaProvider(screen=mock_screen),
-            DeveloperProvider(screen=mock_screen),
-        ]
+        providers = [ProviderClass(screen=mock_screen) for ProviderClass in ALL_PROVIDERS]
 
         for provider in providers:
             # provider.app is accessed via provider.screen.app, no need to set directly
@@ -968,16 +1027,7 @@ class TestCommandPaletteIntegration:
         mock_screen = MagicMock()
         mock_screen.app = mock_app
 
-        providers = [
-            ThemeProvider(screen=mock_screen),
-            TabNavigationProvider(screen=mock_screen),
-            LLMProviderProvider(screen=mock_screen),
-            QuickActionsProvider(screen=mock_screen),
-            SettingsProvider(screen=mock_screen),
-            CharacterProvider(screen=mock_screen),
-            MediaProvider(screen=mock_screen),
-            DeveloperProvider(screen=mock_screen),
-        ]
+        providers = [ProviderClass(screen=mock_screen) for ProviderClass in ALL_PROVIDERS]
 
         test_queries = ["test", "switch", "open", "new"]
 
@@ -1015,6 +1065,7 @@ class TestCommandPaletteIntegration:
                 ["new_chat"],
             ),
             (SettingsProvider(screen=mock_screen), "handle_setting", ["open_settings"]),
+            (LibraryIngestProvider(screen=mock_screen), "handle_library_ingest_action", ["open_library_ingest"]),
         ]
 
         for provider, method_name, args in providers:
@@ -1022,9 +1073,7 @@ class TestCommandPaletteIntegration:
             # Don't try to set provider.app as it's a read-only property
 
             # Mock app to raise exception based on the method being tested
-            if method_name == "switch_tab":
-                provider.app.post_message.side_effect = Exception("Test error")
-            elif method_name == "execute_quick_action":
+            if method_name in ("switch_tab", "execute_quick_action", "handle_library_ingest_action"):
                 provider.app.post_message.side_effect = Exception("Test error")
             elif method_name == "switch_theme":
                 # This method sets theme
@@ -1067,16 +1116,7 @@ class TestCommandPalettePerformance:
         mock_screen = MagicMock()
         mock_screen.app = mock_app
 
-        providers = [
-            ThemeProvider(screen=mock_screen),
-            TabNavigationProvider(screen=mock_screen),
-            LLMProviderProvider(screen=mock_screen),
-            QuickActionsProvider(screen=mock_screen),
-            SettingsProvider(screen=mock_screen),
-            CharacterProvider(screen=mock_screen),
-            MediaProvider(screen=mock_screen),
-            DeveloperProvider(screen=mock_screen),
-        ]
+        providers = [ProviderClass(screen=mock_screen) for ProviderClass in ALL_PROVIDERS]
 
         for provider in providers:
             # provider.app is accessed via provider.screen.app, no need to set directly
@@ -1106,11 +1146,7 @@ class TestCommandPalettePerformance:
         mock_screen = MagicMock()
         mock_screen.app = mock_app
 
-        providers = [
-            TabNavigationProvider(screen=mock_screen),
-            QuickActionsProvider(screen=mock_screen),
-            SettingsProvider(screen=mock_screen),
-        ]
+        providers = [ProviderClass(screen=mock_screen) for ProviderClass in ALL_PROVIDERS]
 
         for provider in providers:
             # provider.app is accessed via provider.screen.app, no need to set directly

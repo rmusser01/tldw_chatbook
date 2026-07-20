@@ -91,6 +91,7 @@ class LibraryRail(Vertical):
         query: str = "",
         search_placeholder: str = "Search conversations…",
         workspaces_body_factory: Callable[[], Iterable[Widget]] | None = None,
+        top_action_factory: Callable[[], Iterable[Widget]] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -99,6 +100,7 @@ class LibraryRail(Vertical):
         self.query = query
         self.search_placeholder = search_placeholder
         self.workspaces_body_factory = workspaces_body_factory
+        self.top_action_factory = top_action_factory
         self.styles.width = "3fr"
         self.styles.min_width = 24
 
@@ -148,6 +150,8 @@ class LibraryRail(Vertical):
             ComposeResult with the search box, one header + body per section,
             and the Details header + body.
         """
+        if self.top_action_factory is not None:
+            yield from self.top_action_factory()
         yield Input(
             value=self.query,
             placeholder=self.search_placeholder,

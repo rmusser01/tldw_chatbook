@@ -149,13 +149,18 @@ _TRACKING_PARAMS = frozenset(
 )
 
 
-def _is_http_url(source: str) -> bool:
+def is_http_url(source: str) -> bool:
+    """Return whether ``source`` is an http or https URL."""
     from urllib.parse import urlparse
 
     try:
         return urlparse(source).scheme in ("http", "https")
     except Exception:
         return False
+
+
+# Backward-compatible alias retained for existing callers.
+_is_http_url = is_http_url
 
 
 def classify_ingest_source(source: str) -> str:
@@ -522,6 +527,10 @@ def parse_local_file_for_ingest(
             result = _ensure_process_pdf()(
                 file_input=str(file_path),
                 filename=file_path.name,
+                engine=options.get("pdf_engine"),
+                page_range=options.get("page_range"),
+                ocr=options.get("ocr", False),
+                extract_images=options.get("extract_images", False),
                 title_override=title,
                 author_override=author,
                 keywords=keywords,
@@ -551,6 +560,9 @@ def parse_local_file_for_ingest(
         elif file_type == "ebook":
             result = _ensure_process_ebook()(
                 file_path=str(file_path),
+                method=options.get("extraction_method"),
+                split_chapters=options.get("split_chapters", True),
+                include_toc=options.get("include_toc", True),
                 title_override=title,
                 author_override=author,
                 keywords=keywords,
@@ -577,20 +589,18 @@ def parse_local_file_for_ingest(
             # Process single audio file
             results = audio_processor.process_audio_files(
                 inputs=[str(file_path)],
-                transcription_model=chunk_options.get("transcription_model", "base"),
-                transcription_language=chunk_options.get(
-                    "transcription_language", "en"
-                ),
+                transcription_model=options.get('transcription_model', chunk_options.get('transcription_model', 'base')),
+                transcription_language=options.get('language', chunk_options.get('transcription_language', 'en')),
                 perform_chunking=True,
-                chunk_method=chunk_options.get("method", "sentences"),
-                max_chunk_size=chunk_options.get("size", 500),
-                chunk_overlap=chunk_options.get("overlap", 200),
-                use_adaptive_chunking=chunk_options.get("adaptive", False),
-                use_multi_level_chunking=chunk_options.get("multi_level", False),
-                chunk_language=chunk_options.get("language", "en"),
-                diarize=chunk_options.get("diarize", False),
-                vad_use=chunk_options.get("vad_filter", False),
-                timestamp_option=True,
+                chunk_method=chunk_options.get('method', 'sentences'),
+                max_chunk_size=chunk_options.get('size', 500),
+                chunk_overlap=chunk_options.get('overlap', 200),
+                use_adaptive_chunking=chunk_options.get('adaptive', False),
+                use_multi_level_chunking=chunk_options.get('multi_level', False),
+                chunk_language=chunk_options.get('language', 'en'),
+                diarize=options.get('diarization', chunk_options.get('diarize', False)),
+                vad_use=chunk_options.get('vad_filter', False),
+                timestamp_option=options.get('timestamps', True),
                 perform_analysis=perform_analysis,
                 api_name=api_name,
                 api_key=api_key,
@@ -632,20 +642,18 @@ def parse_local_file_for_ingest(
             results = video_processor.process_videos(
                 inputs=[str(file_path)],
                 download_video_flag=False,  # Extract audio only for transcription
-                transcription_model=chunk_options.get("transcription_model", "base"),
-                transcription_language=chunk_options.get(
-                    "transcription_language", "en"
-                ),
+                transcription_model=options.get('transcription_model', chunk_options.get('transcription_model', 'base')),
+                transcription_language=options.get('language', chunk_options.get('transcription_language', 'en')),
                 perform_chunking=True,
-                chunk_method=chunk_options.get("method", "sentences"),
-                max_chunk_size=chunk_options.get("size", 500),
-                chunk_overlap=chunk_options.get("overlap", 200),
-                use_adaptive_chunking=chunk_options.get("adaptive", False),
-                use_multi_level_chunking=chunk_options.get("multi_level", False),
-                chunk_language=chunk_options.get("language", "en"),
-                diarize=chunk_options.get("diarize", False),
-                vad_use=chunk_options.get("vad_filter", False),
-                timestamp_option=True,
+                chunk_method=chunk_options.get('method', 'sentences'),
+                max_chunk_size=chunk_options.get('size', 500),
+                chunk_overlap=chunk_options.get('overlap', 200),
+                use_adaptive_chunking=chunk_options.get('adaptive', False),
+                use_multi_level_chunking=chunk_options.get('multi_level', False),
+                chunk_language=chunk_options.get('language', 'en'),
+                diarize=options.get('diarization', chunk_options.get('diarize', False)),
+                vad_use=chunk_options.get('vad_filter', False),
+                timestamp_option=options.get('timestamps', True),
                 perform_analysis=perform_analysis,
                 api_name=api_name,
                 api_key=api_key,
@@ -747,12 +755,13 @@ def parse_local_file_for_ingest(
             raise FileIngestionError(f"Failed to process {file_type} file: {error_msg}")
 
         # Extract content and metadata
-        content = result.get("content", "")
-        extracted_title = result.get("title", title)
-        extracted_author = result.get("author", author or "Unknown")
-        extracted_keywords = result.get("keywords", [])
-        chunks = result.get("chunks", [])
-        analysis = result.get("analysis", "")
+        content = result.get('content', '')
+        extracted_title = result.get('title', title)
+        extracted_author = result.get('author', author or 'Unknown')
+        extracted_keywords = result.get('keywords', [])
+        chunks = result.get('chunks', [])
+        analysis = result.get('analysis', '')
+        warnings = result.get('warnings', []) if result else []
 
         # Combine keywords
         all_keywords = list(set(keywords + extracted_keywords))
@@ -779,18 +788,19 @@ def parse_local_file_for_ingest(
         media_metadata["file_type"] = file_type
 
         return {
-            "media_type": file_type,
-            "file_type": file_type,
-            "title": extracted_title,
-            "author": extracted_author,
-            "content": content,
-            "keywords": all_keywords,
-            "url": source_url,
-            "analysis_content": analysis,
-            "chunks": chunks if chunks else None,
-            "chunk_options": chunk_options if chunk_options else None,
-            "metadata": media_metadata,
-            "file_path": raw_source if is_url else str(file_path),
+            'media_type': file_type,
+            'file_type': file_type,
+            'title': extracted_title,
+            'author': extracted_author,
+            'content': content,
+            'keywords': all_keywords,
+            'url': source_url,
+            'analysis_content': analysis,
+            'chunks': chunks if chunks else None,
+            'chunk_options': chunk_options if chunk_options else None,
+            'metadata': media_metadata,
+            'file_path': raw_source if is_url else str(file_path),
+            'warnings': warnings,
         }
 
     except PermanentIngestError:

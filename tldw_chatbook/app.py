@@ -168,6 +168,7 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
+from tldw_chatbook.Library.ingest_capabilities import get_type_group
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
     IngestJobState,
@@ -1295,6 +1296,57 @@ class MediaProvider(Provider):
             self.app.notify(f"Failed to execute media action: {e}", severity="error")
 
 
+class LibraryIngestProvider(Provider):
+    """Provider for the Library ingest deep-link command."""
+
+    COMMANDS = (
+        (
+            "Library: Ingest content…",
+            "open_library_ingest",
+            "Open Library and start ingesting content",
+        ),
+    )
+
+    def __init__(self, screen, *args, **kwargs):
+        """Initialize the LibraryIngestProvider with required screen parameter."""
+        super().__init__(screen, *args, **kwargs)
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+
+        for command_text, action_id, help_text in self.COMMANDS:
+            score = matcher.match(command_text)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(command_text),
+                    partial(self.handle_library_ingest_action, action_id),
+                    help=help_text,
+                )
+
+    async def discover(self) -> Hits:
+        for command_text, action_id, help_text in self.COMMANDS:
+            yield Hit(
+                1.0,
+                command_text,
+                partial(self.handle_library_ingest_action, action_id),
+                help=help_text,
+            )
+
+    def handle_library_ingest_action(self, action_id: str) -> None:
+        """Handle Library ingest actions."""
+        try:
+            if action_id == "open_library_ingest":
+                _navigate_via_screen(
+                    self.app,
+                    TAB_LIBRARY,
+                    "Opened Library to ingest content",
+                    {LIBRARY_NAV_CONTEXT_INGEST: True},
+                )
+        except Exception as e:
+            self.app.notify(f"Failed to open Library ingest: {e}", severity="error")
+
+
 class DeveloperProvider(Provider):
     """Provider for developer and debug commands."""
 
@@ -1722,6 +1774,7 @@ class LibraryIngestQueueMixin:
         self,
         *,
         source_path: str,
+        ingest_options: dict[str, Any] | None = None,
         title: str = "",
         author: str = "",
         keywords: tuple[str, ...] = (),
@@ -1738,6 +1791,10 @@ class LibraryIngestQueueMixin:
 
         Args:
             source_path: The file path to ingest.
+            ingest_options: Per-type ingestion options snapshot captured at
+                submit time. This is the canonical source of ingestion
+                settings; the older ``perform_analysis``/``chunk_enabled``/
+                ``chunk_size`` arguments are deprecated fallbacks.
             title: Optional title form field.
             author: Optional author form field.
             keywords: Keywords form field.
@@ -1773,6 +1830,7 @@ class LibraryIngestQueueMixin:
             chunk_enabled=chunk_enabled,
             chunk_size=chunk_size,
             detected_type=detected_type,
+            ingest_options=ingest_options or {},
         )
         if self.media_db is None:
             failed = self.library_ingest_jobs.mark_failed(
@@ -1970,31 +2028,77 @@ class LibraryIngestQueueMixin:
         thread.start()
         return thread
 
-    @staticmethod
-    def _ingest_job_options(job: LibraryIngestJob) -> Dict[str, Any]:
+    def _ingest_job_options(self, job: LibraryIngestJob) -> Dict[str, Any]:
         """Build ``run_parse_job``'s ``options`` dict from a job's fields.
 
-        Mechanical 1:1 translation documented in
-        ``ingest_parse_worker``'s module docstring -- the Library queue
-        never sets ``custom_prompt``/``system_prompt``/``api_name``/
-        ``api_key``/``metadata``, so they're simply absent (``None`` inside
-        the worker's ``options.get(...)`` reads).
+        ``job.ingest_options`` is the canonical source of ingestion settings.
+        It is expected to be a group-keyed snapshot (e.g. ``{"generic": {...},
+        "pdf": {...}}``); values from the detected type group override values
+        from the ``generic`` group. The older scalar fields
+        (``perform_analysis``, ``chunk_enabled``, ``chunk_size``) are used only
+        as deprecated fallbacks when ``ingest_options`` is empty or does not
+        contain a value.
+
+        The Library queue never sets ``custom_prompt``/``system_prompt``/
+        ``api_name``/``api_key``/``metadata``, so they're simply absent (``None``
+        inside the worker's ``options.get(...)`` reads).
         """
-        return {
+        opts = job.ingest_options or {}
+        group = get_type_group(job.source_path)
+
+        # Resolve a flat option map from the generic group and the detected
+        # type-specific group, with type-specific values taking precedence.
+        flat_opts: dict[str, Any] = dict(opts.get("generic", {}))
+        flat_opts.update(opts.get(group, {}) or {})
+
+        options: dict[str, Any] = {
             "title": job.title or None,
             "author": job.author or None,
             "keywords": list(job.keywords) or None,
-            "perform_analysis": job.perform_analysis,
+            "perform_analysis": flat_opts.get(
+                "analyze", job.perform_analysis
+            ),
             "chunk_options": (
                 {
                     "method": "sentences",
-                    "size": job.chunk_size,
-                    "overlap": 100,
+                    "size": flat_opts.get("chunk_size", job.chunk_size),
+                    "overlap": flat_opts.get("chunk_overlap", 50),
                 }
-                if job.chunk_enabled
+                if flat_opts.get("chunk", job.chunk_enabled)
                 else None
             ),
         }
+
+        if group == "pdf":
+            options["pdf_engine"] = (
+                flat_opts.get("engine")
+                or flat_opts.get("pdf_engine")
+            )
+            options["page_range"] = flat_opts.get("pages")
+            options["ocr"] = flat_opts.get(
+                "ocr", flat_opts.get("enable_ocr", False)
+            )
+            options["extract_images"] = flat_opts.get("extract_images", False)
+        elif group == "audio_video":
+            options["transcription_model"] = (
+                flat_opts.get("model")
+                or flat_opts.get("transcription_model")
+            )
+            options["language"] = flat_opts.get("language", "auto")
+            options["timestamps"] = flat_opts.get("timestamps", True)
+            options["diarization"] = flat_opts.get("diarization", False)
+        elif group == "ebook":
+            options["extraction_method"] = (
+                flat_opts.get("extraction_method")
+                or flat_opts.get("method")
+                or flat_opts.get("html_converter")
+            )
+            options["split_chapters"] = flat_opts.get("split_chapters", True)
+            options["include_toc"] = flat_opts.get(
+                "include_toc", flat_opts.get("extract_toc", True)
+            )
+
+        return options
 
     def _top_up_ingest_parse_pool(self) -> None:
         """Submit ``QUEUED`` jobs to the parse pool up to the worker cap.
@@ -2220,6 +2324,7 @@ class LibraryIngestQueueMixin:
                 job_id,
                 error=error_text or "Library ingest parsing failed.",
                 permanent=bool(result.get("permanent", False)),
+                error_detail=result.get("error_detail"),
             )
         self._top_up_ingest_parse_pool()
 
@@ -2527,10 +2632,14 @@ class LibraryIngestQueueMixin:
                         existing = self.media_db.get_media_by_url(payload["url"])
                         if existing is not None:
                             media_id = existing.get("id")
+                    content_hash = payload.get("content_hash")
+                    progress = {"message": f"Ingested {job.source_path}"}
                     self.call_from_thread(
                         self.library_ingest_jobs.mark_done,
                         job.job_id,
                         media_id=media_id,
+                        progress=progress,
+                        content_hash=content_hash,
                     )
                 except Exception as exc:
                     # loguru's traceback capture is `.opt(exception=True)`,
@@ -2547,6 +2656,11 @@ class LibraryIngestQueueMixin:
                         job.job_id,
                         error=_sanitize_library_ingest_error(exc),
                         permanent=classify_parse_failure(exc),
+                        error_detail={
+                            "category": "write_error",
+                            "message": str(exc),
+                            "exception_type": exc.__class__.__name__,
+                        },
                     )
         finally:
             if not clean_exit:
@@ -2592,6 +2706,7 @@ class TldwCli(
         SettingsProvider,
         CharacterProvider,
         MediaProvider,
+        LibraryIngestProvider,
         DeveloperProvider,
         ConsoleCommandProvider,
     }

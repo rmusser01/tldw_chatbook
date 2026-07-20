@@ -4,21 +4,17 @@ Renders the app-level Library ingest job registry (``library_ingest_jobs.py``)
 plus a small local form echo into the immutable state
 ``LibraryIngestCanvas`` (the widget in ``Widgets/Library/library_ingest_canvas.py``)
 renders from. Textual-free (stdlib only) so it is unit-testable without
-booting the TUI, mirroring ``library_notes_sync_state.py``. The one non-
-stdlib data source -- ``get_supported_extensions()`` from the heavy
-``Local_Ingestion`` package (L4, fix batch F1b) -- is deliberately a
-function-scoped, memoized import inside ``_supported_types_line``, so
-merely importing this module stays light; see that helper's docstring.
+booting the TUI, mirroring ``library_notes_sync_state.py``.
 """
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
-from functools import lru_cache
+from dataclasses import dataclass, field
 from pathlib import PurePath
-from typing import Sequence
+from typing import Any, Sequence
 
+from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
     IngestJobState,
@@ -47,11 +43,6 @@ _GLYPH_ACTIVE = "●"  # "●" -- queued, parsing, or writing
 _GLYPH_DONE = "✓"  # "✓"
 _GLYPH_FAILED = "✗"  # "✗"
 
-# L4 (fix batch F1b): the failed-row line's "Supported types: ..." tail
-# moves to the form as its own always-visible line, prefixed with this
-# exact copy.
-SUPPORTED_TYPES_PREFIX = "Supported: "
-
 # L4: the marker `local_file_ingestion.py`'s "Unsupported file type" error
 # copy uses to separate the offending extension from its own supported-list
 # tail -- shared here so the queue row's ``short_error`` split can never
@@ -64,9 +55,9 @@ def short_ingest_error(error: str) -> str:
 
     Drops the trailing ``" Supported types: ..."`` tail that
     ``local_file_ingestion.py``'s "Unsupported file type" error carries --
-    that list lives on the ingest form as its own always-visible line (L4,
-    fix batch F1b) instead of being repeated on every failure surface. An
-    error without that exact marker passes through whole.
+    that tail is dropped from the queue-row summary so it is not repeated
+    on every failure surface. An error without that exact marker passes
+    through whole.
 
     Single source of truth for BOTH failure-reason surfaces: the Library
     ingest queue row (``_build_queue_row``) and Home's failed-item canvas
@@ -94,44 +85,99 @@ def _retry_suffix(job: LibraryIngestJob) -> str:
     """
     return f" · retry {job.retry_count}" if job.retry_count else ""
 
+# Human-readable (singular, plural) labels for pre-flight type groups.
+# ``unsupported`` is popped into ``unsupported_files`` before this mapping is
+# consulted, so it is intentionally absent here.
+_TYPE_GROUP_LABELS: dict[str, tuple[str, str]] = {
+    "pdf": ("PDF document", "PDF documents"),
+    "audio_video": ("audio/video file", "audio/video files"),
+    "ebook": ("e-book", "e-books"),
+    "generic": ("plain text file", "plain text files"),
+}
 
-@lru_cache(maxsize=1)
-def _supported_types_line() -> str:
-    """Build the ingest form's supported-extensions line.
 
-    Derived live from ``get_supported_extensions()`` -- the exact same
-    function whose values back ``local_file_ingestion.py``'s "Unsupported
-    file type" error copy -- rather than a hardcoded duplicate list, so the
-    form's line and the runner's error copy can never drift apart (the A2
-    lesson: never hand-duplicate a value that already has a canonical
-    source).
+def _human_size(size_bytes: int) -> str:
+    """Return a compact human-readable size string."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    value = float(size_bytes)
+    for unit in ("KB", "MB", "GB", "TB"):
+        value /= 1024
+        if value < 1024:
+            return f"{value:.1f} {unit}"
+    # Sizes above ~1 PB: divide once more so the value is actually in petabytes.
+    value /= 1024
+    return f"{value:.1f} PB"
 
-    The import is deliberately function-scoped, and the result is memoized
-    (``lru_cache``): importing ``tldw_chatbook.Local_Ingestion`` pulls the
-    full heavy ingestion module graph (PDF/audio/video processing, config,
-    DB), which would break this module's importable-in-isolation contract
-    (see the module docstring) and slow every isolated unit test of the
-    Library state modules. In production the graph is already loaded (the
-    queue-runner in ``app.py`` imports it eagerly), so the deferred import
-    costs nothing there; the supported-extensions set is a hardcoded
-    constant of the ingest seam, so caching the first result forever is
-    safe.
+
+def build_type_breakdown_line(type_groups: dict[str, list[str]]) -> str:
+    """Build a human-readable file/type breakdown line.
+
+    Args:
+        type_groups: Mapping from capability group to the paths assigned to
+            that group, as returned by ``PreflightResult.type_groups`` (after
+            any ``unsupported`` group has been popped).
 
     Returns:
-        ``"Supported: "`` followed by every supported extension (upper-
-        cased, dot stripped, comma-joined), in ``get_supported_extensions()``'s
-        own media-type -> extension-list order.
+        A comma-joined summary such as ``"1 PDF document, 2 audio/video files"``,
+        or an empty string when ``type_groups`` is empty.
     """
-    from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
-        get_supported_extensions,
-    )
+    if not type_groups:
+        return ""
+    parts: list[str] = []
+    for group, paths in type_groups.items():
+        count = len(paths)
+        singular, plural = _TYPE_GROUP_LABELS.get(group, (group, f"{group}s"))
+        label = singular if count == 1 else plural
+        parts.append(f"{count} {label}")
+    return ", ".join(parts)
 
-    extensions = [
-        ext.lstrip(".").upper()
-        for exts in get_supported_extensions().values()
-        for ext in exts
-    ]
-    return SUPPORTED_TYPES_PREFIX + ", ".join(extensions)
+
+def build_estimate_line(total_files: int, total_size: int, truncated: bool) -> str:
+    """Build a lightweight file-count + size estimate line.
+
+    Args:
+        total_files: Number of files discovered.
+        total_size: Sum of file sizes in bytes.
+        truncated: Whether the directory scan reached its limit.
+
+    Returns:
+        ``"{n} file(s) · {size}"`` with an optional truncation note.
+    """
+    if total_files <= 0:
+        return "0 files"
+    noun = "file" if total_files == 1 else "files"
+    line = f"{total_files} {noun} · {_human_size(total_size)}"
+    if truncated:
+        line += " · more files not shown"
+    return line
+
+
+def build_warning_lines(warnings: list[dict[str, Any]]) -> list[str]:
+    """Build human-readable warning lines from pre-flight warning dicts.
+
+    Args:
+        warnings: List of warning dictionaries, typically from
+            ``PreflightResult.warnings``. Expected keys: ``label``, ``hint``,
+            and optionally ``command``.
+
+    Returns:
+        A list of display strings such as ``"PDF processing: PyMuPDF is not
+        installed."``.
+    """
+    lines: list[str] = []
+    for warning in warnings:
+        label = warning.get("label", "")
+        hint = warning.get("hint", "")
+        if label and hint:
+            lines.append(f"{label}: {hint}")
+        elif hint:
+            lines.append(hint)
+        elif label:
+            lines.append(label)
+        else:
+            lines.append(str(warning))
+    return lines
 
 
 @dataclass
@@ -166,6 +212,15 @@ class LibraryIngestFormState:
             shut out from under the user (mirrors
             ``_library_rag_history_collapsed``/
             ``sync_library_rag_history_collapsed`` in ``library_screen.py``).
+        expanded_type_groups: Set of type-group ids whose collapsible option
+            panels are currently expanded, so user toggles survive
+            recomposes.
+        type_options: Last-used ingestion options per type group,
+            keyed by group id (``pdf``, ``audio_video``, ``ebook``,
+            ``generic``).
+        preflight: The most recent pre-flight analysis result, if any.
+        preflight_checking: Whether a pre-flight analysis is currently
+            running (used to show a spinner/disable controls).
     """
 
     path: str = ""
@@ -176,6 +231,10 @@ class LibraryIngestFormState:
     chunk: bool = False
     chunk_size: str = str(DEFAULT_CHUNK_SIZE)
     advanced_open: bool = False
+    expanded_type_groups: set[str] = field(default_factory=set)
+    type_options: dict[str, dict[str, Any]] = field(default_factory=dict)
+    preflight: PreflightResult | None = None
+    preflight_checking: bool = False
 
 
 @dataclass(frozen=True)
@@ -217,6 +276,10 @@ class IngestQueueRow:
     can_retry: bool
     can_dismiss: bool = False
     media_id: int | None = None
+    state: IngestJobState | None = None
+    source_path: str = ""
+    progress: dict[str, Any] | None = None
+    error_detail: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -237,12 +300,6 @@ class LibraryIngestCanvasState:
             both would be redundant, since without a registry the media-db
             gate can never even be checked in production.
         form: The form echo (see ``LibraryIngestFormState``).
-        supported_types_line: (L4, fix batch F1b) A muted, always-visible
-            line listing every ingestible extension, built live from
-            ``get_supported_extensions()`` (see ``_supported_types_line``)
-            rather than hardcoded -- rendered under the Browse… button so
-            it stays reachable without being repeated on every failed queue
-            row (see ``IngestQueueRow.line``'s ``short_error``).
         start_enabled: Whether the "Start ingest" button is enabled --
             requires a working registry, an available media DB, and a
             non-blank typed path.
@@ -268,19 +325,50 @@ class LibraryIngestCanvasState:
             ``jobs`` (computed from the raw jobs, not from ``queue_rows``,
             so a defensively-malformed done-without-``media_id`` row --
             which renders with ``can_open=False`` -- still counts).
+        errors: Pre-flight error messages (e.g. path not found, URL
+            unreachable) that should render inline in the summary area.
+        type_breakdown_line: Human-readable file/type summary built from the
+            pre-flight result, e.g. ``"2 PDF documents, 1 plain text file"``.
+            Empty when no pre-flight result is available.
+        estimate_line: Lightweight estimate of file count and total size,
+            e.g. ``"5 files · 1.2 MB"``. Empty when no pre-flight result is
+            available.
+        warning_lines: Human-readable tooling/guardrail warnings derived from
+            the pre-flight result.
+        preflight_checking: Whether a pre-flight analysis is currently running.
+        expanded_type_groups: Set of type-group ids whose collapsible option
+            panels are expanded, copied from the form state so toggles survive
+            recomposes.
+        type_groups: Ordered list of supported type-group ids from the latest
+            pre-flight result (``unsupported`` is excluded -- it lives in
+            ``unsupported_files``).
+        unsupported_files: Paths from the pre-flight result's ``unsupported``
+            group, rendered separately from supported type groups.
+        recent_jobs: The most recent terminal jobs (``DONE`` or ``FAILED``)
+            from the registry snapshot, limited to 10. Dismissed jobs are
+            intentionally excluded because the registry's ``jobs()`` snapshot
+            already filters them out.
     """
 
     header: str
     server_quiet_line: str
     unavailable_line: str
     form: LibraryIngestFormState
-    supported_types_line: str
     start_enabled: bool
     start_quiet_line: str
     queue_heading: str
     queue_counts_line: str
     queue_rows: tuple[IngestQueueRow, ...]
     queue_show_clear_finished: bool
+    errors: list[str]
+    type_breakdown_line: str
+    estimate_line: str
+    warning_lines: list[str]
+    preflight_checking: bool
+    expanded_type_groups: set[str]
+    type_groups: list[str]
+    unsupported_files: list[str]
+    recent_jobs: list[LibraryIngestJob]
 
 
 def _basename(source_path: str) -> str:
@@ -335,10 +423,9 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
     - done: ``"✓ done · {basename} · {elapsed}"``.
     - failed: ``"✗ failed · {basename} · {short_error}"``, where
       ``short_error`` (L4, fix batch F1b) drops a trailing
-      ``" Supported types: ..."`` tail from ``job.error`` -- that list now
-      lives on the form as ``supported_types_line`` instead, always visible
-      rather than repeated on every failed row. An error without that exact
-      marker passes through whole. Once ``job.retry_count`` is nonzero
+      ``" Supported types: ..."`` tail from ``job.error`` so it is not
+      repeated on every failed row. An error without that exact marker
+      passes through whole. Once ``job.retry_count`` is nonzero
       (task 161), a `` · retry {n}`` suffix is appended.
     """
     basename = _basename(job.source_path)
@@ -353,6 +440,10 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
             can_open=False,
             can_retry=False,
             media_id=job.media_id,
+            state=job.state,
+            source_path=job.source_path,
+            progress=job.progress,
+            error_detail=job.error_detail,
         )
     if job.state == IngestJobState.WRITING:
         line = f"{_GLYPH_ACTIVE} writing · {basename}"
@@ -365,6 +456,10 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
             can_open=False,
             can_retry=False,
             media_id=job.media_id,
+            state=job.state,
+            source_path=job.source_path,
+            progress=job.progress,
+            error_detail=job.error_detail,
         )
     if job.state == IngestJobState.QUEUED:
         return IngestQueueRow(
@@ -374,6 +469,10 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
             can_open=False,
             can_retry=False,
             media_id=job.media_id,
+            state=job.state,
+            source_path=job.source_path,
+            progress=job.progress,
+            error_detail=job.error_detail,
         )
     if job.state == IngestJobState.DONE:
         elapsed = _format_elapsed(job.started_at, job.finished_at, now=now)
@@ -384,17 +483,29 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
             can_open=job.media_id is not None,
             can_retry=False,
             media_id=job.media_id,
+            state=job.state,
+            source_path=job.source_path,
+            progress=job.progress,
+            error_detail=job.error_detail,
         )
     # FAILED -- the only remaining IngestJobState member.
     short_error = short_ingest_error(job.error)
+    is_unsupported = (
+        job.error_detail is not None
+        and job.error_detail.get("category") == "unsupported_file_type"
+    )
     return IngestQueueRow(
         job_id=job.job_id,
         glyph=_GLYPH_FAILED,
         line=f"{_GLYPH_FAILED} failed · {basename} · {short_error}{_retry_suffix(job)}",
         can_open=False,
-        can_retry=not job.permanent,
+        can_retry=not job.permanent and not is_unsupported,
         can_dismiss=True,
         media_id=job.media_id,
+        state=job.state,
+        source_path=job.source_path,
+        progress=job.progress,
+        error_detail=job.error_detail,
     )
 
 
@@ -445,6 +556,8 @@ def build_library_ingest_state(
     media_db_available: bool = True,
     registry_available: bool = True,
     now: float | None = None,
+    preflight: PreflightResult | None = None,
+    preflight_checking: bool | None = None,
 ) -> LibraryIngestCanvasState:
     """Build the ingest canvas's full display state.
 
@@ -466,11 +579,20 @@ def build_library_ingest_state(
             ``INGEST_UNAVAILABLE_COPY``, overriding the media-db line.
         now: The "current" monotonic time used for elapsed-time defensive
             fallbacks; defaults to ``time.monotonic()``.
+        preflight: Optional pre-flight analysis result. When ``None``, the
+            builder falls back to ``form.preflight``.
+        preflight_checking: Whether a pre-flight analysis is currently in
+            progress. When ``None`` (the default), the value is taken from
+            ``form.preflight_checking``.
 
     Returns:
         The canvas's full display state.
     """
     resolved_now = now if now is not None else time.monotonic()
+    active_preflight = preflight if preflight is not None else form.preflight
+    active_preflight_checking = (
+        form.preflight_checking if preflight_checking is None else preflight_checking
+    )
     server_quiet_line = (
         SERVER_QUIET_LINE_COPY
         if str(runtime_source or "local").strip().lower() == "server"
@@ -495,18 +617,62 @@ def build_library_ingest_state(
     queue_show_clear_finished = any(
         job.state in (IngestJobState.DONE, IngestJobState.FAILED) for job in jobs
     )
+
+    # Pre-flight summary fields. Copy ``type_groups`` so the frozen
+    # ``PreflightResult`` is never mutated; pop ``unsupported`` into its own
+    # list for separate rendering.
+    if active_preflight is not None:
+        type_groups = dict(active_preflight.type_groups)
+        unsupported_files = list(type_groups.pop("unsupported", []))
+        errors = list(active_preflight.errors)
+        type_breakdown_line = build_type_breakdown_line(type_groups)
+        estimate_line = build_estimate_line(
+            active_preflight.total_files,
+            active_preflight.total_size,
+            active_preflight.truncated,
+        )
+        warning_lines = build_warning_lines(active_preflight.warnings)
+        type_groups_list = list(type_groups.keys())
+    else:
+        type_groups = {}
+        unsupported_files = []
+        errors = []
+        type_breakdown_line = ""
+        estimate_line = ""
+        warning_lines = []
+        type_groups_list = []
+
+    # Always expose the generic panel so global options (analyze, chunk) are
+    # reachable even when no plain-text files are in the selection.
+    if "generic" not in type_groups_list:
+        type_groups_list.append("generic")
+
+    recent_jobs = [
+        job
+        for job in jobs
+        if job.state in (IngestJobState.DONE, IngestJobState.FAILED)
+    ][:10]
+
     return LibraryIngestCanvasState(
         header=INGEST_HEADER_COPY,
         server_quiet_line=server_quiet_line,
         unavailable_line=unavailable_line,
         form=form,
-        supported_types_line=_supported_types_line(),
         start_enabled=start_enabled,
         start_quiet_line=start_quiet_line,
         queue_heading=QUEUE_HEADING_COPY,
         queue_counts_line=_queue_counts_line(jobs),
         queue_rows=queue_rows,
         queue_show_clear_finished=queue_show_clear_finished,
+        errors=errors,
+        type_breakdown_line=type_breakdown_line,
+        estimate_line=estimate_line,
+        warning_lines=warning_lines,
+        preflight_checking=active_preflight_checking,
+        expanded_type_groups=set(form.expanded_type_groups),
+        type_groups=type_groups_list,
+        unsupported_files=unsupported_files,
+        recent_jobs=recent_jobs,
     )
 
 

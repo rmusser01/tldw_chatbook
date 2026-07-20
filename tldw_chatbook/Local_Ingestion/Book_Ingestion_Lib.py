@@ -121,7 +121,10 @@ def process_ebook(
     api_name: Optional[str] = None,
     api_key: Optional[str] = None,
     summarize_recursively: bool = False,
-    extraction_method: str = "filtered",
+    extraction_method: str = 'filtered',
+    method: Optional[str] = None,  # Per-type option alias for ``extraction_method``.
+    split_chapters: bool = True,  # Per-type option (not yet implemented).
+    include_toc: bool = True,  # Per-type option for EPUB TOC extraction.
 ) -> Dict[str, Any]:
     """
     Process any supported ebook format by routing to the appropriate handler.
@@ -129,20 +132,34 @@ def process_ebook(
     Supported formats: EPUB, MOBI, AZW, AZW3, FB2
 
     Args:
-        Same as process_epub
+        Same as process_epub, plus:
+        method (str, optional): Alias for ``extraction_method``. ``method``
+            takes precedence if provided.
+        split_chapters (bool): Reserved for future chapter-level splitting.
+            Not yet implemented; passing ``False`` records a warning.
+        include_toc (bool): For EPUB files, include the table of contents in
+            the extracted text. Defaults to ``True``.
 
     Returns:
         Same as process_epub
     """
     if not EBOOK_PROCESSING_AVAILABLE:
-        raise ImportError(
-            "E-book processing libraries not available. Install with: pip install tldw_chatbook[ebook]"
-        )
+        raise ImportError("E-book processing libraries not available. Install with: pip install tldw_chatbook[ebook]")
+
+    # Resolve per-type option aliases, preserving backward compatibility for
+    # the legacy ``extraction_method`` parameter name.
+    extraction_method = method if method is not None else extraction_method
 
     file_path_obj = Path(file_path)
     file_extension = file_path_obj.suffix.lower()
 
     logger.info(f"Processing ebook file: {file_path} (format: {file_extension})")
+
+    # Track not-yet-implemented per-type options. ``include_toc`` only applies
+    # to EPUB; MOBI/FB2 handlers ignore it gracefully.
+    unsupported_options: List[str] = []
+    if not split_chapters:
+        unsupported_options.append("split_chapters=False")
 
     # Route to appropriate handler based on file extension
     if file_extension == ".epub":
@@ -160,9 +177,11 @@ def process_ebook(
             api_key=api_key,
             summarize_recursively=summarize_recursively,
             extraction_method=extraction_method,
+            include_toc=include_toc,
+            unsupported_options=unsupported_options,
         )
-    elif file_extension in [".mobi", ".azw", ".azw3"]:
-        return process_mobi(
+    elif file_extension in ['.mobi', '.azw', '.azw3']:
+        result = process_mobi(
             file_path=file_path,
             title_override=title_override,
             author_override=author_override,
@@ -176,8 +195,17 @@ def process_ebook(
             api_key=api_key,
             summarize_recursively=summarize_recursively,
         )
-    elif file_extension == ".fb2":
-        return process_fb2(
+        if unsupported_options:
+            result.setdefault("warnings", [])
+            if result["warnings"] is None:
+                result["warnings"] = []
+            result["warnings"].append(
+                "Ignored unsupported ebook ingestion option(s): "
+                + ", ".join(unsupported_options)
+            )
+        return result
+    elif file_extension == '.fb2':
+        result = process_fb2(
             file_path=file_path,
             title_override=title_override,
             author_override=author_override,
@@ -191,7 +219,22 @@ def process_ebook(
             api_key=api_key,
             summarize_recursively=summarize_recursively,
         )
+        if unsupported_options:
+            result.setdefault("warnings", [])
+            if result["warnings"] is None:
+                result["warnings"] = []
+            result["warnings"].append(
+                "Ignored unsupported ebook ingestion option(s): "
+                + ", ".join(unsupported_options)
+            )
+        return result
     else:
+        warnings_list: List[str] = []
+        if unsupported_options:
+            warnings_list.append(
+                "Ignored unsupported ebook ingestion option(s): "
+                + ", ".join(unsupported_options)
+            )
         return {
             "status": "Error",
             "input_ref": file_path,
@@ -203,8 +246,8 @@ def process_ebook(
             "chunks": None,
             "analysis": None,
             "keywords": keywords or [],
-            "warnings": None,
-            "analysis_details": None,
+            "warnings": warnings_list or None,
+            "analysis_details": None
         }
 
 
@@ -294,8 +337,10 @@ def slugify(text: str) -> str:
 #
 # File Conversion Functions
 
-
-def epub_to_markdown(epub_path: str) -> Tuple[str, Optional["epub.EpubBook"]]:
+def epub_to_markdown(
+    epub_path: str,
+    include_toc: bool = True,
+) -> Tuple[str, Optional['epub.EpubBook']]:
     """
     Converts an EPUB file to Markdown format.
 
@@ -306,6 +351,8 @@ def epub_to_markdown(epub_path: str) -> Tuple[str, Optional["epub.EpubBook"]]:
 
     Args:
         epub_path (str): Path to the EPUB file.
+        include_toc (bool, optional): If ``True`` (default), prepend the EPUB's
+            table of contents to the output.
 
     Returns:
         Tuple[str, Optional['epub.EpubBook']]: A tuple containing:
@@ -317,29 +364,30 @@ def epub_to_markdown(epub_path: str) -> Tuple[str, Optional["epub.EpubBook"]]:
                    is corrupted or parsing fails).
     """
     if not EBOOKLIB_AVAILABLE:
-        raise ImportError(
-            "ebooklib not available. Install with: pip install tldw_chatbook[ebook]"
-        )
+        raise ImportError("ebooklib not available. Install with: pip install tldw_chatbook[ebook]")
 
     book = None  # Initialize book
     try:
         logger.info(f"Converting EPUB to Markdown from {epub_path}")
         book = epub.read_epub(epub_path)
-        markdown_content = "# Table of Contents\n\n"
+        markdown_content = ""
+        if include_toc:
+            markdown_content = "# Table of Contents\n\n"
+            chapters = []
 
-        # Extract and format the table of contents
-        toc = book.toc
-        for item in toc:
-            if isinstance(item, tuple):
-                section, children = item
-                level = 1
-                markdown_content += format_toc_item(section, level)
-                for child in children:
-                    markdown_content += format_toc_item(child, level + 1)
-            else:
-                markdown_content += format_toc_item(item, 1)
+            # Extract and format the table of contents
+            toc = book.toc
+            for item in toc:
+                if isinstance(item, tuple):
+                    section, children = item
+                    level = 1
+                    markdown_content += format_toc_item(section, level)
+                    for child in children:
+                        markdown_content += format_toc_item(child, level + 1)
+                else:
+                    markdown_content += format_toc_item(item, 1)
 
-        markdown_content += "\n---\n\n"
+            markdown_content += "\n---\n\n"
 
         # Process each chapter
         for item in book.get_items():
@@ -745,7 +793,9 @@ def process_epub(
     api_name: Optional[str] = None,
     api_key: Optional[str] = None,
     summarize_recursively: bool = False,
-    extraction_method: str = "filtered",  # 'markdown', 'filtered', 'basic'
+    extraction_method: str = 'filtered',  # 'markdown', 'filtered', 'basic'
+    include_toc: bool = True,
+    unsupported_options: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Processes an EPUB file: extracts content & metadata, chunks, and optionally summarizes.
@@ -794,6 +844,10 @@ def process_epub(
             - 'filtered': Reads EPUB spine, skips front matter, cleans text (uses `read_epub_filtered`).
             - 'basic': Reads all document items, extracts Hx/P tags (uses `read_epub`).
             Defaults to 'filtered'. If the chosen method fails, it attempts a fallback to 'basic'.
+        include_toc (bool, optional): When ``extraction_method`` is ``'markdown'``,
+            include the table of contents in the extracted text. Defaults to ``True``.
+        unsupported_options (List[str], optional): Warnings for per-type options
+            that are not yet implemented; appended to ``warnings`` if present.
 
     Returns:
         Dict[str, Any]: A dictionary containing the processing results. Keys include:
@@ -849,6 +903,12 @@ def process_epub(
         labels={"file_path": file_path, "extractor": extraction_method},
     )
 
+    if unsupported_options:
+        result["warnings"].append(
+            "Ignored unsupported ebook ingestion option(s): "
+            + ", ".join(unsupported_options)
+        )
+
     extracted_text: Optional[str] = None
     ebook_obj: Optional["epub.EpubBook"] = None
 
@@ -863,9 +923,9 @@ def process_epub(
         ebook_obj = None
         extractor_func: Optional[callable] = None
 
-        if extraction_method == "markdown":
-            extractor_func = epub_to_markdown
-        elif extraction_method == "filtered":
+        if extraction_method == 'markdown':
+            extractor_func = lambda path: epub_to_markdown(path, include_toc=include_toc)
+        elif extraction_method == 'filtered':
             extractor_func = read_epub_filtered
         else:
             extractor_func = read_epub  # Default fallback

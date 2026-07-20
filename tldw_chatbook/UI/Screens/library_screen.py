@@ -10,6 +10,7 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +20,11 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
 from textual.css.query import NoMatches, QueryError
 from textual.timer import Timer
+from textual.widget import Widget
+from textual.worker import Worker
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -55,6 +59,9 @@ from ...Library.library_export_state import (
     next_media_quality,
     normalize_export_destination,
 )
+from ...Library.ingest_capabilities import get_capabilities, list_type_groups
+from ...Library.ingest_preflight import analyze_path
+from ...Library.ingest_types import PreflightResult
 from ...Library.library_ingest_jobs import LibraryIngestJob
 from ...Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
@@ -667,6 +674,108 @@ def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
         screen.refresh(recompose=True)
 
 
+class IngestGuardrailModal(ModalScreen[bool]):
+    """Confirmation modal for starting an ingest with tooling warnings."""
+
+    DEFAULT_CSS = """
+    IngestGuardrailModal {
+        align: center middle;
+    }
+
+    #ingest-guardrail-modal {
+        width: 60;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    #ingest-guardrail-actions {
+        height: 3;
+        min-height: 3;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+    #ingest-guardrail-cancel,
+    #ingest-guardrail-confirm {
+        width: 14;
+        min-width: 14;
+        height: 3;
+        min-height: 3;
+    }
+    """
+
+    BINDINGS = [("escape", "dismiss(false)", "Close")]
+
+    def __init__(self, warnings: list[dict], affected_counts: dict[str, int]) -> None:
+        self.warnings = warnings
+        self.affected_counts = affected_counts
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="ingest-guardrail-modal"):
+            yield Static("Some files may fail to ingest:")
+            for i, w in enumerate(self.warnings):
+                count = self.affected_counts.get(w["feature"], 0)
+                with Vertical():
+                    yield Static(f"- {w['label']} ({count} files): {w['hint']}")
+                    if w.get("command"):
+                        yield Button(
+                            "Copy install command",
+                            id=f"ingest-guardrail-copy-command-{i}",
+                            classes="copy-command",
+                        )
+            with Horizontal(id="ingest-guardrail-actions"):
+                yield Button(
+                    "Cancel", id="ingest-guardrail-cancel", variant="error"
+                )
+                yield Button(
+                    "Start ingest anyway",
+                    id="ingest-guardrail-confirm",
+                    variant="primary",
+                )
+
+    @on(Button.Pressed, "#ingest-guardrail-confirm")
+    def _confirm(self) -> None:
+        self.dismiss(True)
+
+    @on(Button.Pressed, "#ingest-guardrail-cancel")
+    def _cancel(self) -> None:
+        self.dismiss(False)
+
+    @on(Button.Pressed, ".copy-command")
+    def _copy_command(self, event: Button.Pressed) -> None:
+        button_id = event.button.id
+        if not button_id or not button_id.startswith("ingest-guardrail-copy-command-"):
+            return
+        index = int(button_id.split("-")[-1])
+        command = self.warnings[index].get("command", "")
+        copy_fn = getattr(self.app, "copy_to_clipboard", None)
+        if callable(copy_fn):
+            try:
+                copy_fn(command)
+                self.notify("Install command copied to clipboard")
+            except Exception:
+                self.notify("Failed to copy command", severity="error")
+        else:
+            self.notify("Clipboard not available", severity="warning")
+
+
+def _affected_counts(preflight: PreflightResult) -> dict[str, int]:
+    """Map each tooling feature to the number of files that depend on it."""
+    counts: dict[str, int] = {}
+    for group, files in preflight.type_groups.items():
+        if group == "unsupported":
+            # Unsupported files have no capability schema; they are surfaced
+            # separately in the pre-flight summary, not via tooling warnings.
+            continue
+        cap = get_capabilities(group)
+        for feat in cap.required_features + cap.optional_features:
+            counts[feat] = counts.get(feat, 0) + len(files)
+    return counts
+
+
 class LibraryScreen(BaseAppScreen):
     """Source material, imports/exports, conversations, and Search/RAG entry."""
 
@@ -1012,6 +1121,9 @@ class LibraryScreen(BaseAppScreen):
         # (not here) so a re-mounted, cached screen instance never treats
         # jobs that finished in a previous mount as a fresh transition.
         self._library_ingest_last_done_count: int = 0
+        # Pre-flight analysis worker for the ingest path field. Cancelled
+        # and replaced on every new trigger so rapid edits never stack.
+        self._library_ingest_preflight_worker: Worker | None = None
         # Export canvas state (F4 Task 2). ``_library_export_counts`` is
         # ``None`` until the counts worker lands a result for the current
         # scope (drives ``LibraryExportFormState.counts_loading`` --
@@ -1081,6 +1193,7 @@ class LibraryScreen(BaseAppScreen):
         """
         self._register_footer_shortcuts()
         super().on_mount()
+        self._load_library_ingest_options_from_config()
         self.set_timer(
             LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
             self._apply_source_snapshot_timeout,
@@ -3245,6 +3358,14 @@ class LibraryScreen(BaseAppScreen):
         )
         return tuple(widgets)
 
+    def _compose_library_rail_top_action(self) -> list[Widget]:
+        """Build the top-of-rail action widget(s) for the Library shell.
+
+        Returns a primary Ingest button that jumps directly to the Ingest
+        media canvas, surfaced above the rail search box for discoverability.
+        """
+        return [Button("Ingest content…", variant="primary", id="library-ingest-top-button")]
+
     def _compose_workspaces_rail_body(self) -> list[Any]:
         """Build the Workspaces body for the rail Details section.
 
@@ -3303,6 +3424,7 @@ class LibraryScreen(BaseAppScreen):
                 query=self._library_rag_query,
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
+                top_action_factory=self._compose_library_rail_top_action,
                 id="library-rail",
                 classes="destination-workbench-pane",
             )
@@ -4088,8 +4210,16 @@ class LibraryScreen(BaseAppScreen):
         stale in-progress form from a previous Ingest visit never
         reappears when the user comes back to the canvas. The job queue
         itself is registry-owned and untouched by this reset -- only the
-        local form echo resets.
+        local form echo resets. Any in-flight pre-flight worker is
+        cancelled so its late result cannot repopulate the fresh form.
         """
+        if self._library_ingest_preflight_worker is not None:
+            try:
+                if not self._library_ingest_preflight_worker.is_finished:
+                    self._library_ingest_preflight_worker.cancel()
+            except Exception:
+                pass
+            self._library_ingest_preflight_worker = None
         self._library_ingest_form = LibraryIngestFormState()
 
     # ----- Export canvas -------------------------------------------------
@@ -5054,12 +5184,18 @@ class LibraryScreen(BaseAppScreen):
         runtime_state = getattr(
             getattr(self.app_instance, "runtime_policy", None), "state", None
         )
-        runtime_source = str(
-            getattr(runtime_state, "active_source", "local") or "local"
-        )
+        runtime_source = str(getattr(runtime_state, "active_source", "local") or "local")
+        # Sync generic top-level form fields into the generic options group so
+        # the canvas renders current values for analyze/chunk/chunk_size.
+        form = self._library_ingest_form
+        generic_options = dict(form.type_options.get("generic", {}))
+        generic_options["analyze"] = form.analyze
+        generic_options["chunk"] = form.chunk
+        generic_options["chunk_size"] = form.chunk_size
+        form.type_options["generic"] = generic_options
         return build_library_ingest_state(
             jobs,
-            form=self._library_ingest_form,
+            form=form,
             runtime_source=runtime_source,
             media_db_available=getattr(self.app_instance, "media_db", None) is not None,
             registry_available=registry is not None,
@@ -6207,6 +6343,12 @@ class LibraryScreen(BaseAppScreen):
             save_setting_to_cli_config("library.rail_state", "sections", serialized)
         except Exception:
             pass
+
+    @on(Button.Pressed, "#library-ingest-top-button")
+    async def _on_library_ingest_top_button(self, event: Button.Pressed) -> None:
+        """Jump from the rail-top Ingest button to the Ingest media canvas."""
+        event.stop()
+        await self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
 
     @on(Button.Pressed, ".library-rail-row")
     async def handle_library_rail_row(self, event: Button.Pressed) -> None:
@@ -10459,6 +10601,14 @@ class LibraryScreen(BaseAppScreen):
             return
         quiet_line.update(new_state.start_quiet_line)
 
+    @on(Input.Blurred, "#library-ingest-path")
+    def handle_library_ingest_path_blurred(self, event: Input.Blurred) -> None:
+        """Trigger pre-flight when the user leaves the path field."""
+        event.stop()
+        path = self._library_ingest_form.path.strip()
+        if path:
+            self._trigger_library_ingest_preflight(path)
+
     @on(Input.Changed, "#library-ingest-title")
     def handle_library_ingest_title_changed(self, event: Input.Changed) -> None:
         """Track the ingest title text as the user types it (state only)."""
@@ -10476,16 +10626,6 @@ class LibraryScreen(BaseAppScreen):
         """Track the ingest keywords text as the user types it (state only)."""
         event.stop()
         self._library_ingest_form.keywords = event.value
-
-    @on(Input.Changed, "#library-ingest-chunk-size")
-    def handle_library_ingest_chunk_size_changed(self, event: Input.Changed) -> None:
-        """Track the chunk-size text as typed (display-echo only).
-
-        Parsed and clamped to ``[100, 5000]`` only at submit time (see
-        ``clamp_chunk_size``) -- never here.
-        """
-        event.stop()
-        self._library_ingest_form.chunk_size = event.value
 
     @on(Button.Pressed, "#library-ingest-browse")
     def handle_library_ingest_browse(self, event: Button.Pressed) -> None:
@@ -10509,60 +10649,118 @@ class LibraryScreen(BaseAppScreen):
                 return
             self._library_ingest_form.path = str(selected_path)
             self.refresh(recompose=True)
+            self._trigger_library_ingest_preflight(str(selected_path))
 
         self.app.push_screen(
             FileOpen(title="Import Media"),
             browse_callback,
         )
 
-    @on(Collapsible.Toggled, "#library-ingest-advanced")
-    def sync_library_ingest_advanced_open(self, event: Collapsible.Toggled) -> None:
-        """Track manual expand/collapse so recomposes preserve the user's choice.
+    @on(LibraryIngestCanvas.OptionPanelToggled)
+    def sync_library_ingest_type_group_expanded(
+        self,
+        event: LibraryIngestCanvas.OptionPanelToggled,
+    ) -> None:
+        """Track per-type panel expand/collapse so recomposes preserve the user's choice."""
+        event.stop()
+        if event.expanded:
+            self._library_ingest_form.expanded_type_groups.add(event.group)
+        else:
+            self._library_ingest_form.expanded_type_groups.discard(event.group)
 
-        Mirrors ``sync_library_rag_history_collapsed`` exactly (see that
-        handler's docstring for the full reasoning): ``Collapsible``'s
-        ``collapsed`` reactive is defined with ``init=False``, so
-        ``_watch_collapsed`` -- and therefore this ``Toggled`` message --
-        fires only on an actual *change* of the reactive, never merely from
-        ``compose()`` constructing a fresh ``Collapsible(collapsed=...)``
-        with a value that happens to equal the reactive's own default.
-        Concretely: the widget always passes
-        ``collapsed=not state.form.advanced_open``, and the reactive's
-        default is ``True`` -- so a compose only posts a spurious ``Toggled``
-        when it constructs the panel already-expanded (``advanced_open`` is
-        ``True``, i.e. ``collapsed=False`` differs from the ``True``
-        default), which immediately reasserts the same ``True`` this
-        handler already holds. Every recompose this handler must survive
-        (the analyze/chunk toggles, a registry-listener-driven job
-        transition) is triggered by something OTHER than a manual header
-        click, so this handler is never invoked by them -- only a real
-        user click (or a future programmatic ``collapsible.collapsed =``
-        assignment) fires it, exactly like the history panel's precedent.
+    @on(LibraryIngestCanvas.OptionValueChanged)
+    def handle_library_ingest_option_value_changed(
+        self,
+        event: LibraryIngestCanvas.OptionValueChanged,
+    ) -> None:
+        """Persist per-type option changes in the form echo.
+
+        The canvas stays render-only and posts a message for every value
+        change; the screen owns the mutable form state. Checkbox and select
+        changes trigger a recompose so panel titles and dependent-field
+        disabled states stay in sync, but text/number inputs do not (they
+        would remount the Input and lose cursor position mid-typing).
         """
         event.stop()
-        self._library_ingest_form.advanced_open = not event.collapsible.collapsed
+        group_options = self._library_ingest_form.type_options.setdefault(
+            event.group, {}
+        )
+        group_options[event.name] = event.value
+        # Generic group toggles mirror the legacy top-level form fields so
+        # existing submit/config-persistence paths keep working.
+        if event.group == "generic":
+            form = self._library_ingest_form
+            if event.name == "analyze":
+                form.analyze = bool(event.value)
+            elif event.name == "chunk":
+                form.chunk = bool(event.value)
+            elif event.name == "chunk_size":
+                form.chunk_size = str(event.value)
+        cap = get_capabilities(event.group)
+        field = next((f for f in cap.fields if f.name == event.name), None)
+        if field is not None and field.type not in ("text", "number"):
+            self.refresh(recompose=True)
 
-    @on(Button.Pressed, "#library-ingest-analyze-toggle")
-    def handle_library_ingest_analyze_toggle(self, event: Button.Pressed) -> None:
-        """Flip the "Analyze after ingest" form toggle.
+    def _trigger_library_ingest_preflight(self, path: str) -> None:
+        """Start (or restart) the pre-flight worker for ``path``.
 
-        Args:
-            event: Button press event emitted by the analyze toggle.
+        No-op for empty paths so stray focus/blur/enter events never scan
+        the current working directory.
         """
-        event.stop()
-        self._library_ingest_form.analyze = not self._library_ingest_form.analyze
+        if not path.strip():
+            self._library_ingest_form.preflight_checking = False
+            return
+        if self._library_ingest_preflight_worker is not None:
+            try:
+                if not self._library_ingest_preflight_worker.is_finished:
+                    self._library_ingest_preflight_worker.cancel()
+            except Exception:
+                pass
+        self._library_ingest_form.preflight_checking = True
+        self.refresh(recompose=True)
+        self._library_ingest_preflight_worker = self._run_library_ingest_preflight(path)
+
+    @work(thread=True)
+    def _run_library_ingest_preflight(self, path: str) -> None:
+        """Analyze ``path`` on a worker thread and apply the result."""
+        raw_scan_limit = get_cli_setting("library.ingest_directory_scan_limit", 1000)
+        try:
+            scan_limit = int(raw_scan_limit)
+        except (TypeError, ValueError):
+            scan_limit = 1000
+        try:
+            result = analyze_path(path, scan_limit=scan_limit)
+        except Exception as exc:
+            logger.opt(exception=True).debug(
+                f"Library ingest pre-flight failed for path: {path}"
+            )
+            result = PreflightResult(
+                type_groups={},
+                warnings=[],
+                errors=[f"Pre-flight analysis failed: {exc}"],
+                total_size=0,
+                truncated=False,
+                total_files=0,
+            )
+        self.app.call_from_thread(self._apply_library_ingest_preflight_result, result)
+
+    def _apply_library_ingest_preflight_result(
+        self,
+        result: PreflightResult,
+    ) -> None:
+        """Merge a pre-flight result into the form echo and refresh."""
+        self._library_ingest_form.preflight = result
+        self._library_ingest_form.preflight_checking = False
         self.refresh(recompose=True)
 
-    @on(Button.Pressed, "#library-ingest-chunk-toggle")
-    def handle_library_ingest_chunk_toggle(self, event: Button.Pressed) -> None:
-        """Flip the "Chunk content" form toggle.
+    def _trigger_preflight(self, path: str) -> None:
+        """Alias for ``_trigger_library_ingest_preflight``.
 
-        Args:
-            event: Button press event emitted by the chunk toggle.
+        Kept as a short internal seam used by the pre-flight retry button
+        (``#ingest-preflight-retry``) and any future callers that just need
+        to re-run the analysis for the current form path.
         """
-        event.stop()
-        self._library_ingest_form.chunk = not self._library_ingest_form.chunk
-        self.refresh(recompose=True)
+        self._trigger_library_ingest_preflight(path)
 
     def _notify_library_ingest_warning(self, message: str) -> None:
         notify = getattr(self.app_instance, "notify", None)
@@ -10588,33 +10786,34 @@ class LibraryScreen(BaseAppScreen):
         the registry/DB unavailable) stays quiet instead of nagging, since
         the always-visible gate line already explains the blocker
         (2026-07 UAT: Enter in a valid path field previously did nothing).
+        Pre-flight is also triggered so a final Enter in a non-submitting
+        path still refreshes the summary.
 
         Args:
             event: Input submission event emitted by the path field.
         """
         event.stop()
+        self._trigger_library_ingest_preflight(self._library_ingest_form.path)
         if not self._build_library_ingest_state().start_enabled:
             return
         self._submit_library_ingest_form()
 
-    def _submit_library_ingest_form(self) -> None:
-        """Validate the ingest form and submit a new Library ingest job.
+    @on(Button.Pressed, "#ingest-preflight-retry")
+    def _on_preflight_retry(self) -> None:
+        """Re-run pre-flight analysis for the current ingest path."""
+        self._trigger_preflight(self._library_ingest_form.path)
 
-        Shared by the Start ingest button and Enter in the path field. An
-        invalid/missing path is a quiet warning notice, matching every
-        other Library form failure path in this screen; a missing
-        ``submit_library_ingest_job`` seam (registry absent) gets the same
-        treatment. On success, the path AND title fields clear (L3b AB
-        wave, A1) -- title is per-file, so it must not silently reapply to
-        the next file in a batch -- while author/keywords/advanced options
-        persist, since those are batch metadata a user submitting several
-        files in a row shouldn't have to retype for every submission.
+    def _resolve_ingest_source(self, raw_path: str) -> str | None:
+        """Validate and canonicalise a Library ingest source path or URL.
+
+        Returns ``None`` when validation fails and the caller should stop
+        (a warning notification has already been shown). URLs are returned
+        as-is; filesystem paths are expanded and normalised by
+        ``validate_path_simple``.
         """
-        form = self._library_ingest_form
-        raw_path = form.path.strip()
         if not raw_path:
             self._notify_library_ingest_warning("Please choose a file to ingest.")
-            return
+            return None
         from urllib.parse import urlparse
 
         if urlparse(raw_path).scheme in ("http", "https"):
@@ -10625,26 +10824,72 @@ class LibraryScreen(BaseAppScreen):
                 self._notify_library_ingest_warning(
                     "That doesn't look like a valid http(s) URL."
                 )
-                return
-            submitted_source = raw_path
-        else:
-            try:
-                validated_path = validate_path_simple(
-                    Path(raw_path).expanduser(), require_exists=True
-                )
-            except ValueError:
-                logger.opt(exception=True).warning(
-                    f"Rejected Library ingest path {raw_path!r}."
-                )
-                self._notify_library_ingest_warning("Could not find that file.")
-                return
-            submitted_source = str(validated_path)
+                return None
+            return raw_path
+        try:
+            validated_path = validate_path_simple(
+                Path(raw_path).expanduser(), require_exists=True
+            )
+        except ValueError:
+            logger.opt(exception=True).warning(
+                f"Rejected Library ingest path {raw_path!r}."
+            )
+            self._notify_library_ingest_warning("Could not find that file.")
+            return None
+        return str(validated_path)
+
+    def _submit_library_ingest_form(self) -> None:
+        """Validate the ingest form and submit a new Library ingest job.
+
+        Shared by the Start ingest button and Enter in the path field. An
+        invalid/missing path is a quiet warning notice, matching every
+        other Library form failure path in this screen; a missing
+        ``submit_library_ingest_job`` seam (registry absent) gets the same
+        treatment. When pre-flight tooling warnings are present, a
+        confirmation modal quantifies the affected files before the user
+        proceeds. On success, the path AND title fields clear (L3b AB
+        wave, A1) -- title is per-file, so it must not silently reapply to
+        the next file in a batch -- while author/keywords/advanced options
+        persist, since those are batch metadata a user submitting several
+        files in a row shouldn't have to retype for every submission.
+        """
+        form = self._library_ingest_form
+        submitted_source = self._resolve_ingest_source(form.path.strip())
+        if submitted_source is None:
+            return
         submit = getattr(self.app_instance, "submit_library_ingest_job", None)
         if not callable(submit):
             self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
             return
+        if form.preflight is not None and form.preflight.warnings:
+            counts = _affected_counts(form.preflight)
+            self.app.push_screen(
+                IngestGuardrailModal(form.preflight.warnings, counts),
+                partial(self._do_submit_ingest, submitted_source),
+            )
+        else:
+            self._do_submit_ingest(submitted_source)
+
+    def _do_submit_ingest(
+        self, submitted_source: str, confirmed: bool = True
+    ) -> None:
+        """Perform the actual Library ingest job submission.
+
+        The ``confirmed`` parameter lets this method be used directly as the
+        guardrail modal callback: the modal dismisses with ``True``/``False``
+        and the partial binding already supplies ``submitted_source``.
+        """
+        if not confirmed:
+            return
+        submit = getattr(self.app_instance, "submit_library_ingest_job", None)
+        if not callable(submit):
+            self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
+            return
+        form = self._library_ingest_form
+        snapshot = self._build_ingest_options_snapshot()
         submit(
             source_path=submitted_source,
+            ingest_options=snapshot,
             title=self._safe_text(form.title, max_length=300),
             author=self._safe_text(form.author, max_length=200),
             keywords=parse_keywords(form.keywords),
@@ -10652,9 +10897,68 @@ class LibraryScreen(BaseAppScreen):
             chunk_enabled=form.chunk,
             chunk_size=clamp_chunk_size(form.chunk_size),
         )
+        for group, values in snapshot.items():
+            for key, val in values.items():
+                save_setting_to_cli_config(f"library.ingest_options.{group}", key, val)
         form.path = ""
         form.title = ""
         self.refresh(recompose=True)
+
+    def _load_library_ingest_options_from_config(self) -> None:
+        """Load persisted per-type ingest options into the form echo.
+
+        Called from ``on_mount`` so a fresh Library visit carries forward the
+        last-used options from previous sessions.
+        """
+        form = self._library_ingest_form
+        for group in list_type_groups():
+            cap = get_capabilities(group)
+            prefix = f"library.ingest_options.{group}"
+            stored: dict[str, Any] = {}
+            for name in cap.field_names:
+                value = get_cli_setting(prefix, name)
+                if value is not None:
+                    stored[name] = value
+            if group == "generic":
+                for name in ("analyze", "chunk", "chunk_size", "chunk_overlap"):
+                    value = get_cli_setting(prefix, name)
+                    if value is None:
+                        continue
+                    if name == "analyze":
+                        form.analyze = bool(value)
+                    elif name == "chunk":
+                        form.chunk = bool(value)
+                    elif name == "chunk_size":
+                        form.chunk_size = str(value)
+                    else:
+                        stored[name] = value
+            if stored:
+                form.type_options.setdefault(group, {}).update(stored)
+
+    def _build_ingest_options_snapshot(self) -> dict[str, dict[str, Any]]:
+        """Capture the current per-type ingestion options as a snapshot.
+
+        Returns a shallow copy of ``self._library_ingest_form.type_options``,
+        with the top-level generic toggles (analyze, chunk, chunk_size)
+        merged into the ``generic`` group so the downstream pipeline has a
+        single canonical options map.
+
+        Returns:
+            A group-keyed dict mapping type group ids (``generic``, ``pdf``,
+            ``audio_video``, ``ebook``) to their option name/value maps.
+        """
+        form = self._library_ingest_form
+        snapshot: dict[str, dict[str, Any]] = {
+            group: dict(opts) for group, opts in form.type_options.items()
+        }
+        generic = snapshot.setdefault("generic", {})
+        generic["analyze"] = form.analyze
+        generic["chunk"] = form.chunk
+        # Prefer the generic panel's chunk_size when the user has set one;
+        # otherwise fall back to the legacy top-level form field.
+        if "chunk_size" not in generic:
+            generic["chunk_size"] = clamp_chunk_size(form.chunk_size)
+        return snapshot
 
     @staticmethod
     def _ingest_job_id_from_button(button_id: str | None, prefix: str) -> str | None:
@@ -10698,6 +11002,51 @@ class LibraryScreen(BaseAppScreen):
         jobs = jobs_fn() if callable(jobs_fn) else ()
         return next((job for job in jobs if job.job_id == job_id), None)
 
+    def _navigate_to_media(self, media_id: str | int) -> None:
+        """Open the Library media viewer for ``media_id``.
+
+        Thin synchronous seam so the ingest "Open in Library" fallback can
+        reuse the same detail viewer path as Search/RAG result open actions
+        without duplicating viewer state setup.
+        """
+        self.run_worker(self._open_library_item_by_id("media", str(media_id)))
+
+    def _open_job_in_library(self, job: LibraryIngestJob) -> None:
+        """Resolve a done ingest job to a media item and open it.
+
+        Falls back to source-path and content-hash lookups when the job was
+        deduplicated and therefore has no stamped ``media_id``. Defensively
+        skips fallback when the media database is unavailable.
+        """
+        media_id = job.media_id
+        if media_id is None:
+            media_db = getattr(self.app_instance, "media_db", None)
+            if media_db is not None:
+                # Fallback 1: match by source URL/path.
+                try:
+                    media = media_db.get_media_by_url(job.source_path)
+                    if media:
+                        media_id = media.get("id")
+                except Exception:
+                    logger.opt(exception=True).debug(
+                        f"ingest open-in-library URL lookup failed: {job.source_path}"
+                    )
+                # Fallback 2: match by content hash if the job recorded one.
+                if media_id is None and job.content_hash:
+                    try:
+                        media = media_db.get_media_by_hash(job.content_hash)
+                        if media:
+                            media_id = media.get("id")
+                    except Exception:
+                        logger.opt(exception=True).debug(
+                            f"ingest open-in-library hash lookup failed: {job.content_hash}"
+                        )
+        if media_id:
+            self._navigate_to_media(media_id)
+        else:
+            # Show a transient status when no single match can be resolved.
+            self.notify("Already in Library — no single match found")
+
     @on(Button.Pressed, ".library-ingest-open")
     async def handle_library_ingest_open(self, event: Button.Pressed) -> None:
         """Open a done ingest job's resulting media item in the Library viewer.
@@ -10712,9 +11061,9 @@ class LibraryScreen(BaseAppScreen):
         if job_id is None:
             return
         job = self._library_ingest_job_by_id(job_id)
-        if job is None or job.media_id is None:
+        if job is None:
             return
-        await self._open_library_item_by_id("media", str(job.media_id))
+        self._open_job_in_library(job)
 
     @on(Button.Pressed, ".library-ingest-retry")
     def handle_library_ingest_retry(self, event: Button.Pressed) -> None:
@@ -10768,6 +11117,29 @@ class LibraryScreen(BaseAppScreen):
             dismiss(job_id)
         self.refresh(recompose=True)
 
+    @on(Button.Pressed, ".library-ingest-details")
+    def _on_ingest_job_details(self, event: Button.Pressed) -> None:
+        """Show a notification with a failed ingest job's structured error details.
+
+        Args:
+            event: Button press event emitted by a "Show details" row action.
+        """
+        event.stop()
+        job_id = self._ingest_job_id_from_button(
+            event.button.id, "library-ingest-details-"
+        )
+        if job_id is None:
+            return
+        registry = self._library_ingest_registry()
+        get_job = getattr(registry, "get_job", None)
+        if not callable(get_job):
+            return
+        job = get_job(job_id)
+        if job is None or not job.error_detail:
+            return
+        detail = job.error_detail.get("message") or str(job.error_detail)
+        self.notify(f"Error details: {detail}", title="Ingest error", timeout=10)
+
     @on(Button.Pressed, "#library-ingest-clear-finished")
     def handle_library_ingest_clear_finished(self, event: Button.Pressed) -> None:
         """Clear every done+failed ingest job in one shot (L3b AB wave, B2).
@@ -10784,6 +11156,36 @@ class LibraryScreen(BaseAppScreen):
         clear_finished = getattr(registry, "clear_finished", None)
         if callable(clear_finished):
             clear_finished()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#ingest-expand-all")
+    def handle_library_ingest_expand_all(self, event: Button.Pressed) -> None:
+        """Expand every per-type options panel."""
+        event.stop()
+        form = self._library_ingest_form
+        state = self._build_library_ingest_state()
+        form.expanded_type_groups.update(state.type_groups)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#ingest-collapse-all")
+    def handle_library_ingest_collapse_all(self, event: Button.Pressed) -> None:
+        """Collapse every per-type options panel."""
+        event.stop()
+        form = self._library_ingest_form
+        form.expanded_type_groups.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-ingest-option-reset")
+    def handle_library_ingest_option_reset(self, event: Button.Pressed) -> None:
+        """Reset a per-type options panel to its defaults."""
+        event.stop()
+        button_id = event.button.id or ""
+        if not button_id.startswith("opt-") or not button_id.endswith("-reset"):
+            return
+        # opt-{group}-reset -> {group}
+        group = button_id[4:-6]
+        form = self._library_ingest_form
+        form.type_options[group] = {}
         self.refresh(recompose=True)
 
     # ----- Export canvas: section entry points --------------------------
