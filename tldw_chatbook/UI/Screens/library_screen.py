@@ -10337,7 +10337,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if form.preflight is not None and form.preflight.warnings:
             counts = _affected_counts(form.preflight)
-            self.push_screen(
+            self.app.push_screen(
                 IngestGuardrailModal(form.preflight.warnings, counts),
                 partial(self._do_submit_ingest, submitted_source),
             )

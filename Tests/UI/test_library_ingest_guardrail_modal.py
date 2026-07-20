@@ -1,7 +1,7 @@
 """Tests for the Library ingest guardrail confirmation modal."""
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from textual.app import App
@@ -149,7 +149,6 @@ def _minimal_library_screen() -> LibraryScreen:
     screen = object.__new__(LibraryScreen)
     screen._library_ingest_form = LibraryIngestFormState()
     screen._notify_library_ingest_warning = MagicMock()
-    screen.push_screen = MagicMock()
     screen.refresh = MagicMock()
     screen.app_instance = MagicMock()
     return screen
@@ -174,11 +173,13 @@ def test_submit_with_warnings_shows_guardrail_modal(tmp_path: Path):
         total_files=1,
     )
 
-    screen._submit_library_ingest_form()
+    mock_app = MagicMock()
+    with patch.object(LibraryScreen, "app", new_callable=lambda: property(lambda self: mock_app)):
+        screen._submit_library_ingest_form()
 
     screen.app_instance.submit_library_ingest_job.assert_not_called()
-    assert screen.push_screen.called
-    modal = screen.push_screen.call_args.args[0]
+    assert mock_app.push_screen.called
+    modal = mock_app.push_screen.call_args.args[0]
     assert isinstance(modal, IngestGuardrailModal)
     assert modal.warnings == form.preflight.warnings
 
@@ -202,12 +203,14 @@ def test_submit_confirm_guardrail_calls_submit(tmp_path: Path):
         total_files=1,
     )
 
-    screen._submit_library_ingest_form()
+    mock_app = MagicMock()
+    with patch.object(LibraryScreen, "app", new_callable=lambda: property(lambda self: mock_app)):
+        screen._submit_library_ingest_form()
 
     screen.app_instance.submit_library_ingest_job.assert_not_called()
-    assert screen.push_screen.called
-    modal = screen.push_screen.call_args.args[0]
-    callback = screen.push_screen.call_args.args[1]
+    assert mock_app.push_screen.called
+    modal = mock_app.push_screen.call_args.args[0]
+    callback = mock_app.push_screen.call_args.args[1]
     assert isinstance(modal, IngestGuardrailModal)
 
     callback(True)
@@ -228,9 +231,11 @@ def test_submit_without_warnings_calls_submit(tmp_path: Path):
         type_groups={"generic": [str(txt)]}, total_files=1
     )
 
-    screen._submit_library_ingest_form()
+    mock_app = MagicMock()
+    with patch.object(LibraryScreen, "app", new_callable=lambda: property(lambda self: mock_app)):
+        screen._submit_library_ingest_form()
 
-    screen.push_screen.assert_not_called()
+    mock_app.push_screen.assert_not_called()
     screen.app_instance.submit_library_ingest_job.assert_called_once()
     call_kwargs = screen.app_instance.submit_library_ingest_job.call_args.kwargs
     assert call_kwargs["source_path"] == str(txt)
