@@ -68,11 +68,11 @@ class SchedulingService:
         watchlist_projection: WatchlistProjection | None = None,
     ) -> None:
         self.db = db
-        self.server_client = server_client
+        self.server_client = server_client or SchedulingServerClient()
         self.runtime_source = runtime_source
         self.owner_id = runtime_source
         self.watchlist_projection = watchlist_projection
-        self.sync_engine = SyncEngine(db, server_client, self.owner_id)
+        self.sync_engine = SyncEngine(db, self.server_client, self.owner_id)
 
     def set_owner(self, owner_id: str) -> None:
         """Switch the active owner and propagate it to the sync engine."""
@@ -266,9 +266,10 @@ class SchedulingService:
 
         return self.db.delete_reminder_task(task_id)
 
-    async def sync_now(self) -> None:
-        """Trigger a full sync for the current owner."""
-        await self.sync_engine.sync_now()
+    async def sync_now(self, owner_id: str | None = None) -> None:
+        """Trigger a full sync for the given owner (defaults to current owner)."""
+        target_owner = owner_id if owner_id is not None else self.owner_id
+        await self.sync_engine.sync_now(target_owner)
 
     def _use_server(self) -> bool:
         """Return True when server operations should be attempted."""

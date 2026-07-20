@@ -48,3 +48,21 @@ class DisableTaskRequested(Message):
     def __init__(self, task: ReminderTask) -> None:
         super().__init__()
         self.task = task
+
+
+class SyncCompleted(Message):
+    """Posted when a sync attempt completes."""
+
+    def __init__(self, owner_id: str, conflict_count: int) -> None:
+        super().__init__()
+        self.owner_id = owner_id
+        self.conflict_count = conflict_count
+
+
+class SyncFailed(Message):
+    """Posted when a sync attempt fails."""
+
+    def __init__(self, owner_id: str, error: str) -> None:
+        super().__init__()
+        self.owner_id = owner_id
+        self.error = error

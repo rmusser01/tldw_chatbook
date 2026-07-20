@@ -8,7 +8,7 @@ import pytest
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduledTask, TaskStatus
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
-from tldw_chatbook.Scheduling.services import SchedulingService
+from tldw_chatbook.Scheduling.services import SchedulingServerClient, SchedulingService
 from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
@@ -489,3 +489,33 @@ async def test_updated_reminder_is_picked_up_by_priority_queue(db):
     queue.load(now=datetime(2099, 1, 1, tzinfo=timezone.utc))
 
     assert any(item["id"] == task.id for item in queue._items)
+
+
+@pytest.mark.asyncio
+async def test_sync_now_passes_owner_id_to_engine(db):
+    engine = MagicMock()
+    engine.sync_now = AsyncMock()
+    svc = SchedulingService(db=db, runtime_source="local")
+    svc.sync_engine = engine
+
+    await svc.sync_now("server:example.com")
+
+    engine.sync_now.assert_awaited_once_with("server:example.com")
+
+
+@pytest.mark.asyncio
+async def test_sync_now_defaults_to_current_owner(db):
+    engine = MagicMock()
+    engine.sync_now = AsyncMock()
+    svc = SchedulingService(db=db, runtime_source="local")
+    svc.sync_engine = engine
+
+    await svc.sync_now()
+
+    engine.sync_now.assert_awaited_once_with("local")
+
+
+def test_server_client_is_always_present(db):
+    svc = SchedulingService(db=db, runtime_source="local", server_client=None)
+    assert isinstance(svc.server_client, SchedulingServerClient)
+    assert svc.server_client.notifications_service is None

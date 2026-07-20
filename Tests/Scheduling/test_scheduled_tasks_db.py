@@ -581,3 +581,71 @@ def test_log_automation_audit_event_rejects_reserved_id(db: ScheduledTasksDB) ->
             summary="Reserved id",
             id="custom-id",
         )
+
+
+def test_bulk_apply_pulled_items_and_purge_mutations(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    owner_id = "server:1"
+
+    local_id = db.create_reminder_task(
+        owner_id=owner_id,
+        title="Local",
+        schedule_kind="one_time",
+    )
+    db.record_pending_mutation(
+        local_id=local_id,
+        primitive="reminder_task",
+        owner_id=owner_id,
+        payload={"action": "update", "title": "Local"},
+    )
+    pending = db.get_pending_mutations(owner_id)
+    assert len(pending) == 1
+    mutation_id = pending[0]["id"]
+
+    with db.transaction() as conn:
+        db._apply_pulled_reminders(conn, owner_id, [
+            {"id": "srv-1", "title": "One", "schedule_kind": "one_time"},
+        ])
+        db._purge_pending_mutations(conn, owner_id, [mutation_id])
+
+    rows = db.list_reminder_tasks(owner_id=owner_id)
+    assert len(rows) == 2
+    assert any(r["server_id"] == "srv-1" for r in rows)
+    assert db.get_pending_mutations(owner_id) == []
+
+
+def test_bulk_apply_pulled_reminders_records_conflict_for_pending_mutation(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    owner_id = "server:1"
+    local_id = db.create_reminder_task(
+        owner_id=owner_id,
+        server_id="srv-1",
+        title="Local",
+        schedule_kind="one_time",
+    )
+
+    with db.transaction() as conn:
+        conflicts = db._apply_pulled_reminders(
+            conn,
+            owner_id,
+            [{"id": "srv-1", "title": "Server", "schedule_kind": "one_time"}],
+            pending_local_ids={local_id},
+        )
+
+    assert len(conflicts) == 1
+    assert conflicts[0]["local_id"] == local_id
+    row = db.get_reminder_task(local_id)
+    assert row["title"] == "Local"  # server state is not applied
+
+
+def test_record_sync_error_appends_and_caps(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    owner_id = "server:1"
+
+    for i in range(12):
+        db._append_sync_error(owner_id, f"error {i}")
+
+    state = db.get_sync_state(owner_id)
+    assert len(state["sync_errors"]) == 10
+    assert state["sync_errors"][-1]["message"] == "error 11"
+    assert state["sync_errors"][0]["message"] == "error 2"

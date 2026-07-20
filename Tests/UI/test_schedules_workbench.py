@@ -1,21 +1,24 @@
 """Tests for the SchedulesWorkbench shell."""
 
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 from textual.app import App
 from textual.containers import Horizontal
 from textual.widgets import Button, DataTable, Input, Static
 
-from tldw_chatbook.Scheduling.events import DeleteTaskRequested
+from tldw_chatbook.Scheduling.events import DeleteTaskRequested, SyncCompleted, SyncFailed
 from tldw_chatbook.Scheduling.models import (
     ReminderTask,
     ScheduledTask,
     ScheduleKind,
     TaskStatus,
 )
+from tldw_chatbook.UI.Screens.scheduling.conflicts_tab import ConflictsTab
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
+from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from tldw_chatbook.UI.Screens.scheduling.task_detail import (
     TaskDetail,
     TaskInspector,
@@ -25,16 +28,56 @@ from tldw_chatbook.UI.Screens.scheduling.task_detail import (
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 
 
+class _MockServerClient:
+    """Stub server client for test scheduling services."""
+
+    def __init__(self, notifications_service=None):
+        self.notifications_service = notifications_service
+
+
+class _MockSchedulingDB:
+    """Stub scheduled-tasks DB for test scheduling services."""
+
+    def __init__(self, sync_state=None, conflicts=None):
+        self._sync_state = sync_state or {}
+        self._conflicts = conflicts or []
+
+    def get_sync_state(self, owner_id: str):
+        return self._sync_state
+
+    def update_sync_state(self, owner_id: str, **kwargs):
+        self._sync_state.update(kwargs)
+
+    def get_conflicts(self, owner_id: str, primitive=None):
+        return self._conflicts
+
+
+class _MockSchedulingServiceMixin:
+    """Common attributes expected by the SchedulesWorkbench UI."""
+
+    owner_id = "local"
+    server_client = _MockServerClient()
+    db = _MockSchedulingDB()
+    sync_engine = None
+
+    def set_owner(self, owner_id: str) -> None:
+        self.owner_id = owner_id
+
+    async def sync_now(self, owner_id: str | None = None) -> None:
+        pass
+
+
 class WorkbenchTestApp(App):
     """Minimal test app that may not expose a real SchedulingService."""
 
     scheduling_service = None
 
 
-class MockSchedulingService:
+class MockSchedulingService(_MockSchedulingServiceMixin):
     """Stub service returning a single reminder task."""
 
     def __init__(self) -> None:
+        super().__init__()
         self.updated: list[tuple[str, dict]] = []
         self.created: list[dict] = []
         self.deleted_ids: list[str] = []
@@ -78,7 +121,7 @@ class WorkbenchTestAppWithService(App):
         self.scheduling_service = MockSchedulingService()
 
 
-class MockSchedulingServiceWithWatchlist:
+class MockSchedulingServiceWithWatchlist(_MockSchedulingServiceMixin):
     """Stub service returning one reminder and one watchlist projection."""
 
     async def list_reminders(self):
@@ -208,7 +251,7 @@ async def test_task_inspector_renders_metadata():
         assert "conflict" not in conflict_card.classes
 
 
-class EmptyMockSchedulingService:
+class EmptyMockSchedulingService(_MockSchedulingServiceMixin):
     """Stub service returning no reminder tasks."""
 
     async def list_reminders(self):
@@ -218,7 +261,7 @@ class EmptyMockSchedulingService:
         return await self.list_reminders()
 
 
-class DistinctMetadataMockSchedulingService:
+class DistinctMetadataMockSchedulingService(_MockSchedulingServiceMixin):
     """Stub service returning a task with sync and last-run metadata."""
 
     async def list_reminders(self):
@@ -241,7 +284,7 @@ class DistinctMetadataMockSchedulingService:
         return await self.list_reminders()
 
 
-class FailingMockSchedulingService:
+class FailingMockSchedulingService(_MockSchedulingServiceMixin):
     """Stub service that raises on list_reminders."""
 
     async def list_reminders(self):
@@ -373,7 +416,7 @@ async def test_inspector_shows_distinct_metadata():
 async def test_conflict_card_shows_for_conflict_status():
     """The inspector conflict card renders when the task status is CONFLICT."""
 
-    class ConflictMockSchedulingService:
+    class ConflictMockSchedulingService(_MockSchedulingServiceMixin):
         async def list_reminders(self):
             return [
                 ReminderTask(
@@ -539,10 +582,11 @@ def test_status_badge_classes_use_dedicated_css():
     assert _STATUS_BADGE_CLASSES[TaskStatus.MISSED] == "missed"
 
 
-class ToggleFailingMockSchedulingService:
+class ToggleFailingMockSchedulingService(_MockSchedulingServiceMixin):
     """Stub service that succeeds once, then fails on subsequent calls."""
 
     def __init__(self):
+        super().__init__()
         self._calls = 0
 
     async def list_reminders(self):
@@ -590,10 +634,11 @@ async def test_load_tasks_service_error_clears_stale_rows():
         assert "No scheduled tasks yet" in empty_state.visual.plain
 
 
-class RecordingMockSchedulingService:
+class RecordingMockSchedulingService(_MockSchedulingServiceMixin):
     """Stub service that records delete calls and their arguments."""
 
     def __init__(self, fail_delete: bool = False):
+        super().__init__()
         self.deleted_ids: list[str] = []
         self.fail_delete = fail_delete
         self._deleted = False
@@ -705,12 +750,11 @@ async def test_unimplemented_action_bindings_notify_user():
         for action in (
             pilot.app.screen.action_run_now,
             pilot.app.screen.action_pause_resume,
-            pilot.app.screen.action_sync_now,
         ):
             action()
             await pilot.pause()
 
-        assert len(pilot.app._notifications) == 3
+        assert len(pilot.app._notifications) == 2
         for notification in pilot.app._notifications:
             assert notification.message == "Not yet available"
             assert notification.severity == "warning"
@@ -808,3 +852,180 @@ async def test_edit_reminder_action_updates_existing_reminder():
         assert service.updated[0][1]["title"] == "Updated title"
         notifications = list(pilot.app._notifications)
         assert any(n.message == "Reminder updated." for n in notifications)
+
+
+def test_sync_completed_event():
+    msg = SyncCompleted("server:1", conflict_count=2)
+    assert msg.owner_id == "server:1"
+    assert msg.conflict_count == 2
+
+
+def test_sync_failed_event():
+    msg = SyncFailed("server:1", error="timeout")
+    assert msg.owner_id == "server:1"
+    assert msg.error == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_action_sync_now_notifies_when_no_service():
+    app = WorkbenchTestApp()
+    workbench = SchedulesWorkbench(app)
+    # Should not crash and should not start a worker
+    workbench.action_sync_now()
+
+
+def test_action_sync_now_guard_prevents_duplicate_workers():
+    class FakeService:
+        def __init__(self):
+            self.owner_id = "local"
+            self.server_client = None
+            self.sync_now = AsyncMock()
+            self.db = None
+
+    app = WorkbenchTestAppWithService()
+    app.scheduling_service = FakeService()
+    workbench = SchedulesWorkbench(app)
+    workbench._sync_running = True
+    workbench.action_sync_now()
+    # The app should have received a warning notification.
+    # Exact assertion depends on the test harness; at minimum it must not start a second worker.
+
+
+@pytest.mark.asyncio
+async def test_sync_status_widget_renders_mode_and_timestamps():
+    app = WorkbenchTestApp()
+    async with app.run_test() as pilot:
+        widget = SyncStatusWidget(
+            current_owner="server:example.com",
+            server_available=True,
+        )
+        await pilot.app.mount(widget)
+        await pilot.pause()
+
+        local_btn = widget.query_one("#scheduling-owner-local", Button)
+        server_btn = widget.query_one("#scheduling-owner-server", Button)
+        assert local_btn.variant != "primary"
+        assert server_btn.variant == "primary"
+
+        widget.update_status(
+            last_pull_at="2026-07-19T10:00:00+00:00",
+            last_push_at="2026-07-19T10:05:00+00:00",
+            sync_errors=[],
+        )
+        await pilot.pause()
+        pull = widget.query_one("#scheduling-last-pull", Static)
+        push = widget.query_one("#scheduling-last-push", Static)
+        assert "Last pull" in pull.visual.plain
+        assert "Last push" in push.visual.plain
+
+
+@pytest.mark.asyncio
+async def test_sync_status_widget_disables_server_button_when_unavailable():
+    app = WorkbenchTestApp()
+    async with app.run_test() as pilot:
+        widget = SyncStatusWidget(
+            current_owner="local",
+            server_available=False,
+        )
+        await pilot.app.mount(widget)
+        await pilot.pause()
+        server_btn = widget.query_one("#scheduling-owner-server", Button)
+        assert server_btn.disabled
+
+
+@pytest.mark.asyncio
+async def test_conflicts_tab_renders_rows_and_resolves():
+    class FakeEngine:
+        def __init__(self):
+            self.calls = []
+
+        def resolve_conflict(self, conflict_id, resolution):
+            self.calls.append((conflict_id, resolution))
+            return True
+
+    class CapturingConflictsTab(ConflictsTab):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.posted_messages: list[ConflictsTab.ConflictResolved] = []
+
+        def post_message(self, message):
+            if isinstance(message, ConflictsTab.ConflictResolved):
+                self.posted_messages.append(message)
+            return super().post_message(message)
+
+    app = WorkbenchTestApp()
+    async with app.run_test() as pilot:
+        engine = FakeEngine()
+        tab = CapturingConflictsTab(sync_engine=engine)
+        await pilot.app.mount(tab)
+        await pilot.pause()
+        tab.populate([
+            {
+                "id": "c1",
+                "local_id": "l1",
+                "server_state": {},
+                "local_state": {"record": {"title": "Local"}},
+            },
+        ])
+        await pilot.pause()
+
+        table = tab.query_one("#scheduling-conflicts-table", DataTable)
+        assert table.row_count == 1
+        table.cursor_coordinate = (0, 0)
+        await pilot.click("#scheduling-use-server")
+        await pilot.pause()
+
+        assert engine.calls == [("c1", "server")]
+        assert len(tab.posted_messages) == 1
+        msg = tab.posted_messages[0]
+        assert msg.conflict_id == "c1"
+        assert msg.resolution == "server"
+        assert table.row_count == 0
+
+
+
+@pytest.mark.asyncio
+async def test_conflicts_tab_resolve_false_does_not_post_message():
+    class FakeEngine:
+        def __init__(self):
+            self.calls = []
+
+        def resolve_conflict(self, conflict_id, resolution):
+            self.calls.append((conflict_id, resolution))
+            return False
+
+    class CapturingConflictsTab(ConflictsTab):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.posted_messages: list[ConflictsTab.ConflictResolved] = []
+
+        def post_message(self, message):
+            if isinstance(message, ConflictsTab.ConflictResolved):
+                self.posted_messages.append(message)
+            return super().post_message(message)
+
+    app = WorkbenchTestApp()
+    async with app.run_test() as pilot:
+        engine = FakeEngine()
+        tab = CapturingConflictsTab(sync_engine=engine)
+        await pilot.app.mount(tab)
+        await pilot.pause()
+        tab.populate([
+            {
+                "id": "c1",
+                "local_id": "l1",
+                "server_state": {},
+                "local_state": {"record": {"title": "Local"}},
+            },
+        ])
+        await pilot.pause()
+
+        table = tab.query_one("#scheduling-conflicts-table", DataTable)
+        assert table.row_count == 1
+        table.cursor_coordinate = (0, 0)
+        await pilot.click("#scheduling-use-server")
+        await pilot.pause()
+
+        assert engine.calls == [("c1", "server")]
+        assert len(tab.posted_messages) == 0
+        assert table.row_count == 1

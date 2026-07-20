@@ -164,6 +164,342 @@ class ScheduledTasksDB(BaseDB):
             conn.close()
 
     # ------------------------------------------------------------------
+    # Connection-aware helpers
+    # ------------------------------------------------------------------
+
+    def _get_reminder_task_by_server_id_conn(
+        self, conn: sqlite3.Connection, owner_id: str, server_id: str
+    ) -> Optional[dict[str, Any]]:
+        cursor = conn.execute(
+            "SELECT * FROM reminder_tasks WHERE owner_id = ? AND server_id = ?",
+            (owner_id, server_id),
+        )
+        return self._row_to_dict(cursor.fetchone())
+
+    def _create_reminder_task_conn(
+        self, conn: sqlite3.Connection, owner_id: str, title: str, **kwargs: Any
+    ) -> str:
+        self._validate_kwargs(kwargs, self._REMINDER_TASK_COLUMNS, "reminder task")
+        task_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        fields: dict[str, Any] = {
+            "id": task_id,
+            "owner_id": owner_id,
+            "title": title,
+            "created_at": self._to_utc_iso(now),
+            "updated_at": self._to_utc_iso(now),
+            "enabled": 1,
+            "sync_version": 0,
+        }
+        for key, value in kwargs.items():
+            if key == "enabled":
+                fields[key] = 1 if value else 0
+            elif key in self._DATETIME_FIELDS:
+                fields[key] = self._to_utc_iso(value)
+            else:
+                fields[key] = value
+        self._validate_sql_identifiers(list(fields.keys()))
+        columns = ", ".join(fields.keys())
+        placeholders = ", ".join(["?"] * len(fields))
+        conn.execute(
+            f"INSERT INTO reminder_tasks ({columns}) VALUES ({placeholders})",
+            list(fields.values()),
+        )
+        return task_id
+
+    def _update_reminder_task_conn(
+        self, conn: sqlite3.Connection, task_id: str, **kwargs: Any
+    ) -> bool:
+        if not kwargs:
+            return False
+        self._validate_kwargs(kwargs, self._REMINDER_TASK_COLUMNS, "reminder task")
+        updates: list[str] = []
+        params: list[Any] = []
+        for key, value in kwargs.items():
+            if key == "enabled":
+                updates.append("enabled = ?")
+                params.append(1 if value else 0)
+            elif key in self._DATETIME_FIELDS:
+                updates.append(f"{key} = ?")
+                params.append(self._to_utc_iso(value))
+            else:
+                updates.append(f"{key} = ?")
+                params.append(value)
+        if not updates:
+            return False
+        self._validate_sql_identifiers([key.split(" ", 1)[0] for key in updates])
+        updates.append("updated_at = ?")
+        params.append(self._to_utc_iso(datetime.now(timezone.utc)))
+        params.append(task_id)
+        cursor = conn.execute(
+            f"UPDATE reminder_tasks SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+        return cursor.rowcount > 0
+
+    def _set_sync_mapping_conn(
+        self,
+        conn: sqlite3.Connection,
+        local_id: str,
+        server_id: str,
+        primitive: str,
+        owner_id: str,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO sync_mapping
+            (local_id, server_id, primitive, owner_id, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (local_id, server_id, primitive, owner_id, self._to_utc_iso(now)),
+        )
+
+    def _delete_reminder_task_conn(
+        self, conn: sqlite3.Connection, task_id: str
+    ) -> bool:
+        cursor = conn.execute("DELETE FROM reminder_tasks WHERE id = ?", (task_id,))
+        return cursor.rowcount > 0
+
+    def _delete_sync_mapping_conn(
+        self,
+        conn: sqlite3.Connection,
+        local_id: str,
+        primitive: str,
+        owner_id: str,
+    ) -> None:
+        conn.execute(
+            """
+            DELETE FROM sync_mapping
+            WHERE local_id = ? AND primitive = ? AND owner_id = ?
+            """,
+            (local_id, primitive, owner_id),
+        )
+
+    def _delete_tombstone_conn(
+        self,
+        conn: sqlite3.Connection,
+        local_id: str,
+        primitive: str,
+        owner_id: str,
+    ) -> None:
+        conn.execute(
+            """
+            DELETE FROM sync_tombstones
+            WHERE local_id = ? AND primitive = ? AND owner_id = ?
+            """,
+            (local_id, primitive, owner_id),
+        )
+
+    def _detect_server_deletions_conn(
+        self,
+        conn: sqlite3.Connection,
+        owner_id: str,
+        seen_server_ids: set[str],
+    ) -> None:
+        """Record conflicts for local rows whose server id is no longer returned.
+
+        Rows with a local tombstone are deleted instead of becoming conflicts.
+        Must run inside an existing transaction.
+        """
+        cursor = conn.execute(
+            "SELECT * FROM reminder_tasks WHERE owner_id = ? AND server_id IS NOT NULL",
+            (owner_id,),
+        )
+        for local_row in self._rows_to_dicts(cursor.fetchall()):
+            server_id = local_row.get("server_id")
+            if not server_id or server_id in seen_server_ids:
+                continue
+
+            existing_conflict = conn.execute(
+                """
+                SELECT 1 FROM sync_conflicts
+                WHERE local_id = ? AND primitive = ? AND owner_id = ? AND resolved_at IS NULL
+                """,
+                (local_row["id"], "reminder_task", owner_id),
+            ).fetchone()
+            if existing_conflict is not None:
+                continue
+
+            tombstone = conn.execute(
+                """
+                SELECT 1 FROM sync_tombstones
+                WHERE local_id = ? AND primitive = ? AND owner_id = ?
+                """,
+                (local_row["id"], "reminder_task", owner_id),
+            ).fetchone()
+
+            if tombstone is not None:
+                self._delete_reminder_task_conn(conn, local_row["id"])
+                self._delete_sync_mapping_conn(
+                    conn, local_row["id"], "reminder_task", owner_id
+                )
+                self._delete_tombstone_conn(
+                    conn, local_row["id"], "reminder_task", owner_id
+                )
+            else:
+                self._record_conflict_conn(
+                    conn,
+                    local_id=local_row["id"],
+                    primitive="reminder_task",
+                    owner_id=owner_id,
+                    server_state={},
+                    local_state={"record": dict(local_row)},
+                )
+
+    def _record_conflict_conn(
+        self,
+        conn: sqlite3.Connection,
+        local_id: str,
+        primitive: str,
+        owner_id: str,
+        server_state: dict[str, Any],
+        local_state: dict[str, Any],
+    ) -> str:
+        conflict_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        conn.execute(
+            """
+            INSERT INTO sync_conflicts
+            (id, local_id, primitive, owner_id, server_state, local_state,
+             server_state_at, created_at, resolved_at, resolution, retry_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0)
+            """,
+            (
+                conflict_id,
+                local_id,
+                primitive,
+                owner_id,
+                self._to_json(server_state),
+                self._to_json(local_state),
+                self._to_utc_iso(server_state.get("updated_at") or now),
+                self._to_utc_iso(now),
+            ),
+        )
+        return conflict_id
+
+    def _update_sync_state_conn(
+        self,
+        conn: sqlite3.Connection,
+        owner_id: str,
+        **kwargs: Any,
+    ) -> None:
+        if not kwargs:
+            return
+        self._validate_kwargs(kwargs, self._SYNC_STATE_COLUMNS, "sync state")
+        fields: dict[str, Any] = {"owner_id": owner_id}
+        for key, value in kwargs.items():
+            if key == "sync_errors":
+                fields[key] = self._to_json(value)
+            elif key in self._DATETIME_FIELDS:
+                fields[key] = self._to_utc_iso(value)
+            else:
+                fields[key] = value
+        self._validate_sql_identifiers(list(fields.keys()))
+        columns = ", ".join(fields.keys())
+        placeholders = ", ".join(["?"] * len(fields))
+        updates = [f"{key} = excluded.{key}" for key in fields if key != "owner_id"]
+        self._validate_sql_identifiers([key.split(" ", 1)[0] for key in updates])
+        conn.execute(
+            f"""
+            INSERT INTO sync_state ({columns}) VALUES ({placeholders})
+            ON CONFLICT(owner_id) DO UPDATE SET {", ".join(updates)}
+            """,
+            list(fields.values()),
+        )
+
+    def _get_sync_state_conn(
+        self,
+        conn: sqlite3.Connection,
+        owner_id: str,
+    ) -> Optional[dict[str, Any]]:
+        """Fetch the sync state row for ``owner_id`` on an existing connection."""
+        cursor = conn.execute(
+            "SELECT * FROM sync_state WHERE owner_id = ?",
+            (owner_id,),
+        )
+        return self._row_to_dict(cursor.fetchone(), json_fields={"sync_errors"})
+
+    def _apply_pulled_reminders(
+        self,
+        conn: sqlite3.Connection,
+        owner_id: str,
+        server_items: list[dict[str, Any]],
+        pending_local_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Insert or update reminder rows from a pulled server list.
+
+        Rows with a pending local mutation become server-update conflicts instead of
+        being overwritten. Returns the list of conflicts created.
+
+        Must run inside an existing transaction (``conn`` is the open connection).
+        """
+        pending = pending_local_ids or set()
+        conflicts: list[dict[str, Any]] = []
+        for item in server_items:
+            server_id = item.get("id")
+            if not server_id:
+                continue
+
+            existing = self._get_reminder_task_by_server_id_conn(
+                conn, owner_id, server_id
+            )
+            fields = {
+                key: item[key]
+                for key in self._REMINDER_TASK_COLUMNS
+                if key in item and key not in {"id", "server_id", "owner_id"}
+            }
+            fields.setdefault("title", "Untitled reminder")
+            if "schedule_kind" not in fields:
+                fields["schedule_kind"] = "one_time"
+            if "updated_at" not in fields:
+                fields["updated_at"] = self._to_utc_iso(datetime.now(timezone.utc))
+
+            if existing:
+                local_id = existing["id"]
+                if local_id in pending:
+                    conflicts.append({
+                        "local_id": local_id,
+                        "server_state": dict(item),
+                        "local_state": {"record": dict(existing)},
+                    })
+                    continue
+                self._update_reminder_task_conn(conn, local_id, **fields)
+            else:
+                local_id = self._create_reminder_task_conn(
+                    conn, owner_id, server_id=server_id, **fields
+                )
+
+            self._set_sync_mapping_conn(
+                conn, local_id, server_id, "reminder_task", owner_id
+            )
+        return conflicts
+
+    def _purge_pending_mutations(
+        self,
+        conn: sqlite3.Connection,
+        owner_id: str,
+        mutation_ids: list[int],
+    ) -> None:
+        """Delete pending mutations by their row ids inside an existing transaction."""
+        if not mutation_ids:
+            return
+        placeholders = ", ".join("?" * len(mutation_ids))
+        conn.execute(
+            f"DELETE FROM pending_mutations WHERE id IN ({placeholders})",
+            mutation_ids,
+        )
+
+    def _append_sync_error(self, owner_id: str, message: str) -> None:
+        """Append a sync error, capping the history at 10 entries."""
+        with self.transaction() as conn:
+            state = self._get_sync_state_conn(conn, owner_id) or {}
+            errors = list(state.get("sync_errors") or [])
+            errors.append({"message": message, "timestamp": datetime.now(timezone.utc).isoformat()})
+            errors = errors[-10:]
+            self._update_sync_state_conn(conn, owner_id, sync_errors=errors)
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
@@ -289,37 +625,9 @@ class ScheduledTasksDB(BaseDB):
 
     def create_reminder_task(self, owner_id: str, title: str, **kwargs: Any) -> str:
         """Create a reminder task and return its generated local UUID."""
-        self._validate_kwargs(kwargs, self._REMINDER_TASK_COLUMNS, "reminder task")
-
-        task_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
-
-        fields: dict[str, Any] = {
-            "id": task_id,
-            "owner_id": owner_id,
-            "title": title,
-            "created_at": self._to_utc_iso(now),
-            "updated_at": self._to_utc_iso(now),
-            "enabled": 1,
-            "sync_version": 0,
-        }
-
-        for key, value in kwargs.items():
-            if key == "enabled":
-                fields[key] = 1 if value else 0
-            elif key in self._DATETIME_FIELDS:
-                fields[key] = self._to_utc_iso(value)
-            else:
-                fields[key] = value
-
-        self._validate_sql_identifiers(list(fields.keys()))
-        columns = ", ".join(fields.keys())
-        placeholders = ", ".join(["?"] * len(fields))
-
         with self.transaction() as conn:
-            conn.execute(
-                f"INSERT INTO reminder_tasks ({columns}) VALUES ({placeholders})",
-                list(fields.values()),
+            task_id = self._create_reminder_task_conn(
+                conn, owner_id, title, **kwargs
             )
 
         logger.debug(f"Created reminder task {task_id} for owner {owner_id}")
@@ -342,12 +650,8 @@ class ScheduledTasksDB(BaseDB):
     ) -> Optional[dict[str, Any]]:
         """Fetch a reminder task by owner and server-side identifier."""
         with closing(self._get_connection()) as conn:
-            cursor = conn.execute(
-                "SELECT * FROM reminder_tasks WHERE owner_id = ? AND server_id = ?",
-                (owner_id, server_id),
-            )
-            return self._row_to_dict(
-                cursor.fetchone(), json_fields=self._REMINDER_JSON_FIELDS
+            return self._get_reminder_task_by_server_id_conn(
+                conn, owner_id, server_id
             )
 
     def list_reminder_tasks(
@@ -383,45 +687,13 @@ class ScheduledTasksDB(BaseDB):
 
     def update_reminder_task(self, task_id: str, **kwargs: Any) -> bool:
         """Update reminder task fields. Returns True if a row was changed."""
-        if not kwargs:
-            return False
-
-        self._validate_kwargs(kwargs, self._REMINDER_TASK_COLUMNS, "reminder task")
-
-        updates: list[str] = []
-        params: list[Any] = []
-
-        for key, value in kwargs.items():
-            if key == "enabled":
-                updates.append("enabled = ?")
-                params.append(1 if value else 0)
-            elif key in self._DATETIME_FIELDS:
-                updates.append(f"{key} = ?")
-                params.append(self._to_utc_iso(value))
-            else:
-                updates.append(f"{key} = ?")
-                params.append(value)
-
-        if not updates:
-            return False
-
-        self._validate_sql_identifiers([key.split(" ", 1)[0] for key in updates])
-        updates.append("updated_at = ?")
-        params.append(self._to_utc_iso(datetime.now(timezone.utc)))
-        params.append(task_id)
-
         with self.transaction() as conn:
-            cursor = conn.execute(
-                f"UPDATE reminder_tasks SET {', '.join(updates)} WHERE id = ?",
-                params,
-            )
-            return cursor.rowcount > 0
+            return self._update_reminder_task_conn(conn, task_id, **kwargs)
 
     def delete_reminder_task(self, task_id: str) -> bool:
         """Delete a reminder task by local id."""
         with self.transaction() as conn:
-            cursor = conn.execute("DELETE FROM reminder_tasks WHERE id = ?", (task_id,))
-            return cursor.rowcount > 0
+            return self._delete_reminder_task_conn(conn, task_id)
 
     def reminders_due_before(self, now: datetime) -> list[dict[str, Any]]:
         """Return enabled reminders whose next_run_at is at or before ``now``."""
@@ -741,15 +1013,9 @@ class ScheduledTasksDB(BaseDB):
         owner_id: str,
     ) -> None:
         """Create or replace the mapping between a local and server record."""
-        now = datetime.now(timezone.utc)
         with self.transaction() as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO sync_mapping
-                (local_id, server_id, primitive, owner_id, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (local_id, server_id, primitive, owner_id, self._to_utc_iso(now)),
+            self._set_sync_mapping_conn(
+                conn, local_id, server_id, primitive, owner_id
             )
 
     def delete_sync_mapping(
@@ -760,13 +1026,7 @@ class ScheduledTasksDB(BaseDB):
     ) -> None:
         """Remove the sync mapping for a local record."""
         with self.transaction() as conn:
-            conn.execute(
-                """
-                DELETE FROM sync_mapping
-                WHERE local_id = ? AND primitive = ? AND owner_id = ?
-                """,
-                (local_id, primitive, owner_id),
-            )
+            self._delete_sync_mapping_conn(conn, local_id, primitive, owner_id)
 
     def get_sync_state(self, owner_id: str) -> Optional[dict[str, Any]]:
         """Fetch the sync state row for ``owner_id``, or ``None`` if absent."""
@@ -787,34 +1047,8 @@ class ScheduledTasksDB(BaseDB):
         ``last_conflict_at``, ``sync_errors``. The ``owner_id`` is always
         stored; other fields are updated if provided.
         """
-        if not kwargs:
-            return
-
-        self._validate_kwargs(kwargs, self._SYNC_STATE_COLUMNS, "sync state")
-
-        fields: dict[str, Any] = {"owner_id": owner_id}
-        for key, value in kwargs.items():
-            if key == "sync_errors":
-                fields[key] = self._to_json(value)
-            elif key in self._DATETIME_FIELDS:
-                fields[key] = self._to_utc_iso(value)
-            else:
-                fields[key] = value
-
-        self._validate_sql_identifiers(list(fields.keys()))
-        columns = ", ".join(fields.keys())
-        placeholders = ", ".join(["?"] * len(fields))
-        updates = [f"{key} = excluded.{key}" for key in fields if key != "owner_id"]
-        self._validate_sql_identifiers([key.split(" ", 1)[0] for key in updates])
-
         with self.transaction() as conn:
-            conn.execute(
-                f"""
-                INSERT INTO sync_state ({columns}) VALUES ({placeholders})
-                ON CONFLICT(owner_id) DO UPDATE SET {", ".join(updates)}
-                """,
-                list(fields.values()),
-            )
+            self._update_sync_state_conn(conn, owner_id, **kwargs)
 
     # ------------------------------------------------------------------
     # Pending mutations
@@ -975,13 +1209,7 @@ class ScheduledTasksDB(BaseDB):
     ) -> None:
         """Remove a tombstone after its delete has been pushed to the server."""
         with self.transaction() as conn:
-            conn.execute(
-                """
-                DELETE FROM sync_tombstones
-                WHERE local_id = ? AND primitive = ? AND owner_id = ?
-                """,
-                (local_id, primitive, owner_id),
-            )
+            self._delete_tombstone_conn(conn, local_id, primitive, owner_id)
 
     # ------------------------------------------------------------------
     # Conflicts
@@ -999,28 +1227,15 @@ class ScheduledTasksDB(BaseDB):
 
         Returns the generated conflict id.
         """
-        conflict_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
         with self.transaction() as conn:
-            conn.execute(
-                """
-                INSERT INTO sync_conflicts
-                (id, local_id, primitive, owner_id, server_state, local_state,
-                 server_state_at, created_at, resolved_at, resolution, retry_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0)
-                """,
-                (
-                    conflict_id,
-                    local_id,
-                    primitive,
-                    owner_id,
-                    self._to_json(server_state),
-                    self._to_json(local_state),
-                    self._to_utc_iso(server_state.get("updated_at") or now),
-                    self._to_utc_iso(now),
-                ),
+            return self._record_conflict_conn(
+                conn,
+                local_id=local_id,
+                primitive=primitive,
+                owner_id=owner_id,
+                server_state=server_state,
+                local_state=local_state,
             )
-        return conflict_id
 
     def get_conflicts(
         self,
