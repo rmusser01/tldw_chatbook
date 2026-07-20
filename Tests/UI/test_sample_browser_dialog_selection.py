@@ -114,7 +114,9 @@ async def test_sample_browser_rebuilds_visible_rows_without_duplicate_ids(monkey
 
 
 @pytest.mark.asyncio
-async def test_sample_browser_bulk_selection_buttons_update_visible_selection(monkeypatch):
+async def test_sample_browser_bulk_selection_buttons_update_visible_selection(
+    monkeypatch,
+):
     _install_sample_browser_test_doubles(monkeypatch)
     app = _ScreenHost(SampleBrowserDialog(dataset_path="/tmp/empty-dataset.json"))
 

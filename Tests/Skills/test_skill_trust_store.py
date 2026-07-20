@@ -107,7 +107,9 @@ def test_trust_store_rejects_tampered_manifest(tmp_path):
     marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
 
-    store.save_manifest({"version": 1, "generation": 1, "skills": {}, "audit": []}, keys, salt=b"4" * 32)
+    store.save_manifest(
+        {"version": 1, "generation": 1, "skills": {}, "audit": []}, keys, salt=b"4" * 32
+    )
     payload = json.loads(store.manifest_path.read_text(encoding="utf-8"))
     payload["manifest"]["generation"] = 2
     store.manifest_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -121,7 +123,9 @@ def test_trust_store_rejects_marker_mismatch(tmp_path):
     marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
 
-    store.save_manifest({"version": 1, "generation": 3, "skills": {}, "audit": []}, keys, salt=b"5" * 32)
+    store.save_manifest(
+        {"version": 1, "generation": 3, "skills": {}, "audit": []}, keys, salt=b"5" * 32
+    )
     marker.save_marker(generation=2, manifest_digest="old")
 
     with pytest.raises(ValueError, match="manifest generation marker mismatch"):
@@ -134,7 +138,9 @@ def test_trust_store_rejects_missing_marker_after_manifest_exists(tmp_path):
     marker = FileSkillTrustGenerationMarkerStore(marker_path)
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
 
-    store.save_manifest({"version": 1, "generation": 1, "skills": {}, "audit": []}, keys, salt=b"6" * 32)
+    store.save_manifest(
+        {"version": 1, "generation": 1, "skills": {}, "audit": []}, keys, salt=b"6" * 32
+    )
     marker_path.unlink()
 
     with pytest.raises(ValueError, match="manifest generation marker mismatch"):
@@ -196,7 +202,9 @@ def test_trust_store_rejects_snapshot_directory_symlink_escape(tmp_path):
     store = SkillTrustStore(store_dir=store_dir, marker_store=marker)
 
     with pytest.raises(ValueError, match="unsafe skill trust path"):
-        store.save_snapshot("demo-1", {"files": {"SKILL.md": "# Demo"}}, keys, generation=1)
+        store.save_snapshot(
+            "demo-1", {"files": {"SKILL.md": "# Demo"}}, keys, generation=1
+        )
 
     assert not (outside_dir / "demo-1.json").exists()
 
@@ -231,7 +239,9 @@ def test_trust_store_load_salt_requires_32_bytes(tmp_path):
     marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
 
-    store.save_manifest({"version": 1, "generation": 1, "skills": {}, "audit": []}, keys, salt=b"7" * 32)
+    store.save_manifest(
+        {"version": 1, "generation": 1, "skills": {}, "audit": []}, keys, salt=b"7" * 32
+    )
     payload = json.loads(store.manifest_path.read_text(encoding="utf-8"))
     payload["kdf_salt"] = "c2hvcnQ="
     store.manifest_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -248,7 +258,9 @@ def test_trust_store_snapshot_accepts_immutable_mapping_payloads(tmp_path):
 
     store.save_snapshot("demo-1", payload, keys, generation=1)
 
-    assert store.load_snapshot("demo-1", keys, generation=1) == {"files": {"SKILL.md": "# Demo"}}
+    assert store.load_snapshot("demo-1", keys, generation=1) == {
+        "files": {"SKILL.md": "# Demo"}
+    }
 
 
 def test_trust_store_rejects_non_string_mapping_keys(tmp_path):
@@ -257,7 +269,9 @@ def test_trust_store_rejects_non_string_mapping_keys(tmp_path):
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
 
     with pytest.raises(ValueError, match="mapping keys must be strings"):
-        store.save_snapshot("demo-1", {"files": {1: "numeric", "1": "string"}}, keys, generation=1)
+        store.save_snapshot(
+            "demo-1", {"files": {1: "numeric", "1": "string"}}, keys, generation=1
+        )
 
     assert not (store.snapshots_dir / "demo-1.json").exists()
 

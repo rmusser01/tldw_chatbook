@@ -236,7 +236,9 @@ class ConsoleSkillPickerModal(ModalScreen[Optional[Mapping[str, object]]]):
         await container.remove_children()
         self._row_ids = []
         if not self._results:
-            await container.mount(Static(EMPTY_STORE_COPY, id=EMPTY_STATIC_ID, markup=False))
+            await container.mount(
+                Static(EMPTY_STORE_COPY, id=EMPTY_STATIC_ID, markup=False)
+            )
             return
         used_ids: set[str] = set()
         buttons = []
@@ -264,7 +266,9 @@ class ConsoleSkillPickerModal(ModalScreen[Optional[Mapping[str, object]]]):
         button.can_focus = False
         return button
 
-    def _row_id(self, record: Mapping[str, object], index: int, used_ids: set[str]) -> str:
+    def _row_id(
+        self, record: Mapping[str, object], index: int, used_ids: set[str]
+    ) -> str:
         name = record.get("name")
         if isinstance(name, str) and name:
             candidate = f"{ROW_ID_PREFIX}{name}"

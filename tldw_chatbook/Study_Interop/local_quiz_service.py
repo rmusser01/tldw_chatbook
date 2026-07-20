@@ -62,9 +62,13 @@ class LocalQuizService:
         except Exception:
             return None
 
-    def list_quizzes(self, *, q: Optional[str] = None, limit: int = 100, offset: int = 0) -> Any:
+    def list_quizzes(
+        self, *, q: Optional[str] = None, limit: int = 100, offset: int = 0
+    ) -> Any:
         normalized_q = str(q or "").strip() or None
-        return self._require_db().list_quizzes(q=normalized_q, limit=limit, offset=offset)
+        return self._require_db().list_quizzes(
+            q=normalized_q, limit=limit, offset=offset
+        )
 
     def count_quizzes(self) -> int:
         """Count non-deleted local quizzes.
@@ -99,7 +103,10 @@ class LocalQuizService:
             message=f"Local quiz created: {quiz.get('name') or name}",
             source_entity_id=str(quiz.get("id") or quiz_id),
             source_entity_kind="study_quiz",
-            payload={"action": "quiz_created", "quiz_id": str(quiz.get("id") or quiz_id)},
+            payload={
+                "action": "quiz_created",
+                "quiz_id": str(quiz.get("id") or quiz_id),
+            },
         )
         return quiz
 
@@ -181,15 +188,21 @@ class LocalQuizService:
             payload={
                 "action": "quiz_attempt_completed",
                 "attempt_id": str(attempt.get("id") or attempt_id),
-                "quiz_id": str(attempt.get("quiz_id")) if attempt.get("quiz_id") is not None else None,
+                "quiz_id": str(attempt.get("quiz_id"))
+                if attempt.get("quiz_id") is not None
+                else None,
                 "score": attempt.get("score"),
                 "total_possible": attempt.get("total_possible"),
             },
         )
         return attempt
 
-    def list_attempts(self, *, quiz_id: Optional[str] = None, limit: int = 100, offset: int = 0) -> Any:
-        return self._require_db().list_attempts(quiz_id=quiz_id, limit=limit, offset=offset)
+    def list_attempts(
+        self, *, quiz_id: Optional[str] = None, limit: int = 100, offset: int = 0
+    ) -> Any:
+        return self._require_db().list_attempts(
+            quiz_id=quiz_id, limit=limit, offset=offset
+        )
 
     def get_attempt(
         self,

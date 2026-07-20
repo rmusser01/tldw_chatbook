@@ -5,97 +5,97 @@ import os
 import sys
 import importlib.util
 from dataclasses import dataclass
-from typing import Dict, Any, Optional, Callable
+from typing import Any, Optional, Callable
 
 from loguru import logger
 
 # Global flags for optional dependency availability
 DEPENDENCIES_AVAILABLE = {
-    'torch': False,
-    'transformers': False,
-    'numpy': False,
-    'chromadb': False,
-    'embeddings_rag': False,
-    'websearch': False,
-    'jieba': False,
-    'fugashi': False,
-    'flashrank': False,
-    'sentence_transformers': False,
-    'chunker': False,
-    'chinese_chunking': False,
-    'japanese_chunking': False,
-    'token_chunking': False,
-    'cohere': False,
+    "torch": False,
+    "transformers": False,
+    "numpy": False,
+    "chromadb": False,
+    "embeddings_rag": False,
+    "websearch": False,
+    "jieba": False,
+    "fugashi": False,
+    "flashrank": False,
+    "sentence_transformers": False,
+    "chunker": False,
+    "chinese_chunking": False,
+    "japanese_chunking": False,
+    "token_chunking": False,
+    "cohere": False,
     # Audio/Video processing
-    'audio_processing': False,
-    'video_processing': False,
-    'faster_whisper': False,
-    'lightning_whisper_mlx': False,
-    'parakeet_mlx': False,
-    'yt_dlp': False,
-    'soundfile': False,
-    'scipy': False,
-    'qwen2audio': False,
+    "audio_processing": False,
+    "video_processing": False,
+    "faster_whisper": False,
+    "lightning_whisper_mlx": False,
+    "parakeet_mlx": False,
+    "yt_dlp": False,
+    "soundfile": False,
+    "scipy": False,
+    "qwen2audio": False,
     # PDF processing
-    'pdf_processing': False,
-    'pymupdf': False,
-    'pymupdf4llm': False,
-    'docling': False,
+    "pdf_processing": False,
+    "pymupdf": False,
+    "pymupdf4llm": False,
+    "docling": False,
     # Image/SVG rendering
-    'svg_rendering': False,
+    "svg_rendering": False,
     # E-book processing
-    'ebook_processing': False,
-    'ebooklib': False,
-    'defusedxml': False,
-    'html2text': False,
-    'lxml': False,
-    'beautifulsoup4': False,
+    "ebook_processing": False,
+    "ebooklib": False,
+    "defusedxml": False,
+    "html2text": False,
+    "lxml": False,
+    "beautifulsoup4": False,
     # Web scraping - additional
-    'pandas': False,
-    'playwright': False,
-    'trafilatura': False,
-    'aiohttp': False,
+    "pandas": False,
+    "playwright": False,
+    "trafilatura": False,
+    "aiohttp": False,
     # Local LLM
-    'local_llm': False,
-    'mlx_lm': False,
-    'vllm': False,
-    'onnxruntime': False,
+    "local_llm": False,
+    "mlx_lm": False,
+    "vllm": False,
+    "onnxruntime": False,
     # MCP
-    'mcp': False,
+    "mcp": False,
     # TTS
-    'tts_processing': False,
-    'kokoro_onnx': False,
-    'chatterbox': False,
-    'pydub': False,
-    'pyaudio': False,
-    'av': False,
+    "tts_processing": False,
+    "kokoro_onnx": False,
+    "chatterbox": False,
+    "pydub": False,
+    "pyaudio": False,
+    "av": False,
     # STT
-    'stt_processing': False,
-    'nemo_toolkit': False,
+    "stt_processing": False,
+    "nemo_toolkit": False,
     # OCR
-    'ocr_processing': False,
-    'docext': False,
-    'gradio_client': False,
-    'openai': False,
+    "ocr_processing": False,
+    "docext": False,
+    "gradio_client": False,
+    "openai": False,
     # Image processing
-    'image_processing': False,
-    'PIL': False,
-    'pillow': False,
-    'textual_image': False,
-    'rich_pixels': False,
+    "image_processing": False,
+    "PIL": False,
+    "pillow": False,
+    "textual_image": False,
+    "rich_pixels": False,
     # Mindmap
-    'mindmap': False,
-    'anytree': False,
+    "mindmap": False,
+    "anytree": False,
     # Subscriptions
-    'subscriptions': False,
-    'markdown': False,
-    'schedule': False,
-    'feedparser': False,
+    "subscriptions": False,
+    "markdown": False,
+    "schedule": False,
+    "feedparser": False,
     # Web server
-    'web': False,
-    'textual_serve': False,
+    "web": False,
+    "textual_serve": False,
     # Progress bars
-    'tqdm': False,
+    "tqdm": False,
 }
 
 # Pristine copy of the registry above — reset_dependency_checks() restores
@@ -197,159 +197,283 @@ def _feature(
 
 OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
     "all-tools": _feature(
-        "all-tools", "All optional tools", AREA_ALL,
+        "all-tools",
+        "All optional tools",
+        AREA_ALL,
         ("grep_ast", "chromadb", "vllm", "playwright", "faster-whisper", "mcp[cli]"),
-        "Release packaging", "All optional capabilities", OWNER_RELEASE,
+        "Release packaging",
+        "All optional capabilities",
+        OWNER_RELEASE,
     ),
     "audio": _feature(
-        "audio", "Audio ingestion and transcription", AREA_MEDIA,
+        "audio",
+        "Audio ingestion and transcription",
+        AREA_MEDIA,
         ("soundfile", "scipy", "yt-dlp", "faster-whisper"),
-        "Library > Import/Export", "Audio processing", OWNER_LIBRARY_MEDIA,
+        "Library > Import/Export",
+        "Audio processing",
+        OWNER_LIBRARY_MEDIA,
     ),
     "chatterbox": _feature(
-        "chatterbox", "Chatterbox TTS", AREA_MEDIA,
+        "chatterbox",
+        "Chatterbox TTS",
+        AREA_MEDIA,
         ("chatterbox-tts", "torchaudio", "torch"),
-        "STTS", "Chatterbox TTS", OWNER_LIBRARY_MEDIA,
+        "STTS",
+        "Chatterbox TTS",
+        OWNER_LIBRARY_MEDIA,
     ),
     "chunker": _feature(
-        "chunker", "Advanced chunking", AREA_RAG,
+        "chunker",
+        "Advanced chunking",
+        AREA_RAG,
         ("nltk", "langdetect", "scikit-learn", "jieba", "fugashi"),
-        "Library > Import/Export", "Advanced chunking", OWNER_LIBRARY_RAG,
+        "Library > Import/Export",
+        "Advanced chunking",
+        OWNER_LIBRARY_RAG,
     ),
     "coding_map": _feature(
-        "coding_map", "Code map analysis", AREA_LOCAL_INFERENCE,
+        "coding_map",
+        "Code map analysis",
+        AREA_LOCAL_INFERENCE,
         ("grep_ast", "pygments", "tqdm"),
-        "Console/provider setup", "Code map analysis", OWNER_CONSOLE_PROVIDER,
+        "Console/provider setup",
+        "Code map analysis",
+        OWNER_CONSOLE_PROVIDER,
     ),
     "debugging": _feature(
-        "debugging", "Metrics and telemetry", AREA_DIAGNOSTICS,
+        "debugging",
+        "Metrics and telemetry",
+        AREA_DIAGNOSTICS,
         ("prometheus_client", "opentelemetry-api", "opentelemetry-sdk"),
-        "Settings > Diagnostics", "Diagnostics/telemetry", OWNER_SETTINGS,
+        "Settings > Diagnostics",
+        "Diagnostics/telemetry",
+        OWNER_SETTINGS,
     ),
     "dev": _feature(
-        "dev", "Development dependencies", AREA_DEVELOPMENT,
+        "dev",
+        "Development dependencies",
+        AREA_DEVELOPMENT,
         ("pytest", "textual-dev", "hypothesis", "build", "twine"),
-        "Development setup", "Development tooling", OWNER_DEVELOPMENT,
+        "Development setup",
+        "Development tooling",
+        OWNER_DEVELOPMENT,
     ),
     "diarization": _feature(
-        "diarization", "Speaker diarization", AREA_MEDIA,
+        "diarization",
+        "Speaker diarization",
+        AREA_MEDIA,
         ("torch", "torchaudio", "speechbrain", "scikit-learn"),
-        "Library > Import/Export", "Speaker diarization", OWNER_LIBRARY_MEDIA,
+        "Library > Import/Export",
+        "Speaker diarization",
+        OWNER_LIBRARY_MEDIA,
     ),
     "ebook": _feature(
-        "ebook", "E-book processing", AREA_MEDIA,
+        "ebook",
+        "E-book processing",
+        AREA_MEDIA,
         ("ebooklib", "beautifulsoup4", "defusedxml"),
-        "Library > Import/Export", "E-book ingestion", OWNER_LIBRARY_MEDIA,
+        "Library > Import/Export",
+        "E-book ingestion",
+        OWNER_LIBRARY_MEDIA,
     ),
     "embeddings_rag": _feature(
-        "embeddings_rag", "Library/Search-RAG", AREA_RAG,
+        "embeddings_rag",
+        "Library/Search-RAG",
+        AREA_RAG,
         ("torch", "transformers", "sentence-transformers", "chromadb"),
-        "Settings > RAG", "Search/RAG queries", OWNER_LIBRARY_RAG,
+        "Settings > RAG",
+        "Search/RAG queries",
+        OWNER_LIBRARY_RAG,
     ),
     "higgs_tts": _feature(
-        "higgs_tts", "Higgs Audio TTS", AREA_MEDIA,
+        "higgs_tts",
+        "Higgs Audio TTS",
+        AREA_MEDIA,
         ("torch", "torchaudio", "librosa", "soundfile"),
-        "STTS", "Higgs Audio TTS", OWNER_LIBRARY_MEDIA,
+        "STTS",
+        "Higgs Audio TTS",
+        OWNER_LIBRARY_MEDIA,
     ),
     "local_mlx": _feature(
-        "local_mlx", "Local MLX inference", AREA_LOCAL_INFERENCE,
+        "local_mlx",
+        "Local MLX inference",
+        AREA_LOCAL_INFERENCE,
         ("mlx-lm",),
-        "Settings > Models", "Local MLX inference", OWNER_CONSOLE_PROVIDER,
+        "Settings > Models",
+        "Local MLX inference",
+        OWNER_CONSOLE_PROVIDER,
     ),
     "local_transformers": _feature(
-        "local_transformers", "Local Transformers inference", AREA_LOCAL_INFERENCE,
+        "local_transformers",
+        "Local Transformers inference",
+        AREA_LOCAL_INFERENCE,
         ("transformers",),
-        "Settings > Models", "Local Transformers inference", OWNER_CONSOLE_PROVIDER,
+        "Settings > Models",
+        "Local Transformers inference",
+        OWNER_CONSOLE_PROVIDER,
     ),
     "local_tts": _feature(
-        "local_tts", "Local text-to-speech", AREA_MEDIA,
+        "local_tts",
+        "Local text-to-speech",
+        AREA_MEDIA,
         ("kokoro-onnx", "onnxruntime", "pyaudio"),
-        "STTS", "Local TTS", OWNER_LIBRARY_MEDIA,
+        "STTS",
+        "Local TTS",
+        OWNER_LIBRARY_MEDIA,
     ),
     "local_vllm": _feature(
-        "local_vllm", "Local vLLM inference", AREA_LOCAL_INFERENCE,
+        "local_vllm",
+        "Local vLLM inference",
+        AREA_LOCAL_INFERENCE,
         ("vllm",),
-        "Settings > Models", "Local vLLM inference", OWNER_CONSOLE_PROVIDER,
+        "Settings > Models",
+        "Local vLLM inference",
+        OWNER_CONSOLE_PROVIDER,
     ),
     "mcp": _feature(
-        "mcp", "MCP server and client support", AREA_MCP,
+        "mcp",
+        "MCP server and client support",
+        AREA_MCP,
         ("mcp[cli]",),
-        "MCP", "MCP server/client tools", OWNER_MCP,
+        "MCP",
+        "MCP server/client tools",
+        OWNER_MCP,
     ),
     "media_processing": _feature(
-        "media_processing", "Combined media processing", AREA_MEDIA,
+        "media_processing",
+        "Combined media processing",
+        AREA_MEDIA,
         ("soundfile", "scipy", "yt-dlp", "faster-whisper"),
-        "Library > Import/Export", "Media processing", OWNER_LIBRARY_MEDIA,
+        "Library > Import/Export",
+        "Media processing",
+        OWNER_LIBRARY_MEDIA,
     ),
     "mindmap": _feature(
-        "mindmap", "Mind map visualization", AREA_VISUALIZATION,
+        "mindmap",
+        "Mind map visualization",
+        AREA_VISUALIZATION,
         ("anytree",),
-        "Library", "Mind map visualization", OWNER_LIBRARY,
+        "Library",
+        "Mind map visualization",
+        OWNER_LIBRARY,
     ),
     "mlx_whisper": _feature(
-        "mlx_whisper", "Legacy MLX Whisper providers", AREA_MEDIA,
+        "mlx_whisper",
+        "Legacy MLX Whisper providers",
+        AREA_MEDIA,
         ("lightning-whisper-mlx", "parakeet-mlx"),
-        "Library > Import/Export", "MLX transcription", OWNER_LIBRARY_MEDIA,
+        "Library > Import/Export",
+        "MLX transcription",
+        OWNER_LIBRARY_MEDIA,
     ),
     "nemo": _feature(
-        "nemo", "NVIDIA NeMo ASR", AREA_MEDIA,
+        "nemo",
+        "NVIDIA NeMo ASR",
+        AREA_MEDIA,
         ("nemo-toolkit[asr]", "torch", "torchaudio"),
-        "Library > Import/Export", "NVIDIA NeMo ASR", OWNER_LIBRARY_MEDIA,
+        "Library > Import/Export",
+        "NVIDIA NeMo ASR",
+        OWNER_LIBRARY_MEDIA,
     ),
     "ocr_docext": _feature(
-        "ocr_docext", "OCR and document extraction", AREA_MEDIA,
+        "ocr_docext",
+        "OCR and document extraction",
+        AREA_MEDIA,
         ("docext", "gradio_client", "openai"),
-        "Library > Import/Export", "OCR/document extraction", OWNER_LIBRARY_MEDIA,
+        "Library > Import/Export",
+        "OCR/document extraction",
+        OWNER_LIBRARY_MEDIA,
     ),
     "pdf": _feature(
-        "pdf", "PDF processing", AREA_MEDIA,
+        "pdf",
+        "PDF processing",
+        AREA_MEDIA,
         ("pymupdf", "pymupdf4llm", "docling"),
-        "Library > Import/Export", "PDF ingestion", OWNER_LIBRARY_MEDIA,
+        "Library > Import/Export",
+        "PDF ingestion",
+        OWNER_LIBRARY_MEDIA,
     ),
     "speech_recording": _feature(
-        "speech_recording", "Speech recording", AREA_MEDIA,
+        "speech_recording",
+        "Speech recording",
+        AREA_MEDIA,
         ("pyaudio", "sounddevice", "webrtcvad"),
-        "STTS", "Speech recording", OWNER_LIBRARY_MEDIA,
+        "STTS",
+        "Speech recording",
+        OWNER_LIBRARY_MEDIA,
     ),
     "subscriptions": _feature(
-        "subscriptions", "Subscriptions and scheduled feeds", AREA_WATCHLISTS,
+        "subscriptions",
+        "Subscriptions and scheduled feeds",
+        AREA_WATCHLISTS,
         ("markdown", "schedule", "feedparser", "beautifulsoup4", "cryptography"),
-        "Watchlists", "Subscriptions/watchlists", OWNER_WATCHLISTS,
+        "Watchlists",
+        "Subscriptions/watchlists",
+        OWNER_WATCHLISTS,
     ),
     "svg": _feature(
-        "svg", "SVG rasterization", AREA_MEDIA,
+        "svg",
+        "SVG rasterization",
+        AREA_MEDIA,
         ("cairosvg",),
-        "Library > Import/Export", "SVG rasterization for image attachments", OWNER_LIBRARY_MEDIA,
+        "Library > Import/Export",
+        "SVG rasterization for image attachments",
+        OWNER_LIBRARY_MEDIA,
     ),
     "transcription_faster_whisper": _feature(
-        "transcription_faster_whisper", "Faster Whisper transcription", AREA_MEDIA,
+        "transcription_faster_whisper",
+        "Faster Whisper transcription",
+        AREA_MEDIA,
         ("faster-whisper",),
-        "Library > Import/Export", "Faster Whisper transcription", OWNER_LIBRARY_MEDIA,
+        "Library > Import/Export",
+        "Faster Whisper transcription",
+        OWNER_LIBRARY_MEDIA,
     ),
     "transcription_lightning_whisper": _feature(
-        "transcription_lightning_whisper", "Lightning Whisper MLX transcription", AREA_MEDIA,
+        "transcription_lightning_whisper",
+        "Lightning Whisper MLX transcription",
+        AREA_MEDIA,
         ("lightning-whisper-mlx",),
-        "Library > Import/Export", "Lightning Whisper transcription", OWNER_LIBRARY_MEDIA,
+        "Library > Import/Export",
+        "Lightning Whisper transcription",
+        OWNER_LIBRARY_MEDIA,
     ),
     "transcription_parakeet": _feature(
-        "transcription_parakeet", "Parakeet MLX transcription", AREA_MEDIA,
+        "transcription_parakeet",
+        "Parakeet MLX transcription",
+        AREA_MEDIA,
         ("parakeet-mlx",),
-        "Library > Import/Export", "Parakeet transcription", OWNER_LIBRARY_MEDIA,
+        "Library > Import/Export",
+        "Parakeet transcription",
+        OWNER_LIBRARY_MEDIA,
     ),
     "video": _feature(
-        "video", "Video ingestion and transcription", AREA_MEDIA,
+        "video",
+        "Video ingestion and transcription",
+        AREA_MEDIA,
         ("soundfile", "scipy", "yt-dlp", "faster-whisper"),
-        "Library > Import/Export", "Video processing", OWNER_LIBRARY_MEDIA,
+        "Library > Import/Export",
+        "Video processing",
+        OWNER_LIBRARY_MEDIA,
     ),
     "web": _feature(
-        "web", "Web server", AREA_WEB,
+        "web",
+        "Web server",
+        AREA_WEB,
         ("textual-serve",),
-        "Web server setup", "Browser access", OWNER_WEB,
+        "Web server setup",
+        "Browser access",
+        OWNER_WEB,
     ),
     "websearch": _feature(
-        "websearch", "Web search and scraping", AREA_WEB,
+        "websearch",
+        "Web search and scraping",
+        AREA_WEB,
         ("beautifulsoup4", "playwright", "trafilatura"),
-        "Search/RAG or server research settings", "Web search", OWNER_LIBRARY_RAG,
+        "Search/RAG or server research settings",
+        "Web search",
+        OWNER_LIBRARY_RAG,
     ),
 }
 
@@ -383,49 +507,54 @@ def optional_feature_groups_by_area() -> dict[str, tuple[str, ...]]:
     grouped: dict[str, list[str]] = {}
     for extra, info in OPTIONAL_FEATURES.items():
         grouped.setdefault(info.feature_area, []).append(extra)
-    return {
-        area: tuple(sorted(extras))
-        for area, extras in sorted(grouped.items())
-    }
+    return {area: tuple(sorted(extras)) for area, extras in sorted(grouped.items())}
+
 
 def check_dependency(module_name: str, feature_name: Optional[str] = None) -> bool:
     """
     Check if a dependency is available and cache the result.
-    
+
     Args:
         module_name: The module to import (e.g., 'torch')
         feature_name: Optional feature name for grouped dependencies
-        
+
     Returns:
         bool: True if the dependency is available
     """
     if feature_name is None:
         feature_name = module_name
-    
+
     try:
         # For kokoro_onnx on Windows, also check if onnxruntime is available
-        if module_name == 'kokoro_onnx' and sys.platform == 'win32':
+        if module_name == "kokoro_onnx" and sys.platform == "win32":
             try:
-                __import__('onnxruntime')
+                __import__("onnxruntime")
             except ImportError:
-                logger.warning("onnxruntime not found - required for kokoro_onnx on Windows")
+                logger.warning(
+                    "onnxruntime not found - required for kokoro_onnx on Windows"
+                )
                 DEPENDENCIES_AVAILABLE[feature_name] = False
                 return False
-        
+
         module = __import__(module_name)
         MODULES[module_name] = module
         DEPENDENCIES_AVAILABLE[feature_name] = True
-        logger.debug(f"✅ {module_name} dependency found. Feature '{feature_name}' is enabled.")
+        logger.debug(
+            f"✅ {module_name} dependency found. Feature '{feature_name}' is enabled."
+        )
         return True
     except (ImportError, ModuleNotFoundError) as e:
         DEPENDENCIES_AVAILABLE[feature_name] = False
-        logger.debug(f"⚠️ {module_name} dependency not found. Feature '{feature_name}' will be disabled. Reason: {e}")
+        logger.debug(
+            f"⚠️ {module_name} dependency not found. Feature '{feature_name}' will be disabled. Reason: {e}"
+        )
         return False
+
 
 # SVG rendering (cairosvg) — checked lazily, cached after the first call.
 _svg_rendering_available: Optional[bool] = None
 
-_HOMEBREW_LIB = '/opt/homebrew/lib'
+_HOMEBREW_LIB = "/opt/homebrew/lib"
 
 
 def _ensure_homebrew_dyld_path() -> None:
@@ -439,17 +568,20 @@ def _ensure_homebrew_dyld_path() -> None:
     """
     if not os.path.isdir(_HOMEBREW_LIB):
         return
-    current = os.environ.get('DYLD_FALLBACK_LIBRARY_PATH')
+    current = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH")
     if current is None:
         default_chain = (
-            os.path.expanduser('~/lib'), '/usr/local/lib', '/lib', '/usr/lib',
+            os.path.expanduser("~/lib"),
+            "/usr/local/lib",
+            "/lib",
+            "/usr/lib",
         )
-        os.environ['DYLD_FALLBACK_LIBRARY_PATH'] = ':'.join(
+        os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = ":".join(
             default_chain + (_HOMEBREW_LIB,)
         )
         return
-    if _HOMEBREW_LIB not in current.split(':'):
-        os.environ['DYLD_FALLBACK_LIBRARY_PATH'] = f"{current}:{_HOMEBREW_LIB}"
+    if _HOMEBREW_LIB not in current.split(":"):
+        os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = f"{current}:{_HOMEBREW_LIB}"
 
 
 def ensure_svg_rendering() -> bool:
@@ -474,22 +606,29 @@ def ensure_svg_rendering() -> bool:
     global _svg_rendering_available
     if _svg_rendering_available is not None:
         return _svg_rendering_available
-    if sys.platform == 'darwin':
+    if sys.platform == "darwin":
         _ensure_homebrew_dyld_path()
     try:
-        _svg_rendering_available = check_dependency('cairosvg', 'svg_rendering')
+        _svg_rendering_available = check_dependency("cairosvg", "svg_rendering")
     except Exception as exc:
         logger.warning(
             f"cairosvg availability check raised an unexpected error; "
             f"treating SVG rendering as unavailable: {exc!r}"
         )
-        DEPENDENCIES_AVAILABLE['svg_rendering'] = False
+        DEPENDENCIES_AVAILABLE["svg_rendering"] = False
         _svg_rendering_available = False
     return _svg_rendering_available
 
+
 # Modules that must be installed for the 'embeddings_rag' feature group.
 # Shared by the deep import check below and the cheap installed-probe.
-EMBEDDINGS_RAG_REQUIRED_MODULES = ('torch', 'transformers', 'numpy', 'chromadb', 'sentence_transformers')
+EMBEDDINGS_RAG_REQUIRED_MODULES = (
+    "torch",
+    "transformers",
+    "numpy",
+    "chromadb",
+    "sentence_transformers",
+)
 
 
 def embeddings_rag_deps_installed() -> bool:
@@ -524,11 +663,12 @@ def check_embeddings_rag_deps() -> bool:
     required_deps = list(EMBEDDINGS_RAG_REQUIRED_MODULES)
     all_available = True
     missing_deps = []
-    
+
     for dep in required_deps:
         try:
             # First try the lazy check
             import importlib.util
+
             spec = importlib.util.find_spec(dep)
             if spec is None:
                 all_available = False
@@ -537,37 +677,50 @@ def check_embeddings_rag_deps() -> bool:
             else:
                 # For critical dependencies, also try actual import to be sure
                 try:
-                    if dep == 'torch':
+                    if dep == "torch":
                         import torch
+
                         logger.debug(f"✅ torch {torch.__version__} is available")
-                    elif dep == 'transformers':
+                    elif dep == "transformers":
                         import transformers
-                        logger.debug(f"✅ transformers {transformers.__version__} is available")
-                    elif dep == 'numpy':
+
+                        logger.debug(
+                            f"✅ transformers {transformers.__version__} is available"
+                        )
+                    elif dep == "numpy":
                         import numpy
+
                         logger.debug(f"✅ numpy {numpy.__version__} is available")
-                    elif dep == 'chromadb':
+                    elif dep == "chromadb":
                         # ChromaDB has some import quirks, handle them carefully
                         try:
                             # First ensure protobuf internal builder is available
-                            from google.protobuf.internal import builder
+                            from google.protobuf.internal import builder  # noqa: F401
                         except ImportError:
                             # Create a dummy if needed
                             import google.protobuf.internal
-                            if not hasattr(google.protobuf.internal, 'builder'):
+
+                            if not hasattr(google.protobuf.internal, "builder"):
+
                                 class DummyBuilder:
                                     pass
+
                                 google.protobuf.internal.builder = DummyBuilder()
-                        
+
                         # Set environment variable to suppress warnings
                         import os
-                        os.environ['__PYDANTIC_SELF_SCHEMA__'] = 'pydantic.v1'
-                        
+
+                        os.environ["__PYDANTIC_SELF_SCHEMA__"] = "pydantic.v1"
+
                         import chromadb
+
                         logger.debug(f"✅ chromadb {chromadb.__version__} is available")
-                    elif dep == 'sentence_transformers':
+                    elif dep == "sentence_transformers":
                         import sentence_transformers
-                        logger.debug(f"✅ sentence_transformers {sentence_transformers.__version__} is available")
+
+                        logger.debug(
+                            f"✅ sentence_transformers {sentence_transformers.__version__} is available"
+                        )
                     else:
                         logger.debug(f"✅ {dep} is available (spec check)")
                 except Exception as e:
@@ -578,55 +731,59 @@ def check_embeddings_rag_deps() -> bool:
             all_available = False
             missing_deps.append(dep)
             logger.debug(f"⚠️ {dep} check failed: {e}")
-    
+
     # Also mark individual dependencies
     for dep in required_deps:
         if dep not in missing_deps:
             # Mark the individual dependency as available
             DEPENDENCIES_AVAILABLE[dep] = True
-    
-    DEPENDENCIES_AVAILABLE['embeddings_rag'] = all_available
+
+    DEPENDENCIES_AVAILABLE["embeddings_rag"] = all_available
     if all_available:
         logger.info("✅ All embeddings/RAG dependencies found. Features are enabled.")
     else:
-        logger.warning(f"⚠️ Some embeddings/RAG dependencies missing: {', '.join(missing_deps)}. Features will be disabled.")
-    
+        logger.warning(
+            f"⚠️ Some embeddings/RAG dependencies missing: {', '.join(missing_deps)}. Features will be disabled."
+        )
+
     return all_available
+
 
 def check_websearch_deps() -> bool:
     """Check dependencies needed for web search functionality."""
     # Based on pyproject.toml websearch optional dependencies
-    required_deps = ['lxml', 'bs4', 'pandas', 'playwright', 'trafilatura', 'langdetect', 'nltk', 'scikit-learn']
-    optional_deps = ['playwright_stealth']  # This one was commented out
-    
+
     essential_available = True
-    for dep in ['lxml', 'bs4', 'trafilatura', 'langdetect']:  # Core web scraping deps
-        if not check_dependency(dep, 'websearch_core'):
+    for dep in ["lxml", "bs4", "trafilatura", "langdetect"]:  # Core web scraping deps
+        if not check_dependency(dep, "websearch_core"):
             essential_available = False
             break
-    
-    DEPENDENCIES_AVAILABLE['websearch'] = essential_available
+
+    DEPENDENCIES_AVAILABLE["websearch"] = essential_available
     return essential_available
+
 
 def check_chunker_deps() -> bool:
     """Check dependencies needed for enhanced chunking functionality."""
     # Core chunking deps that are always useful
-    core_deps = ['langdetect', 'nltk']
-    sklearn_available = check_dependency('sklearn', 'scikit-learn')
-    all_core_available = all(check_dependency(dep) for dep in core_deps) and sklearn_available
-    
+    core_deps = ["langdetect", "nltk"]
+    sklearn_available = check_dependency("sklearn", "scikit-learn")
+    all_core_available = (
+        all(check_dependency(dep) for dep in core_deps) and sklearn_available
+    )
+
     # Language-specific deps
-    chinese_available = check_dependency('jieba', 'chinese_chunking')
-    japanese_available = check_dependency('fugashi', 'japanese_chunking')
-    token_available = check_dependency('transformers', 'token_chunking')
-    
+    chinese_available = check_dependency("jieba", "chinese_chunking")
+    japanese_available = check_dependency("fugashi", "japanese_chunking")
+    token_available = check_dependency("transformers", "token_chunking")
+
     # Overall chunker feature available if core deps are present
     chunker_available = all_core_available
-    DEPENDENCIES_AVAILABLE['chunker'] = chunker_available
-    DEPENDENCIES_AVAILABLE['chinese_chunking'] = chinese_available
-    DEPENDENCIES_AVAILABLE['japanese_chunking'] = japanese_available
-    DEPENDENCIES_AVAILABLE['token_chunking'] = token_available
-    
+    DEPENDENCIES_AVAILABLE["chunker"] = chunker_available
+    DEPENDENCIES_AVAILABLE["chinese_chunking"] = chinese_available
+    DEPENDENCIES_AVAILABLE["japanese_chunking"] = japanese_available
+    DEPENDENCIES_AVAILABLE["token_chunking"] = token_available
+
     if chunker_available:
         logger.info("✅ Core chunking dependencies found.")
         enhanced_features = []
@@ -637,97 +794,100 @@ def check_chunker_deps() -> bool:
         if token_available:
             enhanced_features.append("Token-based")
         if enhanced_features:
-            logger.info(f"✅ Enhanced chunking available for: {', '.join(enhanced_features)}")
+            logger.info(
+                f"✅ Enhanced chunking available for: {', '.join(enhanced_features)}"
+            )
     else:
         logger.warning("⚠️ Some core chunking dependencies missing.")
-    
+
     return chunker_available
+
 
 def get_safe_import(module_name: str, feature_name: Optional[str] = None):
     """
     Get a module if available, otherwise return None.
-    
+
     Args:
         module_name: The module to import
         feature_name: Optional feature name for grouped dependencies
-        
+
     Returns:
         The imported module or None if not available
     """
     if feature_name is None:
         feature_name = module_name
-        
+
     if check_dependency(module_name, feature_name):
         return MODULES.get(module_name)
     return None
 
+
 def require_dependency(module_name: str, feature_name: Optional[str] = None) -> Any:
     """
     Require a dependency and raise an informative error if not available.
-    
+
     Args:
         module_name: The module to import
         feature_name: Optional feature name for grouped dependencies
-        
+
     Returns:
         The imported module
-        
+
     Raises:
         ImportError: If the dependency is not available
     """
     if feature_name is None:
         feature_name = module_name
-        
+
     if not check_dependency(module_name, feature_name):
         raise ImportError(
             f"Required dependency '{module_name}' for feature '{feature_name}' is not available. "
             f"Please install the optional dependencies with: pip install tldw_chatbook[{feature_name}]"
         )
-    
+
     return MODULES[module_name]
+
 
 def check_audio_processing_deps() -> bool:
     """Check dependencies needed for audio processing functionality."""
     # Core audio processing dependencies
-    core_deps = ['soundfile', 'scipy']
-    transcription_deps = ['faster_whisper']
-    download_deps = ['yt_dlp']
-    
+    core_deps = ["soundfile", "scipy"]
+
     # Check core deps
     core_available = all(check_dependency(dep) for dep in core_deps)
-    
+
     # Check transcription deps
-    faster_whisper_available = check_dependency('faster_whisper')
-    
+    faster_whisper_available = check_dependency("faster_whisper")
+
     # Check lightning-whisper-mlx (macOS only)
     lightning_whisper_available = False
-    if sys.platform == 'darwin':
-        lightning_whisper_available = check_dependency('lightning_whisper_mlx')
+    if sys.platform == "darwin":
+        lightning_whisper_available = check_dependency("lightning_whisper_mlx")
     else:
-        DEPENDENCIES_AVAILABLE['lightning_whisper_mlx'] = False
-    
+        DEPENDENCIES_AVAILABLE["lightning_whisper_mlx"] = False
+
     # Check parakeet-mlx (macOS only)
     parakeet_mlx_available = False
-    if sys.platform == 'darwin':
-        parakeet_mlx_available = check_dependency('parakeet_mlx')
+    if sys.platform == "darwin":
+        parakeet_mlx_available = check_dependency("parakeet_mlx")
     else:
-        DEPENDENCIES_AVAILABLE['parakeet_mlx'] = False
-    
+        DEPENDENCIES_AVAILABLE["parakeet_mlx"] = False
+
     # Check optional transcription backend
-    qwen2audio_available = check_dependency('qwen2_audio', 'qwen2audio')
-    
+    qwen2audio_available = check_dependency("qwen2_audio", "qwen2audio")
+
     # Check download capability
-    yt_dlp_available = check_dependency('yt_dlp')
-    
+    yt_dlp_available = check_dependency("yt_dlp")
+
     # Overall audio processing available if core deps are present
     audio_available = core_available
-    DEPENDENCIES_AVAILABLE['audio_processing'] = audio_available
-    DEPENDENCIES_AVAILABLE['faster_whisper'] = faster_whisper_available
-    DEPENDENCIES_AVAILABLE['lightning_whisper_mlx'] = lightning_whisper_available
-    DEPENDENCIES_AVAILABLE['parakeet_mlx'] = parakeet_mlx_available
-    DEPENDENCIES_AVAILABLE['qwen2audio'] = qwen2audio_available
-    DEPENDENCIES_AVAILABLE['yt_dlp'] = yt_dlp_available
-    
+    DEPENDENCIES_AVAILABLE["audio_processing"] = audio_available
+    DEPENDENCIES_AVAILABLE["faster_whisper"] = faster_whisper_available
+    DEPENDENCIES_AVAILABLE["lightning_whisper_mlx"] = lightning_whisper_available
+    DEPENDENCIES_AVAILABLE["parakeet_mlx"] = parakeet_mlx_available
+    DEPENDENCIES_AVAILABLE["qwen2audio"] = qwen2audio_available
+    DEPENDENCIES_AVAILABLE["yt_dlp"] = yt_dlp_available
+
     if audio_available:
         logger.info("✅ Core audio processing dependencies found.")
         enhanced_features = []
@@ -742,43 +902,49 @@ def check_audio_processing_deps() -> bool:
         if yt_dlp_available:
             enhanced_features.append("YouTube/URL downloading")
         if enhanced_features:
-            logger.info(f"✅ Enhanced audio features available: {', '.join(enhanced_features)}")
+            logger.info(
+                f"✅ Enhanced audio features available: {', '.join(enhanced_features)}"
+            )
     else:
         logger.warning("⚠️ Some core audio processing dependencies missing.")
-    
+
     return audio_available
+
 
 def check_video_processing_deps() -> bool:
     """Check dependencies needed for video processing functionality."""
     # Video processing reuses audio processing capabilities
-    audio_available = DEPENDENCIES_AVAILABLE.get('audio_processing', False)
+    audio_available = DEPENDENCIES_AVAILABLE.get("audio_processing", False)
     if not audio_available:
         # Check audio deps if not already checked
         check_audio_processing_deps()
-        audio_available = DEPENDENCIES_AVAILABLE.get('audio_processing', False)
-    
+        audio_available = DEPENDENCIES_AVAILABLE.get("audio_processing", False)
+
     # Additional video-specific deps (if any)
     # Currently video processing mainly relies on audio processing + ffmpeg (external)
-    
+
     video_available = audio_available
-    DEPENDENCIES_AVAILABLE['video_processing'] = video_available
-    
+    DEPENDENCIES_AVAILABLE["video_processing"] = video_available
+
     if video_available:
         logger.info("✅ Video processing dependencies found (via audio processing).")
     else:
-        logger.warning("⚠️ Video processing unavailable due to missing audio dependencies.")
-    
+        logger.warning(
+            "⚠️ Video processing unavailable due to missing audio dependencies."
+        )
+
     return video_available
+
 
 def check_pdf_processing_deps() -> bool:
     """Check dependencies needed for PDF processing functionality."""
-    pymupdf_available = check_dependency('pymupdf')
-    pymupdf4llm_available = check_dependency('pymupdf4llm')
-    docling_available = check_dependency('docling')
-    
+    pymupdf_available = check_dependency("pymupdf")
+    pymupdf4llm_available = check_dependency("pymupdf4llm")
+    docling_available = check_dependency("docling")
+
     pdf_available = pymupdf_available
-    DEPENDENCIES_AVAILABLE['pdf_processing'] = pdf_available
-    
+    DEPENDENCIES_AVAILABLE["pdf_processing"] = pdf_available
+
     if pdf_available:
         logger.info("✅ PDF processing dependencies found.")
         enhanced_features = []
@@ -787,24 +953,27 @@ def check_pdf_processing_deps() -> bool:
         if docling_available:
             enhanced_features.append("Docling document processing")
         if enhanced_features:
-            logger.info(f"✅ Enhanced PDF features available: {', '.join(enhanced_features)}")
+            logger.info(
+                f"✅ Enhanced PDF features available: {', '.join(enhanced_features)}"
+            )
     else:
         logger.warning("⚠️ PDF processing dependencies missing.")
-    
+
     return pdf_available
+
 
 def check_ebook_processing_deps() -> bool:
     """Check dependencies needed for e-book processing functionality."""
-    ebooklib_available = check_dependency('ebooklib')
-    defusedxml_available = check_dependency('defusedxml')
-    html2text_available = check_dependency('html2text')
-    
-    lxml_available = check_dependency('lxml')
-    bs4_available = check_dependency('bs4', 'beautifulsoup4')
-    
+    ebooklib_available = check_dependency("ebooklib")
+    defusedxml_available = check_dependency("defusedxml")
+    html2text_available = check_dependency("html2text")
+
+    lxml_available = check_dependency("lxml")
+    bs4_available = check_dependency("bs4", "beautifulsoup4")
+
     ebook_available = ebooklib_available and defusedxml_available
-    DEPENDENCIES_AVAILABLE['ebook_processing'] = ebook_available
-    
+    DEPENDENCIES_AVAILABLE["ebook_processing"] = ebook_available
+
     if ebook_available:
         logger.info("✅ E-book processing dependencies found.")
         enhanced_features = []
@@ -815,21 +984,24 @@ def check_ebook_processing_deps() -> bool:
         if bs4_available:
             enhanced_features.append("BeautifulSoup HTML parsing")
         if enhanced_features:
-            logger.info(f"✅ Enhanced e-book features available: {', '.join(enhanced_features)}")
+            logger.info(
+                f"✅ Enhanced e-book features available: {', '.join(enhanced_features)}"
+            )
     else:
         logger.warning("⚠️ E-book processing dependencies missing.")
-    
+
     return ebook_available
+
 
 def check_ocr_deps() -> bool:
     """Check dependencies needed for OCR functionality."""
-    docext_available = check_dependency('docext')
-    gradio_client_available = check_dependency('gradio_client')
-    openai_available = check_dependency('openai')
-    
+    docext_available = check_dependency("docext")
+    gradio_client_available = check_dependency("gradio_client")
+    openai_available = check_dependency("openai")
+
     ocr_available = docext_available or gradio_client_available or openai_available
-    DEPENDENCIES_AVAILABLE['ocr_processing'] = ocr_available
-    
+    DEPENDENCIES_AVAILABLE["ocr_processing"] = ocr_available
+
     if ocr_available:
         logger.info("✅ OCR processing dependencies found.")
         available_backends = []
@@ -842,18 +1014,19 @@ def check_ocr_deps() -> bool:
         logger.info(f"✅ Available OCR backends: {', '.join(available_backends)}")
     else:
         logger.warning("⚠️ OCR processing dependencies missing.")
-    
+
     return ocr_available
+
 
 def check_local_llm_deps() -> bool:
     """Check dependencies needed for local LLM functionality."""
-    mlx_available = check_dependency('mlx_lm', 'mlx_lm')
-    vllm_available = check_dependency('vllm')
-    onnx_available = check_dependency('onnxruntime')
-    
+    mlx_available = check_dependency("mlx_lm", "mlx_lm")
+    vllm_available = check_dependency("vllm")
+    onnx_available = check_dependency("onnxruntime")
+
     local_llm_available = mlx_available or vllm_available or onnx_available
-    DEPENDENCIES_AVAILABLE['local_llm'] = local_llm_available
-    
+    DEPENDENCIES_AVAILABLE["local_llm"] = local_llm_available
+
     if local_llm_available:
         logger.info("✅ Local LLM dependencies found.")
         available_backends = []
@@ -866,20 +1039,25 @@ def check_local_llm_deps() -> bool:
         logger.info(f"✅ Available local LLM backends: {', '.join(available_backends)}")
     else:
         logger.warning("⚠️ Local LLM dependencies missing.")
-    
+
     return local_llm_available
+
 
 def check_tts_deps() -> bool:
     """Check dependencies needed for TTS functionality."""
-    kokoro_available = check_dependency('kokoro_onnx', 'kokoro_onnx')
-    chatterbox_available = check_dependency('chatterbox')
-    pydub_available = check_dependency('pydub')
-    pyaudio_available = check_dependency('pyaudio')
-    av_available = check_dependency('av')
-    
-    tts_available = kokoro_available or chatterbox_available or (pydub_available and pyaudio_available)
-    DEPENDENCIES_AVAILABLE['tts_processing'] = tts_available
-    
+    kokoro_available = check_dependency("kokoro_onnx", "kokoro_onnx")
+    chatterbox_available = check_dependency("chatterbox")
+    pydub_available = check_dependency("pydub")
+    pyaudio_available = check_dependency("pyaudio")
+    av_available = check_dependency("av")
+
+    tts_available = (
+        kokoro_available
+        or chatterbox_available
+        or (pydub_available and pyaudio_available)
+    )
+    DEPENDENCIES_AVAILABLE["tts_processing"] = tts_available
+
     if tts_available:
         logger.info("✅ TTS processing dependencies found.")
         available_features = []
@@ -894,18 +1072,19 @@ def check_tts_deps() -> bool:
         logger.info(f"✅ Available TTS features: {', '.join(available_features)}")
     else:
         logger.warning("⚠️ TTS processing dependencies missing.")
-    
+
     return tts_available
+
 
 def check_stt_deps() -> bool:
     """Check dependencies needed for STT functionality."""
-    nemo_available = check_dependency('nemo_toolkit')
-    
-    faster_whisper_available = DEPENDENCIES_AVAILABLE.get('faster_whisper', False)
-    
+    nemo_available = check_dependency("nemo_toolkit")
+
+    faster_whisper_available = DEPENDENCIES_AVAILABLE.get("faster_whisper", False)
+
     stt_available = nemo_available or faster_whisper_available
-    DEPENDENCIES_AVAILABLE['stt_processing'] = stt_available
-    
+    DEPENDENCIES_AVAILABLE["stt_processing"] = stt_available
+
     if stt_available:
         logger.info("✅ STT processing dependencies found.")
         available_backends = []
@@ -916,27 +1095,29 @@ def check_stt_deps() -> bool:
         logger.info(f"✅ Available STT backends: {', '.join(available_backends)}")
     else:
         logger.warning("⚠️ STT processing dependencies missing.")
-    
+
     return stt_available
+
 
 def check_image_processing_deps() -> bool:
     """Check dependencies needed for image processing functionality."""
     try:
-        import PIL
+        import PIL  # noqa: F401
+
         pil_available = True
-        DEPENDENCIES_AVAILABLE['PIL'] = True
-        DEPENDENCIES_AVAILABLE['pillow'] = True
+        DEPENDENCIES_AVAILABLE["PIL"] = True
+        DEPENDENCIES_AVAILABLE["pillow"] = True
     except ImportError:
         pil_available = False
-        DEPENDENCIES_AVAILABLE['PIL'] = False
-        DEPENDENCIES_AVAILABLE['pillow'] = False
-    
-    textual_image_available = check_dependency('textual_image')
-    rich_pixels_available = check_dependency('rich_pixels')
-    
+        DEPENDENCIES_AVAILABLE["PIL"] = False
+        DEPENDENCIES_AVAILABLE["pillow"] = False
+
+    textual_image_available = check_dependency("textual_image")
+    rich_pixels_available = check_dependency("rich_pixels")
+
     image_available = pil_available
-    DEPENDENCIES_AVAILABLE['image_processing'] = image_available
-    
+    DEPENDENCIES_AVAILABLE["image_processing"] = image_available
+
     if image_available:
         logger.info("✅ Image processing dependencies found.")
         enhanced_features = []
@@ -945,50 +1126,54 @@ def check_image_processing_deps() -> bool:
         if rich_pixels_available:
             enhanced_features.append("Rich pixels rendering")
         if enhanced_features:
-            logger.info(f"✅ Enhanced image features available: {', '.join(enhanced_features)}")
+            logger.info(
+                f"✅ Enhanced image features available: {', '.join(enhanced_features)}"
+            )
     else:
         logger.warning("⚠️ Image processing dependencies missing.")
-    
+
     return image_available
+
 
 def check_mcp_deps() -> bool:
     """Check dependencies needed for MCP functionality."""
-    mcp_available = check_dependency('mcp')
-    DEPENDENCIES_AVAILABLE['mcp'] = mcp_available
-    
+    mcp_available = check_dependency("mcp")
+    DEPENDENCIES_AVAILABLE["mcp"] = mcp_available
+
     if mcp_available:
         logger.info("✅ MCP (Model Context Protocol) dependencies found.")
     else:
         logger.warning("⚠️ MCP dependencies missing.")
-    
+
     return mcp_available
 
 
 def check_mindmap_available() -> bool:
     """Check if mindmap dependencies are available.
-    
+
     Since anytree is in base dependencies, mindmap is always available.
     This function exists for consistency with other optional features.
     """
     # anytree is in base dependencies, so always available
-    anytree_available = check_dependency('anytree', 'mindmap')
-    DEPENDENCIES_AVAILABLE['mindmap'] = anytree_available
-    
+    anytree_available = check_dependency("anytree", "mindmap")
+    DEPENDENCIES_AVAILABLE["mindmap"] = anytree_available
+
     if anytree_available:
         logger.info("✅ Mindmap dependencies found.")
     else:
         logger.warning("⚠️ Mindmap dependencies missing.")
-    
+
     return anytree_available
+
 
 def check_subscriptions_deps() -> bool:
     """Check dependencies needed for subscriptions functionality."""
-    markdown_available = check_dependency('markdown')
-    schedule_available = check_dependency('schedule')
-    feedparser_available = check_dependency('feedparser')
-    beautifulsoup_available = check_dependency('bs4', 'beautifulsoup4')
-    defusedxml_available = check_dependency('defusedxml')
-    
+    markdown_available = check_dependency("markdown")
+    schedule_available = check_dependency("schedule")
+    feedparser_available = check_dependency("feedparser")
+    beautifulsoup_available = check_dependency("bs4", "beautifulsoup4")
+    defusedxml_available = check_dependency("defusedxml")
+
     # All are needed for subscriptions to work properly
     subscriptions_available = (
         markdown_available
@@ -997,8 +1182,8 @@ def check_subscriptions_deps() -> bool:
         and beautifulsoup_available
         and defusedxml_available
     )
-    DEPENDENCIES_AVAILABLE['subscriptions'] = subscriptions_available
-    
+    DEPENDENCIES_AVAILABLE["subscriptions"] = subscriptions_available
+
     if subscriptions_available:
         logger.info("✅ Subscriptions dependencies found.")
     else:
@@ -1014,41 +1199,50 @@ def check_subscriptions_deps() -> bool:
         if not defusedxml_available:
             missing.append("defusedxml")
         logger.warning(f"⚠️ Subscriptions dependencies missing: {', '.join(missing)}")
-    
+
     return subscriptions_available
+
 
 def check_web_server_deps() -> bool:
     """Check dependencies needed for web server functionality."""
-    textual_serve_available = check_dependency('textual_serve')
-    
+    textual_serve_available = check_dependency("textual_serve")
+
     web_available = textual_serve_available
-    DEPENDENCIES_AVAILABLE['web'] = web_available
-    DEPENDENCIES_AVAILABLE['textual_serve'] = textual_serve_available
-    
+    DEPENDENCIES_AVAILABLE["web"] = web_available
+    DEPENDENCIES_AVAILABLE["textual_serve"] = textual_serve_available
+
     if web_available:
         logger.info("✅ Web server dependencies found. Textual-serve is available.")
     else:
-        logger.warning("⚠️ Web server dependencies missing. Install with: pip install tldw_chatbook[web]")
-    
+        logger.warning(
+            "⚠️ Web server dependencies missing. Install with: pip install tldw_chatbook[web]"
+        )
+
     return web_available
 
-def create_unavailable_feature_handler(feature_name: str, suggestion: str = "") -> Callable:
+
+def create_unavailable_feature_handler(
+    feature_name: str, suggestion: str = ""
+) -> Callable:
     """
     Create a function that raises an informative error when a feature is unavailable.
-    
+
     Args:
         feature_name: Name of the unavailable feature
         suggestion: Optional installation suggestion
-        
+
     Returns:
         A function that raises an error with helpful information
     """
+
     def handler(*args, **kwargs):
         install_hint = f" Install with: {suggestion}" if suggestion else ""
         raise ImportError(
             f"Feature '{feature_name}' is not available due to missing dependencies.{install_hint}"
         )
+
     return handler
+
 
 # Initialize dependency checks
 def reset_dependency_checks() -> None:
@@ -1065,29 +1259,30 @@ def reset_dependency_checks() -> None:
     MODULES = {}
     logger.debug("Reset dependency checks")
 
+
 def initialize_dependency_checks():
     """Initialize all dependency checks at startup."""
     logger.info("Checking optional dependencies...")
-    
+
     # Check core optional dependencies
-    check_dependency('torch')
-    check_dependency('transformers') 
-    check_dependency('numpy')
-    check_dependency('chromadb')
-    check_dependency('sentence_transformers')
-    check_dependency('jieba')
-    check_dependency('fugashi')
-    check_dependency('flashrank')
-    check_dependency('cohere')
-    check_dependency('tqdm')
-    
+    check_dependency("torch")
+    check_dependency("transformers")
+    check_dependency("numpy")
+    check_dependency("chromadb")
+    check_dependency("sentence_transformers")
+    check_dependency("jieba")
+    check_dependency("fugashi")
+    check_dependency("flashrank")
+    check_dependency("cohere")
+    check_dependency("tqdm")
+
     # Check grouped features
     check_embeddings_rag_deps()
     check_websearch_deps()
     check_chunker_deps()
     check_audio_processing_deps()
     check_video_processing_deps()
-    
+
     # Check new dependency groups
     check_pdf_processing_deps()
     check_ebook_processing_deps()
@@ -1100,59 +1295,71 @@ def initialize_dependency_checks():
     check_mindmap_available()
     check_subscriptions_deps()
     check_web_server_deps()
-    
+
     # Log summary
-    enabled_features = [name for name, available in DEPENDENCIES_AVAILABLE.items() if available]
-    disabled_features = [name for name, available in DEPENDENCIES_AVAILABLE.items() if not available]
-    
+    enabled_features = [
+        name for name, available in DEPENDENCIES_AVAILABLE.items() if available
+    ]
+    disabled_features = [
+        name for name, available in DEPENDENCIES_AVAILABLE.items() if not available
+    ]
+
     if enabled_features:
         logger.info(f"✅ Available features: {', '.join(enabled_features)}")
     if disabled_features:
         logger.info(f"⚠️ Disabled features: {', '.join(disabled_features)}")
-    
+
     logger.info("Dependency check complete.")
 
+
 # Lazy initialization - dependencies will be checked on first use
-import os
 
 # Track if we've initialized
 _initialized = False
 
+
 def ensure_dependencies_checked():
     """Ensure dependencies have been checked at least once."""
     global _initialized
-    if not _initialized and 'PYTEST_CURRENT_TEST' not in os.environ:
+    if not _initialized and "PYTEST_CURRENT_TEST" not in os.environ:
         initialize_dependency_checks()
         _initialized = True
-    
+
+
 # Force recheck function for embeddings
 def force_recheck_embeddings():
     """Force a recheck of embeddings dependencies."""
     logger.info("Force rechecking embeddings dependencies...")
     # Reset the cached values
-    DEPENDENCIES_AVAILABLE['embeddings_rag'] = False
-    DEPENDENCIES_AVAILABLE['torch'] = False
-    DEPENDENCIES_AVAILABLE['transformers'] = False
-    DEPENDENCIES_AVAILABLE['numpy'] = False
-    DEPENDENCIES_AVAILABLE['chromadb'] = False
-    DEPENDENCIES_AVAILABLE['sentence_transformers'] = False
+    DEPENDENCIES_AVAILABLE["embeddings_rag"] = False
+    DEPENDENCIES_AVAILABLE["torch"] = False
+    DEPENDENCIES_AVAILABLE["transformers"] = False
+    DEPENDENCIES_AVAILABLE["numpy"] = False
+    DEPENDENCIES_AVAILABLE["chromadb"] = False
+    DEPENDENCIES_AVAILABLE["sentence_transformers"] = False
     # Recheck
     return check_embeddings_rag_deps()
+
 
 # Check configuration for eager dependency checking
 eager_check = False
 
 # First check environment variable (highest priority)
-if os.environ.get('TLDW_EAGER_DEPENDENCY_CHECK', '').lower() == 'true':
+if os.environ.get("TLDW_EAGER_DEPENDENCY_CHECK", "").lower() == "true":
     eager_check = True
-    logger.info("Eager dependency checking enabled via TLDW_EAGER_DEPENDENCY_CHECK environment variable")
+    logger.info(
+        "Eager dependency checking enabled via TLDW_EAGER_DEPENDENCY_CHECK environment variable"
+    )
 else:
     # Check config file if not in test environment
-    if 'PYTEST_CURRENT_TEST' not in os.environ:
+    if "PYTEST_CURRENT_TEST" not in os.environ:
         try:
             # Import config lazily to avoid circular dependencies
             from ..config import get_cli_setting
-            if get_cli_setting("rag", "performance", {}).get("eager_dependency_check", False):
+
+            if get_cli_setting("rag", "performance", {}).get(
+                "eager_dependency_check", False
+            ):
                 eager_check = True
                 logger.info("Eager dependency checking enabled via config file")
         except Exception as e:
@@ -1161,7 +1368,9 @@ else:
 if eager_check:
     initialize_dependency_checks()
     _initialized = True
-elif 'PYTEST_CURRENT_TEST' in os.environ:
+elif "PYTEST_CURRENT_TEST" in os.environ:
     logger.debug("Skipping auto-initialization in test environment")
 else:
-    logger.info("Lazy dependency checking enabled (default). Dependencies will be checked on first use.")
+    logger.info(
+        "Lazy dependency checking enabled (default). Dependencies will be checked on first use."
+    )

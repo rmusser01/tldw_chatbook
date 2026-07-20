@@ -45,7 +45,6 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "tools_settings": "mcp",
     "llm": "settings",
     "llm_management": "settings",
-    "customize": "settings",
     "logs": "diagnostics_logs",
     "stats": "diagnostics_stats",
     "stts": "settings",
@@ -87,7 +86,10 @@ def build_workbench_route_coverage() -> WorkbenchRouteCoverage:
     screen_aliases = registered_screen_aliases()
     shell_routes = registered_shell_route_ids()
     known_route_ids = (
-        set(constant_tabs) | set(screen_routes) | set(screen_aliases) | set(shell_routes)
+        set(constant_tabs)
+        | set(screen_routes)
+        | set(screen_aliases)
+        | set(shell_routes)
     )
     all_known_routes = tuple(sorted(known_route_ids))
     missing_owner_routes = tuple(

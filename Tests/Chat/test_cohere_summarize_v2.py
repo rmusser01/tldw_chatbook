@@ -39,8 +39,12 @@ def test_non_streaming_hits_v2_with_messages_array(mock_post):
     _mock_post(mock_post, _text_response())
 
     summary = summarize_with_cohere(
-        "test-key", "Some article text.", "Summarize this.",
-        temp=0.2, system_message="Be terse.", streaming=False,
+        "test-key",
+        "Some article text.",
+        "Summarize this.",
+        temp=0.2,
+        system_message="Be terse.",
+        streaming=False,
     )
 
     assert summary == "A concise summary."
@@ -65,17 +69,25 @@ def test_blank_system_message_is_omitted(mock_post):
     payload = mock_post.call_args[1]["json"]
     # A blank system message must not become an empty system turn; the
     # helper's own default fills None, so only explicit blanks are omitted.
-    assert all(m["role"] != "system" or m["content"].strip() for m in payload["messages"])
+    assert all(
+        m["role"] != "system" or m["content"].strip() for m in payload["messages"]
+    )
 
 
 @patch("requests.Session.post")
 def test_non_streaming_concatenates_multiple_text_parts(mock_post):
-    _mock_post(mock_post, {
-        "message": {"role": "assistant", "content": [
-            {"type": "text", "text": "Part one. "},
-            {"type": "text", "text": "Part two."},
-        ]},
-    })
+    _mock_post(
+        mock_post,
+        {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Part one. "},
+                    {"type": "text", "text": "Part two."},
+                ],
+            },
+        },
+    )
 
     summary = summarize_with_cohere("test-key", "Text.", "Prompt.")
 
@@ -104,10 +116,14 @@ def test_non_200_reports_api_request_failed(mock_post):
 def test_streaming_yields_content_delta_text(mock_post):
     events = [
         {"type": "message-start"},
-        {"type": "content-delta",
-         "delta": {"message": {"content": {"text": "Summary "}}}},
-        {"type": "content-delta",
-         "delta": {"message": {"content": {"text": "chunks."}}}},
+        {
+            "type": "content-delta",
+            "delta": {"message": {"content": {"text": "Summary "}}},
+        },
+        {
+            "type": "content-delta",
+            "delta": {"message": {"content": {"text": "chunks."}}},
+        },
         {"type": "message-end", "delta": {"finish_reason": "COMPLETE"}},
     ]
     mock_response = Mock()
@@ -118,9 +134,14 @@ def test_streaming_yields_content_delta_text(mock_post):
     ]
     mock_post.return_value = mock_response
 
-    chunks = list(summarize_with_cohere(
-        "test-key", "Text.", "Prompt.", streaming=True,
-    ))
+    chunks = list(
+        summarize_with_cohere(
+            "test-key",
+            "Text.",
+            "Prompt.",
+            streaming=True,
+        )
+    )
 
     assert chunks == ["Summary ", "chunks."]
     assert mock_post.call_args[0][0] == V2_URL
@@ -157,9 +178,14 @@ def test_streaming_skips_interleaved_event_lines_without_log_noise(mock_post):
     ]
     mock_post.return_value = mock_response
 
-    chunks = list(summarize_with_cohere(
-        "test-key", "Text.", "Prompt.", streaming=True,
-    ))
+    chunks = list(
+        summarize_with_cohere(
+            "test-key",
+            "Text.",
+            "Prompt.",
+            streaming=True,
+        )
+    )
 
     assert chunks == ["Hi."]
 
@@ -175,7 +201,10 @@ def test_streaming_non_200_reports_the_same_pinned_error_format(mock_post):
     mock_post.return_value = mock_response
 
     result = summarize_with_cohere(
-        "test-key", "Text.", "Prompt.", streaming=True,
+        "test-key",
+        "Text.",
+        "Prompt.",
+        streaming=True,
     )
 
     assert result == 'Cohere: API request failed: {"message": "bad request"}'
@@ -197,9 +226,14 @@ def test_streaming_parses_raw_json_lines_without_sse_framing(mock_post):
     ]
     mock_post.return_value = mock_response
 
-    chunks = list(summarize_with_cohere(
-        "test-key", "Text.", "Prompt.", streaming=True,
-    ))
+    chunks = list(
+        summarize_with_cohere(
+            "test-key",
+            "Text.",
+            "Prompt.",
+            streaming=True,
+        )
+    )
 
     assert chunks == ["Raw ", "lines."]
 
@@ -227,15 +261,20 @@ def test_streaming_skips_non_object_json_and_closes_response(mock_post):
     mock_response.status_code = 200
     mock_response.raise_for_status = Mock()
     mock_response.iter_lines.return_value = [
-        b'[1, 2, 3]',
+        b"[1, 2, 3]",
         b'"just a string"',
         b'{"type": "content-delta", "delta": {"message": {"content": {"text": "Still works."}}}}',
     ]
     mock_post.return_value = mock_response
 
-    chunks = list(summarize_with_cohere(
-        "test-key", "Text.", "Prompt.", streaming=True,
-    ))
+    chunks = list(
+        summarize_with_cohere(
+            "test-key",
+            "Text.",
+            "Prompt.",
+            streaming=True,
+        )
+    )
 
     assert chunks == ["Still works."]
     mock_response.close.assert_called_once()

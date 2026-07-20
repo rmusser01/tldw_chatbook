@@ -7,6 +7,7 @@ tool/spawn steps, keeps an in-memory live snapshot for the rail poll, and
 runs AgentService.run_turn synchronously (the controller wraps it in
 asyncio.to_thread). No widget mutation.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -15,19 +16,39 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from loguru import logger
+
 from tldw_chatbook.Agents.agent_models import (
-    AGENT_KIND_PRIMARY, AGENT_KIND_SUBAGENT, FIND_TOOLS_NAME, LOAD_TOOLS_NAME,
-    RunBudget, RUNTIME_TOOL_NAMES, SPAWN_TOOL_NAME, STEP_ERROR, STEP_SPAWN,
-    STEP_TOOL_RESULT, AgentConfig, AgentStep, RunOutcome, ToolCall, ToolCatalogEntry,
-    ToolResult, ToolSchema,
+    AGENT_KIND_PRIMARY,
+    AGENT_KIND_SUBAGENT,
+    FIND_TOOLS_NAME,
+    LOAD_TOOLS_NAME,
+    RunBudget,
+    RUNTIME_TOOL_NAMES,
+    SPAWN_TOOL_NAME,
+    STEP_ERROR,
+    STEP_SPAWN,
+    STEP_TOOL_RESULT,
+    AgentConfig,
+    AgentStep,
+    RunOutcome,
+    ToolCall,
+    ToolCatalogEntry,
+    ToolResult,
+    ToolSchema,
 )
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
 from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.tool_catalog import (
-    BuiltinToolProvider, SkillToolProvider, ToolCatalogRegistry,
+    BuiltinToolProvider,
+    SkillToolProvider,
+    ToolCatalogRegistry,
     intersect_skill_tools,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -38,7 +59,8 @@ CONSOLE_AGENT_OPERATING_PROMPT = (
     "tool is needed. When a tool would help, call exactly one tool per reply "
     "using the fenced protocol described below, then continue once you have the "
     "result. Use spawn_subagent to delegate a self-contained sub-task to an "
-    "isolated helper. Keep replies concise.")
+    "isolated helper. Keep replies concise."
+)
 
 # Skills Phase-2 gate finding 1 (Task-14 report, scenario 5: "Find a skill
 # that can shout, load it, and use it on: hello"): a discovery-heavy run --
@@ -72,8 +94,7 @@ CONSOLE_AGENT_OPERATING_PROMPT = (
 # override applies only at the Console bridge's own config-assembly site
 # (run_reply below); other callers of RunBudget()/AgentConfig keep the bare
 # engine default.
-CONSOLE_RUN_BUDGET = RunBudget(
-    max_steps=32, max_wall_seconds=480.0, max_model_turns=8)
+CONSOLE_RUN_BUDGET = RunBudget(max_steps=32, max_wall_seconds=480.0, max_model_turns=8)
 
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 
@@ -170,15 +191,17 @@ def inject_resume_agent_markers(
         return list(messages)
 
     existing_tool_contents = {
-        message.content for message in messages
+        message.content
+        for message in messages
         if message.role is ConsoleMessageRole.TOOL
     }
     assistant_indexes = [
-        index for index, message in enumerate(messages)
+        index
+        for index, message in enumerate(messages)
         if message.role is ConsoleMessageRole.ASSISTANT
     ]
     matched = dict(zip(assistant_indexes, non_empty_blocks))
-    leftover_blocks = non_empty_blocks[len(assistant_indexes):]
+    leftover_blocks = non_empty_blocks[len(assistant_indexes) :]
 
     def _already_present(block: list[ConsoleChatMessage]) -> bool:
         return all(marker.content in existing_tool_contents for marker in block)
@@ -300,8 +323,16 @@ class _StreamingModelAdapter:
     instead of at most once per run.
     """
 
-    def __init__(self, *, store, provider_gateway, resolution, assistant_message_id,
-                 should_cancel, loop):
+    def __init__(
+        self,
+        *,
+        store,
+        provider_gateway,
+        resolution,
+        assistant_message_id,
+        should_cancel,
+        loop,
+    ):
         self._store = store
         self._gateway = provider_gateway
         self._resolution = resolution
@@ -309,8 +340,16 @@ class _StreamingModelAdapter:
         self._should_cancel = should_cancel
         self._loop = loop
 
-    def chat_call(self, *, messages_payload, model=None, api_endpoint=None,
-                  streaming=False, tools=None, **_ignored) -> dict:
+    def chat_call(
+        self,
+        *,
+        messages_payload,
+        model=None,
+        api_endpoint=None,
+        streaming=False,
+        tools=None,
+        **_ignored,
+    ) -> dict:
         is_subagent = self._is_subagent(messages_payload)
         gate = StreamGate()
         any_streamed = False
@@ -330,7 +369,8 @@ class _StreamingModelAdapter:
             # either way, since the callee-side default is also None.
             stream_kwargs = {"tools": tools} if tools is not None else {}
             async for chunk in self._gateway.stream_chat(
-                    self._resolution, messages_payload, **stream_kwargs):
+                self._resolution, messages_payload, **stream_kwargs
+            ):
                 if isinstance(chunk, ProviderToolCalls):
                     # Plan-B contract: structured deltas never hit the
                     # transcript — captured here, surfaced only through the
@@ -377,8 +417,9 @@ class _StreamingModelAdapter:
         if not messages_payload:
             return False
         first = messages_payload[0]
-        return (first.get("role") == "system"
-                and str(first.get("content", "")).startswith(SUBAGENT_SYSTEM_PROMPT))
+        return first.get("role") == "system" and str(
+            first.get("content", "")
+        ).startswith(SUBAGENT_SYSTEM_PROMPT)
 
 
 def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -402,9 +443,12 @@ def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any
         that pass the eligibility filter, in the order ``get_context``
         returned them.
     """
-    available = context.get("available_skills") if isinstance(context, Mapping) else None
+    available = (
+        context.get("available_skills") if isinstance(context, Mapping) else None
+    )
     return [
-        item for item in (available or [])
+        item
+        for item in (available or [])
         if isinstance(item, Mapping)
         and item.get("name")
         and not item.get("trust_blocked", False)
@@ -413,7 +457,8 @@ def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any
 
 
 def _non_colliding_skill_entries(
-    context: Mapping[str, Any], builtin_names: tuple[str, ...],
+    context: Mapping[str, Any],
+    builtin_names: tuple[str, ...],
 ) -> list[Mapping[str, Any]]:
     """Eligible skill entries, excluding any name that collides with a
     builtin OR one of the loop's own in-loop runtime tool names.
@@ -445,13 +490,15 @@ def _non_colliding_skill_entries(
     """
     collision_names = set(builtin_names) | RUNTIME_TOOL_NAMES
     return [
-        item for item in _eligible_skill_entries(context)
+        item
+        for item in _eligible_skill_entries(context)
         if str(item["name"]) not in collision_names
     ]
 
 
 def _compose_run_allowed_tools(
-    context: Mapping[str, Any], builtin_names: tuple[str, ...],
+    context: Mapping[str, Any],
+    builtin_names: tuple[str, ...],
 ) -> tuple[str, ...]:
     """Pure per-run allow-list: builtins, then eligible skill names, then spawn.
 
@@ -470,7 +517,8 @@ def _compose_run_allowed_tools(
     """
     skill_names = tuple(
         str(item["name"])
-        for item in _non_colliding_skill_entries(context, builtin_names))
+        for item in _non_colliding_skill_entries(context, builtin_names)
+    )
     return tuple(builtin_names) + skill_names + (SPAWN_TOOL_NAME,)
 
 
@@ -499,7 +547,8 @@ class _CollisionFilteredMCPProvider:
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         return [
-            entry for entry in self._provider.list_catalog()
+            entry
+            for entry in self._provider.list_catalog()
             if entry.name in self._allowed_names
         ]
 
@@ -510,8 +559,22 @@ class _CollisionFilteredMCPProvider:
         return self._provider.invoke(tool_id, args)
 
 
+def _truncate_log_value(value: Any, *, max_len: int = 200) -> str:
+    """Return a safe, bounded string representation for logging.
+
+    Tool arguments and results may contain secrets or very large payloads;
+    this helper truncates the string form so log lines stay readable and do
+    not dump sensitive data into logs.
+    """
+    text = str(value)
+    if len(text) > max_len:
+        return f"{text[: max_len - 3]}..."
+    return text
+
+
 def _non_colliding_mcp_names(
-    mcp_provider: Any, collision_names: frozenset[str] | set[str],
+    mcp_provider: Any,
+    collision_names: frozenset[str] | set[str],
 ) -> tuple[str, ...]:
     """Eligible MCP tool names, excluding any collision with a builtin, a
     runtime tool, or an already-included skill name.
@@ -541,7 +604,8 @@ def _non_colliding_mcp_names(
         ``collision_names``, in catalog order.
     """
     return tuple(
-        entry.name for entry in mcp_provider.list_catalog()
+        entry.name
+        for entry in mcp_provider.list_catalog()
         if entry.name not in collision_names
     )
 
@@ -593,7 +657,8 @@ def _compose_run_registry_and_allowed(
         mcp_names = _non_colliding_mcp_names(mcp_provider, collision_names)
         if mcp_names:
             registry.register_provider(
-                _CollisionFilteredMCPProvider(mcp_provider, frozenset(mcp_names)))
+                _CollisionFilteredMCPProvider(mcp_provider, frozenset(mcp_names))
+            )
             allowed_tools += mcp_names
     allowed_tools += (SPAWN_TOOL_NAME,)
     return registry, allowed_tools, builtin_names
@@ -611,8 +676,13 @@ class _BridgeSkillRunner:
     discipline for the ``/skill-name`` user-invocation path).
     """
 
-    def __init__(self, *, skills_service: Any, skill_names: frozenset[str],
-                 builtin_names: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        *,
+        skills_service: Any,
+        skill_names: frozenset[str],
+        builtin_names: tuple[str, ...],
+    ) -> None:
         self._skills_service = skills_service
         self._skill_names = skill_names
         self._builtin_names = builtin_names
@@ -620,30 +690,42 @@ class _BridgeSkillRunner:
     def is_skill_tool(self, name: str) -> bool:
         return name in self._skill_names
 
-    def run(self, name: str, args: str,
-            spawn: Callable[..., ToolResult]) -> ToolResult:
+    def run(self, name: str, args: str, spawn: Callable[..., ToolResult]) -> ToolResult:
         try:
             result = asyncio.run(
-                self._skills_service.execute_skill(name, mode="local", args=args))
+                self._skills_service.execute_skill(name, mode="local", args=args)
+            )
         except SkillTrustBlockedError as exc:
             return ToolResult(
                 ok=False,
-                error=SKILL_UNTRUSTED_REFUSE.format(name=name, reason=exc.reason_code))
-        rendered = result.get("rendered_prompt", "") if isinstance(result, Mapping) else ""
+                error=SKILL_UNTRUSTED_REFUSE.format(name=name, reason=exc.reason_code),
+            )
+        rendered = (
+            result.get("rendered_prompt", "") if isinstance(result, Mapping) else ""
+        )
         declared_allowed_tools = (
-            result.get("allowed_tools") if isinstance(result, Mapping) else None)
-        allowed_tools = intersect_skill_tools(declared_allowed_tools, self._builtin_names)
+            result.get("allowed_tools") if isinstance(result, Mapping) else None
+        )
+        allowed_tools = intersect_skill_tools(
+            declared_allowed_tools, self._builtin_names
+        )
         return spawn(rendered, allowed_tools=allowed_tools)
 
 
 class ConsoleAgentBridge:
     """Owns the tool registry + run store and runs one primary agent reply."""
 
-    def __init__(self, *, agent_runs_db: AgentRunsDB, store,
-                 provider_gateway, registry: ToolCatalogRegistry | None = None,
-                 clock: Callable[[], float] = time.monotonic,
-                 skills_service: Any | None = None,
-                 native_tools_enabled: Callable[[], bool] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        agent_runs_db: AgentRunsDB,
+        store,
+        provider_gateway,
+        registry: ToolCatalogRegistry | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        skills_service: Any | None = None,
+        native_tools_enabled: Callable[[], bool] | None = None,
+    ) -> None:
         self._db = agent_runs_db
         self._store = store
         self._gateway = provider_gateway
@@ -654,20 +736,54 @@ class ConsoleAgentBridge:
             registry = ToolCatalogRegistry()
             registry.register_provider(BuiltinToolProvider())
         self._registry = registry
-        self._allowed_tools = tuple(
-            e.name for e in registry.list_catalog()) + (SPAWN_TOOL_NAME,)
+        self._allowed_tools = tuple(e.name for e in registry.list_catalog()) + (
+            SPAWN_TOOL_NAME,
+        )
         self._live: dict[str, AgentLiveSnapshot] = {}
         self._historical_cache: dict[str, AgentLiveSnapshot] = {}
 
+    def native_tool_schemas(self) -> list[dict[str, Any]]:
+        """Return the native tool schemas available to this bridge.
+
+        Iterates the bridge's tool registry and returns one schema dict per
+        catalog entry.  Failures to load an individual schema are logged and
+        skipped so the preview remains useful even when a provider is slow or
+        misconfigured.
+        """
+        schemas: list[dict[str, Any]] = []
+        for entry in self._registry.list_catalog():
+            try:
+                schema = self._registry.load_schema(entry.id)
+            except Exception as exc:  # pragma: no cover - defensive only
+                logger.warning(
+                    "Failed to load schema for {tool_id}: {exc}",
+                    tool_id=entry.id, exc=exc,
+                )
+                continue
+            schemas.append({
+                "name": schema.name,
+                "description": schema.description,
+                "parameters": schema.parameters,
+            })
+        return schemas
+
     # -- run ------------------------------------------------------------
 
-    def run_reply(self, *, conversation_id: str, session_id: str, resolution: Any,
-                  assistant_message_id: str, model: str, session_system_prompt: str,
-                  agent_messages: list[dict], should_cancel: Callable[[], bool],
-                  supersede_previous: bool = False,
-                  mcp_provider: Any | None = None,
-                  review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
-                  ) -> RunOutcome:
+    def run_reply(
+        self,
+        *,
+        conversation_id: str,
+        session_id: str,
+        resolution: Any,
+        assistant_message_id: str,
+        model: str,
+        session_system_prompt: str,
+        agent_messages: list[dict],
+        should_cancel: Callable[[], bool],
+        supersede_previous: bool = False,
+        mcp_provider: Any | None = None,
+        review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
+    ) -> RunOutcome:
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP): rebuilt FRESH for this run whenever there is a skills
         # service OR an already-composed MCP provider for this run (never
@@ -690,28 +806,36 @@ class ConsoleAgentBridge:
             context: Mapping[str, Any] = {}
             if self._skills_service is not None:
                 context = asyncio.run(self._skills_service.get_context(mode="local"))
-            registry, allowed_tools, builtin_names = (
-                _compose_run_registry_and_allowed(context, mcp_provider=mcp_provider))
+            registry, allowed_tools, builtin_names = _compose_run_registry_and_allowed(
+                context, mcp_provider=mcp_provider
+            )
             if self._skills_service is not None:
                 skill_names = frozenset(
                     str(item["name"])
-                    for item in _non_colliding_skill_entries(context, builtin_names))
+                    for item in _non_colliding_skill_entries(context, builtin_names)
+                )
                 skill_runner = _BridgeSkillRunner(
-                    skills_service=self._skills_service, skill_names=skill_names,
-                    builtin_names=builtin_names)
+                    skills_service=self._skills_service,
+                    skill_names=skill_names,
+                    builtin_names=builtin_names,
+                )
         # [console] native_tool_calls kill-switch (Task 5): a caller-supplied
         # predicate (chat_screen.py's _console_native_tool_calls_enabled)
         # gates whether this run may use native provider tool-calls at all;
         # no predicate (fakes/tests that never pass one) defaults to
         # always-on, matching the pre-kill-switch behavior.
-        native_tools = (True if self._native_tools_enabled is None
-                        else bool(self._native_tools_enabled()))
+        native_tools = (
+            True
+            if self._native_tools_enabled is None
+            else bool(self._native_tools_enabled())
+        )
         config = AgentConfig(
             model=model,
             system_prompt=compose_agent_system_prompt(session_system_prompt),
             allowed_tools=allowed_tools,
             budget=CONSOLE_RUN_BUDGET,
-            native_tools=native_tools)
+            native_tools=native_tools,
+        )
         # One event loop for the whole run (PR #629 Fix 1(c)): every turn
         # this run makes -- primary tool-call turns, any sub-agent turns,
         # and the final-answer turn -- bridges through this same loop via
@@ -723,9 +847,13 @@ class ConsoleAgentBridge:
         # for the whole run means at most one swap per run.
         run_loop = asyncio.new_event_loop()
         adapter = _StreamingModelAdapter(
-            store=self._store, provider_gateway=self._gateway, resolution=resolution,
-            assistant_message_id=assistant_message_id, should_cancel=should_cancel,
-            loop=run_loop)
+            store=self._store,
+            provider_gateway=self._gateway,
+            resolution=resolution,
+            assistant_message_id=assistant_message_id,
+            should_cancel=should_cancel,
+            loop=run_loop,
+        )
 
         live_steps: list[AgentLiveStep] = []
         subagents: list[SubAgentSummary] = []
@@ -736,7 +864,9 @@ class ConsoleAgentBridge:
         self._historical_cache.pop(conversation_id, None)
 
         def on_step(step: AgentStep, agent_kind: str) -> None:
-            live_steps.append(AgentLiveStep(step.kind, self._summarize(step), agent_kind))
+            live_steps.append(
+                AgentLiveStep(step.kind, self._summarize(step), agent_kind)
+            )
             if agent_kind == AGENT_KIND_PRIMARY:
                 if step.kind == STEP_SPAWN:
                     subagents.append(SubAgentSummary(step.summary or ""))
@@ -746,13 +876,41 @@ class ConsoleAgentBridge:
                 # (Plan-B final-review Medium-1). See its docstring for why
                 # the text must stay raw/unescaped.
                 marker_text = format_agent_step_marker(
-                    step.kind, tool_name=step.tool_name, result=step.result,
-                    summary=step.summary)
+                    step.kind,
+                    tool_name=step.tool_name,
+                    result=step.result,
+                    summary=step.summary,
+                )
                 if marker_text is not None:
                     self._append_marker(session_id, marker_text)
+            # Diagnostic logging for every tool call and result. The actual
+            # tool invocation lives inside AgentService, so we observe it
+            # through the step stream it emits.
+            if step.kind == STEP_TOOL_RESULT:
+                logger.debug(
+                    "agent tool call: agent_kind={agent_kind} tool={tool_name} "
+                    "args={args} result={result} step={step_index}",
+                    agent_kind=agent_kind,
+                    tool_name=step.tool_name,
+                    args=_truncate_log_value(step.args),
+                    result=_truncate_log_value(step.result),
+                    step_index=step.index,
+                )
+            elif step.kind == STEP_ERROR:
+                logger.warning(
+                    "agent step error: agent_kind={agent_kind} tool={tool_name} "
+                    "summary={summary} step={step_index}",
+                    agent_kind=agent_kind,
+                    tool_name=step.tool_name,
+                    summary=step.summary,
+                    step_index=step.index,
+                )
             self._live[conversation_id] = AgentLiveSnapshot(
-                status="running", step=len(live_steps),
-                steps=tuple(live_steps[-5:]), subagents=tuple(subagents))
+                status="running",
+                step=len(live_steps),
+                steps=tuple(live_steps[-5:]),
+                subagents=tuple(subagents),
+            )
 
         # C1 (probe-verified security regression): thread the composed MCP
         # provider's stamp_scope() through as AgentService's generic
@@ -768,18 +926,30 @@ class ConsoleAgentBridge:
         # has it.
         review_state_scope = (
             getattr(mcp_provider, "stamp_scope", None)
-            if mcp_provider is not None else None)
+            if mcp_provider is not None
+            else None
+        )
         service = AgentService(
-            self._db, registry, chat_call=adapter.chat_call,
-            clock=self._clock, on_step=on_step, skill_runner=skill_runner,
+            self._db,
+            registry,
+            chat_call=adapter.chat_call,
+            clock=self._clock,
+            on_step=on_step,
+            skill_runner=skill_runner,
             review_tool_calls=review_tool_calls,
-            review_state_scope=review_state_scope)
+            review_state_scope=review_state_scope,
+        )
 
         supersede_run_id = (
-            self._previous_primary_run_id(conversation_id) if supersede_previous else None)
+            self._previous_primary_run_id(conversation_id)
+            if supersede_previous
+            else None
+        )
         try:
             _run_id, outcome = service.run_turn(
-                conversation_id=conversation_id, messages=agent_messages, config=config,
+                conversation_id=conversation_id,
+                messages=agent_messages,
+                config=config,
                 # execution_key-first (Task 5): the service's capability
                 # check keys off api_endpoint, and execution_key is by
                 # definition "Provider key passed to chat_api_call" — the
@@ -790,13 +960,37 @@ class ConsoleAgentBridge:
                 # which keeps them on the fence path unchanged.
                 api_endpoint=str(
                     getattr(resolution, "execution_key", "")
-                    or getattr(resolution, "provider", "") or "agent"),
-                should_cancel=should_cancel, supersede_run_id=supersede_run_id)
+                    or getattr(resolution, "provider", "")
+                    or "agent"
+                ),
+                should_cancel=should_cancel,
+                supersede_run_id=supersede_run_id,
+            )
         finally:
             run_loop.close()
+        for step in outcome.steps:
+            logger.info(
+                "agent run step",
+                agent_kind=AGENT_KIND_PRIMARY,
+                step_kind=step.kind,
+                tool_name=step.tool_name,
+                summary=step.summary,
+                step_index=step.index,
+            )
+        logger.info(
+            "console agent bridge run_reply end",
+            conversation_id=conversation_id,
+            session_id=session_id,
+            outcome_status=outcome.status,
+            final_text_len=len(outcome.final_text),
+            step_count=len(outcome.steps),
+        )
         self._live[conversation_id] = AgentLiveSnapshot(
-            status=outcome.status, step=len(live_steps),
-            steps=tuple(live_steps[-5:]), subagents=tuple(subagents))
+            status=outcome.status,
+            step=len(live_steps),
+            steps=tuple(live_steps[-5:]),
+            subagents=tuple(subagents),
+        )
         # The run just finished -- drop any stale historical cache entry so
         # a *later* resume (in a future process) always re-derives fresh
         # rather than reading this run's now-superseded snapshot (belt and
@@ -841,8 +1035,11 @@ class ConsoleAgentBridge:
         return snapshot
 
     def subagent_runs(self, conversation_id: str) -> list[dict]:
-        return [r for r in self._db.list_runs(conversation_id)
-                if r["agent_kind"] == AGENT_KIND_SUBAGENT]
+        return [
+            r
+            for r in self._db.list_runs(conversation_id)
+            if r["agent_kind"] == AGENT_KIND_SUBAGENT
+        ]
 
     def subagent_run(self, run_id: str) -> dict | None:
         return self._db.get_run(run_id)
@@ -858,7 +1055,9 @@ class ConsoleAgentBridge:
         """
         return self._db.count_subagents_by_conversation(conversation_ids)
 
-    def resume_marker_messages(self, conversation_id: str) -> list[list[ConsoleChatMessage]]:
+    def resume_marker_messages(
+        self, conversation_id: str
+    ) -> list[list[ConsoleChatMessage]]:
         """Re-derive transcript TOOL marker messages from ``AgentRunsDB`` for resume.
 
         Plan-B final-review Medium-1: the rail (``historical_snapshot``) and
@@ -883,7 +1082,8 @@ class ConsoleAgentBridge:
         job -- see ``inject_resume_agent_markers``.
         """
         records = [
-            record for record in self._db.list_runs(conversation_id, include_superseded=False)
+            record
+            for record in self._db.list_runs(conversation_id, include_superseded=False)
             if record["agent_kind"] == AGENT_KIND_PRIMARY
         ]
         records.reverse()  # list_runs is newest-first; markers must read chronologically
@@ -898,8 +1098,13 @@ class ConsoleAgentBridge:
                     summary=step.get("summary"),
                 )
                 if text is not None:
-                    block.append(ConsoleChatMessage(
-                        role=ConsoleMessageRole.TOOL, content=text, status="complete"))
+                    block.append(
+                        ConsoleChatMessage(
+                            role=ConsoleMessageRole.TOOL,
+                            content=text,
+                            status="complete",
+                        )
+                    )
             blocks.append(block)
         return blocks
 
@@ -915,9 +1120,10 @@ class ConsoleAgentBridge:
         # `fetch \[docs]`).
         try:
             self._store.append_message(
-                session_id, role=ConsoleMessageRole.TOOL, content=text)
+                session_id, role=ConsoleMessageRole.TOOL, content=text
+            )
         except KeyError:
-            pass   # session vanished mid-run; the rail still has the live snapshot
+            pass  # session vanished mid-run; the rail still has the live snapshot
 
     @staticmethod
     def _summarize(step: AgentStep) -> str:
@@ -943,7 +1149,8 @@ class ConsoleAgentBridge:
         # exists to avoid.
         records = self._db.list_runs(conversation_id, include_superseded=False)
         primary = next(
-            (r for r in records if r["agent_kind"] == AGENT_KIND_PRIMARY), None)
+            (r for r in records if r["agent_kind"] == AGENT_KIND_PRIMARY), None
+        )
         if primary is None:
             return AgentLiveSnapshot()
         steps = tuple(
@@ -976,6 +1183,11 @@ class ConsoleAgentBridge:
         # persisted (JSON-decoded) step dict instead -- also left raw (no
         # escaping) for the same Finding-B reason: this text only ever
         # renders into a markup=False Static.
-        raw = (step.get("summary") or step.get("result")
-               or step.get("tool_name") or step.get("kind") or "")
+        raw = (
+            step.get("summary")
+            or step.get("result")
+            or step.get("tool_name")
+            or step.get("kind")
+            or ""
+        )
         return str(raw)[:200]

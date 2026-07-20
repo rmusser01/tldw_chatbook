@@ -1,0 +1,132 @@
+{
+  "items": [
+    {
+      "id": "def_01J5RHPQWXYZ1234567890AB",
+      "owner_id": "server:42",
+      "version": 1,
+      "family": "recurring_question",
+      "name": "Daily stand-up summary",
+      "description": "Ask the team for yesterday's progress and today's blockers every weekday at 09:00 UTC.",
+      "lifecycle": "configured",
+      "health": "execution_unavailable",
+      "disabled_lock_kind": null,
+      "disabled_reason": null,
+      "schedule": {
+        "kind": "cron",
+        "expression": "0 9 * * 1-5",
+        "timezone": "UTC"
+      },
+      "input": {
+        "question": "What did you work on yesterday and what is blocking you today?",
+        "target_chat_id": "chat_12345"
+      },
+      "config": {
+        "agent_ref": "agent://standup-agent/v1",
+        "output_template": "standup_summary_v1"
+      },
+      "visibility_policy": {
+        "scope": "private",
+        "shared_with": []
+      },
+      "notification_policy": {
+        "on_success": "silent",
+        "on_failure": "toast"
+      },
+      "approval_policy": {
+        "mode": "auto"
+      },
+      "preview_id": "prev_01J5RHPQWXYZ1234567890AB",
+      "created_by": "user:42",
+      "updated_by": "user:42",
+      "created_at": "2026-07-18T09:00:00+00:00",
+      "updated_at": "2026-07-18T09:00:00+00:00",
+      "archived_at": null
+    },
+    {
+      "id": "def_01J5RHPQWXYZ1234567890CD",
+      "owner_id": "server:42",
+      "version": 2,
+      "family": "agent_task",
+      "name": "Weekly library digest",
+      "description": "Generate a reading digest from newly ingested media every Monday at 07:00 UTC.",
+      "lifecycle": "paused",
+      "health": "capability_unavailable",
+      "disabled_lock_kind": "none",
+      "disabled_reason": "Library ingest capability unavailable on this server profile.",
+      "schedule": {
+        "kind": "cron",
+        "expression": "0 7 * * 1",
+        "timezone": "UTC"
+      },
+      "input": {
+        "source_collection": "library://default/ingested-last-7d",
+        "max_items": 10
+      },
+      "config": {
+        "agent_ref": "agent://digest-agent/v2",
+        "output_template": "weekly_digest_v1"
+      },
+      "visibility_policy": {
+        "scope": "private",
+        "shared_with": []
+      },
+      "notification_policy": {
+        "on_success": "email",
+        "on_failure": "email"
+      },
+      "approval_policy": {
+        "mode": "manual",
+        "required_approvers": 1
+      },
+      "preview_id": "prev_01J5RHPQWXYZ1234567890CD",
+      "created_by": "user:42",
+      "updated_by": "user:42",
+      "created_at": "2026-07-10T07:00:00+00:00",
+      "updated_at": "2026-07-15T12:30:00+00:00",
+      "archived_at": null
+    },
+    {
+      "id": "def_01J5RHPQWXYZ1234567890EF",
+      "owner_id": "server:42",
+      "version": 1,
+      "family": "recurring_question",
+      "name": "Retired weekly check-in",
+      "description": "This definition has been archived and should not execute.",
+      "lifecycle": "archived",
+      "health": "needs_attention",
+      "disabled_lock_kind": null,
+      "disabled_reason": null,
+      "schedule": {
+        "kind": "cron",
+        "expression": "0 10 * * 5",
+        "timezone": "America/New_York"
+      },
+      "input": {
+        "question": "What are your top priorities for next week?"
+      },
+      "config": {},
+      "visibility_policy": {
+        "scope": "private",
+        "shared_with": []
+      },
+      "notification_policy": {
+        "on_success": "silent",
+        "on_failure": "silent"
+      },
+      "approval_policy": {
+        "mode": "auto"
+      },
+      "preview_id": null,
+      "created_by": "user:42",
+      "updated_by": "user:42",
+      "created_at": "2026-06-01T10:00:00+00:00",
+      "updated_at": "2026-07-01T14:00:00+00:00",
+      "archived_at": "2026-07-01T14:00:00+00:00"
+    }
+  ],
+  "total": 3,
+  "limit": 50,
+  "offset": 0,
+  "has_more": false,
+  "next_offset": null
+}

@@ -14,18 +14,30 @@ async def test_misc_server_parity_gateways_route_namespace_scoped_surfaces(monke
     monkeypatch.setattr(client, "_request", mocked)
 
     calls = [
-        client.call_server_audio_endpoint("POST", "segment/transcript", payload={"media_id": "m1"}),
-        client.call_server_prompt_studio_endpoint("GET", "projects", params={"limit": 10}),
-        client.call_server_quizzes_endpoint("POST", "import/json", payload={"items": []}),
+        client.call_server_audio_endpoint(
+            "POST", "segment/transcript", payload={"media_id": "m1"}
+        ),
+        client.call_server_prompt_studio_endpoint(
+            "GET", "projects", params={"limit": 10}
+        ),
+        client.call_server_quizzes_endpoint(
+            "POST", "import/json", payload={"items": []}
+        ),
         client.call_server_email_endpoint("GET", "search", params={"q": "invoice"}),
-        client.call_server_chunking_endpoint("POST", "chunk_text", payload={"text": "hello"}),
+        client.call_server_chunking_endpoint(
+            "POST", "chunk_text", payload={"text": "hello"}
+        ),
         client.call_server_llm_endpoint("GET", "providers/mlx/status"),
-        client.call_server_outputs_endpoint("GET", "download/by-name", params={"name": "trace.json"}),
+        client.call_server_outputs_endpoint(
+            "GET", "download/by-name", params={"name": "trace.json"}
+        ),
         client.call_server_sharing_endpoint("GET", "admin/audit"),
         client.call_server_voice_endpoint("GET", "workflows/templates"),
         client.call_server_audit_endpoint("GET", "export", params={"format": "jsonl"}),
         client.call_server_invites_endpoint("POST", "redeem", payload={"token": "abc"}),
-        client.call_server_research_endpoint("GET", "semantic-scholar-search", params={"q": "rag"}),
+        client.call_server_research_endpoint(
+            "GET", "semantic-scholar-search", params={"q": "rag"}
+        ),
         client.call_server_web_scraping_endpoint("POST", "service/initialize"),
         client.call_server_websub_endpoint("GET", "callback/user-1/token-1"),
         client.call_server_chatbooks_endpoint("GET", "health"),
@@ -63,7 +75,9 @@ async def test_misc_server_parity_gateways_route_namespace_scoped_surfaces(monke
 
 
 @pytest.mark.asyncio
-async def test_misc_server_parity_gateways_reject_cross_namespace_and_unsafe_routes(monkeypatch):
+async def test_misc_server_parity_gateways_reject_cross_namespace_and_unsafe_routes(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr(client, "_request", mocked)

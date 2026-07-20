@@ -56,7 +56,9 @@ def _query_one(root: object, selector: str) -> object:
     return matches[0]
 
 
-async def _wait_for_selector(root: object, pilot: object, selector: str, *, attempts: int = 100) -> None:
+async def _wait_for_selector(
+    root: object, pilot: object, selector: str, *, attempts: int = 100
+) -> None:
     for _ in range(attempts):
         if _query_matches(root, selector):
             return
@@ -64,7 +66,9 @@ async def _wait_for_selector(root: object, pilot: object, selector: str, *, atte
     raise RuntimeError(f"Timed out waiting for selector: {selector}")
 
 
-async def _click_if_present(screen: object, pilot: object, selectors: Iterable[str]) -> None:
+async def _click_if_present(
+    screen: object, pilot: object, selectors: Iterable[str]
+) -> None:
     for selector in selectors:
         try:
             if _query_matches(screen, selector):
@@ -74,7 +78,9 @@ async def _click_if_present(screen: object, pilot: object, selectors: Iterable[s
             continue
 
 
-async def _run_soak(output_dir: Path, *, route_switches: int, idle_seconds: float) -> int:
+async def _run_soak(
+    output_dir: Path, *, route_switches: int, idle_seconds: float
+) -> int:
     app = _build_test_app(configured_default="chat")
     if getattr(app, "ui_responsiveness_monitor", None) is None:
         app.ui_responsiveness_monitor = UIResponsivenessMonitor(enabled=True)
@@ -82,7 +88,9 @@ async def _run_soak(output_dir: Path, *, route_switches: int, idle_seconds: floa
     route_failures = 0
     focus_failures = 0
 
-    def fake_cli_setting(section: str, key: str | None = None, default: object = None) -> object:
+    def fake_cli_setting(
+        section: str, key: str | None = None, default: object = None
+    ) -> object:
         if (section, key) == ("splash_screen", "enabled"):
             return False
         if (section, key) == ("general", "default_tab"):
@@ -91,7 +99,10 @@ async def _run_soak(output_dir: Path, *, route_switches: int, idle_seconds: floa
 
     with (
         patch("tldw_chatbook.app.get_cli_setting", side_effect=fake_cli_setting),
-        patch("tldw_chatbook.UI.Screens.chat_screen.save_setting_to_cli_config", return_value=True),
+        patch(
+            "tldw_chatbook.UI.Screens.chat_screen.save_setting_to_cli_config",
+            return_value=True,
+        ),
     ):
         async with app.run_test(size=(140, 42)) as pilot:
             await _wait_for_selector(app, pilot, "#console-shell")
@@ -141,12 +152,22 @@ async def _run_soak(output_dir: Path, *, route_switches: int, idle_seconds: floa
         f"focus failures: {focus_failures}, workers before: {before_workers}, "
         f"workers after: {after_workers}"
     )
-    write_responsiveness_artifacts(output_dir, snapshot, route_switch_summary=route_summary)
+    write_responsiveness_artifacts(
+        output_dir, snapshot, route_switch_summary=route_summary
+    )
 
     missing_artifacts = [
-        filename for filename in REQUIRED_RESPONSIVENESS_ARTIFACTS if not (output_dir / filename).exists()
+        filename
+        for filename in REQUIRED_RESPONSIVENESS_ARTIFACTS
+        if not (output_dir / filename).exists()
     ]
-    if route_failures or focus_failures or missing_artifacts or snapshot.stalled or after_workers > before_workers:
+    if (
+        route_failures
+        or focus_failures
+        or missing_artifacts
+        or snapshot.stalled
+        or after_workers > before_workers
+    ):
         details = [
             route_summary,
             f"stalled: {snapshot.stalled}",
@@ -164,7 +185,9 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts"),
+        default=Path(
+            "Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts"
+        ),
     )
     parser.add_argument("--route-switches", type=int, default=6)
     parser.add_argument("--idle-seconds", type=float, default=10.0)

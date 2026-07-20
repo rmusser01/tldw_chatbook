@@ -158,7 +158,9 @@ class PersonasCharacterCardWidget(Container):
         )
         tags = [str(tag) for tag in (record.get("tags") or [])]
         _set("tags", f"Tags: {', '.join(tags)}" if tags else "Tags: none")
-        greetings = [str(greeting) for greeting in (record.get("alternate_greetings") or [])]
+        greetings = [
+            str(greeting) for greeting in (record.get("alternate_greetings") or [])
+        ]
         _set("alt-greetings", f"Alternate greetings: {len(greetings)}")
         _set("greeting-preview", greetings[0] if greetings else "")
         # The preview row is unlabeled, so the labeled-row hiding above does
@@ -169,7 +171,9 @@ class PersonasCharacterCardWidget(Container):
             greetings
         )
         avatar = "embedded" if (record.get("image") or record.get("avatar")) else "none"
-        self.query_one("#personas-card-avatar-status", Static).update(f"Avatar: {avatar}")
+        self.query_one("#personas-card-avatar-status", Static).update(
+            f"Avatar: {avatar}"
+        )
 
         # Display toggling (never remove/mount) keeps load_character sync-safe
         # for the handler's call_from_thread continuation.

@@ -69,7 +69,9 @@ def test_process_document_auto_falls_back_when_docling_import_fails(
     monkeypatch.setattr(document_processing, "process_with_docling", broken_docling)
     monkeypatch.setattr(document_processing, "process_docx", native_docx)
 
-    result = document_processing.process_document("sample.docx", processing_method="auto")
+    result = document_processing.process_document(
+        "sample.docx", processing_method="auto"
+    )
 
     assert result["extraction_successful"] is True
     assert result["content"] == "Native content"
@@ -93,7 +95,9 @@ def test_process_document_explicit_docling_preserves_import_failure(
     monkeypatch.setattr(document_processing, "process_with_docling", broken_docling)
     monkeypatch.setattr(document_processing, "process_docx", native_docx)
 
-    result = document_processing.process_document("sample.docx", processing_method="docling")
+    result = document_processing.process_document(
+        "sample.docx", processing_method="docling"
+    )
 
     assert result["extraction_successful"] is False
     assert result["metadata"]["error"] == "broken transitive Docling dependency"
@@ -113,7 +117,9 @@ def test_process_document_auto_does_not_retry_broken_docling_without_native_pars
     monkeypatch.setattr(document_processing, "PYTHON_DOCX_AVAILABLE", False)
     monkeypatch.setattr(document_processing, "process_with_docling", broken_docling)
 
-    result = document_processing.process_document("sample.docx", processing_method="auto")
+    result = document_processing.process_document(
+        "sample.docx", processing_method="auto"
+    )
 
     assert result["extraction_successful"] is False
     assert result["metadata"]["error"] == "No parser available for .docx"
@@ -162,7 +168,9 @@ def test_parse_pdf_success_with_present_but_none_error_key_does_not_raise(
     ``FileIngestionError``. The check must key off truthiness
     (``result.get('error')``) instead of key presence."""
     source = tmp_path / "doc.pdf"
-    source.write_bytes(b"%PDF-1.4 stub bytes, never actually parsed (process_pdf is mocked).")
+    source.write_bytes(
+        b"%PDF-1.4 stub bytes, never actually parsed (process_pdf is mocked)."
+    )
 
     stub_result = {
         "status": "Success",
@@ -438,12 +446,18 @@ def test_classify_parse_failure_missing_file_is_permanent() -> None:
 
 
 def test_classify_parse_failure_unsupported_type_is_permanent() -> None:
-    assert classify_parse_failure(FileIngestionError("Unsupported file type: .xyz")) is True
+    assert (
+        classify_parse_failure(FileIngestionError("Unsupported file type: .xyz"))
+        is True
+    )
 
 
 def test_classify_parse_failure_generic_error_is_retryable() -> None:
     assert classify_parse_failure(RuntimeError("transient DB hiccup")) is False
-    assert classify_parse_failure(FileIngestionError("Failed to ingest pdf file: boom")) is False
+    assert (
+        classify_parse_failure(FileIngestionError("Failed to ingest pdf file: boom"))
+        is False
+    )
 
 
 # --- run_parse_job (pool entry point) ----------------------------------------
@@ -544,7 +558,9 @@ def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProce
     )
 
 
-def test_ingest_parse_worker_import_excludes_local_file_ingestion(tmp_path: Path) -> None:
+def test_ingest_parse_worker_import_excludes_local_file_ingestion(
+    tmp_path: Path,
+) -> None:
     """Resolving ingest_parse_worker by its real dotted path (exactly how a
     spawned pool worker unpickles ``run_parse_job``) must not drag
     ``local_file_ingestion`` (or its heavy transitive parse-chain deps)
@@ -590,9 +606,13 @@ def test_run_parse_job_through_real_spawn_pool(tmp_path: Path) -> None:
 
     ctx = multiprocessing.get_context("spawn")
     with ctx.Pool(1) as pool:
-        async_result = pool.apply_async(run_parse_job, (str(source), {"title": "Pool note"}))
+        async_result = pool.apply_async(
+            run_parse_job, (str(source), {"title": "Pool note"})
+        )
         result = async_result.get(timeout=120)
 
     assert result["ok"] is True
     assert result["payload"]["title"] == "Pool note"
-    assert result["payload"]["content"] == "Parsed inside a real spawned worker process."
+    assert (
+        result["payload"]["content"] == "Parsed inside a real spawned worker process."
+    )

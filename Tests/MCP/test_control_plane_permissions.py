@@ -8,6 +8,7 @@ tool-level `allow` entry), the typed state setters (`set_tool_state`,
 no-store no-op fallbacks, and `gate_tool_test()` (single-tool resolution for
 the Test Tool button, no audit emission, kill switch deliberately ignored).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,7 +20,9 @@ from tldw_chatbook.MCP.execution_log import MCPExecutionLog
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_store import LocalMCPStore
 from tldw_chatbook.MCP.permission_store import MCPPermissionStore, definition_hash
-from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+from tldw_chatbook.MCP.unified_control_plane_service import (
+    UnifiedMCPControlPlaneService,
+)
 
 
 def _tool(
@@ -47,7 +50,10 @@ def _service(tmp_path: Path) -> tuple[UnifiedMCPControlPlaneService, LocalMCPSto
     store = LocalMCPStore(tmp_path / "store.json")
     fake_local_service = SimpleNamespace(store=store)
     service = UnifiedMCPControlPlaneService(
-        local_service=fake_local_service, server_service=None, target_store=None, context_store=None
+        local_service=fake_local_service,
+        server_service=None,
+        target_store=None,
+        context_store=None,
     )
     return service, store
 
@@ -56,7 +62,10 @@ def _service_without_store() -> UnifiedMCPControlPlaneService:
     # No `.store` attribute at all -- mirrors `getattr(..., "store", None)`.
     fake_local_service = SimpleNamespace()
     return UnifiedMCPControlPlaneService(
-        local_service=fake_local_service, server_service=None, target_store=None, context_store=None
+        local_service=fake_local_service,
+        server_service=None,
+        target_store=None,
+        context_store=None,
     )
 
 
@@ -117,13 +126,21 @@ def test_effective_tool_states_resolves_per_precedence_with_real_store(tmp_path)
     server_default_tool = _tool(name="write", server_key="local:demo")
     global_default_tool = _tool(name="fetch", server_key="local:other")
 
-    current_hash = definition_hash(tool_override.description, tool_override.input_schema)
-    permission_store = MCPPermissionStore(Path(store.path).with_name("mcp_permissions.json"))
+    current_hash = definition_hash(
+        tool_override.description, tool_override.input_schema
+    )
+    permission_store = MCPPermissionStore(
+        Path(store.path).with_name("mcp_permissions.json")
+    )
     permission_store.set_global_default("deny")
     permission_store.set_server_default("local:demo", "ask")
-    permission_store.set_tool_state("local:demo", "search", "allow", definition_hash=current_hash)
+    permission_store.set_tool_state(
+        "local:demo", "search", "allow", definition_hash=current_hash
+    )
 
-    result = service.effective_tool_states([tool_override, server_default_tool, global_default_tool])
+    result = service.effective_tool_states(
+        [tool_override, server_default_tool, global_default_tool]
+    )
 
     assert result[("local:demo", "search")].state == "allow"
     assert result[("local:demo", "search")].origin == "tool_override"
@@ -136,12 +153,18 @@ def test_effective_tool_states_resolves_per_precedence_with_real_store(tmp_path)
 # -- effective_tool_states: rug-pull downgrade audit -------------------------
 
 
-def test_effective_tool_states_fresh_mismatch_emits_exactly_one_downgraded_record_across_two_calls(tmp_path):
+def test_effective_tool_states_fresh_mismatch_emits_exactly_one_downgraded_record_across_two_calls(
+    tmp_path,
+):
     service, store = _service(tmp_path)
     original_tool = _tool(name="search", description="Search docs")
     permission_store = service.permission_store
-    original_hash = definition_hash(original_tool.description, original_tool.input_schema)
-    permission_store.set_tool_state("local:demo", "search", "allow", definition_hash=original_hash)
+    original_hash = definition_hash(
+        original_tool.description, original_tool.input_schema
+    )
+    permission_store.set_tool_state(
+        "local:demo", "search", "allow", definition_hash=original_hash
+    )
 
     # Simulate a rug-pull: the tool's live definition has changed since the
     # user allowed it, so the stored hash no longer matches.
@@ -160,7 +183,10 @@ def test_effective_tool_states_fresh_mismatch_emits_exactly_one_downgraded_recor
     assert record["decision"] == "downgraded"
     assert record["ok"] is False
     assert record["duration_ms"] == 0
-    assert record["error"] == "search definition changed since you allowed it — review and re-allow"
+    assert (
+        record["error"]
+        == "search definition changed since you allowed it — review and re-allow"
+    )
 
     # The marker is now persisted -- a second resolution pass must not
     # append a second audit record.
@@ -198,7 +224,9 @@ def test_effective_tool_states_matching_hash_does_not_mark_or_audit(tmp_path):
     tool = _tool(name="search")
     permission_store = service.permission_store
     current_hash = definition_hash(tool.description, tool.input_schema)
-    permission_store.set_tool_state("local:demo", "search", "allow", definition_hash=current_hash)
+    permission_store.set_tool_state(
+        "local:demo", "search", "allow", definition_hash=current_hash
+    )
 
     result = service.effective_tool_states([tool])
 
@@ -209,7 +237,9 @@ def test_effective_tool_states_matching_hash_does_not_mark_or_audit(tmp_path):
     assert _permission_log_records(store) == []
 
 
-def test_effective_tool_states_downgrade_audit_survives_execution_log_failure(tmp_path, monkeypatch):
+def test_effective_tool_states_downgrade_audit_survives_execution_log_failure(
+    tmp_path, monkeypatch
+):
     """Best-effort contract: a failure while appending the audit record
     must not prevent `effective_tool_states()` from returning its result
     (mirrors `_record_tool_execution`'s never-raise contract)."""
@@ -223,7 +253,9 @@ def test_effective_tool_states_downgrade_audit_survives_execution_log_failure(tm
     service, store = _service(tmp_path)
     tool = _tool(name="search")
     permission_store = service.permission_store
-    permission_store.set_tool_state("local:demo", "search", "allow", definition_hash="stale-hash")
+    permission_store.set_tool_state(
+        "local:demo", "search", "allow", definition_hash="stale-hash"
+    )
 
     result = service.effective_tool_states([tool])
 
@@ -234,10 +266,14 @@ def test_effective_tool_states_downgrade_audit_survives_execution_log_failure(tm
 # -- set_tool_state -----------------------------------------------------------
 
 
-def test_set_tool_state_allow_computes_and_stores_definition_hash_and_clears_marker(tmp_path):
+def test_set_tool_state_allow_computes_and_stores_definition_hash_and_clears_marker(
+    tmp_path,
+):
     service, _store = _service(tmp_path)
     permission_store = service.permission_store
-    permission_store.set_tool_state("local:demo", "search", "allow", definition_hash="stale-hash")
+    permission_store.set_tool_state(
+        "local:demo", "search", "allow", definition_hash="stale-hash"
+    )
     permission_store.mark_config_changed("local:demo", "search")
     tool = _tool(name="search", description="Search docs")
 
@@ -245,7 +281,9 @@ def test_set_tool_state_allow_computes_and_stores_definition_hash_and_clears_mar
 
     entry = permission_store.get_tool_entry("local:demo", "search")
     assert entry["state"] == "allow"
-    assert entry["definition_hash"] == definition_hash(tool.description, tool.input_schema)
+    assert entry["definition_hash"] == definition_hash(
+        tool.description, tool.input_schema
+    )
     assert "config_changed" not in entry
 
 
@@ -278,7 +316,9 @@ def test_set_tool_state_none_clears_entry(tmp_path):
 def test_set_tool_state_no_store_is_a_noop():
     service = _service_without_store()
 
-    service.set_tool_state("local:demo", "search", "allow", tool=_tool())  # must not raise
+    service.set_tool_state(
+        "local:demo", "search", "allow", tool=_tool()
+    )  # must not raise
 
 
 # -- set_server_default / set_global_default / kill switch --------------------
@@ -346,7 +386,9 @@ def test_gate_tool_test_returns_state_per_store(tmp_path, stored_state, expected
     kwargs = {}
     if stored_state == "allow":
         kwargs["definition_hash"] = definition_hash(tool.description, tool.input_schema)
-    service.permission_store.set_tool_state("local:demo", "search", stored_state, **kwargs)
+    service.permission_store.set_tool_state(
+        "local:demo", "search", stored_state, **kwargs
+    )
 
     result = service.gate_tool_test(tool)
 
@@ -357,7 +399,10 @@ def test_gate_tool_test_ignores_kill_switch(tmp_path):
     service, _store = _service(tmp_path)
     tool = _tool(name="search")
     service.permission_store.set_tool_state(
-        "local:demo", "search", "allow", definition_hash=definition_hash(tool.description, tool.input_schema)
+        "local:demo",
+        "search",
+        "allow",
+        definition_hash=definition_hash(tool.description, tool.input_schema),
     )
     service.permission_store.set_kill_switch(True)
 
@@ -369,7 +414,9 @@ def test_gate_tool_test_ignores_kill_switch(tmp_path):
 def test_gate_tool_test_does_not_emit_audit_record_on_fresh_mismatch(tmp_path):
     service, store = _service(tmp_path)
     tool = _tool(name="search")
-    service.permission_store.set_tool_state("local:demo", "search", "allow", definition_hash="stale-hash")
+    service.permission_store.set_tool_state(
+        "local:demo", "search", "allow", definition_hash="stale-hash"
+    )
 
     result = service.gate_tool_test(tool)
 
@@ -424,7 +471,10 @@ def test_gate_tool_test_by_key_allow_downgrades_to_ask_without_live_tool(tmp_pat
     service, _store = _service(tmp_path)
     tool = _tool(name="search")
     service.permission_store.set_tool_state(
-        "local:demo", "search", "allow", definition_hash=definition_hash(tool.description, tool.input_schema)
+        "local:demo",
+        "search",
+        "allow",
+        definition_hash=definition_hash(tool.description, tool.input_schema),
     )
 
     result = service.gate_tool_test_by_key("local:demo", "search")
@@ -435,7 +485,9 @@ def test_gate_tool_test_by_key_allow_downgrades_to_ask_without_live_tool(tmp_pat
 
 def test_gate_tool_test_by_key_does_not_emit_audit_record(tmp_path):
     service, store = _service(tmp_path)
-    service.permission_store.set_tool_state("local:demo", "search", "allow", definition_hash="stale-hash")
+    service.permission_store.set_tool_state(
+        "local:demo", "search", "allow", definition_hash="stale-hash"
+    )
 
     service.gate_tool_test_by_key("local:demo", "search")
 

@@ -76,7 +76,9 @@ async def test_sync_client_routes_send_and_get_changes(monkeypatch):
             last_processed_server_id=30,
         )
     )
-    pulled = await client.get_sync_changes(client_id="chatbook-client-1", since_change_id=30)
+    pulled = await client.get_sync_changes(
+        client_id="chatbook-client-1", since_change_id=30
+    )
 
     assert sent == {"status": "success"}
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/sync/send")
@@ -148,7 +150,11 @@ async def test_sync_v2_client_routes_protocol_endpoints(monkeypatch):
                     "notes.note": ["upsert", "tombstone"],
                     "chat.message": ["append", "tombstone"],
                 },
-                "encryption_policies": ["client_private_v1", "server_trusted", "shared_workspace_v1"],
+                "encryption_policies": [
+                    "client_private_v1",
+                    "server_trusted",
+                    "shared_workspace_v1",
+                ],
                 "max_batch_size": 100,
                 "max_envelope_payload_bytes": 262144,
                 "max_attachment_bytes": 1048576,
@@ -175,8 +181,19 @@ async def test_sync_v2_client_routes_protocol_endpoints(monkeypatch):
                 "cursors": {"notes": "4"},
                 "key_setup_required": False,
             },
-            {"dataset_id": "dataset-1", "accepted": [], "rejected": [], "conflicts": [], "next_cursor": "5"},
-            {"dataset_id": "dataset-1", "envelopes": [], "next_cursor": "6", "has_more": False},
+            {
+                "dataset_id": "dataset-1",
+                "accepted": [],
+                "rejected": [],
+                "conflicts": [],
+                "next_cursor": "5",
+            },
+            {
+                "dataset_id": "dataset-1",
+                "envelopes": [],
+                "next_cursor": "6",
+                "has_more": False,
+            },
             {
                 "datasets": [
                     {
@@ -205,7 +222,9 @@ async def test_sync_v2_client_routes_protocol_endpoints(monkeypatch):
         SyncV2DatasetEnrollRequest(device_id=device.device_id, domains=["notes"])
     )
     pushed = await client.push_sync_v2_envelopes(
-        SyncV2PushRequest(dataset_id=dataset.dataset_id, device_id=device.device_id, envelopes=[])
+        SyncV2PushRequest(
+            dataset_id=dataset.dataset_id, device_id=device.device_id, envelopes=[]
+        )
     )
     pulled = await client.pull_sync_v2_envelopes(
         dataset_id=dataset.dataset_id,
@@ -214,7 +233,9 @@ async def test_sync_v2_client_routes_protocol_endpoints(monkeypatch):
         domains=["notes"],
         page_size=10,
     )
-    manifest = await client.get_sync_v2_restore_manifest(dataset_ids=[dataset.dataset_id], domains=["notes"])
+    manifest = await client.get_sync_v2_restore_manifest(
+        dataset_ids=[dataset.dataset_id], domains=["notes"]
+    )
 
     assert isinstance(capabilities, SyncV2CapabilitiesResponse)
     assert device.device_id == "device-1"
@@ -314,7 +335,9 @@ async def test_sync_v2_client_uploads_encrypted_attachment_metadata(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_sync_v2_attachment_upload_omits_none_values_when_serializing(monkeypatch):
+async def test_sync_v2_attachment_upload_omits_none_values_when_serializing(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         return_value={
@@ -407,7 +430,10 @@ async def test_sync_v2_client_lists_recovery_bundle_records(monkeypatch):
     assert isinstance(response, SyncV2KeyRecoveryBundleListResponse)
     assert isinstance(response.key_records[0], SyncV2KeyRecoveryBundleRecord)
     assert response.key_records[0].wrapped_key_blob == "wrapped:opaque-key"
-    assert response.key_records[0].kdf_metadata == {"algorithm": "scrypt", "salt": "opaque-salt"}
+    assert response.key_records[0].kdf_metadata == {
+        "algorithm": "scrypt",
+        "salt": "opaque-salt",
+    }
     assert mocked.await_args.args[:2] == ("GET", "/api/v1/sync/keys/recovery-bundle")
     assert mocked.await_args.kwargs["params"] == {
         "dataset_id": "dataset-1",
@@ -432,7 +458,9 @@ async def test_sync_v2_client_lists_and_resolves_conflicts(monkeypatch):
     mocked = AsyncMock(side_effect=[[conflict_payload], resolved_payload])
     monkeypatch.setattr(client, "_request", mocked)
 
-    conflicts = await client.list_sync_v2_conflicts(dataset_id="dataset-1", status="unresolved")
+    conflicts = await client.list_sync_v2_conflicts(
+        dataset_id="dataset-1", status="unresolved"
+    )
     resolved = await client.resolve_sync_v2_conflict(
         "conflict-1",
         SyncV2ConflictResolveRequest(
@@ -450,7 +478,10 @@ async def test_sync_v2_client_lists_and_resolves_conflicts(monkeypatch):
         "dataset_id": "dataset-1",
         "status": "unresolved",
     }
-    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/sync/conflicts/conflict-1/resolve")
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/sync/conflicts/conflict-1/resolve",
+    )
     assert mocked.await_args_list[1].kwargs["json_data"] == {
         "conflict_id": "conflict-1",
         "action": "accept_remote",
@@ -475,7 +506,11 @@ async def test_sync_v2_client_bootstraps_profile(monkeypatch):
             "user_id": "user_123",
             "active_dataset_id": "ds_1",
             "device": {"device_id": "dev_1", "registered": True},
-            "dataset": {"dataset_id": "ds_1", "scope": "personal", "default_personal": True},
+            "dataset": {
+                "dataset_id": "ds_1",
+                "scope": "personal",
+                "default_personal": True,
+            },
             "server_cursor": 0,
             "capabilities": {"protocol_version": "sync-v2-m1"},
         }
@@ -489,7 +524,10 @@ async def test_sync_v2_client_bootstraps_profile(monkeypatch):
     assert isinstance(resp, SyncV2ProfileBootstrapResponse)
     assert resp.device.device_id == "dev_1"
     assert resp.dataset.dataset_id == "ds_1"
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/sync/profile/bootstrap")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/sync/profile/bootstrap",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"]["mode"] == "offline_sync"
 
 
@@ -499,7 +537,11 @@ async def test_sync_v2_client_gets_profile(monkeypatch):
 
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
-        return_value={"profile_bootstrapped": False, "user_id": "user_123", "server_cursor": 0}
+        return_value={
+            "profile_bootstrapped": False,
+            "user_id": "user_123",
+            "server_cursor": 0,
+        }
     )
     monkeypatch.setattr(client, "_request", mocked)
 
@@ -517,7 +559,11 @@ async def test_sync_v2_client_gets_profile_without_device_id(monkeypatch):
 
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
-        return_value={"profile_bootstrapped": False, "user_id": "user_123", "server_cursor": 0}
+        return_value={
+            "profile_bootstrapped": False,
+            "user_id": "user_123",
+            "server_cursor": 0,
+        }
     )
     monkeypatch.setattr(client, "_request", mocked)
 
@@ -531,10 +577,19 @@ async def test_sync_v2_client_gets_profile_without_device_id(monkeypatch):
 @pytest.mark.asyncio
 async def test_pull_sync_v2_omits_none_query_params(monkeypatch):
     client = TLDWAPIClient("http://localhost:8000")
-    mocked = AsyncMock(return_value={"dataset_id": "ds_1", "envelopes": [], "next_cursor": None, "has_more": False})
+    mocked = AsyncMock(
+        return_value={
+            "dataset_id": "ds_1",
+            "envelopes": [],
+            "next_cursor": None,
+            "has_more": False,
+        }
+    )
     monkeypatch.setattr(client, "_request", mocked)
 
-    await client.pull_sync_v2_envelopes(dataset_id="ds_1", device_id="dev_1", cursor="0", domains=["notes.note"])
+    await client.pull_sync_v2_envelopes(
+        dataset_id="ds_1", device_id="dev_1", cursor="0", domains=["notes.note"]
+    )
 
     params = mocked.await_args_list[0].kwargs["params"]
     assert "page_size" not in params  # None must be omitted, not sent as empty string

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.DB import Subscriptions_DB as subscriptions_module
+from tldw_chatbook.DB import base_db as base_db_module
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 
 
@@ -34,16 +34,18 @@ class _TrackedConnection:
 
 
 @pytest.mark.unit
-def test_subscriptions_db_closes_schema_initialization_connection(tmp_path, monkeypatch):
+def test_subscriptions_db_closes_schema_initialization_connection(
+    tmp_path, monkeypatch
+):
     connections = []
-    original_connect = subscriptions_module.sqlite3.connect
+    original_connect = base_db_module.sqlite3.connect
 
     def tracked_connect(*args, **kwargs):
         conn = _TrackedConnection(original_connect(*args, **kwargs))
         connections.append(conn)
         return conn
 
-    monkeypatch.setattr(subscriptions_module.sqlite3, "connect", tracked_connect)
+    monkeypatch.setattr(base_db_module.sqlite3, "connect", tracked_connect)
 
     db = SubscriptionsDB(tmp_path / "subscriptions.db")
     try:
@@ -67,7 +69,7 @@ def test_subscriptions_db_basic_add_and_list():
                 source="https://example.com/feed.xml",
                 tags=["news", "tech"],
                 priority=3,
-                folder="Smoke"
+                folder="Smoke",
             )
             assert isinstance(sub_id, int) and sub_id > 0
 
@@ -80,12 +82,18 @@ def test_subscriptions_db_basic_add_and_list():
             # Record a successful check with one new item
             db.record_check_result(
                 subscription_id=sub_id,
-                items=[{
-                    "url": "https://example.com/article-1?utm=abc",
-                    "title": "An Article",
-                    "content_hash": "hash1"
-                }],
-                stats={"response_time_ms": 120, "bytes_transferred": 1024, "new_items_found": 1}
+                items=[
+                    {
+                        "url": "https://example.com/article-1?utm=abc",
+                        "title": "An Article",
+                        "content_hash": "hash1",
+                    }
+                ],
+                stats={
+                    "response_time_ms": 120,
+                    "bytes_transferred": 1024,
+                    "new_items_found": 1,
+                },
             )
 
             # New items should be present

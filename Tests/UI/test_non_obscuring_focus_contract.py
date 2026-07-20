@@ -105,7 +105,9 @@ def css_selectors(text: str) -> list[str]:
         prefix = uncommented[: match.start()]
         selector_start = max(prefix.rfind("}"), prefix.rfind(";")) + 1
         selector_text = prefix[selector_start : match.start()]
-        selectors.extend(item.strip() for item in selector_text.split(",") if item.strip())
+        selectors.extend(
+            item.strip() for item in selector_text.split(",") if item.strip()
+        )
     return selectors
 
 
@@ -289,7 +291,9 @@ def assert_native_row_hover_state_contract(block: str) -> None:
     assert "$accent" not in block
     assert "$warning" not in block
     assert "$error" not in block
-    assert "background: $surface;" in block or "background: $surface-lighten-1;" in block
+    assert (
+        "background: $surface;" in block or "background: $surface-lighten-1;" in block
+    )
     assert "color: $text;" in block
 
 
@@ -704,8 +708,12 @@ def test_console_structural_separators_use_visible_column_line_token():
 
     assert transcript_region_blocks
     assert all("$ds-grid-line" not in block for block in transcript_region_blocks)
-    assert any("border: solid $ds-column-line;" in block for block in transcript_region_blocks)
-    assert any("border: round $ds-column-line;" in block for block in transcript_region_blocks)
+    assert any(
+        "border: solid $ds-column-line;" in block for block in transcript_region_blocks
+    )
+    assert any(
+        "border: round $ds-column-line;" in block for block in transcript_region_blocks
+    )
     assert "border: round $ds-column-line;" in composer
     assert "border: round $ds-grid-line;" not in composer
     assert "color: $ds-column-line;" in transcript_rule
@@ -762,7 +770,9 @@ def test_console_settings_modal_select_current_preserves_visible_value_row():
         ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
     ):
         current = css_block(text, "ConsoleSettingsModal Select > SelectCurrent")
-        current_focus = css_block(text, "ConsoleSettingsModal Select:focus > SelectCurrent")
+        current_focus = css_block(
+            text, "ConsoleSettingsModal Select:focus > SelectCurrent"
+        )
 
         assert "height: 1;" in current
         assert "min-height: 1;" in current
@@ -784,8 +794,12 @@ def test_console_settings_modal_select_overlay_is_readable():
     ):
         overlay = css_block(text, "ConsoleSettingsModal Select > SelectOverlay")
         option = css_block(text, "ConsoleSettingsModal Select > SelectOverlay Option")
-        hover = css_block(text, "ConsoleSettingsModal Select > SelectOverlay Option:hover")
-        selected = css_block(text, "ConsoleSettingsModal Select > SelectOverlay Option.-selected")
+        hover = css_block(
+            text, "ConsoleSettingsModal Select > SelectOverlay Option:hover"
+        )
+        selected = css_block(
+            text, "ConsoleSettingsModal Select > SelectOverlay Option.-selected"
+        )
 
         assert "border: solid $ds-grid-line;" in overlay
         assert "background: $ds-surface-panel;" in overlay
@@ -856,7 +870,9 @@ def test_settings_compact_select_uses_non_clipping_row_contract():
     current_focus = css_block(text, ".settings-compact-select:focus > SelectCurrent")
     overlay = css_block(text, ".settings-compact-select > SelectOverlay")
     option = css_block(text, ".settings-compact-select > SelectOverlay Option")
-    selected_option = css_block(text, ".settings-compact-select > SelectOverlay Option.-selected")
+    selected_option = css_block(
+        text, ".settings-compact-select > SelectOverlay Option.-selected"
+    )
 
     assert "height: 3;" in row
     assert "min-height: 3;" in row
@@ -961,7 +977,9 @@ def test_shared_collapsible_header_hover_uses_non_obscuring_surface_contract():
         blocks = css_blocks(text, "Collapsible > .collapsible--header:hover")
         assert "background: $surface-lighten-1;" in base
         assert blocks, f"{label} is missing Collapsible header hover"
-        assert len(blocks) == 1, f"{label} should define exactly one Collapsible header hover"
+        assert len(blocks) == 1, (
+            f"{label} should define exactly one Collapsible header hover"
+        )
         assert "background: $surface;" in blocks[0]
         assert_native_row_hover_state_contract(blocks[0])
 
@@ -969,7 +987,9 @@ def test_shared_collapsible_header_hover_uses_non_obscuring_surface_contract():
 def test_shared_collapsible_header_focus_is_underlined_and_non_heavy():
     text = WIDGETS.read_text(encoding="utf-8")
     block = css_block(text, "Collapsible > .collapsible--header:focus")
-    collapsed_focus = css_block(text, "Collapsible.-collapsed > .collapsible--header:focus")
+    collapsed_focus = css_block(
+        text, "Collapsible.-collapsed > .collapsible--header:focus"
+    )
     assert_non_obscuring_focus(block)
     assert "outline: heavy" not in block
     assert "border-bottom: solid $ds-focus-accent;" in collapsed_focus
@@ -981,7 +1001,9 @@ def test_conversations_collapsible_active_header_uses_selected_contract():
         BUNDLE.read_text(encoding="utf-8"),
     ):
         blocks = css_blocks(text, "Collapsible.-active > .collapsible--header")
-        assert blocks, "Missing CSS block for Collapsible.-active > .collapsible--header"
+        assert blocks, (
+            "Missing CSS block for Collapsible.-active > .collapsible--header"
+        )
         active = blocks[-1]
         assert_readable_selected_state_contract(active)
         assert_no_dominant_selected_geometry(active)
@@ -990,7 +1012,10 @@ def test_conversations_collapsible_active_header_uses_selected_contract():
 
 def test_message_action_buttons_focus_without_obscuring_labels():
     text = MESSAGES.read_text(encoding="utf-8")
-    for selector in (".message-actions Button:focus", ".message-actions Button:focus:hover"):
+    for selector in (
+        ".message-actions Button:focus",
+        ".message-actions Button:focus:hover",
+    ):
         block = css_block(text, selector)
         assert_non_obscuring_focus(block)
         assert "$ds-focus-bg" in block or "$ds-surface-raised" in block
@@ -1079,7 +1104,9 @@ def test_layout_tab_active_states_use_underlined_selected_contracts():
         for block in blocks:
             assert_readable_selected_state_contract(block)
 
-    assert_all_native_tab_selectors_follow_contracts(LAYOUT_TABS.read_text(encoding="utf-8"))
+    assert_all_native_tab_selectors_follow_contracts(
+        LAYOUT_TABS.read_text(encoding="utf-8")
+    )
     assert_all_native_tab_selectors_follow_contracts(BUNDLE.read_text(encoding="utf-8"))
 
 
@@ -1090,7 +1117,9 @@ def test_feature_buttons_inherit_shared_button_focus_contract_without_duplicate_
         assert_non_obscuring_focus(block)
         assert "$ds-focus-bg" in block or "$ds-surface-raised" in block
 
-    assert css_blocks(CODING.read_text(encoding="utf-8"), ".coding-nav-button:focus") == []
+    assert (
+        css_blocks(CODING.read_text(encoding="utf-8"), ".coding-nav-button:focus") == []
+    )
     assert (
         css_blocks(
             FEATURE_ALERTS.read_text(encoding="utf-8"),
@@ -1159,7 +1188,9 @@ def test_bundled_wizard_progress_active_states_match_source_contracts():
 def test_wizard_progress_default_css_matches_active_state_contract():
     from tldw_chatbook.UI.Wizards.BaseWizard import WizardProgress
 
-    assert_wizard_progress_active_contracts(WizardProgress.DEFAULT_CSS, scope="WizardProgress")
+    assert_wizard_progress_active_contracts(
+        WizardProgress.DEFAULT_CSS, scope="WizardProgress"
+    )
 
 
 def test_wizard_selection_states_are_readable_without_dominant_fill():
@@ -1185,7 +1216,9 @@ def test_embeddings_focus_and_active_states_follow_shared_contracts():
     text = EMBEDDINGS.read_text(encoding="utf-8")
     assert_embeddings_focus_and_active_contracts(text)
 
-    widget_focus_selector = re.compile(r"\b(Input|TextArea|Select|Button|Checkbox)\b.*:focus")
+    widget_focus_selector = re.compile(
+        r"\b(Input|TextArea|Select|Button|Checkbox)\b.*:focus"
+    )
     offenders = [
         selector
         for selector in css_selectors(text)
@@ -1253,16 +1286,10 @@ def test_feature_navigation_hover_states_use_neutral_readable_surface(
 
     bundled_blocks = css_blocks(BUNDLE.read_text(encoding="utf-8"), selector)
     assert bundled_blocks, f"tldw_cli_modular.tcss is missing {selector}"
-    assert len(bundled_blocks) == 1, f"tldw_cli_modular.tcss should define exactly one {selector}"
+    assert len(bundled_blocks) == 1, (
+        f"tldw_cli_modular.tcss should define exactly one {selector}"
+    )
     assert_native_row_hover_state_contract(bundled_blocks[0])
-
-
-def test_customize_window_default_css_nav_active_state_follows_contract():
-    from tldw_chatbook.UI.Customize_Window import CustomizeWindow
-
-    active = css_block(CustomizeWindow.DEFAULT_CSS, ".customize-nav-button.active-nav")
-    assert_feature_nav_active_contract(active)
-    assert_no_dominant_selected_geometry(active)
 
 
 def test_bundled_feature_navigation_states_match_source_contracts():
@@ -1300,7 +1327,9 @@ def test_llm_management_default_css_nav_states_follow_contracts():
 
 def test_ingest_selected_files_list_uses_non_obscuring_container_cue():
     for path in (INGEST, BUNDLE):
-        blocks = css_blocks(path.read_text(encoding="utf-8"), ".ingest-selected-files-list")
+        blocks = css_blocks(
+            path.read_text(encoding="utf-8"), ".ingest-selected-files-list"
+        )
         assert blocks, "Missing CSS block for .ingest-selected-files-list"
         for block in blocks:
             assert "outline: heavy" not in block
@@ -1354,7 +1383,9 @@ def test_native_listview_row_states_follow_shared_contracts():
     text = LISTS.read_text(encoding="utf-8")
     assert "height: auto;" in css_block(text, "ListView ListItem")
     assert_native_row_hover_state_contract(css_block(text, "ListView ListItem:hover"))
-    assert_native_row_selected_state_contract(css_block(text, "ListView ListItem.-highlight"))
+    assert_native_row_selected_state_contract(
+        css_block(text, "ListView ListItem.-highlight")
+    )
 
 
 def test_bundled_native_listview_row_states_keep_effective_contracts():
@@ -1362,10 +1393,16 @@ def test_bundled_native_listview_row_states_keep_effective_contracts():
     assert len(css_blocks(text, "ListView ListItem:hover")) == 1
     assert len(css_blocks(text, "ListView ListItem.-highlight")) == 1
     assert "height: auto;" in css_blocks(text, "ListView ListItem")[-1]
-    assert_native_row_hover_state_contract(css_blocks(text, "ListView ListItem:hover")[-1])
-    assert_native_row_selected_state_contract(css_blocks(text, "ListView ListItem.-highlight")[-1])
+    assert_native_row_hover_state_contract(
+        css_blocks(text, "ListView ListItem:hover")[-1]
+    )
+    assert_native_row_selected_state_contract(
+        css_blocks(text, "ListView ListItem.-highlight")[-1]
+    )
 
-    assert_native_row_hover_state_contract(css_block(text, "#chatbooks-list ListItem:hover"))
+    assert_native_row_hover_state_contract(
+        css_block(text, "#chatbooks-list ListItem:hover")
+    )
     for selector in (
         "#chatbooks-list ListItem.-highlight",
         "ConfigSearchResult.-highlight",
@@ -1378,14 +1415,22 @@ def test_bundled_native_listview_row_states_keep_effective_contracts():
 def test_config_search_result_highlight_targets_rendered_list_item():
     text = CONFIG_SEARCH.read_text(encoding="utf-8")
     assert css_blocks(text, "ConfigSearchResult ListItem.-highlight") == []
-    assert_native_row_selected_state_contract(css_block(text, "ConfigSearchResult.-highlight"))
+    assert_native_row_selected_state_contract(
+        css_block(text, "ConfigSearchResult.-highlight")
+    )
 
 
 def test_native_datatable_row_states_follow_shared_contracts():
     text = LISTS.read_text(encoding="utf-8")
-    assert_native_row_selected_state_contract(css_block(text, "DataTable > .datatable--cursor"))
-    assert_native_row_hover_state_contract(css_block(text, "DataTable > .datatable--hover"))
-    assert_native_row_selected_state_contract(css_block(text, "DataTable > .datatable--selected"))
+    assert_native_row_selected_state_contract(
+        css_block(text, "DataTable > .datatable--cursor")
+    )
+    assert_native_row_hover_state_contract(
+        css_block(text, "DataTable > .datatable--hover")
+    )
+    assert_native_row_selected_state_contract(
+        css_block(text, "DataTable > .datatable--selected")
+    )
 
 
 def test_bundled_native_datatable_row_states_keep_effective_contracts():
@@ -1397,9 +1442,14 @@ def test_bundled_native_datatable_row_states_keep_effective_contracts():
     ):
         assert len(css_blocks(text, selector)) == 1
 
-    for selector in ("DataTable > .datatable--cursor", "DataTable > .datatable--selected"):
+    for selector in (
+        "DataTable > .datatable--cursor",
+        "DataTable > .datatable--selected",
+    ):
         assert_native_row_selected_state_contract(css_blocks(text, selector)[-1])
-    assert_native_row_hover_state_contract(css_blocks(text, "DataTable > .datatable--hover")[-1])
+    assert_native_row_hover_state_contract(
+        css_blocks(text, "DataTable > .datatable--hover")[-1]
+    )
 
 
 def test_native_choice_and_tree_states_follow_shared_contracts():
@@ -1421,7 +1471,9 @@ def test_native_choice_and_tree_states_follow_shared_contracts():
     ):
         assert_native_row_hover_state_contract(css_block(text, selector))
 
-    assert_all_native_choice_selectors_follow_contracts(WIZARDS.read_text(encoding="utf-8"))
+    assert_all_native_choice_selectors_follow_contracts(
+        WIZARDS.read_text(encoding="utf-8")
+    )
 
 
 def test_bundled_native_choice_and_tree_states_match_source_contracts():
@@ -1518,14 +1570,18 @@ def test_media_review_item_styles_are_scoped_to_media_review_list(selector: str)
         ("_media.tcss", MEDIA.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
     ):
-        assert css_blocks(text, selector) == [], f"{label} should not define unscoped {selector}"
+        assert css_blocks(text, selector) == [], (
+            f"{label} should not define unscoped {selector}"
+        )
 
 
 def test_repo_tree_widget_states_match_code_repo_contract():
     from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import TreeNode
 
     hover = css_block(TreeNode.DEFAULT_CSS, ".tree-expand-btn:hover")
-    source_hover = css_block(CODE_REPO.read_text(encoding="utf-8"), ".tree-expand-btn:hover")
+    source_hover = css_block(
+        CODE_REPO.read_text(encoding="utf-8"), ".tree-expand-btn:hover"
+    )
     selected = css_block(TreeNode.DEFAULT_CSS, ".tree-node-selected")
     assert_native_row_hover_state_contract(hover)
     assert_native_row_hover_state_contract(source_hover)
@@ -1536,7 +1592,9 @@ def test_repo_tree_widget_states_match_code_repo_contract():
         CODE_REPO.read_text(encoding="utf-8"),
         BUNDLE.read_text(encoding="utf-8"),
     ):
-        assert_native_row_hover_state_contract(css_block(text, ".tree-expand-btn:hover"))
+        assert_native_row_hover_state_contract(
+            css_block(text, ".tree-expand-btn:hover")
+        )
 
 
 def test_chatbooks_search_input_focus_uses_stable_thin_contracts():
@@ -1556,7 +1614,9 @@ def test_chatbooks_search_input_focus_uses_stable_thin_contracts():
 
 def test_evals_sample_browser_selected_row_uses_readable_inline_contract():
     text = SAMPLE_BROWSER_DIALOG.read_text(encoding="utf-8")
-    assert_readable_inline_selected_state_contract(css_block(text, ".sample-row.selected"))
+    assert_readable_inline_selected_state_contract(
+        css_block(text, ".sample-row.selected")
+    )
 
 
 def test_evals_sample_browser_selected_row_children_show_inline_selected_cue():
@@ -1687,7 +1747,9 @@ def test_sidebar_section_focus_within_uses_non_semantic_container_cue():
         assert "background: $ds-focus-bg;" in block
 
 
-@pytest.mark.parametrize("selector", (".setting-input", ".sidebar-input", ".sidebar Select"))
+@pytest.mark.parametrize(
+    "selector", (".setting-input", ".sidebar-input", ".sidebar Select")
+)
 def test_sidebar_inputs_use_stable_base_geometry_for_shared_focus(selector: str):
     text = SIDEBARS.read_text(encoding="utf-8")
     block = css_block(text, selector)
@@ -1697,7 +1759,9 @@ def test_sidebar_inputs_use_stable_base_geometry_for_shared_focus(selector: str)
     assert "border-bottom: solid" in block
 
 
-@pytest.mark.parametrize("selector", (".setting-input", ".sidebar-input", ".sidebar Select"))
+@pytest.mark.parametrize(
+    "selector", (".setting-input", ".sidebar-input", ".sidebar Select")
+)
 def test_bundled_sidebar_inputs_keep_stable_effective_geometry(selector: str):
     text = BUNDLE.read_text(encoding="utf-8")
     blocks = css_blocks(text, selector)
@@ -1745,7 +1809,9 @@ def test_sidebar_preset_active_hover_preserves_active_cue():
 def test_sidebar_hover_states_use_neutral_readable_surface(selector: str):
     source_blocks = css_blocks(SIDEBARS.read_text(encoding="utf-8"), selector)
     assert source_blocks, f"layout/_sidebars.tcss is missing {selector}"
-    assert len(source_blocks) == 1, f"layout/_sidebars.tcss should define exactly one {selector}"
+    assert len(source_blocks) == 1, (
+        f"layout/_sidebars.tcss should define exactly one {selector}"
+    )
     assert_native_row_hover_state_contract(source_blocks[0])
 
     bundled_blocks = css_blocks(BUNDLE.read_text(encoding="utf-8"), selector)

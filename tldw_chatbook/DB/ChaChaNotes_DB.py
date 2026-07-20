@@ -33,6 +33,7 @@ Key entities managed:
 The library requires a `client_id` upon initialization, which is used to attribute
 changes in the `sync_log` and in individual records.
 """
+
 # Imports
 import contextlib
 import sqlite3
@@ -70,19 +71,23 @@ DEFAULT_DISCOVERY_OWNER = "general_chat"
 # Conversations snapshot so Console workspace chats are listed and counted.
 CONVERSATION_SCOPE_ALL = "all"
 
+
 # --- Custom Exceptions ---
 class CharactersRAGDBError(Exception):
     """Base exception for CharactersRAGDB related errors."""
+
     pass
 
 
 class SchemaError(CharactersRAGDBError):
     """Exception for schema version mismatches or migration failures."""
+
     pass
 
 
 class InputError(ValueError):
     """Custom exception for input validation errors."""
+
     pass
 
 
@@ -99,7 +104,12 @@ class ConflictError(CharactersRAGDBError):
         entity_id (Any): The ID or unique identifier of the entity involved.
     """
 
-    def __init__(self, message="Conflict detected.", entity: Optional[str] = None, entity_id: Any = None):
+    def __init__(
+        self,
+        message="Conflict detected.",
+        entity: Optional[str] = None,
+        entity_id: Any = None,
+    ):
         super().__init__(message)
         self.entity = entity
         self.entity_id = entity_id
@@ -140,6 +150,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
+
     _CURRENT_SCHEMA_VERSION = 22  # Adds world_book_entries.regex (P2d-regex).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
@@ -2461,8 +2472,12 @@ UPDATE db_schema_version
    AND version = 18;
 """
 
-    def __init__(self, db_path: Union[str, Path], client_id: str,
-                 check_integrity_on_startup: bool = False):
+    def __init__(
+        self,
+        db_path: Union[str, Path],
+        client_id: str,
+        check_integrity_on_startup: bool = False,
+    ):
         """
         Initializes the CharactersRAGDB instance.
 
@@ -2487,9 +2502,11 @@ UPDATE db_schema_version
             self.is_memory_db = False
             self.db_path = db_path.resolve()
         else:
-            self.is_memory_db = (db_path == ':memory:')
-            self.db_path = Path(db_path).resolve() if not self.is_memory_db else Path(":memory:")
-        self.db_path_str = str(self.db_path) if not self.is_memory_db else ':memory:'
+            self.is_memory_db = db_path == ":memory:"
+            self.db_path = (
+                Path(db_path).resolve() if not self.is_memory_db else Path(":memory:")
+            )
+        self.db_path_str = str(self.db_path) if not self.is_memory_db else ":memory:"
 
         if not client_id:
             raise ValueError("Client ID cannot be empty or None.")
@@ -2499,31 +2516,45 @@ UPDATE db_schema_version
             try:
                 self.db_path.parent.mkdir(parents=True, exist_ok=True)
             except OSError as e:
-                raise CharactersRAGDBError(f"Failed to create database directory {self.db_path.parent}: {e}")
+                raise CharactersRAGDBError(
+                    f"Failed to create database directory {self.db_path.parent}: {e}"
+                )
 
-        logger.info(f"Initializing CharactersRAGDB for path: {self.db_path_str} [Client ID: {self.client_id}]")
+        logger.info(
+            f"Initializing CharactersRAGDB for path: {self.db_path_str} [Client ID: {self.client_id}]"
+        )
         self._local = threading.local()
         try:
             self._initialize_schema()
-            
+
             # Run integrity check if requested and not in-memory
             if check_integrity_on_startup and not self.is_memory_db:
-                logger.info(f"Running startup integrity check for CharactersRAGDB")
+                logger.info("Running startup integrity check for CharactersRAGDB")
                 if not self.check_integrity():
-                    logger.warning(f"Database integrity check failed for {self.db_path_str}. "
-                                  "Consider running repairs or restoring from backup.")
+                    logger.warning(
+                        f"Database integrity check failed for {self.db_path_str}. "
+                        "Consider running repairs or restoring from backup."
+                    )
                     # Note: We don't raise an exception here to allow the app to continue
                     # with potentially degraded functionality.
-            
-            logger.debug(f"CharactersRAGDB initialization completed successfully for {self.db_path_str}")
+
+            logger.debug(
+                f"CharactersRAGDB initialization completed successfully for {self.db_path_str}"
+            )
         except (CharactersRAGDBError, sqlite3.Error) as e:
-            logger.opt(exception=True).critical(f"FATAL: DB Initialization failed for {self.db_path_str}: {e}")
+            logger.opt(exception=True).critical(
+                f"FATAL: DB Initialization failed for {self.db_path_str}: {e}"
+            )
             self.close_connection()  # Attempt to clean up
             raise CharactersRAGDBError(f"Database initialization failed: {e}") from e
         except Exception as e:
-            logger.opt(exception=True).critical(f"FATAL: Unexpected error during DB Initialization for {self.db_path_str}: {e}")
+            logger.opt(exception=True).critical(
+                f"FATAL: Unexpected error during DB Initialization for {self.db_path_str}: {e}"
+            )
             self.close_connection()
-            raise CharactersRAGDBError(f"Unexpected database initialization error: {e}") from e
+            raise CharactersRAGDBError(
+                f"Unexpected database initialization error: {e}"
+            ) from e
 
     # --- Connection Management ---
     def _get_thread_connection(self) -> sqlite3.Connection:
@@ -2550,15 +2581,19 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: If connecting to the database fails.
         """
-        conn = getattr(self._local, 'conn', None)
+        conn = getattr(self._local, "conn", None)
         if conn:
-            last_used = getattr(self._local, 'conn_last_used', None)
-            if last_used is None or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS:
+            last_used = getattr(self._local, "conn_last_used", None)
+            if (
+                last_used is None
+                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
+            ):
                 try:
                     conn.execute("SELECT 1")  # Check if connection is still alive
                 except (sqlite3.ProgrammingError, sqlite3.OperationalError):
                     logger.warning(
-                        f"Thread-local connection for {self.db_path_str} was closed or became unusable. Reopening.")
+                        f"Thread-local connection for {self.db_path_str} was closed or became unusable. Reopening."
+                    )
                     try:
                         conn.close()
                     except sqlite3.Error:
@@ -2571,8 +2606,8 @@ UPDATE db_schema_version
                 conn = sqlite3.connect(
                     self.db_path_str,
                     detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
-                    check_same_thread=False, # Required for threading.local approach
-                    timeout=15 # Maybe slightly increase timeout?
+                    check_same_thread=False,  # Required for threading.local approach
+                    timeout=15,  # Maybe slightly increase timeout?
                 )
                 conn.row_factory = sqlite3.Row
                 if not self.is_memory_db:
@@ -2581,11 +2616,16 @@ UPDATE db_schema_version
                 conn.execute("PRAGMA foreign_keys = ON;")
                 self._local.conn = conn
                 logger.debug(
-                    f"Opened/Reopened SQLite connection to {self.db_path_str} (Journal: {conn.execute('PRAGMA journal_mode;').fetchone()[0]}) for thread {threading.get_ident()}")
+                    f"Opened/Reopened SQLite connection to {self.db_path_str} (Journal: {conn.execute('PRAGMA journal_mode;').fetchone()[0]}) for thread {threading.get_ident()}"
+                )
             except sqlite3.Error as e:
-                logger.opt(exception=True).error(f"Failed to connect to database {self.db_path_str}: {e}")
+                logger.opt(exception=True).error(
+                    f"Failed to connect to database {self.db_path_str}: {e}"
+                )
                 self._local.conn = None
-                raise CharactersRAGDBError(f"Failed to connect to database '{self.db_path_str}': {e}") from e
+                raise CharactersRAGDBError(
+                    f"Failed to connect to database '{self.db_path_str}': {e}"
+                ) from e
         self._local.conn_last_used = time.monotonic()
         return self._local.conn
 
@@ -2610,7 +2650,7 @@ UPDATE db_schema_version
         If a transaction is active and uncommitted on this connection, it attempts a rollback.
         Clears the connection reference from `threading.local` for the current thread.
         """
-        conn = getattr(self._local, 'conn', None)
+        conn = getattr(self._local, "conn", None)
         if conn is not None:
             try:
                 if not self.is_memory_db:
@@ -2618,10 +2658,13 @@ UPDATE db_schema_version
                     if conn.in_transaction:
                         try:
                             logger.warning(
-                                f"Connection to {self.db_path_str} is in an uncommitted transaction during close. Attempting rollback.")
+                                f"Connection to {self.db_path_str} is in an uncommitted transaction during close. Attempting rollback."
+                            )
                             conn.rollback()  # Attempt rollback if transaction is open
                         except sqlite3.Error as rb_err:
-                            logger.error(f"Rollback attempt during close for {self.db_path_str} failed: {rb_err}")
+                            logger.error(
+                                f"Rollback attempt during close for {self.db_path_str} failed: {rb_err}"
+                            )
                             # Don't proceed to checkpoint if rollback fails and we're still in transaction potentially
                             # However, conn.close() below should still be attempted.
 
@@ -2630,23 +2673,33 @@ UPDATE db_schema_version
                     # We assume if conn.in_transaction is false now, any transaction was committed/rolled back.
                     if not conn.in_transaction:  # Re-check after potential rollback
                         mode_row = conn.execute("PRAGMA journal_mode;").fetchone()
-                        if mode_row and mode_row[0].lower() == 'wal':
+                        if mode_row and mode_row[0].lower() == "wal":
                             try:
                                 logger.debug(
-                                    f"Attempting WAL checkpoint (TRUNCATE) before closing {self.db_path_str} on thread {threading.get_ident()}.")
+                                    f"Attempting WAL checkpoint (TRUNCATE) before closing {self.db_path_str} on thread {threading.get_ident()}."
+                                )
                                 conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-                                logger.debug(f"WAL checkpoint TRUNCATE executed for {self.db_path_str}.")
+                                logger.debug(
+                                    f"WAL checkpoint TRUNCATE executed for {self.db_path_str}."
+                                )
                             except sqlite3.Error as cp_err:
-                                logger.warning(f"WAL checkpoint failed for {self.db_path_str}: {cp_err}")
+                                logger.warning(
+                                    f"WAL checkpoint failed for {self.db_path_str}: {cp_err}"
+                                )
                 conn.close()
-                logger.debug(f"Closed connection for thread {threading.get_ident()} to {self.db_path_str}.")
-            except sqlite3.Error as e:  # Catches errors from execute, checkpoint, or close
+                logger.debug(
+                    f"Closed connection for thread {threading.get_ident()} to {self.db_path_str}."
+                )
+            except (
+                sqlite3.Error
+            ) as e:  # Catches errors from execute, checkpoint, or close
                 logger.warning(
-                    f"Error during SQLite connection close/checkpoint for {self.db_path_str} on thread {threading.get_ident()}: {e}")
+                    f"Error during SQLite connection close/checkpoint for {self.db_path_str} on thread {threading.get_ident()}: {e}"
+                )
             finally:
                 # This ensures that the reference is cleared from threading.local
                 # even if conn.close() itself raised an exception.
-                if hasattr(self._local, 'conn'):
+                if hasattr(self._local, "conn"):
                     self._local.conn = None
 
     def backup_database(self, backup_file_path: str) -> bool:
@@ -2659,15 +2712,24 @@ UPDATE db_schema_version
         Returns:
             bool: True if the backup was successful, False otherwise.
         """
-        logger.info(f"Starting database backup from '{self.db_path_str}' to '{backup_file_path}'")
+        logger.info(
+            f"Starting database backup from '{self.db_path_str}' to '{backup_file_path}'"
+        )
         # src_conn is managed by get_connection and should not be closed by this method directly
         # backup_conn is local to this method and must be closed
         backup_conn: Optional[sqlite3.Connection] = None
         try:
             # Ensure the backup file path is not the same as the source for file-based DBs
-            if not self.is_memory_db and self.db_path.resolve() == Path(backup_file_path).resolve():
-                logger.error("Backup path cannot be the same as the source database path.")
-                raise ValueError("Backup path cannot be the same as the source database path.")
+            if (
+                not self.is_memory_db
+                and self.db_path.resolve() == Path(backup_file_path).resolve()
+            ):
+                logger.error(
+                    "Backup path cannot be the same as the source database path."
+                )
+                raise ValueError(
+                    "Backup path cannot be the same as the source database path."
+                )
 
             src_conn = self.get_connection()
 
@@ -2675,24 +2737,34 @@ UPDATE db_schema_version
             backup_db_path_obj = Path(backup_file_path)
             backup_db_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
-            backup_conn = sqlite3.connect(str(backup_db_path_obj)) # Use string path for connect
+            backup_conn = sqlite3.connect(
+                str(backup_db_path_obj)
+            )  # Use string path for connect
 
             logger.debug(f"Source DB connection: {src_conn}")
-            logger.debug(f"Backup DB connection: {backup_conn} to file {str(backup_db_path_obj)}")
+            logger.debug(
+                f"Backup DB connection: {backup_conn} to file {str(backup_db_path_obj)}"
+            )
 
             # Perform the backup
             src_conn.backup(backup_conn, pages=0, progress=None)
 
-            logger.info(f"Database backup successful from '{self.db_path_str}' to '{str(backup_db_path_obj)}'")
+            logger.info(
+                f"Database backup successful from '{self.db_path_str}' to '{str(backup_db_path_obj)}'"
+            )
             return True
-        except ValueError as ve: # Catch specific ValueError for path mismatch first
+        except ValueError as ve:  # Catch specific ValueError for path mismatch first
             logger.opt(exception=True).error(f"ValueError during database backup: {ve}")
             return False
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"SQLite error during database backup: {e}")
+            logger.opt(exception=True).error(
+                f"SQLite error during database backup: {e}"
+            )
             return False
         except Exception as e:
-            logger.opt(exception=True).error(f"Unexpected error during database backup: {e}")
+            logger.opt(exception=True).error(
+                f"Unexpected error during database backup: {e}"
+            )
             return False
         finally:
             if backup_conn:
@@ -2703,11 +2775,11 @@ UPDATE db_schema_version
                     logger.warning(f"Error closing backup database connection: {e}")
             # Source connection (src_conn) is managed by the thread-local mechanism
             # and should not be closed here to allow continued use of the DB instance.
-    
+
     def check_integrity(self) -> bool:
         """
         Check the integrity of the database.
-        
+
         Returns:
             bool: True if integrity check passes, False otherwise
         """
@@ -2716,21 +2788,27 @@ UPDATE db_schema_version
             cursor = conn.cursor()
             cursor.execute("PRAGMA integrity_check")
             result = cursor.fetchone()
-            
+
             is_ok = result and result[0] == "ok"
             if is_ok:
                 logger.info(f"Database integrity check passed: {self.db_path_str}")
             else:
                 logger.error(f"Database integrity check failed: {self.db_path_str}")
-            
+
             return is_ok
         except Exception as e:
             logger.error(f"Failed to check database integrity: {e}")
             return False
 
     # --- Query Execution ---
-    def execute_query(self, query: str, params: Optional[Union[tuple, Dict[str, Any]]] = None, *, commit: bool = False,
-                      script: bool = False) -> sqlite3.Cursor:
+    def execute_query(
+        self,
+        query: str,
+        params: Optional[Union[tuple, Dict[str, Any]]] = None,
+        *,
+        commit: bool = False,
+        script: bool = False,
+    ) -> sqlite3.Cursor:
         """
         Executes a single SQL query or an entire SQL script.
 
@@ -2753,7 +2831,7 @@ UPDATE db_schema_version
         """
         start_time = time.time()
         operation_type = "script" if script else "query"
-        
+
         conn = self.get_connection()
         try:
             cursor = conn.cursor()
@@ -2773,58 +2851,76 @@ UPDATE db_schema_version
             else:
                 cursor.execute(query, params or ())
 
-            if commit and not conn.in_transaction:  # Only commit if not already in a transaction handled by the context manager
+            if (
+                commit and not conn.in_transaction
+            ):  # Only commit if not already in a transaction handled by the context manager
                 conn.commit()
                 logger.debug("Committed directly by execute_query.")
-            
+
             # Log success metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_query_duration", duration, labels={
-                "operation": operation_type,
-                "success": "true"
-            })
-            log_counter("chachanotes_db_query_count", labels={
-                "operation": operation_type,
-                "status": "success"
-            })
-            
+            log_histogram(
+                "chachanotes_db_query_duration",
+                duration,
+                labels={"operation": operation_type, "success": "true"},
+            )
+            log_counter(
+                "chachanotes_db_query_count",
+                labels={"operation": operation_type, "status": "success"},
+            )
+
             return cursor
         except sqlite3.IntegrityError as e:
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_query_duration", duration, labels={
-                "operation": operation_type,
-                "success": "false"
-            })
-            log_counter("chachanotes_db_query_count", labels={
-                "operation": operation_type,
-                "status": "error",
-                "error_type": "integrity_error"
-            })
-            
-            logger.warning(f"Integrity constraint violation: {query[:300]}... Error: {e}")
+            log_histogram(
+                "chachanotes_db_query_duration",
+                duration,
+                labels={"operation": operation_type, "success": "false"},
+            )
+            log_counter(
+                "chachanotes_db_query_count",
+                labels={
+                    "operation": operation_type,
+                    "status": "error",
+                    "error_type": "integrity_error",
+                },
+            )
+
+            logger.warning(
+                f"Integrity constraint violation: {query[:300]}... Error: {e}"
+            )
             # Distinguish unique constraint from other integrity errors if possible
             if "unique constraint failed" in str(e).lower():
                 raise ConflictError(message=f"Unique constraint violation: {e}") from e
             raise CharactersRAGDBError(
-                f"Database constraint violation: {e}") from e  # Broader for other integrity issues
+                f"Database constraint violation: {e}"
+            ) from e  # Broader for other integrity issues
         except sqlite3.Error as e:
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_query_duration", duration, labels={
-                "operation": operation_type,
-                "success": "false"
-            })
-            log_counter("chachanotes_db_query_count", labels={
-                "operation": operation_type,
-                "status": "error",
-                "error_type": "database_error"
-            })
-            
-            logger.opt(exception=True).error(f"Query execution failed: {query[:300]}... Error: {e}")
+            log_histogram(
+                "chachanotes_db_query_duration",
+                duration,
+                labels={"operation": operation_type, "success": "false"},
+            )
+            log_counter(
+                "chachanotes_db_query_count",
+                labels={
+                    "operation": operation_type,
+                    "status": "error",
+                    "error_type": "database_error",
+                },
+            )
+
+            logger.opt(exception=True).error(
+                f"Query execution failed: {query[:300]}... Error: {e}"
+            )
             raise CharactersRAGDBError(f"Query execution failed: {e}") from e
 
-    def execute_many(self, query: str, params_list: List[tuple], *, commit: bool = False) -> Optional[sqlite3.Cursor]:
+    def execute_many(
+        self, query: str, params_list: List[tuple], *, commit: bool = False
+    ) -> Optional[sqlite3.Cursor]:
         """
         Executes a parameterized SQL query multiple times with a list of parameter sets.
 
@@ -2848,23 +2944,35 @@ UPDATE db_schema_version
             return None
         try:
             cursor = conn.cursor()
-            logger.debug(f"Executing Many: {query[:150]}... with {len(params_list)} sets.")
+            logger.debug(
+                f"Executing Many: {query[:150]}... with {len(params_list)} sets."
+            )
             cursor.executemany(query, params_list)
-            if commit and not conn.in_transaction:  # Only commit if not already in a transaction
+            if (
+                commit and not conn.in_transaction
+            ):  # Only commit if not already in a transaction
                 conn.commit()
                 logger.debug("Committed Many directly by execute_many.")
             return cursor
         except sqlite3.IntegrityError as e:
-            logger.warning(f"Integrity constraint violation during batch: {query[:150]}... Error: {e}")
+            logger.warning(
+                f"Integrity constraint violation during batch: {query[:150]}... Error: {e}"
+            )
             if "unique constraint failed" in str(e).lower():
-                raise ConflictError(message=f"Unique constraint violation during batch: {e}") from e
-            raise CharactersRAGDBError(f"Database constraint violation during batch: {e}") from e
+                raise ConflictError(
+                    message=f"Unique constraint violation during batch: {e}"
+                ) from e
+            raise CharactersRAGDBError(
+                f"Database constraint violation during batch: {e}"
+            ) from e
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"Execute Many failed: {query[:150]}... Error: {e}")
+            logger.opt(exception=True).error(
+                f"Execute Many failed: {query[:150]}... Error: {e}"
+            )
             raise CharactersRAGDBError(f"Execute Many failed: {e}") from e
 
     # --- Transaction Context ---
-    def transaction(self) -> 'TransactionContextManager':
+    def transaction(self) -> "TransactionContextManager":
         """
         Returns a context manager for database transactions.
 
@@ -2897,15 +3005,24 @@ UPDATE db_schema_version
                          other than "no such table".
         """
         try:
-            cursor = conn.execute("SELECT version FROM db_schema_version WHERE schema_name = ? LIMIT 1",
-                                  (self._SCHEMA_NAME,))
+            cursor = conn.execute(
+                "SELECT version FROM db_schema_version WHERE schema_name = ? LIMIT 1",
+                (self._SCHEMA_NAME,),
+            )
             result = cursor.fetchone()
-            return result['version'] if result else 0
+            return result["version"] if result else 0
         except sqlite3.Error as e:
-            if "no such table" in str(e).lower() and "db_schema_version" in str(e).lower():
+            if (
+                "no such table" in str(e).lower()
+                and "db_schema_version" in str(e).lower()
+            ):
                 return 0
-            logger.opt(exception=True).error(f"Could not determine database schema version for '{self._SCHEMA_NAME}': {e}")
-            raise SchemaError(f"Could not determine schema version for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"Could not determine database schema version for '{self._SCHEMA_NAME}': {e}"
+            )
+            raise SchemaError(
+                f"Could not determine schema version for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _apply_schema_v4(self, conn: sqlite3.Connection):
         """
@@ -2923,7 +3040,9 @@ UPDATE db_schema_version
             SchemaError: If the schema script execution fails or the version
                          is not correctly updated to 4 in `db_schema_version`.
         """
-        logger.info(f"Applying schema Version 4 for '{self._SCHEMA_NAME}' to DB: {self.db_path_str}...")
+        logger.info(
+            f"Applying schema Version 4 for '{self._SCHEMA_NAME}' to DB: {self.db_path_str}..."
+        )
         try:
             # Using conn.executescript directly as it manages its own transaction
             conn.executescript(self._FULL_SCHEMA_SQL_V4)
@@ -2932,16 +3051,27 @@ UPDATE db_schema_version
             final_version = self._get_db_version(conn)
             if final_version != 4:
                 raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V4] Schema version update check failed. Expected 4, got: {final_version}")
-            logger.info(f"[{self._SCHEMA_NAME} V4] Schema 4 applied and version confirmed for DB: {self.db_path_str}.")
+                    f"[{self._SCHEMA_NAME} V4] Schema version update check failed. Expected 4, got: {final_version}"
+                )
+            logger.info(
+                f"[{self._SCHEMA_NAME} V4] Schema 4 applied and version confirmed for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V4] Schema application failed: {e}")
-            raise SchemaError(f"DB schema V4 setup failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V4] Schema application failed: {e}"
+            )
+            raise SchemaError(
+                f"DB schema V4 setup failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except SchemaError:
             raise
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V4] Unexpected error during schema V4 application: {e}")
-            raise SchemaError(f"Unexpected error applying schema V4 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V4] Unexpected error during schema V4 application: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error applying schema V4 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v4_to_v5(self, conn: sqlite3.Connection):
         """
@@ -2958,25 +3088,38 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 5 in db_schema_version.
         """
-        logger.info(f"Migrating schema from V4 to V5 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V4 to V5 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             # Execute the migration script
             conn.executescript(self._MIGRATE_V4_TO_V5_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V4→V5] Migration script executed.")
-            
+
             # Verify the migration was successful
             final_version = self._get_db_version(conn)
             if final_version != 5:
                 raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V4→V5] Migration version check failed. Expected 5, got: {final_version}")
-            
-            logger.info(f"[{self._SCHEMA_NAME} V4→V5] Migration completed successfully for DB: {self.db_path_str}.")
+                    f"[{self._SCHEMA_NAME} V4→V5] Migration version check failed. Expected 5, got: {final_version}"
+                )
+
+            logger.info(
+                f"[{self._SCHEMA_NAME} V4→V5] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V4→V5] Migration failed: {e}")
-            raise SchemaError(f"Migration from V4 to V5 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V4→V5] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V4 to V5 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V4→V5] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V4 to V5 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V4→V5] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V4 to V5 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v5_to_v6(self, conn: sqlite3.Connection):
         """
@@ -2993,25 +3136,38 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 6 in db_schema_version.
         """
-        logger.info(f"Migrating schema from V5 to V6 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V5 to V6 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             # Execute the migration script
             conn.executescript(self._MIGRATE_V5_TO_V6_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V5→V6] Migration script executed.")
-            
+
             # Verify the migration was successful
             final_version = self._get_db_version(conn)
             if final_version != 6:
                 raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V5→V6] Migration version check failed. Expected 6, got: {final_version}")
-            
-            logger.info(f"[{self._SCHEMA_NAME} V5→V6] Migration completed successfully for DB: {self.db_path_str}.")
+                    f"[{self._SCHEMA_NAME} V5→V6] Migration version check failed. Expected 6, got: {final_version}"
+                )
+
+            logger.info(
+                f"[{self._SCHEMA_NAME} V5→V6] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V5→V6] Migration failed: {e}")
-            raise SchemaError(f"Migration from V5 to V6 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V5→V6] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V5 to V6 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V5→V6] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V5 to V6 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V5→V6] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V5 to V6 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v6_to_v7(self, conn: sqlite3.Connection):
         """
@@ -3028,25 +3184,38 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 7 in db_schema_version.
         """
-        logger.info(f"Migrating schema from V6 to V7 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V6 to V7 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             # Execute the migration script
             conn.executescript(self._MIGRATE_V6_TO_V7_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V6→V7] Migration script executed.")
-            
+
             # Verify the migration was successful
             final_version = self._get_db_version(conn)
             if final_version != 7:
                 raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V6→V7] Migration version check failed. Expected 7, got: {final_version}")
-            
-            logger.info(f"[{self._SCHEMA_NAME} V6→V7] Migration completed successfully for DB: {self.db_path_str}.")
+                    f"[{self._SCHEMA_NAME} V6→V7] Migration version check failed. Expected 7, got: {final_version}"
+                )
+
+            logger.info(
+                f"[{self._SCHEMA_NAME} V6→V7] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V6→V7] Migration failed: {e}")
-            raise SchemaError(f"Migration from V6 to V7 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V6→V7] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V6 to V7 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V6→V7] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V6 to V7 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V6→V7] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V6 to V7 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v8_to_v9(self, conn: sqlite3.Connection):
         """
@@ -3063,25 +3232,38 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 9 in db_schema_version.
         """
-        logger.info(f"Migrating schema from V8 to V9 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V8 to V9 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             # Execute the migration script
             conn.executescript(self._MIGRATE_V8_TO_V9_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V8→V9] Migration script executed.")
-            
+
             # Verify the migration was successful
             final_version = self._get_db_version(conn)
             if final_version != 9:
                 raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V8→V9] Migration version check failed. Expected 9, got: {final_version}")
-            
-            logger.info(f"[{self._SCHEMA_NAME} V8→V9] Migration completed successfully for DB: {self.db_path_str}.")
+                    f"[{self._SCHEMA_NAME} V8→V9] Migration version check failed. Expected 9, got: {final_version}"
+                )
+
+            logger.info(
+                f"[{self._SCHEMA_NAME} V8→V9] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V8→V9] Migration failed: {e}")
-            raise SchemaError(f"Migration from V8 to V9 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V8→V9] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V8 to V9 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V8→V9] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V8 to V9 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V8→V9] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V8 to V9 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v9_to_v10(self, conn: sqlite3.Connection):
         """
@@ -3098,31 +3280,44 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 10 in db_schema_version.
         """
-        logger.info(f"Migrating schema from V9 to V10 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V9 to V10 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             # Execute the migration script
             conn.executescript(self._MIGRATE_V9_TO_V10_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V9→V10] Migration script executed.")
-            
+
             # Verify the migration was successful
             final_version = self._get_db_version(conn)
             if final_version != 10:
                 raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V9→V10] Migration version check failed. Expected 10, got: {final_version}")
-            
-            logger.info(f"[{self._SCHEMA_NAME} V9→V10] Migration completed successfully for DB: {self.db_path_str}.")
+                    f"[{self._SCHEMA_NAME} V9→V10] Migration version check failed. Expected 10, got: {final_version}"
+                )
+
+            logger.info(
+                f"[{self._SCHEMA_NAME} V9→V10] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V9→V10] Migration failed: {e}")
-            raise SchemaError(f"Migration from V9 to V10 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V9→V10] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V9 to V10 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V9→V10] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V9 to V10 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V9→V10] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V9 to V10 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v10_to_v11(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 10 to version 11.
 
-        This migration adds study-related tables for learning paths, flashcards, 
+        This migration adds study-related tables for learning paths, flashcards,
         mindmaps, and study session tracking.
 
         Args:
@@ -3133,25 +3328,38 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 11 in db_schema_version.
         """
-        logger.info(f"Migrating schema from V10 to V11 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V10 to V11 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             # Execute the migration script
             conn.executescript(self._MIGRATE_V10_TO_V11_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V10→V11] Migration script executed.")
-            
+
             # Verify the migration was successful
             final_version = self._get_db_version(conn)
             if final_version != 11:
                 raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V10→V11] Migration version check failed. Expected 11, got: {final_version}")
-            
-            logger.info(f"[{self._SCHEMA_NAME} V10→V11] Migration completed successfully for DB: {self.db_path_str}.")
+                    f"[{self._SCHEMA_NAME} V10→V11] Migration version check failed. Expected 11, got: {final_version}"
+                )
+
+            logger.info(
+                f"[{self._SCHEMA_NAME} V10→V11] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V10→V11] Migration failed: {e}")
-            raise SchemaError(f"Migration from V10 to V11 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V10→V11] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V10 to V11 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V10→V11] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V10 to V11 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V10→V11] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V10 to V11 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v11_to_v12(self, conn: sqlite3.Connection):
         """
@@ -3168,25 +3376,38 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 12 in db_schema_version.
         """
-        logger.info(f"Migrating schema from V11 to V12 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V11 to V12 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             # Execute the migration script
             conn.executescript(self._MIGRATE_V11_TO_V12_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V11→V12] Migration script executed.")
-            
+
             # Verify the migration was successful
             final_version = self._get_db_version(conn)
             if final_version != 12:
                 raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V11→V12] Migration version check failed. Expected 12, got: {final_version}")
-            
-            logger.info(f"[{self._SCHEMA_NAME} V11→V12] Migration completed successfully for DB: {self.db_path_str}.")
+                    f"[{self._SCHEMA_NAME} V11→V12] Migration version check failed. Expected 12, got: {final_version}"
+                )
+
+            logger.info(
+                f"[{self._SCHEMA_NAME} V11→V12] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V11→V12] Migration failed: {e}")
-            raise SchemaError(f"Migration from V11 to V12 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V11→V12] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V11 to V12 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V11→V12] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V11 to V12 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V11→V12] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V11 to V12 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v12_to_v13(self, conn: sqlite3.Connection):
         """
@@ -3195,7 +3416,9 @@ UPDATE db_schema_version
         This migration adds conversation metadata fields needed for local/server
         conversation parity and backfills legacy rows with safe defaults.
         """
-        logger.info(f"Migrating schema from V12 to V13 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V12 to V13 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             conn.executescript(self._MIGRATE_V12_TO_V13_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V12→V13] Migration script executed.")
@@ -3206,13 +3429,23 @@ UPDATE db_schema_version
                     f"[{self._SCHEMA_NAME} V12→V13] Migration version check failed. Expected 13, got: {final_version}"
                 )
 
-            logger.info(f"[{self._SCHEMA_NAME} V12→V13] Migration completed successfully for DB: {self.db_path_str}.")
+            logger.info(
+                f"[{self._SCHEMA_NAME} V12→V13] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V12→V13] Migration failed: {e}")
-            raise SchemaError(f"Migration from V12 to V13 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V12→V13] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V12 to V13 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V12→V13] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V12 to V13 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V12→V13] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V12 to V13 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v13_to_v14(self, conn: sqlite3.Connection):
         """
@@ -3220,7 +3453,9 @@ UPDATE db_schema_version
 
         This migration adds runtime/discovery metadata fields and backfills legacy rows with safe defaults.
         """
-        logger.info(f"Migrating schema from V13 to V14 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V13 to V14 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             conn.executescript(self._MIGRATE_V13_TO_V14_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V13→V14] Migration script executed.")
@@ -3231,13 +3466,23 @@ UPDATE db_schema_version
                     f"[{self._SCHEMA_NAME} V13→V14] Migration version check failed. Expected 14, got: {final_version}"
                 )
 
-            logger.info(f"[{self._SCHEMA_NAME} V13→V14] Migration completed successfully for DB: {self.db_path_str}.")
+            logger.info(
+                f"[{self._SCHEMA_NAME} V13→V14] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V13→V14] Migration failed: {e}")
-            raise SchemaError(f"Migration from V13 to V14 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V13→V14] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V13 to V14 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V13→V14] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V13 to V14 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V13→V14] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V13 to V14 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v14_to_v15(self, conn: sqlite3.Connection):
         """
@@ -3245,7 +3490,9 @@ UPDATE db_schema_version
 
         This migration adds local quiz parity tables for quizzes, questions, and attempts.
         """
-        logger.info(f"Migrating schema from V14 to V15 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V14 to V15 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             conn.executescript(self._MIGRATE_V14_TO_V15_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V14→V15] Migration script executed.")
@@ -3256,13 +3503,23 @@ UPDATE db_schema_version
                     f"[{self._SCHEMA_NAME} V14→V15] Migration version check failed. Expected 15, got: {final_version}"
                 )
 
-            logger.info(f"[{self._SCHEMA_NAME} V14→V15] Migration completed successfully for DB: {self.db_path_str}.")
+            logger.info(
+                f"[{self._SCHEMA_NAME} V14→V15] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V14→V15] Migration failed: {e}")
-            raise SchemaError(f"Migration from V14 to V15 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V14→V15] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V14 to V15 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V14→V15] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V14 to V15 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V14→V15] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V14 to V15 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v15_to_v16(self, conn: sqlite3.Connection):
         """
@@ -3271,7 +3528,9 @@ UPDATE db_schema_version
         This migration repairs flashcard FTS5 triggers and rebuilds the local
         flashcard FTS index so multi-token flashcard updates remain searchable.
         """
-        logger.info(f"Migrating schema from V15 to V16 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V15 to V16 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             existing_flashcard_tables = {
                 row[0]
@@ -3307,7 +3566,9 @@ UPDATE db_schema_version
                         """
                     )
                 conn.executescript(self._MIGRATE_V15_TO_V16_SQL)
-                logger.debug(f"[{self._SCHEMA_NAME} V15→V16] Migration script executed.")
+                logger.debug(
+                    f"[{self._SCHEMA_NAME} V15→V16] Migration script executed."
+                )
 
             final_version = self._get_db_version(conn)
             if final_version != 16:
@@ -3315,13 +3576,23 @@ UPDATE db_schema_version
                     f"[{self._SCHEMA_NAME} V15→V16] Migration version check failed. Expected 16, got: {final_version}"
                 )
 
-            logger.info(f"[{self._SCHEMA_NAME} V15→V16] Migration completed successfully for DB: {self.db_path_str}.")
+            logger.info(
+                f"[{self._SCHEMA_NAME} V15→V16] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V15→V16] Migration failed: {e}")
-            raise SchemaError(f"Migration from V15 to V16 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V15→V16] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V15 to V16 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V15→V16] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V15 to V16 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V15→V16] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V15 to V16 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v16_to_v17(self, conn: sqlite3.Connection):
         """
@@ -3330,7 +3601,9 @@ UPDATE db_schema_version
         This migration adds durable local-only conversation marks without adding
         sync triggers or changing normalized conversation metadata.
         """
-        logger.info(f"Migrating schema from V16 to V17 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V16 to V17 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             conn.executescript(self._MIGRATE_V16_TO_V17_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V16→V17] Migration script executed.")
@@ -3341,13 +3614,23 @@ UPDATE db_schema_version
                     f"[{self._SCHEMA_NAME} V16→V17] Migration version check failed. Expected 17, got: {final_version}"
                 )
 
-            logger.info(f"[{self._SCHEMA_NAME} V16→V17] Migration completed successfully for DB: {self.db_path_str}.")
+            logger.info(
+                f"[{self._SCHEMA_NAME} V16→V17] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V16→V17] Migration failed: {e}")
-            raise SchemaError(f"Migration from V16 to V17 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V16→V17] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V16 to V17 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V16→V17] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V16 to V17 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V16→V17] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V16 to V17 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v17_to_v18(self, conn: sqlite3.Connection):
         """
@@ -3358,7 +3641,9 @@ UPDATE db_schema_version
         feature, and redefines the ``conversations_sync_*`` triggers so edits
         to the new column are reflected in ``sync_log``.
         """
-        logger.info(f"Migrating schema from V17 to V18 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V17 to V18 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             conn.executescript(self._MIGRATE_V17_TO_V18_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V17→V18] Migration script executed.")
@@ -3369,13 +3654,23 @@ UPDATE db_schema_version
                     f"[{self._SCHEMA_NAME} V17→V18] Migration version check failed. Expected 18, got: {final_version}"
                 )
 
-            logger.info(f"[{self._SCHEMA_NAME} V17→V18] Migration completed successfully for DB: {self.db_path_str}.")
+            logger.info(
+                f"[{self._SCHEMA_NAME} V17→V18] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V17→V18] Migration failed: {e}")
-            raise SchemaError(f"Migration from V17 to V18 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V17→V18] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V17 to V18 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V17→V18] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V17 to V18 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V17→V18] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V17 to V18 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v19_to_v20(self, conn: sqlite3.Connection):
         """
@@ -3386,12 +3681,17 @@ UPDATE db_schema_version
         (e.g., active_dictionaries), and redefines the ``conversations_sync_*``
         triggers so edits to the new column are reflected in ``sync_log``.
         """
-        logger.info(f"Migrating schema from V19 to V20 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V19 to V20 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             # Idempotent column add: SQLite has no ``ADD COLUMN IF NOT EXISTS``, so
             # skip the ALTER when a replayed/partial migration already left the
             # column in place (mirrors the v18->v19 ``CREATE TABLE IF NOT EXISTS``).
-            existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+            existing_columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+            }
             if "metadata" not in existing_columns:
                 conn.execute("ALTER TABLE conversations ADD COLUMN metadata TEXT")
             conn.executescript(self._MIGRATE_V19_TO_V20_SQL)
@@ -3403,13 +3703,23 @@ UPDATE db_schema_version
                     f"[{self._SCHEMA_NAME} V19→V20] Migration version check failed. Expected 20, got: {final_version}"
                 )
 
-            logger.info(f"[{self._SCHEMA_NAME} V19→V20] Migration completed successfully for DB: {self.db_path_str}.")
+            logger.info(
+                f"[{self._SCHEMA_NAME} V19→V20] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V19→V20] Migration failed: {e}")
-            raise SchemaError(f"Migration from V19 to V20 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V19→V20] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V19 to V20 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V19→V20] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V19 to V20 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V19→V20] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V19 to V20 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v20_to_v21(self, conn: sqlite3.Connection):
         """
@@ -3420,16 +3730,23 @@ UPDATE db_schema_version
         the ``world_book_entries_sync_*`` triggers so edits to the new
         column are reflected in ``sync_log``.
         """
-        logger.info(f"Migrating schema from V20 to V21 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V20 to V21 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             # Idempotent column add: SQLite has no ``ADD COLUMN IF NOT EXISTS``, so
             # skip the ALTER when a replayed/partial migration already left the
             # column in place (mirrors the v19->v20 ``metadata`` column guard).
             existing_columns = {
-                row[1] for row in conn.execute("PRAGMA table_info(world_book_entries)").fetchall()
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(world_book_entries)"
+                ).fetchall()
             }
             if "priority" not in existing_columns:
-                conn.execute("ALTER TABLE world_book_entries ADD COLUMN priority INTEGER DEFAULT 0")
+                conn.execute(
+                    "ALTER TABLE world_book_entries ADD COLUMN priority INTEGER DEFAULT 0"
+                )
             conn.executescript(self._MIGRATE_V20_TO_V21_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V20→V21] Migration script executed.")
 
@@ -3439,13 +3756,23 @@ UPDATE db_schema_version
                     f"[{self._SCHEMA_NAME} V20→V21] Migration version check failed. Expected 21, got: {final_version}"
                 )
 
-            logger.info(f"[{self._SCHEMA_NAME} V20→V21] Migration completed successfully for DB: {self.db_path_str}.")
+            logger.info(
+                f"[{self._SCHEMA_NAME} V20→V21] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V20→V21] Migration failed: {e}")
-            raise SchemaError(f"Migration from V20 to V21 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V20→V21] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V20 to V21 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V20→V21] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V20 to V21 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V20→V21] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V20 to V21 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v21_to_v22(self, conn: sqlite3.Connection):
         """Migrate schema V21→V22: add ``regex`` to ``world_book_entries`` and
@@ -3482,7 +3809,9 @@ UPDATE db_schema_version
         triggers are added here; sync wiring is tracked separately
         (TASK-220).
         """
-        logger.info(f"Migrating schema from V18 to V19 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V18 to V19 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             conn.executescript(self._MIGRATE_V18_TO_V19_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V18→V19] Migration script executed.")
@@ -3493,13 +3822,23 @@ UPDATE db_schema_version
                     f"[{self._SCHEMA_NAME} V18→V19] Migration version check failed. Expected 19, got: {final_version}"
                 )
 
-            logger.info(f"[{self._SCHEMA_NAME} V18→V19] Migration completed successfully for DB: {self.db_path_str}.")
+            logger.info(
+                f"[{self._SCHEMA_NAME} V18→V19] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V18→V19] Migration failed: {e}")
-            raise SchemaError(f"Migration from V18 to V19 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V18→V19] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V18 to V19 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V18→V19] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V18 to V19 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V18→V19] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V18 to V19 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
         """
@@ -3516,25 +3855,38 @@ UPDATE db_schema_version
             SchemaError: If the migration fails or the version is not correctly
                          updated to 8 in db_schema_version.
         """
-        logger.info(f"Migrating schema from V7 to V8 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        logger.info(
+            f"Migrating schema from V7 to V8 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
         try:
             # Execute the migration script
             conn.executescript(self._MIGRATE_V7_TO_V8_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V7→V8] Migration script executed.")
-            
+
             # Verify the migration was successful
             final_version = self._get_db_version(conn)
             if final_version != 8:
                 raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V7→V8] Migration version check failed. Expected 8, got: {final_version}")
-            
-            logger.info(f"[{self._SCHEMA_NAME} V7→V8] Migration completed successfully for DB: {self.db_path_str}.")
+                    f"[{self._SCHEMA_NAME} V7→V8] Migration version check failed. Expected 8, got: {final_version}"
+                )
+
+            logger.info(
+                f"[{self._SCHEMA_NAME} V7→V8] Migration completed successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V7→V8] Migration failed: {e}")
-            raise SchemaError(f"Migration from V7 to V8 failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V7→V8] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V7 to V8 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V7→V8] Unexpected error during migration: {e}")
-            raise SchemaError(f"Unexpected error migrating from V7 to V8 for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V7→V8] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V7 to V8 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     def _initialize_schema(self):
         """
@@ -3558,19 +3910,27 @@ UPDATE db_schema_version
         conn = self.get_connection()
         current_initial_version = 0
         try:
-            with TransactionContextManager(self): # Ensures atomicity for schema changes
+            with TransactionContextManager(
+                self
+            ):  # Ensures atomicity for schema changes
                 current_db_version = self._get_db_version(conn)
-                current_initial_version = current_db_version # Store initial for messages
+                current_initial_version = (
+                    current_db_version  # Store initial for messages
+                )
                 target_version = self._CURRENT_SCHEMA_VERSION
                 logger.info(
-                    f"Checking DB schema '{self._SCHEMA_NAME}'. Current version: {current_db_version}. Code supports: {target_version}")
+                    f"Checking DB schema '{self._SCHEMA_NAME}'. Current version: {current_db_version}. Code supports: {target_version}"
+                )
 
                 if current_db_version == target_version:
-                    logger.debug(f"Database schema '{self._SCHEMA_NAME}' is up to date (Version {target_version}).")
+                    logger.debug(
+                        f"Database schema '{self._SCHEMA_NAME}' is up to date (Version {target_version})."
+                    )
                     return
                 if current_db_version > target_version:
                     raise SchemaError(
-                        f"Database schema '{self._SCHEMA_NAME}' version ({current_db_version}) is newer than supported by code ({target_version}). Aborting.")
+                        f"Database schema '{self._SCHEMA_NAME}' version ({current_db_version}) is newer than supported by code ({target_version}). Aborting."
+                    )
 
                 migration_steps = {
                     4: self._migrate_from_v4_to_v5,
@@ -3610,16 +3970,26 @@ UPDATE db_schema_version
                 final_version_check = self._get_db_version(conn)
                 if final_version_check != target_version:
                     raise SchemaError(
-                        f"Schema migration process completed, but final DB version is {final_version_check}, expected {target_version}. Manual check required.")
+                        f"Schema migration process completed, but final DB version is {final_version_check}, expected {target_version}. Manual check required."
+                    )
                 logger.info(
-                    f"Database schema '{self._SCHEMA_NAME}' successfully initialized/migrated to version {final_version_check}.")
+                    f"Database schema '{self._SCHEMA_NAME}' successfully initialized/migrated to version {final_version_check}."
+                )
 
         except (SchemaError, sqlite3.Error) as e:
-            logger.opt(exception=True).error(f"Schema initialization/migration failed for '{self._SCHEMA_NAME}': {e}")
-            raise SchemaError(f"Schema initialization/migration for '{self._SCHEMA_NAME}' failed: {e}") from e
+            logger.opt(exception=True).error(
+                f"Schema initialization/migration failed for '{self._SCHEMA_NAME}': {e}"
+            )
+            raise SchemaError(
+                f"Schema initialization/migration for '{self._SCHEMA_NAME}' failed: {e}"
+            ) from e
         except Exception as e:
-            logger.opt(exception=True).error(f"Unexpected error during schema initialization for '{self._SCHEMA_NAME}': {e}")
-            raise CharactersRAGDBError(f"Unexpected error applying schema for '{self._SCHEMA_NAME}': {e}") from e
+            logger.opt(exception=True).error(
+                f"Unexpected error during schema initialization for '{self._SCHEMA_NAME}': {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Unexpected error applying schema for '{self._SCHEMA_NAME}': {e}"
+            ) from e
 
     # --- Internal Helpers ---
     def _get_current_utc_timestamp_iso(self) -> str:
@@ -3631,7 +4001,11 @@ UPDATE db_schema_version
         Returns:
             A string representing the current UTC timestamp with millisecond precision.
         """
-        return datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+        return (
+            datetime.now(timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z")
+        )
 
     def _generate_uuid(self) -> str:
         """
@@ -3642,8 +4016,9 @@ UPDATE db_schema_version
         """
         return str(uuid.uuid4())
 
-    def _get_current_db_version(self, conn: sqlite3.Connection, table_name: str, pk_col_name: str,
-                                pk_value: Any) -> int:
+    def _get_current_db_version(
+        self, conn: sqlite3.Connection, table_name: str, pk_col_name: str, pk_value: Any
+    ) -> int:
         """
         Fetches the current version of an active (not soft-deleted) record.
 
@@ -3663,25 +4038,42 @@ UPDATE db_schema_version
                            set in the exception) or if the record is found but is soft-deleted.
         """
         # Validate SQL identifiers to prevent injection
-        if not validate_table_name(table_name, 'chachanotes'):
+        if not validate_table_name(table_name, "chachanotes"):
             raise ValueError(f"Invalid table name: {table_name}")
         if not validate_column_name(pk_col_name, table_name):
             raise ValueError(f"Invalid column name: {pk_col_name}")
-            
-        cursor = conn.execute(f"SELECT version, deleted FROM {table_name} WHERE {pk_col_name} = ?", (pk_value,))
+
+        cursor = conn.execute(
+            f"SELECT version, deleted FROM {table_name} WHERE {pk_col_name} = ?",
+            (pk_value,),
+        )
         row = cursor.fetchone()
 
         if not row:
-            logger.warning(f"Record not found in {table_name} with {pk_col_name} = {pk_value} for version check.")
-            raise ConflictError(f"Record not found in {table_name}.", entity=table_name, entity_id=pk_value)
+            logger.warning(
+                f"Record not found in {table_name} with {pk_col_name} = {pk_value} for version check."
+            )
+            raise ConflictError(
+                f"Record not found in {table_name}.",
+                entity=table_name,
+                entity_id=pk_value,
+            )
 
-        if row['deleted']:
-            logger.warning(f"Record in {table_name} with {pk_col_name} = {pk_value} is soft-deleted.")
-            raise ConflictError(f"Record is soft-deleted in {table_name}.", entity=table_name, entity_id=pk_value)
+        if row["deleted"]:
+            logger.warning(
+                f"Record in {table_name} with {pk_col_name} = {pk_value} is soft-deleted."
+            )
+            raise ConflictError(
+                f"Record is soft-deleted in {table_name}.",
+                entity=table_name,
+                entity_id=pk_value,
+            )
 
-        return row['version']
+        return row["version"]
 
-    def _ensure_json_string(self, data: Optional[Union[List, Dict, Set]]) -> Optional[str]:
+    def _ensure_json_string(
+        self, data: Optional[Union[List, Dict, Set]]
+    ) -> Optional[str]:
         """
         Serializes Python list, dict, or set to a JSON string.
 
@@ -3699,7 +4091,9 @@ UPDATE db_schema_version
             data = list(data)  # Convert set to list before dumping
         return json.dumps(data)
 
-    def _deserialize_row_fields(self, row: sqlite3.Row, json_fields: List[str]) -> Optional[Dict[str, Any]]:
+    def _deserialize_row_fields(
+        self, row: sqlite3.Row, json_fields: List[str]
+    ) -> Optional[Dict[str, Any]]:
         """
         Converts a sqlite3.Row object to a dictionary, deserializing specified JSON fields.
 
@@ -3724,17 +4118,22 @@ UPDATE db_schema_version
                 try:
                     item[field] = json.loads(item[field])
                 except json.JSONDecodeError:
-                    pk_val = item.get('id') or item.get('uuid', 'N/A')  # Try to get an identifier
+                    pk_val = item.get("id") or item.get(
+                        "uuid", "N/A"
+                    )  # Try to get an identifier
                     logger.warning(
-                        f"Failed to decode JSON for field '{field}' in row (ID: {pk_val}). Value: '{item[field][:100]}...'")
+                        f"Failed to decode JSON for field '{field}' in row (ID: {pk_val}). Value: '{item[field][:100]}...'"
+                    )
                     item[field] = None  # Or sensible default
         return item
 
-    _CHARACTER_CARD_JSON_FIELDS = ['alternate_greetings', 'tags', 'extensions']
+    _CHARACTER_CARD_JSON_FIELDS = ["alternate_greetings", "tags", "extensions"]
 
     # --- Character Card Methods ---
     @staticmethod
-    def _ensure_json_string_from_mixed(data: Optional[Union[List, Dict, Set, str]]) -> Optional[str]:
+    def _ensure_json_string_from_mixed(
+        data: Optional[Union[List, Dict, Set, str]],
+    ) -> Optional[str]:
         """
         Serializes Python list, dict, or set to a JSON string, or passes through an existing string.
 
@@ -3755,12 +4154,16 @@ UPDATE db_schema_version
         """
         if data is None:
             return None
-        if isinstance(data, str):  # If it's already a string, assume it's valid JSON or pass it through
+        if isinstance(
+            data, str
+        ):  # If it's already a string, assume it's valid JSON or pass it through
             try:
                 json.loads(data)  # Validate if it's a JSON string
                 return data
             except json.JSONDecodeError:
-                logger.debug(f"Input string is not valid JSON, passing through: '{data[:100]}...'")
+                logger.debug(
+                    f"Input string is not valid JSON, passing through: '{data[:100]}...'"
+                )
                 return data
         if isinstance(data, Set):
             new_data = list(data)
@@ -3796,7 +4199,7 @@ UPDATE db_schema_version
             ConflictError: If a character card with the same 'name' already exists.
             CharactersRAGDBError: For other database-related errors during insertion.
         """
-        required_fields = ['name']
+        required_fields = ["name"]
         for field in required_fields:
             if field not in card_data or not card_data[field]:
                 raise InputError(f"Required field '{field}' is missing or empty.")
@@ -3810,9 +4213,11 @@ UPDATE db_schema_version
                 return field_value
             return self._ensure_json_string(field_value)
 
-        alt_greetings_json = get_json_field_as_string(card_data.get('alternate_greetings'))
-        tags_json = get_json_field_as_string(card_data.get('tags'))
-        extensions_json = get_json_field_as_string(card_data.get('extensions'))
+        alt_greetings_json = get_json_field_as_string(
+            card_data.get("alternate_greetings")
+        )
+        tags_json = get_json_field_as_string(card_data.get("tags"))
+        extensions_json = get_json_field_as_string(card_data.get("extensions"))
 
         query = """
                 INSERT INTO character_cards (name, description, personality, scenario, image, post_history_instructions, \
@@ -3820,69 +4225,103 @@ UPDATE db_schema_version
                                              alternate_greetings, tags, creator, character_version, extensions, \
                                              created_at, last_modified, client_id, version, deleted) \
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
-                """ # created_at added
+                """  # created_at added
         params = (
-            card_data['name'], card_data.get('description'), card_data.get('personality'),
-            card_data.get('scenario'), card_data.get('image'), card_data.get('post_history_instructions'),
-            card_data.get('first_message'), card_data.get('message_example'), card_data.get('creator_notes'),
-            card_data.get('system_prompt'), alt_greetings_json, tags_json,
-            card_data.get('creator'), card_data.get('character_version'), extensions_json,
-            now, now, self.client_id, # created_at, last_modified, client_id
+            card_data["name"],
+            card_data.get("description"),
+            card_data.get("personality"),
+            card_data.get("scenario"),
+            card_data.get("image"),
+            card_data.get("post_history_instructions"),
+            card_data.get("first_message"),
+            card_data.get("message_example"),
+            card_data.get("creator_notes"),
+            card_data.get("system_prompt"),
+            alt_greetings_json,
+            tags_json,
+            card_data.get("creator"),
+            card_data.get("character_version"),
+            extensions_json,
+            now,
+            now,
+            self.client_id,  # created_at, last_modified, client_id
         )
-        
+
         start_time = time.time()
         try:
             with self.transaction() as conn:
-                cursor = conn.execute(query, params)  # execute_query not needed due to conn from context
+                cursor = conn.execute(
+                    query, params
+                )  # execute_query not needed due to conn from context
                 char_id = cursor.lastrowid
-                logger.info(f"Added character card '{card_data['name']}' with ID: {char_id}.")
-                
+                logger.info(
+                    f"Added character card '{card_data['name']}' with ID: {char_id}."
+                )
+
                 # Log success metrics
                 duration = time.time() - start_time
-                log_histogram("chachanotes_db_operation_duration", duration, labels={
-                    "operation": "add_character_card",
-                    "status": "success"
-                })
-                log_counter("chachanotes_db_operation_count", labels={
-                    "operation": "add_character_card",
-                    "status": "success"
-                })
-                
+                log_histogram(
+                    "chachanotes_db_operation_duration",
+                    duration,
+                    labels={"operation": "add_character_card", "status": "success"},
+                )
+                log_counter(
+                    "chachanotes_db_operation_count",
+                    labels={"operation": "add_character_card", "status": "success"},
+                )
+
                 return char_id
         except sqlite3.IntegrityError as e:
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_operation_duration", duration, labels={
-                "operation": "add_character_card",
-                "status": "error"
-            })
-            log_counter("chachanotes_db_operation_count", labels={
-                "operation": "add_character_card",
-                "status": "error",
-                "error_type": "integrity_error"
-            })
-            
+            log_histogram(
+                "chachanotes_db_operation_duration",
+                duration,
+                labels={"operation": "add_character_card", "status": "error"},
+            )
+            log_counter(
+                "chachanotes_db_operation_count",
+                labels={
+                    "operation": "add_character_card",
+                    "status": "error",
+                    "error_type": "integrity_error",
+                },
+            )
+
             if "UNIQUE constraint failed: character_cards.name" in str(e):
-                logger.warning(f"Character card with name '{card_data['name']}' already exists.")
-                raise ConflictError(f"Character card with name '{card_data['name']}' already exists.",
-                                    entity="character_cards", entity_id=card_data['name']) from e
-            raise CharactersRAGDBError(f"Database integrity error adding character card: {e}") from e
+                logger.warning(
+                    f"Character card with name '{card_data['name']}' already exists."
+                )
+                raise ConflictError(
+                    f"Character card with name '{card_data['name']}' already exists.",
+                    entity="character_cards",
+                    entity_id=card_data["name"],
+                ) from e
+            raise CharactersRAGDBError(
+                f"Database integrity error adding character card: {e}"
+            ) from e
         except CharactersRAGDBError as e:
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_operation_duration", duration, labels={
-                "operation": "add_character_card",
-                "status": "error"
-            })
-            log_counter("chachanotes_db_operation_count", labels={
-                "operation": "add_character_card",
-                "status": "error",
-                "error_type": "database_error"
-            })
-            
-            logger.error(f"Database error adding character card '{card_data.get('name')}': {e}")
+            log_histogram(
+                "chachanotes_db_operation_duration",
+                duration,
+                labels={"operation": "add_character_card", "status": "error"},
+            )
+            log_counter(
+                "chachanotes_db_operation_count",
+                labels={
+                    "operation": "add_character_card",
+                    "status": "error",
+                    "error_type": "database_error",
+                },
+            )
+
+            logger.error(
+                f"Database error adding character card '{card_data.get('name')}': {e}"
+            )
             raise
-        return None # Should not be reached
+        return None  # Should not be reached
 
     def get_character_card_by_id(self, character_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -3908,34 +4347,47 @@ UPDATE db_schema_version
             cursor = self.execute_query(query, (character_id,))
             row = cursor.fetchone()
             result = self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS)
-            
+
             # Log metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
-                "operation": "get_by_id",
-                "found": "true" if result else "false"
-            })
-            log_counter("chachanotes_db_character_card_operation_count", labels={
-                "operation": "get_by_id",
-                "status": "success",
-                "found": "true" if result else "false"
-            })
-            
+            log_histogram(
+                "chachanotes_db_character_card_operation_duration",
+                duration,
+                labels={
+                    "operation": "get_by_id",
+                    "found": "true" if result else "false",
+                },
+            )
+            log_counter(
+                "chachanotes_db_character_card_operation_count",
+                labels={
+                    "operation": "get_by_id",
+                    "status": "success",
+                    "found": "true" if result else "false",
+                },
+            )
+
             return result
         except CharactersRAGDBError as e:
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
-                "operation": "get_by_id",
-                "found": "false"
-            })
-            log_counter("chachanotes_db_character_card_operation_count", labels={
-                "operation": "get_by_id",
-                "status": "error",
-                "error_type": "database_error"
-            })
-            
-            logger.error(f"Database error fetching character card ID {character_id}: {e}")
+            log_histogram(
+                "chachanotes_db_character_card_operation_duration",
+                duration,
+                labels={"operation": "get_by_id", "found": "false"},
+            )
+            log_counter(
+                "chachanotes_db_character_card_operation_count",
+                labels={
+                    "operation": "get_by_id",
+                    "status": "error",
+                    "error_type": "database_error",
+                },
+            )
+
+            logger.error(
+                f"Database error fetching character card ID {character_id}: {e}"
+            )
             raise
 
     def get_character_card_by_name(self, name: str) -> Optional[Dict[str, Any]]:
@@ -3962,37 +4414,52 @@ UPDATE db_schema_version
             cursor = self.execute_query(query, (name,))
             row = cursor.fetchone()
             result = self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS)
-            
+
             # Log metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
-                "operation": "get_by_name",
-                "found": "true" if result else "false"
-            })
-            log_counter("chachanotes_db_character_card_operation_count", labels={
-                "operation": "get_by_name",
-                "status": "success",
-                "found": "true" if result else "false"
-            })
-            
+            log_histogram(
+                "chachanotes_db_character_card_operation_duration",
+                duration,
+                labels={
+                    "operation": "get_by_name",
+                    "found": "true" if result else "false",
+                },
+            )
+            log_counter(
+                "chachanotes_db_character_card_operation_count",
+                labels={
+                    "operation": "get_by_name",
+                    "status": "success",
+                    "found": "true" if result else "false",
+                },
+            )
+
             return result
         except CharactersRAGDBError as e:
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
-                "operation": "get_by_name",
-                "found": "false"
-            })
-            log_counter("chachanotes_db_character_card_operation_count", labels={
-                "operation": "get_by_name",
-                "status": "error",
-                "error_type": "database_error"
-            })
-            
-            logger.error(f"Database error fetching character card by name '{name}': {e}")
+            log_histogram(
+                "chachanotes_db_character_card_operation_duration",
+                duration,
+                labels={"operation": "get_by_name", "found": "false"},
+            )
+            log_counter(
+                "chachanotes_db_character_card_operation_count",
+                labels={
+                    "operation": "get_by_name",
+                    "status": "error",
+                    "error_type": "database_error",
+                },
+            )
+
+            logger.error(
+                f"Database error fetching character card by name '{name}': {e}"
+            )
             raise
 
-    def list_character_cards(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    def list_character_cards(
+        self, limit: int = 100, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         """
         Lists character cards, ordered by name.
 
@@ -4015,38 +4482,52 @@ UPDATE db_schema_version
         try:
             cursor = self.execute_query(query, (limit, offset))
             rows = cursor.fetchall()
-            results = [self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS) for row in rows if row]
-            
+            results = [
+                self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS)
+                for row in rows
+                if row
+            ]
+
             # Log metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
-                "operation": "list",
-                "found": "true" if results else "false"
-            })
-            log_counter("chachanotes_db_character_card_operation_count", labels={
-                "operation": "list",
-                "status": "success",
-                "result_count": str(len(results))
-            })
-            
+            log_histogram(
+                "chachanotes_db_character_card_operation_duration",
+                duration,
+                labels={"operation": "list", "found": "true" if results else "false"},
+            )
+            log_counter(
+                "chachanotes_db_character_card_operation_count",
+                labels={
+                    "operation": "list",
+                    "status": "success",
+                    "result_count": str(len(results)),
+                },
+            )
+
             return results
         except CharactersRAGDBError as e:
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
-                "operation": "list",
-                "found": "false"
-            })
-            log_counter("chachanotes_db_character_card_operation_count", labels={
-                "operation": "list",
-                "status": "error",
-                "error_type": "database_error"
-            })
-            
+            log_histogram(
+                "chachanotes_db_character_card_operation_duration",
+                duration,
+                labels={"operation": "list", "found": "false"},
+            )
+            log_counter(
+                "chachanotes_db_character_card_operation_count",
+                labels={
+                    "operation": "list",
+                    "status": "error",
+                    "error_type": "database_error",
+                },
+            )
+
             logger.error(f"Database error listing character cards: {e}")
             raise
 
-    def update_character_card(self, character_id: int, card_data: Dict[str, Any], expected_version: int) -> Optional[bool]:
+    def update_character_card(
+        self, character_id: int, card_data: Dict[str, Any], expected_version: int
+    ) -> Optional[bool]:
         """
         Updates an existing character card using optimistic locking.
 
@@ -4085,17 +4566,20 @@ UPDATE db_schema_version
         """
         start_time = time.time()
         logger.debug(
-            f"Starting update_character_card for ID {character_id}, expected_version {expected_version} (SINGLE UPDATE STRATEGY)")
+            f"Starting update_character_card for ID {character_id}, expected_version {expected_version} (SINGLE UPDATE STRATEGY)"
+        )
 
         # If card_data is empty, treat as a no-op as per original behavior.
         # No version check, no transaction, no version bump.
         if not card_data:
-            logger.info(f"No data provided in card_data for character card update ID {character_id}. No-op.")
+            logger.info(
+                f"No data provided in card_data for character card update ID {character_id}. No-op."
+            )
             # Log metrics for no-op
-            log_counter("chachanotes_db_character_card_operation_count", labels={
-                "operation": "update",
-                "status": "no_op"
-            })
+            log_counter(
+                "chachanotes_db_character_card_operation_count",
+                labels={"operation": "update", "status": "no_op"},
+            )
             return True
 
         now = self._get_current_utc_timestamp_iso()
@@ -4105,15 +4589,18 @@ UPDATE db_schema_version
                 logger.debug(f"Transaction started. Connection object: {id(conn)}")
 
                 # Initial version check. This also confirms the record exists and is not deleted.
-                current_db_version_initial_check = self._get_current_db_version(conn, "character_cards", "id",
-                                                                                character_id)
+                current_db_version_initial_check = self._get_current_db_version(
+                    conn, "character_cards", "id", character_id
+                )
                 logger.debug(
-                    f"Initial DB version: {current_db_version_initial_check}, Client expected: {expected_version}")
+                    f"Initial DB version: {current_db_version_initial_check}, Client expected: {expected_version}"
+                )
 
                 if current_db_version_initial_check != expected_version:
                     raise ConflictError(
                         f"Update failed: version mismatch (db has {current_db_version_initial_check}, client expected {expected_version}) for character_cards ID {character_id}.",
-                        entity="character_cards", entity_id=character_id
+                        entity="character_cards",
+                        entity_id=character_id,
                     )
 
                 set_clauses_sql = []
@@ -4122,9 +4609,18 @@ UPDATE db_schema_version
 
                 # Define fields that can be directly updated and JSON fields
                 updatable_direct_fields = [
-                    "name", "description", "personality", "scenario", "image",
-                    "post_history_instructions", "first_message", "message_example",
-                    "creator_notes", "system_prompt", "creator", "character_version"
+                    "name",
+                    "description",
+                    "personality",
+                    "scenario",
+                    "image",
+                    "post_history_instructions",
+                    "first_message",
+                    "message_example",
+                    "creator_notes",
+                    "system_prompt",
+                    "creator",
+                    "character_version",
                 ]
                 # self._CHARACTER_CARD_JSON_FIELDS is already defined in your class
 
@@ -4137,11 +4633,19 @@ UPDATE db_schema_version
                         set_clauses_sql.append(f"{key} = ?")
                         params_for_set_clause.append(value)
                         fields_updated_log.append(key)
-                    elif key not in ['id', 'created_at', 'last_modified', 'version', 'client_id', 'deleted']:
+                    elif key not in [
+                        "id",
+                        "created_at",
+                        "last_modified",
+                        "version",
+                        "client_id",
+                        "deleted",
+                    ]:
                         # Log if a key in card_data is not recognized as updatable, but don't error.
                         # This matches the original sequential strategy's behavior of skipping unknown fields.
                         logger.warning(
-                            f"Skipping unknown or non-updatable field '{key}' in update_character_card payload.")
+                            f"Skipping unknown or non-updatable field '{key}' in update_character_card payload."
+                        )
 
                 # If expected_version check passed, we always update metadata (last_modified, version, client_id),
                 # effectively "touching" the record and bumping its version, even if fields_updated_log is empty
@@ -4149,7 +4653,9 @@ UPDATE db_schema_version
                 next_version_val = expected_version + 1
 
                 # Add metadata fields to be updated
-                set_clauses_sql.extend(["last_modified = ?", "version = ?", "client_id = ?"])
+                set_clauses_sql.extend(
+                    ["last_modified = ?", "version = ?", "client_id = ?"]
+                )
                 params_for_set_clause.extend([now, next_version_val, self.client_id])
 
                 # Construct the final query
@@ -4160,7 +4666,9 @@ UPDATE db_schema_version
                 where_params = [character_id, expected_version]
                 final_params = tuple(params_for_set_clause + where_params)
 
-                logger.debug(f"Executing SINGLE character update query: {final_update_query}")
+                logger.debug(
+                    f"Executing SINGLE character update query: {final_update_query}"
+                )
                 logger.debug(f"Params: {final_params}")
 
                 cursor = conn.execute(final_update_query, final_params)
@@ -4169,92 +4677,144 @@ UPDATE db_schema_version
                 if cursor.rowcount == 0:
                     # This could happen if a concurrent modification occurred between the initial version check and this UPDATE SQL.
                     # Re-check the record's state to provide a more specific error.
-                    check_again_cursor = conn.execute("SELECT version, deleted FROM character_cards WHERE id = ?",
-                                                      (character_id,))
+                    check_again_cursor = conn.execute(
+                        "SELECT version, deleted FROM character_cards WHERE id = ?",
+                        (character_id,),
+                    )
                     final_state = check_again_cursor.fetchone()
                     msg = f"Update for character_cards ID {character_id} (expected v{expected_version}) affected 0 rows."
                     if not final_state:
                         msg = f"Character card ID {character_id} disappeared before update completion (expected v{expected_version})."
-                    elif final_state['deleted']:
+                    elif final_state["deleted"]:
                         msg = f"Character card ID {character_id} was soft-deleted concurrently (expected v{expected_version} for update)."
-                    elif final_state[
-                        'version'] != expected_version:  # Version changed from what we expected for the WHERE clause
+                    elif (
+                        final_state["version"] != expected_version
+                    ):  # Version changed from what we expected for the WHERE clause
                         msg = f"Character card ID {character_id} version changed to {final_state['version']} concurrently (expected v{expected_version} for update's WHERE clause)."
                     else:  # This case implies the record was found with the correct version and not deleted, yet rowcount was 0. Unlikely.
                         msg = f"Update for character card ID {character_id} (expected v{expected_version}) affected 0 rows for an unknown reason after passing initial checks."
-                    raise ConflictError(msg, entity="character_cards", entity_id=character_id)
+                    raise ConflictError(
+                        msg, entity="character_cards", entity_id=character_id
+                    )
 
                 log_msg_fields_updated = f"Fields from payload processed: {fields_updated_log if fields_updated_log else 'None'}."
                 logger.info(
-                    f"Updated character card ID {character_id} (SINGLE UPDATE) from client-expected version {expected_version} to final DB version {next_version_val}. {log_msg_fields_updated}")
-                
+                    f"Updated character card ID {character_id} (SINGLE UPDATE) from client-expected version {expected_version} to final DB version {next_version_val}. {log_msg_fields_updated}"
+                )
+
                 # Log success metrics
                 duration = time.time() - start_time
-                log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
-                    "operation": "update",
-                    "fields_updated": str(len(fields_updated_log))
-                })
-                log_counter("chachanotes_db_character_card_operation_count", labels={
-                    "operation": "update",
-                    "status": "success",
-                    "fields_updated": str(len(fields_updated_log))
-                })
-                
+                log_histogram(
+                    "chachanotes_db_character_card_operation_duration",
+                    duration,
+                    labels={
+                        "operation": "update",
+                        "fields_updated": str(len(fields_updated_log)),
+                    },
+                )
+                log_counter(
+                    "chachanotes_db_character_card_operation_count",
+                    labels={
+                        "operation": "update",
+                        "status": "success",
+                        "fields_updated": str(len(fields_updated_log)),
+                    },
+                )
+
                 return True
 
-        except sqlite3.IntegrityError as e: # Catch unique constraint violation for name
+        except (
+            sqlite3.IntegrityError
+        ) as e:  # Catch unique constraint violation for name
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
-                "operation": "update",
-                "fields_updated": "0"
-            })
-            
+            log_histogram(
+                "chachanotes_db_character_card_operation_duration",
+                duration,
+                labels={"operation": "update", "fields_updated": "0"},
+            )
+
             if "UNIQUE constraint failed: character_cards.name" in str(e):
                 updated_name = card_data.get("name", "[name not in update_data]")
-                logger.warning(f"Update for character card ID {character_id} failed: name '{updated_name}' already exists.")
-                log_counter("chachanotes_db_character_card_operation_count", labels={
+                logger.warning(
+                    f"Update for character card ID {character_id} failed: name '{updated_name}' already exists."
+                )
+                log_counter(
+                    "chachanotes_db_character_card_operation_count",
+                    labels={
+                        "operation": "update",
+                        "status": "error",
+                        "error_type": "unique_constraint",
+                    },
+                )
+                raise ConflictError(
+                    f"Cannot update character card ID {character_id}: name '{updated_name}' already exists.",
+                    entity="character_cards",
+                    entity_id=updated_name,
+                ) from e  # Use name as entity_id for this specific conflict
+
+            log_counter(
+                "chachanotes_db_character_card_operation_count",
+                labels={
                     "operation": "update",
                     "status": "error",
-                    "error_type": "unique_constraint"
-                })
-                raise ConflictError(f"Cannot update character card ID {character_id}: name '{updated_name}' already exists.",
-                                    entity="character_cards", entity_id=updated_name) from e # Use name as entity_id for this specific conflict
-            
-            log_counter("chachanotes_db_character_card_operation_count", labels={
-                "operation": "update",
-                "status": "error",
-                "error_type": "integrity_error"
-            })
-            logger.opt(exception=True).critical(f"DATABASE IntegrityError during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}")
-            raise CharactersRAGDBError(f"Database integrity error during single update: {e}") from e
+                    "error_type": "integrity_error",
+                },
+            )
+            logger.opt(exception=True).critical(
+                f"DATABASE IntegrityError during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Database integrity error during single update: {e}"
+            ) from e
         except sqlite3.DatabaseError as e:
-            logger.opt(exception=True).critical(f"DATABASE ERROR during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}")
-            raise CharactersRAGDBError(f"Database error during single update: {e}") from e
-        except ConflictError:  # Re-raise ConflictErrors from _get_current_db_version or manual checks
+            logger.opt(exception=True).critical(
+                f"DATABASE ERROR during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Database error during single update: {e}"
+            ) from e
+        except (
+            ConflictError
+        ):  # Re-raise ConflictErrors from _get_current_db_version or manual checks
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
-                "operation": "update",
-                "fields_updated": "0"
-            })
-            log_counter("chachanotes_db_character_card_operation_count", labels={
-                "operation": "update",
-                "status": "error",
-                "error_type": "version_conflict"
-            })
-            
-            logger.warning(f"ConflictError during update_character_card for ID {character_id}.")  # exc_info=True if needed
+            log_histogram(
+                "chachanotes_db_character_card_operation_duration",
+                duration,
+                labels={"operation": "update", "fields_updated": "0"},
+            )
+            log_counter(
+                "chachanotes_db_character_card_operation_count",
+                labels={
+                    "operation": "update",
+                    "status": "error",
+                    "error_type": "version_conflict",
+                },
+            )
+
+            logger.warning(
+                f"ConflictError during update_character_card for ID {character_id}."
+            )  # exc_info=True if needed
             raise
-        except InputError:  # Should not happen if initial `if not card_data:` check is there.
-            logger.warning(f"InputError during update_character_card for ID {character_id}.")
+        except (
+            InputError
+        ):  # Should not happen if initial `if not card_data:` check is there.
+            logger.warning(
+                f"InputError during update_character_card for ID {character_id}."
+            )
             raise
         except Exception as e:  # Catch any other unexpected Python errors
             logger.opt(exception=True).error(
-                f"Unexpected Python error in update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}")
-            raise CharactersRAGDBError(f"Unexpected error updating character card: {e}") from e
+                f"Unexpected Python error in update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Unexpected error updating character card: {e}"
+            ) from e
 
-    def soft_delete_character_card(self, character_id: int, expected_version: int) -> Optional[bool]:
+    def soft_delete_character_card(
+        self, character_id: int, expected_version: int
+    ) -> Optional[bool]:
         """
         Soft-deletes a character card using optimistic locking.
 
@@ -4291,16 +4851,21 @@ UPDATE db_schema_version
         try:
             with self.transaction() as conn:
                 try:
-                    current_db_version = self._get_current_db_version(conn, "character_cards", "id", character_id)
+                    current_db_version = self._get_current_db_version(
+                        conn, "character_cards", "id", character_id
+                    )
                     # If here, record is active.
                 except ConflictError as e:
                     # Check if ConflictError from _get_current_db_version was because it's ALREADY soft-deleted.
-                    check_status_cursor = conn.execute("SELECT deleted, version FROM character_cards WHERE id = ?",
-                                                       (character_id,))
+                    check_status_cursor = conn.execute(
+                        "SELECT deleted, version FROM character_cards WHERE id = ?",
+                        (character_id,),
+                    )
                     record_status = check_status_cursor.fetchone()
-                    if record_status and record_status['deleted']:
+                    if record_status and record_status["deleted"]:
                         logger.info(
-                            f"Character card ID {character_id} already soft-deleted. Soft delete successful (idempotent).")
+                            f"Character card ID {character_id} already soft-deleted. Soft delete successful (idempotent)."
+                        )
                         return True
                     # If not found, or some other conflict, re-raise.
                     raise e
@@ -4308,86 +4873,108 @@ UPDATE db_schema_version
                 if current_db_version != expected_version:
                     raise ConflictError(
                         f"Soft delete for Character ID {character_id} failed: version mismatch (db has {current_db_version}, client expected {expected_version}).",
-                        entity="character_cards", entity_id=character_id
+                        entity="character_cards",
+                        entity_id=character_id,
                     )
 
                 cursor = conn.execute(query, params)
 
                 if cursor.rowcount == 0:
                     # Race condition: Record changed between pre-check and UPDATE.
-                    check_again_cursor = conn.execute("SELECT version, deleted FROM character_cards WHERE id = ?",
-                                                      (character_id,))
+                    check_again_cursor = conn.execute(
+                        "SELECT version, deleted FROM character_cards WHERE id = ?",
+                        (character_id,),
+                    )
                     final_state = check_again_cursor.fetchone()
                     msg = f"Soft delete for Character ID {character_id} (expected v{expected_version}) affected 0 rows."
                     if not final_state:
                         msg = f"Character card ID {character_id} disappeared before soft delete (expected active version {expected_version})."
-                    elif final_state['deleted']:
+                    elif final_state["deleted"]:
                         # If it got deleted by another process. Consider this success if the state is 'deleted'.
                         logger.info(
-                            f"Character card ID {character_id} was soft-deleted concurrently to version {final_state['version']}. Soft delete successful.")
+                            f"Character card ID {character_id} was soft-deleted concurrently to version {final_state['version']}. Soft delete successful."
+                        )
                         return True
-                    elif final_state['version'] != expected_version:  # Still active but version changed
+                    elif (
+                        final_state["version"] != expected_version
+                    ):  # Still active but version changed
                         msg = f"Soft delete for Character ID {character_id} failed: version changed to {final_state['version']} concurrently (expected {expected_version})."
                     else:
                         msg = f"Soft delete for Character ID {character_id} (expected version {expected_version}) affected 0 rows for an unknown reason after passing initial checks."
-                    raise ConflictError(msg, entity="character_cards", entity_id=character_id)
+                    raise ConflictError(
+                        msg, entity="character_cards", entity_id=character_id
+                    )
 
                 logger.info(
-                    f"Soft-deleted character card ID {character_id} (was version {expected_version}), new version {next_version_val}.")
+                    f"Soft-deleted character card ID {character_id} (was version {expected_version}), new version {next_version_val}."
+                )
                 # Log success metrics
                 duration = time.time() - start_time
-                log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
-                    "operation": "soft_delete",
-                    "idempotent": "false"
-                })
-                log_counter("chachanotes_db_character_card_operation_count", labels={
-                    "operation": "soft_delete",
-                    "status": "success",
-                    "concurrent": "false"
-                })
+                log_histogram(
+                    "chachanotes_db_character_card_operation_duration",
+                    duration,
+                    labels={"operation": "soft_delete", "idempotent": "false"},
+                )
+                log_counter(
+                    "chachanotes_db_character_card_operation_count",
+                    labels={
+                        "operation": "soft_delete",
+                        "status": "success",
+                        "concurrent": "false",
+                    },
+                )
                 return True
         except ConflictError:
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
-                "operation": "soft_delete",
-                "idempotent": "false"
-            })
-            log_counter("chachanotes_db_character_card_operation_count", labels={
-                "operation": "soft_delete",
-                "status": "error",
-                "error_type": "version_conflict"
-            })
+            log_histogram(
+                "chachanotes_db_character_card_operation_duration",
+                duration,
+                labels={"operation": "soft_delete", "idempotent": "false"},
+            )
+            log_counter(
+                "chachanotes_db_character_card_operation_count",
+                labels={
+                    "operation": "soft_delete",
+                    "status": "error",
+                    "error_type": "version_conflict",
+                },
+            )
             raise
         except CharactersRAGDBError as e:  # Catches sqlite3.Error from conn.execute
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
-                "operation": "soft_delete",
-                "idempotent": "false"
-            })
-            log_counter("chachanotes_db_character_card_operation_count", labels={
-                "operation": "soft_delete",
-                "status": "error",
-                "error_type": "database_error"
-            })
+            log_histogram(
+                "chachanotes_db_character_card_operation_duration",
+                duration,
+                labels={"operation": "soft_delete", "idempotent": "false"},
+            )
+            log_counter(
+                "chachanotes_db_character_card_operation_count",
+                labels={
+                    "operation": "soft_delete",
+                    "status": "error",
+                    "error_type": "database_error",
+                },
+            )
             logger.opt(exception=True).error(
-                f"Database error soft-deleting character card ID {character_id} (expected v{expected_version}): {e}")
+                f"Database error soft-deleting character card ID {character_id} (expected v{expected_version}): {e}"
+            )
             raise
 
     def delete_character_card(self, character_id: int) -> bool:
         """
         Soft-deletes a character card with version checking.
-        
+
         This method retrieves the current version of the character and performs
         a soft delete. It's a convenience wrapper around soft_delete_character_card.
-        
+
         Args:
             character_id: The ID of the character card to delete.
-            
+
         Returns:
             True if the deletion was successful, False otherwise.
-            
+
         Raises:
             CharactersRAGDBError: For database-related errors.
         """
@@ -4395,22 +4982,30 @@ UPDATE db_schema_version
             # Get current character to find its version
             character = self.get_character_card_by_id(character_id)
             if not character:
-                logger.warning(f"Character card ID {character_id} not found for deletion.")
+                logger.warning(
+                    f"Character card ID {character_id} not found for deletion."
+                )
                 return False
-                
+
             # Use the current version for optimistic locking
-            current_version = character.get('version', 1)
+            current_version = character.get("version", 1)
             return self.soft_delete_character_card(character_id, current_version)
-            
+
         except ConflictError as e:
-            logger.error(f"Conflict error deleting character card ID {character_id}: {e}")
+            logger.error(
+                f"Conflict error deleting character card ID {character_id}: {e}"
+            )
             return False
         except Exception as e:
-            logger.opt(exception=True).error(f"Unexpected error deleting character card ID {character_id}: {e}")
+            logger.opt(exception=True).error(
+                f"Unexpected error deleting character card ID {character_id}: {e}"
+            )
             raise CharactersRAGDBError(f"Error deleting character card: {e}") from e
 
     @staticmethod
-    def _ensure_character_cards_fts_update_trigger_handles_undelete(conn: sqlite3.Connection) -> None:
+    def _ensure_character_cards_fts_update_trigger_handles_undelete(
+        conn: sqlite3.Connection,
+    ) -> None:
         """Repair older DBs whose character-card FTS update trigger breaks undelete."""
         conn.execute("DROP TRIGGER IF EXISTS character_cards_au")
         conn.execute(
@@ -4429,7 +5024,9 @@ UPDATE db_schema_version
             """
         )
 
-    def restore_character_card(self, character_id: int, expected_version: int) -> Optional[bool]:
+    def restore_character_card(
+        self, character_id: int, expected_version: int
+    ) -> Optional[bool]:
         """
         Restores a soft-deleted character card using optimistic locking.
 
@@ -4461,7 +5058,9 @@ UPDATE db_schema_version
                         entity_id=character_id,
                     )
                 if not current_state["deleted"]:
-                    logger.info(f"Character card ID {character_id} already active. Restore is idempotent.")
+                    logger.info(
+                        f"Character card ID {character_id} already active. Restore is idempotent."
+                    )
                     return True
                 if current_state["version"] != expected_version:
                     raise ConflictError(
@@ -4480,7 +5079,9 @@ UPDATE db_schema_version
                     if not final_state:
                         msg = f"Character card ID {character_id} disappeared."
                     elif not final_state["deleted"]:
-                        logger.info(f"Character card ID {character_id} was restored concurrently. Success.")
+                        logger.info(
+                            f"Character card ID {character_id} was restored concurrently. Success."
+                        )
                         return True
                     elif final_state["version"] != expected_version:
                         msg = (
@@ -4492,7 +5093,9 @@ UPDATE db_schema_version
                             f"Restore for character card ID {character_id} "
                             f"(expected v{expected_version}) affected 0 rows."
                         )
-                    raise ConflictError(msg, entity="character_cards", entity_id=character_id)
+                    raise ConflictError(
+                        msg, entity="character_cards", entity_id=character_id
+                    )
 
                 logger.info(
                     f"Restored character card ID {character_id} "
@@ -4507,7 +5110,9 @@ UPDATE db_schema_version
             )
             raise
 
-    def search_character_cards(self, search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def search_character_cards(
+        self, search_term: str, limit: int = 10
+    ) -> List[Dict[str, Any]]:
         """
         Searches character cards using Full-Text Search (FTS).
 
@@ -4539,9 +5144,15 @@ UPDATE db_schema_version
         try:
             cursor = self.execute_query(query, (search_term, limit))
             rows = cursor.fetchall()
-            return [self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS) for row in rows if row]
+            return [
+                self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS)
+                for row in rows
+                if row
+            ]
         except CharactersRAGDBError as e:
-            logger.error(f"Error searching character cards for '{safe_search_term}': {e}")
+            logger.error(
+                f"Error searching character cards for '{safe_search_term}': {e}"
+            )
             raise
 
     # --- Conversation Methods ---
@@ -4596,7 +5207,9 @@ UPDATE db_schema_version
             )
         return normalized
 
-    def _normalize_topic_label_source(self, topic_label_source: Optional[str]) -> Optional[str]:
+    def _normalize_topic_label_source(
+        self, topic_label_source: Optional[str]
+    ) -> Optional[str]:
         normalized_source = self._normalize_nullable_text(topic_label_source)
         if normalized_source is None:
             return None
@@ -4605,11 +5218,15 @@ UPDATE db_schema_version
             raise InputError("topic_label_source must be 'manual' or 'auto'.")
         return normalized_source
 
-    def _normalize_conversation_character_scope(self, character_scope: Optional[str]) -> str:
+    def _normalize_conversation_character_scope(
+        self, character_scope: Optional[str]
+    ) -> str:
         if character_scope is None:
             return "all"
         if not isinstance(character_scope, str):
-            raise InputError(f"Conversation character scope must be a string. Got: {character_scope!r}")
+            raise InputError(
+                f"Conversation character scope must be a string. Got: {character_scope!r}"
+            )
         normalized = character_scope.strip().lower()
         if not normalized:
             raise InputError("Conversation character scope cannot be empty.")
@@ -4620,7 +5237,9 @@ UPDATE db_schema_version
             )
         return normalized
 
-    def _conversation_character_scope_clause(self, character_scope: Optional[str], *, column: str = "character_id") -> Optional[str]:
+    def _conversation_character_scope_clause(
+        self, character_scope: Optional[str], *, column: str = "character_id"
+    ) -> Optional[str]:
         normalized = self._normalize_conversation_character_scope(character_scope)
         if normalized == "all":
             return None
@@ -4650,12 +5269,16 @@ UPDATE db_schema_version
     ) -> Tuple[str, Optional[str]]:
         normalized_scope = (scope_type or "global").strip().lower()
         if normalized_scope not in self._ALLOWED_SCOPE_TYPES:
-            raise InputError(f"Invalid scope_type '{scope_type}'. Allowed: {', '.join(self._ALLOWED_SCOPE_TYPES)}")
+            raise InputError(
+                f"Invalid scope_type '{scope_type}'. Allowed: {', '.join(self._ALLOWED_SCOPE_TYPES)}"
+            )
 
         normalized_workspace_id = self._normalize_nullable_text(workspace_id)
         if normalized_scope == "workspace":
             if normalized_workspace_id is None:
-                raise InputError("workspace_id is required when scope_type is 'workspace'.")
+                raise InputError(
+                    "workspace_id is required when scope_type is 'workspace'."
+                )
             return normalized_scope, normalized_workspace_id
         return "global", None
 
@@ -4683,20 +5306,26 @@ UPDATE db_schema_version
             try:
                 normalized_character_id = int(character_id)
             except (TypeError, ValueError) as exc:
-                raise InputError(f"character_id must be numeric. Got: {character_id}") from exc
+                raise InputError(
+                    f"character_id must be numeric. Got: {character_id}"
+                ) from exc
 
         if normalized_kind is None and normalized_character_id is not None:
             normalized_kind = "character"
 
         if normalized_kind is None:
             if normalized_memory_mode is not None:
-                raise InputError("persona_memory_mode is only valid for persona-backed conversations.")
+                raise InputError(
+                    "persona_memory_mode is only valid for persona-backed conversations."
+                )
             return None, None, None, None
 
         if normalized_kind == "character":
             if normalized_character_id is None:
                 if normalized_assistant_id is None:
-                    raise InputError("Character conversations require 'character_id' or 'assistant_id'.")
+                    raise InputError(
+                        "Character conversations require 'character_id' or 'assistant_id'."
+                    )
                 try:
                     normalized_character_id = int(normalized_assistant_id)
                 except (TypeError, ValueError) as exc:
@@ -4706,12 +5335,16 @@ UPDATE db_schema_version
             if normalized_assistant_id is None:
                 normalized_assistant_id = str(normalized_character_id)
             if normalized_memory_mode is not None:
-                raise InputError("persona_memory_mode is only valid for persona-backed conversations.")
+                raise InputError(
+                    "persona_memory_mode is only valid for persona-backed conversations."
+                )
             return "character", normalized_assistant_id, normalized_character_id, None
 
         if normalized_kind == "persona":
             if normalized_assistant_id is None:
-                raise InputError("Persona conversations require a non-empty 'assistant_id'.")
+                raise InputError(
+                    "Persona conversations require a non-empty 'assistant_id'."
+                )
             if normalized_memory_mode is not None:
                 normalized_memory_mode = normalized_memory_mode.lower()
                 if normalized_memory_mode not in self._ALLOWED_PERSONA_MEMORY_MODES:
@@ -4721,7 +5354,9 @@ UPDATE db_schema_version
             return "persona", normalized_assistant_id, None, normalized_memory_mode
 
         if normalized_memory_mode is not None:
-            raise InputError("persona_memory_mode is only valid for persona-backed conversations.")
+            raise InputError(
+                "persona_memory_mode is only valid for persona-backed conversations."
+            )
         return "generic", normalized_assistant_id, None, None
 
     def _normalize_conversation_runtime_visibility(
@@ -4774,37 +5409,51 @@ UPDATE db_schema_version
             CharactersRAGDBError: For other database-related errors.
         """
         start_time = time.time()
-        conv_id = conv_data.get('id') or self._generate_uuid()
-        root_id = conv_data.get('root_id') or conv_id  # If root_id not given, this is a new root.
+        conv_id = conv_data.get("id") or self._generate_uuid()
+        root_id = (
+            conv_data.get("root_id") or conv_id
+        )  # If root_id not given, this is a new root.
 
-        client_id = conv_data.get('client_id') or self.client_id
+        client_id = conv_data.get("client_id") or self.client_id
         if not client_id:
-            raise InputError("Client ID is required for conversation (either in conv_data or DB instance).")
+            raise InputError(
+                "Client ID is required for conversation (either in conv_data or DB instance)."
+            )
 
-        assistant_kind, assistant_id, character_id, persona_memory_mode = self._normalize_conversation_assistant_identity(
-            character_id=conv_data.get('character_id'),
-            assistant_kind=conv_data.get('assistant_kind'),
-            assistant_id=conv_data.get('assistant_id'),
-            persona_memory_mode=conv_data.get('persona_memory_mode'),
+        assistant_kind, assistant_id, character_id, persona_memory_mode = (
+            self._normalize_conversation_assistant_identity(
+                character_id=conv_data.get("character_id"),
+                assistant_kind=conv_data.get("assistant_kind"),
+                assistant_id=conv_data.get("assistant_id"),
+                persona_memory_mode=conv_data.get("persona_memory_mode"),
+            )
         )
         scope_type, workspace_id = self._normalize_scope(
-            conv_data.get('scope_type'),
-            conv_data.get('workspace_id'),
+            conv_data.get("scope_type"),
+            conv_data.get("workspace_id"),
         )
-        state = self._normalize_conversation_state(conv_data.get('state'))
-        topic_label = self._normalize_nullable_text(conv_data.get('topic_label'))
-        topic_label_source = self._normalize_topic_label_source(conv_data.get('topic_label_source'))
-        topic_last_tagged_at = self._normalize_nullable_text(conv_data.get('topic_last_tagged_at'))
-        topic_last_tagged_message_id = self._normalize_nullable_text(conv_data.get('topic_last_tagged_message_id'))
-        cluster_id = self._normalize_nullable_text(conv_data.get('cluster_id'))
-        source = self._normalize_nullable_text(conv_data.get('source'))
-        external_ref = self._normalize_nullable_text(conv_data.get('external_ref'))
-        runtime_backend, discovery_owner, discovery_entity_id = self._normalize_conversation_runtime_visibility(
-            runtime_backend=conv_data.get("runtime_backend"),
-            discovery_owner=conv_data.get("discovery_owner"),
-            discovery_entity_id=conv_data.get("discovery_entity_id"),
+        state = self._normalize_conversation_state(conv_data.get("state"))
+        topic_label = self._normalize_nullable_text(conv_data.get("topic_label"))
+        topic_label_source = self._normalize_topic_label_source(
+            conv_data.get("topic_label_source")
         )
-        system_prompt = self._normalize_nullable_text(conv_data.get('system_prompt'))
+        topic_last_tagged_at = self._normalize_nullable_text(
+            conv_data.get("topic_last_tagged_at")
+        )
+        topic_last_tagged_message_id = self._normalize_nullable_text(
+            conv_data.get("topic_last_tagged_message_id")
+        )
+        cluster_id = self._normalize_nullable_text(conv_data.get("cluster_id"))
+        source = self._normalize_nullable_text(conv_data.get("source"))
+        external_ref = self._normalize_nullable_text(conv_data.get("external_ref"))
+        runtime_backend, discovery_owner, discovery_entity_id = (
+            self._normalize_conversation_runtime_visibility(
+                runtime_backend=conv_data.get("runtime_backend"),
+                discovery_owner=conv_data.get("discovery_owner"),
+                discovery_entity_id=conv_data.get("discovery_entity_id"),
+            )
+        )
+        system_prompt = self._normalize_nullable_text(conv_data.get("system_prompt"))
 
         now = self._get_current_utc_timestamp_iso()
         query = """
@@ -4815,73 +5464,121 @@ UPDATE db_schema_version
                                            runtime_backend, discovery_owner, discovery_entity_id, system_prompt, \
                                            title, rating, created_at, last_modified, client_id, version, deleted) \
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
-                """ # created_at added
+                """  # created_at added
         params = (
-            conv_id, root_id, conv_data.get('forked_from_message_id'),
-            conv_data.get('parent_conversation_id'), character_id, assistant_kind, assistant_id, persona_memory_mode,
-            scope_type, workspace_id, state, topic_label, topic_label_source,
-            topic_last_tagged_at, topic_last_tagged_message_id, cluster_id, source, external_ref,
-            runtime_backend, discovery_owner, discovery_entity_id, system_prompt,
-            conv_data.get('title'), conv_data.get('rating'),
-            now, now, client_id # created_at, last_modified, client_id
+            conv_id,
+            root_id,
+            conv_data.get("forked_from_message_id"),
+            conv_data.get("parent_conversation_id"),
+            character_id,
+            assistant_kind,
+            assistant_id,
+            persona_memory_mode,
+            scope_type,
+            workspace_id,
+            state,
+            topic_label,
+            topic_label_source,
+            topic_last_tagged_at,
+            topic_last_tagged_message_id,
+            cluster_id,
+            source,
+            external_ref,
+            runtime_backend,
+            discovery_owner,
+            discovery_entity_id,
+            system_prompt,
+            conv_data.get("title"),
+            conv_data.get("rating"),
+            now,
+            now,
+            client_id,  # created_at, last_modified, client_id
         )
         try:
             with self.transaction() as conn:
                 conn.execute(query, params)
             logger.info(f"Added conversation ID: {conv_id}.")
-            
+
             # Log success metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
-                "operation": "add",
-                "has_title": "true" if conv_data.get('title') else "false"
-            })
-            log_counter("chachanotes_db_conversation_operation_count", labels={
-                "operation": "add",
-                "status": "success",
-                "is_forked": "true" if conv_data.get('forked_from_message_id') else "false"
-            })
-            
+            log_histogram(
+                "chachanotes_db_conversation_operation_duration",
+                duration,
+                labels={
+                    "operation": "add",
+                    "has_title": "true" if conv_data.get("title") else "false",
+                },
+            )
+            log_counter(
+                "chachanotes_db_conversation_operation_count",
+                labels={
+                    "operation": "add",
+                    "status": "success",
+                    "is_forked": "true"
+                    if conv_data.get("forked_from_message_id")
+                    else "false",
+                },
+            )
+
             return conv_id
         except sqlite3.IntegrityError as e:
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
-                "operation": "add",
-                "has_title": "false"
-            })
-            
+            log_histogram(
+                "chachanotes_db_conversation_operation_duration",
+                duration,
+                labels={"operation": "add", "has_title": "false"},
+            )
+
             if "UNIQUE constraint failed: conversations.id" in str(e):
-                log_counter("chachanotes_db_conversation_operation_count", labels={
+                log_counter(
+                    "chachanotes_db_conversation_operation_count",
+                    labels={
+                        "operation": "add",
+                        "status": "error",
+                        "error_type": "unique_constraint",
+                    },
+                )
+                raise ConflictError(
+                    f"Conversation with ID '{conv_id}' already exists.",
+                    entity="conversations",
+                    entity_id=conv_id,
+                ) from e
+            # Could also be FK violation for character_id, etc.
+            log_counter(
+                "chachanotes_db_conversation_operation_count",
+                labels={
                     "operation": "add",
                     "status": "error",
-                    "error_type": "unique_constraint"
-                })
-                raise ConflictError(f"Conversation with ID '{conv_id}' already exists.", entity="conversations", entity_id=conv_id) from e
-            # Could also be FK violation for character_id, etc.
-            log_counter("chachanotes_db_conversation_operation_count", labels={
-                "operation": "add",
-                "status": "error",
-                "error_type": "integrity_error"
-            })
-            raise CharactersRAGDBError(f"Database integrity error adding conversation: {e}") from e
+                    "error_type": "integrity_error",
+                },
+            )
+            raise CharactersRAGDBError(
+                f"Database integrity error adding conversation: {e}"
+            ) from e
         except CharactersRAGDBError as e:
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
-                "operation": "add",
-                "has_title": "false"
-            })
-            log_counter("chachanotes_db_conversation_operation_count", labels={
-                "operation": "add",
-                "status": "error",
-                "error_type": "database_error"
-            })
+            log_histogram(
+                "chachanotes_db_conversation_operation_duration",
+                duration,
+                labels={"operation": "add", "has_title": "false"},
+            )
+            log_counter(
+                "chachanotes_db_conversation_operation_count",
+                labels={
+                    "operation": "add",
+                    "status": "error",
+                    "error_type": "database_error",
+                },
+            )
             logger.error(f"Database error adding conversation: {e}")
             raise
-        return None # Should not be reached
+        return None  # Should not be reached
 
-    def list_all_active_conversations(self, limit: int = 1000, offset: int = 0) -> List[Dict[str, Any]]:
+    def list_all_active_conversations(
+        self, limit: int = 1000, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         """
         Lists all active (not soft-deleted) conversations.
 
@@ -4902,7 +5599,9 @@ UPDATE db_schema_version
             CharactersRAGDBError: For database query errors.
         """
         start_time = time.time()
-        logger.debug(f"Listing all active conversations: limit={limit}, offset={offset}")
+        logger.debug(
+            f"Listing all active conversations: limit={limit}, offset={offset}"
+        )
         query = """
                 SELECT id, \
                        root_id, \
@@ -4931,29 +5630,46 @@ UPDATE db_schema_version
         try:
             cursor = self.execute_query(query, (self.client_id, limit, offset))
             conversations = [dict(row) for row in cursor.fetchall()]
-            logger.info(f"Found {len(conversations)} active conversations (limit {limit}, offset {offset}).")
-            
+            logger.info(
+                f"Found {len(conversations)} active conversations (limit {limit}, offset {offset})."
+            )
+
             # Log success metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
-                "operation": "list_active",
-                "result_count": str(len(conversations))
-            })
-            log_counter("chachanotes_db_conversation_operation_count", labels={
-                "operation": "list_active",
-                "status": "success",
-                "result_count": str(len(conversations))
-            })
-            
+            log_histogram(
+                "chachanotes_db_conversation_operation_duration",
+                duration,
+                labels={
+                    "operation": "list_active",
+                    "result_count": str(len(conversations)),
+                },
+            )
+            log_counter(
+                "chachanotes_db_conversation_operation_count",
+                labels={
+                    "operation": "list_active",
+                    "status": "success",
+                    "result_count": str(len(conversations)),
+                },
+            )
+
             return conversations
         except CharactersRAGDBError as e:
-            logger.opt(exception=True).error(f"Database error listing all active conversations: {e}")
+            logger.opt(exception=True).error(
+                f"Database error listing all active conversations: {e}"
+            )
             raise  # Re-raise the specific error
         except Exception as e:  # Catch any other unexpected errors
-            logger.opt(exception=True).error(f"Unexpected error listing all active conversations: {e}")
-            raise CharactersRAGDBError(f"Unexpected error listing conversations: {e}") from e
+            logger.opt(exception=True).error(
+                f"Unexpected error listing all active conversations: {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Unexpected error listing conversations: {e}"
+            ) from e
 
-    def get_conversation_by_id(self, conversation_id: str, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
+    def get_conversation_by_id(
+        self, conversation_id: str, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
         """
         Retrieves a specific conversation by its UUID.
 
@@ -4977,37 +5693,46 @@ UPDATE db_schema_version
             cursor = self.execute_query(query, (conversation_id,))
             row = cursor.fetchone()
             result = dict(row) if row else None
-            
+
             # Log metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
-                "operation": "get_by_id",
-                "found": "true" if result else "false"
-            })
-            log_counter("chachanotes_db_conversation_operation_count", labels={
-                "operation": "get_by_id",
-                "status": "success",
-                "found": "true" if result else "false"
-            })
-            
+            log_histogram(
+                "chachanotes_db_conversation_operation_duration",
+                duration,
+                labels={
+                    "operation": "get_by_id",
+                    "found": "true" if result else "false",
+                },
+            )
+            log_counter(
+                "chachanotes_db_conversation_operation_count",
+                labels={
+                    "operation": "get_by_id",
+                    "status": "success",
+                    "found": "true" if result else "false",
+                },
+            )
+
             return result
         except CharactersRAGDBError as e:
-            logger.error(f"Database error fetching conversation ID {conversation_id}: {e}")
+            logger.error(
+                f"Database error fetching conversation ID {conversation_id}: {e}"
+            )
             raise
 
     def get_conversation_by_name(self, conversation_name: str) -> List[Dict[str, Any]]:
         """
         Retrieves all conversations with the specified name.
-        
+
         Only non-deleted conversations are returned.
-        
+
         Args:
             conversation_name: The name of the conversation.
-            
+
         Returns:
             A list of dictionaries containing the conversations' data.
             Returns an empty list if no matching conversations are found.
-            
+
         Raises:
             CharactersRAGDBError: For database errors during fetching.
         """
@@ -5017,27 +5742,37 @@ UPDATE db_schema_version
             cursor = self.execute_query(query, (conversation_name,))
             rows = cursor.fetchall()
             results = [dict(row) for row in rows]
-            
+
             # Log metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
-                "operation": "get_by_name",
-                "found": "true" if results else "false"
-            })
-            log_counter("chachanotes_db_conversation_operation_count", labels={
-                "operation": "get_by_name",
-                "status": "success",
-                "found": "true" if results else "false",
-                "count": str(len(results))
-            })
-            
+            log_histogram(
+                "chachanotes_db_conversation_operation_duration",
+                duration,
+                labels={
+                    "operation": "get_by_name",
+                    "found": "true" if results else "false",
+                },
+            )
+            log_counter(
+                "chachanotes_db_conversation_operation_count",
+                labels={
+                    "operation": "get_by_name",
+                    "status": "success",
+                    "found": "true" if results else "false",
+                    "count": str(len(results)),
+                },
+            )
+
             return results
         except CharactersRAGDBError as e:
-            logger.error(f"Database error fetching conversations by name {conversation_name}: {e}")
+            logger.error(
+                f"Database error fetching conversations by name {conversation_name}: {e}"
+            )
             raise
 
-    def get_conversations_for_character(self, character_id: int, limit: int = 50, offset: int = 0) -> List[
-        Dict[str, Any]]:
+    def get_conversations_for_character(
+        self, character_id: int, limit: int = 50, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         """
         Lists conversations associated with a specific character ID.
 
@@ -5063,22 +5798,31 @@ UPDATE db_schema_version
         try:
             cursor = self.execute_query(query, (character_id, limit, offset))
             results = [dict(row) for row in cursor.fetchall()]
-            
+
             # Log metrics
             duration = time.time() - start_time
-            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
-                "operation": "get_for_character",
-                "result_count": str(len(results))
-            })
-            log_counter("chachanotes_db_conversation_operation_count", labels={
-                "operation": "get_for_character",
-                "status": "success",
-                "result_count": str(len(results))
-            })
-            
+            log_histogram(
+                "chachanotes_db_conversation_operation_duration",
+                duration,
+                labels={
+                    "operation": "get_for_character",
+                    "result_count": str(len(results)),
+                },
+            )
+            log_counter(
+                "chachanotes_db_conversation_operation_count",
+                labels={
+                    "operation": "get_for_character",
+                    "status": "success",
+                    "result_count": str(len(results)),
+                },
+            )
+
             return results
         except CharactersRAGDBError as e:
-            logger.error(f"Database error fetching conversations for character ID {character_id}: {e}")
+            logger.error(
+                f"Database error fetching conversations for character ID {character_id}: {e}"
+            )
             raise
 
     def search_conversations_page(
@@ -5105,10 +5849,14 @@ UPDATE db_schema_version
             # page/count (the Library Browse ▸ Conversations snapshot seam);
             # a workspace_id would silently contradict that, so reject it.
             if self._normalize_nullable_text(workspace_id) is not None:
-                raise InputError("workspace_id must be omitted when scope_type is 'all'.")
+                raise InputError(
+                    "workspace_id must be omitted when scope_type is 'all'."
+                )
             normalized_workspace_id = None
         else:
-            normalized_scope, normalized_workspace_id = self._normalize_scope(scope_type, workspace_id)
+            normalized_scope, normalized_workspace_id = self._normalize_scope(
+                scope_type, workspace_id
+            )
             clauses.append("scope_type = ?")
             params.append(normalized_scope)
 
@@ -5132,7 +5880,9 @@ UPDATE db_schema_version
             clauses.append("character_id = ?")
             params.append(character_id)
 
-        character_scope_clause = self._conversation_character_scope_clause(character_scope)
+        character_scope_clause = self._conversation_character_scope_clause(
+            character_scope
+        )
         if character_scope_clause:
             clauses.append(character_scope_clause)
 
@@ -5174,7 +5924,9 @@ UPDATE db_schema_version
             params.extend([like_query, normalized_query, fts_query])
 
         where_clause = " AND ".join(clauses) if clauses else "1 = 1"
-        count_query = f"SELECT COUNT(*) as total FROM conversations WHERE {where_clause}"
+        count_query = (
+            f"SELECT COUNT(*) as total FROM conversations WHERE {where_clause}"
+        )
         page_query = (
             "SELECT * FROM conversations "
             f"WHERE {where_clause} "
@@ -5345,7 +6097,9 @@ UPDATE db_schema_version
             LIMIT ? OFFSET ?
         """
         if not include_deleted_conversation:
-            query = query.replace("ORDER BY", "AND c.deleted = 0\n            ORDER BY", 1)
+            query = query.replace(
+                "ORDER BY", "AND c.deleted = 0\n            ORDER BY", 1
+            )
         cursor = self.execute_query(query, (conversation_id, limit, offset))
         return [dict(row) for row in cursor.fetchall()]
 
@@ -5375,11 +6129,15 @@ UPDATE db_schema_version
             ORDER BY m.timestamp {order_by_timestamp}
         """
         if not include_deleted_conversation:
-            query = query.replace("ORDER BY", "AND c.deleted = 0\n            ORDER BY", 1)
+            query = query.replace(
+                "ORDER BY", "AND c.deleted = 0\n            ORDER BY", 1
+            )
         cursor = self.execute_query(query, tuple([conversation_id, *parent_ids]))
         return [dict(row) for row in cursor.fetchall()]
 
-    def update_conversation(self, conversation_id: str, update_data: Dict[str, Any], expected_version: int) -> Optional[bool]:
+    def update_conversation(
+        self, conversation_id: str, update_data: Dict[str, Any], expected_version: int
+    ) -> Optional[bool]:
         """
         Updates an existing conversation using optimistic locking.
 
@@ -5409,10 +6167,18 @@ UPDATE db_schema_version
             CharactersRAGDBError: For other database-related errors (e.g., rating out of range
                                   if not caught by this method but by DB constraint).
         """
-        logger.debug(f"Starting update_conversation for ID {conversation_id}, expected_version {expected_version}")
+        logger.debug(
+            f"Starting update_conversation for ID {conversation_id}, expected_version {expected_version}"
+        )
 
-        if 'rating' in update_data and update_data['rating'] is not None and not (1 <= update_data['rating'] <= 5):
-            raise InputError(f"Rating must be between 1 and 5. Got: {update_data['rating']}")
+        if (
+            "rating" in update_data
+            and update_data["rating"] is not None
+            and not (1 <= update_data["rating"] <= 5)
+        ):
+            raise InputError(
+                f"Rating must be between 1 and 5. Got: {update_data['rating']}"
+            )
 
         now = self._get_current_utc_timestamp_iso()
 
@@ -5437,13 +6203,13 @@ UPDATE db_schema_version
                         entity="conversations",
                         entity_id=conversation_id,
                     )
-                if current_state['deleted']:
+                if current_state["deleted"]:
                     raise ConflictError(
                         f"Conversation ID {conversation_id} is deleted, cannot update.",
                         entity="conversations",
                         entity_id=conversation_id,
                     )
-                if current_state['version'] != expected_version:
+                if current_state["version"] != expected_version:
                     raise ConflictError(
                         f"Conversation ID {conversation_id} update failed: version mismatch (db has {current_state['version']}, client expected {expected_version}).",
                         entity="conversations",
@@ -5452,77 +6218,124 @@ UPDATE db_schema_version
 
                 assistant_update_requested = any(
                     field in update_data
-                    for field in ('assistant_kind', 'assistant_id', 'character_id', 'persona_memory_mode')
+                    for field in (
+                        "assistant_kind",
+                        "assistant_id",
+                        "character_id",
+                        "persona_memory_mode",
+                    )
                 )
-                scope_update_requested = 'scope_type' in update_data or 'workspace_id' in update_data
+                scope_update_requested = (
+                    "scope_type" in update_data or "workspace_id" in update_data
+                )
                 runtime_update_requested = any(
                     field in update_data
-                    for field in ("runtime_backend", "discovery_owner", "discovery_entity_id")
+                    for field in (
+                        "runtime_backend",
+                        "discovery_owner",
+                        "discovery_entity_id",
+                    )
                 )
 
                 if assistant_update_requested:
-                    assistant_kind, assistant_id, character_id, persona_memory_mode = self._normalize_conversation_assistant_identity(
-                        character_id=update_data.get('character_id', current_state['character_id']),
-                        assistant_kind=update_data.get('assistant_kind', current_state['assistant_kind']),
-                        assistant_id=update_data.get('assistant_id', current_state['assistant_id']),
-                        persona_memory_mode=update_data.get('persona_memory_mode', current_state['persona_memory_mode']),
+                    assistant_kind, assistant_id, character_id, persona_memory_mode = (
+                        self._normalize_conversation_assistant_identity(
+                            character_id=update_data.get(
+                                "character_id", current_state["character_id"]
+                            ),
+                            assistant_kind=update_data.get(
+                                "assistant_kind", current_state["assistant_kind"]
+                            ),
+                            assistant_id=update_data.get(
+                                "assistant_id", current_state["assistant_id"]
+                            ),
+                            persona_memory_mode=update_data.get(
+                                "persona_memory_mode",
+                                current_state["persona_memory_mode"],
+                            ),
+                        )
                     )
                 else:
-                    assistant_kind = current_state['assistant_kind']
-                    assistant_id = current_state['assistant_id']
-                    character_id = current_state['character_id']
-                    persona_memory_mode = current_state['persona_memory_mode']
+                    assistant_kind = current_state["assistant_kind"]
+                    assistant_id = current_state["assistant_id"]
+                    character_id = current_state["character_id"]
+                    persona_memory_mode = current_state["persona_memory_mode"]
 
                 if scope_update_requested:
                     scope_type, workspace_id = self._normalize_scope(
-                        update_data.get('scope_type', current_state['scope_type']),
-                        update_data.get('workspace_id', current_state['workspace_id']),
+                        update_data.get("scope_type", current_state["scope_type"]),
+                        update_data.get("workspace_id", current_state["workspace_id"]),
                     )
                 else:
-                    scope_type = current_state['scope_type']
-                    workspace_id = current_state['workspace_id']
+                    scope_type = current_state["scope_type"]
+                    workspace_id = current_state["workspace_id"]
 
-                state = current_state['state']
-                if 'state' in update_data:
-                    state = self._normalize_conversation_state(update_data.get('state'))
+                state = current_state["state"]
+                if "state" in update_data:
+                    state = self._normalize_conversation_state(update_data.get("state"))
 
-                topic_label = current_state['topic_label']
-                if 'topic_label' in update_data:
-                    topic_label = self._normalize_nullable_text(update_data.get('topic_label'))
+                topic_label = current_state["topic_label"]
+                if "topic_label" in update_data:
+                    topic_label = self._normalize_nullable_text(
+                        update_data.get("topic_label")
+                    )
 
-                topic_label_source = current_state['topic_label_source']
-                if 'topic_label_source' in update_data:
-                    topic_label_source = self._normalize_topic_label_source(update_data.get('topic_label_source'))
+                topic_label_source = current_state["topic_label_source"]
+                if "topic_label_source" in update_data:
+                    topic_label_source = self._normalize_topic_label_source(
+                        update_data.get("topic_label_source")
+                    )
 
-                topic_last_tagged_at = current_state['topic_last_tagged_at']
-                if 'topic_last_tagged_at' in update_data:
-                    topic_last_tagged_at = self._normalize_nullable_text(update_data.get('topic_last_tagged_at'))
+                topic_last_tagged_at = current_state["topic_last_tagged_at"]
+                if "topic_last_tagged_at" in update_data:
+                    topic_last_tagged_at = self._normalize_nullable_text(
+                        update_data.get("topic_last_tagged_at")
+                    )
 
-                topic_last_tagged_message_id = current_state['topic_last_tagged_message_id']
-                if 'topic_last_tagged_message_id' in update_data:
-                    topic_last_tagged_message_id = self._normalize_nullable_text(update_data.get('topic_last_tagged_message_id'))
+                topic_last_tagged_message_id = current_state[
+                    "topic_last_tagged_message_id"
+                ]
+                if "topic_last_tagged_message_id" in update_data:
+                    topic_last_tagged_message_id = self._normalize_nullable_text(
+                        update_data.get("topic_last_tagged_message_id")
+                    )
 
-                cluster_id = current_state['cluster_id']
-                if 'cluster_id' in update_data:
-                    cluster_id = self._normalize_nullable_text(update_data.get('cluster_id'))
+                cluster_id = current_state["cluster_id"]
+                if "cluster_id" in update_data:
+                    cluster_id = self._normalize_nullable_text(
+                        update_data.get("cluster_id")
+                    )
 
-                source = current_state['source']
-                if 'source' in update_data:
-                    source = self._normalize_nullable_text(update_data.get('source'))
+                source = current_state["source"]
+                if "source" in update_data:
+                    source = self._normalize_nullable_text(update_data.get("source"))
 
-                external_ref = current_state['external_ref']
-                if 'external_ref' in update_data:
-                    external_ref = self._normalize_nullable_text(update_data.get('external_ref'))
+                external_ref = current_state["external_ref"]
+                if "external_ref" in update_data:
+                    external_ref = self._normalize_nullable_text(
+                        update_data.get("external_ref")
+                    )
 
-                system_prompt = current_state['system_prompt']
-                if 'system_prompt' in update_data:
-                    system_prompt = self._normalize_nullable_text(update_data.get('system_prompt'))
+                system_prompt = current_state["system_prompt"]
+                if "system_prompt" in update_data:
+                    system_prompt = self._normalize_nullable_text(
+                        update_data.get("system_prompt")
+                    )
 
                 if runtime_update_requested:
-                    runtime_backend, discovery_owner, discovery_entity_id = self._normalize_conversation_runtime_visibility(
-                        runtime_backend=update_data.get("runtime_backend", current_state["runtime_backend"]),
-                        discovery_owner=update_data.get("discovery_owner", current_state["discovery_owner"]),
-                        discovery_entity_id=update_data.get("discovery_entity_id", current_state["discovery_entity_id"]),
+                    runtime_backend, discovery_owner, discovery_entity_id = (
+                        self._normalize_conversation_runtime_visibility(
+                            runtime_backend=update_data.get(
+                                "runtime_backend", current_state["runtime_backend"]
+                            ),
+                            discovery_owner=update_data.get(
+                                "discovery_owner", current_state["discovery_owner"]
+                            ),
+                            discovery_entity_id=update_data.get(
+                                "discovery_entity_id",
+                                current_state["discovery_entity_id"],
+                            ),
+                        )
                     )
                 else:
                     runtime_backend = current_state["runtime_backend"]
@@ -5532,70 +6345,87 @@ UPDATE db_schema_version
                 fields_to_update_sql = []
                 params_for_set_clause = []
 
-                if 'title' in update_data:
+                if "title" in update_data:
                     fields_to_update_sql.append("title = ?")
-                    params_for_set_clause.append(update_data.get('title'))
-                if 'rating' in update_data:
+                    params_for_set_clause.append(update_data.get("title"))
+                if "rating" in update_data:
                     fields_to_update_sql.append("rating = ?")
-                    params_for_set_clause.append(update_data.get('rating'))
-                if 'metadata' in update_data:                       # ADDED (P1e)
-                    fields_to_update_sql.append("metadata = ?")     # ADDED
-                    params_for_set_clause.append(update_data.get('metadata'))  # ADDED
+                    params_for_set_clause.append(update_data.get("rating"))
+                if "metadata" in update_data:  # ADDED (P1e)
+                    fields_to_update_sql.append("metadata = ?")  # ADDED
+                    params_for_set_clause.append(update_data.get("metadata"))  # ADDED
                 if assistant_update_requested:
-                    fields_to_update_sql.extend([
-                        "assistant_kind = ?",
-                        "assistant_id = ?",
-                        "character_id = ?",
-                        "persona_memory_mode = ?",
-                    ])
-                    params_for_set_clause.extend([assistant_kind, assistant_id, character_id, persona_memory_mode])
+                    fields_to_update_sql.extend(
+                        [
+                            "assistant_kind = ?",
+                            "assistant_id = ?",
+                            "character_id = ?",
+                            "persona_memory_mode = ?",
+                        ]
+                    )
+                    params_for_set_clause.extend(
+                        [
+                            assistant_kind,
+                            assistant_id,
+                            character_id,
+                            persona_memory_mode,
+                        ]
+                    )
                 if scope_update_requested:
                     fields_to_update_sql.extend(["scope_type = ?", "workspace_id = ?"])
                     params_for_set_clause.extend([scope_type, workspace_id])
-                if 'state' in update_data:
+                if "state" in update_data:
                     fields_to_update_sql.append("state = ?")
                     params_for_set_clause.append(state)
-                if 'topic_label' in update_data:
+                if "topic_label" in update_data:
                     fields_to_update_sql.append("topic_label = ?")
                     params_for_set_clause.append(topic_label)
-                if 'topic_label_source' in update_data:
+                if "topic_label_source" in update_data:
                     fields_to_update_sql.append("topic_label_source = ?")
                     params_for_set_clause.append(topic_label_source)
-                if 'topic_last_tagged_at' in update_data:
+                if "topic_last_tagged_at" in update_data:
                     fields_to_update_sql.append("topic_last_tagged_at = ?")
                     params_for_set_clause.append(topic_last_tagged_at)
-                if 'topic_last_tagged_message_id' in update_data:
+                if "topic_last_tagged_message_id" in update_data:
                     fields_to_update_sql.append("topic_last_tagged_message_id = ?")
                     params_for_set_clause.append(topic_last_tagged_message_id)
-                if 'cluster_id' in update_data:
+                if "cluster_id" in update_data:
                     fields_to_update_sql.append("cluster_id = ?")
                     params_for_set_clause.append(cluster_id)
-                if 'source' in update_data:
+                if "source" in update_data:
                     fields_to_update_sql.append("source = ?")
                     params_for_set_clause.append(source)
-                if 'external_ref' in update_data:
+                if "external_ref" in update_data:
                     fields_to_update_sql.append("external_ref = ?")
                     params_for_set_clause.append(external_ref)
-                if 'system_prompt' in update_data:
+                if "system_prompt" in update_data:
                     fields_to_update_sql.append("system_prompt = ?")
                     params_for_set_clause.append(system_prompt)
                 if runtime_update_requested:
-                    fields_to_update_sql.extend([
-                        "runtime_backend = ?",
-                        "discovery_owner = ?",
-                        "discovery_entity_id = ?",
-                    ])
-                    params_for_set_clause.extend([runtime_backend, discovery_owner, discovery_entity_id])
+                    fields_to_update_sql.extend(
+                        [
+                            "runtime_backend = ?",
+                            "discovery_owner = ?",
+                            "discovery_entity_id = ?",
+                        ]
+                    )
+                    params_for_set_clause.extend(
+                        [runtime_backend, discovery_owner, discovery_entity_id]
+                    )
 
                 next_version_val = expected_version + 1
-                fields_to_update_sql.extend(["last_modified = ?", "version = ?", "client_id = ?"])
+                fields_to_update_sql.extend(
+                    ["last_modified = ?", "version = ?", "client_id = ?"]
+                )
                 params_for_set_clause.extend([now, next_version_val, self.client_id])
 
                 main_update_query = (
                     f"UPDATE conversations SET {', '.join(fields_to_update_sql)} "
                     "WHERE id = ? AND version = ? AND deleted = 0"
                 )
-                main_update_params = tuple(params_for_set_clause + [conversation_id, expected_version])
+                main_update_params = tuple(
+                    params_for_set_clause + [conversation_id, expected_version]
+                )
                 cursor_main = conn.execute(main_update_query, main_update_params)
                 if cursor_main.rowcount == 0:
                     raise ConflictError(
@@ -5610,7 +6440,9 @@ UPDATE db_schema_version
                 return True
 
         except sqlite3.IntegrityError as e:
-            raise CharactersRAGDBError(f"Database integrity error during update_conversation: {e}") from e
+            raise CharactersRAGDBError(
+                f"Database integrity error during update_conversation: {e}"
+            ) from e
         except ConflictError:
             raise
         except InputError:
@@ -5621,10 +6453,16 @@ UPDATE db_schema_version
             )
             raise
         except Exception as e:
-            logger.opt(exception=True).error(f"Unexpected Python error in update_conversation for ID {conversation_id}: {e}")
-            raise CharactersRAGDBError(f"Unexpected error during update_conversation: {e}") from e
+            logger.opt(exception=True).error(
+                f"Unexpected Python error in update_conversation for ID {conversation_id}: {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Unexpected error during update_conversation: {e}"
+            ) from e
 
-    def soft_delete_conversation(self, conversation_id: str, expected_version: int) -> Optional[bool]:
+    def soft_delete_conversation(
+        self, conversation_id: str, expected_version: int
+    ) -> Optional[bool]:
         """
         Soft-deletes a conversation using optimistic locking.
 
@@ -5651,56 +6489,79 @@ UPDATE db_schema_version
         next_version_val = expected_version + 1
 
         query = "UPDATE conversations SET deleted = 1, last_modified = ?, version = ?, client_id = ? WHERE id = ? AND version = ? AND deleted = 0"
-        params = (now, next_version_val, self.client_id, conversation_id, expected_version)
+        params = (
+            now,
+            next_version_val,
+            self.client_id,
+            conversation_id,
+            expected_version,
+        )
 
         try:
             with self.transaction() as conn:
                 try:
-                    current_db_version = self._get_current_db_version(conn, "conversations", "id", conversation_id)
+                    current_db_version = self._get_current_db_version(
+                        conn, "conversations", "id", conversation_id
+                    )
                 except ConflictError as e:
-                    check_status_cursor = conn.execute("SELECT deleted, version FROM conversations WHERE id = ?",
-                                                       (conversation_id,))
+                    check_status_cursor = conn.execute(
+                        "SELECT deleted, version FROM conversations WHERE id = ?",
+                        (conversation_id,),
+                    )
                     record_status = check_status_cursor.fetchone()
-                    if record_status and record_status['deleted']:
-                        logger.info(f"Conversation ID {conversation_id} already soft-deleted. Success (idempotent).")
+                    if record_status and record_status["deleted"]:
+                        logger.info(
+                            f"Conversation ID {conversation_id} already soft-deleted. Success (idempotent)."
+                        )
                         return True
-                    raise e # Re-raise if not found or other conflict
+                    raise e  # Re-raise if not found or other conflict
 
                 if current_db_version != expected_version:
                     raise ConflictError(
                         f"Soft delete for Conversation ID {conversation_id} failed: version mismatch (db has {current_db_version}, client expected {expected_version}).",
-                        entity="conversations", entity_id=conversation_id
+                        entity="conversations",
+                        entity_id=conversation_id,
                     )
 
                 cursor = conn.execute(query, params)
 
                 if cursor.rowcount == 0:
-                    check_again_cursor = conn.execute("SELECT version, deleted FROM conversations WHERE id = ?",
-                                                      (conversation_id,))
+                    check_again_cursor = conn.execute(
+                        "SELECT version, deleted FROM conversations WHERE id = ?",
+                        (conversation_id,),
+                    )
                     final_state = check_again_cursor.fetchone()
                     msg = f"Soft delete for conversation ID {conversation_id} (expected v{expected_version}) affected 0 rows."
                     if not final_state:
                         msg = f"Conversation ID {conversation_id} disappeared."
-                    elif final_state['deleted']:
-                        logger.info(f"Conversation ID {conversation_id} was soft-deleted concurrently. Success.")
+                    elif final_state["deleted"]:
+                        logger.info(
+                            f"Conversation ID {conversation_id} was soft-deleted concurrently. Success."
+                        )
                         return True
-                    elif final_state['version'] != expected_version:
+                    elif final_state["version"] != expected_version:
                         msg = f"Conversation ID {conversation_id} version changed to {final_state['version']} concurrently."
                     else:
                         msg = f"Soft delete for conversation ID {conversation_id} (expected v{expected_version}) affected 0 rows."
-                    raise ConflictError(msg, entity="conversations", entity_id=conversation_id)
+                    raise ConflictError(
+                        msg, entity="conversations", entity_id=conversation_id
+                    )
 
                 logger.info(
-                    f"Soft-deleted conversation ID {conversation_id} (was v{expected_version}), new version {next_version_val}.")
+                    f"Soft-deleted conversation ID {conversation_id} (was v{expected_version}), new version {next_version_val}."
+                )
                 return True
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
             logger.opt(exception=True).error(
-                f"Database error soft-deleting conversation ID {conversation_id} (expected v{expected_version}): {e}")
+                f"Database error soft-deleting conversation ID {conversation_id} (expected v{expected_version}): {e}"
+            )
             raise
 
-    def restore_conversation(self, conversation_id: str, expected_version: int) -> Optional[bool]:
+    def restore_conversation(
+        self, conversation_id: str, expected_version: int
+    ) -> Optional[bool]:
         """
         Restores a soft-deleted conversation using optimistic locking.
 
@@ -5716,7 +6577,13 @@ UPDATE db_schema_version
             "SET deleted = 0, last_modified = ?, version = ?, client_id = ? "
             "WHERE id = ? AND version = ? AND deleted = 1"
         )
-        params = (now, next_version_val, self.client_id, conversation_id, expected_version)
+        params = (
+            now,
+            next_version_val,
+            self.client_id,
+            conversation_id,
+            expected_version,
+        )
 
         try:
             with self.transaction() as conn:
@@ -5731,7 +6598,9 @@ UPDATE db_schema_version
                         entity_id=conversation_id,
                     )
                 if not current_state["deleted"]:
-                    logger.info(f"Conversation ID {conversation_id} already active. Restore is idempotent.")
+                    logger.info(
+                        f"Conversation ID {conversation_id} already active. Restore is idempotent."
+                    )
                     return True
                 if current_state["version"] != expected_version:
                     raise ConflictError(
@@ -5750,7 +6619,9 @@ UPDATE db_schema_version
                     if not final_state:
                         msg = f"Conversation ID {conversation_id} disappeared."
                     elif not final_state["deleted"]:
-                        logger.info(f"Conversation ID {conversation_id} was restored concurrently. Success.")
+                        logger.info(
+                            f"Conversation ID {conversation_id} was restored concurrently. Success."
+                        )
                         return True
                     elif final_state["version"] != expected_version:
                         msg = (
@@ -5762,7 +6633,9 @@ UPDATE db_schema_version
                             f"Restore for conversation ID {conversation_id} "
                             f"(expected v{expected_version}) affected 0 rows."
                         )
-                    raise ConflictError(msg, entity="conversations", entity_id=conversation_id)
+                    raise ConflictError(
+                        msg, entity="conversations", entity_id=conversation_id
+                    )
 
                 logger.info(
                     f"Restored conversation ID {conversation_id} "
@@ -5777,8 +6650,9 @@ UPDATE db_schema_version
             )
             raise
 
-    def search_conversations_by_title(self, title_query: str, character_id: Optional[int] = None, limit: int = 10) -> \
-            List[Dict[str, Any]]:
+    def search_conversations_by_title(
+        self, title_query: str, character_id: Optional[int] = None, limit: int = 10
+    ) -> List[Dict[str, Any]]:
         """
         Searches conversations by title using FTS.
 
@@ -5798,7 +6672,9 @@ UPDATE db_schema_version
             CharactersRAGDBError: For database search errors.
         """
         if not title_query.strip():
-            logger.warning("Empty title_query provided for conversation search. Returning empty list.")
+            logger.warning(
+                "Empty title_query provided for conversation search. Returning empty list."
+            )
             return []
         safe_search_term = f'"{title_query}"'
         base_query = """
@@ -5820,30 +6696,36 @@ UPDATE db_schema_version
             cursor = self.execute_query(base_query, tuple(params_list))
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
-            logger.error(f"Error searching conversations for title '{safe_search_term}': {e}")
+            logger.error(
+                f"Error searching conversations for title '{safe_search_term}': {e}"
+            )
             raise
 
-    def search_conversations_by_content(self, search_query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def search_conversations_by_content(
+        self, search_query: str, limit: int = 10
+    ) -> List[Dict[str, Any]]:
         """
         Searches conversations by message content using FTS.
-        
+
         Searches the messages table for content matching the query,
         then returns the unique conversations containing those messages.
-        
+
         Args:
             search_query: The search term for content. Supports FTS query syntax.
             limit: Maximum number of conversations to return. Defaults to 10.
-            
+
         Returns:
             A list of matching conversation dictionaries with relevance scores.
-            
+
         Raises:
             CharactersRAGDBError: For database search errors.
         """
         if not search_query.strip():
-            logger.warning("Empty search_query provided for conversation content search. Returning empty list.")
+            logger.warning(
+                "Empty search_query provided for conversation content search. Returning empty list."
+            )
             return []
-            
+
         # Search for messages containing the query, then get their conversations
         query = """
             SELECT DISTINCT c.*, 
@@ -5859,18 +6741,22 @@ UPDATE db_schema_version
             ORDER BY best_rank
             LIMIT ?
         """
-        
+
         try:
             cursor = self.execute_query(query, (search_query, limit))
             results = []
             for row in cursor.fetchall():
                 conv_dict = dict(row)
                 # Add a relevance score based on rank (lower rank = better match)
-                conv_dict['relevance_score'] = 1.0 / (1.0 + abs(conv_dict.get('best_rank', 0)))
+                conv_dict["relevance_score"] = 1.0 / (
+                    1.0 + abs(conv_dict.get("best_rank", 0))
+                )
                 results.append(conv_dict)
             return results
         except CharactersRAGDBError as e:
-            logger.error(f"Error searching conversations by content '{search_query}': {e}")
+            logger.error(
+                f"Error searching conversations by content '{search_query}': {e}"
+            )
             raise
 
     # --- Message Methods ---
@@ -5903,40 +6789,43 @@ UPDATE db_schema_version
             ConflictError: If a message with the provided 'id' (if any) already exists.
             CharactersRAGDBError: For other database errors (e.g., FK violation for conversation_id).
         """
-        msg_id = msg_data.get('id') or self._generate_uuid()
+        msg_id = msg_data.get("id") or self._generate_uuid()
 
-        required_fields = ['conversation_id', 'sender', 'content']  # Content can be empty if image is present
+        required_fields = [
+            "conversation_id",
+            "sender",
+            "content",
+        ]  # Content can be empty if image is present
         for field in required_fields:
             if field not in msg_data:  # Removed "not msg_data[field]" for 'content'
                 raise InputError(f"Required field '{field}' is missing for message.")
-        if not msg_data.get('content') and not msg_data.get('image_data'):
+        if not msg_data.get("content") and not msg_data.get("image_data"):
             raise InputError("Message must have text content or image data.")
-        if msg_data.get('image_data') and not msg_data.get('image_mime_type'):
+        if msg_data.get("image_data") and not msg_data.get("image_mime_type"):
             raise InputError("image_mime_type is required if image_data is provided.")
 
-
-        client_id = msg_data.get('client_id') or self.client_id
+        client_id = msg_data.get("client_id") or self.client_id
         if not client_id:
             raise InputError("Client ID is required for message.")
 
         now = self._get_current_utc_timestamp_iso()
-        timestamp = msg_data.get('timestamp') or now
+        timestamp = msg_data.get("timestamp") or now
 
         # Determine role from sender or use provided role
-        role = msg_data.get('role')
+        role = msg_data.get("role")
         if not role:
             # Auto-determine role from sender
-            sender_lower = msg_data['sender'].lower()
-            if sender_lower == 'user':
-                role = 'user'
-            elif sender_lower == 'system':
-                role = 'system'
-            elif sender_lower in ('assistant', 'ai', 'bot'):
-                role = 'assistant'
-            elif sender_lower == 'tool':
-                role = 'tool'
+            sender_lower = msg_data["sender"].lower()
+            if sender_lower == "user":
+                role = "user"
+            elif sender_lower == "system":
+                role = "system"
+            elif sender_lower in ("assistant", "ai", "bot"):
+                role = "assistant"
+            elif sender_lower == "tool":
+                role = "tool"
             else:
-                role = 'assistant'  # Default for character names
+                role = "assistant"  # Default for character names
 
         query = """
                 INSERT INTO messages (id, conversation_id, parent_message_id, sender, content,
@@ -5945,27 +6834,46 @@ UPDATE db_schema_version
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?)
                 """
         params = (
-            msg_id, msg_data['conversation_id'], msg_data.get('parent_message_id'),
-            msg_data['sender'], msg_data.get('content', ''),  # Default to empty string if no text content
-            msg_data.get('image_data'), msg_data.get('image_mime_type'),
-            timestamp, msg_data.get('ranking'), now, client_id, role
+            msg_id,
+            msg_data["conversation_id"],
+            msg_data.get("parent_message_id"),
+            msg_data["sender"],
+            msg_data.get("content", ""),  # Default to empty string if no text content
+            msg_data.get("image_data"),
+            msg_data.get("image_mime_type"),
+            timestamp,
+            msg_data.get("ranking"),
+            now,
+            client_id,
+            role,
         )
         try:
             with self.transaction():
-                conv_cursor = self.execute_query("SELECT 1 FROM conversations WHERE id = ? AND deleted = 0",
-                                                 (msg_data['conversation_id'],))
+                conv_cursor = self.execute_query(
+                    "SELECT 1 FROM conversations WHERE id = ? AND deleted = 0",
+                    (msg_data["conversation_id"],),
+                )
                 if not conv_cursor.fetchone():
                     raise InputError(
-                        f"Cannot add message: Conversation ID '{msg_data['conversation_id']}' not found or deleted.")
-                self.execute_query(query, params)  # commit handled by transaction context
+                        f"Cannot add message: Conversation ID '{msg_data['conversation_id']}' not found or deleted."
+                    )
+                self.execute_query(
+                    query, params
+                )  # commit handled by transaction context
             logger.info(
-                f"Added message ID: {msg_id} to conversation {msg_data['conversation_id']} (Image: {'Yes' if msg_data.get('image_data') else 'No'}).")
+                f"Added message ID: {msg_id} to conversation {msg_data['conversation_id']} (Image: {'Yes' if msg_data.get('image_data') else 'No'})."
+            )
             return msg_id
         except sqlite3.IntegrityError as e:
             if "UNIQUE constraint failed: messages.id" in str(e):
-                raise ConflictError(f"Message with ID '{msg_id}' already exists.", entity="messages",
-                                    entity_id=msg_id) from e
-            raise CharactersRAGDBError(f"Database integrity error adding message: {e}") from e
+                raise ConflictError(
+                    f"Message with ID '{msg_id}' already exists.",
+                    entity="messages",
+                    entity_id=msg_id,
+                ) from e
+            raise CharactersRAGDBError(
+                f"Database integrity error adding message: {e}"
+            ) from e
         except InputError:
             raise
         except CharactersRAGDBError as e:
@@ -6073,9 +6981,14 @@ UPDATE db_schema_version
                     )
         return result
 
-    def get_messages_for_conversation(self, conversation_id: str, limit: int = 100, offset: int = 0,
-                                      order_by_timestamp: str = "ASC",
-                                      include_image_data: bool = True) -> List[Dict[str, Any]]:
+    def get_messages_for_conversation(
+        self,
+        conversation_id: str,
+        limit: int = 100,
+        offset: int = 0,
+        order_by_timestamp: str = "ASC",
+        include_image_data: bool = True,
+    ) -> List[Dict[str, Any]]:
         """Lists non-deleted messages for a non-deleted conversation.
 
         Ordered by ``timestamp`` according to ``order_by_timestamp``. The
@@ -6122,15 +7035,21 @@ UPDATE db_schema_version
             cursor = self.execute_query(query, (conversation_id, limit, offset))
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
-            logger.error(f"Database error fetching messages for conversation ID {conversation_id}: {e}")
+            logger.error(
+                f"Database error fetching messages for conversation ID {conversation_id}: {e}"
+            )
             raise
 
-    def get_messages_for_conversations_batch(self, conversation_ids: List[str], limit_per_conversation: int = 100,
-                                           order_by_timestamp: str = "ASC",
-                                           include_image_data: bool = True) -> Dict[str, List[Dict[str, Any]]]:
+    def get_messages_for_conversations_batch(
+        self,
+        conversation_ids: List[str],
+        limit_per_conversation: int = 100,
+        order_by_timestamp: str = "ASC",
+        include_image_data: bool = True,
+    ) -> Dict[str, List[Dict[str, Any]]]:
         """
         Batch fetch messages for multiple conversations to avoid N+1 queries.
-        
+
         Args:
             conversation_ids: List of conversation IDs to fetch messages for
             limit_per_conversation: Maximum messages per conversation
@@ -6139,23 +7058,23 @@ UPDATE db_schema_version
                 returned as None (key still present) so text-only callers skip
                 the BLOB I/O (task-260). ``image_mime_type`` is always
                 returned.
-            
+
         Returns:
             Dictionary mapping conversation_id to list of messages
-            
+
         Raises:
             InputError: If ``order_by_timestamp`` is not "ASC"/"DESC".
             CharactersRAGDBError: For database errors.
         """
         if not conversation_ids:
             return {}
-            
+
         if order_by_timestamp.upper() not in ["ASC", "DESC"]:
             raise InputError("order_by_timestamp must be 'ASC' or 'DESC'.")
-        
+
         image_col = "m.image_data" if include_image_data else "NULL AS image_data"
         # Use ROW_NUMBER() window function to limit messages per conversation
-        placeholders = ','.join('?' * len(conversation_ids))
+        placeholders = ",".join("?" * len(conversation_ids))
         query = f"""
             WITH ranked_messages AS (
                 SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
@@ -6172,31 +7091,35 @@ UPDATE db_schema_version
             WHERE row_num <= ?
             ORDER BY conversation_id, timestamp {order_by_timestamp}
         """
-        
+
         try:
-            cursor = self.execute_query(query, tuple(conversation_ids) + (limit_per_conversation,))
+            cursor = self.execute_query(
+                query, tuple(conversation_ids) + (limit_per_conversation,)
+            )
             all_messages = [dict(row) for row in cursor.fetchall()]
-            
+
             # Group messages by conversation_id
             result = {}
             for message in all_messages:
-                conv_id = message['conversation_id']
+                conv_id = message["conversation_id"]
                 if conv_id not in result:
                     result[conv_id] = []
                 result[conv_id].append(message)
-            
+
             # Ensure all requested conversation IDs are in the result (even if empty)
             for conv_id in conversation_ids:
                 if conv_id not in result:
                     result[conv_id] = []
-                    
+
             return result
-            
+
         except CharactersRAGDBError as e:
             logger.error(f"Database error fetching messages for conversations: {e}")
             raise
 
-    def update_message(self, message_id: str, update_data: Dict[str, Any], expected_version: int) -> Optional[bool]:
+    def update_message(
+        self, message_id: str, update_data: Dict[str, Any], expected_version: int
+    ) -> Optional[bool]:
         """
         Updates an existing message using optimistic locking.
 
@@ -6235,28 +7158,49 @@ UPDATE db_schema_version
         fields_to_update_sql = []
         params_for_set_clause = []
 
-        allowed_to_update = ['content', 'ranking', 'parent_message_id', 'image_data', 'image_mime_type', 'feedback']
+        allowed_to_update = [
+            "content",
+            "ranking",
+            "parent_message_id",
+            "image_data",
+            "image_mime_type",
+            "feedback",
+        ]
 
         # Special handling for clearing image
-        if 'image_data' in update_data and update_data['image_data'] is None:
+        if "image_data" in update_data and update_data["image_data"] is None:
             fields_to_update_sql.append("image_data = NULL")
             fields_to_update_sql.append("image_mime_type = NULL")
             # Remove these keys from update_data to avoid processing them again
             # in the loop if they were explicitly set to None
             # This isn't strictly necessary with current loop logic but good for clarity
-            update_data.pop('image_data', None)
-            update_data.pop('image_mime_type', None)
+            update_data.pop("image_data", None)
+            update_data.pop("image_mime_type", None)
 
         for key, value in update_data.items():
             if key in allowed_to_update:
                 fields_to_update_sql.append(f"{key} = ?")
                 params_for_set_clause.append(value)
-            elif key not in ['id', 'conversation_id', 'sender', 'timestamp', 'last_modified', 'version', 'client_id', 'deleted']:
+            elif key not in [
+                "id",
+                "conversation_id",
+                "sender",
+                "timestamp",
+                "last_modified",
+                "version",
+                "client_id",
+                "deleted",
+            ]:
                 logging.warning(
-                    f"Attempted to update immutable or unknown field '{key}' in message ID {message_id}, skipping.")
+                    f"Attempted to update immutable or unknown field '{key}' in message ID {message_id}, skipping."
+                )
 
-        if not fields_to_update_sql: # If only image was cleared, this list might be empty now if no other fields
-            logger.info(f"No updatable content fields provided for message ID {message_id}, but metadata will be updated if version matches.")
+        if (
+            not fields_to_update_sql
+        ):  # If only image was cleared, this list might be empty now if no other fields
+            logger.info(
+                f"No updatable content fields provided for message ID {message_id}, but metadata will be updated if version matches."
+            )
             # Proceed to metadata update; SQL query will be constructed accordingly
 
         next_version_val = expected_version + 1
@@ -6264,7 +7208,9 @@ UPDATE db_schema_version
         current_fields_to_update_sql = list(fields_to_update_sql)
         current_params_for_set_clause = list(params_for_set_clause)
 
-        current_fields_to_update_sql.extend(["last_modified = ?", "version = ?", "client_id = ?"])
+        current_fields_to_update_sql.extend(
+            ["last_modified = ?", "version = ?", "client_id = ?"]
+        )
         current_params_for_set_clause.extend([now, next_version_val, self.client_id])
 
         where_values = [message_id, expected_version]
@@ -6274,44 +7220,60 @@ UPDATE db_schema_version
 
         try:
             with self.transaction() as conn:
-                current_db_version = self._get_current_db_version(conn, "messages", "id", message_id)
+                current_db_version = self._get_current_db_version(
+                    conn, "messages", "id", message_id
+                )
 
                 if current_db_version != expected_version:
                     raise ConflictError(
                         f"Message ID {message_id} update failed: version mismatch (db has {current_db_version}, client expected {expected_version}).",
-                        entity="messages", entity_id=message_id
+                        entity="messages",
+                        entity_id=message_id,
                     )
 
                 cursor = conn.execute(query, final_params_for_execute)
 
                 if cursor.rowcount == 0:
-                    check_again_cursor = conn.execute("SELECT version, deleted FROM messages WHERE id = ?",
-                                                      (message_id,))
+                    check_again_cursor = conn.execute(
+                        "SELECT version, deleted FROM messages WHERE id = ?",
+                        (message_id,),
+                    )
                     final_state = check_again_cursor.fetchone()
                     msg = f"Update for message ID {message_id} (expected v{expected_version}) affected 0 rows."
                     if not final_state:
                         msg = f"Message ID {message_id} disappeared."
-                    elif final_state['deleted']:
+                    elif final_state["deleted"]:
                         msg = f"Message ID {message_id} was soft-deleted concurrently."
-                    elif final_state['version'] != expected_version:
+                    elif final_state["version"] != expected_version:
                         msg = f"Message ID {message_id} version changed to {final_state['version']} concurrently."
                     raise ConflictError(msg, entity="messages", entity_id=message_id)
 
                 logger.info(
-                    f"Updated message ID {message_id} from version {expected_version} to version {next_version_val}. Fields updated: {fields_to_update_sql if fields_to_update_sql else 'None'}")
+                    f"Updated message ID {message_id} from version {expected_version} to version {next_version_val}. Fields updated: {fields_to_update_sql if fields_to_update_sql else 'None'}"
+                )
                 return True
         except sqlite3.IntegrityError as e:
-            logger.opt(exception=True).error(f"SQLite integrity error updating message ID {message_id} (expected v{expected_version}): {e}")
-            raise CharactersRAGDBError(f"Database integrity error updating message: {e}") from e
+            logger.opt(exception=True).error(
+                f"SQLite integrity error updating message ID {message_id} (expected v{expected_version}): {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Database integrity error updating message: {e}"
+            ) from e
         except ConflictError:
             raise
-        except InputError: # Should not be raised from here directly, but for completeness
+        except (
+            InputError
+        ):  # Should not be raised from here directly, but for completeness
             raise
         except CharactersRAGDBError as e:
-            logger.opt(exception=True).error(f"Database error updating message ID {message_id} (expected v{expected_version}): {e}")
+            logger.opt(exception=True).error(
+                f"Database error updating message ID {message_id} (expected v{expected_version}): {e}"
+            )
             raise
 
-    def soft_delete_message(self, message_id: str, expected_version: int) -> Optional[bool]:
+    def soft_delete_message(
+        self, message_id: str, expected_version: int
+    ) -> Optional[bool]:
         """
         Soft-deletes a message using optimistic locking.
 
@@ -6341,50 +7303,66 @@ UPDATE db_schema_version
         try:
             with self.transaction() as conn:
                 try:
-                    current_db_version = self._get_current_db_version(conn, "messages", "id", message_id)
+                    current_db_version = self._get_current_db_version(
+                        conn, "messages", "id", message_id
+                    )
                 except ConflictError as e:
-                    check_status_cursor = conn.execute("SELECT deleted, version FROM messages WHERE id = ?",
-                                                       (message_id,))
+                    check_status_cursor = conn.execute(
+                        "SELECT deleted, version FROM messages WHERE id = ?",
+                        (message_id,),
+                    )
                     record_status = check_status_cursor.fetchone()
-                    if record_status and record_status['deleted']:
-                        logger.info(f"Message ID {message_id} already soft-deleted. Success (idempotent).")
+                    if record_status and record_status["deleted"]:
+                        logger.info(
+                            f"Message ID {message_id} already soft-deleted. Success (idempotent)."
+                        )
                         return True
-                    raise e # Re-raise if not found or other conflict
+                    raise e  # Re-raise if not found or other conflict
 
                 if current_db_version != expected_version:
                     raise ConflictError(
                         f"Soft delete for Message ID {message_id} failed: version mismatch (db has {current_db_version}, client expected {expected_version}).",
-                        entity="messages", entity_id=message_id
+                        entity="messages",
+                        entity_id=message_id,
                     )
 
                 cursor = conn.execute(query, params)
 
                 if cursor.rowcount == 0:
-                    check_again_cursor = conn.execute("SELECT version, deleted FROM messages WHERE id = ?",
-                                                      (message_id,))
+                    check_again_cursor = conn.execute(
+                        "SELECT version, deleted FROM messages WHERE id = ?",
+                        (message_id,),
+                    )
                     final_state = check_again_cursor.fetchone()
                     msg = f"Soft delete for message ID {message_id} (expected v{expected_version}) affected 0 rows."
                     if not final_state:
                         msg = f"Message ID {message_id} disappeared."
-                    elif final_state['deleted']:
-                        logger.info(f"Message ID {message_id} was soft-deleted concurrently. Success.")
+                    elif final_state["deleted"]:
+                        logger.info(
+                            f"Message ID {message_id} was soft-deleted concurrently. Success."
+                        )
                         return True
-                    elif final_state['version'] != expected_version:
+                    elif final_state["version"] != expected_version:
                         msg = f"Message ID {message_id} version changed to {final_state['version']} concurrently."
                     else:
                         msg = f"Soft delete for message ID {message_id} (expected v{expected_version}) affected 0 rows."
                     raise ConflictError(msg, entity="messages", entity_id=message_id)
 
                 logger.info(
-                    f"Soft-deleted message ID {message_id} (was v{expected_version}), new version {next_version_val}.")
+                    f"Soft-deleted message ID {message_id} (was v{expected_version}), new version {next_version_val}."
+                )
                 return True
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.opt(exception=True).error(f"Database error soft-deleting message ID {message_id} (expected v{expected_version}): {e}")
+            logger.opt(exception=True).error(
+                f"Database error soft-deleting message ID {message_id} (expected v{expected_version}): {e}"
+            )
             raise
 
-    def update_message_feedback(self, message_id: str, feedback: str, expected_version: int) -> bool:
+    def update_message_feedback(
+        self, message_id: str, feedback: str, expected_version: int
+    ) -> bool:
         """
         Updates the feedback for a message using optimistic locking.
 
@@ -6406,30 +7384,37 @@ UPDATE db_schema_version
             CharactersRAGDBError: For database errors.
         """
         import re
-        
+
         # Validate feedback format
         if feedback is not None:
-            if not re.match(r'^[12];', feedback):
-                raise InputError(f"Invalid feedback format: '{feedback}'. Must start with '1;' or '2;'")
-        
+            if not re.match(r"^[12];", feedback):
+                raise InputError(
+                    f"Invalid feedback format: '{feedback}'. Must start with '1;' or '2;'"
+                )
+
         # Use the existing update_message method with feedback in update_data
-        update_data = {'feedback': feedback}
+        update_data = {"feedback": feedback}
         return self.update_message(message_id, update_data, expected_version)
 
-    def create_message_variant(self, original_message_id: str, variant_content: str, 
-                              variant_number: int = None, is_selected: bool = False) -> Optional[str]:
+    def create_message_variant(
+        self,
+        original_message_id: str,
+        variant_content: str,
+        variant_number: int = None,
+        is_selected: bool = False,
+    ) -> Optional[str]:
         """
         Creates a variant of an existing message (for regeneration or multiple responses).
-        
+
         Args:
             original_message_id: The ID of the message to create a variant of.
             variant_content: The content of the new variant.
             variant_number: The variant number (auto-assigned if None).
             is_selected: Whether this variant is the selected one.
-            
+
         Returns:
             The ID of the created variant message.
-            
+
         Raises:
             InputError: If the original message doesn't exist.
             CharactersRAGDBError: For database errors.
@@ -6437,130 +7422,172 @@ UPDATE db_schema_version
         try:
             with self.transaction() as conn:
                 # Get the original message details
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     SELECT conversation_id, parent_message_id, sender, role,
                            image_data, image_mime_type
                     FROM messages 
                     WHERE id = ? AND deleted = 0
-                """, (original_message_id,))
-                
+                """,
+                    (original_message_id,),
+                )
+
                 original = cursor.fetchone()
                 if not original:
-                    raise InputError(f"Original message {original_message_id} not found")
-                
+                    raise InputError(
+                        f"Original message {original_message_id} not found"
+                    )
+
                 # If original is already a variant, find the root
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     SELECT variant_of FROM messages WHERE id = ?
-                """, (original_message_id,))
+                """,
+                    (original_message_id,),
+                )
                 variant_info = cursor.fetchone()
-                root_variant_id = variant_info['variant_of'] if variant_info and variant_info['variant_of'] else original_message_id
-                
+                root_variant_id = (
+                    variant_info["variant_of"]
+                    if variant_info and variant_info["variant_of"]
+                    else original_message_id
+                )
+
                 # Count existing variants
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     SELECT COUNT(*) as count, MAX(variant_number) as max_num 
                     FROM messages 
                     WHERE (variant_of = ? OR id = ?) AND deleted = 0
-                """, (root_variant_id, root_variant_id))
-                
+                """,
+                    (root_variant_id, root_variant_id),
+                )
+
                 variant_stats = cursor.fetchone()
                 if variant_number is None:
-                    variant_number = (variant_stats['max_num'] or 1) + 1
-                
+                    variant_number = (variant_stats["max_num"] or 1) + 1
+
                 # If selected, unselect others
                 if is_selected:
-                    conn.execute("""
+                    conn.execute(
+                        """
                         UPDATE messages 
                         SET is_selected_variant = 0 
                         WHERE (variant_of = ? OR id = ?) AND deleted = 0
-                    """, (root_variant_id, root_variant_id))
-                
+                    """,
+                        (root_variant_id, root_variant_id),
+                    )
+
                 # Create the new variant message
                 new_msg_id = str(uuid.uuid4())
                 now = self._get_current_utc_timestamp_iso()
-                
-                conn.execute("""
+
+                conn.execute(
+                    """
                     INSERT INTO messages (
                         id, conversation_id, parent_message_id, sender, content, 
                         role, image_data, image_mime_type,
                         variant_of, variant_number, is_selected_variant, total_variants,
                         timestamp, last_modified, version, client_id, deleted
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0)
-                """, (
-                    new_msg_id, original['conversation_id'], original['parent_message_id'],
-                    original['sender'], variant_content, original['role'],
-                    original['image_data'], original['image_mime_type'],
-                    root_variant_id, variant_number, int(is_selected), variant_stats['count'] + 1,
-                    now, now, self.client_id
-                ))
-                
+                """,
+                    (
+                        new_msg_id,
+                        original["conversation_id"],
+                        original["parent_message_id"],
+                        original["sender"],
+                        variant_content,
+                        original["role"],
+                        original["image_data"],
+                        original["image_mime_type"],
+                        root_variant_id,
+                        variant_number,
+                        int(is_selected),
+                        variant_stats["count"] + 1,
+                        now,
+                        now,
+                        self.client_id,
+                    ),
+                )
+
                 # Update total_variants count for all variants
-                conn.execute("""
+                conn.execute(
+                    """
                     UPDATE messages 
                     SET total_variants = ? 
                     WHERE (variant_of = ? OR id = ?) AND deleted = 0
-                """, (variant_stats['count'] + 1, root_variant_id, root_variant_id))
-                
-                logger.info(f"Created variant {new_msg_id} (#{variant_number}) of message {original_message_id}")
+                """,
+                    (variant_stats["count"] + 1, root_variant_id, root_variant_id),
+                )
+
+                logger.info(
+                    f"Created variant {new_msg_id} (#{variant_number}) of message {original_message_id}"
+                )
                 return new_msg_id
-                
+
         except InputError:
             raise
         except Exception as e:
             logger.opt(exception=True).error(f"Error creating message variant: {e}")
             raise CharactersRAGDBError(f"Failed to create message variant: {e}") from e
-    
+
     def get_message_variants(self, message_id: str) -> List[Dict[str, Any]]:
         """
         Gets all variants of a message (including the original).
-        
+
         Args:
             message_id: The ID of any message in the variant group.
-            
+
         Returns:
             List of message variants ordered by variant_number.
         """
         try:
             with self.transaction() as conn:
                 # Find the root variant ID
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     SELECT variant_of FROM messages WHERE id = ? AND deleted = 0
-                """, (message_id,))
+                """,
+                    (message_id,),
+                )
                 result = cursor.fetchone()
-                
-                if result and result['variant_of']:
-                    root_id = result['variant_of']
+
+                if result and result["variant_of"]:
+                    root_id = result["variant_of"]
                 else:
                     root_id = message_id
-                
+
                 # Get all variants
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     SELECT id, content, sender, role, variant_number, is_selected_variant,
                            total_variants, timestamp, last_modified, version, feedback
                     FROM messages 
                     WHERE (id = ? OR variant_of = ?) AND deleted = 0
                     ORDER BY variant_number
-                """, (root_id, root_id))
-                
+                """,
+                    (root_id, root_id),
+                )
+
                 variants = []
                 for row in cursor:
                     variants.append(dict(row))
-                
+
                 return variants
-                
+
         except Exception as e:
             logger.opt(exception=True).error(f"Error getting message variants: {e}")
             raise CharactersRAGDBError(f"Failed to get message variants: {e}") from e
-    
+
     def select_message_variant(self, variant_id: str) -> bool:
         """
         Selects a specific message variant as the active one.
-        
+
         Args:
             variant_id: The ID of the variant to select.
-            
+
         Returns:
             True if successful.
-            
+
         Raises:
             InputError: If the variant doesn't exist.
             CharactersRAGDBError: For database errors.
@@ -6568,40 +7595,51 @@ UPDATE db_schema_version
         try:
             with self.transaction() as conn:
                 # Get the variant info
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     SELECT variant_of FROM messages WHERE id = ? AND deleted = 0
-                """, (variant_id,))
+                """,
+                    (variant_id,),
+                )
                 result = cursor.fetchone()
-                
+
                 if not result:
                     raise InputError(f"Message variant {variant_id} not found")
-                
-                root_id = result['variant_of'] if result['variant_of'] else variant_id
-                
+
+                root_id = result["variant_of"] if result["variant_of"] else variant_id
+
                 # Unselect all variants
-                conn.execute("""
+                conn.execute(
+                    """
                     UPDATE messages 
                     SET is_selected_variant = 0 
                     WHERE (id = ? OR variant_of = ?) AND deleted = 0
-                """, (root_id, root_id))
-                
+                """,
+                    (root_id, root_id),
+                )
+
                 # Select the specified variant
-                conn.execute("""
+                conn.execute(
+                    """
                     UPDATE messages 
                     SET is_selected_variant = 1 
                     WHERE id = ? AND deleted = 0
-                """, (variant_id,))
-                
+                """,
+                    (variant_id,),
+                )
+
                 logger.info(f"Selected variant {variant_id}")
                 return True
-                
+
         except InputError:
             raise
         except Exception as e:
             logger.opt(exception=True).error(f"Error selecting message variant: {e}")
             raise CharactersRAGDBError(f"Failed to select message variant: {e}") from e
 
-    def search_messages_by_content(self, content_query: str, conversation_id: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
+    def search_messages_by_content(
+        self, content_query: str, conversation_id: Optional[str] = None, limit: int = 10
+    ) -> List[Dict[str, Any]]:
         """
         Searches messages by content using FTS.
 
@@ -6640,7 +7678,9 @@ UPDATE db_schema_version
             cursor = self.execute_query(base_query, tuple(params_list))
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
-            logger.error(f"Error searching messages for content '{safe_search_term}': {e}")
+            logger.error(
+                f"Error searching messages for content '{safe_search_term}': {e}"
+            )
             raise
 
     # --- Keyword, KeywordCollection, Note Methods (CRUD + Search) ---
@@ -6652,8 +7692,14 @@ UPDATE db_schema_version
     # - soft_delete: UPDATE SET deleted = 1, last_modified, version, client_id WHERE id/name = ? AND version = ? AND deleted = 0.
     # - search: Use respective FTS table.
 
-    def _add_generic_item(self, table_name: str, unique_col_name: str, item_data: Dict[str, Any], main_col_value: str,
-                          other_fields_map: Dict[str, str]) -> Optional[int]:
+    def _add_generic_item(
+        self,
+        table_name: str,
+        unique_col_name: str,
+        item_data: Dict[str, Any],
+        main_col_value: str,
+        other_fields_map: Dict[str, str],
+    ) -> Optional[int]:
         """
         Internal helper to add items to tables with an auto-increment ID and a unique text column.
 
@@ -6684,11 +7730,13 @@ UPDATE db_schema_version
             CharactersRAGDBError: For other database errors.
         """
         now = self._get_current_utc_timestamp_iso()
-        client_id_to_use = item_data.get('client_id', self.client_id)
+        client_id_to_use = item_data.get("client_id", self.client_id)
 
         other_cols = list(other_fields_map.keys())
-        other_placeholders_list = ['?'] * len(other_cols)
-        other_values = [item_data.get(other_fields_map[col_db]) for col_db in other_cols]
+        other_placeholders_list = ["?"] * len(other_cols)
+        other_values = [
+            item_data.get(other_fields_map[col_db]) for col_db in other_cols
+        ]
 
         cols_str_list = [unique_col_name]
         placeholders_str_list = ["?"]
@@ -6697,27 +7745,38 @@ UPDATE db_schema_version
             placeholders_str_list.extend(other_placeholders_list)
 
         # Add created_at for new inserts
-        cols_str_list_insert = cols_str_list + ['created_at', 'last_modified', 'client_id', 'version', 'deleted']
-        placeholders_str_list_insert = placeholders_str_list + ['?', '?', '?', '1', '0']
+        cols_str_list_insert = cols_str_list + [
+            "created_at",
+            "last_modified",
+            "client_id",
+            "version",
+            "deleted",
+        ]
+        placeholders_str_list_insert = placeholders_str_list + ["?", "?", "?", "1", "0"]
 
         query = f"""
             INSERT INTO {table_name} (
-                {', '.join(cols_str_list_insert)}
-            ) VALUES ({', '.join(placeholders_str_list_insert)})
+                {", ".join(cols_str_list_insert)}
+            ) VALUES ({", ".join(placeholders_str_list_insert)})
         """
         # Params for INSERT: main_value, other_values..., created_at, last_modified, client_id
-        params_tuple_insert = tuple([main_col_value] + other_values + [now, now, client_id_to_use])
-
+        params_tuple_insert = tuple(
+            [main_col_value] + other_values + [now, now, client_id_to_use]
+        )
 
         try:
             with self.transaction() as conn:
                 # Check if a soft-deleted item exists and undelete it
                 undelete_cursor = conn.execute(
                     f"SELECT id, version FROM {table_name} WHERE {unique_col_name} = ? AND deleted = 1",
-                    (main_col_value,))
+                    (main_col_value,),
+                )
                 existing_deleted = undelete_cursor.fetchone()
                 if existing_deleted:
-                    item_id, current_version = existing_deleted['id'], existing_deleted['version']
+                    item_id, current_version = (
+                        existing_deleted["id"],
+                        existing_deleted["version"],
+                    )
                     next_version = current_version + 1
 
                     update_set_parts = [f"{unique_col_name} = ?"]
@@ -6725,41 +7784,71 @@ UPDATE db_schema_version
                     for i, col_db in enumerate(other_cols):
                         update_set_parts.append(f"{col_db} = ?")
                         update_params_list.append(other_values[i])
-                    update_set_parts.extend(["deleted = 0", "last_modified = ?", "version = ?", "client_id = ?"])
+                    update_set_parts.extend(
+                        [
+                            "deleted = 0",
+                            "last_modified = ?",
+                            "version = ?",
+                            "client_id = ?",
+                        ]
+                    )
                     # WHERE clause params for undelete
                     undelete_where_params = [item_id, current_version]
-                    full_undelete_params = tuple(update_params_list + [now, next_version, client_id_to_use] + undelete_where_params)
+                    full_undelete_params = tuple(
+                        update_params_list
+                        + [now, next_version, client_id_to_use]
+                        + undelete_where_params
+                    )
 
                     undelete_query = f"UPDATE {table_name} SET {', '.join(update_set_parts)} WHERE id = ? AND version = ?"
 
-                    row_count_undelete = conn.execute(undelete_query, full_undelete_params).rowcount
+                    row_count_undelete = conn.execute(
+                        undelete_query, full_undelete_params
+                    ).rowcount
                     if row_count_undelete == 0:
                         raise ConflictError(
                             f"Failed to undelete {table_name} '{main_col_value}' due to version mismatch or it became active/disappeared.",
-                            entity=table_name, entity_id=main_col_value)
+                            entity=table_name,
+                            entity_id=main_col_value,
+                        )
                     logger.info(
-                        f"Undeleted and updated {table_name} '{main_col_value}' with ID: {item_id}, new version {next_version}.")
+                        f"Undeleted and updated {table_name} '{main_col_value}' with ID: {item_id}, new version {next_version}."
+                    )
                     return item_id
 
                 # If not undeleting, proceed with insert
                 cursor_insert = conn.execute(query, params_tuple_insert)
                 item_id_insert = cursor_insert.lastrowid
-                logger.info(f"Added {table_name} '{main_col_value}' with ID: {item_id_insert}.")
+                logger.info(
+                    f"Added {table_name} '{main_col_value}' with ID: {item_id_insert}."
+                )
                 return item_id_insert
         except sqlite3.IntegrityError as e:
-             if f"unique constraint failed: {table_name}.{unique_col_name}" in str(e).lower(): # Use lower for robustness
-                logger.warning(f"{table_name} with {unique_col_name} '{main_col_value}' already exists and is active.")
-                raise ConflictError(f"{table_name} '{main_col_value}' already exists and is active.", entity=table_name,
-                                    entity_id=main_col_value) from e
-             raise CharactersRAGDBError(f"Database integrity error adding {table_name}: {e}") from e
-        except ConflictError: # From undelete path
+            if (
+                f"unique constraint failed: {table_name}.{unique_col_name}"
+                in str(e).lower()
+            ):  # Use lower for robustness
+                logger.warning(
+                    f"{table_name} with {unique_col_name} '{main_col_value}' already exists and is active."
+                )
+                raise ConflictError(
+                    f"{table_name} '{main_col_value}' already exists and is active.",
+                    entity=table_name,
+                    entity_id=main_col_value,
+                ) from e
+            raise CharactersRAGDBError(
+                f"Database integrity error adding {table_name}: {e}"
+            ) from e
+        except ConflictError:  # From undelete path
             raise
         except CharactersRAGDBError as e:
             logger.error(f"Database error adding {table_name} '{main_col_value}': {e}")
             raise
         return None  # Should not be reached if exceptions are raised properly
 
-    def _get_generic_item_by_id(self, table_name: str, item_id: int) -> Optional[Dict[str, Any]]:
+    def _get_generic_item_by_id(
+        self, table_name: str, item_id: int
+    ) -> Optional[Dict[str, Any]]:
         """
         Internal helper: Retrieves a non-deleted item by its auto-increment integer ID.
 
@@ -6782,7 +7871,9 @@ UPDATE db_schema_version
             logger.error(f"Database error fetching {table_name} ID {item_id}: {e}")
             raise
 
-    def _get_generic_item_by_unique_text(self, table_name: str, unique_col_name: str, value: str) -> Optional[Dict[str, Any]]:
+    def _get_generic_item_by_unique_text(
+        self, table_name: str, unique_col_name: str, value: str
+    ) -> Optional[Dict[str, Any]]:
         """
         Internal helper: Retrieves a non-deleted item by a unique text column value.
         Assumes the column has `COLLATE NOCASE` if case-insensitive search is desired.
@@ -6798,16 +7889,22 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors.
         """
-        query = f"SELECT * FROM {table_name} WHERE {unique_col_name} = ? AND deleted = 0"
+        query = (
+            f"SELECT * FROM {table_name} WHERE {unique_col_name} = ? AND deleted = 0"
+        )
         try:
             cursor = self.execute_query(query, (value,))
             row = cursor.fetchone()
             return dict(row) if row else None
         except CharactersRAGDBError as e:
-            logger.error(f"Database error fetching {table_name} by {unique_col_name} '{value}': {e}")
+            logger.error(
+                f"Database error fetching {table_name} by {unique_col_name} '{value}': {e}"
+            )
             raise
 
-    def _list_generic_items(self, table_name: str, order_by_col: str, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    def _list_generic_items(
+        self, table_name: str, order_by_col: str, limit: int = 100, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         """
         Internal helper: Lists non-deleted items from a table, with specified ordering.
 
@@ -6831,10 +7928,16 @@ UPDATE db_schema_version
             logger.error(f"Database error listing {table_name}: {e}")
             raise
 
-    def _update_generic_item(self, table_name: str, item_id: Union[int, str],
-                             update_data: Dict[str, Any], expected_version: int,
-                             allowed_fields: List[str], pk_col_name: str = "id",
-                             unique_col_name_in_data: Optional[str] = None) -> Optional[bool]:
+    def _update_generic_item(
+        self,
+        table_name: str,
+        item_id: Union[int, str],
+        update_data: Dict[str, Any],
+        expected_version: int,
+        allowed_fields: List[str],
+        pk_col_name: str = "id",
+        unique_col_name_in_data: Optional[str] = None,
+    ) -> Optional[bool]:
         """
         Internal helper: Updates an item in a table using optimistic locking.
 
@@ -6859,7 +7962,9 @@ UPDATE db_schema_version
             CharactersRAGDBError: For other database errors.
         """
         if not update_data:
-            raise InputError(f"No data provided for update of {table_name} ID {item_id}.")
+            raise InputError(
+                f"No data provided for update of {table_name} ID {item_id}."
+            )
 
         now = self._get_current_utc_timestamp_iso()
         fields_to_update_sql = []
@@ -6873,9 +7978,17 @@ UPDATE db_schema_version
                     params_for_set_clause.append(value.strip())
                 else:
                     params_for_set_clause.append(value)
-            elif key not in [pk_col_name, 'created_at', 'last_modified', 'version', 'client_id', 'deleted']:
+            elif key not in [
+                pk_col_name,
+                "created_at",
+                "last_modified",
+                "version",
+                "client_id",
+                "deleted",
+            ]:
                 logger.warning(
-                    f"Attempted to update immutable or unknown field '{key}' in {table_name} ID {item_id}, skipping.")
+                    f"Attempted to update immutable or unknown field '{key}' in {table_name} ID {item_id}, skipping."
+                )
 
         if not fields_to_update_sql:
             # This means update_data either was empty (caught above) or contained only non-allowed fields.
@@ -6884,16 +7997,19 @@ UPDATE db_schema_version
             # For safety, ensure metadata is only updated if there are actual field changes or if it's an explicit "touch".
             # The calling methods (e.g., update_note) handle this: "if not fields_to_update_sql: return True"
             # This helper should proceed if there's anything to set.
-            logger.info(f"No recognized updatable fields provided in update_data for {table_name} ID {item_id}. Will only update metadata if version matches.")
+            logger.info(
+                f"No recognized updatable fields provided in update_data for {table_name} ID {item_id}. Will only update metadata if version matches."
+            )
             # If we must update metadata anyway if version matches:
             # Fall through to add metadata updates. The query will work fine.
 
-
         next_version_val = expected_version + 1
-        current_fields_to_update_sql = list(fields_to_update_sql) # clone
-        current_params_for_set_clause = list(params_for_set_clause) # clone
+        current_fields_to_update_sql = list(fields_to_update_sql)  # clone
+        current_params_for_set_clause = list(params_for_set_clause)  # clone
 
-        current_fields_to_update_sql.extend(["last_modified = ?", "version = ?", "client_id = ?"])
+        current_fields_to_update_sql.extend(
+            ["last_modified = ?", "version = ?", "client_id = ?"]
+        )
         current_params_for_set_clause.extend([now, next_version_val, self.client_id])
 
         # Values for the WHERE clause
@@ -6905,12 +8021,15 @@ UPDATE db_schema_version
         try:
             with self.transaction() as conn:
                 # Explicit pre-check. _get_current_db_version raises ConflictError if not found or soft-deleted.
-                current_db_version = self._get_current_db_version(conn, table_name, pk_col_name, item_id)
+                current_db_version = self._get_current_db_version(
+                    conn, table_name, pk_col_name, item_id
+                )
 
                 if current_db_version != expected_version:
                     raise ConflictError(
                         f"{table_name} ID {item_id} was modified: version mismatch (db has {current_db_version}, client expected {expected_version}).",
-                        entity=table_name, entity_id=item_id
+                        entity=table_name,
+                        entity_id=item_id,
                     )
 
                 # If current_db_version == expected_version, proceed with the update.
@@ -6920,46 +8039,66 @@ UPDATE db_schema_version
                     # This state implies the record was active with expected_version during the _get_current_db_version check,
                     # but was either deleted or its version changed *just before* the UPDATE SQL executed.
                     check_again_cursor = conn.execute(
-                        f"SELECT version, deleted FROM {table_name} WHERE {pk_col_name} = ?", (item_id,))
+                        f"SELECT version, deleted FROM {table_name} WHERE {pk_col_name} = ?",
+                        (item_id,),
+                    )
                     final_state = check_again_cursor.fetchone()
                     msg = f"Update for {table_name} ID {item_id} (expected version {expected_version}) affected 0 rows."
                     if not final_state:
                         msg = f"{table_name} ID {item_id} disappeared before update completion (was version {expected_version})."
-                    elif final_state['deleted']:
+                    elif final_state["deleted"]:
                         msg = f"{table_name} ID {item_id} was soft-deleted concurrently (expected version {expected_version} for update)."
-                    elif final_state['version'] != expected_version:
+                    elif final_state["version"] != expected_version:
                         msg = f"{table_name} ID {item_id} version changed to {final_state['version']} concurrently (expected {expected_version} for update)."
                     raise ConflictError(msg, entity=table_name, entity_id=item_id)
 
                 logger.info(
-                    f"Updated {table_name} ID {item_id} from version {expected_version} to version {next_version_val}.")
+                    f"Updated {table_name} ID {item_id} from version {expected_version} to version {next_version_val}."
+                )
                 return True
         except sqlite3.IntegrityError as e:
             if unique_col_name_in_data and unique_col_name_in_data in update_data:
                 # More specific check for the unique column mentioned
-                db_unique_col_name = unique_col_name_in_data # Assuming it matches DB col name for this check
-                if f"UNIQUE constraint failed: {table_name}.{db_unique_col_name}" in str(e).lower():
+                db_unique_col_name = unique_col_name_in_data  # Assuming it matches DB col name for this check
+                if (
+                    f"UNIQUE constraint failed: {table_name}.{db_unique_col_name}"
+                    in str(e).lower()
+                ):
                     val = update_data[unique_col_name_in_data]
                     logger.warning(
-                        f"Update failed for {table_name} ID {item_id}: {db_unique_col_name} '{val}' already exists.")
+                        f"Update failed for {table_name} ID {item_id}: {db_unique_col_name} '{val}' already exists."
+                    )
                     raise ConflictError(
                         f"Cannot update {table_name} ID {item_id}: {db_unique_col_name} '{val}' already exists.",
-                        entity=table_name, entity_id=val) from e
+                        entity=table_name,
+                        entity_id=val,
+                    ) from e
             logger.opt(exception=True).error(
-                f"SQLite integrity error during update of {table_name} ID {item_id} (expected version {expected_version}): {e}")
-            raise CharactersRAGDBError(f"Database integrity error updating {table_name} ({item_id}): {e}") from e
+                f"SQLite integrity error during update of {table_name} ID {item_id} (expected version {expected_version}): {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Database integrity error updating {table_name} ({item_id}): {e}"
+            ) from e
         except ConflictError:
             raise
-        except InputError: # Should be caught by callers if they check 'update_data' emptiness first
+        except (
+            InputError
+        ):  # Should be caught by callers if they check 'update_data' emptiness first
             raise
         except CharactersRAGDBError as e:
             logger.opt(exception=True).error(
-                f"Database error updating {table_name} ID {item_id} (expected version {expected_version}): {e}")
+                f"Database error updating {table_name} ID {item_id} (expected version {expected_version}): {e}"
+            )
             raise
         # No implicit return None, function should return True or raise.
 
-    def _soft_delete_generic_item(self, table_name: str, item_id: Union[int, str],
-                                  expected_version: int, pk_col_name: str = "id") -> Optional[bool]:
+    def _soft_delete_generic_item(
+        self,
+        table_name: str,
+        item_id: Union[int, str],
+        expected_version: int,
+        pk_col_name: str = "id",
+    ) -> Optional[bool]:
         """
         Internal helper: Soft-deletes an item in a table using optimistic locking.
 
@@ -6988,25 +8127,31 @@ UPDATE db_schema_version
         try:
             with self.transaction() as conn:
                 try:
-                    current_db_version = self._get_current_db_version(conn, table_name, pk_col_name, item_id)
+                    current_db_version = self._get_current_db_version(
+                        conn, table_name, pk_col_name, item_id
+                    )
                     # If we are here, record is active and current_db_version is its version.
                 except ConflictError as e:
                     # Check if the ConflictError is because it's already soft-deleted.
                     # Query again to be absolutely sure of the 'deleted' status.
                     check_deleted_cursor = conn.execute(
-                        f"SELECT deleted, version FROM {table_name} WHERE {pk_col_name} = ?", (item_id,))
+                        f"SELECT deleted, version FROM {table_name} WHERE {pk_col_name} = ?",
+                        (item_id,),
+                    )
                     record_status = check_deleted_cursor.fetchone()
 
-                    if record_status and record_status['deleted']:
+                    if record_status and record_status["deleted"]:
                         logger.info(
-                            f"{table_name} ID {item_id} already soft-deleted. Operation considered successful (idempotent).")
+                            f"{table_name} ID {item_id} already soft-deleted. Operation considered successful (idempotent)."
+                        )
                         return True
-                    raise e # Re-raise if not found or other conflict
+                    raise e  # Re-raise if not found or other conflict
 
                 if current_db_version != expected_version:
                     raise ConflictError(
                         f"Soft delete failed for {table_name} ID {item_id}: version mismatch (db has {current_db_version}, client expected {expected_version}).",
-                        entity=table_name, entity_id=item_id
+                        entity=table_name,
+                        entity_id=item_id,
                     )
 
                 cursor = conn.execute(query, params)
@@ -7015,47 +8160,67 @@ UPDATE db_schema_version
                     # This means the record (which was active with expected_version) changed state
                     # between the _get_current_db_version check and the UPDATE execution.
                     check_again_cursor = conn.execute(
-                        f"SELECT deleted, version FROM {table_name} WHERE {pk_col_name} = ?", (item_id,))
+                        f"SELECT deleted, version FROM {table_name} WHERE {pk_col_name} = ?",
+                        (item_id,),
+                    )
                     changed_record = check_again_cursor.fetchone()
-                    msg = f"Soft delete for {table_name} ID {item_id} (expected version {expected_version}) affected 0 rows."
                     if not changed_record:
                         raise ConflictError(
                             f"{table_name} ID {item_id} disappeared before soft-delete completion (expected version {expected_version}).",
-                            entity=table_name, entity_id=item_id)
+                            entity=table_name,
+                            entity_id=item_id,
+                        )
 
-                    if changed_record['deleted']:
+                    if changed_record["deleted"]:
                         # If it got deleted by another process, and the new version matches what we intended, it's fine.
-                        if changed_record['version'] == next_version_val:
+                        if changed_record["version"] == next_version_val:
                             logger.info(
-                                f"{table_name} ID {item_id} was soft-deleted concurrently to version {next_version_val}. Operation successful.")
+                                f"{table_name} ID {item_id} was soft-deleted concurrently to version {next_version_val}. Operation successful."
+                            )
                             return True
                         else:
                             raise ConflictError(
                                 f"{table_name} ID {item_id} was soft-deleted concurrently to an unexpected version {changed_record['version']} (expected to set to {next_version_val}).",
-                                entity=table_name, entity_id=item_id)
+                                entity=table_name,
+                                entity_id=item_id,
+                            )
 
-                    if changed_record['version'] != expected_version:  # Still active, but version changed
+                    if (
+                        changed_record["version"] != expected_version
+                    ):  # Still active, but version changed
                         raise ConflictError(
                             f"Soft delete failed for {table_name} ID {item_id}: version changed to {changed_record['version']} concurrently (expected {expected_version}).",
-                            entity=table_name, entity_id=item_id)
+                            entity=table_name,
+                            entity_id=item_id,
+                        )
 
                     raise ConflictError(
                         f"Soft delete for {table_name} ID {item_id} (expected version {expected_version}) affected 0 rows for an unknown reason after passing initial checks.",
-                        entity=table_name, entity_id=item_id)
+                        entity=table_name,
+                        entity_id=item_id,
+                    )
 
                 logger.info(
-                    f"Soft-deleted {table_name} ID {item_id} (was version {expected_version}), new version {next_version_val}.")
+                    f"Soft-deleted {table_name} ID {item_id} (was version {expected_version}), new version {next_version_val}."
+                )
                 return True
         except ConflictError:
             raise
         except CharactersRAGDBError as e:  # Catches sqlite3.Error from conn.execute
             logger.opt(exception=True).error(
-                f"Database error soft-deleting {table_name} ID {item_id} (expected version {expected_version}): {e}")
+                f"Database error soft-deleting {table_name} ID {item_id} (expected version {expected_version}): {e}"
+            )
             raise
         # No implicit return None.
 
-    def _search_generic_items_fts(self, fts_table_name: str, main_table_name: str, fts_match_cols_or_table: str,
-                                  search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def _search_generic_items_fts(
+        self,
+        fts_table_name: str,
+        main_table_name: str,
+        fts_match_cols_or_table: str,
+        search_term: str,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
         """
         Internal helper: Performs FTS search on tables like keywords, notes, collections.
 
@@ -7123,7 +8288,9 @@ UPDATE db_schema_version
         """
         if not keyword_text or not keyword_text.strip():
             raise InputError("Keyword text cannot be empty.")
-        return self._add_generic_item("keywords", "keyword", {}, keyword_text.strip(), {})  # No other_fields_map
+        return self._add_generic_item(
+            "keywords", "keyword", {}, keyword_text.strip(), {}
+        )  # No other_fields_map
 
     def get_keyword_by_id(self, keyword_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -7148,7 +8315,9 @@ UPDATE db_schema_version
         Returns:
             Keyword data as a dictionary, or None if not found/deleted.
         """
-        return self._get_generic_item_by_unique_text("keywords", "keyword", keyword_text.strip())
+        return self._get_generic_item_by_unique_text(
+            "keywords", "keyword", keyword_text.strip()
+        )
 
     def list_keywords(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """
@@ -7161,7 +8330,9 @@ UPDATE db_schema_version
         Returns:
             A list of keyword dictionaries.
         """
-        return self._list_generic_items("keywords", "keyword COLLATE NOCASE", limit, offset)
+        return self._list_generic_items(
+            "keywords", "keyword COLLATE NOCASE", limit, offset
+        )
 
     def soft_delete_keyword(self, keyword_id: int, expected_version: int) -> bool:
         """
@@ -7186,10 +8357,12 @@ UPDATE db_schema_version
             table_name="keywords",
             item_id=keyword_id,
             expected_version=expected_version,
-            pk_col_name="id" # Explicitly pass, though "id" is default
+            pk_col_name="id",  # Explicitly pass, though "id" is default
         )
 
-    def search_keywords(self, search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def search_keywords(
+        self, search_term: str, limit: int = 10
+    ) -> List[Dict[str, Any]]:
         """
         Searches keywords by text using FTS.
 
@@ -7204,10 +8377,14 @@ UPDATE db_schema_version
             A list of matching keyword dictionaries.
         """
         safe_search_term = f'"{search_term}"'
-        return self._search_generic_items_fts("keywords_fts", "keywords", "keyword", safe_search_term, limit)
+        return self._search_generic_items_fts(
+            "keywords_fts", "keywords", "keyword", safe_search_term, limit
+        )
 
     # Keyword Collections
-    def add_keyword_collection(self, name: str, parent_id: Optional[int] = None) -> Optional[int]:
+    def add_keyword_collection(
+        self, name: str, parent_id: Optional[int] = None
+    ) -> Optional[int]:
         """
         Adds a new keyword collection or undeletes an existing one.
 
@@ -7228,10 +8405,17 @@ UPDATE db_schema_version
         """
         if not name or not name.strip():
             raise InputError("Collection name cannot be empty.")
-        return self._add_generic_item("keyword_collections", "name", {"parent_id": parent_id}, name.strip(),
-                                      {"parent_id": "parent_id"}) # Maps DB 'parent_id' to item_data['parent_id']
+        return self._add_generic_item(
+            "keyword_collections",
+            "name",
+            {"parent_id": parent_id},
+            name.strip(),
+            {"parent_id": "parent_id"},
+        )  # Maps DB 'parent_id' to item_data['parent_id']
 
-    def get_keyword_collection_by_id(self, collection_id: int) -> Optional[Dict[str, Any]]:
+    def get_keyword_collection_by_id(
+        self, collection_id: int
+    ) -> Optional[Dict[str, Any]]:
         """
         Retrieves a keyword collection by ID. Active collections only.
 
@@ -7253,9 +8437,13 @@ UPDATE db_schema_version
         Returns:
             Collection data as dictionary, or None.
         """
-        return self._get_generic_item_by_unique_text("keyword_collections", "name", name.strip())
+        return self._get_generic_item_by_unique_text(
+            "keyword_collections", "name", name.strip()
+        )
 
-    def list_keyword_collections(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    def list_keyword_collections(
+        self, limit: int = 100, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         """
         Lists active keyword collections, ordered by name (case-insensitively).
 
@@ -7266,9 +8454,13 @@ UPDATE db_schema_version
         Returns:
             A list of collection dictionaries.
         """
-        return self._list_generic_items("keyword_collections", "name COLLATE NOCASE", limit, offset)
+        return self._list_generic_items(
+            "keyword_collections", "name COLLATE NOCASE", limit, offset
+        )
 
-    def update_keyword_collection(self, collection_id: int, update_data: Dict[str, Any], expected_version: int) -> bool:
+    def update_keyword_collection(
+        self, collection_id: int, update_data: Dict[str, Any], expected_version: int
+    ) -> bool:
         """
         Updates a keyword collection with optimistic locking.
 
@@ -7293,12 +8485,14 @@ UPDATE db_schema_version
             item_id=collection_id,
             update_data=update_data,
             expected_version=expected_version,
-            allowed_fields=['name', 'parent_id'],
-            pk_col_name="id", # Explicitly pass, though "id" is default
-            unique_col_name_in_data='name' # For handling unique constraint on name if it's updated
+            allowed_fields=["name", "parent_id"],
+            pk_col_name="id",  # Explicitly pass, though "id" is default
+            unique_col_name_in_data="name",  # For handling unique constraint on name if it's updated
         )
 
-    def soft_delete_keyword_collection(self, collection_id: int, expected_version: int) -> bool:
+    def soft_delete_keyword_collection(
+        self, collection_id: int, expected_version: int
+    ) -> bool:
         """
         Soft-deletes a keyword collection with optimistic locking.
 
@@ -7320,30 +8514,46 @@ UPDATE db_schema_version
             table_name="keyword_collections",
             item_id=collection_id,
             expected_version=expected_version,
-            pk_col_name="id" # Explicitly pass, though "id" is default
+            pk_col_name="id",  # Explicitly pass, though "id" is default
         )
 
-    def search_keyword_collections(self, search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def search_keyword_collections(
+        self, search_term: str, limit: int = 10
+    ) -> List[Dict[str, Any]]:
         safe_search_term = f'"{search_term}"'
-        return self._search_generic_items_fts("keyword_collections_fts", "keyword_collections", "name", safe_search_term,
-                                              limit)
+        return self._search_generic_items_fts(
+            "keyword_collections_fts",
+            "keyword_collections",
+            "name",
+            safe_search_term,
+            limit,
+        )
 
     # Notes (Now with UUID and specific methods)
-    def add_note(self, title: str, content: str, note_id: Optional[str] = None) -> Optional[str]:
+    def add_note(
+        self, title: str, content: str, note_id: Optional[str] = None
+    ) -> Optional[str]:
         if not title or not title.strip():
             raise InputError("Note title cannot be empty.")
-        if content is None: # Allow empty string for content
+        if content is None:  # Allow empty string for content
             raise InputError("Note content cannot be None.")
 
         final_note_id = note_id or self._generate_uuid()
         now = self._get_current_utc_timestamp_iso()
-        client_id_to_use = self.client_id # Notes use the instance's client_id directly
+        client_id_to_use = self.client_id  # Notes use the instance's client_id directly
 
         query = """
             INSERT INTO notes (id, title, content, last_modified, client_id, version, deleted, created_at)
             VALUES (?, ?, ?, ?, ?, 1, 0, ?)
         """
-        params = (final_note_id, title.strip(), content, now, client_id_to_use, now) # created_at is also now
+        params = (
+            final_note_id,
+            title.strip(),
+            content,
+            now,
+            client_id_to_use,
+            now,
+        )  # created_at is also now
 
         try:
             with self.transaction() as conn:
@@ -7352,8 +8562,14 @@ UPDATE db_schema_version
                 return final_note_id
         except sqlite3.IntegrityError as e:
             if "UNIQUE constraint failed: notes.id" in str(e):
-                raise ConflictError(f"Note with ID '{final_note_id}' already exists.", entity="notes", entity_id=final_note_id) from e
-            raise CharactersRAGDBError(f"Database integrity error adding note: {e}") from e
+                raise ConflictError(
+                    f"Note with ID '{final_note_id}' already exists.",
+                    entity="notes",
+                    entity_id=final_note_id,
+                ) from e
+            raise CharactersRAGDBError(
+                f"Database integrity error adding note: {e}"
+            ) from e
         except CharactersRAGDBError as e:
             logger.error(f"Database error adding note '{title.strip()}': {e}")
             raise
@@ -7363,16 +8579,16 @@ UPDATE db_schema_version
         cursor = self.execute_query(query, (note_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
-    
+
     def get_note_by_title(self, title: str) -> Optional[Dict[str, Any]]:
         """
         Retrieves a specific note by its title.
-        
+
         Only non-deleted notes are returned.
-        
+
         Args:
             title: The title of the note.
-            
+
         Returns:
             A dictionary containing the note's data if found and not deleted,
             otherwise None.
@@ -7427,7 +8643,9 @@ UPDATE db_schema_version
             logger.error(f"Database error listing all note ids: {e}")
             raise
 
-    def update_note(self, note_id: str, update_data: Dict[str, Any], expected_version: int) -> Optional[bool]:
+    def update_note(
+        self, note_id: str, update_data: Dict[str, Any], expected_version: int
+    ) -> Optional[bool]:
         if not update_data:
             raise InputError("No data provided for note update.")
 
@@ -7435,22 +8653,36 @@ UPDATE db_schema_version
         fields_to_update_sql = []
         params_for_set_clause = []
 
-        allowed_to_update = ['title', 'content']
+        allowed_to_update = ["title", "content"]
         for key, value in update_data.items():
             if key in allowed_to_update:
                 fields_to_update_sql.append(f"{key} = ?")
                 # Title might need stripping, content is as-is
-                params_for_set_clause.append(value.strip() if key == 'title' and isinstance(value, str) else value)
-            elif key not in ['id', 'created_at', 'last_modified', 'version', 'client_id', 'deleted']:
+                params_for_set_clause.append(
+                    value.strip()
+                    if key == "title" and isinstance(value, str)
+                    else value
+                )
+            elif key not in [
+                "id",
+                "created_at",
+                "last_modified",
+                "version",
+                "client_id",
+                "deleted",
+            ]:
                 logger.warning(
-                    f"Attempted to update immutable or unknown field '{key}' in note ID {note_id}, skipping.")
+                    f"Attempted to update immutable or unknown field '{key}' in note ID {note_id}, skipping."
+                )
 
         if not fields_to_update_sql:
             logger.info(f"No updatable fields provided for note ID {note_id}.")
             return True
 
         next_version_val = expected_version + 1
-        fields_to_update_sql.extend(["last_modified = ?", "version = ?", "client_id = ?"])
+        fields_to_update_sql.extend(
+            ["last_modified = ?", "version = ?", "client_id = ?"]
+        )
 
         all_set_values = params_for_set_clause[:]
         all_set_values.extend([now, next_version_val, self.client_id])
@@ -7462,36 +8694,45 @@ UPDATE db_schema_version
 
         try:
             with self.transaction() as conn:
-                current_db_version = self._get_current_db_version(conn, "notes", "id", note_id)
+                current_db_version = self._get_current_db_version(
+                    conn, "notes", "id", note_id
+                )
 
                 if current_db_version != expected_version:
                     raise ConflictError(
                         f"Note ID {note_id} update failed: version mismatch (db has {current_db_version}, client expected {expected_version}).",
-                        entity="notes", entity_id=note_id
+                        entity="notes",
+                        entity_id=note_id,
                     )
 
                 cursor = conn.execute(query, final_params_for_execute)
 
                 if cursor.rowcount == 0:
-                    check_again_cursor = conn.execute("SELECT version, deleted FROM notes WHERE id = ?", (note_id,))
+                    check_again_cursor = conn.execute(
+                        "SELECT version, deleted FROM notes WHERE id = ?", (note_id,)
+                    )
                     final_state = check_again_cursor.fetchone()
                     if not final_state:
                         msg = f"Note ID {note_id} disappeared."
-                    elif final_state['deleted']:
+                    elif final_state["deleted"]:
                         msg = f"Note ID {note_id} was soft-deleted concurrently."
-                    elif final_state['version'] != expected_version:
+                    elif final_state["version"] != expected_version:
                         msg = f"Note ID {note_id} version changed to {final_state['version']} concurrently."
                     else:
                         msg = f"Update for note ID {note_id} (expected v{expected_version}) affected 0 rows."
                     raise ConflictError(msg, entity="notes", entity_id=note_id)
 
-                logger.info(f"Updated note ID {note_id} from version {expected_version} to version {next_version_val}.")
+                logger.info(
+                    f"Updated note ID {note_id} from version {expected_version} to version {next_version_val}."
+                )
                 return True
         # No specific UNIQUE constraint on notes.title or notes.content in the schema, so sqlite3.IntegrityError less likely for these fields.
         except ConflictError:
             raise
         except CharactersRAGDBError as e:  # Catches sqlite3.Error
-            logger.opt(exception=True).error(f"Database error updating note ID {note_id} (expected v{expected_version}): {e}")
+            logger.opt(exception=True).error(
+                f"Database error updating note ID {note_id} (expected v{expected_version}): {e}"
+            )
             raise
 
     def soft_delete_note(self, note_id: str, expected_version: int) -> Optional[bool]:
@@ -7504,44 +8745,58 @@ UPDATE db_schema_version
         try:
             with self.transaction() as conn:
                 try:
-                    current_db_version = self._get_current_db_version(conn, "notes", "id", note_id)
+                    current_db_version = self._get_current_db_version(
+                        conn, "notes", "id", note_id
+                    )
                 except ConflictError as e:
-                    check_status_cursor = conn.execute("SELECT deleted, version FROM notes WHERE id = ?", (note_id,))
+                    check_status_cursor = conn.execute(
+                        "SELECT deleted, version FROM notes WHERE id = ?", (note_id,)
+                    )
                     record_status = check_status_cursor.fetchone()
-                    if record_status and record_status['deleted']:
-                        logger.info(f"Note ID {note_id} already soft-deleted. Success (idempotent).")
+                    if record_status and record_status["deleted"]:
+                        logger.info(
+                            f"Note ID {note_id} already soft-deleted. Success (idempotent)."
+                        )
                         return True
                     raise e
 
                 if current_db_version != expected_version:
                     raise ConflictError(
                         f"Soft delete for Note ID {note_id} failed: version mismatch (db has {current_db_version}, client expected {expected_version}).",
-                        entity="notes", entity_id=note_id
+                        entity="notes",
+                        entity_id=note_id,
                     )
 
                 cursor = conn.execute(query, params)
 
                 if cursor.rowcount == 0:
-                    check_again_cursor = conn.execute("SELECT version, deleted FROM notes WHERE id = ?", (note_id,))
+                    check_again_cursor = conn.execute(
+                        "SELECT version, deleted FROM notes WHERE id = ?", (note_id,)
+                    )
                     final_state = check_again_cursor.fetchone()
                     if not final_state:
                         msg = f"Note ID {note_id} disappeared."
-                    elif final_state['deleted']:
-                        logger.info(f"Note ID {note_id} was soft-deleted concurrently. Success.")
+                    elif final_state["deleted"]:
+                        logger.info(
+                            f"Note ID {note_id} was soft-deleted concurrently. Success."
+                        )
                         return True
-                    elif final_state['version'] != expected_version:
+                    elif final_state["version"] != expected_version:
                         msg = f"Note ID {note_id} version changed to {final_state['version']} concurrently."
                     else:
                         msg = f"Soft delete for note ID {note_id} (expected v{expected_version}) affected 0 rows."
                     raise ConflictError(msg, entity="notes", entity_id=note_id)
 
                 logger.info(
-                    f"Soft-deleted note ID {note_id} (was v{expected_version}), new version {next_version_val}.")
+                    f"Soft-deleted note ID {note_id} (was v{expected_version}), new version {next_version_val}."
+                )
                 return True
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.opt(exception=True).error(f"Database error soft-deleting note ID {note_id} (expected v{expected_version}): {e}")
+            logger.opt(exception=True).error(
+                f"Database error soft-deleting note ID {note_id} (expected v{expected_version}): {e}"
+            )
             raise
 
     def search_notes(
@@ -7580,10 +8835,16 @@ UPDATE db_schema_version
             logger.error(f"Error searching notes for '{search_term}': {e}")
             raise
 
-
     # --- Linking Table Methods (with manual sync_log entries) ---
-    def _manage_link(self, link_table: str, col1_name: str, col1_val: Any, col2_name: str, col2_val: Any,
-                     operation: str) -> bool:
+    def _manage_link(
+        self,
+        link_table: str,
+        col1_name: str,
+        col1_val: Any,
+        col2_name: str,
+        col2_val: Any,
+        operation: str,
+    ) -> bool:
         """Helper to add ('link') or remove ('unlink') entries from a linking table."""
         now_iso = self._get_current_utc_timestamp_iso()
         sync_payload_dict: Dict[str, Any] = {}
@@ -7597,15 +8858,19 @@ UPDATE db_schema_version
                     params = (col1_val, col2_val, now_iso)
                     cursor = conn.execute(query, params)
                     rows_affected = cursor.rowcount
-                    if rows_affected > 0: # Link was actually created
+                    if rows_affected > 0:  # Link was actually created
                         log_sync_entry = True
-                        sync_payload_dict = {col1_name: col1_val, col2_name: col2_val, 'created_at': now_iso}
+                        sync_payload_dict = {
+                            col1_name: col1_val,
+                            col2_name: col2_val,
+                            "created_at": now_iso,
+                        }
                 elif operation == "unlink":
                     query = f"DELETE FROM {link_table} WHERE {col1_name} = ? AND {col2_name} = ?"
                     params = (col1_val, col2_val)
                     cursor = conn.execute(query, params)
                     rows_affected = cursor.rowcount
-                    if rows_affected > 0: # Link was actually deleted
+                    if rows_affected > 0:  # Link was actually deleted
                         log_sync_entry = True
                         sync_payload_dict = {col1_name: col1_val, col2_name: col2_val}
                 else:
@@ -7613,42 +8878,72 @@ UPDATE db_schema_version
 
                 if log_sync_entry:
                     sync_entity_id = f"{col1_val}_{col2_val}"
-                    sync_op = 'create' if operation == 'link' else 'delete'
-                    sync_timestamp = now_iso # Use now_iso for create, and also for delete event time
+                    sync_op = "create" if operation == "link" else "delete"
+                    sync_timestamp = now_iso  # Use now_iso for create, and also for delete event time
 
                     sync_log_query = """
                         INSERT INTO sync_log (entity, entity_id, operation, timestamp, client_id, version, payload)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                     """
                     sync_log_params = (
-                        link_table, sync_entity_id, sync_op, sync_timestamp,
-                        self.client_id, 1, # Link table entries don't have their own version, use 1 for sync log
-                        json.dumps(sync_payload_dict)
+                        link_table,
+                        sync_entity_id,
+                        sync_op,
+                        sync_timestamp,
+                        self.client_id,
+                        1,  # Link table entries don't have their own version, use 1 for sync log
+                        json.dumps(sync_payload_dict),
                     )
                     conn.execute(sync_log_query, sync_log_params)
-                    logger.debug(f"Logged sync event for {link_table}: {sync_op} on {sync_entity_id}")
+                    logger.debug(
+                        f"Logged sync event for {link_table}: {sync_op} on {sync_entity_id}"
+                    )
 
             logger.info(
-                f"{operation.capitalize()}ed {link_table}: {col1_name}={col1_val}, {col2_name}={col2_val}. Rows affected: {rows_affected}")
+                f"{operation.capitalize()}ed {link_table}: {col1_name}={col1_val}, {col2_name}={col2_val}. Rows affected: {rows_affected}"
+            )
             return rows_affected > 0
-        except sqlite3.Error as e: # Catch SQLite specific errors from conn.execute
-            logger.opt(exception=True).error(f"SQLite error during {operation} for {link_table} ({col1_name}={col1_val}, {col2_name}={col2_val}): {e}")
-            raise CharactersRAGDBError(f"Database error during {operation} for {link_table}: {e}") from e
-        except CharactersRAGDBError as e: # Catch custom errors like InputError
-            logger.opt(exception=True).error(f"Application error during {operation} for {link_table}: {e}")
+        except sqlite3.Error as e:  # Catch SQLite specific errors from conn.execute
+            logger.opt(exception=True).error(
+                f"SQLite error during {operation} for {link_table} ({col1_name}={col1_val}, {col2_name}={col2_val}): {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Database error during {operation} for {link_table}: {e}"
+            ) from e
+        except CharactersRAGDBError as e:  # Catch custom errors like InputError
+            logger.opt(exception=True).error(
+                f"Application error during {operation} for {link_table}: {e}"
+            )
             raise
 
-
     # Conversation <-> Keyword
-    def link_conversation_to_keyword(self, conversation_id: str, keyword_id: int) -> bool:
-        return self._manage_link("conversation_keywords", "conversation_id", conversation_id, "keyword_id", keyword_id,
-                                 "link")
+    def link_conversation_to_keyword(
+        self, conversation_id: str, keyword_id: int
+    ) -> bool:
+        return self._manage_link(
+            "conversation_keywords",
+            "conversation_id",
+            conversation_id,
+            "keyword_id",
+            keyword_id,
+            "link",
+        )
 
-    def unlink_conversation_from_keyword(self, conversation_id: str, keyword_id: int) -> bool:
-        return self._manage_link("conversation_keywords", "conversation_id", conversation_id, "keyword_id", keyword_id,
-                                 "unlink")
+    def unlink_conversation_from_keyword(
+        self, conversation_id: str, keyword_id: int
+    ) -> bool:
+        return self._manage_link(
+            "conversation_keywords",
+            "conversation_id",
+            conversation_id,
+            "keyword_id",
+            keyword_id,
+            "unlink",
+        )
 
-    def get_keywords_for_conversation(self, conversation_id: str) -> List[Dict[str, Any]]:
+    def get_keywords_for_conversation(
+        self, conversation_id: str
+    ) -> List[Dict[str, Any]]:
         query = """
                 SELECT k.* \
                 FROM keywords k \
@@ -7660,7 +8955,9 @@ UPDATE db_schema_version
         cursor = self.execute_query(query, (conversation_id,))
         return [dict(row) for row in cursor.fetchall()]
 
-    def get_keywords_for_conversations(self, conversation_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    def get_keywords_for_conversations(
+        self, conversation_ids: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
         if not conversation_ids:
             return {}
         placeholders = ",".join(["?"] * len(conversation_ids))
@@ -7673,15 +8970,21 @@ UPDATE db_schema_version
                 ORDER BY ck.conversation_id, k.keyword COLLATE NOCASE
                 """
         cursor = self.execute_query(query, tuple(conversation_ids))
-        grouped: Dict[str, List[Dict[str, Any]]] = {conversation_id: [] for conversation_id in conversation_ids}
+        grouped: Dict[str, List[Dict[str, Any]]] = {
+            conversation_id: [] for conversation_id in conversation_ids
+        }
         for row in cursor.fetchall():
             record = dict(row)
             conversation_id = str(record.pop("conversation_id"))
             grouped.setdefault(conversation_id, []).append(record)
         return grouped
 
-    def replace_keywords_for_conversation(self, conversation_id: str, keyword_ids: List[int]) -> bool:
-        normalized_keyword_ids = list(dict.fromkeys(int(keyword_id) for keyword_id in keyword_ids))
+    def replace_keywords_for_conversation(
+        self, conversation_id: str, keyword_ids: List[int]
+    ) -> bool:
+        normalized_keyword_ids = list(
+            dict.fromkeys(int(keyword_id) for keyword_id in keyword_ids)
+        )
         now_iso = self._get_current_utc_timestamp_iso()
         try:
             with self.transaction() as conn:
@@ -7696,7 +8999,11 @@ UPDATE db_schema_version
                 desired_keyword_ids = set(normalized_keyword_ids)
 
                 to_remove = sorted(existing_keyword_ids - desired_keyword_ids)
-                to_add = [keyword_id for keyword_id in normalized_keyword_ids if keyword_id not in existing_keyword_ids]
+                to_add = [
+                    keyword_id
+                    for keyword_id in normalized_keyword_ids
+                    if keyword_id not in existing_keyword_ids
+                ]
 
                 for keyword_id in to_remove:
                     conn.execute(
@@ -7715,7 +9022,12 @@ UPDATE db_schema_version
                             now_iso,
                             self.client_id,
                             1,
-                            json.dumps({"conversation_id": conversation_id, "keyword_id": keyword_id}),
+                            json.dumps(
+                                {
+                                    "conversation_id": conversation_id,
+                                    "keyword_id": keyword_id,
+                                }
+                            ),
                         ),
                     )
 
@@ -7747,9 +9059,13 @@ UPDATE db_schema_version
                     )
             return True
         except sqlite3.Error as e:
-            raise CharactersRAGDBError(f"Database error replacing keywords for conversation: {e}") from e
+            raise CharactersRAGDBError(
+                f"Database error replacing keywords for conversation: {e}"
+            ) from e
 
-    def get_conversations_for_keyword(self, keyword_id: int, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    def get_conversations_for_keyword(
+        self, keyword_id: int, limit: int = 50, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         query = """
                 SELECT c.* \
                 FROM conversations c \
@@ -7764,12 +9080,26 @@ UPDATE db_schema_version
 
     # Collection <-> Keyword
     def link_collection_to_keyword(self, collection_id: int, keyword_id: int) -> bool:
-        return self._manage_link("collection_keywords", "collection_id", collection_id, "keyword_id", keyword_id,
-                                 "link")
+        return self._manage_link(
+            "collection_keywords",
+            "collection_id",
+            collection_id,
+            "keyword_id",
+            keyword_id,
+            "link",
+        )
 
-    def unlink_collection_from_keyword(self, collection_id: int, keyword_id: int) -> bool:
-        return self._manage_link("collection_keywords", "collection_id", collection_id, "keyword_id", keyword_id,
-                                 "unlink")
+    def unlink_collection_from_keyword(
+        self, collection_id: int, keyword_id: int
+    ) -> bool:
+        return self._manage_link(
+            "collection_keywords",
+            "collection_id",
+            collection_id,
+            "keyword_id",
+            keyword_id,
+            "unlink",
+        )
 
     def get_keywords_for_collection(self, collection_id: int) -> List[Dict[str, Any]]:
         query = """
@@ -7783,7 +9113,9 @@ UPDATE db_schema_version
         cursor = self.execute_query(query, (collection_id,))
         return [dict(row) for row in cursor.fetchall()]
 
-    def get_collections_for_keyword(self, keyword_id: int, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    def get_collections_for_keyword(
+        self, keyword_id: int, limit: int = 50, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         query = """
                 SELECT kc.* \
                 FROM keyword_collections kc \
@@ -7797,13 +9129,23 @@ UPDATE db_schema_version
         return [dict(row) for row in cursor.fetchall()]
 
     # Note <-> Keyword
-    def link_note_to_keyword(self, note_id: str, keyword_id: int) -> bool: # note_id is str
-        return self._manage_link("note_keywords", "note_id", note_id, "keyword_id", keyword_id, "link")
+    def link_note_to_keyword(
+        self, note_id: str, keyword_id: int
+    ) -> bool:  # note_id is str
+        return self._manage_link(
+            "note_keywords", "note_id", note_id, "keyword_id", keyword_id, "link"
+        )
 
-    def unlink_note_from_keyword(self, note_id: str, keyword_id: int) -> bool: # note_id is str
-        return self._manage_link("note_keywords", "note_id", note_id, "keyword_id", keyword_id, "unlink")
+    def unlink_note_from_keyword(
+        self, note_id: str, keyword_id: int
+    ) -> bool:  # note_id is str
+        return self._manage_link(
+            "note_keywords", "note_id", note_id, "keyword_id", keyword_id, "unlink"
+        )
 
-    def get_keywords_for_note(self, note_id: str) -> List[Dict[str, Any]]: # note_id is str
+    def get_keywords_for_note(
+        self, note_id: str
+    ) -> List[Dict[str, Any]]:  # note_id is str
         query = """
                 SELECT k.* \
                 FROM keywords k \
@@ -7815,7 +9157,9 @@ UPDATE db_schema_version
         cursor = self.execute_query(query, (note_id,))
         return [dict(row) for row in cursor.fetchall()]
 
-    def get_notes_for_keyword(self, keyword_id: int, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    def get_notes_for_keyword(
+        self, keyword_id: int, limit: int = 50, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         query = """
                 SELECT n.* \
                 FROM notes n \
@@ -7829,8 +9173,12 @@ UPDATE db_schema_version
         return [dict(row) for row in cursor.fetchall()]
 
     # --- Sync Log Methods ---
-    def get_sync_log_entries(self, since_change_id: int = 0, limit: Optional[int] = None,
-                             entity_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_sync_log_entries(
+        self,
+        since_change_id: int = 0,
+        limit: Optional[int] = None,
+        entity_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """Retrieves sync log entries newer than a given change_id, optionally filtered by entity type."""
         query_parts = ["SELECT * FROM sync_log WHERE change_id > ?"]
         params_list: List[Any] = [since_change_id]
@@ -7852,11 +9200,14 @@ UPDATE db_schema_version
             for row in cursor.fetchall():
                 entry = dict(row)
                 try:
-                    entry['payload'] = json.loads(entry['payload'])
+                    entry["payload"] = json.loads(entry["payload"])
                 except json.JSONDecodeError:
                     logger.warning(
-                        f"Failed to decode JSON payload for sync_log ID {entry['change_id']}. Payload: {entry['payload'][:100]}")
-                    entry['payload'] = None  # Or keep as string, depending on consumer needs
+                        f"Failed to decode JSON payload for sync_log ID {entry['change_id']}. Payload: {entry['payload'][:100]}"
+                    )
+                    entry["payload"] = (
+                        None  # Or keep as string, depending on consumer needs
+                    )
                 results.append(entry)
             return results
         except CharactersRAGDBError as e:
@@ -7869,21 +9220,21 @@ UPDATE db_schema_version
         try:
             cursor = self.execute_query(query)
             row = cursor.fetchone()
-            return row['max_id'] if row and row['max_id'] is not None else 0
+            return row["max_id"] if row and row["max_id"] is not None else 0
         except CharactersRAGDBError as e:
             logger.error(f"Error fetching latest sync log change_id: {e}")
             raise
-    
+
     def close(self) -> None:
         """Alias for close_connection() to maintain consistency with BaseDB."""
         self.close_connection()
-    
+
     def vacuum(self) -> None:
         """Vacuum the database to reclaim unused space and optimize performance."""
         if self.is_memory_db:
             logger.debug("Skipping vacuum for in-memory database")
             return
-            
+
         try:
             conn = self.get_connection()
             # Vacuum must be run outside of a transaction
@@ -7894,7 +9245,7 @@ UPDATE db_schema_version
         except Exception as e:
             logger.error(f"Failed to vacuum database: {e}")
             raise CharactersRAGDBError(f"Vacuum failed: {e}") from e
-    
+
     # --- Study Methods (Learning Paths, Flashcards, Mindmaps) ---
 
     def _recount_deck_card_count(self, cursor, deck_id: str) -> None:
@@ -7935,11 +9286,11 @@ UPDATE db_schema_version
             END
             """
         )
-    
+
     def create_flashcard(self, card_data: Dict[str, Any]) -> str:
         """
         Create a new flashcard.
-        
+
         Args:
             card_data: Dictionary containing flashcard data with keys:
                 - deck_id: ID of the deck this card belongs to
@@ -7948,22 +9299,22 @@ UPDATE db_schema_version
                 - tags: Optional space-separated tags
                 - type: Card type (default: 'basic')
                 - metadata: Optional JSON metadata
-        
+
         Returns:
             The ID of the created flashcard.
-            
+
         Raises:
             InputError: If required fields are missing or invalid.
             CharactersRAGDBError: If database operation fails.
         """
-        deck_id = str(card_data.get('deck_id') or "").strip()
+        deck_id = str(card_data.get("deck_id") or "").strip()
         if not deck_id:
             raise InputError("Flashcard must belong to a deck")
-        if not card_data.get('front') or not card_data.get('back'):
+        if not card_data.get("front") or not card_data.get("back"):
             raise InputError("Flashcard must have both front and back text")
-            
+
         card_id = self._generate_uuid()
-        
+
         with self.transaction() as cursor:
             deck_row = cursor.execute(
                 "SELECT id FROM decks WHERE id = ? AND is_deleted = 0",
@@ -7972,34 +9323,42 @@ UPDATE db_schema_version
             if not deck_row:
                 raise InputError(f"Deck {deck_id} not found")
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO flashcards (
                     id, deck_id, front, back, tags, type,
                     created_by, last_modified_by, metadata
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                card_id,
-                deck_id,
-                card_data['front'],
-                card_data['back'],
-                card_data.get('tags', ''),
-                card_data.get('type', 'basic'),
-                card_data.get('created_by', self.client_id),
-                card_data.get('last_modified_by', self.client_id),
-                json.dumps(card_data.get('metadata', {})) if card_data.get('metadata') else None
-            ))
+            """,
+                (
+                    card_id,
+                    deck_id,
+                    card_data["front"],
+                    card_data["back"],
+                    card_data.get("tags", ""),
+                    card_data.get("type", "basic"),
+                    card_data.get("created_by", self.client_id),
+                    card_data.get("last_modified_by", self.client_id),
+                    json.dumps(card_data.get("metadata", {}))
+                    if card_data.get("metadata")
+                    else None,
+                ),
+            )
             self._recount_deck_card_count(cursor, deck_id)
         return card_id
-    
+
     def get_flashcard(self, card_id: str) -> Optional[Dict[str, Any]]:
         """Get a flashcard by ID."""
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT * FROM flashcards 
             WHERE id = ? AND is_deleted = 0
-        """, (card_id,))
-        
+        """,
+            (card_id,),
+        )
+
         row = cursor.fetchone()
         if row:
             return dict(row)
@@ -8054,7 +9413,11 @@ UPDATE db_schema_version
 
                 current_version = int(row["version"])
                 if expected_version is not None and current_version != expected_version:
-                    raise ConflictError("Version mismatch updating flashcard", entity="flashcards", entity_id=card_id)
+                    raise ConflictError(
+                        "Version mismatch updating flashcard",
+                        entity="flashcards",
+                        entity_id=card_id,
+                    )
 
                 source_deck_id = row["deck_id"]
                 updates: list[str] = []
@@ -8096,7 +9459,9 @@ UPDATE db_schema_version
                     updates.append("type = ?")
                     params.append(normalized_type)
 
-                metadata_update_requested = metadata is not None or notes is not None or extra is not None
+                metadata_update_requested = (
+                    metadata is not None or notes is not None or extra is not None
+                )
                 if metadata_update_requested:
                     existing_metadata: dict[str, Any] = {}
                     if row["metadata"]:
@@ -8111,7 +9476,9 @@ UPDATE db_schema_version
                     if extra is not None:
                         existing_metadata["extra"] = extra
                     updates.append("metadata = ?")
-                    params.append(json.dumps(existing_metadata) if existing_metadata else None)
+                    params.append(
+                        json.dumps(existing_metadata) if existing_metadata else None
+                    )
 
                 if not updates:
                     return True
@@ -8137,11 +9504,11 @@ UPDATE db_schema_version
                 return bool(cursor.rowcount)
         except sqlite3.Error as e:
             raise CharactersRAGDBError(f"Failed to update flashcard: {e}") from e
-    
+
     def update_flashcard_review(self, card_id: str, rating: int) -> None:
         """
         Update flashcard after review using SM-2 algorithm.
-        
+
         Args:
             card_id: ID of the flashcard
             rating: Review rating (0-5)
@@ -8154,23 +9521,26 @@ UPDATE db_schema_version
         """
         if rating < 0 or rating > 5:
             raise InputError("Rating must be between 0 and 5")
-            
+
         with self.transaction() as cursor:
             # Get current card data
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT interval, repetitions, ease_factor
                 FROM flashcards
                 WHERE id = ? AND is_deleted = 0
-            """, (card_id,))
-            
+            """,
+                (card_id,),
+            )
+
             row = cursor.fetchone()
             if not row:
                 raise InputError(f"Flashcard {card_id} not found")
-                
-            interval = row['interval']
-            repetitions = row['repetitions']
-            ease_factor = row['ease_factor']
-            
+
+            interval = row["interval"]
+            repetitions = row["repetitions"]
+            ease_factor = row["ease_factor"]
+
             # SM-2 algorithm
             if rating < 3:
                 repetitions = 0
@@ -8182,36 +9552,47 @@ UPDATE db_schema_version
                     interval = 6
                 else:
                     interval = int(interval * ease_factor)
-                    
+
                 repetitions += 1
-                
+
             # Update ease factor
-            ease_factor = ease_factor + 0.1 - (5 - rating) * (0.08 + (5 - rating) * 0.02)
+            ease_factor = (
+                ease_factor + 0.1 - (5 - rating) * (0.08 + (5 - rating) * 0.02)
+            )
             if ease_factor < 1.3:
                 ease_factor = 1.3
-                
+
             # Calculate next review date
             from datetime import datetime, timedelta
+
             next_review = datetime.now(timezone.utc) + timedelta(days=interval)
-            
+
             # Update flashcard
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE flashcards
                 SET interval = ?, repetitions = ?, ease_factor = ?,
                     next_review = ?, last_review = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP, version = version + 1
                 WHERE id = ?
-            """, (interval, repetitions, ease_factor, next_review.isoformat(), card_id))
-            
+            """,
+                (interval, repetitions, ease_factor, next_review.isoformat(), card_id),
+            )
+
             # Add review history
             review_id = self._generate_uuid()
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO review_history (
                     id, flashcard_id, rating, interval_after, ease_after
                 ) VALUES (?, ?, ?, ?, ?)
-            """, (review_id, card_id, rating, interval, ease_factor))
-    
-    def get_due_flashcards(self, deck_id: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
+            """,
+                (review_id, card_id, rating, interval, ease_factor),
+            )
+
+    def get_due_flashcards(
+        self, deck_id: Optional[str] = None, limit: int = 20
+    ) -> List[Dict[str, Any]]:
         """Get flashcards due for review."""
         query = """
             SELECT f.* FROM flashcards f
@@ -8221,18 +9602,18 @@ UPDATE db_schema_version
                 AND (f.next_review IS NULL OR f.next_review <= CURRENT_TIMESTAMP)
         """
         params = []
-        
+
         if deck_id:
             query += " AND f.deck_id = ?"
             params.append(deck_id)
-            
+
         query += " ORDER BY f.next_review ASC LIMIT ?"
         params.append(limit)
-        
+
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute(query, params)
-        
+
         return [dict(row) for row in cursor.fetchall()]
 
     def count_due_flashcards(self) -> int:
@@ -8301,14 +9682,17 @@ UPDATE db_schema_version
     def create_deck(self, name: str, description: Optional[str] = None) -> str:
         """Create a new flashcard deck."""
         deck_id = self._generate_uuid()
-        
+
         with self.transaction() as cursor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO decks (
                     id, name, description, created_by, last_modified_by
                 ) VALUES (?, ?, ?, ?, ?)
-            """, (deck_id, name, description, self.client_id, self.client_id))
-            
+            """,
+                (deck_id, name, description, self.client_id, self.client_id),
+            )
+
         return deck_id
 
     def update_deck(
@@ -8331,7 +9715,11 @@ UPDATE db_schema_version
 
                 current_version = int(row["version"])
                 if expected_version is not None and current_version != expected_version:
-                    raise ConflictError("Version mismatch updating deck", entity="decks", entity_id=deck_id)
+                    raise ConflictError(
+                        "Version mismatch updating deck",
+                        entity="decks",
+                        entity_id=deck_id,
+                    )
 
                 updates: list[str] = []
                 params: list[Any] = []
@@ -8365,7 +9753,12 @@ UPDATE db_schema_version
         except sqlite3.Error as e:
             raise CharactersRAGDBError(f"Failed to update deck: {e}") from e
 
-    def delete_flashcard(self, card_id: str, expected_version: Optional[int] = None, hard_delete: bool = False) -> bool:
+    def delete_flashcard(
+        self,
+        card_id: str,
+        expected_version: Optional[int] = None,
+        hard_delete: bool = False,
+    ) -> bool:
         """Delete a flashcard and refresh the owning deck count."""
         try:
             with self.transaction() as cursor:
@@ -8390,7 +9783,11 @@ UPDATE db_schema_version
                     return True
 
                 if expected_version is not None and current_version != expected_version:
-                    raise ConflictError("Version mismatch deleting flashcard", entity="flashcards", entity_id=card_id)
+                    raise ConflictError(
+                        "Version mismatch deleting flashcard",
+                        entity="flashcards",
+                        entity_id=card_id,
+                    )
 
                 cursor.execute(
                     """
@@ -8409,7 +9806,9 @@ UPDATE db_schema_version
         except sqlite3.Error as e:
             raise CharactersRAGDBError(f"Failed to delete flashcard: {e}") from e
 
-    def move_flashcard(self, card_id: str, target_deck_id: str, expected_version: Optional[int] = None) -> bool:
+    def move_flashcard(
+        self, card_id: str, target_deck_id: str, expected_version: Optional[int] = None
+    ) -> bool:
         """Move a flashcard between decks and refresh both deck counts."""
         try:
             with self.transaction() as cursor:
@@ -8430,7 +9829,11 @@ UPDATE db_schema_version
                 source_deck_id = row["deck_id"]
                 current_version = int(row["version"])
                 if expected_version is not None and current_version != expected_version:
-                    raise ConflictError("Version mismatch moving flashcard", entity="flashcards", entity_id=card_id)
+                    raise ConflictError(
+                        "Version mismatch moving flashcard",
+                        entity="flashcards",
+                        entity_id=card_id,
+                    )
 
                 if source_deck_id == target_deck_id:
                     return True
@@ -8453,7 +9856,12 @@ UPDATE db_schema_version
         except sqlite3.Error as e:
             raise CharactersRAGDBError(f"Failed to move flashcard: {e}") from e
 
-    def delete_deck(self, deck_id: str, expected_version: Optional[int] = None, hard_delete: bool = False) -> bool:
+    def delete_deck(
+        self,
+        deck_id: str,
+        expected_version: Optional[int] = None,
+        hard_delete: bool = False,
+    ) -> bool:
         """Soft-delete or hard-delete a deck, tombstoning its name on soft delete."""
         tombstone_name = f"__deleted_deck__:{deck_id}"
         try:
@@ -8469,7 +9877,9 @@ UPDATE db_schema_version
                 deleted = int(row["is_deleted"])
 
                 if hard_delete:
-                    cursor.execute("DELETE FROM flashcards WHERE deck_id = ?", (deck_id,))
+                    cursor.execute(
+                        "DELETE FROM flashcards WHERE deck_id = ?", (deck_id,)
+                    )
                     cursor.execute("DELETE FROM decks WHERE id = ?", (deck_id,))
                     return True
 
@@ -8477,7 +9887,11 @@ UPDATE db_schema_version
                     return True
 
                 if expected_version is not None and current_version != expected_version:
-                    raise ConflictError("Version mismatch deleting deck", entity="decks", entity_id=deck_id)
+                    raise ConflictError(
+                        "Version mismatch deleting deck",
+                        entity="decks",
+                        entity_id=deck_id,
+                    )
 
                 cursor.execute(
                     """
@@ -8514,7 +9928,9 @@ UPDATE db_schema_version
         if isinstance(raw_placeholders, str) and raw_placeholders.strip():
             try:
                 parsed = json.loads(raw_placeholders)
-                record["placeholder_definitions"] = parsed if isinstance(parsed, list) else []
+                record["placeholder_definitions"] = (
+                    parsed if isinstance(parsed, list) else []
+                )
             except json.JSONDecodeError:
                 record["placeholder_definitions"] = []
         elif raw_placeholders is None:
@@ -8565,9 +9981,13 @@ UPDATE db_schema_version
                 )
             return self.get_flashcard_template(template_id)
         except sqlite3.Error as e:
-            raise CharactersRAGDBError(f"Failed to create flashcard template: {e}") from e
+            raise CharactersRAGDBError(
+                f"Failed to create flashcard template: {e}"
+            ) from e
 
-    def list_flashcard_templates(self, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    def list_flashcard_templates(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> Dict[str, Any]:
         """List non-deleted local flashcard templates."""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -8632,8 +10052,14 @@ UPDATE db_schema_version
                         entity_id=template_id,
                     )
                 target_name = name if name is not None else row["name"]
-                target_model_type = model_type if model_type is not None else row["model_type"]
-                target_front_template = front_template if front_template is not None else row["front_template"]
+                target_model_type = (
+                    model_type if model_type is not None else row["model_type"]
+                )
+                target_front_template = (
+                    front_template
+                    if front_template is not None
+                    else row["front_template"]
+                )
                 if not str(target_name or "").strip():
                     raise InputError("Flashcard template name is required")
                 if not str(target_front_template or "").strip():
@@ -8658,9 +10084,15 @@ UPDATE db_schema_version
                         target_name,
                         target_model_type,
                         target_front_template,
-                        back_template if back_template is not None else row["back_template"],
-                        notes_template if notes_template is not None else row["notes_template"],
-                        extra_template if extra_template is not None else row["extra_template"],
+                        back_template
+                        if back_template is not None
+                        else row["back_template"],
+                        notes_template
+                        if notes_template is not None
+                        else row["notes_template"],
+                        extra_template
+                        if extra_template is not None
+                        else row["extra_template"],
                         json.dumps(list(placeholder_definitions or []))
                         if placeholder_definitions is not None
                         else row["placeholder_definitions"],
@@ -8670,9 +10102,13 @@ UPDATE db_schema_version
                 )
             return self.get_flashcard_template(str(template_id))
         except sqlite3.Error as e:
-            raise CharactersRAGDBError(f"Failed to update flashcard template: {e}") from e
+            raise CharactersRAGDBError(
+                f"Failed to update flashcard template: {e}"
+            ) from e
 
-    def delete_flashcard_template(self, template_id: str, *, expected_version: int) -> bool:
+    def delete_flashcard_template(
+        self, template_id: str, *, expected_version: int
+    ) -> bool:
         """Soft-delete a local flashcard template."""
         try:
             with self.transaction() as cursor:
@@ -8703,7 +10139,9 @@ UPDATE db_schema_version
                 )
                 return True
         except sqlite3.Error as e:
-            raise CharactersRAGDBError(f"Failed to delete flashcard template: {e}") from e
+            raise CharactersRAGDBError(
+                f"Failed to delete flashcard template: {e}"
+            ) from e
 
     def create_flashcard_asset(
         self,
@@ -8718,7 +10156,10 @@ UPDATE db_schema_version
             raise InputError("Flashcard asset content is required")
         asset_uuid = self._generate_uuid()
         filename = str(original_filename or "asset").strip() or "asset"
-        normalized_mime = str(mime_type or "application/octet-stream").strip() or "application/octet-stream"
+        normalized_mime = (
+            str(mime_type or "application/octet-stream").strip()
+            or "application/octet-stream"
+        )
         try:
             with self.transaction() as cursor:
                 cursor.execute(
@@ -8727,7 +10168,14 @@ UPDATE db_schema_version
                         asset_uuid, original_filename, mime_type, byte_size, content, client_id
                     ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (asset_uuid, filename, normalized_mime, len(data), sqlite3.Binary(data), self.client_id),
+                    (
+                        asset_uuid,
+                        filename,
+                        normalized_mime,
+                        len(data),
+                        sqlite3.Binary(data),
+                        self.client_id,
+                    ),
                 )
             return {
                 "asset_uuid": asset_uuid,
@@ -8848,7 +10296,9 @@ UPDATE db_schema_version
                     continue
                 if isinstance(item, str):
                     token = item.strip()
-                    delimiter = "=>" if "=>" in token else ("::" if "::" in token else None)
+                    delimiter = (
+                        "=>" if "=>" in token else ("::" if "::" in token else None)
+                    )
                     if not delimiter:
                         continue
                     left, right = token.split(delimiter, 1)
@@ -8866,7 +10316,9 @@ UPDATE db_schema_version
                 trimmed = token.strip()
                 if not trimmed:
                     continue
-                delimiter = "=>" if "=>" in trimmed else ("::" if "::" in trimmed else None)
+                delimiter = (
+                    "=>" if "=>" in trimmed else ("::" if "::" in trimmed else None)
+                )
                 if not delimiter:
                     continue
                 left, right = trimmed.split(delimiter, 1)
@@ -8885,9 +10337,12 @@ UPDATE db_schema_version
         """Normalize matching maps for case-insensitive comparison."""
         normalized = self._normalize_matching_map(answer)
         return {
-            self._normalize_fill_blank_text(left): self._normalize_fill_blank_text(right)
+            self._normalize_fill_blank_text(left): self._normalize_fill_blank_text(
+                right
+            )
             for left, right in normalized.items()
-            if self._normalize_fill_blank_text(left) and self._normalize_fill_blank_text(right)
+            if self._normalize_fill_blank_text(left)
+            and self._normalize_fill_blank_text(right)
         }
 
     def _normalize_fill_blank_text(self, value: Any) -> str:
@@ -8902,7 +10357,9 @@ UPDATE db_schema_version
             return 0.88
         return min(1.0, max(0.5, parsed))
 
-    def _parse_fill_blank_json_rules(self, raw: str) -> Optional[List[Tuple[str, bool, float]]]:
+    def _parse_fill_blank_json_rules(
+        self, raw: str
+    ) -> Optional[List[Tuple[str, bool, float]]]:
         """Parse JSON encoded fill-blank rules."""
         if not (raw.startswith("{") or raw.startswith("[")):
             return None
@@ -8912,7 +10369,9 @@ UPDATE db_schema_version
             return None
 
         if isinstance(parsed, list):
-            accepted = [str(entry).strip() for entry in parsed if str(entry or "").strip()]
+            accepted = [
+                str(entry).strip() for entry in parsed if str(entry or "").strip()
+            ]
             if not accepted:
                 return None
             return [(entry, False, 0.88) for entry in accepted]
@@ -8923,7 +10382,9 @@ UPDATE db_schema_version
         accepted_raw = parsed.get("accepted_answers")
         if not isinstance(accepted_raw, list):
             return None
-        accepted = [str(entry).strip() for entry in accepted_raw if str(entry or "").strip()]
+        accepted = [
+            str(entry).strip() for entry in accepted_raw if str(entry or "").strip()
+        ]
         if not accepted:
             return None
 
@@ -8931,7 +10392,9 @@ UPDATE db_schema_version
         threshold = self._clamp_fill_blank_threshold(parsed.get("fuzzy_threshold"))
         return [(entry, fuzzy, threshold) for entry in accepted]
 
-    def _parse_fill_blank_token_rule(self, token: str) -> Optional[Tuple[str, bool, float]]:
+    def _parse_fill_blank_token_rule(
+        self, token: str
+    ) -> Optional[Tuple[str, bool, float]]:
         """Parse a single delimited fill-blank token."""
         trimmed = token.strip()
         if not trimmed:
@@ -8951,7 +10414,9 @@ UPDATE db_schema_version
             )
         return (body, True, 0.88)
 
-    def _parse_fill_blank_answer_rules(self, correct_answer: Any) -> List[Tuple[str, bool, float]]:
+    def _parse_fill_blank_answer_rules(
+        self, correct_answer: Any
+    ) -> List[Tuple[str, bool, float]]:
         """Parse supported fill-blank answer syntaxes into match rules."""
         raw = str(correct_answer or "").strip()
         if not raw:
@@ -9014,11 +10479,17 @@ UPDATE db_schema_version
                 continue
             if normalized_value == normalized_user:
                 return True
-            if fuzzy and self._fill_blank_similarity_ratio(normalized_user, normalized_value) >= threshold:
+            if (
+                fuzzy
+                and self._fill_blank_similarity_ratio(normalized_user, normalized_value)
+                >= threshold
+            ):
                 return True
         return False
 
-    def _normalize_quiz_correct_answer(self, question_type: str, correct_answer: Any) -> str:
+    def _normalize_quiz_correct_answer(
+        self, question_type: str, correct_answer: Any
+    ) -> str:
         """Normalize correct answers into a stable stored string representation."""
         normalized_type = str(question_type or "").strip().lower()
         if normalized_type == "multiple_choice":
@@ -9027,7 +10498,9 @@ UPDATE db_schema_version
             except (TypeError, ValueError):
                 return "0"
         if normalized_type == "multi_select":
-            return json.dumps(self._normalize_multi_select_indices(correct_answer), ensure_ascii=True)
+            return json.dumps(
+                self._normalize_multi_select_indices(correct_answer), ensure_ascii=True
+            )
         if normalized_type == "matching":
             normalized = self._normalize_matching_map(correct_answer)
             return json.dumps(normalized, ensure_ascii=True, sort_keys=True)
@@ -9044,7 +10517,9 @@ UPDATE db_schema_version
 
     def _deserialize_quiz_question(self, row: sqlite3.Row) -> Optional[Dict[str, Any]]:
         """Deserialize a quiz question row and expand JSON-backed fields."""
-        item = self._deserialize_row_fields(row, ["options", "tags_json", "source_citations_json"])
+        item = self._deserialize_row_fields(
+            row, ["options", "tags_json", "source_citations_json"]
+        )
         if not item:
             return None
 
@@ -9068,18 +10543,27 @@ UPDATE db_schema_version
             item["hint"] = str(hint_value).strip() or None
 
         try:
-            item["hint_penalty_points"] = max(0, int(item.get("hint_penalty_points") or 0))
+            item["hint_penalty_points"] = max(
+                0, int(item.get("hint_penalty_points") or 0)
+            )
         except (TypeError, ValueError):
             item["hint_penalty_points"] = 0
 
         question_type = str(item.get("question_type") or "").strip().lower()
-        if question_type == "multiple_choice" and item.get("correct_answer") is not None:
+        if (
+            question_type == "multiple_choice"
+            and item.get("correct_answer") is not None
+        ):
             with contextlib.suppress(TypeError, ValueError):
                 item["correct_answer"] = int(item["correct_answer"])
         elif question_type == "multi_select" and item.get("correct_answer") is not None:
-            item["correct_answer"] = self._normalize_multi_select_indices(item["correct_answer"])
+            item["correct_answer"] = self._normalize_multi_select_indices(
+                item["correct_answer"]
+            )
         elif question_type == "matching" and item.get("correct_answer") is not None:
-            item["correct_answer"] = self._normalize_matching_map(item["correct_answer"])
+            item["correct_answer"] = self._normalize_matching_map(
+                item["correct_answer"]
+            )
 
         return item
 
@@ -9146,7 +10630,9 @@ UPDATE db_schema_version
             )
         return quiz_id
 
-    def get_quiz(self, quiz_id: str, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
+    def get_quiz(
+        self, quiz_id: str, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
         """Get a quiz by ID."""
         query = """
             SELECT id, name, description, workspace_id, total_questions,
@@ -9182,7 +10668,9 @@ UPDATE db_schema_version
             params.append(workspace_id)
         if normalized_q:
             q_like = f"%{normalized_q}%"
-            where_clauses.append("(LOWER(name) LIKE ? OR LOWER(COALESCE(description, '')) LIKE ?)")
+            where_clauses.append(
+                "(LOWER(name) LIKE ? OR LOWER(COALESCE(description, '')) LIKE ?)"
+            )
             params.extend([q_like, q_like])
 
         where_sql = " AND ".join(where_clauses)
@@ -9220,10 +10708,18 @@ UPDATE db_schema_version
         row = cursor.fetchone()
         return int(row["cnt"] if row else 0)
 
-    def update_quiz(self, quiz_id: str, updates: Dict[str, Any], client_id: str = "unknown") -> bool:
+    def update_quiz(
+        self, quiz_id: str, updates: Dict[str, Any], client_id: str = "unknown"
+    ) -> bool:
         """Update quiz fields using optimistic version checks when supplied."""
         expected_version = updates.pop("expected_version", None)
-        allowed = {"name", "description", "workspace_id", "time_limit_seconds", "passing_score"}
+        allowed = {
+            "name",
+            "description",
+            "workspace_id",
+            "time_limit_seconds",
+            "passing_score",
+        }
         set_parts: List[str] = []
         params: List[Any] = []
 
@@ -9250,10 +10746,16 @@ UPDATE db_schema_version
                     return False
                 current_version = int(row["version"])
                 if expected_version is not None and current_version != expected_version:
-                    raise ConflictError("Version mismatch updating quiz", entity="quizzes", entity_id=quiz_id)
+                    raise ConflictError(
+                        "Version mismatch updating quiz",
+                        entity="quizzes",
+                        entity_id=quiz_id,
+                    )
                 if not set_parts:
                     return True
-                set_parts.extend(["last_modified = ?", "version = version + 1", "client_id = ?"])
+                set_parts.extend(
+                    ["last_modified = ?", "version = version + 1", "client_id = ?"]
+                )
                 params.extend([now, client_id or self.client_id, quiz_id])
                 conn.execute(
                     f"UPDATE quizzes SET {', '.join(set_parts)} WHERE id = ? AND deleted = 0",
@@ -9263,7 +10765,12 @@ UPDATE db_schema_version
         except sqlite3.Error as e:
             raise CharactersRAGDBError(f"Failed to update quiz: {e}") from e
 
-    def delete_quiz(self, quiz_id: str, expected_version: Optional[int] = None, hard_delete: bool = False) -> bool:
+    def delete_quiz(
+        self,
+        quiz_id: str,
+        expected_version: Optional[int] = None,
+        hard_delete: bool = False,
+    ) -> bool:
         """Soft-delete or hard-delete a quiz."""
         now = self._get_current_utc_timestamp_iso()
         try:
@@ -9282,7 +10789,11 @@ UPDATE db_schema_version
                 if deleted:
                     return True
                 if expected_version is not None and current_version != expected_version:
-                    raise ConflictError("Version mismatch deleting quiz", entity="quizzes", entity_id=quiz_id)
+                    raise ConflictError(
+                        "Version mismatch deleting quiz",
+                        entity="quizzes",
+                        entity_id=quiz_id,
+                    )
                 conn.execute(
                     "UPDATE quizzes SET deleted = 1, last_modified = ?, version = version + 1, client_id = ? "
                     "WHERE id = ? AND deleted = 0",
@@ -9315,7 +10826,13 @@ UPDATE db_schema_version
     ) -> str:
         """Create a question for a quiz and update the quiz question count."""
         normalized_type = str(question_type or "").strip().lower()
-        if normalized_type not in {"multiple_choice", "multi_select", "matching", "true_false", "fill_blank"}:
+        if normalized_type not in {
+            "multiple_choice",
+            "multi_select",
+            "matching",
+            "true_false",
+            "fill_blank",
+        }:
             raise InputError("Unsupported quiz question type.")
 
         normalized_text = str(question_text or "").strip()
@@ -9334,7 +10851,9 @@ UPDATE db_schema_version
                     (quiz_id,),
                 ).fetchone()
                 if not quiz_row:
-                    raise ConflictError("Quiz not found", entity="quizzes", entity_id=quiz_id)
+                    raise ConflictError(
+                        "Quiz not found", entity="quizzes", entity_id=quiz_id
+                    )
 
                 conn.execute(
                     """
@@ -9351,7 +10870,9 @@ UPDATE db_schema_version
                         normalized_type,
                         normalized_text,
                         self._ensure_json_string(options),
-                        self._normalize_quiz_correct_answer(normalized_type, correct_answer),
+                        self._normalize_quiz_correct_answer(
+                            normalized_type, correct_answer
+                        ),
                         (str(explanation or "").strip() or None),
                         normalized_hint,
                         normalized_penalty,
@@ -9372,7 +10893,9 @@ UPDATE db_schema_version
 
         return question_id
 
-    def get_question(self, question_id: str, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
+    def get_question(
+        self, question_id: str, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
         """Get a quiz question by ID."""
         query = """
             SELECT id, quiz_id, question_type, question_text, options,
@@ -9404,7 +10927,9 @@ UPDATE db_schema_version
 
         if normalized_q:
             q_like = f"%{normalized_q}%"
-            where_clauses.append("(LOWER(question_text) LIKE ? OR LOWER(COALESCE(explanation, '')) LIKE ?)")
+            where_clauses.append(
+                "(LOWER(question_text) LIKE ? OR LOWER(COALESCE(explanation, '')) LIKE ?)"
+            )
             params.extend([q_like, q_like])
 
         where_sql = " AND ".join(where_clauses)
@@ -9439,7 +10964,9 @@ UPDATE db_schema_version
         total = int(count_row["count"]) if count_row else 0
         return {"items": items, "count": total}
 
-    def update_question(self, question_id: str, updates: Dict[str, Any], client_id: str = "unknown") -> bool:
+    def update_question(
+        self, question_id: str, updates: Dict[str, Any], client_id: str = "unknown"
+    ) -> bool:
         """Update quiz question fields using optimistic locking when supplied."""
         expected_version = updates.pop("expected_version", None)
         allowed = {
@@ -9476,7 +11003,11 @@ UPDATE db_schema_version
                     ).fetchone()
                     question_type = row["question_type"] if row else None
                 set_parts.append("correct_answer = ?")
-                params.append(self._normalize_quiz_correct_answer(str(question_type or "fill_blank"), value))
+                params.append(
+                    self._normalize_quiz_correct_answer(
+                        str(question_type or "fill_blank"), value
+                    )
+                )
             elif key == "hint":
                 set_parts.append("hint = ?")
                 params.append(str(value or "").strip() or None)
@@ -9498,7 +11029,13 @@ UPDATE db_schema_version
                 params.append(normalized_text)
             elif key == "question_type":
                 normalized_type = str(value or "").strip().lower()
-                if normalized_type not in {"multiple_choice", "multi_select", "matching", "true_false", "fill_blank"}:
+                if normalized_type not in {
+                    "multiple_choice",
+                    "multi_select",
+                    "matching",
+                    "true_false",
+                    "fill_blank",
+                }:
                     raise InputError("Unsupported quiz question type.")
                 set_parts.append("question_type = ?")
                 params.append(normalized_type)
@@ -9518,10 +11055,16 @@ UPDATE db_schema_version
                 current_version = int(row["version"])
                 quiz_id = row["quiz_id"]
                 if expected_version is not None and current_version != expected_version:
-                    raise ConflictError("Version mismatch updating question", entity="quiz_questions", entity_id=question_id)
+                    raise ConflictError(
+                        "Version mismatch updating question",
+                        entity="quiz_questions",
+                        entity_id=question_id,
+                    )
                 if not set_parts:
                     return True
-                set_parts.extend(["last_modified = ?", "version = version + 1", "client_id = ?"])
+                set_parts.extend(
+                    ["last_modified = ?", "version = version + 1", "client_id = ?"]
+                )
                 params.extend([now, client_id or self.client_id, question_id])
                 conn.execute(
                     f"UPDATE quiz_questions SET {', '.join(set_parts)} WHERE id = ? AND deleted = 0",
@@ -9532,7 +11075,12 @@ UPDATE db_schema_version
         except sqlite3.Error as e:
             raise CharactersRAGDBError(f"Failed to update question: {e}") from e
 
-    def delete_question(self, question_id: str, expected_version: Optional[int] = None, hard_delete: bool = False) -> bool:
+    def delete_question(
+        self,
+        question_id: str,
+        expected_version: Optional[int] = None,
+        hard_delete: bool = False,
+    ) -> bool:
         """Delete a quiz question and refresh the owning quiz question count."""
         now = self._get_current_utc_timestamp_iso()
         try:
@@ -9547,13 +11095,19 @@ UPDATE db_schema_version
                 current_version = int(row["version"])
                 deleted = int(row["deleted"])
                 if hard_delete:
-                    conn.execute("DELETE FROM quiz_questions WHERE id = ?", (question_id,))
+                    conn.execute(
+                        "DELETE FROM quiz_questions WHERE id = ?", (question_id,)
+                    )
                     self._recount_quiz_questions(conn, quiz_id)
                     return True
                 if deleted:
                     return True
                 if expected_version is not None and current_version != expected_version:
-                    raise ConflictError("Version mismatch deleting question", entity="quiz_questions", entity_id=question_id)
+                    raise ConflictError(
+                        "Version mismatch deleting question",
+                        entity="quiz_questions",
+                        entity_id=question_id,
+                    )
                 conn.execute(
                     "UPDATE quiz_questions SET deleted = 1, last_modified = ?, version = version + 1, client_id = ? "
                     "WHERE id = ? AND deleted = 0",
@@ -9574,11 +11128,17 @@ UPDATE db_schema_version
                     (quiz_id,),
                 ).fetchone()
                 if not quiz_row:
-                    raise ConflictError("Quiz not found", entity="quizzes", entity_id=quiz_id)
+                    raise ConflictError(
+                        "Quiz not found", entity="quizzes", entity_id=quiz_id
+                    )
 
-                questions_payload = self.list_questions(quiz_id, include_answers=True, limit=None, offset=0)
+                questions_payload = self.list_questions(
+                    quiz_id, include_answers=True, limit=None, offset=0
+                )
                 questions = questions_payload.get("items", [])
-                total_possible = sum(int(question.get("points") or 0) for question in questions)
+                total_possible = sum(
+                    int(question.get("points") or 0) for question in questions
+                )
                 attempt_id = self._generate_uuid()
                 conn.execute(
                     """
@@ -9609,12 +11169,16 @@ UPDATE db_schema_version
                     "total_possible": total_possible,
                     "time_spent_seconds": None,
                     "answers": [],
-                    "questions": [self._public_quiz_question(question) for question in questions],
+                    "questions": [
+                        self._public_quiz_question(question) for question in questions
+                    ],
                 }
         except sqlite3.Error as e:
             raise CharactersRAGDBError(f"Failed to start attempt: {e}") from e
 
-    def submit_attempt(self, attempt_id: str, answers: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def submit_attempt(
+        self, attempt_id: str, answers: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """Submit and grade a quiz attempt."""
         now = self._get_current_utc_timestamp_iso()
         try:
@@ -9624,7 +11188,11 @@ UPDATE db_schema_version
                     (attempt_id,),
                 ).fetchone()
                 if not row:
-                    raise ConflictError("Attempt not found", entity="quiz_attempts", entity_id=attempt_id)
+                    raise ConflictError(
+                        "Attempt not found",
+                        entity="quiz_attempts",
+                        entity_id=attempt_id,
+                    )
 
                 row_data = dict(row)
                 questions_snapshot = row_data.get("questions_snapshot") or "[]"
@@ -9640,13 +11208,19 @@ UPDATE db_schema_version
                 }
 
                 graded_answers: List[Dict[str, Any]] = []
-                total_possible = sum(int(question.get("points") or 0) for question in questions)
+                total_possible = sum(
+                    int(question.get("points") or 0) for question in questions
+                )
                 score = 0
                 total_time_ms = 0
 
                 for answer in answers:
                     question_id = answer.get("question_id")
-                    question = questions_by_id.get(str(question_id)) if question_id is not None else None
+                    question = (
+                        questions_by_id.get(str(question_id))
+                        if question_id is not None
+                        else None
+                    )
                     user_answer = answer.get("user_answer")
                     hint_used = bool(answer.get("hint_used"))
                     hint_penalty_points = 0
@@ -9659,9 +11233,15 @@ UPDATE db_schema_version
                     if question:
                         is_correct = self._check_answer(question, user_answer)
                         points_value = int(question.get("points") or 0)
-                        configured_penalty = max(0, int(question.get("hint_penalty_points") or 0))
+                        configured_penalty = max(
+                            0, int(question.get("hint_penalty_points") or 0)
+                        )
                         if is_correct:
-                            hint_penalty_points = min(points_value, configured_penalty) if hint_used else 0
+                            hint_penalty_points = (
+                                min(points_value, configured_penalty)
+                                if hint_used
+                                else 0
+                            )
                             points_awarded = max(0, points_value - hint_penalty_points)
                         score += points_awarded
                         correct_answer = question.get("correct_answer")
@@ -9687,7 +11267,9 @@ UPDATE db_schema_version
                         }
                     )
 
-                time_spent_seconds = int(total_time_ms / 1000) if total_time_ms else None
+                time_spent_seconds = (
+                    int(total_time_ms / 1000) if total_time_ms else None
+                )
                 conn.execute(
                     "UPDATE quiz_attempts SET completed_at = ?, score = ?, total_possible = ?, time_spent_seconds = ?, answers = ? "
                     "WHERE id = ?",
@@ -9743,7 +11325,9 @@ UPDATE db_schema_version
             if include_answers:
                 item["questions"] = questions
             else:
-                item["questions"] = [self._public_quiz_question(question) for question in questions]
+                item["questions"] = [
+                    self._public_quiz_question(question) for question in questions
+                ]
 
         return item
 
@@ -9790,114 +11374,143 @@ UPDATE db_schema_version
         if question_type == "multi_select":
             if user_answer is None or correct_answer is None:
                 return False
-            return self._normalize_multi_select_indices(user_answer) == self._normalize_multi_select_indices(correct_answer)
+            return self._normalize_multi_select_indices(
+                user_answer
+            ) == self._normalize_multi_select_indices(correct_answer)
         if question_type == "matching":
             if user_answer is None or correct_answer is None:
                 return False
-            return self._normalize_matching_compare_map(user_answer) == self._normalize_matching_compare_map(correct_answer)
+            return self._normalize_matching_compare_map(
+                user_answer
+            ) == self._normalize_matching_compare_map(correct_answer)
         if question_type == "true_false":
             if user_answer is None or correct_answer is None:
                 return False
-            return str(user_answer).strip().lower() == str(correct_answer).strip().lower()
+            return (
+                str(user_answer).strip().lower() == str(correct_answer).strip().lower()
+            )
         if question_type == "fill_blank":
             return self._check_fill_blank_answer(user_answer, correct_answer)
         return False
-    
-    def create_learning_path(self, title: str, description: Optional[str] = None) -> str:
+
+    def create_learning_path(
+        self, title: str, description: Optional[str] = None
+    ) -> str:
         """Create a new learning path."""
         path_id = self._generate_uuid()
-        
+
         with self.transaction() as cursor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO learning_paths (
                     id, title, description, created_by, last_modified_by
                 ) VALUES (?, ?, ?, ?, ?)
-            """, (path_id, title, description, self.client_id, self.client_id))
-            
+            """,
+                (path_id, title, description, self.client_id, self.client_id),
+            )
+
         return path_id
-    
+
     def create_topic(self, topic_data: Dict[str, Any]) -> str:
         """Create a new topic within a learning path."""
         topic_id = self._generate_uuid()
-        
+
         with self.transaction() as cursor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO topics (
                     id, path_id, parent_id, title, content,
                     topic_order, created_by, last_modified_by
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                topic_id,
-                topic_data.get('path_id'),
-                topic_data.get('parent_id'),
-                topic_data['title'],
-                topic_data.get('content', ''),
-                topic_data.get('topic_order', 0),
-                self.client_id,
-                self.client_id
-            ))
-            
+            """,
+                (
+                    topic_id,
+                    topic_data.get("path_id"),
+                    topic_data.get("parent_id"),
+                    topic_data["title"],
+                    topic_data.get("content", ""),
+                    topic_data.get("topic_order", 0),
+                    self.client_id,
+                    self.client_id,
+                ),
+            )
+
         return topic_id
-    
-    def update_topic_progress(self, topic_id: str, progress: float, status: Optional[str] = None) -> None:
+
+    def update_topic_progress(
+        self, topic_id: str, progress: float, status: Optional[str] = None
+    ) -> None:
         """Update topic progress and status."""
         if progress < 0 or progress > 1:
             raise InputError("Progress must be between 0 and 1")
-            
+
         with self.transaction() as cursor:
             query = """
                 UPDATE topics
                 SET progress = ?, updated_at = CURRENT_TIMESTAMP, version = version + 1
             """
             params = [progress]
-            
+
             if status:
-                if status not in ['not_started', 'in_progress', 'completed']:
+                if status not in ["not_started", "in_progress", "completed"]:
                     raise InputError("Invalid topic status")
                 query += ", status = ?"
                 params.append(status)
-                
+
             query += " WHERE id = ? AND is_deleted = 0"
             params.append(topic_id)
-            
+
             cursor.execute(query, params)
-    
+
     def create_mindmap(self, title: str) -> str:
         """Create a new mindmap."""
         mindmap_id = self._generate_uuid()
-        
+
         with self.transaction() as cursor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO mindmaps (
                     id, title, created_by, last_modified_by
                 ) VALUES (?, ?, ?, ?)
-            """, (mindmap_id, title, self.client_id, self.client_id))
-            
+            """,
+                (mindmap_id, title, self.client_id, self.client_id),
+            )
+
         return mindmap_id
-    
-    def add_mindmap_node(self, mindmap_id: str, text: str, parent_id: Optional[str] = None,
-                        position: Optional[Tuple[float, float]] = None) -> str:
+
+    def add_mindmap_node(
+        self,
+        mindmap_id: str,
+        text: str,
+        parent_id: Optional[str] = None,
+        position: Optional[Tuple[float, float]] = None,
+    ) -> str:
         """Add a node to a mindmap."""
         node_id = self._generate_uuid()
-        
+
         with self.transaction() as cursor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO mindmap_nodes (
                     id, mindmap_id, parent_id, text,
                     position_x, position_y
                 ) VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                node_id,
-                mindmap_id,
-                parent_id,
-                text,
-                position[0] if position else 0,
-                position[1] if position else 0
-            ))
-            
+            """,
+                (
+                    node_id,
+                    mindmap_id,
+                    parent_id,
+                    text,
+                    position[0] if position else 0,
+                    position[1] if position else 0,
+                ),
+            )
+
         return node_id
-    
-    def search_flashcards(self, query: str, deck_id: Optional[str] = None) -> List[Dict[str, Any]]:
+
+    def search_flashcards(
+        self, query: str, deck_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Search flashcards using FTS."""
         base_query = """
             SELECT f.* FROM flashcards f
@@ -9905,59 +11518,69 @@ UPDATE db_schema_version
             WHERE flashcards_fts MATCH ? AND f.is_deleted = 0
         """
         params = [query]
-        
+
         if deck_id:
             base_query += " AND f.deck_id = ?"
             params.append(deck_id)
-            
+
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute(base_query, params)
-        
+
         return [dict(row) for row in cursor.fetchall()]
-    
+
     def get_study_stats(self, days: int = 30) -> Dict[str, Any]:
         """Get study statistics for the last N days."""
         from datetime import datetime, timedelta
+
         start_date = datetime.now(timezone.utc) - timedelta(days=days)
-        
+
         conn = self.get_connection()
         cursor = conn.cursor()
-        
+
         # Cards reviewed
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT COUNT(*) as total_reviews,
                    AVG(rating) as avg_rating
             FROM review_history
             WHERE reviewed_at >= ?
-        """, (start_date.isoformat(),))
-        
+        """,
+            (start_date.isoformat(),),
+        )
+
         review_stats = dict(cursor.fetchone())
-        
+
         # Topics completed
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT COUNT(*) as topics_completed
             FROM topics
             WHERE status = 'completed' AND updated_at >= ?
-        """, (start_date.isoformat(),))
-        
+        """,
+            (start_date.isoformat(),),
+        )
+
         topic_stats = dict(cursor.fetchone())
-        
+
         # Study sessions
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT COUNT(*) as total_sessions,
                    SUM(duration) as total_duration,
                    AVG(duration) as avg_duration
             FROM study_sessions
             WHERE started_at >= ?
-        """, (start_date.isoformat(),))
-        
+        """,
+            (start_date.isoformat(),),
+        )
+
         session_stats = dict(cursor.fetchone())
-        
+
         return {
-            'reviews': review_stats,
-            'topics': topic_stats,
-            'sessions': session_stats
+            "reviews": review_stats,
+            "topics": topic_stats,
+            "sessions": session_stats,
         }
 
 
@@ -9970,14 +11593,16 @@ class TransactionContextManager:
 
     def __enter__(self):
         # Ensure transaction_depth is initialized for this thread
-        if not hasattr(self.db._local, 'transaction_depth'):
+        if not hasattr(self.db._local, "transaction_depth"):
             self.db._local.transaction_depth = 0
-            
+
         # If we already have a connection from a parent transaction, use it
         if self.db._local.transaction_depth > 0:
             self.conn = self.db.get_connection()
             self.db._local.transaction_depth += 1
-            logger.debug(f"Entered nested transaction level {self.db._local.transaction_depth} on thread {threading.get_ident()}.")
+            logger.debug(
+                f"Entered nested transaction level {self.db._local.transaction_depth} on thread {threading.get_ident()}."
+            )
             return self.conn.cursor()
         else:
             # This is the outermost transaction
@@ -9986,7 +11611,9 @@ class TransactionContextManager:
             self.db._local.transaction_depth = 1
             # SQLite doesn't support nested transactions directly, but we use SAVEPOINTs for nested behavior
             self.conn.execute("BEGIN")
-            logger.debug(f"Started outermost transaction on thread {threading.get_ident()}.")
+            logger.debug(
+                f"Started outermost transaction on thread {threading.get_ident()}."
+            )
             return self.conn.cursor()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -10006,7 +11633,7 @@ class TransactionContextManager:
             False to propagate any exceptions.
         """
         # Ensure transaction_depth is initialized and decrement it
-        if not hasattr(self.db._local, 'transaction_depth'):
+        if not hasattr(self.db._local, "transaction_depth"):
             self.db._local.transaction_depth = 0
         else:
             self.db._local.transaction_depth -= 1
@@ -10017,20 +11644,29 @@ class TransactionContextManager:
                 # No exception, so commit
                 try:
                     self.conn.commit()
-                    logger.debug(f"Transaction (outermost) committed successfully on thread {threading.get_ident()}.")
+                    logger.debug(
+                        f"Transaction (outermost) committed successfully on thread {threading.get_ident()}."
+                    )
                 except sqlite3.Error as commit_err:
-                    logger.opt(exception=True).error(f"Failed to commit transaction on thread {threading.get_ident()}: {commit_err}")
+                    logger.opt(exception=True).error(
+                        f"Failed to commit transaction on thread {threading.get_ident()}: {commit_err}"
+                    )
                     # Attempt rollback after failed commit
                     try:
                         self.conn.rollback()
-                        logger.debug(f"Rollback after failed commit successful on thread {threading.get_ident()}.")
+                        logger.debug(
+                            f"Rollback after failed commit successful on thread {threading.get_ident()}."
+                        )
                     except sqlite3.Error as rb_err_after_commit_fail:
                         logger.opt(exception=True).critical(
-                            f"Rollback after failed commit also FAILED on thread {threading.get_ident()}: {rb_err_after_commit_fail}")
+                            f"Rollback after failed commit also FAILED on thread {threading.get_ident()}: {rb_err_after_commit_fail}"
+                        )
                     # Re-raise the commit error so the caller knows the transaction failed.
                     # Encapsulate it if it's not already a DB-specific error from our library.
                     if not isinstance(commit_err, CharactersRAGDBError):
-                        raise CharactersRAGDBError(f"Commit failed: {commit_err}") from commit_err
+                        raise CharactersRAGDBError(
+                            f"Commit failed: {commit_err}"
+                        ) from commit_err
                     else:
                         raise commit_err
             else:
@@ -10038,24 +11674,29 @@ class TransactionContextManager:
                 try:
                     self.conn.rollback()
                     logger.debug(
-                        f"Transaction (outermost) rolled back due to exception ({exc_type.__name__}) on thread {threading.get_ident()}.")
+                        f"Transaction (outermost) rolled back due to exception ({exc_type.__name__}) on thread {threading.get_ident()}."
+                    )
                 except sqlite3.Error as rollback_err:
                     logger.opt(exception=True).error(
-                        f"Failed to rollback transaction after exception on thread {threading.get_ident()}: {rollback_err}")
+                        f"Failed to rollback transaction after exception on thread {threading.get_ident()}: {rollback_err}"
+                    )
                     # If rollback also fails, we wrap both errors
                     raise CharactersRAGDBError(
-                        f"Rollback failed after exception: {rollback_err}. Original exception: {exc_val}") from rollback_err
+                        f"Rollback failed after exception: {rollback_err}. Original exception: {exc_val}"
+                    ) from rollback_err
         elif exc_type:
             # If an exception occurred in a nested block, we don't do anything here.
             # The outermost block will handle the rollback.
             logger.debug(
-                f"Exception in nested transaction block on thread {threading.get_ident()}: {exc_type.__name__}. Outermost transaction will handle rollback if this exception propagates.")
-
+                f"Exception in nested transaction block on thread {threading.get_ident()}: {exc_type.__name__}. Outermost transaction will handle rollback if this exception propagates."
+            )
 
         # Return False to re-raise any exceptions that occurred within the `with` block,
         # allowing them to be handled by the caller or to propagate further up.
         # This is standard behavior for context managers.
         return False
+
+
 #
 # End of ChaChaNotes_DB.py
 #######################################################################################################################

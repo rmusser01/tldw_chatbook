@@ -10,6 +10,7 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +20,11 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
 from textual.css.query import NoMatches, QueryError
 from textual.timer import Timer
+from textual.widget import Widget
+from textual.worker import Worker
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -55,6 +59,9 @@ from ...Library.library_export_state import (
     next_media_quality,
     normalize_export_destination,
 )
+from ...Library.ingest_capabilities import get_capabilities, list_type_groups
+from ...Library.ingest_preflight import analyze_path
+from ...Library.ingest_types import PreflightResult
 from ...Library.library_ingest_jobs import LibraryIngestJob
 from ...Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
@@ -111,8 +118,6 @@ from ...Library.library_skills_state import (
     build_skills_list_state,
     classify_skill_save_error,
     compose_skill_markdown,
-    save_marks_needs_review,
-    skill_name_shadows_builtin,
 )
 from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
 from ...Prompt_Management.Prompts_Interop import (
@@ -161,11 +166,17 @@ from ...Library.row_selection import RowSelection
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
-from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
+from ...Sync_Interop.sync_readiness import (
+    DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
+    build_sync_readiness_report,
+)
 from ...Third_Party.textual_fspicker import FileOpen, FileSave
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
-from ...Workspaces import LibraryWorkspaceDepthState, build_library_workspace_depth_state
+from ...Workspaces import (
+    LibraryWorkspaceDepthState,
+    build_library_workspace_depth_state,
+)
 from ...Workspaces.registry_service import next_local_workspace_identity
 from ...Widgets.Console.console_rail_section import (
     CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
@@ -214,7 +225,12 @@ from .study_scope_models import (
 
 
 logger = logger.bind(module="LibraryScreen")
-LIBRARY_SOURCE_PAGE_SIZES = {"notes": 100, "media": 50, "conversations": 50, "prompts": 100}
+LIBRARY_SOURCE_PAGE_SIZES = {
+    "notes": 100,
+    "media": 50,
+    "conversations": 50,
+    "prompts": 100,
+}
 # Only two prompts sort modes (unlike notes' three) -- cycled by
 # handle_library_prompts_sort. Kept local to the screen (not
 # library_prompts_state.py) since it's screen-toolbar-cycling concern, not
@@ -246,7 +262,9 @@ _LIBRARY_PROMPT_IMPORT_PARSERS = {
     ".txt": parse_txt_prompts_from_content,
 }
 LIBRARY_SERVICE_ERROR_COPY = "Library source services unavailable; retry Library later."
-LIBRARY_SERVICE_UNAVAILABLE_COPY = "Library source services are unavailable in this runtime."
+LIBRARY_SERVICE_UNAVAILABLE_COPY = (
+    "Library source services are unavailable in this runtime."
+)
 LIBRARY_EMPTY_COPY = "No local Library content yet."
 LIBRARY_EMPTY_NEXT_ACTION_COPY = (
     "Import media, create notes, or open Library Search/RAG after indexing."
@@ -374,17 +392,27 @@ def _library_carries_forward_line(titles: Sequence[str]) -> str:
 
 
 def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
-    runtime_state = getattr(getattr(app_instance, "runtime_policy", None), "state", None)
-    active_source = str(getattr(runtime_state, "active_source", "local") or "local").lower()
+    runtime_state = getattr(
+        getattr(app_instance, "runtime_policy", None), "state", None
+    )
+    active_source = str(
+        getattr(runtime_state, "active_source", "local") or "local"
+    ).lower()
     server_profile_id = getattr(runtime_state, "active_server_id", None)
-    source_authority = "server" if active_source == "server" and server_profile_id else "local"
+    source_authority = (
+        "server" if active_source == "server" and server_profile_id else "local"
+    )
     authenticated_principal_id = None
     if source_authority == "server":
         server_context_provider = getattr(app_instance, "server_context_provider", None)
-        get_active_context = getattr(server_context_provider, "get_active_context", None)
+        get_active_context = getattr(
+            server_context_provider, "get_active_context", None
+        )
         if callable(get_active_context):
             try:
-                authenticated_principal_id = event_principal_id_from_active_context(get_active_context())
+                authenticated_principal_id = event_principal_id_from_active_context(
+                    get_active_context()
+                )
             except Exception:
                 authenticated_principal_id = None
     workspace_scope = None
@@ -402,6 +430,7 @@ def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
         "authenticated_principal_id": authenticated_principal_id,
         "workspace_scope": workspace_scope,
     }
+
 
 # Maps a Library navigation-context ``mode`` value to the shell rail row
 # that selects that canvas -- covers exactly the mode values nav-context
@@ -484,9 +513,8 @@ def _collection_scoped_conflicts(
         local_side_key = str(conflict.get("local_side_key") or "")
         remote_side_key = str(conflict.get("remote_side_key") or "")
         if local_side_key or remote_side_key:
-            if (
-                local_side_key.endswith(local_side_suffix)
-                or remote_side_key.endswith(remote_side_suffix)
+            if local_side_key.endswith(local_side_suffix) or remote_side_key.endswith(
+                remote_side_suffix
             ):
                 scoped.append(conflict)
             continue
@@ -644,6 +672,108 @@ def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
             exc_info=True,
         )
         screen.refresh(recompose=True)
+
+
+class IngestGuardrailModal(ModalScreen[bool]):
+    """Confirmation modal for starting an ingest with tooling warnings."""
+
+    DEFAULT_CSS = """
+    IngestGuardrailModal {
+        align: center middle;
+    }
+
+    #ingest-guardrail-modal {
+        width: 60;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    #ingest-guardrail-actions {
+        height: 3;
+        min-height: 3;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+    #ingest-guardrail-cancel,
+    #ingest-guardrail-confirm {
+        width: 14;
+        min-width: 14;
+        height: 3;
+        min-height: 3;
+    }
+    """
+
+    BINDINGS = [("escape", "dismiss(false)", "Close")]
+
+    def __init__(self, warnings: list[dict], affected_counts: dict[str, int]) -> None:
+        self.warnings = warnings
+        self.affected_counts = affected_counts
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="ingest-guardrail-modal"):
+            yield Static("Some files may fail to ingest:")
+            for i, w in enumerate(self.warnings):
+                count = self.affected_counts.get(w["feature"], 0)
+                with Vertical():
+                    yield Static(f"- {w['label']} ({count} files): {w['hint']}")
+                    if w.get("command"):
+                        yield Button(
+                            "Copy install command",
+                            id=f"ingest-guardrail-copy-command-{i}",
+                            classes="copy-command",
+                        )
+            with Horizontal(id="ingest-guardrail-actions"):
+                yield Button(
+                    "Cancel", id="ingest-guardrail-cancel", variant="error"
+                )
+                yield Button(
+                    "Start ingest anyway",
+                    id="ingest-guardrail-confirm",
+                    variant="primary",
+                )
+
+    @on(Button.Pressed, "#ingest-guardrail-confirm")
+    def _confirm(self) -> None:
+        self.dismiss(True)
+
+    @on(Button.Pressed, "#ingest-guardrail-cancel")
+    def _cancel(self) -> None:
+        self.dismiss(False)
+
+    @on(Button.Pressed, ".copy-command")
+    def _copy_command(self, event: Button.Pressed) -> None:
+        button_id = event.button.id
+        if not button_id or not button_id.startswith("ingest-guardrail-copy-command-"):
+            return
+        index = int(button_id.split("-")[-1])
+        command = self.warnings[index].get("command", "")
+        copy_fn = getattr(self.app, "copy_to_clipboard", None)
+        if callable(copy_fn):
+            try:
+                copy_fn(command)
+                self.notify("Install command copied to clipboard")
+            except Exception:
+                self.notify("Failed to copy command", severity="error")
+        else:
+            self.notify("Clipboard not available", severity="warning")
+
+
+def _affected_counts(preflight: PreflightResult) -> dict[str, int]:
+    """Map each tooling feature to the number of files that depend on it."""
+    counts: dict[str, int] = {}
+    for group, files in preflight.type_groups.items():
+        if group == "unsupported":
+            # Unsupported files have no capability schema; they are surfaced
+            # separately in the pre-flight summary, not via tooling warnings.
+            continue
+        cap = get_capabilities(group)
+        for feat in cap.required_features + cap.optional_features:
+            counts[feat] = counts.get(feat, 0) + len(files)
+    return counts
 
 
 class LibraryScreen(BaseAppScreen):
@@ -820,7 +950,9 @@ class LibraryScreen(BaseAppScreen):
         # results-arrival transition) is allowed to change this; every
         # other refresh must leave the user's manual expand/collapse alone.
         self._library_rag_history_collapsed: bool = False
-        self._library_search_history: tuple[str, ...] = self._load_library_search_history()
+        self._library_search_history: tuple[str, ...] = (
+            self._load_library_search_history()
+        )
         # Serializes history-collapsible content rebuilds: the "searching"
         # status refresh (called synchronously before the search worker is
         # scheduled) and that worker's own "outcome" refresh can otherwise
@@ -834,7 +966,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_collection_name_input = ""
         self._library_collection_description_input = ""
         self._library_collection_pending_delete_id = ""
-        self._library_workspace_depth_state_cache: LibraryWorkspaceDepthState | None = None
+        self._library_workspace_depth_state_cache: LibraryWorkspaceDepthState | None = (
+            None
+        )
         self._selected_conversation_id = ""
         self._library_selected_row_id: str = ""
         self._library_conversation_query: str = ""
@@ -987,6 +1121,9 @@ class LibraryScreen(BaseAppScreen):
         # (not here) so a re-mounted, cached screen instance never treats
         # jobs that finished in a previous mount as a fresh transition.
         self._library_ingest_last_done_count: int = 0
+        # Pre-flight analysis worker for the ingest path field. Cancelled
+        # and replaced on every new trigger so rapid edits never stack.
+        self._library_ingest_preflight_worker: Worker | None = None
         # Export canvas state (F4 Task 2). ``_library_export_counts`` is
         # ``None`` until the counts worker lands a result for the current
         # scope (drives ``LibraryExportFormState.counts_loading`` --
@@ -1056,6 +1193,7 @@ class LibraryScreen(BaseAppScreen):
         """
         self._register_footer_shortcuts()
         super().on_mount()
+        self._load_library_ingest_options_from_config()
         self.set_timer(
             LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
             self._apply_source_snapshot_timeout,
@@ -1290,7 +1428,9 @@ class LibraryScreen(BaseAppScreen):
             return
 
         self._library_selected_row_id = str(state.get("library_selected_row_id") or "")
-        self._selected_conversation_id = str(state.get("selected_conversation_id") or "")
+        self._selected_conversation_id = str(
+            state.get("selected_conversation_id") or ""
+        )
 
         selected_note_id = str(state.get("selected_note_id") or "")
         notes_view = str(state.get("library_notes_view") or "list")
@@ -1327,25 +1467,33 @@ class LibraryScreen(BaseAppScreen):
         )
         recovery_state = state.get("library_rag_recovery_state")
         self._library_rag_recovery_state = (
-            recovery_state if isinstance(recovery_state, DestinationRecoveryState) else None
+            recovery_state
+            if isinstance(recovery_state, DestinationRecoveryState)
+            else None
         )
 
         media_type_filter = state.get("library_media_type_filter")
         self._library_media_type_filter = (
-            media_type_filter if isinstance(media_type_filter, str) and media_type_filter else "All"
+            media_type_filter
+            if isinstance(media_type_filter, str) and media_type_filter
+            else "All"
         )
         notes_sort = state.get("library_notes_sort")
         self._library_notes_sort = (
             notes_sort if isinstance(notes_sort, str) and notes_sort else "newest"
         )
         notes_filter = state.get("library_notes_filter")
-        self._library_notes_filter = notes_filter if isinstance(notes_filter, str) else ""
+        self._library_notes_filter = (
+            notes_filter if isinstance(notes_filter, str) else ""
+        )
         prompts_sort = state.get("library_prompts_sort")
         self._library_prompts_sort = (
             prompts_sort if isinstance(prompts_sort, str) and prompts_sort else "newest"
         )
         prompts_filter = state.get("library_prompts_filter")
-        self._library_prompts_filter = prompts_filter if isinstance(prompts_filter, str) else ""
+        self._library_prompts_filter = (
+            prompts_filter if isinstance(prompts_filter, str) else ""
+        )
         selected_prompt_id = state.get("selected_prompt_id")
         self._selected_prompt_id = (
             selected_prompt_id if isinstance(selected_prompt_id, int) else None
@@ -1376,7 +1524,11 @@ class LibraryScreen(BaseAppScreen):
         await self._flush_library_note_save()
         prompt_flush_allowed = await self._flush_library_prompt_save()
         skill_flush_allowed = await self._flush_library_skill_save()
-        return not self._library_note_dirty and prompt_flush_allowed and skill_flush_allowed
+        return (
+            not self._library_note_dirty
+            and prompt_flush_allowed
+            and skill_flush_allowed
+        )
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply route context supplied by shell navigation.
@@ -1452,7 +1604,9 @@ class LibraryScreen(BaseAppScreen):
         )
         notes_create = bool(context.get(LIBRARY_NAV_CONTEXT_NOTES_CREATE))
         ingest_media = bool(context.get(LIBRARY_NAV_CONTEXT_INGEST))
-        target_mode = requested_mode if requested_mode in LIBRARY_NAV_MODE_TO_ROW_ID else ""
+        target_mode = (
+            requested_mode if requested_mode in LIBRARY_NAV_MODE_TO_ROW_ID else ""
+        )
         if conversation_id and not target_mode:
             target_mode = LIBRARY_MODE_CONVERSATIONS
         if target_mode:
@@ -1698,13 +1852,16 @@ class LibraryScreen(BaseAppScreen):
         def invoke_service_in_worker() -> Any:
             result = callable_obj(*args, **kwargs)
             if inspect.isawaitable(result):
+
                 async def await_result() -> Any:
                     return await result
 
                 # Runs via asyncio.to_thread: this thread has no event loop,
                 # and the awaitable must complete here so blocking async
                 # services stay off the UI loop.
-                return asyncio.run(await_result())  # policy-exception: worker-thread loop
+                return asyncio.run(
+                    await_result()
+                )  # policy-exception: worker-thread loop
             return result
 
         if isolate_in_worker:
@@ -1811,7 +1968,9 @@ class LibraryScreen(BaseAppScreen):
         parsed = [item.strip() for item in (raw_value or "").split(",") if item.strip()]
         if not parsed:
             return None
-        sanitized = [self._sanitize_media_field(item, max_length=100) for item in parsed]
+        sanitized = [
+            self._sanitize_media_field(item, max_length=100) for item in parsed
+        ]
         sanitized = [item for item in sanitized if item]
         return sanitized or None
 
@@ -1845,7 +2004,9 @@ class LibraryScreen(BaseAppScreen):
         return "Untitled source"
 
     @staticmethod
-    def _response_records_and_count(result: Any) -> tuple[tuple[Mapping[str, Any], ...], int, bool]:
+    def _response_records_and_count(
+        result: Any,
+    ) -> tuple[tuple[Mapping[str, Any], ...], int, bool]:
         total = None
         if isinstance(result, Mapping):
             raw_items = result.get("items")
@@ -1853,12 +2014,16 @@ class LibraryScreen(BaseAppScreen):
             total = result.get("total")
             if isinstance(pagination, Mapping):
                 total = pagination.get("total", pagination.get("total_items", total))
-        elif isinstance(result, Sequence) and not isinstance(result, (str, bytes, bytearray)):
+        elif isinstance(result, Sequence) and not isinstance(
+            result, (str, bytes, bytearray)
+        ):
             raw_items = result
         else:
             raw_items = ()
 
-        records = tuple(record for record in tuple(raw_items or ()) if isinstance(record, Mapping))
+        records = tuple(
+            record for record in tuple(raw_items or ()) if isinstance(record, Mapping)
+        )
         total_known = total is not None
         try:
             count = int(total) if total is not None else len(records)
@@ -1867,7 +2032,9 @@ class LibraryScreen(BaseAppScreen):
             total_known = False
         return records, max(count, 0), total_known
 
-    async def _notes_true_count_or_none(self, count_notes: Any, **kwargs: Any) -> int | None:
+    async def _notes_true_count_or_none(
+        self, count_notes: Any, **kwargs: Any
+    ) -> int | None:
         """Fetch the authoritative local notes total, degrading quietly on failure.
 
         Runs inside the same ``asyncio.gather`` as the paginated ``list_notes``
@@ -1890,13 +2057,19 @@ class LibraryScreen(BaseAppScreen):
             returned something other than an ``int``.
         """
         try:
-            result = await self._run_library_service_call(count_notes, isolate_in_worker=True, **kwargs)
+            result = await self._run_library_service_call(
+                count_notes, isolate_in_worker=True, **kwargs
+            )
         except Exception:
-            logger.opt(exception=True).warning("Failed to fetch exact local notes count; using sample count.")
+            logger.opt(exception=True).warning(
+                "Failed to fetch exact local notes count; using sample count."
+            )
             return None
         return result if isinstance(result, int) else None
 
-    async def _prompts_count_or_none(self, count_prompts: Any, **kwargs: Any) -> int | None:
+    async def _prompts_count_or_none(
+        self, count_prompts: Any, **kwargs: Any
+    ) -> int | None:
         """Fetch the exact local prompts total, degrading quietly on failure.
 
         Runs inside the same ``asyncio.gather`` as the notes/media/
@@ -1920,9 +2093,13 @@ class LibraryScreen(BaseAppScreen):
             returned something other than an ``int``.
         """
         try:
-            result = await self._run_library_service_call(count_prompts, isolate_in_worker=True, **kwargs)
+            result = await self._run_library_service_call(
+                count_prompts, isolate_in_worker=True, **kwargs
+            )
         except Exception:
-            logger.opt(exception=True).warning("Failed to fetch local prompts count; Prompts row will show no count.")
+            logger.opt(exception=True).warning(
+                "Failed to fetch local prompts count; Prompts row will show no count."
+            )
             return None
         return result if isinstance(result, int) else None
 
@@ -2003,7 +2180,9 @@ class LibraryScreen(BaseAppScreen):
             )
         return tuple(records)
 
-    async def _skills_context_or_none(self, get_context: Any, **kwargs: Any) -> Mapping[str, Any] | None:
+    async def _skills_context_or_none(
+        self, get_context: Any, **kwargs: Any
+    ) -> Mapping[str, Any] | None:
         """Fetch the local skills context, degrading quietly on failure.
 
         Runs inside the same ``asyncio.gather`` as the notes/media/
@@ -2033,7 +2212,9 @@ class LibraryScreen(BaseAppScreen):
             something other than a ``Mapping``.
         """
         try:
-            result = await self._run_library_service_call(get_context, isolate_in_worker=True, **kwargs)
+            result = await self._run_library_service_call(
+                get_context, isolate_in_worker=True, **kwargs
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 "Failed to fetch local skills context; Skills row will show no count."
@@ -2041,7 +2222,9 @@ class LibraryScreen(BaseAppScreen):
             return None
         return result if isinstance(result, Mapping) else None
 
-    async def _study_count_or_none(self, count_callable: Any, label: str, **kwargs: Any) -> int | None:
+    async def _study_count_or_none(
+        self, count_callable: Any, label: str, **kwargs: Any
+    ) -> int | None:
         """Fetch a decorative Create-rail count, degrading quietly on failure.
 
         Runs inside the same ``asyncio.gather`` as the local source snapshot
@@ -2078,7 +2261,9 @@ class LibraryScreen(BaseAppScreen):
                 count_callable, isolate_in_worker=isolate_in_worker, **kwargs
             )
         except Exception:
-            logger.opt(exception=True).debug(f"Failed to fetch {label} count for Library create rail.")
+            logger.opt(exception=True).debug(
+                f"Failed to fetch {label} count for Library create rail."
+            )
             return None
         return result if isinstance(result, int) else None
 
@@ -2094,7 +2279,9 @@ class LibraryScreen(BaseAppScreen):
     ]:
         notes_service = getattr(self.app_instance, "notes_scope_service", None)
         media_service = getattr(self.app_instance, "media_reading_scope_service", None)
-        conversation_service = getattr(self.app_instance, "chat_conversation_scope_service", None)
+        conversation_service = getattr(
+            self.app_instance, "chat_conversation_scope_service", None
+        )
         study_service = getattr(self.app_instance, "study_scope_service", None)
         quiz_service = getattr(self.app_instance, "study_quiz_scope_service", None)
         prompt_service = getattr(self.app_instance, "prompt_scope_service", None)
@@ -2113,7 +2300,9 @@ class LibraryScreen(BaseAppScreen):
         list_prompts_available = callable(list_prompts)
         get_skills_context = getattr(skills_service, "get_context", None)
         get_skills_context_available = callable(get_skills_context)
-        notes_user_id = getattr(self.app_instance, "notes_user_id", None) or "default_user"
+        notes_user_id = (
+            getattr(self.app_instance, "notes_user_id", None) or "default_user"
+        )
 
         empty_records: dict[str, tuple[Mapping[str, Any], ...]] = {
             "notes": (),
@@ -2133,7 +2322,9 @@ class LibraryScreen(BaseAppScreen):
             "flashcards_due": None,
             "quizzes": None,
         }
-        if not all(callable(call) for call in (list_notes, list_media, list_conversations)):
+        if not all(
+            callable(call) for call in (list_notes, list_media, list_conversations)
+        ):
             return (
                 empty_records,
                 empty_counts,
@@ -2182,7 +2373,9 @@ class LibraryScreen(BaseAppScreen):
             optional_calls.append(
                 (
                     "notes_true_count",
-                    self._notes_true_count_or_none(count_notes, scope="local_note", user_id=notes_user_id),
+                    self._notes_true_count_or_none(
+                        count_notes, scope="local_note", user_id=notes_user_id
+                    ),
                 )
             )
         if callable(count_decks):
@@ -2191,13 +2384,21 @@ class LibraryScreen(BaseAppScreen):
             )
         if callable(count_due_flashcards):
             optional_calls.append(
-                ("flashcards_due", self._study_count_or_none(count_due_flashcards, "flashcards due"))
+                (
+                    "flashcards_due",
+                    self._study_count_or_none(count_due_flashcards, "flashcards due"),
+                )
             )
         if callable(count_quizzes):
-            optional_calls.append(("quizzes", self._study_count_or_none(count_quizzes, "quizzes")))
+            optional_calls.append(
+                ("quizzes", self._study_count_or_none(count_quizzes, "quizzes"))
+            )
         if count_prompts_available:
             optional_calls.append(
-                ("prompts_count", self._prompts_count_or_none(count_prompts, mode="local"))
+                (
+                    "prompts_count",
+                    self._prompts_count_or_none(count_prompts, mode="local"),
+                )
             )
         if list_prompts_available:
             optional_calls.append(
@@ -2213,7 +2414,10 @@ class LibraryScreen(BaseAppScreen):
             )
         if get_skills_context_available:
             optional_calls.append(
-                ("skills_context", self._skills_context_or_none(get_skills_context, mode="local"))
+                (
+                    "skills_context",
+                    self._skills_context_or_none(get_skills_context, mode="local"),
+                )
             )
         gathered_calls.extend(call for _, call in optional_calls)
 
@@ -2223,7 +2427,9 @@ class LibraryScreen(BaseAppScreen):
                 timeout=LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
             )
         except PolicyDeniedError as exc:
-            policy_message = self._safe_text(exc.user_message, LIBRARY_SERVICE_ERROR_COPY)
+            policy_message = self._safe_text(
+                exc.user_message, LIBRARY_SERVICE_ERROR_COPY
+            )
             recovery_state = policy_denied_recovery_state(
                 exc,
                 unavailable_what="Use Library sources in Console",
@@ -2251,8 +2457,12 @@ class LibraryScreen(BaseAppScreen):
                 empty_study_counts,
             )
 
-        notes_result, media_result, conversation_result, *optional_results = gathered_results
-        optional_values = dict(zip((key for key, _ in optional_calls), optional_results))
+        notes_result, media_result, conversation_result, *optional_results = (
+            gathered_results
+        )
+        optional_values = dict(
+            zip((key for key, _ in optional_calls), optional_results)
+        )
 
         notes_true_count = optional_values.get("notes_true_count")
         prompts_count = optional_values.get("prompts_count")
@@ -2272,11 +2482,15 @@ class LibraryScreen(BaseAppScreen):
             "quizzes": optional_values.get("quizzes"),
         }
 
-        notes, notes_count, notes_total_known = self._response_records_and_count(notes_result)
+        notes, notes_count, notes_total_known = self._response_records_and_count(
+            notes_result
+        )
         if notes_true_count is not None:
             notes_count = notes_true_count
             notes_total_known = True
-        media, media_count, media_total_known = self._response_records_and_count(media_result)
+        media, media_count, media_total_known = self._response_records_and_count(
+            media_result
+        )
         (
             conversations,
             conversations_count,
@@ -2328,7 +2542,9 @@ class LibraryScreen(BaseAppScreen):
             ("conversations", "Conversations"),
         ):
             lines.append(self._source_count_label(source_type, label))
-            for index, record in enumerate(self._local_source_records[source_type], start=1):
+            for index, record in enumerate(
+                self._local_source_records[source_type], start=1
+            ):
                 lines.append(f"  {index}. {self._source_title(source_type, record)}")
             lines.append("")
         return "\n".join(lines).strip()
@@ -2337,7 +2553,9 @@ class LibraryScreen(BaseAppScreen):
         count = self._local_source_counts[source_type]
         if self._local_source_total_known[source_type]:
             return f"{label}: {count}"
-        return f"{label} (showing up to {LIBRARY_SOURCE_PAGE_SIZES[source_type]}): {count}"
+        return (
+            f"{label} (showing up to {LIBRARY_SOURCE_PAGE_SIZES[source_type]}): {count}"
+        )
 
     def _hub_source_count_label(self, source_type: str, label: str) -> str:
         count = self._local_source_counts[source_type]
@@ -2380,14 +2598,22 @@ class LibraryScreen(BaseAppScreen):
 
     @classmethod
     def _conversation_message_count_label(cls, record: Mapping[str, Any]) -> str:
-        for key in ("message_count", "messages_count", "messageCount", "message_total", "messages_total"):
+        for key in (
+            "message_count",
+            "messages_count",
+            "messageCount",
+            "message_total",
+            "messages_total",
+        ):
             value = record.get(key)
             if isinstance(value, int):
                 return f"Messages: {value}"
             if isinstance(value, str) and value.strip().isdigit():
                 return f"Messages: {value.strip()}"
         messages = record.get("messages")
-        if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes, bytearray)):
+        if isinstance(messages, Sequence) and not isinstance(
+            messages, (str, bytes, bytearray)
+        ):
             return f"Messages: {len(messages)}"
         return "Messages: unknown"
 
@@ -2401,7 +2627,13 @@ class LibraryScreen(BaseAppScreen):
 
     @classmethod
     def _conversation_updated_label(cls, record: Mapping[str, Any]) -> str:
-        for key in ("updated_at", "last_modified", "last_updated", "modified_at", "created_at"):
+        for key in (
+            "updated_at",
+            "last_modified",
+            "last_updated",
+            "modified_at",
+            "created_at",
+        ):
             value = cls._safe_text(record.get(key), max_length=64)
             if value:
                 return f"Updated: {value}"
@@ -2515,7 +2747,9 @@ class LibraryScreen(BaseAppScreen):
         recent = self._source_recent_value(source_type)
         return f"Recent: {recent}"
 
-    def _hub_table_cell(self, value: str, width: int = LIBRARY_HUB_RECENT_LABEL_WIDTH) -> str:
+    def _hub_table_cell(
+        self, value: str, width: int = LIBRARY_HUB_RECENT_LABEL_WIDTH
+    ) -> str:
         """Keep hub table cells readable in terminal-width layouts."""
         clean_value = " ".join(value.split())
         if len(clean_value) <= width:
@@ -2565,14 +2799,18 @@ class LibraryScreen(BaseAppScreen):
             if self._local_source_counts.get(source_type, 0) > 0
         )
         workspace_depth_state = self._library_workspace_depth_state()
-        eligible_modules = active_modules if workspace_depth_state.context_handoff_enabled else 0
+        eligible_modules = (
+            active_modules if workspace_depth_state.context_handoff_enabled else 0
+        )
         blocked_modules = max(0, active_modules - eligible_modules)
         return active_modules, eligible_modules, blocked_modules
 
     def _hub_state_summary(self) -> str:
         _, eligible_modules, blocked_modules = self._hub_readiness_counts()
         workspace_depth_state = self._library_workspace_depth_state()
-        console_state = "ready" if workspace_depth_state.context_handoff_enabled else "blocked"
+        console_state = (
+            "ready" if workspace_depth_state.context_handoff_enabled else "blocked"
+        )
         return "\n".join(
             (
                 f"State: Local workspace | Browse all workspaces | Console staging {console_state}",
@@ -2591,7 +2829,9 @@ class LibraryScreen(BaseAppScreen):
         eligible_suffix = "module" if eligible_modules == 1 else "modules"
         return "\n".join(
             (
-                self._hub_key_value_row("Eligible", f"{eligible_modules} {eligible_suffix}"),
+                self._hub_key_value_row(
+                    "Eligible", f"{eligible_modules} {eligible_suffix}"
+                ),
                 self._hub_key_value_row(
                     "Blocked",
                     f"{blocked_modules} workspace-gated {blocked_suffix}",
@@ -2604,7 +2844,9 @@ class LibraryScreen(BaseAppScreen):
             )
         )
 
-    def _hub_key_value_row(self, label: str, value: str, *, label_width: int = 14) -> str:
+    def _hub_key_value_row(
+        self, label: str, value: str, *, label_width: int = 14
+    ) -> str:
         return f"{label:<{label_width}} {value}"
 
     def _source_recent_value(self, source_type: str) -> str:
@@ -2672,7 +2914,6 @@ class LibraryScreen(BaseAppScreen):
     def _hub_spacer(self, widget_id: str) -> Static:
         return Static("", id=widget_id, classes="library-hub-spacer")
 
-
     @classmethod
     def _source_record_id(cls, record: Mapping[str, Any]) -> str | None:
         for key in (
@@ -2716,7 +2957,9 @@ class LibraryScreen(BaseAppScreen):
         metadata: dict[str, int | None] = {}
         for source_type in ("notes", "media", "conversations"):
             count = self._local_source_counts[source_type]
-            metadata[f"{source_type}_sample_count"] = len(self._local_source_records[source_type])
+            metadata[f"{source_type}_sample_count"] = len(
+                self._local_source_records[source_type]
+            )
             metadata[f"{source_type}_total_count"] = (
                 count if self._local_source_total_known[source_type] else None
             )
@@ -2743,7 +2986,9 @@ class LibraryScreen(BaseAppScreen):
 
     def _next_local_workspace_identity(self) -> tuple[str, str]:
         """Return a collision-free local workspace id and display name."""
-        registry_service = getattr(self.app_instance, "workspace_registry_service", None)
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
         if registry_service is None:
             # Preserve the original behavior when the registry is unavailable by
             # falling back to a deterministic identity that mirrors the shared
@@ -2757,9 +3002,13 @@ class LibraryScreen(BaseAppScreen):
         refresh: bool = False,
     ) -> LibraryWorkspaceDepthState:
         if refresh or self._library_workspace_depth_state_cache is None:
-            self._library_workspace_depth_state_cache = build_library_workspace_depth_state(
-                registry_service=getattr(self.app_instance, "workspace_registry_service", None),
-                source_records=self._workspace_source_records(),
+            self._library_workspace_depth_state_cache = (
+                build_library_workspace_depth_state(
+                    registry_service=getattr(
+                        self.app_instance, "workspace_registry_service", None
+                    ),
+                    source_records=self._workspace_source_records(),
+                )
             )
         return self._library_workspace_depth_state_cache
 
@@ -2769,8 +3018,7 @@ class LibraryScreen(BaseAppScreen):
     ) -> Text:
         """Return the left-rail workspace scope copy for the active Library mode."""
         return Text.from_markup(
-            "Active workspace: "
-            f"{escape_markup(workspace_depth_state.workspace_name)}"
+            f"Active workspace: {escape_markup(workspace_depth_state.workspace_name)}"
         )
 
     def _source_study_context(self) -> StudyScopeContext | None:
@@ -2808,7 +3056,9 @@ class LibraryScreen(BaseAppScreen):
         if has_context and titles:
             context_copy = _library_carries_forward_line(titles)
         elif has_context:
-            context_copy = "Carries forward: Library source snapshot (titles unavailable)"
+            context_copy = (
+                "Carries forward: Library source snapshot (titles unavailable)"
+            )
         else:
             # No Library sources at all: the carries-forward line is omitted
             # entirely rather than stating the negative (the blocked
@@ -2851,7 +3101,8 @@ class LibraryScreen(BaseAppScreen):
                 # a bare count in `_local_source_counts` -- reuse the
                 # already-fetched count-seam value rather than fetching
                 # again.
-                "prompts": self._local_source_records.get("prompts", (None, ()))[0] or 0,
+                "prompts": self._local_source_records.get("prompts", (None, ()))[0]
+                or 0,
                 "workspaces": 0,
                 "collections": 0,
             },
@@ -2902,7 +3153,9 @@ class LibraryScreen(BaseAppScreen):
             sync_profile_summary=self._library_sync_profile_summary,
         )
 
-    def _workspace_handoff_summary_label(self, state: LibraryWorkspaceDepthState) -> str:
+    def _workspace_handoff_summary_label(
+        self, state: LibraryWorkspaceDepthState
+    ) -> str:
         """Shorten ``state.handoff_label`` for the Workspace group's Handoff row.
 
         Drops the redundant "Console/RAG handoff: " prefix (the "Handoff"
@@ -2963,7 +3216,9 @@ class LibraryScreen(BaseAppScreen):
         # D2: the ds-recovery-callout warning treatment is for the blocked
         # (no local sources) state only; ready renders as a plain Static.
         recovery_kwargs: dict[str, str] = (
-            {} if self._has_local_sources() else {"classes": "ds-recovery-callout is-blocked"}
+            {}
+            if self._has_local_sources()
+            else {"classes": "ds-recovery-callout is-blocked"}
         )
         action_button_id = {
             "study": "library-open-study",
@@ -3103,6 +3358,14 @@ class LibraryScreen(BaseAppScreen):
         )
         return tuple(widgets)
 
+    def _compose_library_rail_top_action(self) -> list[Widget]:
+        """Build the top-of-rail action widget(s) for the Library shell.
+
+        Returns a primary Ingest button that jumps directly to the Ingest
+        media canvas, surfaced above the rail search box for discoverability.
+        """
+        return [Button("Ingest content…", variant="primary", id="library-ingest-top-button")]
+
     def _compose_workspaces_rail_body(self) -> list[Any]:
         """Build the Workspaces body for the rail Details section.
 
@@ -3161,6 +3424,7 @@ class LibraryScreen(BaseAppScreen):
                 query=self._library_rag_query,
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
+                top_action_factory=self._compose_library_rail_top_action,
                 id="library-rail",
                 classes="destination-workbench-pane",
             )
@@ -3210,7 +3474,10 @@ class LibraryScreen(BaseAppScreen):
                         conversations_state,
                         id="library-conversations-canvas",
                     )
-                elif shell.canvas_kind == "media" and self._library_media_view == "viewer":
+                elif (
+                    shell.canvas_kind == "media"
+                    and self._library_media_view == "viewer"
+                ):
                     if self._library_media_detail is None:
                         yield Static(
                             "Loading media…",
@@ -3220,7 +3487,9 @@ class LibraryScreen(BaseAppScreen):
                         )
                     else:
                         yield LibraryMediaViewer(
-                            build_library_media_viewer_state(self._library_media_detail),
+                            build_library_media_viewer_state(
+                                self._library_media_detail
+                            ),
                             editing=self._library_media_editing,
                             confirming_delete=self._library_media_confirming_delete,
                             highlights=build_library_media_highlight_rows(
@@ -3238,7 +3507,10 @@ class LibraryScreen(BaseAppScreen):
                         media_state,
                         id="library-media-canvas",
                     )
-                elif shell.canvas_kind == "notes" and self._library_notes_view == "editor":
+                elif (
+                    shell.canvas_kind == "notes"
+                    and self._library_notes_view == "editor"
+                ):
                     if self._library_note_conflict_snapshot is not None:
                         # A save just lost an optimistic-lock race: recompose
                         # from the user's own kept text (never the stale
@@ -3266,7 +3538,9 @@ class LibraryScreen(BaseAppScreen):
                         editor_state = (
                             self._library_note_preview_snapshot
                             if self._library_note_preview_snapshot is not None
-                            else build_library_note_editor_state(self._library_note_detail)
+                            else build_library_note_editor_state(
+                                self._library_note_detail
+                            )
                         )
                         yield LibraryNotesCanvas(
                             mode="editor",
@@ -3275,7 +3549,9 @@ class LibraryScreen(BaseAppScreen):
                             preview=self._library_note_preview,
                             id="library-notes-canvas",
                         )
-                elif shell.canvas_kind == "notes" and self._library_notes_view == "sync":
+                elif (
+                    shell.canvas_kind == "notes" and self._library_notes_view == "sync"
+                ):
                     yield LibraryNotesCanvas(
                         mode="sync",
                         sync_state=self._build_library_notes_sync_state(),
@@ -3293,7 +3569,10 @@ class LibraryScreen(BaseAppScreen):
                         mode="create",
                         id="library-notes-canvas",
                     )
-                elif shell.canvas_kind == "prompts" and self._library_prompts_view == "editor":
+                elif (
+                    shell.canvas_kind == "prompts"
+                    and self._library_prompts_view == "editor"
+                ):
                     if self._library_prompt_conflict_snapshot is not None:
                         # A save just lost the app-level staleness check (see
                         # `_save_library_prompt`): recompose from the user's
@@ -3316,7 +3595,9 @@ class LibraryScreen(BaseAppScreen):
                     else:
                         yield LibraryPromptsListCanvas(
                             mode="editor",
-                            editor_state=build_prompt_editor_state(self._library_prompt_detail),
+                            editor_state=build_prompt_editor_state(
+                                self._library_prompt_detail
+                            ),
                             status=self._library_prompt_status,
                             # Task 8b D3: only the name-in-use status backs
                             # a real "Open existing" affordance -- reusing
@@ -3340,7 +3621,10 @@ class LibraryScreen(BaseAppScreen):
                         import_status=self._library_prompts_import_status,
                         id="library-prompts-canvas",
                     )
-                elif shell.canvas_kind == "skills" and self._library_skills_view == "editor":
+                elif (
+                    shell.canvas_kind == "skills"
+                    and self._library_skills_view == "editor"
+                ):
                     if self._library_skill_editor_state is None:
                         yield Static(
                             "Loading skill…",
@@ -3456,9 +3740,9 @@ class LibraryScreen(BaseAppScreen):
         ).lower()
         server_label = None
         if active_source == "server":
-            server_label = getattr(runtime_state, "last_known_server_label", None) or getattr(
-                runtime_state, "active_server_id", None
-            )
+            server_label = getattr(
+                runtime_state, "last_known_server_label", None
+            ) or getattr(runtime_state, "active_server_id", None)
         collections_count = (
             len(self._library_collections_records)
             if self._library_collections_loaded
@@ -3482,7 +3766,9 @@ class LibraryScreen(BaseAppScreen):
         return LibraryShellInput(
             media_count=counts.get("media") if counts_known_yet else None,
             media_known=known.get("media", True),
-            conversations_count=counts.get("conversations") if counts_known_yet else None,
+            conversations_count=counts.get("conversations")
+            if counts_known_yet
+            else None,
             conversations_known=known.get("conversations", True),
             notes_count=counts.get("notes") if counts_known_yet else None,
             notes_known=known.get("notes", True),
@@ -3663,7 +3949,9 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.opt(exception=True).warning(f"Failed to load Library media detail for {media_id!r}.")
+            logger.opt(exception=True).warning(
+                f"Failed to load Library media detail for {media_id!r}."
+            )
             detail = None
         # Discard out-of-order results: if the user has since selected a
         # different media row (or left the viewer), a slower in-flight fetch
@@ -3695,7 +3983,9 @@ class LibraryScreen(BaseAppScreen):
         if self.is_mounted:
             self.refresh(recompose=True)
 
-    async def _fetch_library_media_highlights(self, media_id: str) -> list[dict[str, Any]]:
+    async def _fetch_library_media_highlights(
+        self, media_id: str
+    ) -> list[dict[str, Any]]:
         """Fetch reading highlights for a Library media item from the local scope service.
 
         Guards against an unavailable ``list_highlights`` service or a failed
@@ -3723,7 +4013,8 @@ class LibraryScreen(BaseAppScreen):
             )
         except Exception:
             logger.opt(exception=True).warning(
-                f"Failed to load Library media highlights for {media_id!r}.")
+                f"Failed to load Library media highlights for {media_id!r}."
+            )
             return []
         return list(highlights) if isinstance(highlights, list) else []
 
@@ -3733,7 +4024,9 @@ class LibraryScreen(BaseAppScreen):
         Args:
             media_id: The Library media item id whose highlights changed.
         """
-        self._library_media_highlights = await self._fetch_library_media_highlights(media_id)
+        self._library_media_highlights = await self._fetch_library_media_highlights(
+            media_id
+        )
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -3765,11 +4058,14 @@ class LibraryScreen(BaseAppScreen):
                 get_note_detail,
                 scope="local_note",
                 note_id=note_id,
-                user_id=getattr(self.app_instance, "notes_user_id", None) or "default_user",
+                user_id=getattr(self.app_instance, "notes_user_id", None)
+                or "default_user",
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.opt(exception=True).warning(f"Failed to load Library note detail for {note_id!r}.")
+            logger.opt(exception=True).warning(
+                f"Failed to load Library note detail for {note_id!r}."
+            )
             detail = None
         # Discard out-of-order results: if the user has since selected a
         # different note (or left the editor), a slower in-flight fetch for
@@ -3854,7 +4150,8 @@ class LibraryScreen(BaseAppScreen):
             )
         except Exception:
             logger.opt(exception=True).warning(
-                f"Failed to load keywords for Library note {note_id!r}.")
+                f"Failed to load keywords for Library note {note_id!r}."
+            )
             return None
         return list(keywords) if isinstance(keywords, list) else None
 
@@ -3913,8 +4210,16 @@ class LibraryScreen(BaseAppScreen):
         stale in-progress form from a previous Ingest visit never
         reappears when the user comes back to the canvas. The job queue
         itself is registry-owned and untouched by this reset -- only the
-        local form echo resets.
+        local form echo resets. Any in-flight pre-flight worker is
+        cancelled so its late result cannot repopulate the fresh form.
         """
+        if self._library_ingest_preflight_worker is not None:
+            try:
+                if not self._library_ingest_preflight_worker.is_finished:
+                    self._library_ingest_preflight_worker.cancel()
+            except Exception:
+                pass
+            self._library_ingest_preflight_worker = None
         self._library_ingest_form = LibraryIngestFormState()
 
     # ----- Export canvas -------------------------------------------------
@@ -3930,7 +4235,9 @@ class LibraryScreen(BaseAppScreen):
             "destination_exists": False,
         }
 
-    def _reset_library_export_transient_state(self, scope: ExportScope | None = None) -> None:
+    def _reset_library_export_transient_state(
+        self, scope: ExportScope | None = None
+    ) -> None:
         """Clear the export canvas's scope/counts/form to defaults on entry.
 
         Called from both entry points into the export canvas -- the rail
@@ -4067,7 +4374,9 @@ class LibraryScreen(BaseAppScreen):
         if bool(getattr(media_db, "is_memory_db", False)) or bool(
             getattr(chachanotes_db, "is_memory_db", False)
         ):
-            counts = self._compute_library_export_counts(scope, media_db, chachanotes_db)
+            counts = self._compute_library_export_counts(
+                scope, media_db, chachanotes_db
+            )
             self._apply_library_export_counts(scope, counts)
             return
         self._run_library_export_counts_worker(scope, media_db, chachanotes_db)
@@ -4091,7 +4400,9 @@ class LibraryScreen(BaseAppScreen):
             # -- either way the worker thread must not crash on teardown.
             pass
 
-    def _apply_library_export_counts(self, scope: ExportScope, counts: dict[str, int]) -> None:
+    def _apply_library_export_counts(
+        self, scope: ExportScope, counts: dict[str, int]
+    ) -> None:
         """Marshal a landed counts result onto the export form (UI thread).
 
         Guards against a stale result from a scope the user has since
@@ -4123,7 +4434,10 @@ class LibraryScreen(BaseAppScreen):
         if scope != self._library_export_scope:
             return
         self._library_export_counts = counts
-        if not self.is_mounted or self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+        if (
+            not self.is_mounted
+            or self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT
+        ):
             return
         state = self._build_library_export_state()
         try:
@@ -4137,13 +4451,15 @@ class LibraryScreen(BaseAppScreen):
         # recompose can never resurrect the stale "Counting…" state.
         canvas.state = state
         try:
-            self.query_one("#library-export-scope-line", Static).update(state.scope_line)
+            self.query_one("#library-export-scope-line", Static).update(
+                state.scope_line
+            )
             empty_line = self.query_one("#library-export-empty-line", Static)
             empty_line.update(state.empty_scope_line)
             empty_line.display = bool(state.empty_scope_line)
-            self.query_one("#library-export-submit", Button).disabled = (
-                not state.export_enabled
-            )
+            self.query_one(
+                "#library-export-submit", Button
+            ).disabled = not state.export_enabled
         except (NoMatches, QueryError):
             pass
 
@@ -4375,7 +4691,9 @@ class LibraryScreen(BaseAppScreen):
         try:
             export_result = asyncio.run(  # policy-exception: worker-thread loop
                 service.export_chatbook(
-                    payload, progress_callback=progress_callback, cancel_check=cancel_check,
+                    payload,
+                    progress_callback=progress_callback,
+                    cancel_check=cancel_check,
                 )
             )
         except Exception as exc:
@@ -4473,17 +4791,26 @@ class LibraryScreen(BaseAppScreen):
 
         def _progress_cb(evt) -> None:
             try:
-                if not throttle.should_emit(evt.phase, evt.current, evt.total, time.monotonic()):
+                if not throttle.should_emit(
+                    evt.phase, evt.current, evt.total, time.monotonic()
+                ):
                     return
                 self.app.call_from_thread(
-                    self._apply_library_export_progress, run_id, evt.phase, evt.current, evt.total,
+                    self._apply_library_export_progress,
+                    run_id,
+                    evt.phase,
+                    evt.current,
+                    evt.total,
                 )
             except Exception:
                 # NoApp/shutdown mid-marshal must not crash the worker.
                 pass
 
         outcome = self._run_library_export_via_service(
-            service, payload, name=name, description=description,
+            service,
+            payload,
+            name=name,
+            description=description,
             progress_callback=_progress_cb,
             cancel_check=(cancel_event.is_set if cancel_event is not None else None),
         )
@@ -4595,7 +4922,7 @@ class LibraryScreen(BaseAppScreen):
         detail = str(creator_message or "").strip()
         known_prefix = f"Chatbook created successfully at {path}"
         if detail.startswith(known_prefix):
-            detail = detail[len(known_prefix):].strip(" .")
+            detail = detail[len(known_prefix) :].strip(" .")
         if detail:
             message += f": {escape_markup(detail)}"
 
@@ -4701,7 +5028,10 @@ class LibraryScreen(BaseAppScreen):
 
     def _refresh_library_export_status_line(self) -> None:
         """Update only the #library-export-status-line widget (no recompose)."""
-        if not self.is_mounted or self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+        if (
+            not self.is_mounted
+            or self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT
+        ):
             return
         try:
             widget = self.query_one("#library-export-status-line", Static)
@@ -4729,7 +5059,10 @@ class LibraryScreen(BaseAppScreen):
         update always finds them, mirroring the empty-scope helper's own
         always-mounted precedent from Task 2's fix.
         """
-        if not self.is_mounted or self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+        if (
+            not self.is_mounted
+            or self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT
+        ):
             return
         state = self._build_library_export_state()
         try:
@@ -4744,10 +5077,12 @@ class LibraryScreen(BaseAppScreen):
             error_widget = self.query_one("#library-export-error-line", Static)
             error_widget.update(state.error_line)
             error_widget.display = bool(state.error_line)
-            self.query_one("#library-export-submit", Button).disabled = (
-                not state.export_enabled
+            self.query_one(
+                "#library-export-submit", Button
+            ).disabled = not state.export_enabled
+            self.query_one("#library-export-cancel", Button).display = bool(
+                state.running
             )
-            self.query_one("#library-export-cancel", Button).display = bool(state.running)
         except (NoMatches, QueryError):
             pass
 
@@ -4850,9 +5185,17 @@ class LibraryScreen(BaseAppScreen):
             getattr(self.app_instance, "runtime_policy", None), "state", None
         )
         runtime_source = str(getattr(runtime_state, "active_source", "local") or "local")
+        # Sync generic top-level form fields into the generic options group so
+        # the canvas renders current values for analyze/chunk/chunk_size.
+        form = self._library_ingest_form
+        generic_options = dict(form.type_options.get("generic", {}))
+        generic_options["analyze"] = form.analyze
+        generic_options["chunk"] = form.chunk
+        generic_options["chunk_size"] = form.chunk_size
+        form.type_options["generic"] = generic_options
         return build_library_ingest_state(
             jobs,
-            form=self._library_ingest_form,
+            form=form,
             runtime_source=runtime_source,
             media_db_available=getattr(self.app_instance, "media_db", None) is not None,
             registry_available=registry is not None,
@@ -4889,7 +5232,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sync_conflict = (
             conflict if conflict in SYNC_CONFLICTS else "newer_wins"
         )
-        self._library_notes_sync_auto = bool(get_cli_setting("notes", "auto_sync", False))
+        self._library_notes_sync_auto = bool(
+            get_cli_setting("notes", "auto_sync", False)
+        )
         if self._library_notes_sync_auto:
             self._arm_library_notes_auto_sync_timer()
 
@@ -5069,7 +5414,9 @@ class LibraryScreen(BaseAppScreen):
             self._library_note_autosave_state, word_count=self._note_word_count(content)
         )
         base_meta_line = self._library_note_meta_base_line()
-        meta_static.update(f"{base_meta_line} · {status_text}" if base_meta_line else status_text)
+        meta_static.update(
+            f"{base_meta_line} · {status_text}" if base_meta_line else status_text
+        )
 
     async def _save_library_note(self, *, explicit: bool) -> None:
         """Save the open Library note's current editor text.
@@ -5112,7 +5459,9 @@ class LibraryScreen(BaseAppScreen):
         raw_title, raw_content, raw_keywords_text = fields
 
         title = self._sanitize_media_field(raw_title, max_length=300)
-        content = self._sanitize_note_content(raw_content, max_length=LIBRARY_NOTE_CONTENT_MAX_CHARS)
+        content = self._sanitize_note_content(
+            raw_content, max_length=LIBRARY_NOTE_CONTENT_MAX_CHARS
+        )
         keywords = self._library_note_keywords_from_input(raw_keywords_text)
 
         service = getattr(self.app_instance, "notes_scope_service", None)
@@ -5137,8 +5486,13 @@ class LibraryScreen(BaseAppScreen):
         except ConflictError:
             result = False
         except Exception:
-            logger.opt(exception=True).warning(f"Library note save failed for {note_id!r}.")
-            if note_id != self._selected_note_id or self._library_notes_view != "editor":
+            logger.opt(exception=True).warning(
+                f"Library note save failed for {note_id!r}."
+            )
+            if (
+                note_id != self._selected_note_id
+                or self._library_notes_view != "editor"
+            ):
                 return
             self._library_note_autosave_state = "error"
             self._update_library_note_meta_static(content=raw_content)
@@ -5221,7 +5575,9 @@ class LibraryScreen(BaseAppScreen):
             keywords_text=raw_keywords_text,
             version=self._library_note_version,
             meta_line=(
-                f"{base_meta_line} · {conflict_status}" if base_meta_line else conflict_status
+                f"{base_meta_line} · {conflict_status}"
+                if base_meta_line
+                else conflict_status
             ),
             has_note=True,
         )
@@ -5359,7 +5715,9 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         title = self._sanitize_media_field(title_widget.value, max_length=300)
-        content = self._sanitize_note_content(body_widget.text, max_length=LIBRARY_NOTE_CONTENT_MAX_CHARS)
+        content = self._sanitize_note_content(
+            body_widget.text, max_length=LIBRARY_NOTE_CONTENT_MAX_CHARS
+        )
         keywords = self._library_note_keywords_from_input(keywords_widget.value)
 
         save_note = getattr(service, "save_note", None)
@@ -5393,7 +5751,9 @@ class LibraryScreen(BaseAppScreen):
 
         if isinstance(result, Mapping):
             version = result.get("version")
-            self._library_note_version = version if version is not None else fresh_version + 1
+            self._library_note_version = (
+                version if version is not None else fresh_version + 1
+            )
         else:
             self._library_note_version = fresh_version + 1
 
@@ -5504,7 +5864,10 @@ class LibraryScreen(BaseAppScreen):
                 action.
         """
         event.stop()
-        if self._library_notes_view != "editor" or self._library_note_autosave_state == "conflict":
+        if (
+            self._library_notes_view != "editor"
+            or self._library_note_autosave_state == "conflict"
+        ):
             return
         fields = self._read_library_note_editor_fields()
         if fields is None:
@@ -5552,11 +5915,22 @@ class LibraryScreen(BaseAppScreen):
             return
         title, content, keywords_text = fields
         note_id = self._selected_note_id
-        safe_title = "".join(
-            char for char in (title.strip() or "note") if char.isalnum() or char in (" ", "-", "_")
-        ).rstrip() or "note"
-        default_filename = f"{safe_title}.md" if export_format == "markdown" else f"{safe_title}.txt"
-        dialog_title = "Export Note as Markdown" if export_format == "markdown" else "Export Note as Text"
+        safe_title = (
+            "".join(
+                char
+                for char in (title.strip() or "note")
+                if char.isalnum() or char in (" ", "-", "_")
+            ).rstrip()
+            or "note"
+        )
+        default_filename = (
+            f"{safe_title}.md" if export_format == "markdown" else f"{safe_title}.txt"
+        )
+        dialog_title = (
+            "Export Note as Markdown"
+            if export_format == "markdown"
+            else "Export Note as Text"
+        )
         await self.app.push_screen(
             FileSave(
                 location=str(Path.home()),
@@ -5627,17 +6001,23 @@ class LibraryScreen(BaseAppScreen):
             return
         try:
             validated_path.write_text(
-                build_note_export_content(title, content, keywords_text, note_id, export_format),
+                build_note_export_content(
+                    title, content, keywords_text, note_id, export_format
+                ),
                 encoding="utf-8",
             )
         except Exception as exc:
             logger.opt(exception=True).warning(
-                f"Error exporting Library note {note_id!r} to '{validated_path}'.")
+                f"Error exporting Library note {note_id!r} to '{validated_path}'."
+            )
             if callable(notify):
                 notify(f"Error exporting note: {type(exc).__name__}", severity="error")
             return
         if callable(notify):
-            notify(f"Note exported successfully to {validated_path.name}", severity="information")
+            notify(
+                f"Note exported successfully to {validated_path.name}",
+                severity="information",
+            )
 
     @on(Button.Pressed, "#library-note-export-md")
     async def handle_library_note_export_markdown(self, event: Button.Pressed) -> None:
@@ -5683,16 +6063,22 @@ class LibraryScreen(BaseAppScreen):
             return
         title, content, keywords_text = fields
         note_id = self._selected_note_id
-        export_content = build_note_export_content(title, content, keywords_text, note_id, "markdown")
+        export_content = build_note_export_content(
+            title, content, keywords_text, note_id, "markdown"
+        )
         copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
         if not callable(copy_to_clipboard):
             if callable(notify):
-                notify("Clipboard copy is unavailable in this runtime.", severity="warning")
+                notify(
+                    "Clipboard copy is unavailable in this runtime.", severity="warning"
+                )
             return
         try:
             copy_to_clipboard(export_content)
         except Exception as exc:
-            logger.opt(exception=True).warning(f"Failed to copy Library note {note_id!r} to clipboard.")
+            logger.opt(exception=True).warning(
+                f"Failed to copy Library note {note_id!r} to clipboard."
+            )
             if callable(notify):
                 notify(f"Error copying note: {type(exc).__name__}", severity="error")
             return
@@ -5756,10 +6142,15 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify(workspace_state.context_handoff_tooltip, severity="warning")
             return
-        open_chat_with_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
+        open_chat_with_handoff = getattr(
+            self.app_instance, "open_chat_with_handoff", None
+        )
         if not callable(open_chat_with_handoff):
             if callable(notify):
-                notify("Console handoff is unavailable for Library Notes.", severity="warning")
+                notify(
+                    "Console handoff is unavailable for Library Notes.",
+                    severity="warning",
+                )
             return
         open_chat_with_handoff(payload, action_label="Use in Console")
 
@@ -5953,6 +6344,12 @@ class LibraryScreen(BaseAppScreen):
         except Exception:
             pass
 
+    @on(Button.Pressed, "#library-ingest-top-button")
+    async def _on_library_ingest_top_button(self, event: Button.Pressed) -> None:
+        """Jump from the rail-top Ingest button to the Ingest media canvas."""
+        event.stop()
+        await self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
+
     @on(Button.Pressed, ".library-rail-row")
     async def handle_library_rail_row(self, event: Button.Pressed) -> None:
         """Dispatch a Library rail row press: navigate, browse, or open a canvas."""
@@ -6105,7 +6502,9 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_conversations_select_toggle(self, event: Button.Pressed) -> None:
         """Enter/exit conversations select mode; clears the selection set (both on enter and exit)."""
         event.stop()
-        self._library_conversations_select_mode = not self._library_conversations_select_mode
+        self._library_conversations_select_mode = (
+            not self._library_conversations_select_mode
+        )
         self._library_conversations_row_selection.clear()
         _sync_library_canvas(self, "conversations")
 
@@ -6127,7 +6526,9 @@ class LibraryScreen(BaseAppScreen):
         _sync_library_canvas(self, "conversations")
 
     @on(Button.Pressed, "#library-conversations-export-selected")
-    async def handle_library_conversations_export_selected(self, event: Button.Pressed) -> None:
+    async def handle_library_conversations_export_selected(
+        self, event: Button.Pressed
+    ) -> None:
         """Open the export canvas scoped to the currently selected conversation ids."""
         event.stop()
         # Defensive: an empty selection would resolve to a whole-source export
@@ -6226,7 +6627,9 @@ class LibraryScreen(BaseAppScreen):
         # (empty ids == whole source); the button is disabled at 0 selected.
         if not self._library_media_row_selection.count:
             return
-        await self._open_library_export_canvas(self._library_media_row_selection.export_scope())
+        await self._open_library_export_canvas(
+            self._library_media_row_selection.export_scope()
+        )
 
     @on(Button.Pressed, "#library-media-open-viewer")
     def handle_library_media_open_viewer(self, event: Button.Pressed) -> None:
@@ -6340,7 +6743,8 @@ class LibraryScreen(BaseAppScreen):
                 scope="local_note",
                 query=query,
                 limit=LIBRARY_SOURCE_PAGE_SIZES["notes"],
-                user_id=getattr(self.app_instance, "notes_user_id", None) or "default_user",
+                user_id=getattr(self.app_instance, "notes_user_id", None)
+                or "default_user",
                 isolate_in_worker=True,
             )
         except Exception:
@@ -6395,7 +6799,9 @@ class LibraryScreen(BaseAppScreen):
             event: Input submission event emitted by the prompts filter box.
         """
         event.stop()
-        self._library_prompts_filter = self._safe_text(event.value, max_length=200).strip()
+        self._library_prompts_filter = self._safe_text(
+            event.value, max_length=200
+        ).strip()
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-skills-sort")
@@ -6433,7 +6839,9 @@ class LibraryScreen(BaseAppScreen):
             event: Input submission event emitted by the skills filter box.
         """
         event.stop()
-        self._library_skills_filter = self._safe_text(event.value, max_length=200).strip()
+        self._library_skills_filter = self._safe_text(
+            event.value, max_length=200
+        ).strip()
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-skills-import")
@@ -6506,7 +6914,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_import_path = event.value
 
     @on(Input.Submitted, "#library-skills-import-path")
-    def handle_library_skills_import_path_submitted(self, event: Input.Submitted) -> None:
+    def handle_library_skills_import_path_submitted(
+        self, event: Input.Submitted
+    ) -> None:
         """Run the import when Enter is pressed in the Import row's path field.
 
         Args:
@@ -6539,7 +6949,9 @@ class LibraryScreen(BaseAppScreen):
             return
         raw_path = self._library_skills_import_path.strip()
         if not raw_path:
-            self._apply_library_skills_import_status("Please enter a file or folder path.")
+            self._apply_library_skills_import_status(
+                "Please enter a file or folder path."
+            )
             return
         self.run_worker(
             self._run_library_skills_import(raw_path),
@@ -6615,7 +7027,9 @@ class LibraryScreen(BaseAppScreen):
             logger.opt(exception=True).warning(
                 f"Rejected Library skills import path {raw_path!r}."
             )
-            self._apply_library_skills_import_status("Could not find that file or folder.")
+            self._apply_library_skills_import_status(
+                "Could not find that file or folder."
+            )
             return
 
         service = getattr(self.app_instance, "skills_scope_service", None)
@@ -6629,13 +7043,17 @@ class LibraryScreen(BaseAppScreen):
             skill_dir = validated_path
             skill_md_path = self._find_skill_md_in_dir(skill_dir)
             if skill_md_path is None:
-                self._apply_library_skills_import_status("No SKILL.md found in that folder.")
+                self._apply_library_skills_import_status(
+                    "No SKILL.md found in that folder."
+                )
                 return
         elif validated_path.name.lower() == _SKILL_MD_FILENAME.lower():
             skill_dir = validated_path.parent
             skill_md_path = validated_path
         else:
-            await self._import_library_skill_from_loose_file(validated_path, import_skill_file)
+            await self._import_library_skill_from_loose_file(
+                validated_path, import_skill_file
+            )
             return
 
         try:
@@ -6649,7 +7067,9 @@ class LibraryScreen(BaseAppScreen):
             self._apply_library_skills_import_status("Could not read that file.")
             return
 
-        supporting_files = self._read_library_skill_import_supporting_files(skill_dir, skill_md_path)
+        supporting_files = self._read_library_skill_import_supporting_files(
+            skill_dir, skill_md_path
+        )
         skill_name = skill_dir.name
 
         try:
@@ -6669,7 +7089,9 @@ class LibraryScreen(BaseAppScreen):
         self._apply_library_skills_import_success(skill_name)
 
     async def _import_library_skill_from_loose_file(
-        self, file_path: Path, import_skill_file: Any,
+        self,
+        file_path: Path,
+        import_skill_file: Any,
     ) -> None:
         """Import a standalone ``.md``/``.zip`` file (not named ``SKILL.md``).
 
@@ -6723,7 +7145,8 @@ class LibraryScreen(BaseAppScreen):
             )
         except Exception as exc:
             self._apply_library_skills_import_outcome_from_exception(
-                self._safe_text(file_path.stem, max_length=64), exc,
+                self._safe_text(file_path.stem, max_length=64),
+                exc,
             )
             return
 
@@ -6756,7 +7179,9 @@ class LibraryScreen(BaseAppScreen):
         self._refresh_local_source_snapshot()
 
     def _apply_library_skills_import_outcome_from_exception(
-        self, skill_name: str, exc: Exception,
+        self,
+        skill_name: str,
+        exc: Exception,
     ) -> None:
         """Translate a failed import call into an honest, specific outcome line.
 
@@ -6776,7 +7201,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_import_path = ""
         if "local_skill_exists:" in str(exc):
             self._apply_library_skills_import_status(
-                f"Skipped — a skill named \"{skill_name}\" already exists."
+                f'Skipped — a skill named "{skill_name}" already exists.'
             )
             return
         self._apply_library_skills_import_status("Could not import that skill.")
@@ -6803,7 +7228,8 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _read_library_skill_import_supporting_files(
-        skill_dir: Path, skill_md_path: Path,
+        skill_dir: Path,
+        skill_md_path: Path,
     ) -> dict[str, str]:
         """Read the skill directory's FLAT sibling files as supporting files.
 
@@ -6834,9 +7260,13 @@ class LibraryScreen(BaseAppScreen):
             if not child.is_file() or child.resolve() == skill_md_path.resolve():
                 continue
             try:
-                supporting_files[child.name] = child.read_text(encoding="utf-8", errors="strict")
+                supporting_files[child.name] = child.read_text(
+                    encoding="utf-8", errors="strict"
+                )
             except Exception:
-                logger.debug(f"Skipping unreadable Library skill supporting file '{child}'.")
+                logger.debug(
+                    f"Skipping unreadable Library skill supporting file '{child}'."
+                )
                 continue
         return supporting_files
 
@@ -6914,7 +7344,10 @@ class LibraryScreen(BaseAppScreen):
             detail = None
         # Discard out-of-order results: the same stale-race guard as
         # ``_refresh_library_prompt_detail``.
-        if skill_name != self._selected_skill_name or self._library_skills_view != "editor":
+        if (
+            skill_name != self._selected_skill_name
+            or self._library_skills_view != "editor"
+        ):
             return
         if not isinstance(detail, Mapping):
             logger.info(
@@ -6940,7 +7373,9 @@ class LibraryScreen(BaseAppScreen):
                 a save call's) response.
         """
         self._library_skill_detail = dict(detail)
-        self._library_skill_editor_state = build_skill_editor_state(self._library_skill_detail)
+        self._library_skill_editor_state = build_skill_editor_state(
+            self._library_skill_detail
+        )
         self._library_skill_original_name = self._library_skill_editor_state.name
         self._library_skill_dirty = False
         self._library_skill_status = ""
@@ -7093,20 +7528,25 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-skill-trust-review-files", Static).update(
                 ", ".join(
                     str(item)
-                    for item in ((self._library_skill_active_review or {}).get("changed_files") or [])
+                    for item in (
+                        (self._library_skill_active_review or {}).get("changed_files")
+                        or []
+                    )
                 )
             )
         except (NoMatches, QueryError):
             pass
         try:
-            self.query_one("#library-skill-trust-unlock", Button).disabled = (
-                not skill_trust_unlock_enabled(state.trust_status)
-            )
+            self.query_one(
+                "#library-skill-trust-unlock", Button
+            ).disabled = not skill_trust_unlock_enabled(state.trust_status)
         except (NoMatches, QueryError):
             pass
         try:
-            self.query_one("#library-skill-trust-review", Button).disabled = (
-                not skill_trust_review_enabled(state.trust_status, state.trust_blocked)
+            self.query_one(
+                "#library-skill-trust-review", Button
+            ).disabled = not skill_trust_review_enabled(
+                state.trust_status, state.trust_blocked
             )
         except (NoMatches, QueryError):
             pass
@@ -7158,21 +7598,21 @@ class LibraryScreen(BaseAppScreen):
         if state is None:
             return
         try:
-            self.query_one("#library-skill-user-invocable", Button).label = (
-                skill_user_invocable_label(state.user_invocable)
-            )
+            self.query_one(
+                "#library-skill-user-invocable", Button
+            ).label = skill_user_invocable_label(state.user_invocable)
         except (NoMatches, QueryError):
             pass
         try:
-            self.query_one("#library-skill-disable-model", Button).label = (
-                skill_disable_model_label(state.disable_model_invocation)
-            )
+            self.query_one(
+                "#library-skill-disable-model", Button
+            ).label = skill_disable_model_label(state.disable_model_invocation)
         except (NoMatches, QueryError):
             pass
         try:
-            self.query_one("#library-skill-context", Button).label = (
-                skill_context_toggle_label(state.context)
-            )
+            self.query_one(
+                "#library-skill-context", Button
+            ).label = skill_context_toggle_label(state.context)
         except (NoMatches, QueryError):
             pass
 
@@ -7241,7 +7681,9 @@ class LibraryScreen(BaseAppScreen):
             name = self.query_one("#library-skill-name", Input).value
             description = self.query_one("#library-skill-description", Input).value
             argument_hint = self.query_one("#library-skill-argument-hint", Input).value
-            allowed_tools_csv = self.query_one("#library-skill-allowed-tools", Input).value
+            allowed_tools_csv = self.query_one(
+                "#library-skill-allowed-tools", Input
+            ).value
             model = self.query_one("#library-skill-model", Input).value
             body = self.query_one("#library-skill-body", TextArea).text
         except (NoMatches, QueryError):
@@ -7293,14 +7735,27 @@ class LibraryScreen(BaseAppScreen):
         fields = self._read_library_skill_editor_fields()
         if fields is None:
             return
-        raw_name, raw_description, raw_argument_hint, raw_allowed_tools_csv, raw_model, raw_body = fields
+        (
+            raw_name,
+            raw_description,
+            raw_argument_hint,
+            raw_allowed_tools_csv,
+            raw_model,
+            raw_body,
+        ) = fields
 
         live_name = self._sanitize_media_field(raw_name, max_length=64)
-        description = self._sanitize_note_content(raw_description, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS)
+        description = self._sanitize_note_content(
+            raw_description, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS
+        )
         argument_hint = self._sanitize_media_field(raw_argument_hint, max_length=500)
-        allowed_tools_csv = self._sanitize_note_content(raw_allowed_tools_csv, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS)
+        allowed_tools_csv = self._sanitize_note_content(
+            raw_allowed_tools_csv, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS
+        )
         model = self._sanitize_media_field(raw_model, max_length=128)
-        body = self._sanitize_note_content(raw_body, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS)
+        body = self._sanitize_note_content(
+            raw_body, max_length=LIBRARY_SKILL_TEXT_MAX_CHARS
+        )
 
         if is_create:
             editor_name = live_name or base_state.name
@@ -7373,7 +7828,9 @@ class LibraryScreen(BaseAppScreen):
             return
 
         if exc is not None:
-            logger.opt(exception=True).warning(f"Library skill save failed for {name!r}.")
+            logger.opt(exception=True).warning(
+                f"Library skill save failed for {name!r}."
+            )
             outcome = classify_skill_save_error(None, str(exc), exc)
         else:
             outcome = classify_skill_save_error(result, "", None)
@@ -7383,13 +7840,17 @@ class LibraryScreen(BaseAppScreen):
             return
         if outcome != "ok":
             self._update_library_skill_status_static(
-                LIBRARY_SKILL_SAVE_STATUS_COPY.get(outcome, LIBRARY_SKILL_SAVE_STATUS_COPY["error"])
+                LIBRARY_SKILL_SAVE_STATUS_COPY.get(
+                    outcome, LIBRARY_SKILL_SAVE_STATUS_COPY["error"]
+                )
             )
             return
 
         self._apply_library_skill_save_success(result, is_create=is_create)
 
-    def _apply_library_skill_save_success(self, result: Any, *, is_create: bool) -> None:
+    def _apply_library_skill_save_success(
+        self, result: Any, *, is_create: bool
+    ) -> None:
         """Apply a successful save's response: rebuild state, clear dirty,
         show "Saved.", and refresh the trust panel + warnings in place.
 
@@ -7402,7 +7863,9 @@ class LibraryScreen(BaseAppScreen):
                 row).
         """
         if not isinstance(result, Mapping):
-            self._update_library_skill_status_static(LIBRARY_SKILL_SAVE_STATUS_COPY["error"])
+            self._update_library_skill_status_static(
+                LIBRARY_SKILL_SAVE_STATUS_COPY["error"]
+            )
             return
         # Deliberately NOT ``_apply_library_skill_detail`` (which recomposes
         # + re-arms): recomposing here would remount fresh Input/TextArea
@@ -7411,7 +7874,9 @@ class LibraryScreen(BaseAppScreen):
         # immediately re-mark the just-saved skill dirty -- same discipline
         # ``_save_library_prompt``'s success tail documents.
         self._library_skill_detail = dict(result)
-        self._library_skill_editor_state = build_skill_editor_state(self._library_skill_detail)
+        self._library_skill_editor_state = build_skill_editor_state(
+            self._library_skill_detail
+        )
         self._library_skill_original_name = self._library_skill_editor_state.name
         self._library_skill_dirty = False
         if is_create:
@@ -7422,7 +7887,9 @@ class LibraryScreen(BaseAppScreen):
             # post-create refresh.
             self._refresh_local_source_snapshot()
         self._update_library_skill_status_static(LIBRARY_SKILL_SAVE_STATUS_COPY["ok"])
-        self._update_library_skill_warnings_static(name=self._read_library_skill_live_name())
+        self._update_library_skill_warnings_static(
+            name=self._read_library_skill_live_name()
+        )
         self._render_library_skill_trust_panel()
 
     def _enter_library_skill_conflict(self) -> None:
@@ -7530,16 +7997,28 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.opt(exception=True).warning(f"Failed to delete Library skill {skill_name!r}.")
-            if skill_name != self._selected_skill_name or self._library_skills_view != "editor":
+            logger.opt(exception=True).warning(
+                f"Failed to delete Library skill {skill_name!r}."
+            )
+            if (
+                skill_name != self._selected_skill_name
+                or self._library_skills_view != "editor"
+            ):
                 return
             self._update_library_skill_status_static("Could not delete this skill.")
             return
 
-        if skill_name != self._selected_skill_name or self._library_skills_view != "editor":
+        if (
+            skill_name != self._selected_skill_name
+            or self._library_skills_view != "editor"
+        ):
             return
 
-        deleted = bool(result.get("deleted", True)) if isinstance(result, Mapping) else bool(result)
+        deleted = (
+            bool(result.get("deleted", True))
+            if isinstance(result, Mapping)
+            else bool(result)
+        )
         if not deleted:
             self._update_library_skill_status_static(
                 "This skill changed elsewhere — refresh and try again."
@@ -7563,9 +8042,14 @@ class LibraryScreen(BaseAppScreen):
         if not callable(push_screen_wait):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
-                notify("Local skill trust passphrase prompt is unavailable.", severity="warning")
+                notify(
+                    "Local skill trust passphrase prompt is unavailable.",
+                    severity="warning",
+                )
             return None
-        result = await push_screen_wait(SkillTrustPassphraseModal(confirm_bootstrap=False))
+        result = await push_screen_wait(
+            SkillTrustPassphraseModal(confirm_bootstrap=False)
+        )
         if isinstance(result, str) and result:
             return result
         return None
@@ -7608,7 +8092,10 @@ class LibraryScreen(BaseAppScreen):
             )
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
-                notify("Local skill trust action could not be completed.", severity="warning")
+                notify(
+                    "Local skill trust action could not be completed.",
+                    severity="warning",
+                )
             return None, False
         return result, True
 
@@ -7620,7 +8107,9 @@ class LibraryScreen(BaseAppScreen):
         state = self._library_skill_editor_state
         if not name or state is None:
             return
-        result, ok = await self._call_library_skill_trust_service("status_for_skill", name)
+        result, ok = await self._call_library_skill_trust_service(
+            "status_for_skill", name
+        )
         if not ok or result is None:
             return
         if name != self._selected_skill_name or self._library_skills_view != "editor":
@@ -7632,7 +8121,9 @@ class LibraryScreen(BaseAppScreen):
             trust_changed_files=tuple(result.changed_files),
         )
         self._render_library_skill_trust_panel()
-        self._update_library_skill_warnings_static(name=self._read_library_skill_live_name())
+        self._update_library_skill_warnings_static(
+            name=self._read_library_skill_live_name()
+        )
 
     async def _request_library_skill_trust_bootstrap_passphrase(self) -> str | None:
         """Push the confirm-passphrase bootstrap modal and await a passphrase.
@@ -7647,7 +8138,10 @@ class LibraryScreen(BaseAppScreen):
         if not callable(push_screen_wait):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
-                notify("Local skill trust passphrase prompt is unavailable.", severity="warning")
+                notify(
+                    "Local skill trust passphrase prompt is unavailable.",
+                    severity="warning",
+                )
             return None
         result = await push_screen_wait(SkillTrustBootstrapModal())
         if isinstance(result, str) and result:
@@ -7686,17 +8180,28 @@ class LibraryScreen(BaseAppScreen):
         normal Unlock/Review/Approve row, which a no-recompose patch can't
         produce since those buttons don't exist in the DOM yet.
         """
-        if self._library_skills_view != "editor" or self._library_skill_editor_state is None:
+        if (
+            self._library_skills_view != "editor"
+            or self._library_skill_editor_state is None
+        ):
             return
         passphrase = await self._request_library_skill_trust_bootstrap_passphrase()
         if passphrase is None:
             return
-        _, ok = await self._call_library_skill_trust_service("bootstrap_trust", passphrase)
+        _, ok = await self._call_library_skill_trust_service(
+            "bootstrap_trust", passphrase
+        )
         if not ok:
             return
         name = self._selected_skill_name
-        if name and self._library_skills_view == "editor" and self._library_skill_editor_state is not None:
-            result, status_ok = await self._call_library_skill_trust_service("status_for_skill", name)
+        if (
+            name
+            and self._library_skills_view == "editor"
+            and self._library_skill_editor_state is not None
+        ):
+            result, status_ok = await self._call_library_skill_trust_service(
+                "status_for_skill", name
+            )
             if (
                 status_ok
                 and result is not None
@@ -7744,7 +8249,9 @@ class LibraryScreen(BaseAppScreen):
         passphrase = await self._request_library_skill_trust_passphrase()
         if passphrase is None:
             return
-        _, ok = await self._call_library_skill_trust_service("unlock_with_passphrase", passphrase)
+        _, ok = await self._call_library_skill_trust_service(
+            "unlock_with_passphrase", passphrase
+        )
         if ok:
             await self._refresh_library_skill_trust_status()
 
@@ -7767,7 +8274,9 @@ class LibraryScreen(BaseAppScreen):
         if self._library_skills_view != "editor" or not self._selected_skill_name:
             return
         name = self._selected_skill_name
-        result, ok = await self._call_library_skill_trust_service("capture_review", name)
+        result, ok = await self._call_library_skill_trust_service(
+            "capture_review", name
+        )
         if not ok or not isinstance(result, Mapping) or not result.get("review_id"):
             return
         if name != self._selected_skill_name or self._library_skills_view != "editor":
@@ -7791,7 +8300,10 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _approve_library_skill_trust(self) -> None:
-        if self._library_skills_view != "editor" or self._library_skill_active_review is None:
+        if (
+            self._library_skills_view != "editor"
+            or self._library_skill_active_review is None
+        ):
             return
         name = self._selected_skill_name
         review_id = self._library_skill_active_review.get("review_id")
@@ -7887,7 +8399,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompts_import_path = event.value
 
     @on(Input.Submitted, "#library-prompts-import-path")
-    def handle_library_prompts_import_path_submitted(self, event: Input.Submitted) -> None:
+    def handle_library_prompts_import_path_submitted(
+        self, event: Input.Submitted
+    ) -> None:
         """Run the import when Enter is pressed in the Import row's path field.
 
         Args:
@@ -7921,7 +8435,9 @@ class LibraryScreen(BaseAppScreen):
             return
         raw_path = self._library_prompts_import_path.strip()
         if not raw_path:
-            self._apply_library_prompts_import_status("Please enter a file or folder path.")
+            self._apply_library_prompts_import_status(
+                "Please enter a file or folder path."
+            )
             return
         self.run_worker(
             self._run_library_prompts_import(raw_path),
@@ -7975,14 +8491,18 @@ class LibraryScreen(BaseAppScreen):
             logger.opt(exception=True).warning(
                 f"Rejected Library prompts import path {raw_path!r}."
             )
-            self._apply_library_prompts_import_status("Could not find that file or folder.")
+            self._apply_library_prompts_import_status(
+                "Could not find that file or folder."
+            )
             return
 
         if validated_path.is_dir():
             try:
                 files = sorted(
-                    child for child in validated_path.iterdir()
-                    if child.is_file() and child.suffix.lower() in _LIBRARY_PROMPT_IMPORT_PARSERS
+                    child
+                    for child in validated_path.iterdir()
+                    if child.is_file()
+                    and child.suffix.lower() in _LIBRARY_PROMPT_IMPORT_PARSERS
                 )
             except Exception:
                 # Same quiet-status pattern as the per-file read below --
@@ -8001,11 +8521,15 @@ class LibraryScreen(BaseAppScreen):
                 return
             files = [validated_path]
         else:
-            self._apply_library_prompts_import_status("Could not find that file or folder.")
+            self._apply_library_prompts_import_status(
+                "Could not find that file or folder."
+            )
             return
 
         if not files:
-            self._apply_library_prompts_import_status("No supported prompt files found.")
+            self._apply_library_prompts_import_status(
+                "No supported prompt files found."
+            )
             return
 
         service = getattr(self.app_instance, "prompt_scope_service", None)
@@ -8034,7 +8558,9 @@ class LibraryScreen(BaseAppScreen):
             for prompt_data in parsed_prompts:
                 if not isinstance(prompt_data, Mapping):
                     continue
-                name = self._sanitize_media_field(prompt_data.get("name") or "", max_length=300)
+                name = self._sanitize_media_field(
+                    prompt_data.get("name") or "", max_length=300
+                )
                 if not name:
                     continue
                 try:
@@ -8047,21 +8573,30 @@ class LibraryScreen(BaseAppScreen):
                     )
                 except Exception:
                     existing = None
-                if isinstance(existing, Mapping) and existing.get("local_id") is not None:
+                if (
+                    isinstance(existing, Mapping)
+                    and existing.get("local_id") is not None
+                ):
                     skipped += 1
                     continue
 
-                author = self._sanitize_media_field(
-                    prompt_data.get("author") or "", max_length=200
-                ) or None
+                author = (
+                    self._sanitize_media_field(
+                        prompt_data.get("author") or "", max_length=200
+                    )
+                    or None
+                )
                 details = self._sanitize_note_content(
-                    prompt_data.get("details") or "", max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+                    prompt_data.get("details") or "",
+                    max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS,
                 )
                 system_prompt = self._sanitize_note_content(
-                    prompt_data.get("system_prompt") or "", max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+                    prompt_data.get("system_prompt") or "",
+                    max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS,
                 )
                 user_prompt = self._sanitize_note_content(
-                    prompt_data.get("user_prompt") or "", max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+                    prompt_data.get("user_prompt") or "",
+                    max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS,
                 )
                 keywords = [
                     self._sanitize_media_field(str(kw), max_length=100)
@@ -8176,7 +8711,10 @@ class LibraryScreen(BaseAppScreen):
             detail = None
         # Discard out-of-order results: the same stale-race guard as
         # ``_refresh_library_note_detail``.
-        if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+        if (
+            prompt_id != self._selected_prompt_id
+            or self._library_prompts_view != "editor"
+        ):
             return
         if not isinstance(detail, Mapping):
             logger.info(
@@ -8375,7 +8913,9 @@ class LibraryScreen(BaseAppScreen):
             for button in existing:
                 await button.remove()
 
-    async def _apply_library_prompt_save_outcome(self, outcome: str, *, name: str = "") -> None:
+    async def _apply_library_prompt_save_outcome(
+        self, outcome: str, *, name: str = ""
+    ) -> None:
         """Set the save-status text for a classified outcome AND sync the
         D3 Open-existing affordance to match it, together (no recompose --
         see ``_sync_library_prompt_open_existing_button``'s docstring).
@@ -8392,9 +8932,13 @@ class LibraryScreen(BaseAppScreen):
         """
         self._library_prompt_name_in_use = name if outcome == "name-in-use" else ""
         self._update_library_prompt_status_static(
-            LIBRARY_PROMPT_SAVE_STATUS_COPY.get(outcome, LIBRARY_PROMPT_SAVE_STATUS_COPY["error"])
+            LIBRARY_PROMPT_SAVE_STATUS_COPY.get(
+                outcome, LIBRARY_PROMPT_SAVE_STATUS_COPY["error"]
+            )
         )
-        await self._sync_library_prompt_open_existing_button(show=outcome == "name-in-use")
+        await self._sync_library_prompt_open_existing_button(
+            show=outcome == "name-in-use"
+        )
 
     def _update_library_prompt_meta_static(self) -> None:
         """Targeted update of ``#library-prompt-meta``, no recompose.
@@ -8479,13 +9023,21 @@ class LibraryScreen(BaseAppScreen):
         fields = self._read_library_prompt_editor_fields()
         if fields is None:
             return
-        raw_name, raw_author, raw_details, raw_system, raw_user, raw_keywords_text = fields
+        raw_name, raw_author, raw_details, raw_system, raw_user, raw_keywords_text = (
+            fields
+        )
 
         name = self._sanitize_media_field(raw_name, max_length=300)
         author = self._sanitize_media_field(raw_author, max_length=200)
-        details = self._sanitize_note_content(raw_details, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS)
-        system_prompt = self._sanitize_note_content(raw_system, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS)
-        user_prompt = self._sanitize_note_content(raw_user, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS)
+        details = self._sanitize_note_content(
+            raw_details, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        )
+        system_prompt = self._sanitize_note_content(
+            raw_system, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        )
+        user_prompt = self._sanitize_note_content(
+            raw_user, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        )
         keywords = self._library_note_keywords_from_input(raw_keywords_text)
 
         service = getattr(self.app_instance, "prompt_scope_service", None)
@@ -8505,9 +9057,14 @@ class LibraryScreen(BaseAppScreen):
                 )
             except Exception:
                 candidate = None
-            if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+            if (
+                prompt_id != self._selected_prompt_id
+                or self._library_prompts_view != "editor"
+            ):
                 return
-            candidate_id = candidate.get("local_id") if isinstance(candidate, Mapping) else None
+            candidate_id = (
+                candidate.get("local_id") if isinstance(candidate, Mapping) else None
+            )
             if candidate_id is not None and candidate_id != prompt_id:
                 if candidate.get("deleted"):
                     outcome = classify_prompt_save_error(
@@ -8536,7 +9093,10 @@ class LibraryScreen(BaseAppScreen):
                 )
             except Exception:
                 fresh = None
-            if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+            if (
+                prompt_id != self._selected_prompt_id
+                or self._library_prompts_view != "editor"
+            ):
                 return
             fresh_version = fresh.get("version") if isinstance(fresh, Mapping) else None
             if (
@@ -8568,8 +9128,13 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception as exc:
-            logger.opt(exception=True).warning(f"Library prompt save failed for {prompt_id!r}.")
-            if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+            logger.opt(exception=True).warning(
+                f"Library prompt save failed for {prompt_id!r}."
+            )
+            if (
+                prompt_id != self._selected_prompt_id
+                or self._library_prompts_view != "editor"
+            ):
                 return
             outcome = classify_prompt_save_error(None, str(exc), exc)
             if outcome == "conflict":
@@ -8592,10 +9157,17 @@ class LibraryScreen(BaseAppScreen):
             await self._apply_library_prompt_save_outcome(outcome, name=name)
             return
 
-        if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+        if (
+            prompt_id != self._selected_prompt_id
+            or self._library_prompts_view != "editor"
+        ):
             return
 
-        result_id = result.get("local_id") if isinstance(result, Mapping) else (1 if result else None)
+        result_id = (
+            result.get("local_id")
+            if isinstance(result, Mapping)
+            else (1 if result else None)
+        )
         outcome = classify_prompt_save_error(result_id, "", None)
         if outcome != "ok":
             await self._apply_library_prompt_save_outcome(outcome)
@@ -8764,7 +9336,9 @@ class LibraryScreen(BaseAppScreen):
         fields = self._read_library_prompt_editor_fields()
         if fields is None:
             return
-        _name, _author, _details, _system_prompt, raw_user_prompt, _keywords_text = fields
+        _name, _author, _details, _system_prompt, raw_user_prompt, _keywords_text = (
+            fields
+        )
         user_prompt = self._sanitize_note_content(
             raw_user_prompt, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
         )
@@ -8841,9 +9415,14 @@ class LibraryScreen(BaseAppScreen):
         # ``_export_library_note``'s ``safe_title`` -- alnum/space/-/_ only,
         # falling back to a generic name when that leaves nothing (e.g. a
         # prompt named entirely in punctuation/emoji).
-        safe_name = "".join(
-            char for char in (name.strip() or "prompt") if char.isalnum() or char in (" ", "-", "_")
-        ).rstrip() or "prompt"
+        safe_name = (
+            "".join(
+                char
+                for char in (name.strip() or "prompt")
+                if char.isalnum() or char in (" ", "-", "_")
+            ).rstrip()
+            or "prompt"
+        )
         default_filename = f"{safe_name}.md"
         await self.app.push_screen(
             FileSave(
@@ -8923,12 +9502,18 @@ class LibraryScreen(BaseAppScreen):
             validated_path.write_text(render_prompt_markdown(detail), encoding="utf-8")
         except Exception as exc:
             logger.opt(exception=True).warning(
-                f"Error exporting Library prompt {prompt_id!r} to '{validated_path}'.")
+                f"Error exporting Library prompt {prompt_id!r} to '{validated_path}'."
+            )
             if callable(notify):
-                notify(f"Error exporting prompt: {type(exc).__name__}", severity="error")
+                notify(
+                    f"Error exporting prompt: {type(exc).__name__}", severity="error"
+                )
             return
         if callable(notify):
-            notify(f"Prompt exported successfully to {validated_path.name}", severity="information")
+            notify(
+                f"Prompt exported successfully to {validated_path.name}",
+                severity="information",
+            )
 
     @on(Button.Pressed, "#library-prompt-duplicate")
     def handle_library_prompt_duplicate(self, event: Button.Pressed) -> None:
@@ -9024,15 +9609,23 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.opt(exception=True).warning(f"Failed to delete Library prompt {prompt_id!r}.")
-            if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+            logger.opt(exception=True).warning(
+                f"Failed to delete Library prompt {prompt_id!r}."
+            )
+            if (
+                prompt_id != self._selected_prompt_id
+                or self._library_prompts_view != "editor"
+            ):
                 return
             self._update_library_prompt_status_static("Could not delete this prompt.")
             return
 
         # Discard a stale result: the user has since switched to a different
         # prompt (or left the editor) while this delete was in flight.
-        if prompt_id != self._selected_prompt_id or self._library_prompts_view != "editor":
+        if (
+            prompt_id != self._selected_prompt_id
+            or self._library_prompts_view != "editor"
+        ):
             return
 
         if not deleted:
@@ -9131,7 +9724,9 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._library_prompts_view != "editor":
             return
-        candidate_id = candidate.get("local_id") if isinstance(candidate, Mapping) else None
+        candidate_id = (
+            candidate.get("local_id") if isinstance(candidate, Mapping) else None
+        )
         if candidate_id is None:
             return
         self._reset_library_prompt_editor_state()
@@ -9239,7 +9834,9 @@ class LibraryScreen(BaseAppScreen):
         snapshot = self._library_prompt_conflict_snapshot
         name = self._sanitize_media_field(snapshot.name, max_length=300)
         author = self._sanitize_media_field(snapshot.author, max_length=200)
-        details = self._sanitize_note_content(snapshot.details, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS)
+        details = self._sanitize_note_content(
+            snapshot.details, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        )
         system_prompt = self._sanitize_note_content(
             snapshot.system_prompt, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
         )
@@ -9273,7 +9870,9 @@ class LibraryScreen(BaseAppScreen):
             return
 
         version = result.get("version") if isinstance(result, Mapping) else None
-        self._library_prompt_version = version if version is not None else fresh_version + 1
+        self._library_prompt_version = (
+            version if version is not None else fresh_version + 1
+        )
         patched_detail: dict[str, Any] = (
             dict(self._library_prompt_detail)
             if isinstance(self._library_prompt_detail, Mapping)
@@ -9357,7 +9956,9 @@ class LibraryScreen(BaseAppScreen):
 
         name = self._sanitize_media_field(snapshot.name, max_length=300)
         author = self._sanitize_media_field(snapshot.author, max_length=200)
-        details = self._sanitize_note_content(snapshot.details, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS)
+        details = self._sanitize_note_content(
+            snapshot.details, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
+        )
         system_prompt = self._sanitize_note_content(
             snapshot.system_prompt, max_length=LIBRARY_PROMPT_TEXT_MAX_CHARS
         )
@@ -9404,7 +10005,11 @@ class LibraryScreen(BaseAppScreen):
         if self._library_prompt_conflict_snapshot is not snapshot:
             return  # The user navigated away while the retry was in flight.
 
-        result_id = result.get("local_id") if isinstance(result, Mapping) else (1 if result else None)
+        result_id = (
+            result.get("local_id")
+            if isinstance(result, Mapping)
+            else (1 if result else None)
+        )
         outcome = classify_prompt_save_error(result_id, "", None)
         if outcome != "ok":
             self._return_to_library_prompt_create_draft(snapshot, outcome)
@@ -9441,7 +10046,9 @@ class LibraryScreen(BaseAppScreen):
             self.refresh(recompose=True)
             self.call_after_refresh(self._arm_library_prompt_editor)
 
-    def _return_to_library_prompt_create_draft(self, snapshot: PromptEditorState, outcome: str) -> None:
+    def _return_to_library_prompt_create_draft(
+        self, snapshot: PromptEditorState, outcome: str
+    ) -> None:
         """Return from the create-conflict banner to a plain, editable draft.
 
         Reached when an Overwrite retry (``_resolve_library_prompt_create_conflict``)
@@ -9474,7 +10081,9 @@ class LibraryScreen(BaseAppScreen):
         # `_apply_library_prompt_save_outcome`, so "Open existing" (if this
         # outcome is "name-in-use") resolves against the name that actually
         # collided rather than whatever the Name field holds later.
-        self._library_prompt_name_in_use = snapshot.name if outcome == "name-in-use" else ""
+        self._library_prompt_name_in_use = (
+            snapshot.name if outcome == "name-in-use" else ""
+        )
         self._library_prompt_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
@@ -9563,19 +10172,25 @@ class LibraryScreen(BaseAppScreen):
         if selected_path is None:
             return
 
-        from tldw_chatbook.Event_Handlers.notes_events import _parse_note_from_file_content
+        from tldw_chatbook.Event_Handlers.notes_events import (
+            _parse_note_from_file_content,
+        )
 
         try:
             note_path = validate_path_simple(str(selected_path), require_exists=True)
         except ValueError:
-            logger.opt(exception=True).warning(f"Rejected Library note import path {selected_path!r}.")
+            logger.opt(exception=True).warning(
+                f"Rejected Library note import path {selected_path!r}."
+            )
             self._notify_library_note_create_warning("Could not import that file.")
             return
 
         try:
             file_size = note_path.stat().st_size
         except OSError:
-            logger.opt(exception=True).warning(f"Could not stat Library note import file '{note_path}'.")
+            logger.opt(exception=True).warning(
+                f"Could not stat Library note import file '{note_path}'."
+            )
             self._notify_library_note_create_warning("Could not import that file.")
             return
         if file_size > LIBRARY_NOTE_CONTENT_MAX_CHARS * 4:
@@ -9591,7 +10206,9 @@ class LibraryScreen(BaseAppScreen):
                 note_path.read_text, encoding="utf-8", errors="strict"
             )
         except (OSError, UnicodeDecodeError):
-            logger.opt(exception=True).warning(f"Could not read Library note import file '{note_path}'.")
+            logger.opt(exception=True).warning(
+                f"Could not read Library note import file '{note_path}'."
+            )
             self._notify_library_note_create_warning("Could not import that file.")
             return
 
@@ -9600,7 +10217,9 @@ class LibraryScreen(BaseAppScreen):
             return
 
         title, content = _parse_note_from_file_content(note_path, file_content)
-        title = sanitize_string(title or "", max_length=self._LIBRARY_NOTE_IMPORT_TITLE_MAX_CHARS)
+        title = sanitize_string(
+            title or "", max_length=self._LIBRARY_NOTE_IMPORT_TITLE_MAX_CHARS
+        )
         if not title:
             title = note_path.stem or "Imported note"
         content = (content or "").replace("\x00", "")
@@ -9658,7 +10277,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sync_folder_text = event.value
 
     @on(Input.Submitted, "#library-notes-sync-folder")
-    def handle_library_notes_sync_folder_submitted(self, event: Input.Submitted) -> None:
+    def handle_library_notes_sync_folder_submitted(
+        self, event: Input.Submitted
+    ) -> None:
         """Commit the typed sync folder to config on Enter.
 
         Args:
@@ -9769,9 +10390,7 @@ class LibraryScreen(BaseAppScreen):
                 Path(folder_value).expanduser(), require_exists=True
             )
         except ValueError:
-            self._notify_library_notes_sync_warning(
-                "That sync folder does not exist."
-            )
+            self._notify_library_notes_sync_warning("That sync folder does not exist.")
             return
         if not folder.is_dir():
             self._notify_library_notes_sync_warning(
@@ -9837,7 +10456,9 @@ class LibraryScreen(BaseAppScreen):
             resolution = ConflictResolution.NEWER_WINS
 
         self._library_notes_sync_running = True
-        self._library_notes_sync_status = sync_status_line("syncing", processed=0, total=0)
+        self._library_notes_sync_status = sync_status_line(
+            "syncing", processed=0, total=0
+        )
         self._library_notes_sync_activity = append_activity(
             self._library_notes_sync_activity, f"Starting sync: {folder.name}"
         )
@@ -9886,8 +10507,10 @@ class LibraryScreen(BaseAppScreen):
                 progress_callback=progress_callback,
                 isolate_in_worker=True,
             )
-            changes = len(results.created_notes) + len(results.updated_notes) + (
-                len(results.created_files) + len(results.updated_files)
+            changes = (
+                len(results.created_notes)
+                + len(results.updated_notes)
+                + (len(results.created_files) + len(results.updated_files))
             )
             conflicts = len(results.conflicts)
             # The done line counts CHANGES the run made, not files scanned
@@ -9898,13 +10521,21 @@ class LibraryScreen(BaseAppScreen):
             )
             summary_parts = []
             if results.created_notes:
-                summary_parts.append(f"{count_noun(len(results.created_notes), 'note')} created")
+                summary_parts.append(
+                    f"{count_noun(len(results.created_notes), 'note')} created"
+                )
             if results.updated_notes:
-                summary_parts.append(f"{count_noun(len(results.updated_notes), 'note')} updated")
+                summary_parts.append(
+                    f"{count_noun(len(results.updated_notes), 'note')} updated"
+                )
             if results.created_files:
-                summary_parts.append(f"{count_noun(len(results.created_files), 'file')} created")
+                summary_parts.append(
+                    f"{count_noun(len(results.created_files), 'file')} created"
+                )
             if results.updated_files:
-                summary_parts.append(f"{count_noun(len(results.updated_files), 'file')} updated")
+                summary_parts.append(
+                    f"{count_noun(len(results.updated_files), 'file')} updated"
+                )
             summary = ", ".join(summary_parts) if summary_parts else "No changes"
             self._library_notes_sync_activity = append_activity(
                 self._library_notes_sync_activity, f"Sync complete: {summary}"
@@ -9924,7 +10555,9 @@ class LibraryScreen(BaseAppScreen):
                     f"{count_noun(len(results.errors), 'error')} during sync",
                 )
         except Exception as exc:
-            logger.opt(exception=True).error(f"Library notes sync failed (folder={folder}): {exc}")
+            logger.opt(exception=True).error(
+                f"Library notes sync failed (folder={folder}): {exc}"
+            )
             self._library_notes_sync_status = sync_status_line("failed", error=str(exc))
             self._library_notes_sync_activity = append_activity(
                 self._library_notes_sync_activity, f"Sync failed: {exc}"
@@ -9968,6 +10601,14 @@ class LibraryScreen(BaseAppScreen):
             return
         quiet_line.update(new_state.start_quiet_line)
 
+    @on(Input.Blurred, "#library-ingest-path")
+    def handle_library_ingest_path_blurred(self, event: Input.Blurred) -> None:
+        """Trigger pre-flight when the user leaves the path field."""
+        event.stop()
+        path = self._library_ingest_form.path.strip()
+        if path:
+            self._trigger_library_ingest_preflight(path)
+
     @on(Input.Changed, "#library-ingest-title")
     def handle_library_ingest_title_changed(self, event: Input.Changed) -> None:
         """Track the ingest title text as the user types it (state only)."""
@@ -9985,16 +10626,6 @@ class LibraryScreen(BaseAppScreen):
         """Track the ingest keywords text as the user types it (state only)."""
         event.stop()
         self._library_ingest_form.keywords = event.value
-
-    @on(Input.Changed, "#library-ingest-chunk-size")
-    def handle_library_ingest_chunk_size_changed(self, event: Input.Changed) -> None:
-        """Track the chunk-size text as typed (display-echo only).
-
-        Parsed and clamped to ``[100, 5000]`` only at submit time (see
-        ``clamp_chunk_size``) -- never here.
-        """
-        event.stop()
-        self._library_ingest_form.chunk_size = event.value
 
     @on(Button.Pressed, "#library-ingest-browse")
     def handle_library_ingest_browse(self, event: Button.Pressed) -> None:
@@ -10018,60 +10649,118 @@ class LibraryScreen(BaseAppScreen):
                 return
             self._library_ingest_form.path = str(selected_path)
             self.refresh(recompose=True)
+            self._trigger_library_ingest_preflight(str(selected_path))
 
         self.app.push_screen(
             FileOpen(title="Import Media"),
             browse_callback,
         )
 
-    @on(Collapsible.Toggled, "#library-ingest-advanced")
-    def sync_library_ingest_advanced_open(self, event: Collapsible.Toggled) -> None:
-        """Track manual expand/collapse so recomposes preserve the user's choice.
+    @on(LibraryIngestCanvas.OptionPanelToggled)
+    def sync_library_ingest_type_group_expanded(
+        self,
+        event: LibraryIngestCanvas.OptionPanelToggled,
+    ) -> None:
+        """Track per-type panel expand/collapse so recomposes preserve the user's choice."""
+        event.stop()
+        if event.expanded:
+            self._library_ingest_form.expanded_type_groups.add(event.group)
+        else:
+            self._library_ingest_form.expanded_type_groups.discard(event.group)
 
-        Mirrors ``sync_library_rag_history_collapsed`` exactly (see that
-        handler's docstring for the full reasoning): ``Collapsible``'s
-        ``collapsed`` reactive is defined with ``init=False``, so
-        ``_watch_collapsed`` -- and therefore this ``Toggled`` message --
-        fires only on an actual *change* of the reactive, never merely from
-        ``compose()`` constructing a fresh ``Collapsible(collapsed=...)``
-        with a value that happens to equal the reactive's own default.
-        Concretely: the widget always passes
-        ``collapsed=not state.form.advanced_open``, and the reactive's
-        default is ``True`` -- so a compose only posts a spurious ``Toggled``
-        when it constructs the panel already-expanded (``advanced_open`` is
-        ``True``, i.e. ``collapsed=False`` differs from the ``True``
-        default), which immediately reasserts the same ``True`` this
-        handler already holds. Every recompose this handler must survive
-        (the analyze/chunk toggles, a registry-listener-driven job
-        transition) is triggered by something OTHER than a manual header
-        click, so this handler is never invoked by them -- only a real
-        user click (or a future programmatic ``collapsible.collapsed =``
-        assignment) fires it, exactly like the history panel's precedent.
+    @on(LibraryIngestCanvas.OptionValueChanged)
+    def handle_library_ingest_option_value_changed(
+        self,
+        event: LibraryIngestCanvas.OptionValueChanged,
+    ) -> None:
+        """Persist per-type option changes in the form echo.
+
+        The canvas stays render-only and posts a message for every value
+        change; the screen owns the mutable form state. Checkbox and select
+        changes trigger a recompose so panel titles and dependent-field
+        disabled states stay in sync, but text/number inputs do not (they
+        would remount the Input and lose cursor position mid-typing).
         """
         event.stop()
-        self._library_ingest_form.advanced_open = not event.collapsible.collapsed
+        group_options = self._library_ingest_form.type_options.setdefault(
+            event.group, {}
+        )
+        group_options[event.name] = event.value
+        # Generic group toggles mirror the legacy top-level form fields so
+        # existing submit/config-persistence paths keep working.
+        if event.group == "generic":
+            form = self._library_ingest_form
+            if event.name == "analyze":
+                form.analyze = bool(event.value)
+            elif event.name == "chunk":
+                form.chunk = bool(event.value)
+            elif event.name == "chunk_size":
+                form.chunk_size = str(event.value)
+        cap = get_capabilities(event.group)
+        field = next((f for f in cap.fields if f.name == event.name), None)
+        if field is not None and field.type not in ("text", "number"):
+            self.refresh(recompose=True)
 
-    @on(Button.Pressed, "#library-ingest-analyze-toggle")
-    def handle_library_ingest_analyze_toggle(self, event: Button.Pressed) -> None:
-        """Flip the "Analyze after ingest" form toggle.
+    def _trigger_library_ingest_preflight(self, path: str) -> None:
+        """Start (or restart) the pre-flight worker for ``path``.
 
-        Args:
-            event: Button press event emitted by the analyze toggle.
+        No-op for empty paths so stray focus/blur/enter events never scan
+        the current working directory.
         """
-        event.stop()
-        self._library_ingest_form.analyze = not self._library_ingest_form.analyze
+        if not path.strip():
+            self._library_ingest_form.preflight_checking = False
+            return
+        if self._library_ingest_preflight_worker is not None:
+            try:
+                if not self._library_ingest_preflight_worker.is_finished:
+                    self._library_ingest_preflight_worker.cancel()
+            except Exception:
+                pass
+        self._library_ingest_form.preflight_checking = True
+        self.refresh(recompose=True)
+        self._library_ingest_preflight_worker = self._run_library_ingest_preflight(path)
+
+    @work(thread=True)
+    def _run_library_ingest_preflight(self, path: str) -> None:
+        """Analyze ``path`` on a worker thread and apply the result."""
+        raw_scan_limit = get_cli_setting("library.ingest_directory_scan_limit", 1000)
+        try:
+            scan_limit = int(raw_scan_limit)
+        except (TypeError, ValueError):
+            scan_limit = 1000
+        try:
+            result = analyze_path(path, scan_limit=scan_limit)
+        except Exception as exc:
+            logger.opt(exception=True).debug(
+                f"Library ingest pre-flight failed for path: {path}"
+            )
+            result = PreflightResult(
+                type_groups={},
+                warnings=[],
+                errors=[f"Pre-flight analysis failed: {exc}"],
+                total_size=0,
+                truncated=False,
+                total_files=0,
+            )
+        self.app.call_from_thread(self._apply_library_ingest_preflight_result, result)
+
+    def _apply_library_ingest_preflight_result(
+        self,
+        result: PreflightResult,
+    ) -> None:
+        """Merge a pre-flight result into the form echo and refresh."""
+        self._library_ingest_form.preflight = result
+        self._library_ingest_form.preflight_checking = False
         self.refresh(recompose=True)
 
-    @on(Button.Pressed, "#library-ingest-chunk-toggle")
-    def handle_library_ingest_chunk_toggle(self, event: Button.Pressed) -> None:
-        """Flip the "Chunk content" form toggle.
+    def _trigger_preflight(self, path: str) -> None:
+        """Alias for ``_trigger_library_ingest_preflight``.
 
-        Args:
-            event: Button press event emitted by the chunk toggle.
+        Kept as a short internal seam used by the pre-flight retry button
+        (``#ingest-preflight-retry``) and any future callers that just need
+        to re-run the analysis for the current form path.
         """
-        event.stop()
-        self._library_ingest_form.chunk = not self._library_ingest_form.chunk
-        self.refresh(recompose=True)
+        self._trigger_library_ingest_preflight(path)
 
     def _notify_library_ingest_warning(self, message: str) -> None:
         notify = getattr(self.app_instance, "notify", None)
@@ -10097,33 +10786,34 @@ class LibraryScreen(BaseAppScreen):
         the registry/DB unavailable) stays quiet instead of nagging, since
         the always-visible gate line already explains the blocker
         (2026-07 UAT: Enter in a valid path field previously did nothing).
+        Pre-flight is also triggered so a final Enter in a non-submitting
+        path still refreshes the summary.
 
         Args:
             event: Input submission event emitted by the path field.
         """
         event.stop()
+        self._trigger_library_ingest_preflight(self._library_ingest_form.path)
         if not self._build_library_ingest_state().start_enabled:
             return
         self._submit_library_ingest_form()
 
-    def _submit_library_ingest_form(self) -> None:
-        """Validate the ingest form and submit a new Library ingest job.
+    @on(Button.Pressed, "#ingest-preflight-retry")
+    def _on_preflight_retry(self) -> None:
+        """Re-run pre-flight analysis for the current ingest path."""
+        self._trigger_preflight(self._library_ingest_form.path)
 
-        Shared by the Start ingest button and Enter in the path field. An
-        invalid/missing path is a quiet warning notice, matching every
-        other Library form failure path in this screen; a missing
-        ``submit_library_ingest_job`` seam (registry absent) gets the same
-        treatment. On success, the path AND title fields clear (L3b AB
-        wave, A1) -- title is per-file, so it must not silently reapply to
-        the next file in a batch -- while author/keywords/advanced options
-        persist, since those are batch metadata a user submitting several
-        files in a row shouldn't have to retype for every submission.
+    def _resolve_ingest_source(self, raw_path: str) -> str | None:
+        """Validate and canonicalise a Library ingest source path or URL.
+
+        Returns ``None`` when validation fails and the caller should stop
+        (a warning notification has already been shown). URLs are returned
+        as-is; filesystem paths are expanded and normalised by
+        ``validate_path_simple``.
         """
-        form = self._library_ingest_form
-        raw_path = form.path.strip()
         if not raw_path:
             self._notify_library_ingest_warning("Please choose a file to ingest.")
-            return
+            return None
         from urllib.parse import urlparse
 
         if urlparse(raw_path).scheme in ("http", "https"):
@@ -10134,24 +10824,72 @@ class LibraryScreen(BaseAppScreen):
                 self._notify_library_ingest_warning(
                     "That doesn't look like a valid http(s) URL."
                 )
-                return
-            submitted_source = raw_path
-        else:
-            try:
-                validated_path = validate_path_simple(
-                    Path(raw_path).expanduser(), require_exists=True
-                )
-            except ValueError:
-                logger.opt(exception=True).warning(f"Rejected Library ingest path {raw_path!r}.")
-                self._notify_library_ingest_warning("Could not find that file.")
-                return
-            submitted_source = str(validated_path)
+                return None
+            return raw_path
+        try:
+            validated_path = validate_path_simple(
+                Path(raw_path).expanduser(), require_exists=True
+            )
+        except ValueError:
+            logger.opt(exception=True).warning(
+                f"Rejected Library ingest path {raw_path!r}."
+            )
+            self._notify_library_ingest_warning("Could not find that file.")
+            return None
+        return str(validated_path)
+
+    def _submit_library_ingest_form(self) -> None:
+        """Validate the ingest form and submit a new Library ingest job.
+
+        Shared by the Start ingest button and Enter in the path field. An
+        invalid/missing path is a quiet warning notice, matching every
+        other Library form failure path in this screen; a missing
+        ``submit_library_ingest_job`` seam (registry absent) gets the same
+        treatment. When pre-flight tooling warnings are present, a
+        confirmation modal quantifies the affected files before the user
+        proceeds. On success, the path AND title fields clear (L3b AB
+        wave, A1) -- title is per-file, so it must not silently reapply to
+        the next file in a batch -- while author/keywords/advanced options
+        persist, since those are batch metadata a user submitting several
+        files in a row shouldn't have to retype for every submission.
+        """
+        form = self._library_ingest_form
+        submitted_source = self._resolve_ingest_source(form.path.strip())
+        if submitted_source is None:
+            return
         submit = getattr(self.app_instance, "submit_library_ingest_job", None)
         if not callable(submit):
             self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
             return
+        if form.preflight is not None and form.preflight.warnings:
+            counts = _affected_counts(form.preflight)
+            self.app.push_screen(
+                IngestGuardrailModal(form.preflight.warnings, counts),
+                partial(self._do_submit_ingest, submitted_source),
+            )
+        else:
+            self._do_submit_ingest(submitted_source)
+
+    def _do_submit_ingest(
+        self, submitted_source: str, confirmed: bool = True
+    ) -> None:
+        """Perform the actual Library ingest job submission.
+
+        The ``confirmed`` parameter lets this method be used directly as the
+        guardrail modal callback: the modal dismisses with ``True``/``False``
+        and the partial binding already supplies ``submitted_source``.
+        """
+        if not confirmed:
+            return
+        submit = getattr(self.app_instance, "submit_library_ingest_job", None)
+        if not callable(submit):
+            self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
+            return
+        form = self._library_ingest_form
+        snapshot = self._build_ingest_options_snapshot()
         submit(
             source_path=submitted_source,
+            ingest_options=snapshot,
             title=self._safe_text(form.title, max_length=300),
             author=self._safe_text(form.author, max_length=200),
             keywords=parse_keywords(form.keywords),
@@ -10159,9 +10897,68 @@ class LibraryScreen(BaseAppScreen):
             chunk_enabled=form.chunk,
             chunk_size=clamp_chunk_size(form.chunk_size),
         )
+        for group, values in snapshot.items():
+            for key, val in values.items():
+                save_setting_to_cli_config(f"library.ingest_options.{group}", key, val)
         form.path = ""
         form.title = ""
         self.refresh(recompose=True)
+
+    def _load_library_ingest_options_from_config(self) -> None:
+        """Load persisted per-type ingest options into the form echo.
+
+        Called from ``on_mount`` so a fresh Library visit carries forward the
+        last-used options from previous sessions.
+        """
+        form = self._library_ingest_form
+        for group in list_type_groups():
+            cap = get_capabilities(group)
+            prefix = f"library.ingest_options.{group}"
+            stored: dict[str, Any] = {}
+            for name in cap.field_names:
+                value = get_cli_setting(prefix, name)
+                if value is not None:
+                    stored[name] = value
+            if group == "generic":
+                for name in ("analyze", "chunk", "chunk_size", "chunk_overlap"):
+                    value = get_cli_setting(prefix, name)
+                    if value is None:
+                        continue
+                    if name == "analyze":
+                        form.analyze = bool(value)
+                    elif name == "chunk":
+                        form.chunk = bool(value)
+                    elif name == "chunk_size":
+                        form.chunk_size = str(value)
+                    else:
+                        stored[name] = value
+            if stored:
+                form.type_options.setdefault(group, {}).update(stored)
+
+    def _build_ingest_options_snapshot(self) -> dict[str, dict[str, Any]]:
+        """Capture the current per-type ingestion options as a snapshot.
+
+        Returns a shallow copy of ``self._library_ingest_form.type_options``,
+        with the top-level generic toggles (analyze, chunk, chunk_size)
+        merged into the ``generic`` group so the downstream pipeline has a
+        single canonical options map.
+
+        Returns:
+            A group-keyed dict mapping type group ids (``generic``, ``pdf``,
+            ``audio_video``, ``ebook``) to their option name/value maps.
+        """
+        form = self._library_ingest_form
+        snapshot: dict[str, dict[str, Any]] = {
+            group: dict(opts) for group, opts in form.type_options.items()
+        }
+        generic = snapshot.setdefault("generic", {})
+        generic["analyze"] = form.analyze
+        generic["chunk"] = form.chunk
+        # Prefer the generic panel's chunk_size when the user has set one;
+        # otherwise fall back to the legacy top-level form field.
+        if "chunk_size" not in generic:
+            generic["chunk_size"] = clamp_chunk_size(form.chunk_size)
+        return snapshot
 
     @staticmethod
     def _ingest_job_id_from_button(button_id: str | None, prefix: str) -> str | None:
@@ -10189,7 +10986,7 @@ class LibraryScreen(BaseAppScreen):
         """
         if not button_id or not button_id.startswith(prefix):
             return None
-        job_id = button_id[len(prefix):]
+        job_id = button_id[len(prefix) :]
         return job_id or None
 
     def _library_ingest_job_by_id(self, job_id: str) -> LibraryIngestJob | None:
@@ -10205,6 +11002,51 @@ class LibraryScreen(BaseAppScreen):
         jobs = jobs_fn() if callable(jobs_fn) else ()
         return next((job for job in jobs if job.job_id == job_id), None)
 
+    def _navigate_to_media(self, media_id: str | int) -> None:
+        """Open the Library media viewer for ``media_id``.
+
+        Thin synchronous seam so the ingest "Open in Library" fallback can
+        reuse the same detail viewer path as Search/RAG result open actions
+        without duplicating viewer state setup.
+        """
+        self.run_worker(self._open_library_item_by_id("media", str(media_id)))
+
+    def _open_job_in_library(self, job: LibraryIngestJob) -> None:
+        """Resolve a done ingest job to a media item and open it.
+
+        Falls back to source-path and content-hash lookups when the job was
+        deduplicated and therefore has no stamped ``media_id``. Defensively
+        skips fallback when the media database is unavailable.
+        """
+        media_id = job.media_id
+        if media_id is None:
+            media_db = getattr(self.app_instance, "media_db", None)
+            if media_db is not None:
+                # Fallback 1: match by source URL/path.
+                try:
+                    media = media_db.get_media_by_url(job.source_path)
+                    if media:
+                        media_id = media.get("id")
+                except Exception:
+                    logger.opt(exception=True).debug(
+                        f"ingest open-in-library URL lookup failed: {job.source_path}"
+                    )
+                # Fallback 2: match by content hash if the job recorded one.
+                if media_id is None and job.content_hash:
+                    try:
+                        media = media_db.get_media_by_hash(job.content_hash)
+                        if media:
+                            media_id = media.get("id")
+                    except Exception:
+                        logger.opt(exception=True).debug(
+                            f"ingest open-in-library hash lookup failed: {job.content_hash}"
+                        )
+        if media_id:
+            self._navigate_to_media(media_id)
+        else:
+            # Show a transient status when no single match can be resolved.
+            self.notify("Already in Library — no single match found")
+
     @on(Button.Pressed, ".library-ingest-open")
     async def handle_library_ingest_open(self, event: Button.Pressed) -> None:
         """Open a done ingest job's resulting media item in the Library viewer.
@@ -10213,13 +11055,15 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by an "Open in Library" row action.
         """
         event.stop()
-        job_id = self._ingest_job_id_from_button(event.button.id, "library-ingest-open-")
+        job_id = self._ingest_job_id_from_button(
+            event.button.id, "library-ingest-open-"
+        )
         if job_id is None:
             return
         job = self._library_ingest_job_by_id(job_id)
-        if job is None or job.media_id is None:
+        if job is None:
             return
-        await self._open_library_item_by_id("media", str(job.media_id))
+        self._open_job_in_library(job)
 
     @on(Button.Pressed, ".library-ingest-retry")
     def handle_library_ingest_retry(self, event: Button.Pressed) -> None:
@@ -10229,7 +11073,9 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by a "Retry" row action.
         """
         event.stop()
-        job_id = self._ingest_job_id_from_button(event.button.id, "library-ingest-retry-")
+        job_id = self._ingest_job_id_from_button(
+            event.button.id, "library-ingest-retry-"
+        )
         if job_id is None:
             return
         retry = getattr(self.app_instance, "retry_library_ingest_job", None)
@@ -10258,7 +11104,9 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by a "Dismiss" row action.
         """
         event.stop()
-        job_id = self._ingest_job_id_from_button(event.button.id, "library-ingest-dismiss-")
+        job_id = self._ingest_job_id_from_button(
+            event.button.id, "library-ingest-dismiss-"
+        )
         if job_id is None:
             return
         registry = self._library_ingest_registry()
@@ -10268,6 +11116,29 @@ class LibraryScreen(BaseAppScreen):
             # ever acts on a currently-FAILED, not-yet-hidden job_id.
             dismiss(job_id)
         self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-ingest-details")
+    def _on_ingest_job_details(self, event: Button.Pressed) -> None:
+        """Show a notification with a failed ingest job's structured error details.
+
+        Args:
+            event: Button press event emitted by a "Show details" row action.
+        """
+        event.stop()
+        job_id = self._ingest_job_id_from_button(
+            event.button.id, "library-ingest-details-"
+        )
+        if job_id is None:
+            return
+        registry = self._library_ingest_registry()
+        get_job = getattr(registry, "get_job", None)
+        if not callable(get_job):
+            return
+        job = get_job(job_id)
+        if job is None or not job.error_detail:
+            return
+        detail = job.error_detail.get("message") or str(job.error_detail)
+        self.notify(f"Error details: {detail}", title="Ingest error", timeout=10)
 
     @on(Button.Pressed, "#library-ingest-clear-finished")
     def handle_library_ingest_clear_finished(self, event: Button.Pressed) -> None:
@@ -10285,6 +11156,36 @@ class LibraryScreen(BaseAppScreen):
         clear_finished = getattr(registry, "clear_finished", None)
         if callable(clear_finished):
             clear_finished()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#ingest-expand-all")
+    def handle_library_ingest_expand_all(self, event: Button.Pressed) -> None:
+        """Expand every per-type options panel."""
+        event.stop()
+        form = self._library_ingest_form
+        state = self._build_library_ingest_state()
+        form.expanded_type_groups.update(state.type_groups)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#ingest-collapse-all")
+    def handle_library_ingest_collapse_all(self, event: Button.Pressed) -> None:
+        """Collapse every per-type options panel."""
+        event.stop()
+        form = self._library_ingest_form
+        form.expanded_type_groups.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-ingest-option-reset")
+    def handle_library_ingest_option_reset(self, event: Button.Pressed) -> None:
+        """Reset a per-type options panel to its defaults."""
+        event.stop()
+        button_id = event.button.id or ""
+        if not button_id.startswith("opt-") or not button_id.endswith("-reset"):
+            return
+        # opt-{group}-reset -> {group}
+        group = button_id[4:-6]
+        form = self._library_ingest_form
+        form.type_options[group] = {}
         self.refresh(recompose=True)
 
     # ----- Export canvas: section entry points --------------------------
@@ -10382,9 +11283,12 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         raw_name = str(self._library_export_form.get("name", "")).strip() or "chatbook"
-        safe_name = "".join(
-            char for char in raw_name if char.isalnum() or char in (" ", "-", "_")
-        ).rstrip() or "chatbook"
+        safe_name = (
+            "".join(
+                char for char in raw_name if char.isalnum() or char in (" ", "-", "_")
+            ).rstrip()
+            or "chatbook"
+        )
         self.app.push_screen(
             FileSave(
                 location=str(Path.home()),
@@ -10544,7 +11448,9 @@ class LibraryScreen(BaseAppScreen):
         # (empty ids == whole source); the button is disabled at 0 selected.
         if not self._library_notes_row_selection.count:
             return
-        await self._open_library_export_canvas(self._library_notes_row_selection.export_scope())
+        await self._open_library_export_canvas(
+            self._library_notes_row_selection.export_scope()
+        )
 
     @on(Button.Pressed, "#library-note-back")
     async def handle_library_note_back(self, event: Button.Pressed) -> None:
@@ -10692,8 +11598,12 @@ class LibraryScreen(BaseAppScreen):
             deleted = False
         except Exception:
             logger.opt(exception=True).warning(
-                f"Failed to delete Library note {note_id!r}.")
-            if note_id != self._selected_note_id or self._library_notes_view != "editor":
+                f"Failed to delete Library note {note_id!r}."
+            )
+            if (
+                note_id != self._selected_note_id
+                or self._library_notes_view != "editor"
+            ):
                 return
             self._library_note_confirming_delete = False
             self._notify_library_note_delete_warning("Could not delete this note.")
@@ -10825,7 +11735,11 @@ class LibraryScreen(BaseAppScreen):
         if not isinstance(template, Mapping):
             return "Untitled", ""
         raw_title = template.get("title")
-        title = raw_title if isinstance(raw_title, str) and raw_title.strip() else "Untitled"
+        title = (
+            raw_title
+            if isinstance(raw_title, str) and raw_title.strip()
+            else "Untitled"
+        )
         raw_content = template.get("content")
         if isinstance(raw_content, str):
             content = raw_content
@@ -10879,7 +11793,9 @@ class LibraryScreen(BaseAppScreen):
             content: The note's body (already resolved; not yet sanitized).
         """
         sanitized_title = self._sanitize_media_field(title, max_length=300)
-        sanitized_content = self._sanitize_note_content(content, max_length=LIBRARY_NOTE_CONTENT_MAX_CHARS)
+        sanitized_content = self._sanitize_note_content(
+            content, max_length=LIBRARY_NOTE_CONTENT_MAX_CHARS
+        )
         sanitized_keywords = [
             sanitized
             for keyword in (keywords or [])
@@ -11090,7 +12006,8 @@ class LibraryScreen(BaseAppScreen):
                 )
             except Exception:
                 logger.opt(exception=True).warning(
-                    f"Failed to save Library media edit for {media_id!r}.")
+                    f"Failed to save Library media edit for {media_id!r}."
+                )
                 self._notify_library_media_edit_warning(
                     "Could not save media changes; showing the latest saved version."
                 )
@@ -11223,7 +12140,8 @@ class LibraryScreen(BaseAppScreen):
                 deleted = True
             except Exception:
                 logger.opt(exception=True).warning(
-                    f"Failed to delete Library media item {media_id!r}.")
+                    f"Failed to delete Library media item {media_id!r}."
+                )
                 self._notify_library_media_delete_warning(
                     "Could not delete this media item."
                 )
@@ -11337,8 +12255,11 @@ class LibraryScreen(BaseAppScreen):
                 )
             except Exception:
                 logger.opt(exception=True).warning(
-                    f"Failed to add Library media highlight for {media_id!r}.")
-                self._notify_library_media_highlight_warning("Could not add this highlight.")
+                    f"Failed to add Library media highlight for {media_id!r}."
+                )
+                self._notify_library_media_highlight_warning(
+                    "Could not add this highlight."
+                )
         else:
             self._notify_library_media_highlight_warning("Highlights are unavailable.")
         await self._reload_library_media_highlights(media_id)
@@ -11358,7 +12279,9 @@ class LibraryScreen(BaseAppScreen):
             return
         self.run_worker(self._delete_library_media_highlight(media_id, highlight_id))
 
-    async def _delete_library_media_highlight(self, media_id: str, highlight_id: Any) -> None:
+    async def _delete_library_media_highlight(
+        self, media_id: str, highlight_id: Any
+    ) -> None:
         """Delete a reading highlight, then re-fetch the highlights list.
 
         Guards against a missing ``delete_highlight`` service or a failed
@@ -11382,8 +12305,11 @@ class LibraryScreen(BaseAppScreen):
                 )
             except Exception:
                 logger.opt(exception=True).warning(
-                    f"Failed to delete Library media highlight {highlight_id!r}.")
-                self._notify_library_media_highlight_warning("Could not delete this highlight.")
+                    f"Failed to delete Library media highlight {highlight_id!r}."
+                )
+                self._notify_library_media_highlight_warning(
+                    "Could not delete this highlight."
+                )
         else:
             self._notify_library_media_highlight_warning("Highlights are unavailable.")
         await self._reload_library_media_highlights(media_id)
@@ -11399,7 +12325,9 @@ class LibraryScreen(BaseAppScreen):
             notify(message, severity="warning")
 
     @on(Input.Submitted, "#library-media-content-search")
-    def handle_library_media_content_search_submitted(self, event: Input.Submitted) -> None:
+    def handle_library_media_content_search_submitted(
+        self, event: Input.Submitted
+    ) -> None:
         """Set the in-content search query and jump to the first match.
 
         Submitted (rather than Changed) is used deliberately: recomposing
@@ -11426,11 +12354,17 @@ class LibraryScreen(BaseAppScreen):
         # Bring the first match into view on submit; otherwise the status line
         # claims "Match 1 of N" while the hit stays below the fold until the
         # user cycles Next all the way around.
-        detail = self._library_media_detail if isinstance(self._library_media_detail, Mapping) else None
+        detail = (
+            self._library_media_detail
+            if isinstance(self._library_media_detail, Mapping)
+            else None
+        )
         content = build_library_media_viewer_state(detail).content if detail else ""
         matches = find_content_matches(content, self._library_media_content_query)
         if matches:
-            self.call_after_refresh(self._scroll_library_media_content_to_line, matches[0])
+            self.call_after_refresh(
+                self._scroll_library_media_content_to_line, matches[0]
+            )
 
     def _focus_library_media_content_search_input(self) -> None:
         """Re-focus the content search box after a submit-triggered recompose.
@@ -11475,7 +12409,11 @@ class LibraryScreen(BaseAppScreen):
             step: ``1`` to move to the next match, ``-1`` for the previous
                 one; wraps around the match count either direction.
         """
-        detail = self._library_media_detail if isinstance(self._library_media_detail, Mapping) else None
+        detail = (
+            self._library_media_detail
+            if isinstance(self._library_media_detail, Mapping)
+            else None
+        )
         content = build_library_media_viewer_state(detail).content if detail else ""
         matches = find_content_matches(content, self._library_media_content_query)
         if not matches:
@@ -11501,7 +12439,9 @@ class LibraryScreen(BaseAppScreen):
                 reveal.
         """
         try:
-            content_scroll = self.query_one("#library-media-viewer-content", VerticalScroll)
+            content_scroll = self.query_one(
+                "#library-media-viewer-content", VerticalScroll
+            )
         except (NoMatches, QueryError):
             return
         content_scroll.scroll_to(y=line_index, animate=False)
@@ -11531,7 +12471,9 @@ class LibraryScreen(BaseAppScreen):
         )
         currently_saved = bool(detail.get("is_read_it_later"))
         self.run_worker(
-            self._toggle_library_media_read_later(media_id, currently_saved=currently_saved)
+            self._toggle_library_media_read_later(
+                media_id, currently_saved=currently_saved
+            )
         )
 
     async def _toggle_library_media_read_later(
@@ -11550,7 +12492,9 @@ class LibraryScreen(BaseAppScreen):
                 read-it-later (determines whether to save or remove).
         """
         service = getattr(self.app_instance, "media_reading_scope_service", None)
-        method_name = "remove_from_read_it_later" if currently_saved else "save_to_read_it_later"
+        method_name = (
+            "remove_from_read_it_later" if currently_saved else "save_to_read_it_later"
+        )
         method = getattr(service, method_name, None)
         if callable(method):
             try:
@@ -11568,7 +12512,9 @@ class LibraryScreen(BaseAppScreen):
                     "Could not update read-it-later status."
                 )
         else:
-            self._notify_library_media_read_later_warning("Read-it-later is unavailable.")
+            self._notify_library_media_read_later_warning(
+                "Read-it-later is unavailable."
+            )
         await self._refresh_library_media_detail(media_id)
 
     def _notify_library_media_read_later_warning(self, message: str) -> None:
@@ -11685,12 +12631,15 @@ class LibraryScreen(BaseAppScreen):
                 )
             except Exception:
                 logger.opt(exception=True).warning(
-                    f"Failed to save Library media analysis for {media_id!r}.")
+                    f"Failed to save Library media analysis for {media_id!r}."
+                )
                 self._notify_library_media_analysis_warning(
                     "Could not save analysis changes; showing the latest saved version."
                 )
         else:
-            self._notify_library_media_analysis_warning("Analysis editing is unavailable.")
+            self._notify_library_media_analysis_warning(
+                "Analysis editing is unavailable."
+            )
         self._library_media_editing_analysis = False
         await self._refresh_library_media_detail(media_id)
 
@@ -11776,7 +12725,9 @@ class LibraryScreen(BaseAppScreen):
         return "Search Library…"
 
     @on(Input.Submitted, "#library-conversations-filter")
-    def handle_library_conversations_filter_submitted(self, event: Input.Submitted) -> None:
+    def handle_library_conversations_filter_submitted(
+        self, event: Input.Submitted
+    ) -> None:
         """Filter the conversations canvas from its in-canvas filter box.
 
         This is client-side substring filtering over the already-loaded
@@ -11819,9 +12770,8 @@ class LibraryScreen(BaseAppScreen):
         self.refresh(recompose=True)
 
     async def _refresh_collections_panel_action_state_widgets(self) -> None:
-        if (
-            self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS
-            or not list(self.query("#library-collections-panel"))
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS or not list(
+            self.query("#library-collections-panel")
         ):
             return
 
@@ -11859,7 +12809,9 @@ class LibraryScreen(BaseAppScreen):
             self._library_collections_records = ()
             self._library_sync_profile_summary = None
             self._library_collections_loaded = True
-            self._library_collections_error = "Library Collections are unavailable in this runtime."
+            self._library_collections_error = (
+                "Library Collections are unavailable in this runtime."
+            )
             return
         try:
             records = await self._run_library_service_call(list_collections)
@@ -11870,23 +12822,27 @@ class LibraryScreen(BaseAppScreen):
             self._library_collections_loaded = True
             self._library_collections_error = "Library Collections are unavailable."
             return
-        self._library_collections_records = await self._decorate_library_collection_sync_records(
-            tuple(records or ())
+        self._library_collections_records = (
+            await self._decorate_library_collection_sync_records(tuple(records or ()))
         )
-        self._library_sync_profile_summary = await self._load_library_sync_profile_summary()
+        self._library_sync_profile_summary = (
+            await self._load_library_sync_profile_summary()
+        )
         self._library_collections_loaded = True
         self._library_collections_error = ""
-        if (
-            self._library_collections_selected_id
-            and not any(
-                _record_value(record, "collection_id") == self._library_collections_selected_id
-                for record in self._library_collections_records
-            )
+        if self._library_collections_selected_id and not any(
+            _record_value(record, "collection_id")
+            == self._library_collections_selected_id
+            for record in self._library_collections_records
         ):
             self._library_collections_selected_id = ""
-        if not self._library_collections_selected_id and self._library_collections_records:
+        if (
+            not self._library_collections_selected_id
+            and self._library_collections_records
+        ):
             self._library_collections_selected_id = (
-                _record_value(self._library_collections_records[0], "collection_id") or ""
+                _record_value(self._library_collections_records[0], "collection_id")
+                or ""
             )
 
     async def _decorate_library_collection_sync_records(
@@ -11899,7 +12855,9 @@ class LibraryScreen(BaseAppScreen):
 
         get_latest_mirror_report = getattr(repository, "get_latest_mirror_report", None)
         list_conflict_reports = getattr(repository, "list_conflict_reports", None)
-        if not callable(get_latest_mirror_report) or not callable(list_conflict_reports):
+        if not callable(get_latest_mirror_report) or not callable(
+            list_conflict_reports
+        ):
             return tuple(records)
 
         sync_scope = _active_library_sync_scope(self.app_instance)
@@ -11926,7 +12884,9 @@ class LibraryScreen(BaseAppScreen):
                 ),
             )
         except Exception:
-            logger.opt(exception=True).warning("Failed to load Library Collections sync dry-run state.")
+            logger.opt(exception=True).warning(
+                "Failed to load Library Collections sync dry-run state."
+            )
             return tuple(records)
 
         latest_report = latest_mirror_record["report"] if latest_mirror_record else None
@@ -11947,13 +12907,23 @@ class LibraryScreen(BaseAppScreen):
         for record in records:
             collection_id = str(_record_value(record, "collection_id", ""))
             record_data = _library_collection_record_data(record)
-            collection_report = _collection_scoped_mirror_report(latest_report, collection_id)
-            collection_conflicts = _collection_scoped_conflicts(conflict_reports, collection_id)
+            collection_report = _collection_scoped_mirror_report(
+                latest_report, collection_id
+            )
+            collection_conflicts = _collection_scoped_conflicts(
+                conflict_reports, collection_id
+            )
             record_data["sync_mirror_report"] = collection_report or {}
             record_data["sync_readiness_report"] = readiness_record
             record_data["sync_conflicts"] = collection_conflicts
-            explicit_status = str(_record_value(record, "sync_status", "local-only") or "").lower()
-            if explicit_status in {"", "local-only"} or collection_report or collection_conflicts:
+            explicit_status = str(
+                _record_value(record, "sync_status", "local-only") or ""
+            ).lower()
+            if (
+                explicit_status in {"", "local-only"}
+                or collection_report
+                or collection_conflicts
+            ):
                 promotion_state = build_sync_promotion_state(
                     domain="library_collections",
                     surface_label="Collections",
@@ -11999,19 +12969,28 @@ class LibraryScreen(BaseAppScreen):
         ):
             return None
 
-        scope_provider = getattr(self.app_instance, "_server_notification_event_scope", None)
+        scope_provider = getattr(
+            self.app_instance, "_server_notification_event_scope", None
+        )
         scope = scope_provider() if callable(scope_provider) else {}
         scope_mapping = scope if isinstance(scope, Mapping) else {}
-        raw_server_profile_id = scope_mapping.get("server_profile_id", runtime_state.active_server_id)
+        raw_server_profile_id = scope_mapping.get(
+            "server_profile_id", runtime_state.active_server_id
+        )
         server_profile_id = self._safe_sync_scope_text(raw_server_profile_id)
         if not server_profile_id:
             return None
         authenticated_principal_id = self._safe_sync_scope_text(
             scope_mapping.get("authenticated_principal_id")
         )
-        if scope_mapping.get("authenticated_principal_id") is not None and authenticated_principal_id is None:
+        if (
+            scope_mapping.get("authenticated_principal_id") is not None
+            and authenticated_principal_id is None
+        ):
             return None
-        workspace_scope = self._safe_sync_scope_text(scope_mapping.get("workspace_scope"))
+        workspace_scope = self._safe_sync_scope_text(
+            scope_mapping.get("workspace_scope")
+        )
         if scope_mapping.get("workspace_scope") is not None and workspace_scope is None:
             return None
 
@@ -12024,7 +13003,9 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.opt(exception=True).warning("Failed to load Sync v2 profile summary.")
+            logger.opt(exception=True).warning(
+                "Failed to load Sync v2 profile summary."
+            )
             return None
         return summary if isinstance(summary, Mapping) else None
 
@@ -12064,7 +13045,9 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_rag_query = event.value
         self._reset_library_rag_in_flight_status()
-        await self._refresh_search_rag_panel_state_widgets(include_results_and_history=False)
+        await self._refresh_search_rag_panel_state_widgets(
+            include_results_and_history=False
+        )
 
     @on(Input.Submitted, "#library-rag-query-input")
     async def submit_library_rag_query(self, event: Input.Submitted) -> None:
@@ -12081,7 +13064,9 @@ class LibraryScreen(BaseAppScreen):
         await self._refresh_collections_panel_action_state_widgets()
 
     @on(Input.Changed, "#library-collection-description-input")
-    async def update_library_collection_description_input(self, event: Input.Changed) -> None:
+    async def update_library_collection_description_input(
+        self, event: Input.Changed
+    ) -> None:
         event.stop()
         self._library_collection_description_input = event.value
         await self._refresh_collections_panel_action_state_widgets()
@@ -12125,7 +13110,9 @@ class LibraryScreen(BaseAppScreen):
     def cycle_library_rag_mode(self, event: Button.Pressed) -> None:
         """Cycle Library Search/RAG mode between keyword search and RAG answer."""
         event.stop()
-        self._library_rag_mode = "rag" if self._library_rag_mode == "search" else "search"
+        self._library_rag_mode = (
+            "rag" if self._library_rag_mode == "search" else "search"
+        )
         self._reset_library_rag_retrieval_state()
         self.refresh(recompose=True)
 
@@ -12265,7 +13252,9 @@ class LibraryScreen(BaseAppScreen):
         except LibraryCollectionsServiceError as exc:
             self._notify_library_collections_warning(str(exc))
             return
-        self._library_collections_selected_id = getattr(created, "collection_id", "") or ""
+        self._library_collections_selected_id = (
+            getattr(created, "collection_id", "") or ""
+        )
         self._library_collection_name_input = ""
         self._library_collection_description_input = ""
         self._library_collection_pending_delete_id = ""
@@ -12292,7 +13281,9 @@ class LibraryScreen(BaseAppScreen):
         except LibraryCollectionsServiceError as exc:
             self._notify_library_collections_warning(str(exc))
             return
-        self._library_collections_selected_id = getattr(renamed, "collection_id", "") or ""
+        self._library_collections_selected_id = (
+            getattr(renamed, "collection_id", "") or ""
+        )
         self._library_collection_name_input = ""
         self._library_collection_description_input = ""
         self._library_collection_pending_delete_id = ""
@@ -12303,7 +13294,9 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if not self._library_collections_selected_id:
             return
-        self._library_collection_pending_delete_id = self._library_collections_selected_id
+        self._library_collection_pending_delete_id = (
+            self._library_collections_selected_id
+        )
         await self._refresh_collections_panel_action_state_widgets()
 
     @on(Button.Pressed, "#library-confirm-delete-collection")
@@ -12352,7 +13345,9 @@ class LibraryScreen(BaseAppScreen):
         result_index = self._trailing_index(event.button.id)
         if result_index is None or result_index >= len(self._library_rag_results):
             return
-        self._library_rag_selected_result_id = self._library_rag_results[result_index].result_id
+        self._library_rag_selected_result_id = self._library_rag_results[
+            result_index
+        ].result_id
         await self._refresh_search_rag_panel_state_widgets()
 
     @on(Button.Pressed, ".library-rag-result-open")
@@ -12385,7 +13380,12 @@ class LibraryScreen(BaseAppScreen):
                 resolvable provenance (``LibraryRagResultRow.can_open``).
             record_id: The item's id within its source type.
         """
-        if not record_id or source_type not in ("media", "notes", "conversations", "prompt"):
+        if not record_id or source_type not in (
+            "media",
+            "notes",
+            "conversations",
+            "prompt",
+        ):
             return
 
         if source_type == "prompt":
@@ -12563,7 +13563,10 @@ class LibraryScreen(BaseAppScreen):
         if not callable(opener):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
-                notify("Use in Console is unavailable for Library Search/RAG.", severity="warning")
+                notify(
+                    "Use in Console is unavailable for Library Search/RAG.",
+                    severity="warning",
+                )
             return
 
         opener(
@@ -12579,7 +13582,9 @@ class LibraryScreen(BaseAppScreen):
         )
 
     @work(exclusive=True, group="library_rag_search")
-    async def _execute_library_rag_search(self, request: LibraryRagSearchRequest) -> None:
+    async def _execute_library_rag_search(
+        self, request: LibraryRagSearchRequest
+    ) -> None:
         outcome = await run_library_rag_search(self.app_instance, request)
         await self._apply_library_rag_search_outcome(request, outcome)
 
@@ -12619,9 +13624,8 @@ class LibraryScreen(BaseAppScreen):
         # when a search settles with nothing to show. Every other refresh
         # path leaves the user's manual expand/collapse alone.
         self._library_rag_history_collapsed = bool(self._library_rag_results)
-        if (
-            self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH
-            or not self.query("#library-search-rag-panel")
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH or not self.query(
+            "#library-search-rag-panel"
         ):
             return
         await self._refresh_search_rag_panel_state_widgets(force_history_collapse=True)
@@ -12647,9 +13651,8 @@ class LibraryScreen(BaseAppScreen):
                 DO need them (Submit/Run, evidence selection, outcome
                 application, scope/mode toggles) all pass the default True.
         """
-        if (
-            self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH
-            or not self.query("#library-search-rag-panel")
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH or not self.query(
+            "#library-search-rag-panel"
         ):
             return
 
@@ -12679,7 +13682,9 @@ class LibraryScreen(BaseAppScreen):
         await self._refresh_library_rag_results_widgets(panel_state)
         await self._refresh_library_rag_history_widget(
             panel_state,
-            force_collapsed=panel_state.history_collapsed if force_history_collapse else None,
+            force_collapsed=panel_state.history_collapsed
+            if force_history_collapse
+            else None,
         )
         # `force_history_collapse` is only set True from the results-arrival
         # transition in `_apply_library_rag_search_outcome` -- every other
@@ -12692,9 +13697,9 @@ class LibraryScreen(BaseAppScreen):
         # issued before that would just get overridden by it.
         if force_history_collapse and panel_state.results:
             try:
-                self.query_one(
-                    "#library-rag-results-heading", Static
-                ).scroll_visible(animate=False)
+                self.query_one("#library-rag-results-heading", Static).scroll_visible(
+                    animate=False
+                )
             except NoMatches:
                 pass
 
@@ -12712,7 +13717,8 @@ class LibraryScreen(BaseAppScreen):
         """
         query_controls = self.query_one("#library-rag-query-controls", Vertical)
         query_controls.set_class(
-            library_rag_query_shows_full_recovery(panel_state.query_state), "has-recovery"
+            library_rag_query_shows_full_recovery(panel_state.query_state),
+            "has-recovery",
         )
 
         run_action = panel_state.query_state.run_action
@@ -12830,16 +13836,24 @@ class LibraryScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if payload is None:
             if callable(notify):
-                notify("Select a conversation before using it in Console.", severity="warning")
+                notify(
+                    "Select a conversation before using it in Console.",
+                    severity="warning",
+                )
             return
         if not workspace_state.context_handoff_enabled:
             if callable(notify):
                 notify(workspace_state.context_handoff_tooltip, severity="warning")
             return
-        open_chat_with_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
+        open_chat_with_handoff = getattr(
+            self.app_instance, "open_chat_with_handoff", None
+        )
         if not callable(open_chat_with_handoff):
             if callable(notify):
-                notify("Console handoff is unavailable for Library Conversations.", severity="warning")
+                notify(
+                    "Console handoff is unavailable for Library Conversations.",
+                    severity="warning",
+                )
             return
         open_chat_with_handoff(payload, action_label="Use in Console")
 
@@ -12872,16 +13886,23 @@ class LibraryScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if payload is None:
             if callable(notify):
-                notify("Open a media item before using it in Console.", severity="warning")
+                notify(
+                    "Open a media item before using it in Console.", severity="warning"
+                )
             return
         if not workspace_state.context_handoff_enabled:
             if callable(notify):
                 notify(workspace_state.context_handoff_tooltip, severity="warning")
             return
-        open_chat_with_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
+        open_chat_with_handoff = getattr(
+            self.app_instance, "open_chat_with_handoff", None
+        )
         if not callable(open_chat_with_handoff):
             if callable(notify):
-                notify("Console handoff is unavailable for Library Media.", severity="warning")
+                notify(
+                    "Console handoff is unavailable for Library Media.",
+                    severity="warning",
+                )
             return
         open_chat_with_handoff(payload, action_label="Use in Console")
 
@@ -12907,7 +13928,9 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the Library Workspaces action.
         """
         event.stop()
-        registry_service = getattr(self.app_instance, "workspace_registry_service", None)
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
         if registry_service is None:
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
@@ -12922,7 +13945,9 @@ class LibraryScreen(BaseAppScreen):
             )
             registry_service.set_active_workspace(workspace_id)
         except Exception:
-            logger.opt(exception=True).warning("Failed to create local Library workspace")
+            logger.opt(exception=True).warning(
+                "Failed to create local Library workspace"
+            )
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Local workspace could not be created.", severity="error")
@@ -12974,7 +13999,9 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify(workspace_state.context_handoff_tooltip, severity="warning")
             return
-        open_chat_with_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
+        open_chat_with_handoff = getattr(
+            self.app_instance, "open_chat_with_handoff", None
+        )
         if not callable(open_chat_with_handoff):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):

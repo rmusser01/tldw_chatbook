@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from textual.widgets import Button, Input
 
-from Tests.textual_test_utils import widget_pilot
 from tldw_chatbook.UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt
 
 
@@ -30,7 +29,9 @@ async def test_local_processing_uses_form_metadata(
     mock_app_instance: MagicMock,
     widget_pilot,
 ) -> None:
-    async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+    async with await widget_pilot(
+        MediaIngestWindowRebuilt, app_instance=mock_app_instance
+    ) as pilot:
         window = pilot.app.test_widget
         local_panel = window.local_panel
         local_panel.selected_files = [Path("demo.txt")]
@@ -57,7 +58,9 @@ async def test_local_processing_resets_button_after_completion(
     mock_app_instance: MagicMock,
     widget_pilot,
 ) -> None:
-    async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+    async with await widget_pilot(
+        MediaIngestWindowRebuilt, app_instance=mock_app_instance
+    ) as pilot:
         window = pilot.app.test_widget
         local_panel = window.local_panel
         process_button = local_panel.query_one("#local-process-btn", Button)

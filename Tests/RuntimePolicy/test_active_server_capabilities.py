@@ -79,7 +79,9 @@ def _context(state: RuntimeSourceState):
 
 @pytest.mark.asyncio
 async def test_active_server_capabilities_refreshes_snapshot_and_policy_state():
-    from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
+    from tldw_chatbook.runtime_policy.server_capabilities import (
+        ActiveServerCapabilityService,
+    )
 
     context = _context(
         RuntimeSourceState(
@@ -97,7 +99,10 @@ async def test_active_server_capabilities_refreshes_snapshot_and_policy_state():
 
     snapshot = await service.refresh()
 
-    assert snapshot["record_id"] == "server:capability_snapshot:https://server.example.com/api"
+    assert (
+        snapshot["record_id"]
+        == "server:capability_snapshot:https://server.example.com/api"
+    )
     assert snapshot["active_server_id"] == "https://server.example.com/api"
     assert snapshot["server_configured"] is True
     assert snapshot["reachability"] == "reachable"
@@ -121,7 +126,9 @@ async def test_active_server_capabilities_refreshes_snapshot_and_policy_state():
 
 @pytest.mark.asyncio
 async def test_active_server_capabilities_refresh_uses_current_runtime_policy_server_identity():
-    from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
+    from tldw_chatbook.runtime_policy.server_capabilities import (
+        ActiveServerCapabilityService,
+    )
 
     context = _context(
         RuntimeSourceState(
@@ -148,7 +155,9 @@ async def test_active_server_capabilities_refresh_uses_current_runtime_policy_se
 
     snapshot = await service.refresh()
 
-    assert snapshot["record_id"] == "server:capability_snapshot:https://new.example.com/v1"
+    assert (
+        snapshot["record_id"] == "server:capability_snapshot:https://new.example.com/v1"
+    )
     assert snapshot["active_server_id"] == "https://new.example.com/v1"
     assert snapshot["reachability"] == "reachable"
     assert snapshot["auth_state"] == "authenticated"
@@ -158,7 +167,9 @@ async def test_active_server_capabilities_refresh_uses_current_runtime_policy_se
 
 @pytest.mark.asyncio
 async def test_active_server_capabilities_uses_ungated_probes_to_recover_stale_auth_state():
-    from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
+    from tldw_chatbook.runtime_policy.server_capabilities import (
+        ActiveServerCapabilityService,
+    )
 
     context = _context(
         RuntimeSourceState(
@@ -187,7 +198,9 @@ async def test_active_server_capabilities_uses_ungated_probes_to_recover_stale_a
 
 @pytest.mark.asyncio
 async def test_active_server_capabilities_updates_target_store_status(tmp_path):
-    from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
+    from tldw_chatbook.runtime_policy.server_capabilities import (
+        ActiveServerCapabilityService,
+    )
 
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
@@ -228,7 +241,9 @@ async def test_active_server_capabilities_updates_target_store_status(tmp_path):
 
 @pytest.mark.asyncio
 async def test_active_server_capabilities_ignores_missing_target_profile(tmp_path):
-    from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
+    from tldw_chatbook.runtime_policy.server_capabilities import (
+        ActiveServerCapabilityService,
+    )
 
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     context = _context(
@@ -258,7 +273,9 @@ async def test_active_server_capabilities_ignores_missing_target_profile(tmp_pat
 
 @pytest.mark.asyncio
 async def test_active_server_capabilities_marks_unreachable_without_losing_server_identity():
-    from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
+    from tldw_chatbook.runtime_policy.server_capabilities import (
+        ActiveServerCapabilityService,
+    )
 
     context = _context(
         RuntimeSourceState(
@@ -291,7 +308,9 @@ async def test_active_server_capabilities_marks_unreachable_without_losing_serve
 
 @pytest.mark.asyncio
 async def test_active_server_capabilities_marks_auth_required_as_reachable_server():
-    from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
+    from tldw_chatbook.runtime_policy.server_capabilities import (
+        ActiveServerCapabilityService,
+    )
 
     context = _context(
         RuntimeSourceState(
@@ -325,9 +344,13 @@ async def test_active_server_capabilities_marks_auth_required_as_reachable_serve
 
 @pytest.mark.asyncio
 async def test_active_server_capabilities_does_not_call_server_when_unconfigured():
-    from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
+    from tldw_chatbook.runtime_policy.server_capabilities import (
+        ActiveServerCapabilityService,
+    )
 
-    context = _context(RuntimeSourceState(active_source="local", server_configured=False))
+    context = _context(
+        RuntimeSourceState(active_source="local", server_configured=False)
+    )
     runtime_scope = FakeServerRuntimeScope()
     service = ActiveServerCapabilityService(
         runtime_context=context,
@@ -348,7 +371,9 @@ async def test_active_server_capabilities_does_not_call_server_when_unconfigured
 
 @pytest.mark.asyncio
 async def test_active_server_capabilities_invalidates_persisted_probe_state_when_server_is_cleared():
-    from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
+    from tldw_chatbook.runtime_policy.server_capabilities import (
+        ActiveServerCapabilityService,
+    )
 
     context = _context(
         RuntimeSourceState(
@@ -356,7 +381,9 @@ async def test_active_server_capabilities_invalidates_persisted_probe_state_when
             active_server_id="https://server.example.com/api",
             server_configured=True,
             server_reachability="reachable",
-            server_reachability_checked_at=datetime(2026, 4, 28, 12, 0, tzinfo=timezone.utc),
+            server_reachability_checked_at=datetime(
+                2026, 4, 28, 12, 0, tzinfo=timezone.utc
+            ),
             server_auth_state="authenticated",
             server_auth_checked_at=datetime(2026, 4, 28, 12, 1, tzinfo=timezone.utc),
             last_known_server_label="server.example.com",
@@ -372,7 +399,9 @@ async def test_active_server_capabilities_invalidates_persisted_probe_state_when
         active_server_id=None,
         server_configured=False,
         server_reachability="reachable",
-        server_reachability_checked_at=datetime(2026, 4, 28, 12, 0, tzinfo=timezone.utc),
+        server_reachability_checked_at=datetime(
+            2026, 4, 28, 12, 0, tzinfo=timezone.utc
+        ),
         server_auth_state="authenticated",
         server_auth_checked_at=datetime(2026, 4, 28, 12, 1, tzinfo=timezone.utc),
         last_known_server_label="server.example.com",

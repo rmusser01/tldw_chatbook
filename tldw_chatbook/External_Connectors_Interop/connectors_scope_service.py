@@ -31,7 +31,9 @@ class ConnectorsScopeService:
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: ConnectorsBackend | str | None) -> ConnectorsBackend:
+    def _normalize_mode(
+        self, mode: ConnectorsBackend | str | None
+    ) -> ConnectorsBackend:
         if mode is None:
             return ConnectorsBackend.SERVER
         if isinstance(mode, ConnectorsBackend):
@@ -66,7 +68,9 @@ class ConnectorsScopeService:
         return f"connectors.{resource}.{action}.server"
 
     @staticmethod
-    def _with_record_id(mode: ConnectorsBackend, kind: str, item: dict[str, Any], id_key: str = "id") -> dict[str, Any]:
+    def _with_record_id(
+        mode: ConnectorsBackend, kind: str, item: dict[str, Any], id_key: str = "id"
+    ) -> dict[str, Any]:
         record = dict(item or {})
         record.setdefault("backend", mode.value)
         source_id = record.get(id_key)
@@ -74,7 +78,9 @@ class ConnectorsScopeService:
             record.setdefault("record_id", f"{mode.value}:{kind}:{source_id}")
         return record
 
-    def _normalize_item(self, mode: ConnectorsBackend, item: Any, *, browse_provider: str | None = None) -> Any:
+    def _normalize_item(
+        self, mode: ConnectorsBackend, item: Any, *, browse_provider: str | None = None
+    ) -> Any:
         if not isinstance(item, dict):
             return item
         if "auth_type" in item and "name" in item:
@@ -84,19 +90,30 @@ class ConnectorsScopeService:
         if browse_provider is not None:
             record = dict(item)
             record.setdefault("provider", browse_provider)
-            remote_id = record.get("id") or record.get("remote_id") or record.get("path")
+            remote_id = (
+                record.get("id") or record.get("remote_id") or record.get("path")
+            )
             if remote_id is not None:
-                record.setdefault("record_id", f"{mode.value}:connector_remote_source:{browse_provider}:{remote_id}")
+                record.setdefault(
+                    "record_id",
+                    f"{mode.value}:connector_remote_source:{browse_provider}:{remote_id}",
+                )
             record.setdefault("backend", mode.value)
             return record
         if "remote_id" in item and "provider" in item and "id" in item:
             return self._with_record_id(mode, "connector_source", item)
         if "source_id" in item and "state" in item:
-            return self._with_record_id(mode, "connector_source_sync", item, "source_id")
+            return self._with_record_id(
+                mode, "connector_source_sync", item, "source_id"
+            )
         if "job" in item and "source_id" in item:
-            payload = self._with_record_id(mode, "connector_source_sync", item, "source_id")
+            payload = self._with_record_id(
+                mode, "connector_source_sync", item, "source_id"
+            )
             if isinstance(payload.get("job"), dict):
-                payload["job"] = self._with_record_id(mode, "connector_job", payload["job"])
+                payload["job"] = self._with_record_id(
+                    mode, "connector_job", payload["job"]
+                )
             return payload
         if "source_id" in item and "status" in item and "id" in item:
             return self._with_record_id(mode, "connector_job", item)
@@ -114,7 +131,10 @@ class ConnectorsScopeService:
         browse_provider: str | None = None,
     ) -> Any:
         if isinstance(result, list):
-            return [self._normalize_item(mode, item, browse_provider=browse_provider) for item in result]
+            return [
+                self._normalize_item(mode, item, browse_provider=browse_provider)
+                for item in result
+            ]
         if not isinstance(result, dict):
             return result
         payload = dict(result)
@@ -151,11 +171,19 @@ class ConnectorsScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy(self._action_id(resource, action))
-        result = await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
-        return self._normalize_response(normalized_mode, result, browse_provider=browse_provider)
+        result = await self._maybe_await(
+            getattr(service, method_name)(*args, **(kwargs or {}))
+        )
+        return self._normalize_response(
+            normalized_mode, result, browse_provider=browse_provider
+        )
 
-    async def list_providers(self, *, mode: ConnectorsBackend | str | None = None) -> list[dict[str, Any]]:
-        return await self._call(mode=mode, resource="providers", action="list", method_name="list_providers")
+    async def list_providers(
+        self, *, mode: ConnectorsBackend | str | None = None
+    ) -> list[dict[str, Any]]:
+        return await self._call(
+            mode=mode, resource="providers", action="list", method_name="list_providers"
+        )
 
     async def authorize_provider(
         self,
@@ -189,10 +217,16 @@ class ConnectorsScopeService:
             kwargs=kwargs,
         )
 
-    async def list_accounts(self, *, mode: ConnectorsBackend | str | None = None) -> list[dict[str, Any]]:
-        return await self._call(mode=mode, resource="accounts", action="list", method_name="list_accounts")
+    async def list_accounts(
+        self, *, mode: ConnectorsBackend | str | None = None
+    ) -> list[dict[str, Any]]:
+        return await self._call(
+            mode=mode, resource="accounts", action="list", method_name="list_accounts"
+        )
 
-    async def delete_account(self, account_id: int, *, mode: ConnectorsBackend | str | None = None) -> dict[str, Any]:
+    async def delete_account(
+        self, account_id: int, *, mode: ConnectorsBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy(self._action_id("accounts", "delete"))
@@ -218,11 +252,23 @@ class ConnectorsScopeService:
             browse_provider=provider,
         )
 
-    async def create_source(self, *, mode: ConnectorsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
-        return await self._call(mode=mode, resource="sources", action="create", method_name="create_source", kwargs=kwargs)
+    async def create_source(
+        self, *, mode: ConnectorsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        return await self._call(
+            mode=mode,
+            resource="sources",
+            action="create",
+            method_name="create_source",
+            kwargs=kwargs,
+        )
 
-    async def list_sources(self, *, mode: ConnectorsBackend | str | None = None) -> list[dict[str, Any]]:
-        return await self._call(mode=mode, resource="sources", action="list", method_name="list_sources")
+    async def list_sources(
+        self, *, mode: ConnectorsBackend | str | None = None
+    ) -> list[dict[str, Any]]:
+        return await self._call(
+            mode=mode, resource="sources", action="list", method_name="list_sources"
+        )
 
     async def update_source(
         self,
@@ -240,8 +286,16 @@ class ConnectorsScopeService:
             kwargs=kwargs,
         )
 
-    async def import_source(self, source_id: int, *, mode: ConnectorsBackend | str | None = None) -> dict[str, Any]:
-        return await self._call(mode=mode, resource="sources", action="launch", method_name="import_source", args=(source_id,))
+    async def import_source(
+        self, source_id: int, *, mode: ConnectorsBackend | str | None = None
+    ) -> dict[str, Any]:
+        return await self._call(
+            mode=mode,
+            resource="sources",
+            action="launch",
+            method_name="import_source",
+            args=(source_id,),
+        )
 
     async def get_source_sync_status(
         self,
@@ -277,4 +331,10 @@ class ConnectorsScopeService:
         *,
         mode: ConnectorsBackend | str | None = None,
     ) -> dict[str, Any]:
-        return await self._call(mode=mode, resource="jobs", action="observe", method_name="get_job_status", args=(job_id,))
+        return await self._call(
+            mode=mode,
+            resource="jobs",
+            action="observe",
+            method_name="get_job_status",
+            args=(job_id,),
+        )

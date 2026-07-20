@@ -12,7 +12,12 @@ class FakeVoiceAssistantClient:
         self.calls = []
 
     async def process_voice_command(self, request_data):
-        self.calls.append(("process_voice_command", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "process_voice_command",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"session_id": "session-1", "success": True}
 
     async def list_voice_commands(self, **kwargs):
@@ -20,7 +25,12 @@ class FakeVoiceAssistantClient:
         return {"commands": [], "total": 0}
 
     async def create_voice_command(self, request_data):
-        self.calls.append(("create_voice_command", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "create_voice_command",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"id": "cmd-1", "name": request_data.name}
 
     async def get_voice_command(self, command_id, **kwargs):
@@ -28,11 +38,25 @@ class FakeVoiceAssistantClient:
         return {"id": command_id}
 
     async def update_voice_command(self, command_id, request_data, **kwargs):
-        self.calls.append(("update_voice_command", command_id, request_data.model_dump(exclude_none=True, mode="json"), kwargs))
+        self.calls.append(
+            (
+                "update_voice_command",
+                command_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+                kwargs,
+            )
+        )
         return {"id": command_id, "name": request_data.name}
 
     async def toggle_voice_command(self, command_id, request_data, **kwargs):
-        self.calls.append(("toggle_voice_command", command_id, request_data.model_dump(exclude_none=True, mode="json"), kwargs))
+        self.calls.append(
+            (
+                "toggle_voice_command",
+                command_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+                kwargs,
+            )
+        )
         return {"id": command_id, "enabled": request_data.enabled}
 
     async def validate_voice_command(self, command_id, **kwargs):
@@ -64,7 +88,12 @@ class FakeVoiceAssistantClient:
         return {"total_commands_processed": 1}
 
     async def dry_run_voice_command(self, request_data):
-        self.calls.append(("dry_run_voice_command", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "dry_run_voice_command",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"dry_run": True, "phrase": request_data.phrase}
 
 
@@ -135,7 +164,10 @@ async def test_server_voice_assistant_service_direct_client_takes_precedence_ove
     assert result["record_id"] == "server:voice_commands"
     assert provider.build_calls == 0
     assert client.calls == [
-        ("list_voice_commands", {"include_system": False, "include_disabled": False, "persona_id": None})
+        (
+            "list_voice_commands",
+            {"include_system": False, "include_disabled": False, "persona_id": None},
+        )
     ]
 
 
@@ -156,7 +188,10 @@ async def test_server_voice_assistant_service_from_server_context_provider_is_la
     assert service.client is None
     assert provider.build_calls == 1
     assert client.calls == [
-        ("list_voice_commands", {"include_system": False, "include_disabled": False, "persona_id": None})
+        (
+            "list_voice_commands",
+            {"include_system": False, "include_disabled": False, "persona_id": None},
+        )
     ]
 
 
@@ -173,17 +208,25 @@ async def test_server_voice_assistant_service_re_resolves_provider_without_servi
     assert len(provider.clients) == 2
     assert provider.clients[0] is not provider.clients[1]
     assert provider.clients[0].calls == [
-        ("list_voice_commands", {"include_system": False, "include_disabled": False, "persona_id": None})
+        (
+            "list_voice_commands",
+            {"include_system": False, "include_disabled": False, "persona_id": None},
+        )
     ]
     assert provider.clients[1].calls == [
-        ("list_voice_commands", {"include_system": True, "include_disabled": True, "persona_id": None})
+        (
+            "list_voice_commands",
+            {"include_system": True, "include_disabled": True, "persona_id": None},
+        )
     ]
     for built_client in provider.clients:
         assert all(value is not built_client for value in vars(service).values())
 
 
 @pytest.mark.asyncio
-async def test_server_voice_assistant_service_from_config_returns_provider_backed_service(monkeypatch):
+async def test_server_voice_assistant_service_from_config_returns_provider_backed_service(
+    monkeypatch,
+):
     provider = FakeClientProvider(FakeVoiceAssistantClient())
     build_provider_calls = []
 
@@ -191,7 +234,9 @@ async def test_server_voice_assistant_service_from_config_returns_provider_backe
         build_provider_calls.append(app_config)
         return provider
 
-    monkeypatch.setattr(voice_module, "build_runtime_api_client_provider_from_config", build_provider)
+    monkeypatch.setattr(
+        voice_module, "build_runtime_api_client_provider_from_config", build_provider
+    )
 
     config = {"tldw_api": {"base_url": "https://example.com"}}
     service = ServerVoiceAssistantService.from_config(config)
@@ -223,12 +268,20 @@ async def test_server_voice_assistant_service_routes_rest_calls_with_policy_acti
     policy = FakePolicyEnforcer()
     service = ServerVoiceAssistantService(client, policy_enforcer=policy)
 
-    processed = await service.process_command({"text": "summarize this", "include_tts": False})
-    listed = await service.list_commands(include_system=False, include_disabled=True, persona_id="persona-1")
+    processed = await service.process_command(
+        {"text": "summarize this", "include_tts": False}
+    )
+    listed = await service.list_commands(
+        include_system=False, include_disabled=True, persona_id="persona-1"
+    )
     created = await service.create_command(COMMAND_DEFINITION)
     detail = await service.get_command("cmd-1", persona_id="persona-1")
-    updated = await service.update_command("cmd-1", COMMAND_DEFINITION, persona_id="persona-1")
-    toggled = await service.toggle_command("cmd-1", {"enabled": False}, persona_id="persona-1")
+    updated = await service.update_command(
+        "cmd-1", COMMAND_DEFINITION, persona_id="persona-1"
+    )
+    toggled = await service.toggle_command(
+        "cmd-1", {"enabled": False}, persona_id="persona-1"
+    )
     validation = await service.validate_command("cmd-1", persona_id="persona-1")
     usage = await service.get_command_usage("cmd-1", days=14)
     deleted_command = await service.delete_command("cmd-1", persona_id="persona-1")
@@ -236,7 +289,9 @@ async def test_server_voice_assistant_service_routes_rest_calls_with_policy_acti
     session = await service.get_session("session-1")
     deleted_session = await service.delete_session("session-1")
     analytics = await service.get_analytics(days=30)
-    dry_run = await service.dry_run_command({"phrase": "summarize this", "command_id": "cmd-1"})
+    dry_run = await service.dry_run_command(
+        {"phrase": "summarize this", "command_id": "cmd-1"}
+    )
 
     assert processed["record_id"] == "server:voice_command:session-1"
     assert listed["backend"] == "server"
@@ -246,10 +301,18 @@ async def test_server_voice_assistant_service_routes_rest_calls_with_policy_acti
     assert toggled["enabled"] is False
     assert validation["record_id"] == "server:voice_command_validation:cmd-1"
     assert usage["record_id"] == "server:voice_command_usage:cmd-1"
-    assert deleted_command == {"backend": "server", "record_id": "server:voice_command:cmd-1", "deleted": True}
+    assert deleted_command == {
+        "backend": "server",
+        "record_id": "server:voice_command:cmd-1",
+        "deleted": True,
+    }
     assert sessions["record_id"] == "server:voice_sessions"
     assert session["record_id"] == "server:voice_session:session-1"
-    assert deleted_session == {"backend": "server", "record_id": "server:voice_session:session-1", "deleted": True}
+    assert deleted_session == {
+        "backend": "server",
+        "record_id": "server:voice_session:session-1",
+        "deleted": True,
+    }
     assert analytics["record_id"] == "server:voice_analytics"
     assert dry_run["record_id"] == "server:voice_command_dry_run:summarize this"
     assert policy.calls == [

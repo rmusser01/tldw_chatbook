@@ -29,7 +29,9 @@ class LocalRAGAdminService:
         media_service: Any = None,
     ):
         self.media_db = media_db
-        self.chunking_service = chunking_service or (get_chunking_service(media_db) if media_db is not None else None)
+        self.chunking_service = chunking_service or (
+            get_chunking_service(media_db) if media_db is not None else None
+        )
         self._vector_store = vector_store
         self.media_service = media_service
 
@@ -94,7 +96,9 @@ class LocalRAGAdminService:
         return [str(tag) for tag in candidates if str(tag).strip()]
 
     @classmethod
-    def _extract_template_tags(cls, record: Mapping[str, Any], template_config: Mapping[str, Any]) -> list[str]:
+    def _extract_template_tags(
+        cls, record: Mapping[str, Any], template_config: Mapping[str, Any]
+    ) -> list[str]:
         raw_tags = record.get("tags")
         if raw_tags is None:
             raw_tags = template_config.get("tags")
@@ -104,7 +108,9 @@ class LocalRAGAdminService:
                 raw_tags = metadata.get("tags")
         return cls._normalize_tags(raw_tags)
 
-    def _decorate_template_record(self, record: Mapping[str, Any] | None) -> dict[str, Any]:
+    def _decorate_template_record(
+        self, record: Mapping[str, Any] | None
+    ) -> dict[str, Any]:
         if not record:
             return {}
         decorated = dict(record)
@@ -115,7 +121,9 @@ class LocalRAGAdminService:
         return decorated
 
     @staticmethod
-    def _with_template_tags(template: Mapping[str, Any], tags: Sequence[str] | None) -> dict[str, Any]:
+    def _with_template_tags(
+        template: Mapping[str, Any], tags: Sequence[str] | None
+    ) -> dict[str, Any]:
         payload = dict(template)
         if tags is None:
             return payload
@@ -129,7 +137,9 @@ class LocalRAGAdminService:
     def _get_collection(self, collection_name: str) -> Any:
         return self._require_chroma_client().get_collection(name=collection_name)
 
-    def _infer_collection_dimension(self, collection: Any, metadata: Mapping[str, Any]) -> int | None:
+    def _infer_collection_dimension(
+        self, collection: Any, metadata: Mapping[str, Any]
+    ) -> int | None:
         dimension = metadata.get("embedding_dimension")
         try:
             return int(dimension) if dimension is not None else None
@@ -145,7 +155,11 @@ class LocalRAGAdminService:
         if not embeddings:
             return None
         first_bucket = embeddings[0]
-        candidate = first_bucket[0] if isinstance(first_bucket, list) and first_bucket else first_bucket
+        candidate = (
+            first_bucket[0]
+            if isinstance(first_bucket, list) and first_bucket
+            else first_bucket
+        )
         if candidate is None or not hasattr(candidate, "__len__"):
             return None
         try:
@@ -163,12 +177,23 @@ class LocalRAGAdminService:
     ) -> list[dict[str, Any]]:
         templates = [
             self._decorate_template_record(template)
-            for template in list(self._require_chunking_service().get_all_templates(include_system=True) or [])
+            for template in list(
+                self._require_chunking_service().get_all_templates(include_system=True)
+                or []
+            )
         ]
         if not include_builtin:
-            templates = [template for template in templates if not bool(template.get("is_system", False))]
+            templates = [
+                template
+                for template in templates
+                if not bool(template.get("is_system", False))
+            ]
         if not include_custom:
-            templates = [template for template in templates if bool(template.get("is_system", False))]
+            templates = [
+                template
+                for template in templates
+                if bool(template.get("is_system", False))
+            ]
         if tags:
             requested_tags = {str(tag) for tag in tags if str(tag).strip()}
             templates = [
@@ -199,7 +224,9 @@ class LocalRAGAdminService:
             description=description,
             template_json=self._with_template_tags(template, tags),
         )
-        return self._decorate_template_record(service.get_template_by_id(int(template_id)))
+        return self._decorate_template_record(
+            service.get_template_by_id(int(template_id))
+        )
 
     def update_template(
         self,
@@ -213,7 +240,9 @@ class LocalRAGAdminService:
         existing = self.get_template(template_name)
         template_payload: dict[str, Any] | None = None
         if template is not None:
-            template_payload = self._with_template_tags(template, tags if tags is not None else existing.get("tags"))
+            template_payload = self._with_template_tags(
+                template, tags if tags is not None else existing.get("tags")
+            )
         elif tags is not None:
             template_payload = self._with_template_tags(
                 self._parse_template_config(existing.get("template_json")),
@@ -224,7 +253,9 @@ class LocalRAGAdminService:
             description=description,
             template_json=template_payload,
         )
-        return self._decorate_template_record(service.get_template_by_id(int(existing["id"])))
+        return self._decorate_template_record(
+            service.get_template_by_id(int(existing["id"]))
+        )
 
     def delete_template(self, template_name: str, *, hard_delete: bool = False) -> None:
         existing = self.get_template(template_name)
@@ -258,7 +289,9 @@ class LocalRAGAdminService:
         chunker = Chunker(options=options, template_manager=object())
         raw_chunks = chunker.chunk_text(text, method=method, use_template=False)
         chunks = [
-            chunk.get("text") if isinstance(chunk, Mapping) and "text" in chunk else chunk
+            chunk.get("text")
+            if isinstance(chunk, Mapping) and "text" in chunk
+            else chunk
             for chunk in list(raw_chunks or [])
         ]
         result: dict[str, Any] = {
@@ -275,7 +308,9 @@ class LocalRAGAdminService:
         return result
 
     @staticmethod
-    def _chunking_options_from_template(template_config: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+    def _chunking_options_from_template(
+        template_config: Mapping[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
         chunking = template_config.get("chunking")
         if isinstance(chunking, Mapping):
             method = str(chunking.get("method") or "words")
@@ -287,17 +322,26 @@ class LocalRAGAdminService:
             for stage in pipeline:
                 if not isinstance(stage, Mapping) or stage.get("stage") != "chunk":
                     continue
-                method = str(stage.get("method") or template_config.get("base_method") or "words")
+                method = str(
+                    stage.get("method") or template_config.get("base_method") or "words"
+                )
                 return method, dict(stage.get("options") or {})
 
         method = str(template_config.get("base_method") or "words")
         metadata = template_config.get("metadata")
-        options = dict(metadata.get("default_options") or {}) if isinstance(metadata, Mapping) else {}
+        options = (
+            dict(metadata.get("default_options") or {})
+            if isinstance(metadata, Mapping)
+            else {}
+        )
         return method, options
 
     def list_collections(self) -> list[dict[str, Any]]:
         client = self._require_chroma_client()
-        return [self._coerce_collection(collection) for collection in list(client.list_collections() or [])]
+        return [
+            self._coerce_collection(collection)
+            for collection in list(client.list_collections() or [])
+        ]
 
     def get_collection_detail(self, collection_name: str) -> dict[str, Any]:
         collection = self._get_collection(collection_name)
@@ -311,7 +355,9 @@ class LocalRAGAdminService:
         return {
             "name": getattr(collection, "name", collection_name),
             "count": count,
-            "embedding_dimension": self._infer_collection_dimension(collection, metadata),
+            "embedding_dimension": self._infer_collection_dimension(
+                collection, metadata
+            ),
             "metadata": metadata,
         }
 
@@ -347,7 +393,9 @@ class LocalRAGAdminService:
                 "metadata": metadatas[index] if index < len(metadatas) else {},
             }
             if include_embeddings:
-                item["embedding"] = embeddings[index] if index < len(embeddings) else None
+                item["embedding"] = (
+                    embeddings[index] if index < len(embeddings) else None
+                )
             items.append(item)
 
         try:

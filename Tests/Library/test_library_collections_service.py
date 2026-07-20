@@ -63,7 +63,9 @@ def test_duplicate_normalized_names_are_rejected(tmp_path: Path) -> None:
         service.create_collection(" research ")
 
 
-def test_rename_collection_updates_name_description_and_updated_at(tmp_path: Path) -> None:
+def test_rename_collection_updates_name_description_and_updated_at(
+    tmp_path: Path,
+) -> None:
     service = _service(tmp_path)
     collection = service.create_collection("Research", description="Initial")
 
@@ -126,10 +128,14 @@ def test_transaction_rolls_back_failed_collection_write(tmp_path: Path) -> None:
             raise RuntimeError("force rollback")
 
     with db.connection() as conn:
-        assert conn.execute("SELECT COUNT(*) FROM library_collections").fetchone()[0] == 0
+        assert (
+            conn.execute("SELECT COUNT(*) FROM library_collections").fetchone()[0] == 0
+        )
 
 
-def test_item_membership_allows_same_source_across_collections_only(tmp_path: Path) -> None:
+def test_item_membership_allows_same_source_across_collections_only(
+    tmp_path: Path,
+) -> None:
     service = _service(tmp_path)
     first = service.create_collection("Research")
     second = service.create_collection("Briefing")
@@ -170,7 +176,9 @@ def test_invalid_names_are_rejected_before_sql(tmp_path: Path) -> None:
         service.create_collection("x" * 121)
 
     with sqlite3.connect(tmp_path / "library_collections.db") as conn:
-        assert conn.execute("SELECT COUNT(*) FROM library_collections").fetchone()[0] == 0
+        assert (
+            conn.execute("SELECT COUNT(*) FROM library_collections").fetchone()[0] == 0
+        )
 
 
 def test_descriptions_reject_unsafe_html_before_persistence(tmp_path: Path) -> None:
@@ -180,10 +188,14 @@ def test_descriptions_reject_unsafe_html_before_persistence(tmp_path: Path) -> N
         service.create_collection("Research", description="<script>alert(1)</script>")
 
     with sqlite3.connect(tmp_path / "library_collections.db") as conn:
-        assert conn.execute("SELECT COUNT(*) FROM library_collections").fetchone()[0] == 0
+        assert (
+            conn.execute("SELECT COUNT(*) FROM library_collections").fetchone()[0] == 0
+        )
 
 
-def test_list_collections_uses_default_limit_and_accepts_explicit_limit(tmp_path: Path) -> None:
+def test_list_collections_uses_default_limit_and_accepts_explicit_limit(
+    tmp_path: Path,
+) -> None:
     service = _service(tmp_path)
     for index in range(EXPECTED_DEFAULT_COLLECTION_LIST_LIMIT + 2):
         service.create_collection(f"Collection {index:03d}")
@@ -200,7 +212,9 @@ def test_list_collections_uses_default_limit_and_accepts_explicit_limit(tmp_path
     ]
 
 
-def test_deleted_collection_name_fails_before_late_sql_integrity_error(tmp_path: Path) -> None:
+def test_deleted_collection_name_fails_before_late_sql_integrity_error(
+    tmp_path: Path,
+) -> None:
     service = _service(tmp_path)
     collection = service.create_collection("Research")
     assert service.delete_collection(collection.collection_id) is True
@@ -217,5 +231,7 @@ def test_sqlite_errors_are_normalized_to_service_errors(tmp_path: Path) -> None:
 
     service.db.connection = broken_connection
 
-    with pytest.raises(LibraryCollectionsServiceError, match="Library Collections storage failed"):
+    with pytest.raises(
+        LibraryCollectionsServiceError, match="Library Collections storage failed"
+    ):
         service.list_collections()

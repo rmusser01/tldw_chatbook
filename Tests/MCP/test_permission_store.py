@@ -5,6 +5,7 @@ policy, kill switch + global default round-trips, server/tool state
 set/inherit-prune semantics, the allow-requires-hash guard, the
 config_changed clearing/marking contract, and the atomic-write pattern.
 """
+
 from __future__ import annotations
 
 import json
@@ -72,7 +73,9 @@ def test_load_backs_up_non_dict_json_and_returns_fresh_default(tmp_path):
 
 def test_load_backs_up_unknown_schema_version_and_returns_fresh_default(tmp_path):
     path = tmp_path / "mcp_permissions.json"
-    path.write_text(json.dumps({"schema_version": 2, "kill_switch": True}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"schema_version": 2, "kill_switch": True}), encoding="utf-8"
+    )
 
     store = MCPPermissionStore(path)
     payload = store.load()
@@ -104,7 +107,9 @@ def test_kill_switch_round_trip(tmp_path):
     store.set_kill_switch(True)
 
     assert store.get_kill_switch() is True
-    on_disk = json.loads((tmp_path / "mcp_permissions.json").read_text(encoding="utf-8"))
+    on_disk = json.loads(
+        (tmp_path / "mcp_permissions.json").read_text(encoding="utf-8")
+    )
     assert on_disk["kill_switch"] is True
 
 

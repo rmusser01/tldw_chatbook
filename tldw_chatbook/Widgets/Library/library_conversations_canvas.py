@@ -64,9 +64,12 @@ class LibraryConversationsCanvas(Vertical):
         )
         export_btn.display = not select_mode
         yield export_btn
-        select_btn = Button("Done" if select_mode else "Select",
-                            id="library-conversations-select-toggle",
-                            classes="library-canvas-action", compact=True)
+        select_btn = Button(
+            "Done" if select_mode else "Select",
+            id="library-conversations-select-toggle",
+            classes="library-canvas-action",
+            compact=True,
+        )
         # Disable only when nothing to select AND not already in select mode --
         # in select mode "Done" must stay pressable so the user can always exit,
         # even if the rows dropped to zero (e.g. a background snapshot refresh).
@@ -76,16 +79,29 @@ class LibraryConversationsCanvas(Vertical):
             action_row = Horizontal(classes="ds-toolbar")
             action_row.styles.height = "auto"
             with action_row:
-                yield Static(f"{self.canvas.selected_count} selected",
-                             id="library-conversations-selected-count", markup=False)
-                yield Button(f"Select all {rendered_count} shown",
-                             id="library-conversations-select-all",
-                             classes="library-canvas-action", compact=True)
-                yield Button("Clear", id="library-conversations-select-clear",
-                             classes="library-canvas-action", compact=True)
-                export_selected = Button("Export selected",
-                                         id="library-conversations-export-selected",
-                                         classes="library-canvas-action", compact=True)
+                yield Static(
+                    f"{self.canvas.selected_count} selected",
+                    id="library-conversations-selected-count",
+                    markup=False,
+                )
+                yield Button(
+                    f"Select all {rendered_count} shown",
+                    id="library-conversations-select-all",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Clear",
+                    id="library-conversations-select-clear",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                export_selected = Button(
+                    "Export selected",
+                    id="library-conversations-export-selected",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
                 export_selected.disabled = self.canvas.selected_count == 0
                 yield export_selected
 
@@ -118,9 +134,7 @@ class LibraryConversationsCanvas(Vertical):
                 # ``.plain`` and Textual 8's ``str(Content)`` return
                 # rendered text), so the raw remainder is stashed here at
                 # the single point of truth.
-                label_rest = (
-                    f" {_visible_row_title(row.title)}\n    {row.secondary}"
-                )
+                label_rest = f" {_visible_row_title(row.title)}\n    {row.secondary}"
                 button = Button(
                     f"{marker}{label_rest}",
                     id=f"library-conversation-row-{index}",

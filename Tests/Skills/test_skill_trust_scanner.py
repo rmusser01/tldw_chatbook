@@ -8,7 +8,9 @@ from tldw_chatbook.Skills_Interop.skill_trust_models import SkillFileFingerprint
 from tldw_chatbook.Skills_Interop.skill_trust_scanner import scan_skill_directory
 
 
-def test_scan_skill_directory_fingerprints_skill_and_supporting_text_in_sorted_order(tmp_path):
+def test_scan_skill_directory_fingerprints_skill_and_supporting_text_in_sorted_order(
+    tmp_path,
+):
     skill_dir = tmp_path / "demo"
     skill_dir.mkdir()
     skill_bytes = b"# Demo\nUse safely.\n"
@@ -38,7 +40,9 @@ def test_scan_skill_directory_fingerprints_skill_and_supporting_text_in_sorted_o
     assert snapshot.unsupported_paths == ()
 
 
-def test_scan_skill_directory_marks_unsupported_paths_without_text_or_fingerprints(tmp_path):
+def test_scan_skill_directory_marks_unsupported_paths_without_text_or_fingerprints(
+    tmp_path,
+):
     skill_dir = tmp_path / "demo"
     skill_dir.mkdir()
     (skill_dir / "SKILL.md").write_text("# Demo\n", encoding="utf-8")
@@ -67,7 +71,9 @@ def test_scan_skill_directory_marks_unsupported_paths_without_text_or_fingerprin
     assert snapshot.text_files == {"SKILL.md": "# Demo\n"}
 
 
-def test_scan_skill_directory_rejects_case_variants_and_case_insensitive_temp_suffixes(tmp_path):
+def test_scan_skill_directory_rejects_case_variants_and_case_insensitive_temp_suffixes(
+    tmp_path,
+):
     skill_dir = tmp_path / "demo"
     skill_dir.mkdir()
     (skill_dir / "SKILL.md").write_text("# Demo\n", encoding="utf-8")
@@ -82,7 +88,9 @@ def test_scan_skill_directory_rejects_case_variants_and_case_insensitive_temp_su
     for index, reserved_variant in enumerate(("Skill.md", "skill.md")):
         variant_dir = tmp_path / f"reserved-{index}"
         variant_dir.mkdir()
-        (variant_dir / reserved_variant).write_text("# Case variant\n", encoding="utf-8")
+        (variant_dir / reserved_variant).write_text(
+            "# Case variant\n", encoding="utf-8"
+        )
 
         variant_snapshot = scan_skill_directory("demo", variant_dir)
 

@@ -17,6 +17,7 @@ Reuses the established Library mounted-test harness from
 ``test_library_shell.py`` (``LibraryHarness`` / ``_build_test_app`` /
 ``_seed_conversations`` / the ``_wait_for_*`` pollers).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -97,7 +98,9 @@ async def test_checkbox_toggle_does_not_recompose_screen(monkeypatch):
         assert str(row.label).startswith("☐")
         count_static = screen.query_one("#library-conversations-selected-count", Static)
         assert str(count_static.renderable) == "0 selected"
-        export_button = screen.query_one("#library-conversations-export-selected", Button)
+        export_button = screen.query_one(
+            "#library-conversations-export-selected", Button
+        )
         assert export_button.disabled is True
 
         row.press()

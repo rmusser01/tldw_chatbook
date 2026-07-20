@@ -16,6 +16,7 @@ from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_QUERY_MAX_LENGTH,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
 )
+
 # The shared factory is the single process-wide RAG service constructor
 # (task-247): resolving through it guarantees Library RAG Answer queries read
 # the exact vector store / collection / embedding model that ingestion-time
@@ -34,9 +35,12 @@ _KNOWN_KEYWORD_SOURCE_TYPES = ("notes", "media", "conversations", "prompts")
 # raw provenance `source_type` values -> the scope-toggle identifiers used
 # by `LibraryRagScopeState`/the Search canvas's per-source toggles.
 _SEMANTIC_SOURCE_TYPE_MAP = {
-    "note": "notes", "notes": "notes",
-    "media": "media", "media_chunk": "media",
-    "conversation": "conversations", "conversations": "conversations",
+    "note": "notes",
+    "notes": "notes",
+    "media": "media",
+    "media_chunk": "media",
+    "conversation": "conversations",
+    "conversations": "conversations",
     "chat": "conversations",
 }
 
@@ -84,7 +88,9 @@ class LibraryLocalRagSearchService:
     def __init__(self, app_instance: Any) -> None:
         self._app = app_instance
 
-    async def search(self, query: str, scope: tuple[str, ...], mode: str, **kwargs: Any) -> Any:
+    async def search(
+        self, query: str, scope: tuple[str, ...], mode: str, **kwargs: Any
+    ) -> Any:
         """Run a Library-native keyword or RAG retrieval request.
 
         Args:
@@ -173,9 +179,13 @@ class LibraryLocalRagSearchService:
                 fts_match_query=build_fts_match_query(query),
             )
         except Exception:
-            logger.opt(exception=True).warning("Library keyword search: notes seam failed.")
+            logger.opt(exception=True).warning(
+                "Library keyword search: notes seam failed."
+            )
             return True, []
-        return True, [_note_row(item) for item in raw_results or () if isinstance(item, Mapping)]
+        return True, [
+            _note_row(item) for item in raw_results or () if isinstance(item, Mapping)
+        ]
 
     async def _search_media(
         self,
@@ -195,7 +205,9 @@ class LibraryLocalRagSearchService:
                 fts_match_query=build_fts_match_query(query),
             )
         except Exception:
-            logger.opt(exception=True).warning("Library keyword search: media seam failed.")
+            logger.opt(exception=True).warning(
+                "Library keyword search: media seam failed."
+            )
             return True, []
         items = payload.get("items", []) if isinstance(payload, Mapping) else []
         return True, [_media_row(item) for item in items if isinstance(item, Mapping)]
@@ -221,9 +233,15 @@ class LibraryLocalRagSearchService:
                     db.search_conversations_by_content, fts_query, top_k
                 )
         except Exception:
-            logger.opt(exception=True).warning("Library keyword search: conversations seam failed.")
+            logger.opt(exception=True).warning(
+                "Library keyword search: conversations seam failed."
+            )
             return True, []
-        return True, [_conversation_row(item) for item in raw_results or () if isinstance(item, Mapping)]
+        return True, [
+            _conversation_row(item)
+            for item in raw_results or ()
+            if isinstance(item, Mapping)
+        ]
 
     async def _search_prompts(
         self,
@@ -244,9 +262,13 @@ class LibraryLocalRagSearchService:
                 fts_match_query=build_fts_match_query(query),
             )
         except Exception:
-            logger.opt(exception=True).warning("Library keyword search: prompts seam failed.")
+            logger.opt(exception=True).warning(
+                "Library keyword search: prompts seam failed."
+            )
             return True, []
-        return True, [_prompt_row(item) for item in raw_results or () if isinstance(item, Mapping)]
+        return True, [
+            _prompt_row(item) for item in raw_results or () if isinstance(item, Mapping)
+        ]
 
     async def _search_semantic(
         self,
@@ -358,14 +380,18 @@ class LibraryLocalRagSearchService:
         False so the caller falls back to the generic zero-results outcome
         rather than claiming an empty index it cannot verify.
         """
-        get_stats = getattr(getattr(rag_service, "vector_store", None), "get_collection_stats", None)
+        get_stats = getattr(
+            getattr(rag_service, "vector_store", None), "get_collection_stats", None
+        )
         if not callable(get_stats):
             return False
         try:
             # ChromaDB-backed stats can touch disk; keep it off the event loop.
             stats = await asyncio.to_thread(get_stats)
         except Exception:
-            logger.opt(exception=True).debug("Library RAG: vector store stats probe failed.")
+            logger.opt(exception=True).debug(
+                "Library RAG: vector store stats probe failed."
+            )
             return False
         if not isinstance(stats, Mapping) or stats.get("error"):
             return False
@@ -459,7 +485,10 @@ def _semantic_row(item: Any) -> dict[str, Any]:
         provenance["source_type"] = source_type
     row: dict[str, Any] = {
         "source_id": str(
-            metadata.get("source_id") or metadata.get("document_id") or values.get("id") or ""
+            metadata.get("source_id")
+            or metadata.get("document_id")
+            or values.get("id")
+            or ""
         ),
         "chunk_id": str(metadata.get("chunk_id") or ""),
         "title": metadata.get("title") or metadata.get("document_title") or "",
@@ -487,8 +516,12 @@ def _semantic_row_matches_scope(row: Mapping[str, Any], scope: tuple[str, ...]) 
         unrecognized provenance always return `True` (see `_search_semantic`).
     """
     provenance = row.get("provenance")
-    raw_source_type = provenance.get("source_type") if isinstance(provenance, Mapping) else None
-    canonical = _SEMANTIC_SOURCE_TYPE_MAP.get(str(raw_source_type or "").strip().lower())
+    raw_source_type = (
+        provenance.get("source_type") if isinstance(provenance, Mapping) else None
+    )
+    canonical = _SEMANTIC_SOURCE_TYPE_MAP.get(
+        str(raw_source_type or "").strip().lower()
+    )
     if canonical is None:
         return True
     return canonical in scope
@@ -498,7 +531,9 @@ def _semantic_citation(citation: Any) -> dict[str, Any]:
     if isinstance(citation, Mapping):
         return dict(citation)
     return {
-        "label": getattr(citation, "document_title", None) or getattr(citation, "text", None) or "Citation",
+        "label": getattr(citation, "document_title", None)
+        or getattr(citation, "text", None)
+        or "Citation",
         "source_id": getattr(citation, "document_id", None) or "",
         "chunk_id": getattr(citation, "chunk_id", None) or "",
     }

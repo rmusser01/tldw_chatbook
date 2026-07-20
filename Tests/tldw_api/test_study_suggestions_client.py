@@ -78,10 +78,19 @@ async def test_study_suggestion_routes_wire_and_return_typed_models(monkeypatch)
         "GET",
         "/api/v1/study-suggestions/anchors/deck/7/status",
     )
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/study-suggestions/snapshots/11")
-    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/study-suggestions/snapshots/11/refresh")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/study-suggestions/snapshots/11",
+    )
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/study-suggestions/snapshots/11/refresh",
+    )
     assert mocked.await_args_list[2].kwargs["json_data"] == {"reason": "user_requested"}
-    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/study-suggestions/snapshots/11/actions")
+    assert mocked.await_args_list[3].args[:2] == (
+        "POST",
+        "/api/v1/study-suggestions/snapshots/11/actions",
+    )
     assert mocked.await_args_list[3].kwargs["json_data"] == {
         "target_service": "quiz",
         "target_type": "quiz",

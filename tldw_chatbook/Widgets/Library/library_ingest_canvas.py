@@ -5,10 +5,17 @@ from __future__ import annotations
 from typing import Any
 
 from rich.markup import escape as escape_markup
+from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Button, Collapsible, Input, Static
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.message import Message
+from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
 
+from tldw_chatbook.Library.ingest_capabilities import (
+    TypeGroupCapabilities,
+    _is_installed,
+    get_capabilities,
+)
 from tldw_chatbook.Library.library_ingest_state import (
     QUEUE_EMPTY_COPY,
     LibraryIngestCanvasState,
@@ -25,23 +32,103 @@ class LibraryIngestCanvas(VerticalScroll):
     """Render the Library ingest canvas: the local-file ingest form and its job queue.
 
     ``VerticalScroll`` root (the L3a clipping lesson -- a plain ``Vertical``
-    canvas clips content past the fold); every child is a stacked,
-    full-width Button/Input/Static, mirroring ``LibraryNotesCanvas``'s sync
-    panel. No ``Select``, and no ``Horizontal`` mixing a 1fr sibling with
-    fixed-width action buttons (the known non-rendering failure mode for
-    this canvas family).
-
-    Attributes:
-        state: The canvas's full display state (built by
-            ``build_library_ingest_state``): the form echo, the Start
-            gate, and the queue rows to render.
+    canvas clips content past the fold); every child is stacked full-width,
+    mirroring ``LibraryNotesCanvas``'s sync panel. Per-type option panels
+    are rendered from ``ingest_capabilities.py`` schemas and post messages
+    for all state changes so the screen can persist them.
     """
+
+    class OptionValueChanged(Message):
+        """A per-type option value changed."""
+
+        def __init__(self, group: str, name: str, value: Any) -> None:
+            super().__init__()
+            self.group = group
+            self.name = name
+            self.value = value
+
+    class OptionPanelToggled(Message):
+        """A per-type options panel was expanded or collapsed."""
+
+        def __init__(self, group: str, expanded: bool) -> None:
+            super().__init__()
+            self.group = group
+            self.expanded = expanded
 
     def __init__(self, state: LibraryIngestCanvasState, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.state = state
         self.styles.width = "1fr"
         self.styles.min_width = 40
+
+    def _compose_type_group(
+        self,
+        group: str,
+        cap: TypeGroupCapabilities,
+        values: dict[str, Any],
+        expanded: bool,
+    ) -> Collapsible:
+        """Build a collapsible options panel for one detected type group."""
+        scope_label = f"These options apply to all {cap.label} files in this selection."
+        children: list[Any] = [Static(scope_label, classes="type-group-scope")]
+        summary_parts: list[str] = []
+
+        for field in cap.fields:
+            value = values.get(field.name, field.default)
+            summary_parts.append(f"{field.name}={value}")
+            disabled = field.depends_on is not None and not _is_installed(field.depends_on)
+            widget_id = f"opt-{group}-{field.name}"
+
+            if field.type == "checkbox":
+                children.append(
+                    Checkbox(
+                        field.label,
+                        value=bool(value),
+                        id=widget_id,
+                        disabled=disabled,
+                    )
+                )
+            elif field.type == "select":
+                select_options = [(opt, opt) for opt in field.options]
+                select_value = value if value in field.options else field.default
+                if select_value not in field.options and field.options:
+                    select_value = field.options[0]
+                children.append(
+                    Select(
+                        select_options,
+                        value=select_value,
+                        id=widget_id,
+                        disabled=disabled,
+                        allow_blank=False,
+                    )
+                )
+            else:
+                children.append(
+                    Input(
+                        value=str(value),
+                        placeholder=field.label,
+                        id=widget_id,
+                        disabled=disabled,
+                    )
+                )
+
+        children.append(
+            Button(
+                "Reset to defaults",
+                id=f"opt-{group}-reset",
+                classes="library-canvas-action library-ingest-option-reset",
+                compact=True,
+            )
+        )
+
+        panel = Vertical(*children, classes="type-group-contents")
+        title = f"{cap.label} — {', '.join(summary_parts)}"
+        return Collapsible(
+            panel,
+            title=title,
+            collapsed=not expanded,
+            id=f"type-group-{group}",
+        )
 
     def compose(self) -> ComposeResult:
         state = self.state
@@ -77,16 +164,80 @@ class LibraryIngestCanvas(VerticalScroll):
             classes="library-canvas-action",
             compact=True,
         )
-        # L4 (fix batch F1b): the supported-extensions list lives here,
-        # always visible, instead of being repeated on every failed queue
-        # row (see the row's own short_error) -- reuses the same quiet-line
-        # class as the other muted informational lines on this canvas.
-        yield Static(
-            state.supported_types_line,
-            id="library-ingest-supported-types",
-            classes="library-ingest-quiet-line",
-            markup=False,
-        )
+        # Pre-flight summary replaces the old always-visible supported-types
+        # line. All copy is taken straight from ``state``; this widget stays
+        # render-only and does not compute pre-flight results itself.
+        if state.preflight_checking:
+            yield Static(
+                "Checking…",
+                id="ingest-preflight-status",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
+        else:
+            if state.errors:
+                for index, error in enumerate(state.errors):
+                    yield Static(
+                        escape_markup(error),
+                        id=f"ingest-preflight-error-{index}",
+                        classes="library-ingest-quiet-line",
+                    )
+                yield Button(
+                    "Retry",
+                    id="ingest-preflight-retry",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+            if state.warning_lines:
+                for index, warning in enumerate(state.warning_lines):
+                    yield Static(
+                        f"⚠ {escape_markup(warning)}",
+                        id=f"ingest-preflight-warning-{index}",
+                        classes="library-ingest-quiet-line",
+                    )
+            if state.type_breakdown_line:
+                yield Static(
+                    state.type_breakdown_line,
+                    id="ingest-type-breakdown",
+                    classes="library-ingest-quiet-line",
+                    markup=False,
+                )
+            if state.estimate_line:
+                yield Static(
+                    state.estimate_line,
+                    id="ingest-estimate",
+                    classes="library-ingest-quiet-line",
+                    markup=False,
+                )
+            if state.unsupported_files:
+                count = len(state.unsupported_files)
+                file_noun = "file" if count == 1 else "files"
+                failure_noun = "failure" if count == 1 else "failures"
+                yield Static(
+                    f"{count} unsupported {file_noun} will be recorded as a {failure_noun}.",
+                    id="ingest-unsupported-summary",
+                    classes="library-ingest-quiet-line",
+                    markup=False,
+                )
+            if state.type_groups:
+                with Horizontal(classes="library-ingest-options-bulk"):
+                    yield Button(
+                        "Expand all",
+                        id="ingest-expand-all",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Collapse all",
+                        id="ingest-collapse-all",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                for group in state.type_groups:
+                    cap = get_capabilities(group)
+                    values = state.form.type_options.get(group, {})
+                    expanded = group in state.expanded_type_groups
+                    yield self._compose_type_group(group, cap, values, expanded)
         yield Input(
             value=state.form.title,
             placeholder="Title (optional)",
@@ -105,37 +256,6 @@ class LibraryIngestCanvas(VerticalScroll):
             id="library-ingest-keywords",
             classes="library-ingest-field",
         )
-        with Collapsible(
-            title="Advanced options",
-            # Renders from the form echo's `advanced_open` field (not a
-            # hardcoded True) so a recompose while the panel is expanded --
-            # the analyze/chunk toggle handlers' own, or a registry-listener
-            # -driven one -- never re-collapses it out from under the user.
-            # The screen's `Collapsible.Toggled` handler keeps this field in
-            # sync with the live widget's `collapsed` reactive (mirrors the
-            # `#library-rag-history` collapsible's own state-sync pattern).
-            collapsed=not state.form.advanced_open,
-            id="library-ingest-advanced",
-        ):
-            yield Button(
-                _toggle_label(enabled=state.form.analyze, text="Analyze after ingest"),
-                id="library-ingest-analyze-toggle",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                _toggle_label(enabled=state.form.chunk, text="Chunk content"),
-                id="library-ingest-chunk-toggle",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Input(
-                value=state.form.chunk_size,
-                placeholder="Chunk size (words)",
-                id="library-ingest-chunk-size",
-                classes="library-ingest-field",
-                disabled=not state.form.chunk,
-            )
         # Always mounted, even with empty text, so the Start button never
         # shifts vertically when the gate line's copy appears/disappears
         # (2026-07 UAT: the button jumped ~2 rows on every gate change,
@@ -176,7 +296,6 @@ class LibraryIngestCanvas(VerticalScroll):
                 id="library-ingest-queue-empty",
                 markup=False,
             )
-            return
         for index, row in enumerate(state.queue_rows):
             # A source filename can contain Rich markup syntax (e.g. a
             # literal "[/bracket]" in the name) -- escape_markup here is
@@ -184,7 +303,12 @@ class LibraryIngestCanvas(VerticalScroll):
             # mount time (the L3a lesson; mirrors
             # ``library_rag_history_children``'s escaped Button labels).
             row_classes = "library-ingest-row"
-            has_actions = row.can_open or row.can_retry or row.can_dismiss
+            has_actions = (
+                row.can_open
+                or row.can_retry
+                or row.can_dismiss
+                or bool(row.error_detail)
+            )
             if has_actions:
                 # A row with action buttons below it gets its own
                 # bottom-margin trimmed to 0 (A3) -- the actions row's own
@@ -200,6 +324,14 @@ class LibraryIngestCanvas(VerticalScroll):
                 id=f"library-ingest-row-{index}",
                 classes=row_classes,
             )
+            if row.progress:
+                progress_line = row.progress.get("message") if row.progress else ""
+                yield Static(
+                    f"{row.state.value} {progress_line}",
+                    id=f"library-ingest-progress-{row.job_id}",
+                    classes="library-ingest-progress",
+                    markup=False,
+                )
             # Row-action buttons are keyed by the job's registry-assigned
             # ``job_id`` (e.g. ``"library-ingest-open-ingest-job-3"``), NOT
             # by ``index`` -- unlike the row Static above, these ARE click
@@ -233,6 +365,16 @@ class LibraryIngestCanvas(VerticalScroll):
                             ),
                             compact=True,
                         )
+                    if row.error_detail:
+                        yield Button(
+                            "Show details",
+                            id=f"library-ingest-details-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-details "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
                     if row.can_retry:
                         yield Button(
                             "Retry",
@@ -260,3 +402,55 @@ class LibraryIngestCanvas(VerticalScroll):
                 classes="library-canvas-action",
                 compact=True,
             )
+        with Collapsible(
+            title="Recent ingests", collapsed=True, id="library-ingest-recent"
+        ):
+            for job in state.recent_jobs:
+                yield Static(
+                    f"{escape_markup(job.source_path)} — {job.state.value}",
+                    classes="library-ingest-recent-item",
+                    markup=False,
+                )
+
+    @on(Checkbox.Changed)
+    @on(Select.Changed)
+    @on(Input.Changed)
+    def _handle_option_value_changed(
+        self,
+        event: Checkbox.Changed | Select.Changed | Input.Changed,
+    ) -> None:
+        """Parse an option widget id and bubble the change up as a message."""
+        widget = getattr(
+            event,
+            "checkbox",
+            getattr(event, "select", getattr(event, "input", None)),
+        )
+        if widget is None:
+            return
+        widget_id = widget.id
+        if not widget_id or not widget_id.startswith("opt-"):
+            return
+        parts = widget_id.split("-")
+        if len(parts) < 3 or parts[0] != "opt":
+            return
+        group = parts[1]
+        name = "-".join(parts[2:])
+        if name == "reset":
+            return
+        self.post_message(self.OptionValueChanged(group, name, event.value))
+
+    @on(Collapsible.Expanded)
+    @on(Collapsible.Collapsed)
+    def _handle_option_panel_toggled(
+        self,
+        event: Collapsible.Expanded | Collapsible.Collapsed,
+    ) -> None:
+        """Parse a type-group panel id and bubble expand/collapse up as a message."""
+        collapsible = event.collapsible
+        widget_id = collapsible.id
+        if not widget_id or not widget_id.startswith("type-group-"):
+            return
+        group = widget_id[len("type-group-"):]
+        self.post_message(
+            self.OptionPanelToggled(group, expanded=isinstance(event, Collapsible.Expanded))
+        )

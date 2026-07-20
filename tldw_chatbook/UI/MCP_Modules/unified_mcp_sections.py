@@ -64,7 +64,9 @@ def render_overview_section(payload: Mapping[str, Any] | None) -> str:
             ]
         )
     if "external_servers" in payload:
-        lines.append(f"External server profiles: {_count_value(external_servers.get('profiles'))}")
+        lines.append(
+            f"External server profiles: {_count_value(external_servers.get('profiles'))}"
+        )
     if "governance" in payload:
         lines.append(f"Governance rules: {_count_value(governance.get('rules'))}")
     lines.extend(
@@ -74,7 +76,9 @@ def render_overview_section(payload: Mapping[str, Any] | None) -> str:
         ]
     )
     if is_server_payload:
-        lines.append("Server status and scope capabilities are shown here; use Inventory for runnable items.")
+        lines.append(
+            "Server status and scope capabilities are shown here; use Inventory for runnable items."
+        )
     lines.extend(
         [
             "",
@@ -159,7 +163,12 @@ def render_governance_section(payload: Mapping[str, Any] | None) -> str:
     rules = list(payload.get("rules") or [])
     if rules and not any(
         payload.get(key)
-        for key in ("permission_profiles", "policy_assignments", "approval_policies", "acp_profiles")
+        for key in (
+            "permission_profiles",
+            "policy_assignments",
+            "approval_policies",
+            "acp_profiles",
+        )
     ):
         lines = [
             "Unified MCP Governance",
@@ -248,7 +257,9 @@ def render_advanced_section(payload: Mapping[str, Any] | None) -> str:
     path_scope_objects = list(payload.get("path_scope_objects") or [])
     workspace_set_objects = list(payload.get("workspace_set_objects") or [])
     shared_workspaces = list(payload.get("shared_workspaces") or [])
-    audit_findings = list((payload.get("governance_audit_findings") or {}).get("items") or [])
+    audit_findings = list(
+        (payload.get("governance_audit_findings") or {}).get("items") or []
+    )
     lines = [
         "Unified MCP Advanced",
         "",

@@ -24,9 +24,7 @@ from textual.widgets import Checkbox, Input, Select, Static, TextArea
 
 _SIMPLE_KINDS = ("string", "number", "integer", "boolean")
 
-_RAW_MODE_NOTE = (
-    "This tool's parameters can't be rendered as a form — edit raw JSON."
-)
+_RAW_MODE_NOTE = "This tool's parameters can't be rendered as a form — edit raw JSON."
 
 
 @dataclass(frozen=True)
@@ -77,25 +75,29 @@ def parse_schema(schema: dict | None) -> list[SchemaField] | None:
 
         enum_values = spec.get("enum")
         if isinstance(enum_values, list) and enum_values:
-            fields.append(SchemaField(
-                name=field_name,
-                kind="enum",
-                required=required,
-                description=description,
-                default=default,
-                choices=tuple(str(value) for value in enum_values),
-            ))
+            fields.append(
+                SchemaField(
+                    name=field_name,
+                    kind="enum",
+                    required=required,
+                    description=description,
+                    default=default,
+                    choices=tuple(str(value) for value in enum_values),
+                )
+            )
             continue
 
         prop_type = spec.get("type")
         if prop_type in _SIMPLE_KINDS:
-            fields.append(SchemaField(
-                name=field_name,
-                kind=str(prop_type),
-                required=required,
-                description=description,
-                default=default,
-            ))
+            fields.append(
+                SchemaField(
+                    name=field_name,
+                    kind=str(prop_type),
+                    required=required,
+                    description=description,
+                    default=default,
+                )
+            )
             continue
 
         # Nested object/array, oneOf/anyOf, missing/unsupported type, etc.
@@ -135,8 +137,12 @@ class MCPSchemaForm(Vertical):
 
     def compose(self) -> ComposeResult:
         if self._fields is None:
-            yield Static(_RAW_MODE_NOTE, id="mcp-schema-raw-note",
-                         classes="ds-field-row", markup=False)
+            yield Static(
+                _RAW_MODE_NOTE,
+                id="mcp-schema-raw-note",
+                classes="ds-field-row",
+                markup=False,
+            )
             yield TextArea("{}", id="mcp-schema-raw")
             return
 
@@ -147,16 +153,21 @@ class MCPSchemaForm(Vertical):
 
             if schema_field.kind == "boolean":
                 default_value = (
-                    bool(schema_field.default) if schema_field.default is not None else False
+                    bool(schema_field.default)
+                    if schema_field.default is not None
+                    else False
                 )
                 yield Checkbox(
                     schema_field.description or schema_field.name,
-                    value=default_value, id=widget_id,
+                    value=default_value,
+                    id=widget_id,
                 )
             elif schema_field.kind == "enum":
                 options = [(choice, choice) for choice in schema_field.choices]
                 default_str = (
-                    str(schema_field.default) if schema_field.default is not None else None
+                    str(schema_field.default)
+                    if schema_field.default is not None
+                    else None
                 )
                 if default_str is not None and default_str in schema_field.choices:
                     yield Select(options, id=widget_id, value=default_str)
@@ -169,7 +180,8 @@ class MCPSchemaForm(Vertical):
                 # coercion, so a restrictive native validator would only
                 # get in the way of typing intermediate values like "-").
                 placeholder = (
-                    schema_field.kind if schema_field.kind in ("number", "integer")
+                    schema_field.kind
+                    if schema_field.kind in ("number", "integer")
                     else (schema_field.description or "")
                 )
                 default_str = (

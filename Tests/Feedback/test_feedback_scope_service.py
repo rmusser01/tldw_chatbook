@@ -15,7 +15,10 @@ class FakeFeedbackService:
 
     async def list_feedback(self, conversation_id):
         self.calls.append(("list_feedback", conversation_id))
-        return {"ok": True, "feedback": [{"id": "fb-1", "conversation_id": conversation_id}]}
+        return {
+            "ok": True,
+            "feedback": [{"id": "fb-1", "conversation_id": conversation_id}],
+        }
 
     async def get_feedback(self, feedback_id):
         self.calls.append(("get_feedback", feedback_id))
@@ -63,7 +66,9 @@ async def test_feedback_scope_service_routes_server_crud_and_normalizes_records(
     )
     listed = await scope.list_feedback("conv-1", mode="server")
     detail = await scope.get_feedback("fb-1", mode="server")
-    updated = await scope.update_feedback("fb-1", mode="server", user_notes="Needs detail")
+    updated = await scope.update_feedback(
+        "fb-1", mode="server", user_notes="Needs detail"
+    )
     deleted = await scope.delete_feedback("fb-1", mode="server")
 
     assert submitted["record_id"] == "server:feedback:fb-1"
@@ -97,10 +102,14 @@ async def test_feedback_scope_service_routes_server_crud_and_normalizes_records(
 
 
 @pytest.mark.asyncio
-async def test_feedback_scope_service_routes_local_crud_and_normalizes_records(tmp_path):
+async def test_feedback_scope_service_routes_local_crud_and_normalizes_records(
+    tmp_path,
+):
     local = LocalFeedbackService(store_path=tmp_path / "feedback.json")
     policy = FakePolicyEnforcer()
-    scope = FeedbackScopeService(local_service=local, server_service=None, policy_enforcer=policy)
+    scope = FeedbackScopeService(
+        local_service=local, server_service=None, policy_enforcer=policy
+    )
 
     submitted = await scope.submit_feedback(
         mode="local",
@@ -111,7 +120,9 @@ async def test_feedback_scope_service_routes_local_crud_and_normalizes_records(t
     )
     listed = await scope.list_feedback("local-conv-1", mode="local")
     detail = await scope.get_feedback("local-fb-1", mode="local")
-    updated = await scope.update_feedback("local-fb-1", mode="local", user_notes="Needs citation")
+    updated = await scope.update_feedback(
+        "local-fb-1", mode="local", user_notes="Needs citation"
+    )
     deleted = await scope.delete_feedback("local-fb-1", mode="local")
 
     assert submitted["record_id"] == "local:feedback:local-fb-1"
@@ -131,7 +142,9 @@ async def test_feedback_scope_service_routes_local_crud_and_normalizes_records(t
 @pytest.mark.asyncio
 async def test_feedback_scope_service_honestly_rejects_missing_local_service():
     server = FakeFeedbackService()
-    scope = FeedbackScopeService(local_service=None, server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = FeedbackScopeService(
+        local_service=None, server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
     with pytest.raises(ValueError, match="Local feedback backend is unavailable"):
         await scope.list_feedback("conv-1", mode="local")
@@ -142,7 +155,10 @@ async def test_feedback_scope_service_honestly_rejects_missing_local_service():
 @pytest.mark.asyncio
 async def test_feedback_scope_service_blocks_denied_server_action_before_dispatch():
     server = FakeFeedbackService()
-    scope = FeedbackScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer("server_auth_required"))
+    scope = FeedbackScopeService(
+        server_service=server,
+        policy_enforcer=FakePolicyEnforcer("server_auth_required"),
+    )
 
     with pytest.raises(PolicyDeniedError) as exc:
         await scope.list_feedback("conv-1", mode="server")
@@ -166,13 +182,17 @@ def test_feedback_scope_service_reports_known_unsupported_capabilities():
     ]
     assert scope.list_unsupported_capabilities(mode="local") == []
 
-    detail_capable_scope = FeedbackScopeService(local_service=None, server_service=FakeFeedbackService())
+    detail_capable_scope = FeedbackScopeService(
+        local_service=None, server_service=FakeFeedbackService()
+    )
     assert detail_capable_scope.list_unsupported_capabilities(mode="server") == []
 
 
 @pytest.mark.asyncio
 async def test_feedback_scope_service_reports_server_detail_as_missing_contract():
-    scope = FeedbackScopeService(server_service=object(), policy_enforcer=FakePolicyEnforcer())
+    scope = FeedbackScopeService(
+        server_service=object(), policy_enforcer=FakePolicyEnforcer()
+    )
 
     with pytest.raises(ValueError, match="single-feedback detail"):
         await scope.get_feedback("fb-1", mode="server")

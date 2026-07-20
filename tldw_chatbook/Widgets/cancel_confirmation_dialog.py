@@ -12,7 +12,7 @@ from textual.widgets import Label, Button, Static
 
 class CancelConfirmationDialog(ModalScreen[bool]):
     """Modal dialog for confirming cancellation of media processing."""
-    
+
     DEFAULT_CSS = """
     CancelConfirmationDialog {
         align: center middle;
@@ -50,7 +50,7 @@ class CancelConfirmationDialog(ModalScreen[bool]):
         min-width: 12;
     }
     """
-    
+
     def __init__(
         self,
         title: str = "Cancel Transcription?",
@@ -62,7 +62,7 @@ class CancelConfirmationDialog(ModalScreen[bool]):
         classes: Optional[str] = None,
     ) -> None:
         """Initialize the cancel confirmation dialog.
-        
+
         Args:
             title: Dialog title
             message: Confirmation message
@@ -74,7 +74,7 @@ class CancelConfirmationDialog(ModalScreen[bool]):
         self.message_text = message
         self.confirm_text = confirm_text
         self.cancel_text = cancel_text
-    
+
     def compose(self) -> ComposeResult:
         """Compose the dialog UI."""
         with Container():
@@ -83,7 +83,7 @@ class CancelConfirmationDialog(ModalScreen[bool]):
             with Horizontal(classes="button-container"):
                 yield Button(self.cancel_text, variant="primary", id="continue-btn")
                 yield Button(self.confirm_text, variant="error", id="cancel-btn")
-    
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         event.stop()  # Prevent propagation to parent

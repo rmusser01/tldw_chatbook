@@ -22,25 +22,27 @@ logger = logger.bind(module="ChatAttachmentHandler")
 
 class ChatAttachmentHandler:
     """Handles file attachments and image processing."""
-    
-    def __init__(self, chat_window: 'ChatWindowEnhanced'):
+
+    def __init__(self, chat_window: "ChatWindowEnhanced"):
         """Initialize the attachment handler.
-        
+
         Args:
             chat_window: Parent ChatWindowEnhanced instance
         """
         self.chat_window = chat_window
         self.app_instance = chat_window.app_instance
-    
+
     async def handle_attach_image_button(self, event):
         """Show file picker dialog for attachments or legacy file input.
-        
+
         Args:
             event: Button.Pressed event
         """
         # Check if we're in legacy/test mode with a mocked file input.
         file_path_input = getattr(self.chat_window, "_file_path_input", None)
-        if file_path_input is None and not getattr(self.chat_window, "is_attached", False):
+        if file_path_input is None and not getattr(
+            self.chat_window, "is_attached", False
+        ):
             try:
                 file_path_input = self.chat_window.query_one("#image-file-path-input")
                 self.chat_window._file_path_input = file_path_input
@@ -55,32 +57,38 @@ class ChatAttachmentHandler:
                 file_path_input.styles.display = "block"
             file_path_input.focus()
             return
-        
+
         from fnmatch import fnmatch
         from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
-        
+
         def on_file_selected(file_path: Optional[Path]):
             if file_path:
                 # Process the selected file
                 async def process_async():
                     await self.process_file_attachment(str(file_path))
+
                 self.app_instance.call_later(process_async)
-        
+
         # Create filter functions
         def create_filter(patterns: str):
             """Create a filter function from semicolon-separated patterns."""
-            pattern_list = patterns.split(';')
+            pattern_list = patterns.split(";")
+
             def filter_func(path: Path) -> bool:
                 return any(fnmatch(path.name, pattern) for pattern in pattern_list)
+
             return filter_func
-        
+
         from ...Chat.attachment_core import attachment_filter_specs
 
         file_filters = Filters(
-            *[(label, create_filter(patterns)) for label, patterns in attachment_filter_specs()],
+            *[
+                (label, create_filter(patterns))
+                for label, patterns in attachment_filter_specs()
+            ],
             ("All Files", lambda path: True),
         )
-        
+
         # Push the picker directly — EnhancedFileOpen like every other picker
         # surface: the plain FileOpen re-export accepts no `context` kwarg and
         # raised TypeError the moment this branch was exercised (TASK-219).
@@ -93,20 +101,20 @@ class ChatAttachmentHandler:
             ),
             callback=on_file_selected,
         )
-    
+
     async def handle_clear_image_button(self, event):
         """Clear attached file.
-        
+
         Args:
             event: Button.Pressed event
         """
         # Clear all attachment data
         self.clear_attachment_state()
         self.app_instance.notify("File attachment cleared")
-    
+
     async def process_file_attachment(self, file_path: str) -> None:
         """Process selected file using appropriate handler with worker pattern.
-        
+
         Args:
             file_path: Path to the file to process
         """
@@ -151,10 +159,10 @@ class ChatAttachmentHandler:
         from ...Chat.attachment_core import load_processed_file
 
         return await load_processed_file(file_path)
-    
+
     def _process_file_worker(self, file_path: str) -> None:
         """Worker to process file attachment in background thread.
-        
+
         Args:
             file_path: Path to the file to process
         """
@@ -171,7 +179,7 @@ class ChatAttachmentHandler:
                 file_path,
                 e,
             )
-    
+
     def _handle_processing_error(self, file_path: str, error: Exception) -> None:
         """Handle attachment processing errors on the main thread."""
         file_name = Path(file_path).name
@@ -213,7 +221,7 @@ class ChatAttachmentHandler:
         file_path: Optional[str] = None,
     ) -> None:
         """Handle the processed file data and update UI.
-        
+
         Args:
             processed_file: Processed file data from file handler
             file_path: Original file path for metadata and notifications
@@ -254,62 +262,90 @@ class ChatAttachmentHandler:
                             chat_input.text = new_text
                         if hasattr(chat_input, "value"):
                             chat_input.value = new_text
-                        
+
                         # Move cursor to end
                         try:
-                            lines = new_text.split('\n')
+                            lines = new_text.split("\n")
                             last_row = len(lines) - 1
                             last_col = len(lines[-1]) if lines else 0
                             chat_input.cursor_location = (last_row, last_col)
                         except (IndexError, ValueError) as cursor_error:
-                            logger.warning(f"Failed to set cursor location: {cursor_error}")
-                        
+                            logger.warning(
+                                f"Failed to set cursor location: {cursor_error}"
+                            )
+
                         # Show notification
                         emoji_map = {
                             "text": "📄",
-                            "code": "💻", 
+                            "code": "💻",
                             "data": "📊",
                             "pdf": "📕",
                             "ebook": "📚",
                             "document": "📝",
-                            "file": "📎"
+                            "file": "📎",
                         }
                         emoji = emoji_map.get(file_type, "📎")
-                        
+
                         # Check if model supports images for image files
                         if file_type == "image":
                             try:
                                 from ...model_capabilities import is_vision_capable
-                                provider_widget = self.app_instance.query_one("#chat-api-provider")
-                                model_widget = self.app_instance.query_one("#chat-api-model")
-                                
+
+                                provider_widget = self.app_instance.query_one(
+                                    "#chat-api-provider"
+                                )
+                                model_widget = self.app_instance.query_one(
+                                    "#chat-api-model"
+                                )
+
                                 from textual.widgets import Select
-                                selected_provider = str(provider_widget.value) if provider_widget.value != Select.BLANK else None
-                                selected_model = str(model_widget.value) if model_widget.value != Select.BLANK else None
-                                
+
+                                selected_provider = (
+                                    str(provider_widget.value)
+                                    if provider_widget.value != Select.BLANK
+                                    else None
+                                )
+                                selected_model = (
+                                    str(model_widget.value)
+                                    if model_widget.value != Select.BLANK
+                                    else None
+                                )
+
                                 if selected_provider and selected_model:
-                                    vision_capable = is_vision_capable(selected_provider, selected_model)
+                                    vision_capable = is_vision_capable(
+                                        selected_provider, selected_model
+                                    )
                                     if not vision_capable:
                                         self.app_instance.notify(
                                             f"⚠️ {selected_model} doesn't support images. Select a vision model to send images.",
                                             severity="warning",
-                                            timeout=6
+                                            timeout=6,
                                         )
                             except Exception as vision_error:
-                                logger.debug(f"Could not check vision capability: {vision_error}")
-                        
-                        self.app_instance.notify(f"{emoji} {display_name} content inserted")
-                        
+                                logger.debug(
+                                    f"Could not check vision capability: {vision_error}"
+                                )
+
+                        self.app_instance.notify(
+                            f"{emoji} {display_name} content inserted"
+                        )
+
                     except AttributeError as e:
                         logger.error(f"Chat input widget not available: {e}")
-                        self.app_instance.notify("Chat input not available", severity="error")
+                        self.app_instance.notify(
+                            "Chat input not available", severity="error"
+                        )
                     except (ValueError, TypeError) as e:
                         logger.error(f"Invalid file content or cursor position: {e}")
-                        self.app_instance.notify(f"Failed to insert content: {str(e)}", severity="error")
+                        self.app_instance.notify(
+                            f"Failed to insert content: {str(e)}", severity="error"
+                        )
                     except RuntimeError as e:
                         logger.error(f"Runtime error inserting content: {e}")
-                        self.app_instance.notify("Failed to insert content", severity="error")
-                        
+                        self.app_instance.notify(
+                            "Failed to insert content", severity="error"
+                        )
+
             elif processed_file.insert_mode == "attachment":
                 # Store as attachment
                 self.chat_window.pending_attachment = {
@@ -339,41 +375,47 @@ class ChatAttachmentHandler:
                     {
                         "path": resolved_path,
                         "type": file_type,
-                        "content": processed_file.content if file_type != "image" else None,
+                        "content": processed_file.content
+                        if file_type != "image"
+                        else None,
                         "mime_type": attachment_mime_type,
                     }
                 )
-                
+
                 # Update UI
                 self.update_attachment_ui()
-                
+
                 # Notify user
                 self.app_instance.notify(f"{display_name} attached")
-                
+
         except (AttributeError, KeyError) as e:
             logger.error(f"Invalid processed file structure: {e}")
             self.app_instance.notify("Invalid file data", severity="error")
         except (ValueError, TypeError) as e:
             logger.error(f"Invalid data type or value in processed file: {e}")
-            self.app_instance.notify(f"Failed to process file: {str(e)}", severity="error")
+            self.app_instance.notify(
+                f"Failed to process file: {str(e)}", severity="error"
+            )
         except RuntimeError as e:
-            logger.opt(exception=True).error(f"Runtime error handling processed file: {e}")
+            logger.opt(exception=True).error(
+                f"Runtime error handling processed file: {e}"
+            )
             self.app_instance.notify("Failed to process file", severity="error")
-    
+
     def clear_attachment_state(self):
         """Clear all attachment state."""
         self.chat_window.pending_image = None
         self.chat_window.pending_attachment = None
-        
+
         # Clear from app's attachment list
         session_id = self._get_session_id()
         attached_files = self._get_chat_attached_files()
         if session_id in attached_files:
             attached_files[session_id] = []
-        
+
         # Update UI
         self.update_attachment_ui()
-    
+
     def update_attachment_ui(self):
         """Update the attachment indicator UI."""
         indicator = self.chat_window._get_attachment_indicator()
@@ -383,9 +425,8 @@ class ChatAttachmentHandler:
             attach_button = None
         if not indicator:
             return
-        
+
         try:
-            
             if self.chat_window.pending_image or self.chat_window.pending_attachment:
                 if attach_button is not None:
                     attach_button.label = "📎✓"
@@ -417,6 +458,6 @@ class ChatAttachmentHandler:
                 indicator.update("")
                 indicator.remove_class("has-attachment")
                 indicator.add_class("hidden")
-                
+
         except (AttributeError, RuntimeError) as e:
             logger.debug(f"Could not update attachment indicator: {e}")

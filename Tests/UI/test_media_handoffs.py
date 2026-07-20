@@ -144,7 +144,9 @@ def test_media_window_use_in_chat_unavailable_explains_recovery():
 
 def test_media_window_use_in_chat_policy_block_explains_recovery():
     app = _media_app(runtime_backend="local")
-    app.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
+    app.runtime_policy = SimpleNamespace(
+        state=RuntimeSourceState(active_source="local")
+    )
     app.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
     window = MediaWindow(app)
     window.runtime_state = app.media_runtime_state

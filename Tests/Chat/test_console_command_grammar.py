@@ -117,7 +117,9 @@ def test_fallback_resolver_can_claim_a_skill_word():
 
     registry.register_fallback_resolver(resolver)
 
-    assert registry.parse("/summ the doc") == CommandParse("fallback", "summ", "the doc")
+    assert registry.parse("/summ the doc") == CommandParse(
+        "fallback", "summ", "the doc"
+    )
 
 
 def test_register_adds_a_new_command_available_by_name():

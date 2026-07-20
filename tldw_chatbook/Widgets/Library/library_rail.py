@@ -91,6 +91,7 @@ class LibraryRail(Vertical):
         query: str = "",
         search_placeholder: str = "Search conversations…",
         workspaces_body_factory: Callable[[], Iterable[Widget]] | None = None,
+        top_action_factory: Callable[[], Iterable[Widget]] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -99,6 +100,7 @@ class LibraryRail(Vertical):
         self.query = query
         self.search_placeholder = search_placeholder
         self.workspaces_body_factory = workspaces_body_factory
+        self.top_action_factory = top_action_factory
         self.styles.width = "3fr"
         self.styles.min_width = 24
 
@@ -148,6 +150,8 @@ class LibraryRail(Vertical):
             ComposeResult with the search box, one header + body per section,
             and the Details header + body.
         """
+        if self.top_action_factory is not None:
+            yield from self.top_action_factory()
         yield Input(
             value=self.query,
             placeholder=self.search_placeholder,
@@ -213,7 +217,9 @@ class LibraryRail(Vertical):
                 count_suffix = row.count_display or self._count_suffix(
                     row.count, row.count_known
                 )
-                section_hint = "opens screen" if row.target_kind == "screen" else "in Library"
+                section_hint = (
+                    "opens screen" if row.target_kind == "screen" else "in Library"
+                )
                 button = Button(
                     f"{marker} {_visible_row_title(row.title)}{count_suffix}"
                     f"\n    {section_hint}",
@@ -225,7 +231,11 @@ class LibraryRail(Vertical):
                 button.row_id = row.row_id
                 button.target_kind = row.target_kind
                 button.target_id = row.target_id
-                button.tooltip = row.disabled_tooltip if row.disabled and row.disabled_tooltip else row.title
+                button.tooltip = (
+                    row.disabled_tooltip
+                    if row.disabled and row.disabled_tooltip
+                    else row.title
+                )
                 button.set_class(selected, "library-rail-row-selected")
                 if row.count_emphasis:
                     button.add_class(f"library-rail-row-due-{row.count_emphasis}")

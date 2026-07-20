@@ -1,6 +1,9 @@
+# ruff: noqa: F811
 import pytest
 
-from tldw_chatbook.Evaluations_Interop.evaluation_scope_service import EvaluationScopeService
+from tldw_chatbook.Evaluations_Interop.evaluation_scope_service import (
+    EvaluationScopeService,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -71,8 +74,27 @@ class FakeLocalEvaluationService:
             }
         ]
 
-    def create_dataset(self, *, name, samples, description=None, metadata=None, format=None, source_path=None):
-        self.calls.append(("create_dataset", name, samples, description, metadata, format, source_path))
+    def create_dataset(
+        self,
+        *,
+        name,
+        samples,
+        description=None,
+        metadata=None,
+        format=None,
+        source_path=None,
+    ):
+        self.calls.append(
+            (
+                "create_dataset",
+                name,
+                samples,
+                description,
+                metadata,
+                format,
+                source_path,
+            )
+        )
         return "dataset_local"
 
     def update_dataset(
@@ -86,7 +108,18 @@ class FakeLocalEvaluationService:
         format=None,
         source_path=None,
     ):
-        self.calls.append(("update_dataset", dataset_id, name, samples, description, metadata, format, source_path))
+        self.calls.append(
+            (
+                "update_dataset",
+                dataset_id,
+                name,
+                samples,
+                description,
+                metadata,
+                format,
+                source_path,
+            )
+        )
         return {
             "id": dataset_id,
             "name": name or "local_dataset",
@@ -149,8 +182,29 @@ class FakeLocalEvaluationService:
             }
         ]
 
-    def create_run(self, eval_id, *, target_id=None, target_model=None, config=None, run_name=None, dataset_override=None, webhook_url=None):
-        self.calls.append(("create_run", eval_id, target_id, target_model, config, run_name, dataset_override, webhook_url))
+    def create_run(
+        self,
+        eval_id,
+        *,
+        target_id=None,
+        target_model=None,
+        config=None,
+        run_name=None,
+        dataset_override=None,
+        webhook_url=None,
+    ):
+        self.calls.append(
+            (
+                "create_run",
+                eval_id,
+                target_id,
+                target_model,
+                config,
+                run_name,
+                dataset_override,
+                webhook_url,
+            )
+        )
         return "run_new"
 
     def get_run_artifacts(self, run_id):
@@ -217,10 +271,14 @@ class FakeLocalEvaluationService:
         source_path=None,
     ):
         if samples:
-            self.calls.append(("create_dataset", name, samples, description, metadata, None, None))
+            self.calls.append(
+                ("create_dataset", name, samples, description, metadata, None, None)
+            )
             return "dataset_local"
 
-        self.calls.append(("create_dataset", name, format, source_path, description, metadata))
+        self.calls.append(
+            ("create_dataset", name, format, source_path, description, metadata)
+        )
         return {
             "id": "dataset_local_new",
             "name": name,
@@ -372,8 +430,29 @@ class FakeServerEvaluationService:
         self.calls.append(("delete_dataset", dataset_id))
         return None
 
-    async def create_run(self, eval_id, *, target_model=None, dataset_override=None, config=None, webhook_url=None, run_name=None, target_id=None):
-        self.calls.append(("create_run", eval_id, target_model, dataset_override, config, webhook_url, run_name, target_id))
+    async def create_run(
+        self,
+        eval_id,
+        *,
+        target_model=None,
+        dataset_override=None,
+        config=None,
+        webhook_url=None,
+        run_name=None,
+        target_id=None,
+    ):
+        self.calls.append(
+            (
+                "create_run",
+                eval_id,
+                target_model,
+                dataset_override,
+                config,
+                webhook_url,
+                run_name,
+                target_id,
+            )
+        )
         return {
             "id": "run_srv",
             "object": "run",
@@ -421,7 +500,9 @@ class FakeServerEvaluationService:
     async def create_dataset(self, *, name, samples, description=None, metadata=None):
         self.calls.append(("create_dataset", name, samples, description, metadata))
         return {
-            "id": "dataset_server_new" if name == "Server Dataset" else "dataset_server",
+            "id": "dataset_server_new"
+            if name == "Server Dataset"
+            else "dataset_server",
             "name": name,
             "description": description,
             "sample_count": len(samples),
@@ -439,7 +520,10 @@ class FakeServerEvaluationService:
 
     async def list_rag_pipeline_presets(self, *, limit=50, offset=0):
         self.calls.append(("list_rag_pipeline_presets", limit, offset))
-        return {"items": [{"name": "fast", "config": {"retriever": "hybrid"}}], "total": 1}
+        return {
+            "items": [{"name": "fast", "config": {"retriever": "hybrid"}}],
+            "total": 1,
+        }
 
     async def get_rag_pipeline_preset(self, name):
         self.calls.append(("get_rag_pipeline_preset", name))
@@ -467,7 +551,10 @@ class FakeServerEvaluationService:
 
     async def get_embeddings_abtest_results(self, test_id, *, page=1, page_size=50):
         self.calls.append(("get_embeddings_abtest_results", test_id, page, page_size))
-        return {"summary": {"test_id": test_id, "status": "completed", "arms": []}, "results": []}
+        return {
+            "summary": {"test_id": test_id, "status": "completed", "arms": []},
+            "results": [],
+        }
 
     async def get_embeddings_abtest_significance(self, test_id, *, metric="ndcg"):
         self.calls.append(("get_embeddings_abtest_significance", test_id, metric))
@@ -483,7 +570,14 @@ class FakeServerEvaluationService:
 
     async def generate_synthetic_drafts(self, **kwargs):
         self.calls.append(("generate_synthetic_drafts", kwargs))
-        return {"generation_batch_id": "batch_1", "samples": [], "source_breakdown": {}, "coverage": {}, "missing_coverage": {}, "corpus_scope": {}}
+        return {
+            "generation_batch_id": "batch_1",
+            "samples": [],
+            "source_breakdown": {},
+            "coverage": {},
+            "missing_coverage": {},
+            "corpus_scope": {},
+        }
 
     async def list_synthetic_queue(self, **kwargs):
         self.calls.append(("list_synthetic_queue", kwargs))
@@ -495,7 +589,12 @@ class FakeServerEvaluationService:
 
     async def promote_synthetic_samples(self, **kwargs):
         self.calls.append(("promote_synthetic_samples", kwargs))
-        return {"dataset_id": "dataset_1", "dataset_snapshot_ref": "snapshot_1", "promotion_ids": [], "sample_count": 1}
+        return {
+            "dataset_id": "dataset_1",
+            "dataset_snapshot_ref": "snapshot_1",
+            "promotion_ids": [],
+            "sample_count": 1,
+        }
 
     async def list_benchmarks(self):
         self.calls.append(("list_benchmarks",))
@@ -507,15 +606,34 @@ class FakeServerEvaluationService:
 
     async def run_benchmark(self, benchmark_name, **kwargs):
         self.calls.append(("run_benchmark", benchmark_name, kwargs))
-        return {"benchmark": benchmark_name, "total_samples": 2, "results_summary": {"average_score": 0.75}, "evaluation_id": "eval_1"}
+        return {
+            "benchmark": benchmark_name,
+            "total_samples": 2,
+            "results_summary": {"average_score": 0.75},
+            "evaluation_id": "eval_1",
+        }
 
     async def register_webhook(self, **kwargs):
         self.calls.append(("register_webhook", kwargs))
-        return {"webhook_id": 10, "url": kwargs["url"], "events": kwargs["events"], "secret": kwargs.get("secret") or "x" * 32, "created_at": "2026-04-21T00:00:00Z"}
+        return {
+            "webhook_id": 10,
+            "url": kwargs["url"],
+            "events": kwargs["events"],
+            "secret": kwargs.get("secret") or "x" * 32,
+            "created_at": "2026-04-21T00:00:00Z",
+        }
 
     async def list_webhooks(self):
         self.calls.append(("list_webhooks",))
-        return [{"webhook_id": 10, "url": "https://example.com/evals", "events": ["evaluation.completed"], "status": "active", "created_at": "2026-04-21T00:00:00Z"}]
+        return [
+            {
+                "webhook_id": 10,
+                "url": "https://example.com/evals",
+                "events": ["evaluation.completed"],
+                "status": "active",
+                "created_at": "2026-04-21T00:00:00Z",
+            }
+        ]
 
     async def unregister_webhook(self, url):
         self.calls.append(("unregister_webhook", url))
@@ -547,7 +665,11 @@ class FakeServerEvaluationService:
 
     async def get_recipe_run(self, run_id):
         self.calls.append(("get_recipe_run", run_id))
-        return {"run_id": run_id, "recipe_id": "rag_answer_quality", "status": "completed"}
+        return {
+            "run_id": run_id,
+            "recipe_id": "rag_answer_quality",
+            "status": "completed",
+        }
 
     async def get_recipe_run_report(self, run_id):
         self.calls.append(("get_recipe_run_report", run_id))
@@ -678,7 +800,9 @@ async def test_scope_service_enforces_policy_for_server_evaluation_adjuncts():
         target_sample_count=1,
     )
     await scope.list_synthetic_queue(mode="server")
-    await scope.review_synthetic_sample(mode="server", sample_id="sample_123", action="approve")
+    await scope.review_synthetic_sample(
+        mode="server", sample_id="sample_123", action="approve"
+    )
     await scope.promote_synthetic_samples(
         mode="server",
         sample_ids=["sample_123"],
@@ -694,8 +818,12 @@ async def test_scope_service_enforces_policy_for_server_evaluation_adjuncts():
     await scope.run_benchmark(mode="server", benchmark_name="truthfulqa")
     await scope.list_recipes(mode="server")
     await scope.get_recipe(mode="server", recipe_id="rag_answer_quality")
-    await scope.get_recipe_launch_readiness(mode="server", recipe_id="rag_answer_quality")
-    await scope.validate_recipe_dataset(mode="server", recipe_id="rag_answer_quality", dataset_id="dataset_123")
+    await scope.get_recipe_launch_readiness(
+        mode="server", recipe_id="rag_answer_quality"
+    )
+    await scope.validate_recipe_dataset(
+        mode="server", recipe_id="rag_answer_quality", dataset_id="dataset_123"
+    )
     await scope.create_recipe_run(mode="server", recipe_id="rag_answer_quality")
     await scope.get_recipe_run(mode="server", run_id="recipe_run_1")
     await scope.get_recipe_run_report(mode="server", run_id="recipe_run_1")
@@ -704,7 +832,9 @@ async def test_scope_service_enforces_policy_for_server_evaluation_adjuncts():
     await scope.get_pipeline_preset(mode="server", name="baseline")
     await scope.delete_pipeline_preset(mode="server", name="baseline")
     await scope.cleanup_pipeline_collections(mode="server")
-    await scope.register_webhook(mode="server", url="https://example.com/evals", events=["evaluation.completed"])
+    await scope.register_webhook(
+        mode="server", url="https://example.com/evals", events=["evaluation.completed"]
+    )
     await scope.list_webhooks(mode="server")
     await scope.unregister_webhook(mode="server", url="https://example.com/evals")
     await scope.test_webhook(mode="server", url="https://example.com/evals")
@@ -792,7 +922,9 @@ async def test_scope_service_routes_server_target_catalog_when_adapter_provides_
     class ServerEvaluationServiceWithTargets(FakeServerEvaluationService):
         async def list_targets(self, *, provider=None, limit=100, offset=0):
             self.calls.append(("list_targets", provider, limit, offset))
-            return [{"id": "server-model", "name": "Server Model", "provider": "openai"}]
+            return [
+                {"id": "server-model", "name": "Server Model", "provider": "openai"}
+            ]
 
     server = ServerEvaluationServiceWithTargets()
     policy_enforcer = FakePolicyEnforcer()
@@ -802,7 +934,9 @@ async def test_scope_service_routes_server_target_catalog_when_adapter_provides_
         policy_enforcer=policy_enforcer,
     )
 
-    targets = await scope.list_targets(mode="server", provider="openai", limit=10, offset=5)
+    targets = await scope.list_targets(
+        mode="server", provider="openai", limit=10, offset=5
+    )
 
     assert targets[0]["record_id"] == "server:evaluation_target:server-model"
     assert targets[0]["backend"] == "server"
@@ -816,10 +950,14 @@ async def test_scope_service_routes_server_target_catalog_when_adapter_provides_
 @pytest.mark.asyncio
 async def test_scope_service_forwards_local_dataset_override_and_webhook_url():
     local = FakeLocalEvaluationService()
-    scope = EvaluationScopeService(local_service=local, server_service=FakeServerEvaluationService())
+    scope = EvaluationScopeService(
+        local_service=local, server_service=FakeServerEvaluationService()
+    )
     dataset_override = {
         "name": "inline_cases",
-        "samples": [{"input": "Q1", "expected": "A1", "metadata": {"difficulty": "easy"}}],
+        "samples": [
+            {"input": "Q1", "expected": "A1", "metadata": {"difficulty": "easy"}}
+        ],
     }
 
     await scope.create_run(
@@ -880,7 +1018,9 @@ async def test_evaluation_scope_service_keeps_normalizing_server_runs_after_poli
 @pytest.mark.asyncio
 async def test_scope_service_create_and_update_local_evaluation_resolves_raw_local_responses():
     local = FakeLocalEvaluationService()
-    scope = EvaluationScopeService(local_service=local, server_service=FakeServerEvaluationService())
+    scope = EvaluationScopeService(
+        local_service=local, server_service=FakeServerEvaluationService()
+    )
 
     created = await scope.create_evaluation(
         mode="local",
@@ -896,7 +1036,18 @@ async def test_scope_service_create_and_update_local_evaluation_resolves_raw_loc
 
     assert created["record_id"] == "local:evaluation:task_123"
     assert updated["description"] == "Local evaluation"
-    assert ("create_evaluation", {"name": "local_eval", "description": None, "eval_type": "question_answer", "eval_spec": {"metrics": ["accuracy"]}, "dataset_id": None, "dataset": None, "metadata": None}) in local.calls
+    assert (
+        "create_evaluation",
+        {
+            "name": "local_eval",
+            "description": None,
+            "eval_type": "question_answer",
+            "eval_spec": {"metrics": ["accuracy"]},
+            "dataset_id": None,
+            "dataset": None,
+            "metadata": None,
+        },
+    ) in local.calls
     assert ("get_evaluation", "task_123") in local.calls
 
 
@@ -1045,11 +1196,24 @@ async def test_scope_service_routes_dataset_create_delete_by_backend_with_policy
     assert local_dataset["record_id"] == "local:evaluation_dataset:dataset_local_new"
     assert server_dataset["record_id"] == "server:evaluation_dataset:dataset_server_new"
     assert local.calls[-2:] == [
-        ("create_dataset", "Offline Dataset", "json", "/tmp/offline.json", None, {"project": "offline"}),
+        (
+            "create_dataset",
+            "Offline Dataset",
+            "json",
+            "/tmp/offline.json",
+            None,
+            {"project": "offline"},
+        ),
         ("delete_dataset", "dataset_local_new"),
     ]
     assert server.calls[-2:] == [
-        ("create_dataset", "Server Dataset", [{"input": "Q", "expected": "A"}], None, {"project": "server"}),
+        (
+            "create_dataset",
+            "Server Dataset",
+            [{"input": "Q", "expected": "A"}],
+            None,
+            {"project": "server"},
+        ),
         ("delete_dataset", "dataset_server_new"),
     ]
     assert policy_enforcer.calls[-4:] == [
@@ -1117,11 +1281,19 @@ async def test_scope_service_routes_server_embeddings_abtest_admin_with_policy()
         config=config,
         run_immediately=True,
     )
-    launched = await scope.run_embeddings_abtest(mode="server", test_id="ab_1", config=config)
+    launched = await scope.run_embeddings_abtest(
+        mode="server", test_id="ab_1", config=config
+    )
     status = await scope.get_embeddings_abtest_status(mode="server", test_id="ab_1")
-    results = await scope.get_embeddings_abtest_results(mode="server", test_id="ab_1", page=2, page_size=25)
-    significance = await scope.get_embeddings_abtest_significance(mode="server", test_id="ab_1", metric="mrr")
-    exported = await scope.export_embeddings_abtest(mode="server", test_id="ab_1", format="json")
+    results = await scope.get_embeddings_abtest_results(
+        mode="server", test_id="ab_1", page=2, page_size=25
+    )
+    significance = await scope.get_embeddings_abtest_significance(
+        mode="server", test_id="ab_1", metric="mrr"
+    )
+    exported = await scope.export_embeddings_abtest(
+        mode="server", test_id="ab_1", format="json"
+    )
     deleted = await scope.delete_embeddings_abtest(mode="server", test_id="ab_1")
 
     assert created["test_id"] == "ab_1"
@@ -1167,8 +1339,12 @@ async def test_scope_service_routes_server_synthetic_benchmark_and_webhook_contr
         target_sample_count=2,
         corpus_scope={"collection": "docs"},
     )
-    queue = await scope.list_synthetic_queue(mode="server", recipe_kind="rag_answer_quality", limit=25, offset=5)
-    reviewed = await scope.review_synthetic_sample(mode="server", sample_id="sample_1", action="approve")
+    queue = await scope.list_synthetic_queue(
+        mode="server", recipe_kind="rag_answer_quality", limit=25, offset=5
+    )
+    reviewed = await scope.review_synthetic_sample(
+        mode="server", sample_id="sample_1", action="approve"
+    )
     promoted = await scope.promote_synthetic_samples(
         mode="server",
         sample_ids=["sample_1"],
@@ -1176,7 +1352,9 @@ async def test_scope_service_routes_server_synthetic_benchmark_and_webhook_contr
     )
     benchmarks = await scope.list_benchmarks(mode="server")
     benchmark = await scope.get_benchmark(mode="server", benchmark_name="mmlu")
-    run = await scope.run_benchmark(mode="server", benchmark_name="mmlu", limit=2, api_name="openai")
+    run = await scope.run_benchmark(
+        mode="server", benchmark_name="mmlu", limit=2, api_name="openai"
+    )
     registered = await scope.register_webhook(
         mode="server",
         url="https://example.com/evals",
@@ -1184,7 +1362,9 @@ async def test_scope_service_routes_server_synthetic_benchmark_and_webhook_contr
         secret="x" * 32,
     )
     webhooks = await scope.list_webhooks(mode="server")
-    unregistered = await scope.unregister_webhook(mode="server", url="https://example.com/evals")
+    unregistered = await scope.unregister_webhook(
+        mode="server", url="https://example.com/evals"
+    )
     tested = await scope.test_webhook(mode="server", url="https://example.com/evals")
 
     assert generated["generation_batch_id"] == "batch_1"
@@ -1199,14 +1379,74 @@ async def test_scope_service_routes_server_synthetic_benchmark_and_webhook_contr
     assert unregistered["status"] == "unregistered"
     assert tested["success"] is True
     assert server.calls[-11:] == [
-        ("generate_synthetic_drafts", {"recipe_kind": "rag_answer_quality", "corpus_scope": {"collection": "docs"}, "generation_metadata": None, "context_snapshot_ref": None, "retrieval_baseline_ref": None, "reference_answer": None, "real_examples": None, "seed_examples": None, "target_sample_count": 2}),
-        ("list_synthetic_queue", {"recipe_kind": "rag_answer_quality", "review_state": None, "source_kind": None, "generation_batch_id": None, "limit": 25, "offset": 5}),
-        ("review_synthetic_sample", "sample_1", {"action": "approve", "notes": None, "action_payload": None, "resulting_review_state": None}),
-        ("promote_synthetic_samples", {"sample_ids": ["sample_1"], "dataset_name": "approved_synthetic", "dataset_description": None, "dataset_metadata": None, "promotion_reason": None}),
+        (
+            "generate_synthetic_drafts",
+            {
+                "recipe_kind": "rag_answer_quality",
+                "corpus_scope": {"collection": "docs"},
+                "generation_metadata": None,
+                "context_snapshot_ref": None,
+                "retrieval_baseline_ref": None,
+                "reference_answer": None,
+                "real_examples": None,
+                "seed_examples": None,
+                "target_sample_count": 2,
+            },
+        ),
+        (
+            "list_synthetic_queue",
+            {
+                "recipe_kind": "rag_answer_quality",
+                "review_state": None,
+                "source_kind": None,
+                "generation_batch_id": None,
+                "limit": 25,
+                "offset": 5,
+            },
+        ),
+        (
+            "review_synthetic_sample",
+            "sample_1",
+            {
+                "action": "approve",
+                "notes": None,
+                "action_payload": None,
+                "resulting_review_state": None,
+            },
+        ),
+        (
+            "promote_synthetic_samples",
+            {
+                "sample_ids": ["sample_1"],
+                "dataset_name": "approved_synthetic",
+                "dataset_description": None,
+                "dataset_metadata": None,
+                "promotion_reason": None,
+            },
+        ),
         ("list_benchmarks",),
         ("get_benchmark", "mmlu"),
-        ("run_benchmark", "mmlu", {"limit": 2, "api_name": "openai", "parallel": 4, "save_results": True, "filter_categories": None}),
-        ("register_webhook", {"url": "https://example.com/evals", "events": ["evaluation.completed"], "secret": "x" * 32, "retry_count": None, "timeout_seconds": None}),
+        (
+            "run_benchmark",
+            "mmlu",
+            {
+                "limit": 2,
+                "api_name": "openai",
+                "parallel": 4,
+                "save_results": True,
+                "filter_categories": None,
+            },
+        ),
+        (
+            "register_webhook",
+            {
+                "url": "https://example.com/evals",
+                "events": ["evaluation.completed"],
+                "secret": "x" * 32,
+                "retry_count": None,
+                "timeout_seconds": None,
+            },
+        ),
         ("list_webhooks",),
         ("unregister_webhook", "https://example.com/evals"),
         ("test_webhook", "https://example.com/evals"),
@@ -1237,8 +1477,12 @@ async def test_scope_service_routes_server_recipe_controls_with_policy():
     )
 
     manifests = await scope.list_recipe_manifests(mode="server")
-    manifest = await scope.get_recipe_manifest(mode="server", recipe_id="rag_answer_quality")
-    readiness = await scope.get_recipe_launch_readiness(mode="server", recipe_id="rag_answer_quality")
+    manifest = await scope.get_recipe_manifest(
+        mode="server", recipe_id="rag_answer_quality"
+    )
+    readiness = await scope.get_recipe_launch_readiness(
+        mode="server", recipe_id="rag_answer_quality"
+    )
     validation = await scope.validate_recipe_dataset(
         mode="server",
         recipe_id="rag_answer_quality",
@@ -1266,8 +1510,25 @@ async def test_scope_service_routes_server_recipe_controls_with_policy():
         ("list_recipe_manifests",),
         ("get_recipe_manifest", "rag_answer_quality"),
         ("get_recipe_launch_readiness", "rag_answer_quality"),
-        ("validate_recipe_dataset", "rag_answer_quality", {"dataset_id": "dataset_1", "dataset": None, "run_config": {"mode": "fast"}}),
-        ("create_recipe_run", "rag_answer_quality", {"dataset_id": "dataset_1", "dataset": None, "run_config": {"mode": "fast"}, "force_rerun": True}),
+        (
+            "validate_recipe_dataset",
+            "rag_answer_quality",
+            {
+                "dataset_id": "dataset_1",
+                "dataset": None,
+                "run_config": {"mode": "fast"},
+            },
+        ),
+        (
+            "create_recipe_run",
+            "rag_answer_quality",
+            {
+                "dataset_id": "dataset_1",
+                "dataset": None,
+                "run_config": {"mode": "fast"},
+                "force_rerun": True,
+            },
+        ),
         ("get_recipe_run", "recipe_run_1"),
         ("get_recipe_run_report", "recipe_run_1"),
     ]
@@ -1318,7 +1579,10 @@ def test_evaluation_scope_service_reports_known_source_scoped_capability_gaps():
             "supported": False,
             "reason_code": "local_contract_missing",
             "user_message": "Local evaluation runs can persist requested webhook URLs, but do not dispatch webhook callbacks yet; observe the local run record and artifacts instead.",
-            "affected_action_ids": ["evaluations.run.observe.local", "evaluations.run.update.local"],
+            "affected_action_ids": [
+                "evaluations.run.observe.local",
+                "evaluations.run.update.local",
+            ],
         },
         {
             "operation_id": "evaluations.server_auxiliary_controls.local",
@@ -1336,7 +1600,10 @@ def test_evaluation_scope_service_reports_known_source_scoped_capability_gaps():
             "supported": False,
             "reason_code": "server_contract_missing",
             "user_message": "The current server evaluation API does not expose a target catalog; server runs require an explicit target_model string.",
-            "affected_action_ids": ["evaluations.run.list.server", "evaluations.run.launch.server"],
+            "affected_action_ids": [
+                "evaluations.run.list.server",
+                "evaluations.run.launch.server",
+            ],
         },
         {
             "operation_id": "evaluations.run.results.detail.server",
@@ -1344,6 +1611,9 @@ def test_evaluation_scope_service_reports_known_source_scoped_capability_gaps():
             "supported": False,
             "reason_code": "server_contract_missing",
             "user_message": "The current server unified run detail exposes summary metrics, but not sample-level result artifacts.",
-            "affected_action_ids": ["evaluations.run.detail.server", "evaluations.run.observe.server"],
+            "affected_action_ids": [
+                "evaluations.run.detail.server",
+                "evaluations.run.observe.server",
+            ],
         },
     ]

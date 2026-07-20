@@ -1,10 +1,16 @@
+import json
 from inspect import isawaitable
 
 import pytest
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
-from tldw_chatbook.Notifications import ClientNotificationsDB, NotificationDispatchService
+from tldw_chatbook.Notifications import (
+    ClientNotificationsDB,
+    NotificationDispatchService,
+)
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
+from tldw_chatbook.Subscriptions.watchlist_content_alert_service import WatchlistContentAlertService
+from tldw_chatbook.Subscriptions.watchlist_filter_service import WatchlistFilterService
 
 
 @pytest.mark.asyncio
@@ -64,7 +70,10 @@ async def test_local_watchlists_service_exposes_sync_home_run_snapshot(tmp_path)
     snapshot = service.list_home_run_snapshot(limit=5)
 
     assert not isawaitable(snapshot)
-    assert [run["run_id"] for run in snapshot[:2]] == [failed["run_id"], queued["run_id"]]
+    assert [run["run_id"] for run in snapshot[:2]] == [
+        failed["run_id"],
+        queued["run_id"],
+    ]
     assert snapshot[0]["id"] == f"local:watchlist_run:{failed['run_id']}"
     assert snapshot[0]["status"] == "failed"
     assert snapshot[0]["source_title"] == "Failed Feed"
@@ -74,7 +83,9 @@ async def test_local_watchlists_service_exposes_sync_home_run_snapshot(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_local_watchlists_service_executes_run_and_records_subscription_items(tmp_path):
+async def test_local_watchlists_service_executes_run_and_records_subscription_items(
+    tmp_path,
+):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
 
     async def fake_run_executor(subscription):
@@ -91,7 +102,9 @@ async def test_local_watchlists_service_executes_run_and_records_subscription_it
             "log_text": "fetched 1 item",
         }
 
-    service = LocalWatchlistsService(db_factory=lambda: db, run_executor=fake_run_executor)
+    service = LocalWatchlistsService(
+        db_factory=lambda: db, run_executor=fake_run_executor
+    )
     source = await service.create_source(
         {
             "name": "Feed",
@@ -145,7 +158,9 @@ async def test_local_watchlists_service_persists_alert_rule_crud(tmp_path):
     )
     listed = await service.list_alert_rules(job_id=source["source_id"])
     fetched = await service.get_alert_rule(created["rule_id"])
-    updated = await service.update_alert_rule(created["rule_id"], enabled=False, severity="critical")
+    updated = await service.update_alert_rule(
+        created["rule_id"], enabled=False, severity="critical"
+    )
     deleted = await service.delete_alert_rule(created["rule_id"])
 
     assert created["id"].startswith("local:watchlist_alert_rule:")
@@ -192,7 +207,9 @@ async def test_local_watchlists_service_persists_source_execution_settings(tmp_p
         {
             "name": "Docs",
             "source_type": "url_list",
-            "extraction_rules": {"urls": ["https://example.com/a", "https://example.com/b"]},
+            "extraction_rules": {
+                "urls": ["https://example.com/a", "https://example.com/b"]
+            },
             "processing_options": {"max_urls": 2},
             "extraction_method": "full",
             "check_frequency": 300,
@@ -216,11 +233,15 @@ async def test_local_watchlists_service_persists_source_execution_settings(tmp_p
     assert source["settings"]["check_frequency"] == 300
     assert updated["url"] == "https://example.com/c"
     assert updated["settings"]["processing_options"] == {"max_urls": 1}
-    assert updated["settings"]["extraction_rules"] == {"urls": ["https://example.com/c"]}
+    assert updated["settings"]["extraction_rules"] == {
+        "urls": ["https://example.com/c"]
+    }
 
 
 @pytest.mark.asyncio
-async def test_local_watchlists_service_executes_url_list_sources_with_default_url_monitor(tmp_path, monkeypatch):
+async def test_local_watchlists_service_executes_url_list_sources_with_default_url_monitor(
+    tmp_path, monkeypatch
+):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
     seen_urls = []
@@ -278,7 +299,9 @@ async def test_local_watchlists_service_executes_url_list_sources_with_default_u
 
 
 @pytest.mark.asyncio
-async def test_local_watchlists_service_executes_sitemap_sources_with_default_url_monitor(tmp_path, monkeypatch):
+async def test_local_watchlists_service_executes_sitemap_sources_with_default_url_monitor(
+    tmp_path, monkeypatch
+):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
     fetched_sitemaps = []
@@ -362,7 +385,9 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
 
 
 @pytest.mark.asyncio
-async def test_local_watchlists_service_executes_api_sources_with_json_field_mapping(tmp_path, monkeypatch):
+async def test_local_watchlists_service_executes_api_sources_with_json_field_mapping(
+    tmp_path, monkeypatch
+):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
     requests = []
@@ -456,11 +481,15 @@ async def test_local_watchlists_service_executes_api_sources_with_json_field_map
 
 
 @pytest.mark.asyncio
-async def test_local_watchlists_service_evaluates_completed_run_alerts_into_notifications(tmp_path):
+async def test_local_watchlists_service_evaluates_completed_run_alerts_into_notifications(
+    tmp_path,
+):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     notification_store = ClientNotificationsDB(tmp_path / "notifications.db")
     dispatcher = NotificationDispatchService(store=notification_store)
-    service = LocalWatchlistsService(db_factory=lambda: db, notification_dispatcher=dispatcher)
+    service = LocalWatchlistsService(
+        db_factory=lambda: db, notification_dispatcher=dispatcher
+    )
     source = await service.create_source(
         {
             "name": "Feed",
@@ -503,3 +532,89 @@ async def test_local_watchlists_service_evaluates_completed_run_alerts_into_noti
     assert notifications[0]["payload"]["dedupe_key"] == (
         f"watchlist-alert:{failed_rule['rule_id']}:{launched['run_id']}"
     )
+
+
+@pytest.mark.asyncio
+async def test_create_source_honors_inactive(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    result = await service.create_source(
+        {"name": "Inactive", "source_type": "rss", "url": "http://example.com/feed", "active": False}
+    )
+    assert result["active"] is False
+
+
+@pytest.mark.asyncio
+async def test_execute_run_persists_items_and_evaluates_filters(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+
+    async def fake_run_executor(subscription):
+        return {
+            "items": [
+                {"url": "https://example.com/ai-post", "title": "AI news", "content_hash": "hash-ai"},
+                {"url": "https://example.com/cooking-post", "title": "Cooking tips", "content_hash": "hash-cooking"},
+            ],
+            "stats": {},
+        }
+
+    service = LocalWatchlistsService(db_factory=lambda: db, run_executor=fake_run_executor)
+    source = await service.create_source(
+        {"name": "Feed", "url": "https://example.com/feed.xml", "source_type": "rss"}
+    )
+    # Add an exclude filter for "AI".
+    db.add_filter(
+        name="exclude ai",
+        conditions={"type": "keyword", "pattern": "AI"},
+        action="exclude",
+        subscription_id=source["source_id"],
+    )
+
+    launched = await service.launch_run(source_id=source["source_id"])
+    completed = await service.execute_run(launched["run_id"])
+
+    assert completed["status"] == "completed"
+    assert completed["stats"]["items_found"] == 2
+    assert completed["stats"]["items_ingested"] == 1
+    stored = db.conn.execute(
+        "SELECT url FROM subscription_items WHERE subscription_id = ?",
+        (source["source_id"],),
+    ).fetchall()
+    assert [row["url"] for row in stored] == ["https://example.com/cooking-post"]
+
+
+@pytest.mark.asyncio
+async def test_execute_run_stores_content_alert_matches(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+
+    async def fake_run_executor(subscription):
+        return {
+            "items": [
+                {"url": "https://example.com/ai-post", "title": "AI news", "content_hash": "hash-ai"},
+            ],
+            "stats": {},
+        }
+
+    service = LocalWatchlistsService(db_factory=lambda: db, run_executor=fake_run_executor)
+    source = await service.create_source(
+        {"name": "Feed", "url": "https://example.com/feed.xml", "source_type": "rss"}
+    )
+    db.add_filter(
+        name="AI alert",
+        conditions={"type": "keyword", "pattern": "AI"},
+        action="notify",
+        action_params={"severity": "warning"},
+        subscription_id=source["source_id"],
+    )
+
+    launched = await service.launch_run(source_id=source["source_id"])
+    completed = await service.execute_run(launched["run_id"])
+
+    assert completed["stats"]["items_ingested"] == 1
+    row = db.conn.execute(
+        "SELECT alert_matches FROM subscription_items WHERE subscription_id = ?",
+        (source["source_id"],),
+    ).fetchone()
+    assert row["alert_matches"] is not None
+    matches = json.loads(row["alert_matches"])
+    assert len(matches) == 1
+    assert matches[0]["rule_name"] == "AI alert"

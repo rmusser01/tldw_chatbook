@@ -62,24 +62,40 @@ class ToolsScopeService:
         self.policy_enforcer.require_allowed(action_id=action_id)
 
     @staticmethod
-    def _with_record_id(mode: ToolsBackend, kind: str, item: dict[str, Any], source_id: str | None = None) -> dict[str, Any]:
+    def _with_record_id(
+        mode: ToolsBackend,
+        kind: str,
+        item: dict[str, Any],
+        source_id: str | None = None,
+    ) -> dict[str, Any]:
         record = dict(item or {})
         record.setdefault("backend", mode.value)
-        resolved_id = source_id or record.get("name") or record.get("tool_name") or record.get("id")
+        resolved_id = (
+            source_id
+            or record.get("name")
+            or record.get("tool_name")
+            or record.get("id")
+        )
         if resolved_id is not None:
             record.setdefault("record_id", f"{mode.value}:{kind}:{resolved_id}")
         return record
 
-    def _normalize_list_response(self, mode: ToolsBackend, result: Any) -> dict[str, Any]:
+    def _normalize_list_response(
+        self, mode: ToolsBackend, result: Any
+    ) -> dict[str, Any]:
         if not isinstance(result, dict):
             return {"backend": mode.value, "tools": result}
         payload = dict(result)
         payload.setdefault("backend", mode.value)
         if isinstance(payload.get("tools"), list):
-            payload["tools"] = [self._with_record_id(mode, "tool", item) for item in payload["tools"]]
+            payload["tools"] = [
+                self._with_record_id(mode, "tool", item) for item in payload["tools"]
+            ]
         return payload
 
-    def _normalize_execution_response(self, mode: ToolsBackend, tool_name: str, result: Any) -> dict[str, Any]:
+    def _normalize_execution_response(
+        self, mode: ToolsBackend, tool_name: str, result: Any
+    ) -> dict[str, Any]:
         if not isinstance(result, dict):
             result = {"result": result}
         return self._with_record_id(mode, "tool_execution", result, source_id=tool_name)
@@ -94,7 +110,9 @@ class ToolsScopeService:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
         return []
 
-    async def list_tools(self, *, mode: ToolsBackend | str | None = None) -> dict[str, Any]:
+    async def list_tools(
+        self, *, mode: ToolsBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy("tools.catalog.list.server")

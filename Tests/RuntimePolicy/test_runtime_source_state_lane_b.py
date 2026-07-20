@@ -35,7 +35,9 @@ def test_normalize_runtime_source_state_clears_server_probe_state_when_server_is
         active_server_id="server-a",
         server_configured=False,
         server_reachability="reachable",
-        server_reachability_checked_at=datetime(2026, 4, 29, 11, 59, tzinfo=timezone.utc),
+        server_reachability_checked_at=datetime(
+            2026, 4, 29, 11, 59, tzinfo=timezone.utc
+        ),
         server_auth_state="authenticated",
         server_auth_checked_at=datetime(2026, 4, 29, 11, 59, tzinfo=timezone.utc),
         last_known_server_label="Server A",

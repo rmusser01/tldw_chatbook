@@ -457,8 +457,15 @@ def test_console_rail_state_compact_width_collapses_right_rail_effectively():
 
 def test_console_rail_section_defaults():
     from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_SECTION_IDS
+
     prefs = ConsoleRailPreferences()
-    assert CONSOLE_RAIL_SECTION_IDS == ("session", "context", "model", "details", "agent")
+    assert CONSOLE_RAIL_SECTION_IDS == (
+        "session",
+        "context",
+        "model",
+        "details",
+        "agent",
+    )
     assert prefs.session_open is True
     assert prefs.context_open is True
     assert prefs.model_open is True

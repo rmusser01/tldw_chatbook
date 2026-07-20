@@ -2,7 +2,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
+from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import (
+    ChatDictionaryScopeService,
+)
 
 
 class FakeLocalChatDictionaryService:
@@ -25,14 +27,23 @@ class FakeLocalChatDictionaryService:
         self.calls.append(("get_statistics", dictionary_id))
         return {"dictionary_id": dictionary_id, "entry_count": 1, "source": "local"}
 
+
 class FakeLocalChatDictionaryHistoryService(FakeLocalChatDictionaryService):
     def list_activity(self, dictionary_id, **kwargs):
         self.calls.append(("list_activity", dictionary_id, kwargs))
-        return {"dictionary_id": dictionary_id, "activity": [{"action": "create"}], "source": "local"}
+        return {
+            "dictionary_id": dictionary_id,
+            "activity": [{"action": "create"}],
+            "source": "local",
+        }
 
     def list_versions(self, dictionary_id, **kwargs):
         self.calls.append(("list_versions", dictionary_id, kwargs))
-        return {"dictionary_id": dictionary_id, "versions": [{"revision": 1}], "source": "local"}
+        return {
+            "dictionary_id": dictionary_id,
+            "versions": [{"revision": 1}],
+            "source": "local",
+        }
 
     def get_version(self, dictionary_id, revision):
         self.calls.append(("get_version", dictionary_id, revision))
@@ -40,7 +51,11 @@ class FakeLocalChatDictionaryHistoryService(FakeLocalChatDictionaryService):
 
     def revert_version(self, dictionary_id, revision):
         self.calls.append(("revert_version", dictionary_id, revision))
-        return {"dictionary_id": dictionary_id, "reverted_to_revision": revision, "source": "local"}
+        return {
+            "dictionary_id": dictionary_id,
+            "reverted_to_revision": revision,
+            "source": "local",
+        }
 
 
 class FakeServerChatDictionaryService:
@@ -94,7 +109,9 @@ async def test_chat_dictionary_scope_routes_local_and_server_modes_with_policy()
     assert default_statistics["source"] == "local"
     assert local_statistics["source"] == "local"
     assert server_statistics["source"] == "server"
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "chat.dictionaries.list.local",
         "chat.dictionaries.list.server",
         "chat.dictionaries.create.local",
@@ -138,7 +155,9 @@ async def test_chat_dictionary_scope_reports_and_blocks_local_history_gaps():
             ],
         },
     ]
-    with pytest.raises(ValueError, match="Local chat dictionary activity history is not available"):
+    with pytest.raises(
+        ValueError, match="Local chat dictionary activity history is not available"
+    ):
         await scope.list_activity(2, mode="local")
 
 
@@ -172,13 +191,19 @@ async def test_chat_dictionary_scope_routes_local_history_when_backend_supports_
 @pytest.mark.asyncio
 async def test_scope_service_character_attach_roundtrip(tmp_path):
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-    from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
-    from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
+    from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
+        LocalChatDictionaryService,
+    )
+    from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import (
+        ChatDictionaryScopeService,
+    )
 
     db = CharactersRAGDB(tmp_path / "scope.db", "test-client")
     local = LocalChatDictionaryService(db)
     scope = ChatDictionaryScopeService(local_service=local, server_service=None)
-    dict_id = local.create_dictionary({"name": "Slang", "entries": [{"pattern": "x", "replacement": "y"}]})["id"]
+    dict_id = local.create_dictionary(
+        {"name": "Slang", "entries": [{"pattern": "x", "replacement": "y"}]}
+    )["id"]
     char_id = db.add_character_card({"name": "Noir"})
 
     await scope.attach_to_character(dict_id, char_id, mode="local")
@@ -194,17 +219,26 @@ async def test_scope_service_character_attach_roundtrip(tmp_path):
 async def test_scope_service_summarize_active_dictionaries(tmp_path):
     import json as _json
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-    from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
-    from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
+    from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
+        LocalChatDictionaryService,
+    )
+    from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import (
+        ChatDictionaryScopeService,
+    )
 
     db = CharactersRAGDB(tmp_path / "sum.db", "test-client")
     local = LocalChatDictionaryService(db)
     scope = ChatDictionaryScopeService(local_service=local, server_service=None)
     conv_id = db.add_conversation({"title": "c"})
-    did = local.create_dictionary({"name": "Conv", "entries": [{"pattern": "x", "replacement": "y"}]})["id"]
+    did = local.create_dictionary(
+        {"name": "Conv", "entries": [{"pattern": "x", "replacement": "y"}]}
+    )["id"]
     conv = db.get_conversation_by_id(conv_id)
-    meta = _json.loads(conv.get("metadata") or "{}"); meta["active_dictionaries"] = [did]
-    db.update_conversation(conv_id, {"metadata": _json.dumps(meta)}, expected_version=conv["version"])
+    meta = _json.loads(conv.get("metadata") or "{}")
+    meta["active_dictionaries"] = [did]
+    db.update_conversation(
+        conv_id, {"metadata": _json.dumps(meta)}, expected_version=conv["version"]
+    )
     char_id = db.add_character_card({"name": "N"})
     local.attach_to_character(local.create_dictionary({"name": "Char"})["id"], char_id)
 

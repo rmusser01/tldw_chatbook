@@ -15,7 +15,9 @@ from tldw_chatbook.Widgets.Console.console_background_effect import (
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 
 
 class EffectHarness(App[None]):
@@ -144,7 +146,9 @@ async def test_console_transcript_scope_mounts_effect_without_hiding_transcript(
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        await _wait_for_selector(console, pilot, "#console-transcript-background-effect")
+        await _wait_for_selector(
+            console, pilot, "#console-transcript-background-effect"
+        )
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         effect = console.query_one(
@@ -152,7 +156,9 @@ async def test_console_transcript_scope_mounts_effect_without_hiding_transcript(
             ConsoleBackgroundEffect,
         )
         assert effect.is_effect_active is True
-        assert not console.query("#console-left-rail #console-transcript-background-effect")
+        assert not console.query(
+            "#console-left-rail #console-transcript-background-effect"
+        )
         assert transcript.region.y == effect.region.y
 
 
@@ -173,7 +179,9 @@ async def test_console_background_disabled_does_not_start_active_effect():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        await _wait_for_selector(console, pilot, "#console-transcript-background-effect")
+        await _wait_for_selector(
+            console, pilot, "#console-transcript-background-effect"
+        )
 
         effect = console.query_one(
             "#console-transcript-background-effect",
@@ -199,7 +207,9 @@ async def test_console_workbench_scope_does_not_start_transcript_effect():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        await _wait_for_selector(console, pilot, "#console-transcript-background-effect")
+        await _wait_for_selector(
+            console, pilot, "#console-transcript-background-effect"
+        )
 
         effect = console.query_one(
             "#console-transcript-background-effect",

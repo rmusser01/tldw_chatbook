@@ -64,9 +64,7 @@ def test_recently_used_connection_burst_skips_the_ping(tmp_path, factory):
         statements = _trace_pings(conn)
 
         for _ in range(10):
-            db.get_connection().execute(
-                "SELECT count(*) FROM sqlite_master"
-            ).fetchone()
+            db.get_connection().execute("SELECT count(*) FROM sqlite_master").fetchone()
 
         assert _ping_count(statements) == 0, (
             "a recently-used connection must not be pinged per call"

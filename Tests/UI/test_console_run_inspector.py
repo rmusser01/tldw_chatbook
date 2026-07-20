@@ -66,7 +66,10 @@ async def test_inspector_row_text_change_updates_rows_in_place():
         assert provider_row_after is provider_row_before
         assert str(provider_row_after.renderable) == "Provider: Anthropic / claude"
         # Unchanged rows keep both identity and content.
-        assert inspector.query_one("#console-inspector-run-recipe", Static) is recipe_row_before
+        assert (
+            inspector.query_one("#console-inspector-run-recipe", Static)
+            is recipe_row_before
+        )
 
 
 @pytest.mark.asyncio
@@ -84,7 +87,10 @@ async def test_inspector_row_status_change_swaps_class_and_summary_in_place():
             rows=(
                 ConsoleDisplayRow("Run recipe", "Chat with provider"),
                 ConsoleDisplayRow(
-                    "Provider", "Missing API key", status="blocked", recovery="Add a key"
+                    "Provider",
+                    "Missing API key",
+                    status="blocked",
+                    recovery="Add a key",
                 ),
                 ConsoleDisplayRow("Sources", "1 staged", status="ready"),
             )

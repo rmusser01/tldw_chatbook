@@ -3,7 +3,7 @@
 from tldw_chatbook.Utils.Splash import get_ascii_art
 import math
 import random
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any
 
 from ..base_effect import BaseEffect, register_effect
 
@@ -11,6 +11,7 @@ from ..base_effect import BaseEffect, register_effect
 @register_effect("deep_dream")
 class DeepDreamEffect(BaseEffect):
     """Simulates a 'deep dream' effect with recursive, layered patterns."""
+
     def __init__(self, parent_widget: Any, content: str = "", **kwargs):
         super().__init__(parent_widget, **kwargs)
         self.base_content = get_ascii_art("default")
@@ -28,7 +29,7 @@ class DeepDreamEffect(BaseEffect):
 
         for y in range(self.height):
             for x in range(self.width):
-                if grid[y][x] != ' ':
+                if grid[y][x] != " ":
                     # Add recursive patterns based on time and position
                     v = math.sin(x * 0.2 + self.time) + math.cos(y * 0.2 + self.time)
                     if v > 1.2:

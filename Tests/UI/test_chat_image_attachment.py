@@ -2,7 +2,6 @@
 # Tests for chat file attachment behavior under the current modular contract.
 
 import asyncio
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -69,7 +68,9 @@ def test_process_image_attachment_stores_data():
         file_type="image",
     )
 
-    chat_window.attachment_handler._load_processed_file = AsyncMock(return_value=processed_file)
+    chat_window.attachment_handler._load_processed_file = AsyncMock(
+        return_value=processed_file
+    )
 
     asyncio.run(chat_window.process_file_attachment(test_path))
 
@@ -109,7 +110,9 @@ def test_process_text_file_attachment():
     chat_window = ChatWindowEnhanced(app_instance=mock_app)
     chat_window._chat_input = _MockChatInput("Existing text")
 
-    test_content = "--- Contents of test.txt ---\nThis is test content\n--- End of test.txt ---"
+    test_content = (
+        "--- Contents of test.txt ---\nThis is test content\n--- End of test.txt ---"
+    )
     test_path = "/tmp/test.txt"
     processed_file = SimpleNamespace(
         insert_mode="inline",
@@ -118,13 +121,18 @@ def test_process_text_file_attachment():
         file_type="text",
     )
 
-    chat_window.attachment_handler._load_processed_file = AsyncMock(return_value=processed_file)
+    chat_window.attachment_handler._load_processed_file = AsyncMock(
+        return_value=processed_file
+    )
 
     asyncio.run(chat_window.process_file_attachment(test_path))
 
     expected_text = "Existing text\n\n" + test_content
     assert chat_window._chat_input.text == expected_text
-    assert chat_window._chat_input.cursor_location == (4, len("--- End of test.txt ---"))
+    assert chat_window._chat_input.cursor_location == (
+        4,
+        len("--- End of test.txt ---"),
+    )
     assert chat_window.pending_attachment is None
     assert chat_window.pending_image is None
     mock_app.notify.assert_called_with("📄 test.txt content inserted")

@@ -83,7 +83,11 @@ class LibraryCollectionsPanel(Vertical):
                     )
 
     def compose(self) -> ComposeResult:
-        yield Static("Library Collections", id="library-collections-title", classes="destination-section")
+        yield Static(
+            "Library Collections",
+            id="library-collections-title",
+            classes="destination-section",
+        )
         if self.state.status == "error":
             yield Static(
                 self.state.recovery_copy or self.state.error_message,
@@ -111,7 +115,9 @@ class LibraryCollectionsPanel(Vertical):
                 "No stored collection items are available locally yet.",
                 id="library-collection-empty-reader",
             )
-            yield Static("No Collection selected.", id="library-collection-selected-empty")
+            yield Static(
+                "No Collection selected.", id="library-collection-selected-empty"
+            )
             yield from self._compose_collection_form()
             return
 
@@ -156,7 +162,10 @@ class LibraryCollectionsPanel(Vertical):
                 yield Static("Stored collection content", classes="destination-section")
                 selected = self.state.selected_collection
                 if selected is None:
-                    yield Static("No Collection selected.", id="library-collection-selected-empty")
+                    yield Static(
+                        "No Collection selected.",
+                        id="library-collection-selected-empty",
+                    )
                 else:
                     yield Static(
                         f"Selected: {selected.name}",
@@ -211,14 +220,23 @@ class LibraryCollectionsPanel(Vertical):
                         "Review these labels before any future server write promotion.",
                         id="library-collection-sync-safety-help",
                     )
-                    yield Static(selected.sync_status_label, id="library-collection-sync-status")
-                    if selected.sync_status != "local-only" or selected.sync_status_label != "Sync: local-only":
+                    yield Static(
+                        selected.sync_status_label, id="library-collection-sync-status"
+                    )
+                    if (
+                        selected.sync_status != "local-only"
+                        or selected.sync_status_label != "Sync: local-only"
+                    ):
                         yield Static(
                             selected.sync_status_detail,
                             id="library-collection-sync-detail",
                         )
-                    yield Static(selected.item_count_label, id="library-collection-item-count")
-                    yield Static(selected.updated_at_label, id="library-collection-updated-at")
+                    yield Static(
+                        selected.item_count_label, id="library-collection-item-count"
+                    )
+                    yield Static(
+                        selected.updated_at_label, id="library-collection-updated-at"
+                    )
 
         if self.state.status != "empty":
             yield from self._compose_collection_form()

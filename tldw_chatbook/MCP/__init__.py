@@ -6,7 +6,7 @@ features as MCP tools, resources, and prompts that can be used by AI application
 like Claude Desktop.
 """
 
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING  # noqa: F401
 
 if TYPE_CHECKING:
     from .server import TldwMCPServer
@@ -14,10 +14,12 @@ if TYPE_CHECKING:
 
 __all__ = ["TldwMCPServer", "MCPClient", "is_mcp_available"]
 
+
 def is_mcp_available() -> bool:
     """Check if MCP dependencies are available."""
     try:
-        import mcp
+        import mcp  # noqa: F401
+
         return True
     except ImportError:
         return False

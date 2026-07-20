@@ -16,13 +16,18 @@ from tldw_chatbook.MCP.unified_control_models import (
 )
 from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState
 from tldw_chatbook.UI.MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
-from tldw_chatbook.UI.MCP_Modules.unified_mcp_sections import render_inventory_section, render_overview_section
+from tldw_chatbook.UI.MCP_Modules.unified_mcp_sections import (
+    render_inventory_section,
+    render_overview_section,
+)
 
 
 class FakeUnifiedMCPService:
     def __init__(self, target_store: ConfiguredServerTargetStore) -> None:
         self.target_store = target_store
-        self.context = UnifiedMCPContext(selected_source="local", selected_section="overview")
+        self.context = UnifiedMCPContext(
+            selected_source="local", selected_section="overview"
+        )
         self.action_calls: list[tuple[str, dict]] = []
         self.runtime_state_override_calls = 0
 
@@ -32,7 +37,10 @@ class FakeUnifiedMCPService:
     async def select_source(self, source: str) -> UnifiedMCPContext:
         normalized_source = "server" if source == "server" else "local"
         self.context = replace(self.context, selected_source=normalized_source)
-        if normalized_source == "server" and self.context.selected_active_server_id is None:
+        if (
+            normalized_source == "server"
+            and self.context.selected_active_server_id is None
+        ):
             default_target = self.target_store.resolve_active_target()
             if default_target is not None:
                 return await self.select_server_target(default_target.server_id)
@@ -73,7 +81,9 @@ class FakeUnifiedMCPService:
         )
         return self.context
 
-    async def select_scope(self, scope: str | None, scope_ref: str | None = None) -> UnifiedMCPContext:
+    async def select_scope(
+        self, scope: str | None, scope_ref: str | None = None
+    ) -> UnifiedMCPContext:
         server_id = self.context.selected_active_server_id
         if server_id is None:
             return self.context
@@ -82,7 +92,9 @@ class FakeUnifiedMCPService:
         elif scope == "org" and scope_ref is None:
             scope_ref = "11"
         else:
-            scope_ref = None if scope in {None, "personal", "system_admin"} else scope_ref
+            scope_ref = (
+                None if scope in {None, "personal", "system_admin"} else scope_ref
+            )
         context = replace(
             self.context.per_server_state[server_id],
             selected_scope=scope or "personal",
@@ -129,7 +141,10 @@ class FakeUnifiedMCPService:
             return {**base, "catalogs": [{"id": 9, "name": "Scoped Catalog"}]}
         if effective_section == "external_servers":
             return {**base, "external_servers": [{"id": "docs", "name": "Docs"}]}
-        if effective_section == "governance" and self.context.selected_source == "local":
+        if (
+            effective_section == "governance"
+            and self.context.selected_source == "local"
+        ):
             return {
                 **base,
                 "rules": [
@@ -167,7 +182,10 @@ class FakeUnifiedMCPService:
         if effective_section == "advanced":
             return {
                 **base,
-                "tool_registry_summary": {"modules": [{"module": "search"}], "entries": [{"tool_name": "docs.search"}]},
+                "tool_registry_summary": {
+                    "modules": [{"module": "search"}],
+                    "entries": [{"tool_name": "docs.search"}],
+                },
                 "tool_registry_entries": [{"tool_name": "docs.search"}],
                 "tool_registry_modules": [{"module": "search"}],
                 "governance_packs": [{"id": 4, "name": "Baseline"}],
@@ -176,7 +194,10 @@ class FakeUnifiedMCPService:
         return base
 
     def available_actions(self) -> list[dict]:
-        if self.context.selected_source == "local" and self.context.selected_section == "inventory":
+        if (
+            self.context.selected_source == "local"
+            and self.context.selected_section == "inventory"
+        ):
             return [
                 {
                     "name": "tool.execute",
@@ -197,7 +218,10 @@ class FakeUnifiedMCPService:
                     "payload_template": '{"prompt_name":"summarize_conversation","arguments":{"conversation_id":4}}',
                 },
             ]
-        if self.context.selected_source == "local" and self.context.selected_section == "external_servers":
+        if (
+            self.context.selected_source == "local"
+            and self.context.selected_section == "external_servers"
+        ):
             return [
                 {
                     "name": "profile.save",
@@ -206,7 +230,10 @@ class FakeUnifiedMCPService:
                     "payload_template": '{"profile_id":"demo","command":"python","args":["-m","demo.server"]}',
                 }
             ]
-        if self.context.selected_source == "local" and self.context.selected_section == "governance":
+        if (
+            self.context.selected_source == "local"
+            and self.context.selected_section == "governance"
+        ):
             return [
                 {
                     "name": "governance_rule.save",
@@ -227,7 +254,10 @@ class FakeUnifiedMCPService:
                     "payload_template": '{"rule_id":"rule-a"}',
                 },
             ]
-        if self.context.selected_source == "local" and self.context.selected_section == "advanced":
+        if (
+            self.context.selected_source == "local"
+            and self.context.selected_section == "advanced"
+        ):
             return [
                 {
                     "name": "runtime.access.preview",
@@ -239,7 +269,7 @@ class FakeUnifiedMCPService:
                     "name": "approval_requests.list",
                     "label": "List Local Approval Requests",
                     "action_id": "mcp.governance.observe.local",
-                    "payload_template": '{}',
+                    "payload_template": "{}",
                 },
                 {
                     "name": "approval_request.approve",
@@ -263,19 +293,19 @@ class FakeUnifiedMCPService:
                     "name": "runtime.protocol.inspect",
                     "label": "Inspect Local Protocol",
                     "action_id": "mcp.runtime.observe.local",
-                    "payload_template": '{}',
+                    "payload_template": "{}",
                 },
                 {
                     "name": "runtime.health.get",
                     "label": "Get Local Runtime Health",
                     "action_id": "mcp.runtime.observe.local",
-                    "payload_template": '{}',
+                    "payload_template": "{}",
                 },
                 {
                     "name": "runtime.status.get",
                     "label": "Get Local Runtime Status",
                     "action_id": "mcp.runtime.observe.local",
-                    "payload_template": '{}',
+                    "payload_template": "{}",
                 },
                 {
                     "name": "runtime.request",
@@ -290,7 +320,10 @@ class FakeUnifiedMCPService:
                     "payload_template": '{"requests":[{"method":"tools/list"},{"method":"prompts/list"}]}',
                 },
             ]
-        if self.context.selected_source == "server" and self.context.selected_section == "catalogs":
+        if (
+            self.context.selected_source == "server"
+            and self.context.selected_section == "catalogs"
+        ):
             return [
                 {
                     "name": "catalog.create",
@@ -299,7 +332,10 @@ class FakeUnifiedMCPService:
                     "payload_template": '{"name":"Team Catalog","description":"Scoped"}',
                 }
             ]
-        if self.context.selected_source == "server" and self.context.selected_section == "external_servers":
+        if (
+            self.context.selected_source == "server"
+            and self.context.selected_section == "external_servers"
+        ):
             return [
                 {
                     "name": "external_server.secret.set",
@@ -308,7 +344,10 @@ class FakeUnifiedMCPService:
                     "payload_template": '{"server_id":"docs","secret":"replace-me"}',
                 }
             ]
-        if self.context.selected_source == "server" and self.context.selected_section == "governance":
+        if (
+            self.context.selected_source == "server"
+            and self.context.selected_section == "governance"
+        ):
             return [
                 {
                     "name": "permission_profile.create",
@@ -339,9 +378,12 @@ class FakeUnifiedMCPService:
                     "label": "Get Assignment Slot Status",
                     "action_id": "mcp.credentials.list.server",
                     "payload_template": '{"assignment_id":2,"server_id":"docs","slot_name":"token_readonly"}',
-                }
+                },
             ]
-        if self.context.selected_source == "server" and self.context.selected_section == "advanced":
+        if (
+            self.context.selected_source == "server"
+            and self.context.selected_section == "advanced"
+        ):
             return [
                 {
                     "name": "governance_pack.dry_run",
@@ -413,7 +455,9 @@ class FakeUnifiedMCPService:
 
 
 class UnifiedMCPPanelApp(App):
-    def __init__(self, service: FakeUnifiedMCPService, *, deny_ui_actions: bool = False):
+    def __init__(
+        self, service: FakeUnifiedMCPService, *, deny_ui_actions: bool = False
+    ):
         super().__init__()
         self.notify_messages: list[tuple[str, str]] = []
         self.unified_mcp_service = service
@@ -422,7 +466,9 @@ class UnifiedMCPPanelApp(App):
     def notify(self, message: str, severity: str = "information") -> None:
         self.notify_messages.append((message, severity))
 
-    def require_ui_action_allowed(self, *, action_id: str, runtime_state_override: RuntimeSourceState) -> PolicyDecision:
+    def require_ui_action_allowed(
+        self, *, action_id: str, runtime_state_override: RuntimeSourceState
+    ) -> PolicyDecision:
         if self.deny_ui_actions:
             return PolicyDecision(
                 allowed=False,
@@ -531,7 +577,14 @@ def test_render_overview_section_counts_string_inventory_values_as_single_items(
 async def test_unified_mcp_panel_switches_between_local_and_server_views(tmp_path):
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     app = UnifiedMCPPanelApp(FakeUnifiedMCPService(target_store))
 
@@ -553,10 +606,19 @@ async def test_unified_mcp_panel_switches_between_local_and_server_views(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_unified_mcp_panel_exposes_scope_and_section_controls_for_server_context(tmp_path):
+async def test_unified_mcp_panel_exposes_scope_and_section_controls_for_server_context(
+    tmp_path,
+):
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     app = UnifiedMCPPanelApp(FakeUnifiedMCPService(target_store))
 
@@ -583,10 +645,19 @@ async def test_unified_mcp_panel_exposes_scope_and_section_controls_for_server_c
 
 
 @pytest.mark.asyncio
-async def test_unified_mcp_panel_exposes_slice2_sections_for_local_and_server_contexts(tmp_path):
+async def test_unified_mcp_panel_exposes_slice2_sections_for_local_and_server_contexts(
+    tmp_path,
+):
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     app = UnifiedMCPPanelApp(FakeUnifiedMCPService(target_store))
 
@@ -616,7 +687,14 @@ async def test_unified_mcp_panel_exposes_slice2_sections_for_local_and_server_co
 async def test_unified_mcp_panel_exposes_local_governance_section_and_actions(tmp_path):
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     service = FakeUnifiedMCPService(target_store)
     app = UnifiedMCPPanelApp(service)
@@ -648,7 +726,14 @@ async def test_unified_mcp_panel_exposes_local_governance_section_and_actions(tm
 async def test_unified_mcp_panel_exposes_local_inventory_runtime_actions(tmp_path):
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     service = FakeUnifiedMCPService(target_store)
     app = UnifiedMCPPanelApp(service)
@@ -668,7 +753,9 @@ async def test_unified_mcp_panel_exposes_local_inventory_runtime_actions(tmp_pat
         assert "Execute Local Tool" in action_values
         assert "Read Local Resource" in action_values
         assert "Get Local Prompt" in action_values
-        assert "Actions ready: 3 available" in str(panel.query_one("#unified-mcp-action-readiness", Static).content)
+        assert "Actions ready: 3 available" in str(
+            panel.query_one("#unified-mcp-action-readiness", Static).content
+        )
 
 
 @pytest.mark.asyncio
@@ -716,15 +803,26 @@ async def test_unified_mcp_panel_explains_empty_and_policy_blocked_actions(tmp_p
         readiness_text = str(readiness.content)
         assert "Blocked" in readiness_text
         assert "No actions available for local overview." in readiness_text
-        assert "Select Section: Inventory to inspect runnable MCP tools." in readiness_text
+        assert (
+            "Select Section: Inventory to inspect runnable MCP tools." in readiness_text
+        )
         assert "Run Action disabled" in readiness_text
         assert payload_label.display is False
         assert payload_area.display is False
         assert payload_empty.display is True
-        assert "Choose a runnable action to edit its payload." in str(payload_empty.content)
+        assert "Choose a runnable action to edit its payload." in str(
+            payload_empty.content
+        )
 
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     service = FakeUnifiedMCPService(target_store)
     denied_app = UnifiedMCPPanelApp(service, deny_ui_actions=True)
@@ -742,11 +840,15 @@ async def test_unified_mcp_panel_explains_empty_and_policy_blocked_actions(tmp_p
 
         assert action_select.disabled is True
         assert "Run Action disabled" in str(readiness.content)
-        assert "Runtime policy blocks 3 actions for local inventory." in str(readiness.content)
+        assert "Runtime policy blocks 3 actions for local inventory." in str(
+            readiness.content
+        )
 
 
 @pytest.mark.asyncio
-async def test_unified_mcp_panel_shows_payload_editor_only_for_runnable_actions(tmp_path):
+async def test_unified_mcp_panel_shows_payload_editor_only_for_runnable_actions(
+    tmp_path,
+):
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     service = FakeUnifiedMCPService(target_store)
     app = UnifiedMCPPanelApp(service)
@@ -772,7 +874,14 @@ async def test_unified_mcp_panel_shows_payload_editor_only_for_runnable_actions(
 async def test_unified_mcp_panel_exposes_local_advanced_runtime_actions(tmp_path):
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     service = FakeUnifiedMCPService(target_store)
     app = UnifiedMCPPanelApp(service)
@@ -811,7 +920,14 @@ async def test_unified_mcp_panel_exposes_local_advanced_runtime_actions(tmp_path
 async def test_unified_mcp_panel_executes_minimal_action_runner(tmp_path):
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     service = FakeUnifiedMCPService(target_store)
     app = UnifiedMCPPanelApp(service)
@@ -830,7 +946,9 @@ async def test_unified_mcp_panel_executes_minimal_action_runner(tmp_path):
 
         result = panel.query_one("#unified-mcp-action-result", Static)
 
-        assert service.action_calls == [("profile.save", {"profile_id": "local-b", "command": "python"})]
+        assert service.action_calls == [
+            ("profile.save", {"profile_id": "local-b", "command": "python"})
+        ]
         assert "local-b" in str(result.content)
 
 
@@ -838,7 +956,14 @@ async def test_unified_mcp_panel_executes_minimal_action_runner(tmp_path):
 async def test_unified_mcp_panel_exposes_governance_section_and_actions(tmp_path):
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     service = FakeUnifiedMCPService(target_store)
     app = UnifiedMCPPanelApp(service)
@@ -866,7 +991,14 @@ async def test_unified_mcp_panel_exposes_governance_section_and_actions(tmp_path
 async def test_unified_mcp_panel_exposes_advanced_section_and_actions(tmp_path):
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     service = FakeUnifiedMCPService(target_store)
     app = UnifiedMCPPanelApp(service)

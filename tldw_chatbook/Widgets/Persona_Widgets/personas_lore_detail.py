@@ -102,7 +102,9 @@ class PersonasLoreDetailWidget(Vertical):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._entries: list[dict] = []
-        self._suppress_enabled_toggle: bool = False  # True while we set the Switch programmatically
+        self._suppress_enabled_toggle: bool = (
+            False  # True while we set the Switch programmatically
+        )
 
     # ----- compose -----
 
@@ -118,18 +120,31 @@ class PersonasLoreDetailWidget(Vertical):
                 with VerticalScroll(id="personas-lore-entries-scroll"):
                     yield DataTable(id="personas-lore-entries-table", cursor_type="row")
                     with Horizontal(classes="personas-lore-form-row"):
-                        yield Input(placeholder="Keys (comma-separated)", id="personas-lore-entry-keys")
+                        yield Input(
+                            placeholder="Keys (comma-separated)",
+                            id="personas-lore-entry-keys",
+                        )
                         yield Select(
                             [(label, value) for value, label in POSITIONS],
                             id="personas-lore-entry-position",
                             value="before_char",
                             allow_blank=False,
                         )
-                        yield Input(placeholder="Priority", id="personas-lore-entry-priority", value="0")
-                        yield Switch(value=True, id="personas-lore-entry-enabled", tooltip="Entry enabled")
+                        yield Input(
+                            placeholder="Priority",
+                            id="personas-lore-entry-priority",
+                            value="0",
+                        )
+                        yield Switch(
+                            value=True,
+                            id="personas-lore-entry-enabled",
+                            tooltip="Entry enabled",
+                        )
                     with Horizontal(classes="personas-lore-form-row"):
                         yield Static("Case-sensitive", markup=False)
-                        yield Switch(value=False, id="personas-lore-entry-case-sensitive")
+                        yield Switch(
+                            value=False, id="personas-lore-entry-case-sensitive"
+                        )
                         yield Static("Selective", markup=False)
                         yield Switch(value=False, id="personas-lore-entry-selective")
                     with Horizontal(classes="personas-lore-form-row"):
@@ -141,24 +156,58 @@ class PersonasLoreDetailWidget(Vertical):
                     )
                     yield TextArea(id="personas-lore-entry-content")
                     with Horizontal(classes="personas-lore-form-row"):
-                        yield Button("Add", id="personas-lore-entry-add", classes="console-action-secondary")
-                        yield Button("Update", id="personas-lore-entry-update", classes="console-action-secondary")
-                        yield Button("Delete", id="personas-lore-entry-delete", classes="console-action-secondary")
-                        yield Button("Move up", id="personas-lore-entry-move-up", classes="console-action-secondary")
-                        yield Button("Move down", id="personas-lore-entry-move-down", classes="console-action-secondary")
+                        yield Button(
+                            "Add",
+                            id="personas-lore-entry-add",
+                            classes="console-action-secondary",
+                        )
+                        yield Button(
+                            "Update",
+                            id="personas-lore-entry-update",
+                            classes="console-action-secondary",
+                        )
+                        yield Button(
+                            "Delete",
+                            id="personas-lore-entry-delete",
+                            classes="console-action-secondary",
+                        )
+                        yield Button(
+                            "Move up",
+                            id="personas-lore-entry-move-up",
+                            classes="console-action-secondary",
+                        )
+                        yield Button(
+                            "Move down",
+                            id="personas-lore-entry-move-down",
+                            classes="console-action-secondary",
+                        )
             with TabPane("Settings", id="personas-lore-tab-settings"):
                 yield Input(placeholder="Name", id="personas-lore-name")
                 yield TextArea(id="personas-lore-description")
-                yield Input(placeholder="Scan depth", id="personas-lore-scan-depth", value="3")
-                yield Input(placeholder="Token budget", id="personas-lore-token-budget", value="500")
+                yield Input(
+                    placeholder="Scan depth", id="personas-lore-scan-depth", value="3"
+                )
+                yield Input(
+                    placeholder="Token budget",
+                    id="personas-lore-token-budget",
+                    value="500",
+                )
                 with Horizontal(classes="personas-lore-form-row"):
                     yield Static("Recursive scanning", markup=False)
                     yield Switch(value=False, id="personas-lore-recursive")
                 with Horizontal(classes="personas-lore-form-row"):
                     yield Static("Enabled", markup=False)
                     yield Switch(value=True, id="personas-lore-enabled")
-                yield Button("Save settings", id="personas-lore-settings-save", classes="console-action-secondary")
-                yield Button("Export", id="personas-lore-export", classes="console-action-secondary")
+                yield Button(
+                    "Save settings",
+                    id="personas-lore-settings-save",
+                    classes="console-action-secondary",
+                )
+                yield Button(
+                    "Export",
+                    id="personas-lore-export",
+                    classes="console-action-secondary",
+                )
         yield Static("", id="personas-lore-status", markup=False)
 
     def on_mount(self) -> None:
@@ -181,7 +230,9 @@ class PersonasLoreDetailWidget(Vertical):
         switch's Changed handler.
         """
         selective = self.query_one("#personas-lore-entry-selective", Switch).value
-        self.query_one("#personas-lore-entry-secondary-keys", Input).disabled = not selective
+        self.query_one(
+            "#personas-lore-entry-secondary-keys", Input
+        ).disabled = not selective
 
     # ----- public API -----
 
@@ -196,11 +247,21 @@ class PersonasLoreDetailWidget(Vertical):
         Returns:
             None.
         """
-        self.query_one("#personas-lore-name", Input).value = str(record.get("name") or "")
-        self.query_one("#personas-lore-description", TextArea).text = str(record.get("description") or "")
-        self.query_one("#personas-lore-scan-depth", Input).value = str(record.get("scan_depth") or 3)
-        self.query_one("#personas-lore-token-budget", Input).value = str(record.get("token_budget") or 500)
-        self.query_one("#personas-lore-recursive", Switch).value = bool(record.get("recursive_scanning", False))
+        self.query_one("#personas-lore-name", Input).value = str(
+            record.get("name") or ""
+        )
+        self.query_one("#personas-lore-description", TextArea).text = str(
+            record.get("description") or ""
+        )
+        self.query_one("#personas-lore-scan-depth", Input).value = str(
+            record.get("scan_depth") or 3
+        )
+        self.query_one("#personas-lore-token-budget", Input).value = str(
+            record.get("token_budget") or 500
+        )
+        self.query_one("#personas-lore-recursive", Switch).value = bool(
+            record.get("recursive_scanning", False)
+        )
         self._set_enabled_switch(bool(record.get("enabled", True)))
         self.update_entries(list(record.get("entries") or []))
         self.query_one("#personas-lore-status", Static).update("")
@@ -296,9 +357,10 @@ class PersonasLoreDetailWidget(Vertical):
         Returns:
             int: ``max(existing insertion_order) + 1`` (0 when there are none).
         """
-        return max(
-            (int(e.get("insertion_order") or 0) for e in self._entries), default=-1
-        ) + 1
+        return (
+            max((int(e.get("insertion_order") or 0) for e in self._entries), default=-1)
+            + 1
+        )
 
     def entry_form_payload(self) -> dict | None:
         """API-named entry payload from the form; None if keys or content is empty.
@@ -315,16 +377,22 @@ class PersonasLoreDetailWidget(Vertical):
         if not keys or not content.strip():
             return None
         position = str(self.query_one("#personas-lore-entry-position", Select).value)
-        raw_pri = self.query_one("#personas-lore-entry-priority", Input).value.strip() or "0"
+        raw_pri = (
+            self.query_one("#personas-lore-entry-priority", Input).value.strip() or "0"
+        )
         try:
             priority = max(0, min(100, int(raw_pri)))
         except ValueError:
             priority = 0
         enabled = bool(self.query_one("#personas-lore-entry-enabled", Switch).value)
-        case_sensitive = bool(self.query_one("#personas-lore-entry-case-sensitive", Switch).value)
+        case_sensitive = bool(
+            self.query_one("#personas-lore-entry-case-sensitive", Switch).value
+        )
         selective = bool(self.query_one("#personas-lore-entry-selective", Switch).value)
         regex = bool(self.query_one("#personas-lore-entry-regex", Switch).value)
-        raw_secondary = self.query_one("#personas-lore-entry-secondary-keys", Input).value
+        raw_secondary = self.query_one(
+            "#personas-lore-entry-secondary-keys", Input
+        ).value
         secondary_keys = [k.strip() for k in raw_secondary.split(",") if k.strip()]
         selected_id = self.selected_entry_id
         entry = (
@@ -351,12 +419,16 @@ class PersonasLoreDetailWidget(Vertical):
         }
 
     def settings_payload(self) -> dict:
-        raw_scan_depth = self.query_one("#personas-lore-scan-depth", Input).value.strip() or "3"
+        raw_scan_depth = (
+            self.query_one("#personas-lore-scan-depth", Input).value.strip() or "3"
+        )
         try:
             scan_depth = int(raw_scan_depth)
         except ValueError:
             scan_depth = 3
-        raw_token_budget = self.query_one("#personas-lore-token-budget", Input).value.strip() or "500"
+        raw_token_budget = (
+            self.query_one("#personas-lore-token-budget", Input).value.strip() or "500"
+        )
         try:
             token_budget = int(raw_token_budget)
         except ValueError:
@@ -366,7 +438,9 @@ class PersonasLoreDetailWidget(Vertical):
             "description": self.query_one("#personas-lore-description", TextArea).text,
             "scan_depth": scan_depth,
             "token_budget": token_budget,
-            "recursive_scanning": bool(self.query_one("#personas-lore-recursive", Switch).value),
+            "recursive_scanning": bool(
+                self.query_one("#personas-lore-recursive", Switch).value
+            ),
             "enabled": bool(self.query_one("#personas-lore-enabled", Switch).value),
         }
 
@@ -395,15 +469,27 @@ class PersonasLoreDetailWidget(Vertical):
         self.query_one("#personas-lore-entry-keys", Input).value = ", ".join(
             str(k) for k in (entry.get("keys") or [])
         )
-        self.query_one("#personas-lore-entry-content", TextArea).text = str(entry.get("content") or "")
+        self.query_one("#personas-lore-entry-content", TextArea).text = str(
+            entry.get("content") or ""
+        )
         position = str(entry.get("position") or "before_char")
         if position in {p[0] for p in POSITIONS}:
             self.query_one("#personas-lore-entry-position", Select).value = position
-        self.query_one("#personas-lore-entry-priority", Input).value = str(entry.get("priority") or 0)
-        self.query_one("#personas-lore-entry-enabled", Switch).value = bool(entry.get("enabled", True))
-        self.query_one("#personas-lore-entry-case-sensitive", Switch).value = bool(entry.get("case_sensitive", False))
-        self.query_one("#personas-lore-entry-selective", Switch).value = bool(entry.get("selective", False))
-        self.query_one("#personas-lore-entry-regex", Switch).value = bool(entry.get("regex", False))
+        self.query_one("#personas-lore-entry-priority", Input).value = str(
+            entry.get("priority") or 0
+        )
+        self.query_one("#personas-lore-entry-enabled", Switch).value = bool(
+            entry.get("enabled", True)
+        )
+        self.query_one("#personas-lore-entry-case-sensitive", Switch).value = bool(
+            entry.get("case_sensitive", False)
+        )
+        self.query_one("#personas-lore-entry-selective", Switch).value = bool(
+            entry.get("selective", False)
+        )
+        self.query_one("#personas-lore-entry-regex", Switch).value = bool(
+            entry.get("regex", False)
+        )
         self.query_one("#personas-lore-entry-secondary-keys", Input).value = ", ".join(
             str(k) for k in (entry.get("secondary_keys") or [])
         )

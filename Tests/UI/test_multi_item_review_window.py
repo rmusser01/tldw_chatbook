@@ -20,7 +20,9 @@ async def test_multi_item_review_generation_actions_explain_states():
 
     class MultiItemReviewApp(App[None]):
         def compose(self) -> ComposeResult:
-            yield MultiItemReviewWindow(SimpleNamespace(notify=lambda *args, **kwargs: None))
+            yield MultiItemReviewWindow(
+                SimpleNamespace(notify=lambda *args, **kwargs: None)
+            )
 
     app = MultiItemReviewApp()
     async with app.run_test() as pilot:

@@ -21,7 +21,9 @@ class FakeQuizClient:
         return {"id": quiz_id, "name": "Quiz"}
 
     async def create_quiz(self, request_data):
-        self.calls.append(("create_quiz", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            ("create_quiz", request_data.model_dump(exclude_none=True, mode="json"))
+        )
         return {"id": 7, "name": request_data.name}
 
     async def delete_quiz(self, quiz_id, **kwargs):
@@ -33,7 +35,13 @@ class FakeQuizClient:
         return {"items": [], "total": 0}
 
     async def create_quiz_question(self, quiz_id, request_data):
-        self.calls.append(("create_quiz_question", quiz_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "create_quiz_question",
+                quiz_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"id": 11, "quiz_id": quiz_id}
 
     async def delete_quiz_question(self, quiz_id, question_id, **kwargs):
@@ -45,7 +53,13 @@ class FakeQuizClient:
         return {"id": 21, "quiz_id": quiz_id}
 
     async def submit_quiz_attempt(self, attempt_id, request_data):
-        self.calls.append(("submit_quiz_attempt", attempt_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "submit_quiz_attempt",
+                attempt_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"id": attempt_id, "status": "submitted"}
 
     async def list_quiz_attempts(self, **kwargs):
@@ -140,8 +154,12 @@ async def test_server_quiz_service_re_resolves_provider_without_service_local_cl
     assert provider.build_calls == 2
     assert len(provider.clients) == 2
     assert provider.clients[0] is not provider.clients[1]
-    assert provider.clients[0].calls == [("list_quizzes", {"q": "bio", "limit": 100, "offset": 0})]
-    assert provider.clients[1].calls == [("list_quizzes", {"q": "chem", "limit": 100, "offset": 0})]
+    assert provider.clients[0].calls == [
+        ("list_quizzes", {"q": "bio", "limit": 100, "offset": 0})
+    ]
+    assert provider.clients[1].calls == [
+        ("list_quizzes", {"q": "chem", "limit": 100, "offset": 0})
+    ]
     for built_client in provider.clients:
         assert all(value is not built_client for value in vars(service).values())
 
@@ -181,11 +199,15 @@ async def test_server_quiz_service_enforces_policy_actions():
     )
     await service.delete_question(11, quiz_id=7, expected_version=2)
     await service.start_attempt(7)
-    await service.submit_attempt(21, answers=[{"question_id": 11, "user_answer": "true"}])
+    await service.submit_attempt(
+        21, answers=[{"question_id": 11, "user_answer": "true"}]
+    )
     await service.list_attempts(quiz_id=7)
     await service.get_attempt(21)
 
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "quiz.list.server",
         "quiz.detail.server",
         "quiz.create.server",

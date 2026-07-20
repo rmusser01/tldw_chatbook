@@ -71,7 +71,10 @@ class HomeRail(Vertical):
         previous_preferences = self.preferences
         self.triage = triage
         self.preferences = preferences
-        if triage.sections == previous_triage.sections and preferences == previous_preferences:
+        if (
+            triage.sections == previous_triage.sections
+            and preferences == previous_preferences
+        ):
             try:
                 self._patch_selection(triage, previous_triage)
                 return
@@ -86,7 +89,9 @@ class HomeRail(Vertical):
     ) -> None:
         """Patch selection markers and details text in place (no recompose)."""
         if triage.selected_row_id != previous_triage.selected_row_id:
-            self._patch_row_selection(triage.selected_row_id, previous_triage.selected_row_id)
+            self._patch_row_selection(
+                triage.selected_row_id, previous_triage.selected_row_id
+            )
         if triage.details_lines != previous_triage.details_lines:
             self.query_one("#home-details-body", Static).update(
                 "\n".join(triage.details_lines)
@@ -97,7 +102,9 @@ class HomeRail(Vertical):
     ) -> None:
         """Toggle the marker/class on just the previously/newly selected rows."""
         changed_ids = {
-            row_id for row_id in (new_selected_row_id, previous_selected_row_id) if row_id
+            row_id
+            for row_id in (new_selected_row_id, previous_selected_row_id)
+            if row_id
         }
         if not changed_ids:
             return
@@ -116,9 +123,7 @@ class HomeRail(Vertical):
             source_line = (
                 f"{row.source} - {row.age_label}" if row.age_label else row.source
             )
-            button.label = (
-                f"{marker} {row.glyph} {_visible_row_title(row.title)}\n    {source_line}"
-            )
+            button.label = f"{marker} {row.glyph} {_visible_row_title(row.title)}\n    {source_line}"
             button.set_class(selected, "home-rail-row-selected")
 
     def _section_open(self, section_id: str) -> bool:

@@ -71,7 +71,7 @@ def _detected_server_host_display(base_url: str) -> str:
     display = safe_endpoint_display(base_url)
     for prefix in ("http://", "https://"):
         if display.startswith(prefix):
-            return display[len(prefix):]
+            return display[len(prefix) :]
     return display
 
 
@@ -119,7 +119,9 @@ def build_console_detected_server_action(
     if model_id:
         tooltip = f"Sets provider to {display_name} at {host_display} and model to {model_id}."
     else:
-        tooltip = f"Sets provider to {display_name} at {host_display}. Pick a model next."
+        tooltip = (
+            f"Sets provider to {display_name} at {host_display}. Pick a model next."
+        )
     return ConsoleDetectedServerAction(
         label=f"Use detected {display_name} ({host_display})",
         tooltip=tooltip,
@@ -186,8 +188,12 @@ def build_console_setup_card_state(
     provider_done = bool(readiness.native_send_supported)
     if provider_done and has_model:
         if guidance_dismissed:
-            return ConsoleSetupCardState(mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY)
-        return ConsoleSetupCardState(mode="ready_line", body_copy=CONSOLE_READY_EMPTY_COPY)
+            return ConsoleSetupCardState(
+                mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY
+            )
+        return ConsoleSetupCardState(
+            mode="ready_line", body_copy=CONSOLE_READY_EMPTY_COPY
+        )
 
     provider_name = str(provider_label or "Provider").strip() or "Provider"
     step_one = ConsoleSetupStep(

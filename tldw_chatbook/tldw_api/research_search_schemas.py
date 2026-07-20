@@ -64,7 +64,9 @@ class WebSearchRequest(BaseModel):
         engine = WEBSEARCH_ENGINE_ALIASES.get(str(value).lower(), str(value).lower())
         if engine not in SUPPORTED_WEBSEARCH_ENGINES:
             allowed = ", ".join(sorted(SUPPORTED_WEBSEARCH_ENGINES))
-            raise ValueError(f"Unsupported engine '{value}'. Supported engines: {allowed}")
+            raise ValueError(
+                f"Unsupported engine '{value}'. Supported engines: {allowed}"
+            )
         return engine
 
 
@@ -268,7 +270,9 @@ PAPER_SEARCH_INGEST_ENDPOINTS = frozenset(
 )
 
 
-def _normalize_paper_search_endpoint(value: str, *, allowed: frozenset[str], label: str) -> str:
+def _normalize_paper_search_endpoint(
+    value: str, *, allowed: frozenset[str], label: str
+) -> str:
     endpoint = str(value or "").strip().strip("/").lower()
     if endpoint not in allowed:
         label_prefix = f"{label} " if label else ""
@@ -287,7 +291,9 @@ class PaperSearchRequest(BaseModel):
     @field_validator("endpoint")
     @classmethod
     def validate_endpoint(cls, value: str) -> str:
-        return _normalize_paper_search_endpoint(value, allowed=cls.allowed_endpoints, label="")
+        return _normalize_paper_search_endpoint(
+            value, allowed=cls.allowed_endpoints, label=""
+        )
 
 
 class PaperSearchDetailRequest(BaseModel):
@@ -301,7 +307,9 @@ class PaperSearchDetailRequest(BaseModel):
     @field_validator("endpoint")
     @classmethod
     def validate_endpoint(cls, value: str) -> str:
-        return _normalize_paper_search_endpoint(value, allowed=cls.allowed_endpoints, label="detail")
+        return _normalize_paper_search_endpoint(
+            value, allowed=cls.allowed_endpoints, label="detail"
+        )
 
 
 class PaperSearchIngestRequest(BaseModel):
@@ -316,7 +324,9 @@ class PaperSearchIngestRequest(BaseModel):
     @field_validator("endpoint")
     @classmethod
     def validate_endpoint(cls, value: str) -> str:
-        return _normalize_paper_search_endpoint(value, allowed=cls.allowed_endpoints, label="ingest")
+        return _normalize_paper_search_endpoint(
+            value, allowed=cls.allowed_endpoints, label="ingest"
+        )
 
 
 class PaperSearchListResponse(BaseModel):

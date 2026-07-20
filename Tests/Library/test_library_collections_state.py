@@ -44,7 +44,9 @@ def test_empty_panel_state_explains_library_collections_scope() -> None:
     assert "reading, reviewing, and reusing saved content" in state.empty_copy
     assert state.selected_collection is None
     assert state.delete_action.enabled is False
-    assert state.delete_action.disabled_reason == "Select a Collection before deleting it."
+    assert (
+        state.delete_action.disabled_reason == "Select a Collection before deleting it."
+    )
 
 
 def test_ready_state_selects_first_collection_by_default() -> None:
@@ -91,10 +93,15 @@ def test_sync_status_renders_local_only_and_sync_unavailable_copy() -> None:
     assert local_state.selected_collection is not None
     assert local_state.selected_collection.sync_status_label == "Sync: local-only"
     assert unavailable_state.selected_collection is not None
-    assert unavailable_state.selected_collection.sync_status_label == "Sync: sync-unavailable"
+    assert (
+        unavailable_state.selected_collection.sync_status_label
+        == "Sync: sync-unavailable"
+    )
 
 
-def test_sync_dry_run_status_summarizes_ready_conflict_orphaned_and_unsupported_states() -> None:
+def test_sync_dry_run_status_summarizes_ready_conflict_orphaned_and_unsupported_states() -> (
+    None
+):
     ready = _record(
         "collection-ready",
         "Ready",
@@ -188,4 +195,6 @@ def test_delete_action_is_disabled_when_no_collection_is_selected() -> None:
 
     assert state.selected_collection is None
     assert state.delete_action.enabled is False
-    assert state.delete_action.disabled_reason == "Select a Collection before deleting it."
+    assert (
+        state.delete_action.disabled_reason == "Select a Collection before deleting it."
+    )

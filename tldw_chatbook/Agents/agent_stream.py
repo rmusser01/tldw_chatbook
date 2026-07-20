@@ -35,12 +35,17 @@ under char-by-char feeding. ``flush_tail()`` still guards against a
 negative-length tail (never returns fewer than zero characters) as a
 defensive floor, not because an overshoot is expected in practice.
 """
+
 from __future__ import annotations
 
 from .agent_models import ToolCall
 from .agent_runtime import (
-    FENCE_OPEN, STREAM_TEXT, STREAM_TOOL_CALL, STREAM_UNDECIDED,
-    split_visible_text_and_tool_call, stream_prefix_verdict,
+    FENCE_OPEN,
+    STREAM_TEXT,
+    STREAM_TOOL_CALL,
+    STREAM_UNDECIDED,
+    split_visible_text_and_tool_call,
+    stream_prefix_verdict,
 )
 
 _HOLDBACK = len(FENCE_OPEN) - 1
@@ -51,9 +56,9 @@ class StreamGate:
 
     def __init__(self) -> None:
         self._buf = ""
-        self._streamed_len = 0     # chars of visible text already returned
-        self._scan_from = 0        # buffer index to resume fence search from
-        self._sealed = False       # leading fence: whole turn is a tool call
+        self._streamed_len = 0  # chars of visible text already returned
+        self._scan_from = 0  # buffer index to resume fence search from
+        self._sealed = False  # leading fence: whole turn is a tool call
         self._fence_confirmed = False  # mid-stream candidate tag confirmed
 
     @property
@@ -92,10 +97,10 @@ class StreamGate:
             return ""
         verdict = stream_prefix_verdict(self._buf)
         if verdict == STREAM_TOOL_CALL:
-            self._sealed = True        # leading fence: whole turn is a tool call
+            self._sealed = True  # leading fence: whole turn is a tool call
             return ""
         if verdict == STREAM_UNDECIDED:
-            return ""                  # not enough tokens to decide — hold everything
+            return ""  # not enough tokens to decide — hold everything
 
         # STREAM_TEXT: look for a mid-stream fence candidate, resuming the
         # scan from wherever earlier look-alikes were disproven — those
@@ -113,7 +118,7 @@ class StreamGate:
                 self._scan_from = scan_from
                 safe = max(self._streamed_len, len(self._buf) - _HOLDBACK)
                 safe = self._trim_trailing_ws(safe)
-                out = self._buf[self._streamed_len:safe]
+                out = self._buf[self._streamed_len : safe]
                 self._streamed_len = safe
                 return out
             candidate = stream_prefix_verdict(self._buf[idx:])
@@ -129,14 +134,14 @@ class StreamGate:
                 # the same reason as above.
                 self._scan_from = idx
                 cutoff = self._trim_trailing_ws(idx)
-                out = self._buf[self._streamed_len:cutoff]
+                out = self._buf[self._streamed_len : cutoff]
                 self._streamed_len = cutoff
                 return out
             # STREAM_TOOL_CALL: tag line confirmed clean. Hold for the rest
             # of the turn — the JSON body's genuineness is settled only at
             # finalize.
             self._fence_confirmed = True
-            out = self._buf[self._streamed_len:idx].rstrip()
+            out = self._buf[self._streamed_len : idx].rstrip()
             self._streamed_len += len(out)
             return out
 
@@ -160,7 +165,7 @@ class StreamGate:
             # text can therefore be a hair shorter than what already
             # streamed. Nothing to add back — never return a negative tail.
             return ""
-        tail = visible[self._streamed_len:]
+        tail = visible[self._streamed_len :]
         self._streamed_len = len(visible)
         return tail
 

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+
 if TYPE_CHECKING:
     from ..tldw_api import TLDWAPIClient
 
@@ -60,7 +61,9 @@ class ServerQuizService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -69,10 +72,14 @@ class ServerQuizService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server quiz action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server quiz action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -97,9 +104,13 @@ class ServerQuizService:
     def _coerce_attempt_id(attempt_id: str | int) -> int:
         return int(str(attempt_id))
 
-    async def list_quizzes(self, *, q: Optional[str] = None, limit: int = 100, offset: int = 0) -> Any:
+    async def list_quizzes(
+        self, *, q: Optional[str] = None, limit: int = 100, offset: int = 0
+    ) -> Any:
         self._enforce(self._quiz_action_id("list"))
-        return await self._require_client().list_quizzes(q=q, limit=limit, offset=offset)
+        return await self._require_client().list_quizzes(
+            q=q, limit=limit, offset=offset
+        )
 
     async def get_quiz(self, quiz_id: str | int) -> Any:
         self._enforce(self._quiz_action_id("detail"))
@@ -196,9 +207,13 @@ class ServerQuizService:
 
     async def start_attempt(self, quiz_id: str | int) -> Any:
         self._enforce(self._quiz_attempt_action_id("create"))
-        return await self._require_client().start_quiz_attempt(self._coerce_quiz_id(quiz_id))
+        return await self._require_client().start_quiz_attempt(
+            self._coerce_quiz_id(quiz_id)
+        )
 
-    async def submit_attempt(self, attempt_id: str | int, *, answers: list[dict[str, Any]]) -> Any:
+    async def submit_attempt(
+        self, attempt_id: str | int, *, answers: list[dict[str, Any]]
+    ) -> Any:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import QuizAttemptSubmitRequest
 
@@ -208,7 +223,9 @@ class ServerQuizService:
             QuizAttemptSubmitRequest(answers=answers),
         )
 
-    async def list_attempts(self, *, quiz_id: Optional[str | int] = None, limit: int = 100, offset: int = 0) -> Any:
+    async def list_attempts(
+        self, *, quiz_id: Optional[str | int] = None, limit: int = 100, offset: int = 0
+    ) -> Any:
         self._enforce(self._quiz_attempt_action_id("observe"))
         return await self._require_client().list_quiz_attempts(
             quiz_id=self._coerce_quiz_id(quiz_id),

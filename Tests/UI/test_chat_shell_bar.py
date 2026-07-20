@@ -104,7 +104,9 @@ def test_chat_shell_context_supports_tab_state_and_chat_session_data() -> None:
     )
 
     tab_context = ChatShellContext.from_tab_state(tab_state, resolver=resolver)
-    session_context = ChatShellContext.from_session_data(session_data, resolver=resolver)
+    session_context = ChatShellContext.from_session_data(
+        session_data, resolver=resolver
+    )
 
     assert tab_context.backend_label == "Server"
     assert tab_context.scope_label == "Workspace: Research Lab"
@@ -146,7 +148,7 @@ async def test_chat_shell_bar_exposes_compact_control_ids() -> None:
         "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
         return_value={"openai": ["gpt-4o-mini", "gpt-4o"]},
     ):
-        async with app.run_test(size=(120, 20)) as pilot:
+        async with app.run_test(size=(120, 20)):
             assert app.query_one("#compact-api-provider", Select)
             assert app.query_one("#compact-api-model", Select)
             assert app.query_one("#compact-temperature", Input)
@@ -177,7 +179,9 @@ async def test_chat_shell_bar_keyboard_traversal_reaches_embedded_controls() -> 
 
 
 @pytest.mark.asyncio
-async def test_compact_model_bar_syncs_provider_model_and_temperature_deterministically() -> None:
+async def test_compact_model_bar_syncs_provider_model_and_temperature_deterministically() -> (
+    None
+):
     fixture = _ShellBarFixture(session_data=ChatSessionData(tab_id="tab-a"))
     app = ShellBarTestApp(fixture)
 
@@ -201,9 +205,7 @@ async def test_compact_model_bar_syncs_provider_model_and_temperature_determinis
             model_select = app.query_one("#compact-api-model", Select)
             temperature_input = app.query_one("#compact-temperature", Input)
             model_values = [
-                value
-                for _, value in model_select._options
-                if isinstance(value, str)
+                value for _, value in model_select._options if isinstance(value, str)
             ]
 
             assert provider_select.value == "anthropic"
@@ -273,7 +275,9 @@ async def test_chat_shell_bar_refreshes_label_on_session_sync_and_resize() -> No
 
 
 @pytest.mark.asyncio
-async def test_chat_shell_bar_clears_resolver_labels_when_syncing_without_resolver() -> None:
+async def test_chat_shell_bar_clears_resolver_labels_when_syncing_without_resolver() -> (
+    None
+):
     fixture = _ShellBarFixture(
         session_data=ChatSessionData(
             tab_id="tab-a",

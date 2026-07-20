@@ -264,7 +264,9 @@ class EventStateRepository(BaseDB):
                 return EventStateRecordResult(
                     event_key=event_key,
                     is_duplicate=True,
-                    cursor=self._get_cursor_with_connection(conn, event, table="event_processed_cursors"),
+                    cursor=self._get_cursor_with_connection(
+                        conn, event, table="event_processed_cursors"
+                    ),
                 )
 
             conn.execute(
@@ -336,14 +338,22 @@ class EventStateRepository(BaseDB):
                 ),
             )
             if event.server_cursor is not None:
-                self._upsert_cursor(conn, event, table="event_processed_cursors", cursor=event.server_cursor, now=now)
+                self._upsert_cursor(
+                    conn,
+                    event,
+                    table="event_processed_cursors",
+                    cursor=event.server_cursor,
+                    now=now,
+                )
             self._sync_replay_window_bounds(conn, event, now=now)
             conn.commit()
 
             return EventStateRecordResult(
                 event_key=event_key,
                 is_duplicate=False,
-                cursor=self._get_cursor_with_connection(conn, event, table="event_processed_cursors"),
+                cursor=self._get_cursor_with_connection(
+                    conn, event, table="event_processed_cursors"
+                ),
             )
 
     def is_duplicate_event(self, event: NormalizedEventRecord) -> bool:
@@ -398,7 +408,10 @@ class EventStateRepository(BaseDB):
             stream_name=event.stream_name,
             stream_instance_id=event.stream_instance_id,
         )
-        if not isinstance(expected_cursor, _NoExpectedCursor) and current.cursor != expected_cursor:
+        if (
+            not isinstance(expected_cursor, _NoExpectedCursor)
+            and current.cursor != expected_cursor
+        ):
             return self.reset_cursor(current, reason="cursor_mismatch")
 
         result = self.record_event_and_advance_processed_cursor(event)
@@ -408,9 +421,13 @@ class EventStateRepository(BaseDB):
                 cursor=result.cursor,
                 reason="missing_server_cursor",
             )
-        return CursorAdvanceResult(status=CursorAdvanceStatus.ADVANCED, cursor=result.cursor)
+        return CursorAdvanceResult(
+            status=CursorAdvanceStatus.ADVANCED, cursor=result.cursor
+        )
 
-    def reset_cursor(self, cursor: EventCursor, *, reason: str = "stale_cursor") -> CursorAdvanceResult:
+    def reset_cursor(
+        self, cursor: EventCursor, *, reason: str = "stale_cursor"
+    ) -> CursorAdvanceResult:
         reset = EventCursor(
             source_authority=cursor.source_authority,
             server_profile_id=cursor.server_profile_id,
@@ -497,7 +514,9 @@ class EventStateRepository(BaseDB):
             stream_instance_id=stream_instance_id,
         )
         with self._get_connection() as conn:
-            return self._get_cursor_with_connection(conn, cursor, table="event_processed_cursors")
+            return self._get_cursor_with_connection(
+                conn, cursor, table="event_processed_cursors"
+            )
 
     def get_presented_high_water(
         self,
@@ -516,7 +535,9 @@ class EventStateRepository(BaseDB):
             stream_instance_id=stream_instance_id,
         )
         with self._get_connection() as conn:
-            return self._get_cursor_with_connection(conn, cursor, table="event_presented_high_water")
+            return self._get_cursor_with_connection(
+                conn, cursor, table="event_presented_high_water"
+            )
 
     def mark_event_presented_and_advance_high_water(
         self,
@@ -694,7 +715,9 @@ class EventStateRepository(BaseDB):
             return None
         data = dict(row)
         data["server_profile_id"] = _restore_scope_value(data["server_profile_id"])
-        data["authenticated_principal_id"] = _restore_scope_value(data["authenticated_principal_id"])
+        data["authenticated_principal_id"] = _restore_scope_value(
+            data["authenticated_principal_id"]
+        )
         data["details"] = json.loads(data["details"])
         return data
 
@@ -772,9 +795,18 @@ class EventStateRepository(BaseDB):
                 stream_instance_id=stream_instance_id,
             )
 
-            conn.executemany("DELETE FROM event_presentations WHERE event_key = ?", [(key,) for key in event_keys])
-            conn.executemany("DELETE FROM event_records WHERE id = ?", [(event_id,) for event_id in event_ids])
-            conn.executemany("DELETE FROM event_dedupe_records WHERE dedupe_key = ?", [(key,) for key in dedupe_keys])
+            conn.executemany(
+                "DELETE FROM event_presentations WHERE event_key = ?",
+                [(key,) for key in event_keys],
+            )
+            conn.executemany(
+                "DELETE FROM event_records WHERE id = ?",
+                [(event_id,) for event_id in event_ids],
+            )
+            conn.executemany(
+                "DELETE FROM event_dedupe_records WHERE dedupe_key = ?",
+                [(key,) for key in dedupe_keys],
+            )
             self._record_replay_prune(
                 conn,
                 scope_cursor,
@@ -824,7 +856,11 @@ class EventStateRepository(BaseDB):
         with self._get_connection() as conn:
             window = self._get_replay_window_with_connection(conn, cursor)
             if requested_cursor is None:
-                state = "available" if window.earliest_retained_cursor is not None else "empty"
+                state = (
+                    "available"
+                    if window.earliest_retained_cursor is not None
+                    else "empty"
+                )
             elif self._is_cursor_retained(conn, cursor, requested_cursor):
                 state = "available"
             elif window.last_pruned_cursor is not None and self._cursor_at_or_before(
@@ -832,7 +868,10 @@ class EventStateRepository(BaseDB):
                 window.last_pruned_cursor,
             ):
                 state = "retention_gap"
-            elif window.earliest_retained_cursor is not None or window.pruned_event_count > 0:
+            elif (
+                window.earliest_retained_cursor is not None
+                or window.pruned_event_count > 0
+            ):
                 state = "retention_gap"
             else:
                 state = "empty"
@@ -1017,9 +1056,18 @@ class EventStateRepository(BaseDB):
                 authenticated_principal_id=authenticated_principal_id,
             )
 
-            conn.executemany("DELETE FROM event_presentations WHERE event_key = ?", [(key,) for key in event_keys])
-            conn.executemany("DELETE FROM event_records WHERE event_key = ?", [(key,) for key in event_keys])
-            conn.executemany("DELETE FROM event_dedupe_records WHERE dedupe_key = ?", [(key,) for key in dedupe_keys])
+            conn.executemany(
+                "DELETE FROM event_presentations WHERE event_key = ?",
+                [(key,) for key in event_keys],
+            )
+            conn.executemany(
+                "DELETE FROM event_records WHERE event_key = ?",
+                [(key,) for key in event_keys],
+            )
+            conn.executemany(
+                "DELETE FROM event_dedupe_records WHERE dedupe_key = ?",
+                [(key,) for key in dedupe_keys],
+            )
             self._delete_scoped_rows(
                 conn,
                 "event_processed_cursors",
@@ -1418,7 +1466,9 @@ class EventStateRepository(BaseDB):
         ).fetchall()
         if not rows:
             return None, None
-        return EventStateRepository._row_cursor_marker(rows[0]), EventStateRepository._row_cursor_marker(rows[-1])
+        return EventStateRepository._row_cursor_marker(
+            rows[0]
+        ), EventStateRepository._row_cursor_marker(rows[-1])
 
     @staticmethod
     def _is_cursor_retained(
@@ -1478,7 +1528,10 @@ class EventStateRepository(BaseDB):
         authenticated_principal_id: str | None,
     ) -> tuple[str, tuple[str, ...]]:
         if authenticated_principal_id is None:
-            return "source_authority = ? AND server_profile_id = ?", ("server", server_profile_id)
+            return "source_authority = ? AND server_profile_id = ?", (
+                "server",
+                server_profile_id,
+            )
         return (
             "source_authority = ? AND server_profile_id = ? AND authenticated_principal_id = ?",
             ("server", server_profile_id, authenticated_principal_id),
@@ -1491,10 +1544,17 @@ class EventStateRepository(BaseDB):
         authenticated_principal_id: str | None,
     ) -> tuple[str, tuple[str, ...]]:
         if authenticated_principal_id is None:
-            return "source_authority = ? AND server_profile_id = ?", ("server", _scope_value(server_profile_id))
+            return "source_authority = ? AND server_profile_id = ?", (
+                "server",
+                _scope_value(server_profile_id),
+            )
         return (
             "source_authority = ? AND server_profile_id = ? AND authenticated_principal_id = ?",
-            ("server", _scope_value(server_profile_id), _scope_value(authenticated_principal_id)),
+            (
+                "server",
+                _scope_value(server_profile_id),
+                _scope_value(authenticated_principal_id),
+            ),
         )
 
     @classmethod
@@ -1510,7 +1570,9 @@ class EventStateRepository(BaseDB):
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
         )
-        row = conn.execute(f"SELECT COUNT(*) AS count FROM {table} WHERE {table_filter}", params).fetchone()
+        row = conn.execute(
+            f"SELECT COUNT(*) AS count FROM {table} WHERE {table_filter}", params
+        ).fetchone()
         return int(row["count"])
 
     @classmethod
@@ -1529,7 +1591,9 @@ class EventStateRepository(BaseDB):
         conn.execute(f"DELETE FROM {table} WHERE {table_filter}", params)
 
     @staticmethod
-    def _count_matching_presentations(conn: sqlite3.Connection, event_keys: list[str]) -> int:
+    def _count_matching_presentations(
+        conn: sqlite3.Connection, event_keys: list[str]
+    ) -> int:
         if not event_keys:
             return 0
         count = 0

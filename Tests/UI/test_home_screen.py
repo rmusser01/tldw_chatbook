@@ -59,7 +59,10 @@ def _stub_home_rail_preferences_cli_fallback(monkeypatch):
 
 class HomeHarness(App):
     CSS_PATH = str(
-        Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
     )
 
     def __init__(self, app_instance, seen_routes=None):
@@ -276,7 +279,10 @@ async def test_home_system_status_groups_runtime_readiness_and_work_state():
         assert "Runtime: Local" in system_text
         assert "Server sync: Not configured (local mode)" in system_text
         assert "Local mode is active. Server sync is optional." in system_text
-        assert "Agent readiness: Model ready, RAG needs sources, MCP ready, ACP blocked" in system_text
+        assert (
+            "Agent readiness: Model ready, RAG needs sources, MCP ready, ACP blocked"
+            in system_text
+        )
         assert "Work: 2 active, 1 approvals" in system_text
 
 
@@ -397,7 +403,9 @@ async def test_home_recent_work_empty_state_sets_expectation():
         home = _active_home_screen(host)
 
         recent_text = str(home.query_one("#home-rail-empty-recent").renderable)
-        assert "Runs, chatbooks, imports, and schedules will appear here." in recent_text
+        assert (
+            "Runs, chatbooks, imports, and schedules will appear here." in recent_text
+        )
 
 
 @pytest.mark.asyncio
@@ -424,7 +432,8 @@ async def test_home_recent_work_available_state_points_to_resume_paths():
         home = _active_home_screen(host)
 
         recent_row = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == "recent:digest"
         )
         assert "Nightly digest run" in str(recent_row.label)
@@ -862,13 +871,17 @@ def test_app_detail_hook_delegates_to_adapter_and_navigates_handled_route():
     app.notify = Mock()
     app.post_message = Mock()
 
-    result = app.open_active_home_item_details(target_id="run-1", target_route="schedules")
+    result = app.open_active_home_item_details(
+        target_id="run-1", target_route="schedules"
+    )
 
     assert result.status is HomeControlResultStatus.HANDLED
     assert adapter.control_actions == [HomeControlAction.OPEN_DETAILS]
     assert adapter.control_target_ids == ["run-1"]
     assert adapter.control_target_routes == ["schedules"]
-    app.notify.assert_called_once_with("Opening workflow details.", severity="information")
+    app.notify.assert_called_once_with(
+        "Opening workflow details.", severity="information"
+    )
     app.post_message.assert_called_once()
     assert app.post_message.call_args.args[0].screen_name == "workflows"
 
@@ -919,13 +932,17 @@ def test_app_console_hook_requires_adapter_launch_payload():
     app.notify = Mock()
     app.open_console_for_live_work = Mock()
 
-    result = app.open_active_home_item_in_console(target_id="run-1", target_route="chat")
+    result = app.open_active_home_item_in_console(
+        target_id="run-1", target_route="chat"
+    )
 
     assert result.status is HomeControlResultStatus.UNAVAILABLE
     assert adapter.control_actions == [HomeControlAction.OPEN_IN_CONSOLE]
     assert adapter.control_target_ids == ["run-1"]
     assert adapter.control_target_routes == ["chat"]
-    app.notify.assert_called_once_with("Open in Console is not connected.", severity="warning")
+    app.notify.assert_called_once_with(
+        "Open in Console is not connected.", severity="warning"
+    )
     app.open_console_for_live_work.assert_not_called()
 
 
@@ -950,11 +967,15 @@ def test_app_console_hook_opens_console_with_adapter_launch_payload():
     app.notify = Mock()
     app.open_console_for_live_work = Mock()
 
-    result = app.open_active_home_item_in_console(target_id="run-1", target_route="chat")
+    result = app.open_active_home_item_in_console(
+        target_id="run-1", target_route="chat"
+    )
 
     assert result.status is HomeControlResultStatus.HANDLED
     assert adapter.control_target_ids == ["run-1"]
-    app.notify.assert_called_once_with("Opening Console for Daily digest.", severity="information")
+    app.notify.assert_called_once_with(
+        "Opening Console for Daily digest.", severity="information"
+    )
     app.open_console_for_live_work.assert_called_once_with(
         source="workflows",
         title="Daily digest",
@@ -1038,7 +1059,8 @@ async def test_home_flashcards_due_row_and_control_route_one_hop_to_study():
         home = _active_home_screen(host)
 
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == HOME_FLASHCARDS_DUE_ROW_ID
         )
         assert "Flashcards due: 12" in str(row_button.label)
@@ -1119,7 +1141,8 @@ async def test_home_canvas_primary_control_follows_selection_between_failed_item
         assert len(home.query("#home-review-flashcards")) == 0
 
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == HOME_FLASHCARDS_DUE_ROW_ID
         )
         await pilot.click(f"#{row_button.id}")
@@ -1150,7 +1173,13 @@ async def test_home_flashcards_due_snapshot_reads_in_memory_db_via_real_worker()
     try:
         deck_id = db.create_deck("Biology")
         db.create_flashcard(
-            {"deck_id": deck_id, "front": "ATP", "back": "Energy", "tags": "", "type": "basic"}
+            {
+                "deck_id": deck_id,
+                "front": "ATP",
+                "back": "Energy",
+                "tags": "",
+                "type": "basic",
+            }
         )
         app.chachanotes_db = db
         host = HomeHarness(app)
@@ -1228,7 +1257,8 @@ async def test_home_running_section_shows_parsing_library_ingest_job():
 
         running_body = home.query_one("#home-rail-section-body-running")
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-1"
         )
         assert row_button in running_body.children
@@ -1236,7 +1266,9 @@ async def test_home_running_section_shows_parsing_library_ingest_job():
         assert "Library" in str(row_button.label)
         assert not any(
             str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-1"
-            for btn in home.query_one("#home-rail-section-body-attention").query("Button")
+            for btn in home.query_one("#home-rail-section-body-attention").query(
+                "Button"
+            )
         )
 
 
@@ -1268,7 +1300,8 @@ async def test_home_running_section_shows_writing_library_ingest_job():
 
         running_body = home.query_one("#home-rail-section-body-running")
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-2"
         )
         assert row_button in running_body.children
@@ -1276,7 +1309,9 @@ async def test_home_running_section_shows_writing_library_ingest_job():
         assert "Library" in str(row_button.label)
         assert not any(
             str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-2"
-            for btn in home.query_one("#home-rail-section-body-attention").query("Button")
+            for btn in home.query_one("#home-rail-section-body-attention").query(
+                "Button"
+            )
         )
 
 
@@ -1306,7 +1341,8 @@ async def test_home_needs_attention_section_shows_failed_library_ingest_job():
 
         attention_body = home.query_one("#home-rail-section-body-attention")
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-3"
         )
         assert row_button in attention_body.children
@@ -1357,7 +1393,8 @@ async def test_home_running_section_survives_markup_hostile_ingest_job_title():
 
         running_body = home.query_one("#home-rail-section-body-running")
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")).startswith("local:ingest:")
         )
         assert row_button in running_body.children
@@ -1462,7 +1499,8 @@ async def test_home_open_details_button_click_navigates_library_for_failed_inges
 
         # Select the failed ingest row in Needs Attention via a real press.
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == f"local:ingest:{job.job_id}"
         )
         await pilot.click(row_button)
@@ -1578,7 +1616,8 @@ async def test_home_retry_button_click_requeues_failed_ingest_job():
 
         # Select the failed ingest row in Needs Attention via a real press.
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == f"local:ingest:{job.job_id}"
         )
         await pilot.click(row_button)
@@ -1641,7 +1680,8 @@ async def test_home_retry_requeues_selected_failed_item_not_first():
 
         # Select the SECOND failed item's rail row via a real press.
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == "local:watchlist_run:2"
         )
         await pilot.click(row_button)
@@ -1686,7 +1726,8 @@ async def test_home_recent_only_item_selection_gets_open_details_control():
         home = _active_home_screen(host)
 
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == "local:ingest:done-1"
         )
         await pilot.click(row_button)

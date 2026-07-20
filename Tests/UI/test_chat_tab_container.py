@@ -191,7 +191,9 @@ class TestChatTabContainerShellSync:
         assert container.active_session_id is None
 
     @pytest.mark.asyncio
-    async def test_handoff_session_with_no_conversation_id_does_not_reuse_existing_tab(self):
+    async def test_handoff_session_with_no_conversation_id_does_not_reuse_existing_tab(
+        self,
+    ):
         app = Mock()
         app.notify = Mock()
         app.call_later = Mock()

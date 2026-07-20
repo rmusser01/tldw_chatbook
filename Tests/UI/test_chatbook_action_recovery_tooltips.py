@@ -6,7 +6,9 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button
 
-from tldw_chatbook.UI.ChatbookExportManagementWindow import ChatbookExportManagementWindow
+from tldw_chatbook.UI.ChatbookExportManagementWindow import (
+    ChatbookExportManagementWindow,
+)
 from tldw_chatbook.UI.ChatbookTemplatesWindow import ChatbookTemplatesWindow
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
@@ -43,16 +45,24 @@ async def test_chatbook_template_use_action_explains_selection_requirement():
 
 
 @pytest.mark.asyncio
-async def test_chatbook_export_toolbar_actions_explain_selected_pack_requirement(monkeypatch, tmp_path):
+async def test_chatbook_export_toolbar_actions_explain_selected_pack_requirement(
+    monkeypatch, tmp_path
+):
     async def no_refresh(self):
         return None
 
     async def no_load_details(self, index):
         return None
 
-    monkeypatch.setattr(ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh)
-    monkeypatch.setattr(ChatbookExportManagementWindow, "refresh_server_job_list", no_refresh)
-    monkeypatch.setattr(ChatbookExportManagementWindow, "_load_chatbook_details", no_load_details)
+    monkeypatch.setattr(
+        ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh
+    )
+    monkeypatch.setattr(
+        ChatbookExportManagementWindow, "refresh_server_job_list", no_refresh
+    )
+    monkeypatch.setattr(
+        ChatbookExportManagementWindow, "_load_chatbook_details", no_load_details
+    )
 
     class ManagementApp(App):
         def __init__(self):
@@ -141,8 +151,12 @@ async def test_chatbook_server_job_actions_explain_job_state(monkeypatch):
     async def no_refresh(self):
         return None
 
-    monkeypatch.setattr(ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh)
-    monkeypatch.setattr(ChatbookExportManagementWindow, "refresh_server_job_list", no_refresh)
+    monkeypatch.setattr(
+        ChatbookExportManagementWindow, "refresh_chatbook_list", no_refresh
+    )
+    monkeypatch.setattr(
+        ChatbookExportManagementWindow, "refresh_server_job_list", no_refresh
+    )
 
     class ManagementApp(App):
         def __init__(self):

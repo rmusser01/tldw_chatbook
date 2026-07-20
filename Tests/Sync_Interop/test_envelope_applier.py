@@ -19,7 +19,9 @@ class RecordingLocalStore:
     def get_note_content_hash(self, note_id: str) -> str | None:
         return self.note_hashes.get(note_id)
 
-    def upsert_note_content(self, note_id: str, payload: dict, payload_hash: str) -> None:
+    def upsert_note_content(
+        self, note_id: str, payload: dict, payload_hash: str
+    ) -> None:
         self.note_content[note_id] = payload
         self.note_hashes[note_id] = payload_hash
 
@@ -29,7 +31,9 @@ class RecordingLocalStore:
     def get_chat_message_hash(self, stable_key: str) -> str | None:
         return self.chat_hashes.get(stable_key)
 
-    def append_chat_message(self, stable_key: str, payload: dict, payload_hash: str) -> None:
+    def append_chat_message(
+        self, stable_key: str, payload: dict, payload_hash: str
+    ) -> None:
         self.chat_messages[stable_key] = payload
         self.chat_hashes[stable_key] = payload_hash
 
@@ -39,16 +43,22 @@ class RecordingLocalStore:
     def unlink_workspace_source(self, workspace_id: str, source_id: str) -> None:
         self.workspace_links.discard((workspace_id, source_id))
 
-    def upsert_source_cache(self, stable_key: str, payload: dict, metadata: dict) -> None:
+    def upsert_source_cache(
+        self, stable_key: str, payload: dict, metadata: dict
+    ) -> None:
         self.source_cache[stable_key] = {"payload": payload, "metadata": metadata}
 
     def record_conflict(self, conflict: dict) -> None:
         self.conflicts.append(conflict)
 
 
-def test_note_applier_records_conflict_instead_of_overwriting_divergent_content() -> None:
+def test_note_applier_records_conflict_instead_of_overwriting_divergent_content() -> (
+    None
+):
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
     store = RecordingLocalStore()
     store.note_hashes["note-1"] = "sha256:local-dirty"
     applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
@@ -69,7 +79,9 @@ def test_note_applier_records_conflict_instead_of_overwriting_divergent_content(
 
 def test_note_applier_merges_safe_metadata_without_content_overwrite() -> None:
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
     store = RecordingLocalStore()
     applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
 
@@ -87,7 +99,9 @@ def test_note_applier_merges_safe_metadata_without_content_overwrite() -> None:
 
 def test_legacy_encrypted_apply_conflicts_when_dataset_key_missing() -> None:
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
     store = RecordingLocalStore()
     applier = SyncEnvelopeApplier(local_store=store)
 
@@ -105,7 +119,9 @@ def test_legacy_encrypted_apply_conflicts_when_dataset_key_missing() -> None:
 
 def test_chat_applier_appends_by_stable_id_and_conflicts_on_hash_mismatch() -> None:
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
     store = RecordingLocalStore()
     applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
 
@@ -122,14 +138,19 @@ def test_chat_applier_appends_by_stable_id_and_conflicts_on_hash_mismatch() -> N
 
     assert first["status"] == "applied"
     assert second["status"] == "noop"
-    assert store.chat_messages["conversation-1:message-1"] == {"content": "hello", "role": "user"}
+    assert store.chat_messages["conversation-1:message-1"] == {
+        "content": "hello",
+        "role": "user",
+    }
     assert conflict["status"] == "conflict"
     assert store.conflicts[-1]["domain"] == "chat"
 
 
 def test_chat_applier_allows_versioned_message_update() -> None:
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
     store = RecordingLocalStore()
     applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
 
@@ -161,7 +182,9 @@ def test_chat_applier_allows_versioned_message_update() -> None:
 
 def test_workspace_and_source_cache_appliers_route_to_local_store() -> None:
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
     store = RecordingLocalStore()
     applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
 

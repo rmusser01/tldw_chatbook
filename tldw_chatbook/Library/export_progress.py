@@ -3,6 +3,7 @@
 Kept dependency-free (no Textual) so it is trivially unit-testable; the screen
 supplies ``time.monotonic()`` as ``now`` so the throttle has no hidden clock.
 """
+
 from __future__ import annotations
 
 from typing import Optional

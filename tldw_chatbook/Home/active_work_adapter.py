@@ -18,7 +18,9 @@ from rich.markup import escape
 from tldw_chatbook.Chat.answer_citations import summarize_citation_artifact_metadata
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
 from tldw_chatbook.Library.library_ingest_state import short_ingest_error
-from tldw_chatbook.Notifications.notifications_scope_service import ServerEventScopeRequiredError
+from tldw_chatbook.Notifications.notifications_scope_service import (
+    ServerEventScopeRequiredError,
+)
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Utils.path_validation import validate_path
@@ -77,7 +79,13 @@ _MAX_CHATBOOK_FILE_PATH_CHARS = 2000
 _MAX_CHATBOOK_PAYLOAD_TEXT_CHARS = 1000
 _MAX_CHATBOOK_METADATA_TEXT_CHARS = 256
 _HOME_SERVER_EVENT_FEED_LIMIT = 20
-_DANGEROUS_TEXT_PATTERNS = ("<script", "</script", "javascript:", "onclick=", "onerror=")
+_DANGEROUS_TEXT_PATTERNS = (
+    "<script",
+    "</script",
+    "javascript:",
+    "onclick=",
+    "onerror=",
+)
 
 
 class HomeControlAction(StrEnum):
@@ -264,7 +272,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         if self.chatbook_service is None:
             self._set_chatbook_artifact_snapshot(())
             return
-        list_snapshot = getattr(self.chatbook_service, "list_home_artifact_snapshot", None)
+        list_snapshot = getattr(
+            self.chatbook_service, "list_home_artifact_snapshot", None
+        )
         if not callable(list_snapshot):
             self._set_chatbook_artifact_snapshot(())
             return
@@ -278,7 +288,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             tuple(record for record in records if isinstance(record, Mapping))
         )
 
-    def _set_chatbook_artifact_snapshot(self, records: tuple[Mapping[str, Any], ...]) -> None:
+    def _set_chatbook_artifact_snapshot(
+        self, records: tuple[Mapping[str, Any], ...]
+    ) -> None:
         with self._chatbook_artifact_snapshot_lock:
             self._chatbook_artifact_snapshot = records
 
@@ -316,7 +328,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         target_id: str | None = None,
         target_route: str | None = None,
     ) -> HomeControlResult:
-        if action is HomeControlAction.OPEN_DETAILS and _is_local_watchlist_run_id(target_id):
+        if action is HomeControlAction.OPEN_DETAILS and _is_local_watchlist_run_id(
+            target_id
+        ):
             run = self._local_watchlist_run_by_id(str(target_id))
             if run is not None:
                 title = self._watchlist_run_title(run)
@@ -327,7 +341,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     target_route=target_route or "subscriptions",
                     target_id=target_id,
                 )
-        if action is HomeControlAction.OPEN_IN_CONSOLE and _is_local_watchlist_run_id(target_id):
+        if action is HomeControlAction.OPEN_IN_CONSOLE and _is_local_watchlist_run_id(
+            target_id
+        ):
             run = self._local_watchlist_run_by_id(str(target_id))
             if run is not None:
                 title = self._watchlist_run_title(run)
@@ -340,12 +356,16 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                         source="Watchlists",
                         title=title,
                         payload=self._watchlist_console_payload(run, str(target_id)),
-                        status=str(_mapping_value(run, "status") or "pending").strip().lower(),
+                        status=str(_mapping_value(run, "status") or "pending")
+                        .strip()
+                        .lower(),
                         recovery="Review the Watchlists run details or retry from Watchlists.",
                         action_label="Open Watchlists run",
                     ),
                 )
-        if action is HomeControlAction.OPEN_DETAILS and _is_local_chatbook_id(target_id):
+        if action is HomeControlAction.OPEN_DETAILS and _is_local_chatbook_id(
+            target_id
+        ):
             record = self._local_chatbook_artifact_by_id(str(target_id))
             if record is not None:
                 title = self._chatbook_title(record)
@@ -356,7 +376,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     target_route=target_route or "artifacts",
                     target_id=target_id,
                 )
-        if action is HomeControlAction.OPEN_IN_CONSOLE and _is_local_chatbook_id(target_id):
+        if action is HomeControlAction.OPEN_IN_CONSOLE and _is_local_chatbook_id(
+            target_id
+        ):
             record = self._local_chatbook_artifact_by_id(str(target_id))
             if record is not None:
                 title = self._chatbook_title(record)
@@ -374,7 +396,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                         action_label="Open Chatbook artifact",
                     ),
                 )
-        if action is HomeControlAction.OPEN_DETAILS and _is_local_ingest_job_id(target_id):
+        if action is HomeControlAction.OPEN_DETAILS and _is_local_ingest_job_id(
+            target_id
+        ):
             # Library ingest jobs are ephemeral, in-memory registry entries
             # (see library_ingest_jobs.py) -- routing back to the Library
             # ingest canvas does not require the job to still be present in
@@ -404,7 +428,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             )
         except Exception:
             return 0
-        return sum(1 for notification in notifications if _notification_is_unread(notification))
+        return sum(
+            1 for notification in notifications if _notification_is_unread(notification)
+        )
 
     def _server_event_status_fields(self) -> dict[str, object]:
         if self.server_event_service is None:
@@ -413,7 +439,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 "server_event_state": SERVER_EVENT_STATE_UNAVAILABLE,
                 "server_event_recovery": "Server event feed is unavailable.",
             }
-        list_feed = getattr(self.server_event_service, "list_observed_server_feed", None)
+        list_feed = getattr(
+            self.server_event_service, "list_observed_server_feed", None
+        )
         if not callable(list_feed):
             return {
                 "server_event_count": 0,
@@ -635,7 +663,11 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 str(
                     _mapping_value(run, "title")
                     or _mapping_value(run, "source_title")
-                    or (f"Watchlist run {run_id}" if run_id is not None else "Watchlist run")
+                    or (
+                        f"Watchlist run {run_id}"
+                        if run_id is not None
+                        else "Watchlist run"
+                    )
                 )
             )
             items.append(
@@ -651,7 +683,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             )
         return items
 
-    def _local_recent_work_items(self, runs: list[Any]) -> tuple[HomeActiveWorkItem, ...]:
+    def _local_recent_work_items(
+        self, runs: list[Any]
+    ) -> tuple[HomeActiveWorkItem, ...]:
         """Return terminal local work as recent rows, most recent first."""
         recents: list[HomeActiveWorkItem] = []
         for run in runs:
@@ -763,8 +797,11 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     # any brackets in the error. Titles stay escaped -- they
                     # DO reach a markup-parsing Button label in the rail.
                     status_detail=(
-                        (short_ingest_error(job.error)
-                         if job.state == IngestJobState.FAILED and job.error else "")
+                        (
+                            short_ingest_error(job.error)
+                            if job.state == IngestJobState.FAILED and job.error
+                            else ""
+                        )
                         + _ingest_retry_suffix(job)
                     ),
                     # M4 (fix batch F1b): a permanent (validation-class)
@@ -774,7 +811,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     # (IngestQueueRow.can_retry). Non-FAILED jobs keep the
                     # default True; it's meaningless for them either way.
                     retry_available=(
-                        not job.permanent if job.state == IngestJobState.FAILED else True
+                        not job.permanent
+                        if job.state == IngestJobState.FAILED
+                        else True
                     ),
                 )
             )
@@ -827,7 +866,11 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             logger.warning(f"Failed to fetch local watchlist run details for Home: {e}")
             return None
         return next(
-            (run for run in runs if self._local_watchlist_run_item_id(run) == target_id),
+            (
+                run
+                for run in runs
+                if self._local_watchlist_run_item_id(run) == target_id
+            ),
             None,
         )
 
@@ -879,7 +922,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
 
     @staticmethod
     def _local_chatbook_item_id(record: Any) -> str:
-        chatbook_id = _mapping_value(record, "chatbook_id") or _mapping_value(record, "id")
+        chatbook_id = _mapping_value(record, "chatbook_id") or _mapping_value(
+            record, "id"
+        )
         return f"local:chatbook:{chatbook_id}" if chatbook_id not in (None, "") else ""
 
     @staticmethod
@@ -891,8 +936,12 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         )
 
     @classmethod
-    def _chatbook_console_payload(cls, record: Any, target_id: str) -> Mapping[str, Any]:
-        chatbook_id = _mapping_value(record, "chatbook_id") or _mapping_value(record, "id")
+    def _chatbook_console_payload(
+        cls, record: Any, target_id: str
+    ) -> Mapping[str, Any]:
+        chatbook_id = _mapping_value(record, "chatbook_id") or _mapping_value(
+            record, "id"
+        )
         payload: dict[str, Any] = {
             "target_id": target_id,
             "chatbook_id": chatbook_id,
@@ -1009,7 +1058,10 @@ def _csv(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
-        return _safe_payload_text(value, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS) or None
+        return (
+            _safe_payload_text(value, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS)
+            or None
+        )
     if isinstance(value, (list, tuple)):
         text = ", ".join(
             _safe_payload_text(item, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS)
@@ -1018,7 +1070,9 @@ def _csv(value: Any) -> str | None:
         )
         text = _safe_payload_text(text, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS)
         return text or None
-    return _safe_payload_text(value, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS) or None
+    return (
+        _safe_payload_text(value, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS) or None
+    )
 
 
 def _safe_payload_text(
@@ -1042,7 +1096,9 @@ def _safe_payload_text(
     return escape(html_escape(text, quote=False))
 
 
-def _safe_metadata_value(value: Any, *, max_length: int = _MAX_CHATBOOK_METADATA_TEXT_CHARS) -> Any | None:
+def _safe_metadata_value(
+    value: Any, *, max_length: int = _MAX_CHATBOOK_METADATA_TEXT_CHARS
+) -> Any | None:
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
@@ -1052,7 +1108,9 @@ def _safe_metadata_value(value: Any, *, max_length: int = _MAX_CHATBOOK_METADATA
 
 
 def _safe_file_path(value: Any) -> str | None:
-    text = sanitize_string(str(value or ""), max_length=_MAX_CHATBOOK_FILE_PATH_CHARS).strip()
+    text = sanitize_string(
+        str(value or ""), max_length=_MAX_CHATBOOK_FILE_PATH_CHARS
+    ).strip()
     if not text:
         return None
     text = " ".join(text.split())
@@ -1061,18 +1119,25 @@ def _safe_file_path(value: Any) -> str | None:
         base_directory = path.parent if path.is_absolute() else Path.cwd()
         validated = validate_path(path, base_directory)
     except ValueError:
-        logger.warning(f"Rejected unsafe Chatbook artifact file path for Home payload: {text!r}")
+        logger.warning(
+            f"Rejected unsafe Chatbook artifact file path for Home payload: {text!r}"
+        )
         return None
-    return _safe_payload_text(
-        str(validated),
-        max_length=_MAX_CHATBOOK_FILE_PATH_CHARS,
-    ) or None
+    return (
+        _safe_payload_text(
+            str(validated),
+            max_length=_MAX_CHATBOOK_FILE_PATH_CHARS,
+        )
+        or None
+    )
 
 
 def _console_metadata_payload(metadata: Any) -> dict[str, Any]:
     if not isinstance(metadata, Mapping):
         return {}
-    artifact_source = _safe_metadata_value(metadata.get("artifact_source"), max_length=128)
+    artifact_source = _safe_metadata_value(
+        metadata.get("artifact_source"), max_length=128
+    )
     artifact_kind = _safe_metadata_value(metadata.get("artifact_kind"), max_length=128)
     if str(artifact_source or "").strip().lower() != "console":
         return {}

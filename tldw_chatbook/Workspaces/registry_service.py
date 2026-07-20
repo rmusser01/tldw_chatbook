@@ -115,7 +115,9 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError("Workspace creation failed.")
         return created
 
-    def list_workspaces(self, *, include_archived: bool = False) -> tuple[WorkspaceRecord, ...]:
+    def list_workspaces(
+        self, *, include_archived: bool = False
+    ) -> tuple[WorkspaceRecord, ...]:
         """List local workspaces in stable creation order."""
 
         if include_archived:
@@ -248,7 +250,8 @@ class LocalWorkspaceRegistryService:
         item_type: str,
         item_id: str,
         role: str = "source",
-        transfer_policy: WorkspaceTransferPolicy | str = WorkspaceTransferPolicy.REFERENCE,
+        transfer_policy: WorkspaceTransferPolicy
+        | str = WorkspaceTransferPolicy.REFERENCE,
         title: str = "",
     ) -> WorkspaceMembership:
         """Link a visible item to a workspace without hiding other memberships."""

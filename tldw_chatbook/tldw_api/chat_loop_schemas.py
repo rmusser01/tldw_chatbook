@@ -48,7 +48,9 @@ class ChatLoopStartRequest(BaseModel):
 
     @field_validator("messages")
     @classmethod
-    def validate_messages_non_empty(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def validate_messages_non_empty(
+        cls, value: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         if not value:
             raise ValueError("messages must not be empty")
         return value

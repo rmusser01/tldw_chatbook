@@ -15,7 +15,9 @@ class FakeEvaluationScopeService:
     def __init__(self):
         self.calls: list[tuple] = []
 
-    async def list_evaluations(self, *, mode=None, limit=100, offset=0, after=None, eval_type=None):
+    async def list_evaluations(
+        self, *, mode=None, limit=100, offset=0, after=None, eval_type=None
+    ):
         self.calls.append(("list_evaluations", mode, limit))
         return [
             {
@@ -47,7 +49,9 @@ class FakeEvaluationScopeService:
             }
         ]
 
-    async def list_runs(self, *, mode=None, eval_id, limit=100, offset=0, after=None, status=None):
+    async def list_runs(
+        self, *, mode=None, eval_id, limit=100, offset=0, after=None, status=None
+    ):
         self.calls.append(("list_runs", mode, eval_id, limit))
         return [
             {
@@ -60,7 +64,11 @@ class FakeEvaluationScopeService:
                 "status": "completed",
                 "target_model": "openai:gpt-4.1-mini",
                 "created_at": "1713571300",
-                "progress": {"completed_samples": 3, "total_samples": 3, "percent_complete": 100.0},
+                "progress": {
+                    "completed_samples": 3,
+                    "total_samples": 3,
+                    "percent_complete": 100.0,
+                },
                 "results": {"accuracy": 0.91},
             }
         ]
@@ -82,8 +90,21 @@ class FakeEvaluationScopeService:
             }
         ]
 
-    async def create_run(self, *, mode=None, eval_id, target_id=None, target_model=None, config=None, run_name=None, dataset_override=None, webhook_url=None):
-        self.calls.append(("create_run", mode, eval_id, target_id, target_model, config, run_name))
+    async def create_run(
+        self,
+        *,
+        mode=None,
+        eval_id,
+        target_id=None,
+        target_model=None,
+        config=None,
+        run_name=None,
+        dataset_override=None,
+        webhook_url=None,
+    ):
+        self.calls.append(
+            ("create_run", mode, eval_id, target_id, target_model, config, run_name)
+        )
         return {
             "record_id": "local:evaluation_run:run_2",
             "record_type": "evaluation_run",
@@ -100,13 +121,18 @@ class FakeEvaluationScopeService:
 
     async def get_run_artifacts(self, *, mode=None, run_id):
         self.calls.append(("get_run_artifacts", mode, run_id))
-        return {"run": {"record_id": f"local:evaluation_run:{run_id}", "name": run_id}, "metrics": {"accuracy": 0.9}}
+        return {
+            "run": {"record_id": f"local:evaluation_run:{run_id}", "name": run_id},
+            "metrics": {"accuracy": 0.9},
+        }
 
 
 class EvaluationBrowserHost(App[None]):
     def __init__(self, app_instance, *, view_mode="manage"):
         super().__init__()
-        self._screen = EvaluationBrowserScreen(app_instance=app_instance, view_mode=view_mode)
+        self._screen = EvaluationBrowserScreen(
+            app_instance=app_instance, view_mode=view_mode
+        )
 
     async def on_mount(self) -> None:
         await self.push_screen(self._screen)

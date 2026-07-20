@@ -29,12 +29,20 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
 class TranslationScopeService:
     """Route text translation through local or active-server adapters."""
 
-    def __init__(self, *, server_service: Any = None, local_service: Any = None, policy_enforcer: Any = None):
+    def __init__(
+        self,
+        *,
+        server_service: Any = None,
+        local_service: Any = None,
+        policy_enforcer: Any = None,
+    ):
         self.server_service = server_service
         self.local_service = local_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: TranslationBackend | str | None) -> TranslationBackend:
+    def _normalize_mode(
+        self, mode: TranslationBackend | str | None
+    ) -> TranslationBackend:
         if mode is None:
             return TranslationBackend.SERVER
         if isinstance(mode, TranslationBackend):
@@ -46,14 +54,18 @@ class TranslationScopeService:
 
     def _require_server_service(self, mode: TranslationBackend) -> Any:
         if mode == TranslationBackend.LOCAL:
-            raise ValueError("Server translation is server-only; switch to server mode to use it.")
+            raise ValueError(
+                "Server translation is server-only; switch to server mode to use it."
+            )
         if self.server_service is None:
             raise ValueError("Server translation backend is unavailable.")
         return self.server_service
 
     def _require_local_service(self) -> Any:
         if self.local_service is None:
-            raise ValueError("Server translation is server-only without a local adapter; switch to server mode to use it.")
+            raise ValueError(
+                "Server translation is server-only without a local adapter; switch to server mode to use it."
+            )
         return self.local_service
 
     def _enforce_policy(self, action_id: str) -> None:
@@ -72,7 +84,10 @@ class TranslationScopeService:
         if isinstance(payload, list):
             return [cls._rewrite_backend(item, backend) for item in payload]
         if isinstance(payload, dict):
-            record = {key: cls._rewrite_backend(value, backend) for key, value in payload.items()}
+            record = {
+                key: cls._rewrite_backend(value, backend)
+                for key, value in payload.items()
+            }
             if record.get("backend") == "server":
                 record["backend"] = backend
             return record

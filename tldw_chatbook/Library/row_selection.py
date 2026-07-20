@@ -4,6 +4,7 @@ Pure and Textual-free: the screen owns one instance per browsable source
 (media/conversations/notes) and drives it from the row-press handlers, then
 turns the checked ids into an ``ExportScope`` for the export canvas.
 """
+
 from __future__ import annotations
 
 from typing import Iterable

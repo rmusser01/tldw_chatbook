@@ -3,6 +3,7 @@
 #
 # Imports
 import random
+
 #
 #
 splashscreen_messages = [
@@ -102,7 +103,7 @@ splashscreen_messages = [
     "CONFIG.SYS OPTIMIZED FOR MAXIMUM CONFUSION",
     "DEGAUSSING MONITOR...",
     "PARKING DISK HEADS...",
-    "SPINNING UP 5.25\" FLOPPY...",
+    'SPINNING UP 5.25" FLOPPY...',
     "INITIALIZING 1MHz PROCESSOR...",
     "GENERATING RAINBOW LOGO...",
     "NEGOTIATING PROTOCOLS...",

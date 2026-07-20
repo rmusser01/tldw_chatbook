@@ -30,8 +30,14 @@ def test_resolve_default_mode_explicit_config_wins(monkeypatch):
     monkeypatch.setattr(
         civ, "detect_terminal_capabilities", lambda: {"terminal_type": "kitty"}
     )
-    assert resolve_default_mode({"chat": {"images": {"default_render_mode": "pixels"}}}) == "pixels"
-    assert resolve_default_mode({"chat": {"images": {"default_render_mode": "regular"}}}) == "graphics"
+    assert (
+        resolve_default_mode({"chat": {"images": {"default_render_mode": "pixels"}}})
+        == "pixels"
+    )
+    assert (
+        resolve_default_mode({"chat": {"images": {"default_render_mode": "regular"}}})
+        == "graphics"
+    )
 
 
 def test_resolve_default_mode_auto_uses_terminal_override(monkeypatch):
@@ -75,7 +81,10 @@ def test_resolve_default_mode_auto_without_overrides_uses_capability_mode(monkey
         civ, "detect_terminal_capabilities", lambda: {"terminal_type": "unknown"}
     )
     monkeypatch.setattr(civ, "get_image_render_mode", lambda mode: "regular")
-    assert resolve_default_mode({"chat": {"images": {"default_render_mode": "auto"}}}) == "graphics"
+    assert (
+        resolve_default_mode({"chat": {"images": {"default_render_mode": "auto"}}})
+        == "graphics"
+    )
 
 
 def test_resolve_default_mode_garbage_falls_back_to_pixels(monkeypatch):

@@ -50,11 +50,13 @@ _EMPTY_SKILLS_FILTER_COPY = "No skills match your filter."
 # separate, smaller copy here rather than importing that screen's private
 # helpers -- this editor only needs the trust STATE line + two gating
 # predicates, not that screen's fuller blocked-reason copy).
-_TRUST_REVIEWABLE_STATUSES = frozenset((
-    "quarantined_modified",
-    "quarantined_added",
-    "quarantined_deleted",
-))
+_TRUST_REVIEWABLE_STATUSES = frozenset(
+    (
+        "quarantined_modified",
+        "quarantined_added",
+        "quarantined_deleted",
+    )
+)
 _TRUST_STATE_COPY = {
     "trusted": "Trust: trusted",
     "trust_uninitialized": "Trust: not initialized",
@@ -100,7 +102,9 @@ def skill_trust_needs_setup(trust_status: str) -> bool:
     return trust_status == "trust_uninitialized"
 
 
-def skill_trust_state_line(trust_status: str, changed_files: tuple[str, ...] = ()) -> str:
+def skill_trust_state_line(
+    trust_status: str, changed_files: tuple[str, ...] = ()
+) -> str:
     """Render the trust panel's current-state line.
 
     Args:
@@ -129,7 +133,10 @@ def skill_trust_review_enabled(trust_status: str, trust_blocked: bool) -> bool:
 
 
 def skill_editor_warning_lines(
-    *, live_name: str, trust_status: str, trust_blocked: bool,
+    *,
+    live_name: str,
+    trust_status: str,
+    trust_blocked: bool,
 ) -> tuple[str, ...]:
     """Build the editor's non-blocking warning lines.
 
@@ -299,11 +306,15 @@ class LibrarySkillsListCanvas(VerticalScroll):
         with toolbar:
             yield Button(
                 f"sort: {_SORT_LABELS.get(self.sort_mode, 'Name')} ▸",
-                id="library-skills-sort", classes="library-canvas-action", compact=True,
+                id="library-skills-sort",
+                classes="library-canvas-action",
+                compact=True,
             )
             yield Button(
-                "Import…", id="library-skills-import",
-                classes="library-canvas-action", compact=True,
+                "Import…",
+                id="library-skills-import",
+                classes="library-canvas-action",
+                compact=True,
             )
         if self.import_open:
             yield from self._compose_import_row()
@@ -380,16 +391,22 @@ class LibrarySkillsListCanvas(VerticalScroll):
             # directory-selection mode, so importing a skill BY ITS FOLDER
             # path still has to be typed by hand into the path Input above.
             yield Button(
-                "Browse…", id="library-skills-import-browse",
-                classes="library-canvas-action", compact=True,
+                "Browse…",
+                id="library-skills-import-browse",
+                classes="library-canvas-action",
+                compact=True,
             )
             yield Button(
-                "Import", id="library-skills-import-run",
-                classes="library-canvas-action", compact=True,
+                "Import",
+                id="library-skills-import-run",
+                classes="library-canvas-action",
+                compact=True,
             )
             yield Button(
-                "Cancel", id="library-skills-import-cancel",
-                classes="library-canvas-action", compact=True,
+                "Cancel",
+                id="library-skills-import-cancel",
+                classes="library-canvas-action",
+                compact=True,
             )
         yield Static(
             self.import_status,
@@ -429,9 +446,15 @@ class LibrarySkillsListCanvas(VerticalScroll):
             )
         yield Static("Description", classes="library-prompt-field-label", markup=False)
         yield Input(value=editor_state.description, id="library-skill-description")
-        yield Static("Argument hint", classes="library-prompt-field-label", markup=False)
-        yield Input(value=editor_state.argument_hint or "", id="library-skill-argument-hint")
-        yield Static("Allowed tools", classes="library-prompt-field-label", markup=False)
+        yield Static(
+            "Argument hint", classes="library-prompt-field-label", markup=False
+        )
+        yield Input(
+            value=editor_state.argument_hint or "", id="library-skill-argument-hint"
+        )
+        yield Static(
+            "Allowed tools", classes="library-prompt-field-label", markup=False
+        )
         yield Input(
             value=editor_state.allowed_tools_csv,
             placeholder="Allowed tools (comma-separated)",
@@ -455,7 +478,9 @@ class LibrarySkillsListCanvas(VerticalScroll):
             classes="library-canvas-action",
             compact=True,
         )
-        yield Static("Model override", classes="library-prompt-field-label", markup=False)
+        yield Static(
+            "Model override", classes="library-prompt-field-label", markup=False
+        )
         yield Input(value=editor_state.model or "", id="library-skill-model")
         yield Static(
             MODEL_HINT_COPY,
@@ -465,7 +490,9 @@ class LibrarySkillsListCanvas(VerticalScroll):
         )
         yield Static("Body", classes="library-prompt-field-label", markup=False)
         yield TextArea(editor_state.body, id="library-skill-body")
-        yield Static("Supporting files", classes="library-prompt-field-label", markup=False)
+        yield Static(
+            "Supporting files", classes="library-prompt-field-label", markup=False
+        )
         yield Static(
             skill_supporting_files_text(editor_state.supporting_files),
             id="library-skill-supporting",
@@ -527,10 +554,14 @@ class LibrarySkillsListCanvas(VerticalScroll):
         with Vertical(id="library-skill-trust-panel", classes="ds-panel"):
             yield Static("Trust", classes="destination-section", markup=False)
             state_classes = (
-                "library-skill-trust-state-blocked" if editor_state.trust_blocked else ""
+                "library-skill-trust-state-blocked"
+                if editor_state.trust_blocked
+                else ""
             )
             yield Static(
-                skill_trust_state_line(editor_state.trust_status, editor_state.trust_changed_files),
+                skill_trust_state_line(
+                    editor_state.trust_status, editor_state.trust_changed_files
+                ),
                 id="library-skill-trust-state",
                 classes=state_classes,
                 markup=False,

@@ -158,6 +158,7 @@ class TestPreviewParamsHelperShapes:
     def test_generator_params_are_not_consumed(self):
         """PR #651 review: iterating a generator in the preview would consume
         it before cursor.execute — a heisenbug firing only with DEBUG on."""
+
         def gen():
             yield 1
             yield 2

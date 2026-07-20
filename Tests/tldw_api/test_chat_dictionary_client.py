@@ -24,7 +24,9 @@ async def test_chat_dictionary_client_routes_dictionary_crud(monkeypatch):
     await client.list_chat_dictionaries(include_inactive=True, include_usage=True)
     await client.create_chat_dictionary(ChatDictionaryCreateRequest(name="Lore"))
     await client.get_chat_dictionary(7)
-    await client.update_chat_dictionary(7, ChatDictionaryUpdateRequest(name="Lore v2", version=2))
+    await client.update_chat_dictionary(
+        7, ChatDictionaryUpdateRequest(name="Lore v2", version=2)
+    )
     await client.delete_chat_dictionary(7, hard_delete=True)
 
     assert [call.args[:2] for call in mocked.await_args_list] == [
@@ -38,7 +40,10 @@ async def test_chat_dictionary_client_routes_dictionary_crud(monkeypatch):
         "include_inactive": "true",
         "include_usage": "true",
     }
-    assert mocked.await_args_list[3].kwargs["json_data"] == {"name": "Lore v2", "version": 2}
+    assert mocked.await_args_list[3].kwargs["json_data"] == {
+        "name": "Lore v2",
+        "version": 2,
+    }
     assert mocked.await_args_list[4].kwargs["params"] == {"hard_delete": "true"}
 
 
@@ -48,15 +53,21 @@ async def test_chat_dictionary_client_routes_entries_and_processing(monkeypatch)
     mocked = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr(client, "_request", mocked)
 
-    await client.add_chat_dictionary_entry(7, DictionaryEntryCreateRequest(pattern="Ada", replacement="Dr. Ada"))
+    await client.add_chat_dictionary_entry(
+        7, DictionaryEntryCreateRequest(pattern="Ada", replacement="Dr. Ada")
+    )
     await client.list_chat_dictionary_entries(7, group="people")
     await client.update_chat_dictionary_entry(12, {"enabled": False})
     await client.delete_chat_dictionary_entry(12)
     await client.bulk_chat_dictionary_entry_operations(
         BulkDictionaryEntryOperationRequest(operation="deactivate", entry_ids=[12])
     )
-    await client.reorder_chat_dictionary_entries(7, DictionaryEntryReorderRequest(entry_ids=[12, 13]))
-    await client.process_chat_dictionaries(ProcessChatDictionariesRequest(text="Ada", dictionary_id=7))
+    await client.reorder_chat_dictionary_entries(
+        7, DictionaryEntryReorderRequest(entry_ids=[12, 13])
+    )
+    await client.process_chat_dictionaries(
+        ProcessChatDictionariesRequest(text="Ada", dictionary_id=7)
+    )
 
     assert [call.args[:2] for call in mocked.await_args_list] == [
         ("POST", "/api/v1/chat/dictionaries/7/entries"),
@@ -71,7 +82,9 @@ async def test_chat_dictionary_client_routes_entries_and_processing(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_chat_dictionary_client_routes_import_export_history_and_stats(monkeypatch):
+async def test_chat_dictionary_client_routes_import_export_history_and_stats(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr(client, "_request", mocked)
@@ -81,7 +94,9 @@ async def test_chat_dictionary_client_routes_import_export_history_and_stats(mon
     )
     await client.export_chat_dictionary_markdown(7)
     await client.export_chat_dictionary_json(7)
-    await client.import_chat_dictionary_json(ImportDictionaryJSONRequest(data={"name": "Lore"}))
+    await client.import_chat_dictionary_json(
+        ImportDictionaryJSONRequest(data={"name": "Lore"})
+    )
     await client.list_chat_dictionary_activity(7, limit=5, offset=10)
     await client.list_chat_dictionary_versions(7, limit=5, offset=10)
     await client.get_chat_dictionary_version(7, 3)

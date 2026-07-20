@@ -66,6 +66,7 @@ def _finding_field(finding: Mapping[str, Any], key: str) -> str:
         return "—"
     return str(value)
 
+
 # Decision vocabulary (spec-verbatim, task-7-brief.md): the permission
 # decision under which one execution-log entry ran or stopped.
 # "allowed"/"approved" reached the tool (`execute_hub_tool()`/
@@ -305,27 +306,37 @@ class MCPAuditMode(Vertical):
     def compose(self) -> ComposeResult:
         with Horizontal(id="mcp-audit-subview-strip", classes="ds-toolbar"):
             yield Button(
-                "Executions", id="mcp-audit-subview-executions",
-                classes="mcp-audit-subview-btn", compact=True,
+                "Executions",
+                id="mcp-audit-subview-executions",
+                classes="mcp-audit-subview-btn",
+                compact=True,
                 tooltip="Show the tool execution log.",
             )
             yield Button(
-                "Findings", id="mcp-audit-subview-findings",
-                classes="mcp-audit-subview-btn", compact=True,
+                "Findings",
+                id="mcp-audit-subview-findings",
+                classes="mcp-audit-subview-btn",
+                compact=True,
                 tooltip="Show governance findings for the active tldw_server target.",
             )
         with Vertical(id="mcp-audit-executions-view"):
             with Horizontal(id="mcp-audit-filter-bar", classes="ds-toolbar"):
-                yield Input(placeholder="Filter tool or server…", id="mcp-audit-filter-text")
+                yield Input(
+                    placeholder="Filter tool or server…", id="mcp-audit-filter-text"
+                )
                 with Vertical(id="mcp-audit-filter-decision-slot"):
                     yield Select(
-                        _DECISION_OPTIONS, id="mcp-audit-filter-decision",
-                        prompt="All decisions", value=Select.NULL,
+                        _DECISION_OPTIONS,
+                        id="mcp-audit-filter-decision",
+                        prompt="All decisions",
+                        value=Select.NULL,
                     )
                 with Vertical(id="mcp-audit-filter-initiator-slot"):
                     yield Select(
-                        _INITIATOR_OPTIONS, id="mcp-audit-filter-initiator",
-                        prompt="All initiators", value=Select.NULL,
+                        _INITIATOR_OPTIONS,
+                        id="mcp-audit-filter-initiator",
+                        prompt="All initiators",
+                        value=Select.NULL,
                     )
             table = DataTable(id="mcp-audit-table")
             table.cursor_type = "row"
@@ -364,9 +375,15 @@ class MCPAuditMode(Vertical):
         self._apply_filter()
 
     def _matches(self, entry: dict[str, Any]) -> bool:
-        if self._filter_decision and str(entry.get("decision") or "") != self._filter_decision:
+        if (
+            self._filter_decision
+            and str(entry.get("decision") or "") != self._filter_decision
+        ):
             return False
-        if self._filter_initiator and str(entry.get("initiator") or "") != self._filter_initiator:
+        if (
+            self._filter_initiator
+            and str(entry.get("initiator") or "") != self._filter_initiator
+        ):
             return False
         if self._filter_text:
             needle = self._filter_text.strip().lower()
@@ -542,8 +559,12 @@ class MCPAuditMode(Vertical):
         `#mcp-audit-executions-view`/`#mcp-audit-findings-view` for why
         this isn't split across a CSS default too)."""
         executions_active = self._sub_view == "executions"
-        self.query_one("#mcp-audit-executions-view", Vertical).display = executions_active
-        self.query_one("#mcp-audit-findings-view", Vertical).display = not executions_active
+        self.query_one(
+            "#mcp-audit-executions-view", Vertical
+        ).display = executions_active
+        self.query_one(
+            "#mcp-audit-findings-view", Vertical
+        ).display = not executions_active
         self.query_one("#mcp-audit-subview-executions", Button).set_class(
             executions_active, "is-active"
         )
@@ -584,11 +605,15 @@ class MCPAuditMode(Vertical):
         # echo either.
         if event.select.id == "mcp-audit-filter-decision":
             event.stop()
-            self._filter_decision = None if event.value is Select.NULL else str(event.value)
+            self._filter_decision = (
+                None if event.value is Select.NULL else str(event.value)
+            )
             self._apply_filter()
         elif event.select.id == "mcp-audit-filter-initiator":
             event.stop()
-            self._filter_initiator = None if event.value is Select.NULL else str(event.value)
+            self._filter_initiator = (
+                None if event.value is Select.NULL else str(event.value)
+            )
             self._apply_filter()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:

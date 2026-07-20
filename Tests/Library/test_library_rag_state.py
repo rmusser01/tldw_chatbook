@@ -43,7 +43,9 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
     assert scope.option_by_type("notes").count_label == "2 sources"
     assert scope.option_by_type("notes").selected is True
     assert scope.option_by_type("conversations").available is False
-    assert "No conversations available" in scope.option_by_type("conversations").recovery
+    assert (
+        "No conversations available" in scope.option_by_type("conversations").recovery
+    )
     assert scope.option_by_type("prompts").label == "Prompts"
     assert scope.option_by_type("prompts").available is False
 
@@ -290,7 +292,10 @@ def test_row_badge_label_joins_with_middle_dot_not_pipe() -> None:
         }
     )
 
-    assert row.row_badge_label == "media · workspace-a · 1 citation · excluded from context"
+    assert (
+        row.row_badge_label
+        == "media · workspace-a · 1 citation · excluded from context"
+    )
     assert "|" not in row.row_badge_label
 
 
@@ -334,7 +339,10 @@ def test_panel_state_tracks_retrieval_status_and_console_action_readiness() -> N
     )
 
     assert ready.retrieval_status == "ready"
-    assert ready.next_action == "Review cited evidence or send the selected result to Console."
+    assert (
+        ready.next_action
+        == "Review cited evidence or send the selected result to Console."
+    )
     assert ready.use_in_console_action.enabled is True
     assert ready.selected_result == result
 
@@ -412,7 +420,10 @@ def test_explicit_empty_scope_selection_is_not_defaulted_to_all_sources() -> Non
 
     assert panel.scope.has_selected_sources is False
     assert panel.retrieval_status == "blocked"
-    assert panel.query_state.run_action.disabled_reason == "Select at least one Library source."
+    assert (
+        panel.query_state.run_action.disabled_reason
+        == "Select at least one Library source."
+    )
 
 
 # --- Task 6: prompts as a Search source -----------------------------------
@@ -445,7 +456,10 @@ def test_prompts_source_toggle_label_and_gate_with_four_sources() -> None:
 
     assert panel.scope.has_selected_sources is False
     assert panel.retrieval_status == "blocked"
-    assert panel.query_state.run_action.disabled_reason == "Select at least one Library source."
+    assert (
+        panel.query_state.run_action.disabled_reason
+        == "Select at least one Library source."
+    )
 
     ready = LibraryRagPanelState.from_values(
         source_counts={"notes": 0, "media": 0, "conversations": 0, "prompts": 5},
@@ -490,20 +504,32 @@ class TestSearchingStatusLine:
 class TestResultRowOpenTarget:
     def test_note_result_opens_notes(self):
         row = LibraryRagResultRow.from_result(
-            {"source_id": "note-42", "title": "T", "snippet": "s",
-             "provenance": {"source_type": "note"}}
+            {
+                "source_id": "note-42",
+                "title": "T",
+                "snippet": "s",
+                "provenance": {"source_type": "note"},
+            }
         )
         assert row.open_source_type == "notes"
         assert row.can_open is True
 
     def test_media_and_conversation_map(self):
         media = LibraryRagResultRow.from_result(
-            {"source_id": "7", "title": "T", "snippet": "s",
-             "provenance": {"source_type": "media"}}
+            {
+                "source_id": "7",
+                "title": "T",
+                "snippet": "s",
+                "provenance": {"source_type": "media"},
+            }
         )
         convo = LibraryRagResultRow.from_result(
-            {"source_id": "c1", "title": "T", "snippet": "s",
-             "provenance": {"source_type": "conversation"}}
+            {
+                "source_id": "c1",
+                "title": "T",
+                "snippet": "s",
+                "provenance": {"source_type": "conversation"},
+            }
         )
         assert media.open_source_type == "media"
         assert convo.open_source_type == "conversations"
@@ -514,8 +540,12 @@ class TestResultRowOpenTarget:
         `_open_library_item_by_id`'s dispatch key is "prompt" (singular).
         """
         row = LibraryRagResultRow.from_result(
-            {"source_id": "5", "title": "T", "snippet": "s",
-             "provenance": {"source_type": "prompt"}}
+            {
+                "source_id": "5",
+                "title": "T",
+                "snippet": "s",
+                "provenance": {"source_type": "prompt"},
+            }
         )
         assert row.open_source_type == "prompt"
         assert row.can_open is True

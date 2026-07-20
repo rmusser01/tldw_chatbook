@@ -22,14 +22,28 @@ from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 
-_BUNDLED_CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
-_AGENTIC_TERMINAL_TCSS = Path(tldw_chatbook.__file__).parent / "css" / "components" / "_agentic_terminal.tcss"
+_BUNDLED_CSS_PATH = str(
+    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+)
+_AGENTIC_TERMINAL_TCSS = (
+    Path(tldw_chatbook.__file__).parent
+    / "css"
+    / "components"
+    / "_agentic_terminal.tcss"
+)
 
 
-def _snap(key: str, label: str, state=ReadinessState.READY, reasons=(), message="", **kw):
+def _snap(
+    key: str, label: str, state=ReadinessState.READY, reasons=(), message="", **kw
+):
     return ReadinessSnapshot(
-        server_key=key, label=label, source=key.split(":", 1)[0],
-        state=state, reasons=reasons, message=message, **kw,
+        server_key=key,
+        label=label,
+        source=key.split(":", 1)[0],
+        state=state,
+        reasons=reasons,
+        message=message,
+        **kw,
     )
 
 
@@ -81,7 +95,8 @@ async def test_overview_renders_aggregate_table_and_callouts():
             [
                 _snap("local:docs", "docs", tool_count=4),
                 _snap(
-                    "local:web", "web",
+                    "local:web",
+                    "web",
                     state=ReadinessState.NEEDS_SETUP,
                     reasons=(ReasonCode.AUTH_MISSING,),
                     message="Missing environment variables: KEY.",
@@ -118,7 +133,8 @@ async def test_overview_summary_glyph_carries_worst_state_class_sentence_stays_n
             [
                 _snap("local:docs", "docs"),
                 _snap(
-                    "local:web", "web",
+                    "local:web",
+                    "web",
                     state=ReadinessState.NEEDS_ATTENTION,
                     reasons=(ReasonCode.AUTH_MISSING,),
                     message="Timed out",
@@ -142,7 +158,8 @@ async def test_overview_summary_glyph_carries_worst_state_class_sentence_stays_n
         await canvas.update_overview(
             [
                 _snap(
-                    "local:docs", "docs",
+                    "local:docs",
+                    "docs",
                     state=ReadinessState.NEEDS_SETUP,
                     reasons=(ReasonCode.AUTH_MISSING,),
                     message="Missing environment variables: KEY.",
@@ -172,7 +189,8 @@ async def test_overview_callouts_are_left_aligned_with_bundled_css():
         await canvas.update_overview(
             [
                 _snap(
-                    "local:web", "web",
+                    "local:web",
+                    "web",
                     state=ReadinessState.NEEDS_SETUP,
                     reasons=(ReasonCode.AUTH_MISSING,),
                     message="Missing environment variables: KEY.",
@@ -221,7 +239,8 @@ async def test_update_overview_survives_markup_like_labels_and_renders_plain():
             [
                 _snap("local:evil1", "[/bold]docs"),
                 _snap(
-                    "local:evil2", "safe-label",
+                    "local:evil2",
+                    "safe-label",
                     auth_display="[red]x[/red]",
                     scope_display="[red]y[/red]",
                 ),
@@ -285,10 +304,20 @@ async def test_second_update_overview_leaves_only_latest_callouts():
         canvas = app.query_one(MCPServersMode)
         await canvas.update_overview(
             [
-                _snap("local:a", "a", state=ReadinessState.NEEDS_SETUP,
-                      reasons=(ReasonCode.AUTH_MISSING,), message="first-a"),
-                _snap("local:b", "b", state=ReadinessState.NEEDS_SETUP,
-                      reasons=(ReasonCode.AUTH_MISSING,), message="first-b"),
+                _snap(
+                    "local:a",
+                    "a",
+                    state=ReadinessState.NEEDS_SETUP,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="first-a",
+                ),
+                _snap(
+                    "local:b",
+                    "b",
+                    state=ReadinessState.NEEDS_SETUP,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="first-b",
+                ),
             ]
         )
         # No pilot.pause() here: the second call must start (and its own
@@ -296,8 +325,13 @@ async def test_second_update_overview_leaves_only_latest_callouts():
         # returns.
         await canvas.update_overview(
             [
-                _snap("local:c", "c", state=ReadinessState.NEEDS_SETUP,
-                      reasons=(ReasonCode.AUTH_MISSING,), message="second-c"),
+                _snap(
+                    "local:c",
+                    "c",
+                    state=ReadinessState.NEEDS_SETUP,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="second-c",
+                ),
             ]
         )
         await pilot.pause()
@@ -336,8 +370,11 @@ async def test_detail_text_redacts_secret_query_params_in_base_url():
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
         snap = _snap(
-            "server:main", "main",
-            detail={"base_url": "https://example.test/api?api_key=sk-super-secret&region=us"},
+            "server:main",
+            "main",
+            detail={
+                "base_url": "https://example.test/api?api_key=sk-super-secret&region=us"
+            },
         )
         await canvas.show_detail(snap)
         await pilot.pause()
@@ -360,7 +397,8 @@ async def test_detail_text_marks_env_placeholder_missing_despite_whitespace():
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
         local = _snap(
-            "local:docs", "docs",
+            "local:docs",
+            "docs",
             detail={
                 "command": "python",
                 "args": [],
@@ -381,13 +419,18 @@ async def test_detail_renders_redacted_config_and_builtin_snippet():
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
         local = _snap(
-            "local:docs", "docs",
+            "local:docs",
+            "docs",
             detail={
                 "command": "python",
                 "args": ["--api-key", "sk-123"],
                 "env_placeholders": {"API_KEY": "$MY_KEY"},
                 "missing_env": [],
-                "discovery_snapshot": {"tools": [{"name": "a"}], "resources": [], "prompts": []},
+                "discovery_snapshot": {
+                    "tools": [{"name": "a"}],
+                    "resources": [],
+                    "prompts": [],
+                },
             },
         )
         await canvas.show_detail(local)
@@ -417,7 +460,10 @@ async def test_builtin_detail_no_longer_dumps_raw_expose_flags_in_body_text():
         canvas = app.query_one(MCPServersMode)
         await canvas.show_detail(
             builtin_readiness(
-                enabled=True, expose_tools=True, expose_resources=True, expose_prompts=False
+                enabled=True,
+                expose_tools=True,
+                expose_resources=True,
+                expose_prompts=False,
             )
         )
         await pilot.pause()
@@ -441,7 +487,10 @@ async def test_builtin_detail_shows_enable_expose_checkboxes_with_values_and_not
         canvas = app.query_one(MCPServersMode)
         await canvas.show_detail(
             builtin_readiness(
-                enabled=True, expose_tools=True, expose_resources=False, expose_prompts=True
+                enabled=True,
+                expose_tools=True,
+                expose_resources=False,
+                expose_prompts=True,
             )
         )
         await pilot.pause()
@@ -483,7 +532,10 @@ async def test_builtin_toggles_container_does_not_expand_past_content():
         canvas = app.query_one(MCPServersMode)
         await canvas.show_detail(
             builtin_readiness(
-                enabled=True, expose_tools=True, expose_resources=True, expose_prompts=True
+                enabled=True,
+                expose_tools=True,
+                expose_resources=True,
+                expose_prompts=True,
             )
         )
         await pilot.pause()
@@ -527,7 +579,10 @@ async def test_showing_builtin_detail_does_not_post_builtin_flag_changed():
         canvas = app.query_one(MCPServersMode)
         await canvas.show_detail(
             builtin_readiness(
-                enabled=False, expose_tools=False, expose_resources=True, expose_prompts=False
+                enabled=False,
+                expose_tools=False,
+                expose_resources=True,
+                expose_prompts=False,
             )
         )
         await pilot.pause()
@@ -556,7 +611,10 @@ async def test_toggling_builtin_expose_checkboxes_posts_matching_keys():
         canvas = app.query_one(MCPServersMode)
         await canvas.show_detail(
             builtin_readiness(
-                enabled=True, expose_tools=True, expose_resources=True, expose_prompts=True
+                enabled=True,
+                expose_tools=True,
+                expose_resources=True,
+                expose_prompts=True,
             )
         )
         await pilot.pause()
@@ -582,9 +640,17 @@ async def test_delete_requires_arm_then_confirm():
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
-        snap = _snap("local:docs", "docs",
-                     detail={"command": "npx", "args": [], "env_placeholders": {},
-                             "missing_env": [], "discovery_snapshot": None})
+        snap = _snap(
+            "local:docs",
+            "docs",
+            detail={
+                "command": "npx",
+                "args": [],
+                "env_placeholders": {},
+                "missing_env": [],
+                "discovery_snapshot": None,
+            },
+        )
         await canvas.show_detail(snap)
         await pilot.pause()
         await pilot.click("#mcp-detail-delete")
@@ -672,7 +738,9 @@ async def test_edit_button_posts_edit_config_hub_action():
         await pilot.pause()
         await pilot.click("#mcp-detail-edit")
         await pilot.pause()
-        posted = [e for e in app.events if isinstance(e, MCPInspector.HubActionRequested)]
+        posted = [
+            e for e in app.events if isinstance(e, MCPInspector.HubActionRequested)
+        ]
         assert posted and posted[-1].action is HubAction.EDIT_CONFIG
         assert posted[-1].server_key == "local:docs"
 
@@ -684,7 +752,11 @@ async def test_every_detail_toolbar_button_has_a_tooltip():
         canvas = app.query_one(MCPServersMode)
         await canvas.show_detail(_snap("local:docs", "docs", is_connected=True))
         await pilot.pause()
-        for button_id in ("#mcp-detail-edit", "#mcp-detail-disconnect", "#mcp-detail-delete"):
+        for button_id in (
+            "#mcp-detail-edit",
+            "#mcp-detail-disconnect",
+            "#mcp-detail-delete",
+        ):
             button = app.query_one(button_id)
             assert button.tooltip, f"{button_id} missing a tooltip"
         await pilot.click("#mcp-detail-delete")
@@ -703,7 +775,11 @@ async def test_import_button_posts_import_servers_requested():
     async with app.run_test() as pilot:
         await pilot.click("#mcp-import-server")
         await pilot.pause()
-        posted = [e for e in app.events if isinstance(e, MCPServersMode.ImportServersRequested)]
+        posted = [
+            e
+            for e in app.events
+            if isinstance(e, MCPServersMode.ImportServersRequested)
+        ]
         assert posted
 
 
@@ -837,7 +913,8 @@ async def test_callout_click_posts_server_row_selected_with_its_key():
             [
                 _snap("local:docs", "docs"),
                 _snap(
-                    "local:web", "web",
+                    "local:web",
+                    "web",
                     state=ReadinessState.NEEDS_SETUP,
                     reasons=(ReasonCode.AUTH_MISSING,),
                     message="Missing environment variables: KEY.",
@@ -859,7 +936,8 @@ async def test_callouts_cap_at_four_with_overflow_static():
         canvas = app.query_one(MCPServersMode)
         problem_snaps = [
             _snap(
-                f"local:p{i}", f"p{i}",
+                f"local:p{i}",
+                f"p{i}",
                 state=ReadinessState.NEEDS_SETUP,
                 reasons=(ReasonCode.AUTH_MISSING,),
                 message=f"problem {i}",
@@ -962,7 +1040,8 @@ async def test_overview_table_hugs_content_so_callouts_sit_close_below():
                 _snap("local:a", "a"),
                 _snap("local:b", "b"),
                 _snap(
-                    "local:c", "c",
+                    "local:c",
+                    "c",
                     state=ReadinessState.NEEDS_SETUP,
                     reasons=(ReasonCode.AUTH_MISSING,),
                     message="Missing environment variables: KEY.",
@@ -1023,8 +1102,12 @@ def test_servers_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
         assert start != -1, f"{label} is missing {selector!r}"
         end = text.find("}", start)
         block = text[start:end]
-        assert "height: auto;" in block, f"{label}'s {selector!r} block is missing 'height: auto;'"
-        assert "max-height: 70%;" in block, f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+        assert "height: auto;" in block, (
+            f"{label}'s {selector!r} block is missing 'height: auto;'"
+        )
+        assert "max-height: 70%;" in block, (
+            f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+        )
 
 
 class InspectorAppWithBundledCSS(App):

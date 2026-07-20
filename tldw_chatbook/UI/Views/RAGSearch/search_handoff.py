@@ -141,9 +141,7 @@ def _library_rag_source_authority(runtime_backend: Any) -> str:
 
 def _library_rag_runtime_backend(result: Any) -> str:
     return (
-        _validated_payload_text(
-            _result_or_provenance_value(result, "runtime_backend")
-        )
+        _validated_payload_text(_result_or_provenance_value(result, "runtime_backend"))
         or "local"
     )
 
@@ -405,9 +403,7 @@ def build_library_rag_evidence_bundle(
     blocked_count = sum(reference.status == "blocked" for reference in references)
     bundle_status = _library_rag_bundle_status(references)
     first_runtime_backend = (
-        str(references[0].metadata.get("runtime_backend") or "")
-        if references
-        else ""
+        str(references[0].metadata.get("runtime_backend") or "") if references else ""
     )
     return EvidenceBundle(
         bundle_id=f"library-rag:{_safe_target_part(query_text or 'evidence')}",
@@ -507,7 +503,9 @@ def build_search_chat_handoff_payload(
         item_type="web-result" if is_web else "rag-result",
         title=str(result.get("title") or "Search Result"),
         body=body,
-        content_ref=f"{'search-web' if is_web else 'search-rag'}:{source_id}" if source_id else None,
+        content_ref=f"{'search-web' if is_web else 'search-rag'}:{source_id}"
+        if source_id
+        else None,
         source_id=source_id or None,
         display_summary=body[:240],
         suggested_prompt=(

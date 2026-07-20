@@ -126,7 +126,11 @@ async def test_quizzes_controller_preflights_start_attempt_before_scope_service_
     window = SimpleNamespace(
         app_instance=app_instance,
         notify=Mock(),
-        query_one=Mock(side_effect=lambda selector, *args, **kwargs: select_widget if selector == "#quiz-select" else answer_widget),
+        query_one=Mock(
+            side_effect=lambda selector, *args, **kwargs: (
+                select_widget if selector == "#quiz-select" else answer_widget
+            )
+        ),
     )
     controller = StudyQuizzesController(window)
     controller._scope_service_cache = service
@@ -176,7 +180,9 @@ async def test_pending_scope_context_overrides_restored_state_for_activation():
 
 def test_study_screen_prefers_authoritative_runtime_source_over_saved_screen_mode():
     app_instance = SimpleNamespace(
-        runtime_policy=SimpleNamespace(state=RuntimeSourceState(active_source="server")),
+        runtime_policy=SimpleNamespace(
+            state=RuntimeSourceState(active_source="server")
+        ),
         current_runtime_backend="local",
         runtime_backend="local",
         notify=Mock(),
@@ -192,7 +198,9 @@ def test_study_screen_prefers_authoritative_runtime_source_over_saved_screen_mod
 async def test_workspace_scope_missing_workspace_id_is_scoped_error_not_global_fallback():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
-        pending_study_scope_context=StudyScopeContext(scope_type=StudyScopeType.WORKSPACE),
+        pending_study_scope_context=StudyScopeContext(
+            scope_type=StudyScopeType.WORKSPACE
+        ),
         current_runtime_backend="server",
         runtime_backend="server",
         notify=Mock(),
@@ -256,10 +264,16 @@ async def test_pending_scope_is_applied_before_initialize_on_mount():
         assert screen.current_scope.workspace_id == "workspace-9"
 
     window = SimpleNamespace(
-        load_saved_sessions=AsyncMock(side_effect=lambda: call_order.append("load_saved_sessions")),
+        load_saved_sessions=AsyncMock(
+            side_effect=lambda: call_order.append("load_saved_sessions")
+        ),
         initialize=AsyncMock(side_effect=initialize_side_effect),
-        flashcards_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("flashcards_scope_changed")),
-        quizzes_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")),
+        flashcards_controller=SimpleNamespace(
+            handle_scope_changed=lambda: call_order.append("flashcards_scope_changed")
+        ),
+        quizzes_controller=SimpleNamespace(
+            handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")
+        ),
         _schedule_flashcards_refresh=lambda: call_order.append("schedule_flashcards"),
         _schedule_quizzes_refresh=lambda: call_order.append("schedule_quizzes"),
     )
@@ -353,8 +367,12 @@ async def test_workspace_scope_mount_does_not_refresh_hidden_views(monkeypatch):
     def record_quizzes_refresh(self):
         call_order.append(f"quizzes:{self.current_view}")
 
-    monkeypatch.setattr(StudyWindow, "_schedule_flashcards_refresh", record_flashcards_refresh)
-    monkeypatch.setattr(StudyWindow, "_schedule_quizzes_refresh", record_quizzes_refresh)
+    monkeypatch.setattr(
+        StudyWindow, "_schedule_flashcards_refresh", record_flashcards_refresh
+    )
+    monkeypatch.setattr(
+        StudyWindow, "_schedule_quizzes_refresh", record_quizzes_refresh
+    )
 
     app_instance = SimpleNamespace(
         pending_study_scope_context=StudyScopeContext(
@@ -409,7 +427,9 @@ async def test_scope_change_awaits_end_review_session_before_reset():
             end_review_session_if_needed=end_review_session_if_needed,
             handle_scope_changed=flashcards_scope_changed,
         ),
-        quizzes_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")),
+        quizzes_controller=SimpleNamespace(
+            handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")
+        ),
         _schedule_flashcards_refresh=lambda: call_order.append("schedule_flashcards"),
         _schedule_quizzes_refresh=lambda: call_order.append("schedule_quizzes"),
     )
@@ -420,7 +440,9 @@ async def test_scope_change_awaits_end_review_session_before_reset():
 
     await screen.handle_runtime_backend_changed("local")
 
-    assert call_order.index("end_review_session") < call_order.index("flashcards_scope_changed")
+    assert call_order.index("end_review_session") < call_order.index(
+        "flashcards_scope_changed"
+    )
 
 
 @pytest.mark.asyncio
@@ -442,8 +464,12 @@ async def test_handle_runtime_backend_changed_recomputes_workspace_scope_state()
         load_saved_sessions=AsyncMock(),
         initialize=AsyncMock(),
         current_view="flashcards",
-        flashcards_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("flashcards_scope_changed")),
-        quizzes_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")),
+        flashcards_controller=SimpleNamespace(
+            handle_scope_changed=lambda: call_order.append("flashcards_scope_changed")
+        ),
+        quizzes_controller=SimpleNamespace(
+            handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")
+        ),
         _schedule_flashcards_refresh=lambda: call_order.append("schedule_flashcards"),
         _schedule_quizzes_refresh=lambda: call_order.append("schedule_quizzes"),
     )

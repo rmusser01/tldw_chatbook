@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+
 if TYPE_CHECKING:
     from ..tldw_api import TLDWAPIClient
 from .research_normalizers import ResearchRecord, ResearchRecordList
@@ -64,7 +65,9 @@ class ServerResearchService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -73,10 +76,14 @@ class ServerResearchService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server research action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server research action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -90,7 +97,9 @@ class ServerResearchService:
 
     @staticmethod
     def _dump_list(response: Any) -> ResearchRecordList:
-        return ResearchRecordList(ServerResearchService._dump(item) for item in list(response or []))
+        return ResearchRecordList(
+            ServerResearchService._dump(item) for item in list(response or [])
+        )
 
     @staticmethod
     def _dump_event(response: Any) -> ResearchRecord:
@@ -161,7 +170,9 @@ class ServerResearchService:
         after_id: int = 0,
     ) -> AsyncGenerator[dict[str, Any], None]:
         self._enforce("research.runs.observe.server")
-        async for event in self._require_client().stream_research_run_events(session_id, after_id=after_id):
+        async for event in self._require_client().stream_research_run_events(
+            session_id, after_id=after_id
+        ):
             yield self._dump_event(event)
 
     async def stream_run_events(
@@ -185,7 +196,9 @@ class ServerResearchService:
         self._enforce("research.runs.update.server")
         return self._dump(await self._require_client().cancel_research_run(session_id))
 
-    async def delete_run(self, session_id: str, *, expected_version: int | None = None) -> bool:
+    async def delete_run(
+        self, session_id: str, *, expected_version: int | None = None
+    ) -> bool:
         self._enforce("research.runs.delete.server")
         response = await self._require_client().delete_research_run(session_id)
         if isinstance(response, Mapping):
@@ -198,7 +211,11 @@ class ServerResearchService:
 
     async def get_artifact(self, session_id: str, artifact_name: str) -> dict[str, Any]:
         self._enforce("research.runs.detail.server")
-        return self._dump(await self._require_client().get_research_artifact(session_id, artifact_name))
+        return self._dump(
+            await self._require_client().get_research_artifact(
+                session_id, artifact_name
+            )
+        )
 
     async def patch_and_approve_checkpoint(
         self,

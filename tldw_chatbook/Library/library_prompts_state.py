@@ -15,7 +15,9 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
 from tldw_chatbook.DB.Prompts_DB import ConflictError
-from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
+)
 
 _TIMESTAMP_KEYS = ("last_modified", "created_at")
 
@@ -188,7 +190,9 @@ def _row(record: Mapping[str, Any], *, now: datetime) -> PromptListRow | None:
     raw_timestamp = _timestamp_raw(record)
     age = format_console_relative_age(raw_timestamp, now=now) if raw_timestamp else ""
     secondary = " · ".join(part for part in (details, age) if part)
-    return PromptListRow(prompt_id=prompt_id, name=_text(record.get("name")), secondary=secondary)
+    return PromptListRow(
+        prompt_id=prompt_id, name=_text(record.get("name")), secondary=secondary
+    )
 
 
 def build_prompts_list_state(
@@ -228,7 +232,9 @@ def build_prompts_list_state(
         items.sort(key=lambda record: _text(record.get("name")).lower())
     else:
         items.sort(key=_timestamp_raw, reverse=True)
-    rows = tuple(row for row in (_row(record, now=now) for record in items) if row is not None)
+    rows = tuple(
+        row for row in (_row(record, now=now) for record in items) if row is not None
+    )
     return PromptsListState(rows=rows, count=len(rows), sort=sort)
 
 
@@ -323,7 +329,9 @@ def _is_name_conflict(exc: Exception | None, message_lower: str) -> bool:
     return "unique" in message_lower or "already exists" in message_lower
 
 
-def classify_prompt_save_error(result_id: Any, message: str, exc: Exception | None) -> str:
+def classify_prompt_save_error(
+    result_id: Any, message: str, exc: Exception | None
+) -> str:
     """Classify the outcome of a prompt save (add/update) call.
 
     Args:

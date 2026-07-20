@@ -12,12 +12,12 @@ from .notes_state import NotesState, Note
 from .ui_state import UIState
 
 __all__ = [
-    'AppState',
-    'NavigationState',
-    'ChatState',
-    'ChatSession',
-    'NotesState',
-    'Note',
-    'RuntimeSourceState',
-    'UIState',
+    "AppState",
+    "NavigationState",
+    "ChatState",
+    "ChatSession",
+    "NotesState",
+    "Note",
+    "RuntimeSourceState",
+    "UIState",
 ]

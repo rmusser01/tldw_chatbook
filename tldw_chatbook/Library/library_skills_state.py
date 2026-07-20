@@ -36,16 +36,18 @@ from ..Skills_Interop.skill_trust_models import SkillTrustBlockedError
 # set per the brief's explicit interface (rather than threaded in as
 # caller-supplied "builtin tool names"/"registered command names" sets) --
 # still a pure, deterministic predicate.
-_SHADOWED_BUILTIN_NAMES = frozenset((
-    "calculator",
-    "get_current_datetime",
-    "spawn_subagent",
-    "find_tools",
-    "load_tools",
-    "prompt",
-    "system",
-    "skills",
-))
+_SHADOWED_BUILTIN_NAMES = frozenset(
+    (
+        "calculator",
+        "get_current_datetime",
+        "spawn_subagent",
+        "find_tools",
+        "load_tools",
+        "prompt",
+        "system",
+        "skills",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -240,7 +242,9 @@ def _row(record: Mapping[str, Any], *, default_blocked: bool) -> SkillListRow | 
     )
     description = _text(record.get("description"))
     secondary = " · ".join(part for part in (flags, description) if part)
-    return SkillListRow(name=name, secondary=secondary, trust_glyph=trust_glyph, blocked=blocked)
+    return SkillListRow(
+        name=name, secondary=secondary, trust_glyph=trust_glyph, blocked=blocked
+    )
 
 
 def build_skills_list_state(
@@ -321,10 +325,12 @@ def build_skill_editor_state(detail: Mapping[str, Any]) -> SkillEditorState:
     _, body = LocalSkillsService._parse_front_matter(content)
 
     supporting_source = detail.get("supporting_files") or {}
-    supporting_files = tuple(sorted(
-        (name, len(str(text).encode("utf-8")))
-        for name, text in supporting_source.items()
-    ))
+    supporting_files = tuple(
+        sorted(
+            (name, len(str(text).encode("utf-8")))
+            for name, text in supporting_source.items()
+        )
+    )
 
     changed_files = detail.get("trust_changed_files") or ()
 

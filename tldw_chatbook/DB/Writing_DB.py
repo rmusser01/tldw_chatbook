@@ -458,7 +458,9 @@ class WritingDatabase(BaseDB):
     def get_manuscript(
         self, manuscript_id: str, include_deleted: bool = False
     ) -> Optional[Dict[str, Any]]:
-        return self._get_row("manuscript", manuscript_id, include_deleted=include_deleted)
+        return self._get_row(
+            "manuscript", manuscript_id, include_deleted=include_deleted
+        )
 
     def update_manuscript(
         self,
@@ -549,7 +551,9 @@ class WritingDatabase(BaseDB):
     ) -> Dict[str, Any]:
         data = self._merge_update_data(update_data, kwargs)
         if "manuscript_id" in data:
-            current = self._require_current("chapter", chapter_id, include_deleted=False)
+            current = self._require_current(
+                "chapter", chapter_id, include_deleted=False
+            )
             self._validate_chapter_manuscript_parent(
                 current["project_id"],
                 data["manuscript_id"],
@@ -670,7 +674,9 @@ class WritingDatabase(BaseDB):
         current = self._require_current("scene", scene_id, include_deleted=False)
         next_chapter_id = data.get("chapter_id", current["chapter_id"])
         next_manuscript_id = data.get("manuscript_id", current["manuscript_id"])
-        self._validate_scene_parent(current["project_id"], next_manuscript_id, next_chapter_id)
+        self._validate_scene_parent(
+            current["project_id"], next_manuscript_id, next_chapter_id
+        )
         return self._update("scene", scene_id, data, expected_version)
 
     def move_scene_local(
@@ -783,7 +789,9 @@ class WritingDatabase(BaseDB):
                     ),
                 )
                 if cursor.rowcount != 1:
-                    raise self._version_conflict(entity_kind, current["id"], current["version"])
+                    raise self._version_conflict(
+                        entity_kind, current["id"], current["version"]
+                    )
         return [
             self._require_current(entity_kind, item_id, include_deleted=False)
             for item_id in ordered_ids
@@ -822,9 +830,13 @@ class WritingDatabase(BaseDB):
         label: Optional[str] = None,
     ) -> Dict[str, Any]:
         if label is not None:
-            logger.debug("Ignoring local writing version label; schema stores snapshots only.")
+            logger.debug(
+                "Ignoring local writing version label; schema stores snapshots only."
+            )
         if entity_kind not in {"manuscript", "chapter", "scene"}:
-            raise ValueError("Versions are supported for manuscript, chapter, and scene.")
+            raise ValueError(
+                "Versions are supported for manuscript, chapter, and scene."
+            )
         if entity_kind != "scene" and body_markdown is not None:
             raise ValueError("Only scene versions may include body_markdown.")
 
@@ -881,7 +893,12 @@ class WritingDatabase(BaseDB):
     ) -> tuple[Dict[str, Any], Optional[str]]:
         snapshot_data = dict(current)
         if entity_kind == "scene":
-            return snapshot_data, body_markdown if body_markdown is not None else current.get("body_markdown")
+            return (
+                snapshot_data,
+                body_markdown
+                if body_markdown is not None
+                else current.get("body_markdown"),
+            )
 
         snapshot_data.pop("body_markdown", None)
         if entity_kind == "chapter":
@@ -906,17 +923,15 @@ class WritingDatabase(BaseDB):
             limit=10000,
         )
         chapter_scene_groups = [
-            self.list_scenes(current["project_id"], chapter_id=chapter["id"], limit=10000)
+            self.list_scenes(
+                current["project_id"], chapter_id=chapter["id"], limit=10000
+            )
             for chapter in chapters
         ]
         snapshot_data["child_chapter_ids"] = [chapter["id"] for chapter in chapters]
         snapshot_data["direct_scene_ids"] = [scene["id"] for scene in direct_scenes]
         snapshot_data["assembled_markdown"] = self._assembled_scene_markdown(
-            [
-                scene
-                for scenes in chapter_scene_groups
-                for scene in scenes
-            ]
+            [scene for scenes in chapter_scene_groups for scene in scenes]
             + direct_scenes
         )
         return snapshot_data, None
@@ -1016,16 +1031,16 @@ class WritingDatabase(BaseDB):
     ) -> Dict[str, Any]:
         table = self._TABLES[entity_kind]
         allowed_fields = self._UPDATE_FIELDS[entity_kind]
-        updates = {
-            key: value
-            for key, value in data.items()
-            if key in allowed_fields
-        }
+        updates = {key: value for key, value in data.items() if key in allowed_fields}
         if entity_kind == "scene":
-            current = self._require_current(entity_kind, entity_id, include_deleted=False)
+            current = self._require_current(
+                entity_kind, entity_id, include_deleted=False
+            )
             next_chapter_id = updates.get("chapter_id", current["chapter_id"])
             next_manuscript_id = updates.get("manuscript_id", current["manuscript_id"])
-            self._validate_scene_parent(current["project_id"], next_manuscript_id, next_chapter_id)
+            self._validate_scene_parent(
+                current["project_id"], next_manuscript_id, next_chapter_id
+            )
         current = self._require_expected_version(
             entity_kind,
             entity_id,
@@ -1124,7 +1139,9 @@ class WritingDatabase(BaseDB):
         has_manuscript = manuscript_id is not None
         has_chapter = chapter_id is not None
         if has_manuscript == has_chapter:
-            raise ValueError("A scene must have exactly one parent: chapter_id or manuscript_id.")
+            raise ValueError(
+                "A scene must have exactly one parent: chapter_id or manuscript_id."
+            )
         if manuscript_id is not None:
             manuscript = self._require_current(
                 "manuscript",
@@ -1247,7 +1264,9 @@ class WritingDatabase(BaseDB):
 
     def _normalize_settings(self, data: Dict[str, Any]) -> None:
         if "settings" in data:
-            data["settings_json"] = json.dumps(data.pop("settings") or {}, sort_keys=True)
+            data["settings_json"] = json.dumps(
+                data.pop("settings") or {}, sort_keys=True
+            )
 
     @staticmethod
     def _merge_update_data(

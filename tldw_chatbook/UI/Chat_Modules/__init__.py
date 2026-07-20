@@ -24,19 +24,19 @@ from .chat_messages import (
     ChatVoiceMessage,
     ChatSidebarMessage,
     ChatMessageDisplayMessage,
-    ChatStreamingMessage
+    ChatStreamingMessage,
 )
 
 __all__ = [
-    'ChatInputHandler',
-    'ChatAttachmentHandler', 
-    'ChatVoiceHandler',
-    'ChatSidebarHandler',
-    'ChatMessageManager',
-    'ChatInputMessage',
-    'ChatAttachmentMessage',
-    'ChatVoiceMessage',
-    'ChatSidebarMessage',
-    'ChatMessageDisplayMessage',
-    'ChatStreamingMessage'
+    "ChatInputHandler",
+    "ChatAttachmentHandler",
+    "ChatVoiceHandler",
+    "ChatSidebarHandler",
+    "ChatMessageManager",
+    "ChatInputMessage",
+    "ChatAttachmentMessage",
+    "ChatVoiceMessage",
+    "ChatSidebarMessage",
+    "ChatMessageDisplayMessage",
+    "ChatStreamingMessage",
 ]

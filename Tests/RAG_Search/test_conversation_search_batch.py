@@ -8,8 +8,6 @@ module lived one package deeper, in ``simplified/``), which raised
 time; any end-to-end call below would resurface that class of break.
 """
 
-import asyncio
-
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -25,23 +23,31 @@ class _FakeApp:
         self.db_config = {"chacha_db_path": str(db_path)}
 
 
-def _seed(db: CharactersRAGDB, *, n_convs: int = 3, msgs_per_conv: int = 4) -> list[str]:
+def _seed(
+    db: CharactersRAGDB, *, n_convs: int = 3, msgs_per_conv: int = 4
+) -> list[str]:
     """Seed conversations whose messages embed a searchable marker word."""
     conv_ids = []
     for c in range(n_convs):
         conv_id = db.add_conversation({"title": f"Conversation {c}"})
         conv_ids.append(conv_id)
         for m in range(msgs_per_conv):
-            db.add_message({
-                "conversation_id": conv_id,
-                "sender": "User" if m % 2 == 0 else "AI",
-                "content": f"glimmerfish message {m} of conversation {c}",
-                # Explicit distinct timestamps: deterministic ordering.
-                "timestamp": f"2026-07-17T10:0{c}:{m:02d}Z",
-                # One BLOB-bearing message per conversation proves the
-                # text-only path skips (not breaks on) image rows.
-                **({"image_data": _PNG_STUB, "image_mime_type": "image/png"} if m == 1 else {}),
-            })
+            db.add_message(
+                {
+                    "conversation_id": conv_id,
+                    "sender": "User" if m % 2 == 0 else "AI",
+                    "content": f"glimmerfish message {m} of conversation {c}",
+                    # Explicit distinct timestamps: deterministic ordering.
+                    "timestamp": f"2026-07-17T10:0{c}:{m:02d}Z",
+                    # One BLOB-bearing message per conversation proves the
+                    # text-only path skips (not breaks on) image rows.
+                    **(
+                        {"image_data": _PNG_STUB, "image_mime_type": "image/png"}
+                        if m == 1
+                        else {}
+                    ),
+                }
+            )
     return conv_ids
 
 
@@ -64,7 +70,14 @@ def test_batch_matches_per_conversation_loop(db):
         assert len(batch_rows) == len(loop_rows)
         # Compare on the columns both queries select (the batch query
         # predates the variant columns and doesn't return them).
-        common = ("id", "conversation_id", "sender", "content", "timestamp", "image_data")
+        common = (
+            "id",
+            "conversation_id",
+            "sender",
+            "content",
+            "timestamp",
+            "image_data",
+        )
         for lr, br in zip(loop_rows, batch_rows):
             for key in common:
                 assert br[key] == lr[key], (conv_id, key)
@@ -107,7 +120,8 @@ async def test_search_conversations_fts5_end_to_end(db, tmp_path):
 
     assert results, "expected conversation hits for the seeded marker word"
     reference_order = [
-        str(c["id"]) for c in db.search_conversations_by_content(
+        str(c["id"])
+        for c in db.search_conversations_by_content(
             search_query="glimmerfish", limit=20
         )
     ]
@@ -120,7 +134,9 @@ async def test_search_conversations_fts5_end_to_end(db, tmp_path):
         # as "sender: content" lines.
         expected = "\n".join(
             f"{m['sender']}: {m['content']}"
-            for m in db.get_messages_for_conversation(conversation_id=result.id, limit=5)
+            for m in db.get_messages_for_conversation(
+                conversation_id=result.id, limit=5
+            )
         )
         assert result.content == expected
 

@@ -99,7 +99,10 @@ async def test_local_prompt_service_lists_prompt_versions_from_sync_log_snapshot
     assert [version["version"] for version in versions] == [2, 1]
     assert versions[0]["prompt_uuid"] == "prompt-uuid"
     assert versions[0]["operation"] == "update"
-    assert versions[0]["prompt_definition"] == '{"messages":[{"role":"user","content":"hi"}]}'
+    assert (
+        versions[0]["prompt_definition"]
+        == '{"messages":[{"role":"user","content":"hi"}]}'
+    )
 
 
 @pytest.mark.asyncio

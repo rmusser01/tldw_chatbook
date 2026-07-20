@@ -30,7 +30,10 @@ class OutputTemplateCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_format_matches_type(self) -> "OutputTemplateCreate":
-        if self.type in {"newsletter_markdown", "briefing_markdown", "mece_markdown"} and self.format != "md":
+        if (
+            self.type in {"newsletter_markdown", "briefing_markdown", "mece_markdown"}
+            and self.format != "md"
+        ):
             raise ValueError("Markdown-type templates must use format 'md'.")
         if self.type == "newsletter_html" and self.format != "html":
             raise ValueError("newsletter_html templates must use format 'html'.")

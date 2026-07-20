@@ -25,67 +25,68 @@ from .semantic_availability import (
 # Retrieval Functions
 # ==============================================================================
 
+
 async def search_media_fts5(
-    app: Any,
-    query: str,
-    limit: int = 10,
-    keyword_filter: Optional[List[str]] = None
+    app: Any, query: str, limit: int = 10, keyword_filter: Optional[List[str]] = None
 ) -> List[SearchResult]:
     """Search media database using FTS5."""
     if not app.media_db:
         return []
-    
+
     logger.debug(f"Searching media for: {query}")
-    
+
     # Search media database
     media_results = await asyncio.to_thread(
         app.media_db.search_media_db,
         search_query=query,
-        search_fields=['title', 'content'],
+        search_fields=["title", "content"],
         page=1,
         results_per_page=limit * 2,  # Get extra for filtering
-        include_trash=False
+        include_trash=False,
     )
-    
+
     # Extract results list
     if isinstance(media_results, tuple):
         media_items = media_results[0]
     else:
         media_items = media_results
-    
+
     # Fetch keywords if needed
     keywords_map = {}
     if media_items and keyword_filter:
-        media_ids = [item.get('id') for item in media_items if item.get('id')]
+        media_ids = [item.get("id") for item in media_items if item.get("id")]
         if media_ids:
             keywords_map = await asyncio.to_thread(
-                app.media_db.fetch_keywords_for_media_batch,
-                media_ids
+                app.media_db.fetch_keywords_for_media_batch, media_ids
             )
-    
+
     # Convert to SearchResult objects
     results = []
     for item in media_items:
         # Apply keyword filter if specified
         if keyword_filter:
-            item_keywords = keywords_map.get(item.get('id'), [])
-            if not any(kw.lower() in [k.lower() for k in item_keywords] 
-                      for kw in keyword_filter):
+            item_keywords = keywords_map.get(item.get("id"), [])
+            if not any(
+                kw.lower() in [k.lower() for k in item_keywords]
+                for kw in keyword_filter
+            ):
                 continue
-        
-        results.append(SearchResult(
-            source='media',
-            id=str(item.get('id', '')),
-            title=item.get('title', 'Untitled'),
-            content=item.get('content', ''),
-            metadata={
-                'type': item.get('type', 'unknown'),
-                'author': item.get('author', 'Unknown'),
-                'ingestion_date': item.get('ingestion_date', ''),
-                'keywords': keywords_map.get(item.get('id'), [])
-            }
-        ))
-    
+
+        results.append(
+            SearchResult(
+                source="media",
+                id=str(item.get("id", "")),
+                title=item.get("title", "Untitled"),
+                content=item.get("content", ""),
+                metadata={
+                    "type": item.get("type", "unknown"),
+                    "author": item.get("author", "Unknown"),
+                    "ingestion_date": item.get("ingestion_date", ""),
+                    "keywords": keywords_map.get(item.get("id"), []),
+                },
+            )
+        )
+
     return results[:limit]
 
 
@@ -119,9 +120,7 @@ def _resolve_chacha_db(app: Any):
 
 
 async def search_conversations_fts5(
-    app: Any,
-    query: str,
-    limit: int = 10
+    app: Any, query: str, limit: int = 10
 ) -> List[SearchResult]:
     """Search conversations database using FTS5.
 
@@ -137,50 +136,48 @@ async def search_conversations_fts5(
     db = _resolve_chacha_db(app)
     if db is None:
         return []
-    
+
     logger.debug(f"Searching conversations for: {query}")
     conv_results = await asyncio.to_thread(
-        db.search_conversations_by_content,
-        search_query=query,
-        limit=limit * 2
+        db.search_conversations_by_content, search_query=query, limit=limit * 2
     )
-    
+
     # task-260: one batched query for all matched conversations' context
     # messages (was one query per conversation), and text-only snippets
     # never fetch image BLOBs.
     messages_by_conv = await asyncio.to_thread(
         db.get_messages_for_conversations_batch,
-        conversation_ids=[conv['id'] for conv in conv_results],
+        conversation_ids=[conv["id"] for conv in conv_results],
         limit_per_conversation=5,
         include_image_data=False,
     )
-    
+
     results = []
     for conv in conv_results:
         # Build content from messages
         content_parts = []
-        for msg in messages_by_conv.get(conv['id'], []):
+        for msg in messages_by_conv.get(conv["id"], []):
             content_parts.append(f"{msg['sender']}: {msg['content']}")
-        
-        results.append(SearchResult(
-            source='conversation',
-            id=str(conv['id']),
-            title=conv.get('title', 'Untitled Conversation'),
-            content='\n'.join(content_parts),
-            metadata={
-                'character_id': conv.get('character_id'),
-                'created_at': conv.get('created_at'),
-                'updated_at': conv.get('updated_at')
-            }
-        ))
-    
+
+        results.append(
+            SearchResult(
+                source="conversation",
+                id=str(conv["id"]),
+                title=conv.get("title", "Untitled Conversation"),
+                content="\n".join(content_parts),
+                metadata={
+                    "character_id": conv.get("character_id"),
+                    "created_at": conv.get("created_at"),
+                    "updated_at": conv.get("updated_at"),
+                },
+            )
+        )
+
     return results[:limit]
 
 
 async def search_notes_fts5(
-    app: Any,
-    query: str,
-    limit: int = 10
+    app: Any, query: str, limit: int = 10
 ) -> List[SearchResult]:
     """Search notes using FTS5.
 
@@ -200,28 +197,28 @@ async def search_notes_fts5(
     db = _resolve_chacha_db(app)
     if db is None:
         return []
-    
+
     logger.debug(f"Searching notes for: {query}")
-    
+
     note_results = await asyncio.to_thread(
-        db.search_notes,
-        search_term=query,
-        limit=limit
+        db.search_notes, search_term=query, limit=limit
     )
-    
+
     results = []
     for note in note_results:
-        results.append(SearchResult(
-            source='note',
-            id=str(note['id']),
-            title=note.get('title', 'Untitled Note'),
-            content=note.get('content', ''),
-            metadata={
-                'created_at': note.get('created_at'),
-                'last_modified': note.get('last_modified')
-            }
-        ))
-    
+        results.append(
+            SearchResult(
+                source="note",
+                id=str(note["id"]),
+                title=note.get("title", "Untitled Note"),
+                content=note.get("content", ""),
+                metadata={
+                    "created_at": note.get("created_at"),
+                    "last_modified": note.get("last_modified"),
+                },
+            )
+        )
+
     return results
 
 
@@ -231,7 +228,7 @@ async def search_semantic(
     sources: Dict[str, bool],
     limit: int = 10,
     diagnostics: Optional[Dict[str, Any]] = None,
-    **kwargs
+    **kwargs,
 ) -> List[SearchResult]:
     """Search using semantic embeddings, initializing the runtime lazily.
 
@@ -281,7 +278,7 @@ async def search_semantic(
             search_type="semantic",
             top_k=limit,
             include_citations=True,
-            **kwargs
+            **kwargs,
         )
     except Exception:
         logger.opt(exception=True).error(
@@ -294,30 +291,34 @@ async def search_semantic(
     results = []
     for result in rag_results:
         # Check if this result has citations
-        if hasattr(result, 'citations') and result.citations:
+        if hasattr(result, "citations") and result.citations:
             # Include citations in metadata
             metadata = result.metadata.copy() if result.metadata else {}
-            metadata['_has_citations'] = True
-            metadata['_citations'] = [c.to_dict() for c in result.citations]
-            
-            results.append(SearchResult(
-                source=getattr(result, 'source', 'unknown'),
-                id=result.id,
-                title=getattr(result, 'title', result.document[:50]),
-                content=result.document,
-                score=result.score,
-                metadata=metadata
-            ))
+            metadata["_has_citations"] = True
+            metadata["_citations"] = [c.to_dict() for c in result.citations]
+
+            results.append(
+                SearchResult(
+                    source=getattr(result, "source", "unknown"),
+                    id=result.id,
+                    title=getattr(result, "title", result.document[:50]),
+                    content=result.document,
+                    score=result.score,
+                    metadata=metadata,
+                )
+            )
         else:
             # Basic result without citations
-            results.append(SearchResult(
-                source=getattr(result, 'source', 'unknown'),
-                id=result.id,
-                title=getattr(result, 'title', result.document[:50]),
-                content=getattr(result, 'content', result.document),
-                score=result.score,
-                metadata=result.metadata if hasattr(result, 'metadata') else {}
-            ))
+            results.append(
+                SearchResult(
+                    source=getattr(result, "source", "unknown"),
+                    id=result.id,
+                    title=getattr(result, "title", result.document[:50]),
+                    content=getattr(result, "content", result.document),
+                    score=result.score,
+                    metadata=result.metadata if hasattr(result, "metadata") else {},
+                )
+            )
 
     # Distinguish "no matches" from "nothing indexed yet" (task-250): only a
     # trustworthy zero-document count reports the empty-index state.
@@ -333,48 +334,45 @@ async def search_semantic(
 # Processing Functions
 # ==============================================================================
 
+
 def deduplicate_results(results: List[SearchResult]) -> List[SearchResult]:
     """Remove duplicate results based on content similarity."""
     seen = {}
-    deduped = []
-    
+
     for result in results:
         # Use first 200 chars of content as key
         key = result.content[:200]
-        
+
         if key not in seen or result.score > seen[key].score:
             seen[key] = result
-    
+
     return list(seen.values())
 
 
 def rerank_results(
-    results: List[SearchResult],
-    query: str,
-    model: str = "flashrank",
-    top_k: int = 10
+    results: List[SearchResult], query: str, model: str = "flashrank", top_k: int = 10
 ) -> List[SearchResult]:
     """Rerank results using specified model."""
     if not results:
         return results
-    
+
     if model == "flashrank":
         try:
             from flashrank import RerankRequest, Ranker
-            
+
             # Initialize ranker
             ranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2", cache_dir="/tmp")
-            
+
             # Prepare passages
             passages = []
             for result in results:
                 text = f"{result.title}\n{result.content[:1000]}"
                 passages.append({"text": text})
-            
+
             # Rerank
             rerank_req = RerankRequest(query=query, passages=passages)
             ranked_results = ranker.rerank(rerank_req)
-            
+
             # Reorder results
             reranked = []
             for ranked in ranked_results[:top_k]:
@@ -383,19 +381,21 @@ def rerank_results(
                     result = results[idx]
                     result.score = float(ranked.score)
                     reranked.append(result)
-            
+
             return reranked
-            
+
         except ImportError:
             logger.warning("FlashRank not available, returning original order")
             return results[:top_k]
-    
+
     # Default: just sort by score and limit
     sorted_results = sorted(results, key=lambda x: x.score, reverse=True)
     return sorted_results[:top_k]
 
 
-def filter_by_score(results: List[SearchResult], min_score: float = 0.0) -> List[SearchResult]:
+def filter_by_score(
+    results: List[SearchResult], min_score: float = 0.0
+) -> List[SearchResult]:
     """Filter results by minimum score."""
     return [r for r in results if r.score >= min_score]
 
@@ -404,47 +404,46 @@ def filter_by_score(results: List[SearchResult], min_score: float = 0.0) -> List
 # Formatting Functions
 # ==============================================================================
 
+
 def format_as_context(
-    results: List[SearchResult],
-    max_length: int = 10000,
-    include_citations: bool = True
+    results: List[SearchResult], max_length: int = 10000, include_citations: bool = True
 ) -> str:
     """Format results as LLM context."""
     if not results:
         return "No relevant context found."
-    
+
     context_parts = []
     total_chars = 0
-    
+
     for i, result in enumerate(results):
         # Format header
         if include_citations:
             header = f"[{result.source.upper()} - {result.title}]"
         else:
             header = ""
-        
+
         # Calculate available space
         remaining = max_length - total_chars - len(header) - 10  # Buffer
         if remaining <= 0:
             break
-        
+
         # Truncate content if needed
         content = result.content
         if len(content) > remaining:
             content = content[:remaining] + "..."
-        
+
         # Build result text
         if header:
             result_text = f"{header}\n{content}"
         else:
             result_text = content
-        
+
         context_parts.append(result_text)
         total_chars += len(result_text) + 10  # Account for separator
-        
+
         if total_chars >= max_length:
             break
-    
+
     return "\n---\n".join(context_parts)
 
 
@@ -452,49 +451,54 @@ def format_as_context(
 # Combination Functions
 # ==============================================================================
 
+
 async def parallel_search(
     app: Any,
     query: str,
     sources: Dict[str, bool],
     functions: List[Dict[str, Any]],
-    diagnostics: Optional[Dict[str, Any]] = None
+    diagnostics: Optional[Dict[str, Any]] = None,
 ) -> List[SearchResult]:
     """Execute multiple search functions in parallel."""
     tasks = []
     task_func_names = []
 
     for func_config in functions:
-        func_name = func_config['function']
-        config = func_config.get('config', {})
+        func_name = func_config["function"]
+        config = func_config.get("config", {})
 
-        if func_name == 'search_fts5':
+        if func_name == "search_fts5":
             # Run FTS5 searches for each enabled source
-            if sources.get('media'):
+            if sources.get("media"):
                 tasks.append(search_media_fts5(app, query, **config))
-                task_func_names.append('search_media_fts5')
-            if sources.get('conversations'):
+                task_func_names.append("search_media_fts5")
+            if sources.get("conversations"):
                 tasks.append(search_conversations_fts5(app, query, **config))
-                task_func_names.append('search_conversations_fts5')
-            if sources.get('notes'):
+                task_func_names.append("search_conversations_fts5")
+            if sources.get("notes"):
                 tasks.append(search_notes_fts5(app, query, **config))
-                task_func_names.append('search_notes_fts5')
-        elif func_name == 'search_semantic':
+                task_func_names.append("search_notes_fts5")
+        elif func_name == "search_semantic":
             # Forward only kwargs the RAG service accepts (same fix as the
             # pipeline builder's parallel/retrieve steps, tasks 256/250):
             # splatting the raw config duplicated top_k inside the service
             # call, and gather() below swallowed the resulting TypeError.
             semantic_kwargs = {
                 key: config[key]
-                for key in ('score_threshold', 'filter_metadata')
+                for key in ("score_threshold", "filter_metadata")
                 if key in config
             }
-            tasks.append(search_semantic(
-                app, query, sources,
-                limit=config.get('top_k', config.get('limit', 10)),
-                diagnostics=diagnostics,
-                **semantic_kwargs
-            ))
-            task_func_names.append('search_semantic')
+            tasks.append(
+                search_semantic(
+                    app,
+                    query,
+                    sources,
+                    limit=config.get("top_k", config.get("limit", 10)),
+                    diagnostics=diagnostics,
+                    **semantic_kwargs,
+                )
+            )
+            task_func_names.append("search_semantic")
 
     # Execute all searches in parallel
     results_lists = await asyncio.gather(*tasks, return_exceptions=True)
@@ -504,7 +508,7 @@ async def parallel_search(
     for func_name, results in zip(task_func_names, results_lists):
         if isinstance(results, Exception):
             logger.error(f"Search failed ({func_name}): {results}")
-            if func_name == 'search_semantic':
+            if func_name == "search_semantic":
                 # The vector leg died mid-search: record it so callers can
                 # say the results are keyword-only (task-250).
                 record_semantic_unavailable(diagnostics, SEMANTIC_REASON_SEARCH_ERROR)
@@ -515,26 +519,25 @@ async def parallel_search(
 
 
 def weighted_merge(
-    results_lists: List[List[SearchResult]],
-    weights: List[float]
+    results_lists: List[List[SearchResult]], weights: List[float]
 ) -> List[SearchResult]:
     """Merge multiple result lists with weighted scores."""
     if len(results_lists) != len(weights):
         raise ValueError("Number of result lists must match number of weights")
-    
+
     # Normalize weights
     total_weight = sum(weights)
     if total_weight == 0:
         return []
     weights = [w / total_weight for w in weights]
-    
+
     # Merge with weighted scores
     merged = {}
-    
+
     for results, weight in zip(results_lists, weights):
         for result in results:
             key = f"{result.source}:{result.id}"
-            
+
             if key in merged:
                 # Update score with weighted average
                 merged[key].score += result.score * weight
@@ -542,11 +545,11 @@ def weighted_merge(
                 # New result with weighted score
                 result.score = result.score * weight
                 merged[key] = result
-    
+
     # Sort by final score
     final_results = list(merged.values())
     final_results.sort(key=lambda x: x.score, reverse=True)
-    
+
     return final_results
 
 
@@ -555,20 +558,20 @@ def weighted_merge(
 # ==============================================================================
 
 RETRIEVAL_FUNCTIONS = {
-    'search_media_fts5': search_media_fts5,
-    'search_conversations_fts5': search_conversations_fts5,
-    'search_notes_fts5': search_notes_fts5,
-    'search_semantic': search_semantic,
-    'parallel_search': parallel_search,
+    "search_media_fts5": search_media_fts5,
+    "search_conversations_fts5": search_conversations_fts5,
+    "search_notes_fts5": search_notes_fts5,
+    "search_semantic": search_semantic,
+    "parallel_search": parallel_search,
 }
 
 PROCESSING_FUNCTIONS = {
-    'deduplicate_results': deduplicate_results,
-    'rerank_results': rerank_results,
-    'filter_by_score': filter_by_score,
-    'weighted_merge': weighted_merge,
+    "deduplicate_results": deduplicate_results,
+    "rerank_results": rerank_results,
+    "filter_by_score": filter_by_score,
+    "weighted_merge": weighted_merge,
 }
 
 FORMATTING_FUNCTIONS = {
-    'format_as_context': format_as_context,
+    "format_as_context": format_as_context,
 }

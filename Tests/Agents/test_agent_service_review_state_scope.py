@@ -22,6 +22,7 @@ snapshot `_stamped_decisions` on enter, restore (not merge) it on exit, so
 the child's mutations to the shared dict are fully undone the instant it
 returns control to the parent.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -32,7 +33,10 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.Agents.agent_models import (
-    RUN_DONE, SPAWN_TOOL_NAME, AgentConfig, ToolCall,
+    RUN_DONE,
+    SPAWN_TOOL_NAME,
+    AgentConfig,
+    ToolCall,
 )
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT, AgentService
 from tldw_chatbook.Agents.mcp_tool_provider import DENY_REFUSAL, MCPToolProvider
@@ -43,8 +47,11 @@ from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 
 def _catalog_record(profile_id: str, tools: list[dict]) -> dict:
-    return {"profile_id": profile_id, "is_connected": True,
-            "discovery_snapshot": {"tools": tools}}
+    return {
+        "profile_id": profile_id,
+        "is_connected": True,
+        "discovery_snapshot": {"tools": tools},
+    }
 
 
 def _tool_dict(name: str, description: str = "") -> dict:
@@ -82,20 +89,40 @@ class FakeMCPService:
     def approve_for_session(self, server_key: str, tool_name: str) -> None:
         self.session_approvals.add((server_key, tool_name))
 
-    def set_tool_state(self, server_key: str, tool_name: str, ui_state, *, tool=None) -> None:
+    def set_tool_state(
+        self, server_key: str, tool_name: str, ui_state, *, tool=None
+    ) -> None:
         pass
 
-    def record_tool_decision(self, server_key: str, tool_name: str, *, decision: str,
-                             initiator: str = "agent", error: str | None = None) -> None:
-        self.record_tool_decision_calls.append((server_key, tool_name, decision, initiator, error))
+    def record_tool_decision(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        decision: str,
+        initiator: str = "agent",
+        error: str | None = None,
+    ) -> None:
+        self.record_tool_decision_calls.append(
+            (server_key, tool_name, decision, initiator, error)
+        )
 
     def _tool_call_timeout(self) -> float:
         return 5.0
 
-    async def execute_hub_tool(self, server_key: str, tool_name: str, arguments: dict | None = None, *,
-                               initiator: str = "test", decision: str = "allowed",
-                               timeout_seconds: float | None = None) -> dict:
-        self.execute_calls.append((server_key, tool_name, dict(arguments or {}), initiator, decision))
+    async def execute_hub_tool(
+        self,
+        server_key: str,
+        tool_name: str,
+        arguments: dict | None = None,
+        *,
+        initiator: str = "test",
+        decision: str = "allowed",
+        timeout_seconds: float | None = None,
+    ) -> dict:
+        self.execute_calls.append(
+            (server_key, tool_name, dict(arguments or {}), initiator, decision)
+        )
         return {"content": [{"type": "text", "text": "executed"}]}
 
 
@@ -125,9 +152,14 @@ def db(tmp_path):
 
 
 def _native_turn(calls: list[ToolCall], text: str = "") -> dict:
-    raw = [{"id": c.call_id, "type": "function",
-           "function": {"name": c.name, "arguments": json.dumps(c.args)}}
-          for c in calls]
+    raw = [
+        {
+            "id": c.call_id,
+            "type": "function",
+            "function": {"name": c.name, "arguments": json.dumps(c.args)},
+        }
+        for c in calls
+    ]
     return {"content": text, "tool_calls": raw}
 
 
@@ -146,7 +178,10 @@ class ScriptedChat:
         self.calls.append(messages_payload)
         is_child = bool(messages_payload) and (
             messages_payload[0].get("role") == "system"
-            and str(messages_payload[0].get("content", "")).startswith(SUBAGENT_SYSTEM_PROMPT))
+            and str(messages_payload[0].get("content", "")).startswith(
+                SUBAGENT_SYSTEM_PROMPT
+            )
+        )
         queue = self.child_replies if is_child else self.parent_replies
         item = queue.pop(0)
         message = item if isinstance(item, dict) else {"content": item}
@@ -164,7 +199,10 @@ def _registry_with_mcp(provider: MCPToolProvider) -> ToolCatalogRegistry:
 # C1: the reviewer's exact adversarial interleave
 # ---------------------------------------------------------------------------
 
-def test_parent_deny_is_not_overridden_by_a_same_turn_spawned_childs_approval(db, running_loop):
+
+def test_parent_deny_is_not_overridden_by_a_same_turn_spawned_childs_approval(
+    db, running_loop
+):
     """Parent batch = [spawn_subagent, mcp_X]. Parent denies mcp_X. The
     spawned child (dispatched INLINE, mid-parent-dispatch) approves its OWN
     call to the SAME mcp_X. The parent's remaining (second) call to mcp_X
@@ -181,12 +219,14 @@ def test_parent_deny_is_not_overridden_by_a_same_turn_spawned_childs_approval(db
     def request_mcp_approvals(pending):
         approval_calls.append([p.llm_name for p in pending])
         if len(approval_calls) == 1:
-            return {tool_id: "deny"}        # the PARENT's own decision
-        return {tool_id: "approve_once"}    # the CHILD's own (different) decision
+            return {tool_id: "deny"}  # the PARENT's own decision
+        return {tool_id: "approve_once"}  # the CHILD's own (different) decision
 
     review_hook = build_mcp_review_hook(provider, request_mcp_approvals)
 
-    spawn_call = ToolCall(name=SPAWN_TOOL_NAME, args={"task": "call the tool"}, call_id="p-spawn")
+    spawn_call = ToolCall(
+        name=SPAWN_TOOL_NAME, args={"task": "call the tool"}, call_id="p-spawn"
+    )
     parent_mcp_call = ToolCall(name=tool_id, args={"q": "parent"}, call_id="p-mcp")
     child_mcp_call = ToolCall(name=tool_id, args={"q": "child"}, call_id="c-mcp")
 
@@ -196,17 +236,26 @@ def test_parent_deny_is_not_overridden_by_a_same_turn_spawned_childs_approval(db
     )
 
     agent_service = AgentService(
-        db=db, registry=registry, chat_call=chat,
+        db=db,
+        registry=registry,
+        chat_call=chat,
         review_tool_calls=review_hook,
         review_state_scope=provider.stamp_scope,
     )
     config = AgentConfig(
-        model="m", system_prompt="s",
-        allowed_tools=(tool_id, SPAWN_TOOL_NAME), native_tools=True)
+        model="m",
+        system_prompt="s",
+        allowed_tools=(tool_id, SPAWN_TOOL_NAME),
+        native_tools=True,
+    )
 
     _run_id, outcome = agent_service.run_turn(
-        conversation_id="c1", messages=[{"role": "user", "content": "go"}],
-        config=config, api_endpoint="openai", should_cancel=lambda: False)
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="openai",
+        should_cancel=lambda: False,
+    )
 
     assert outcome.status == RUN_DONE
     assert len(approval_calls) == 2  # one round trip for the parent, one for the child
@@ -215,14 +264,22 @@ def test_parent_deny_is_not_overridden_by_a_same_turn_spawned_childs_approval(db
     # approved call. The parent's own (denied) call must never reach
     # execute_hub_tool at all.
     assert service.execute_calls == [
-        ("local:srv", "run", {"q": "child"}, "agent", "approved")]
+        ("local:srv", "run", {"q": "child"}, "agent", "approved")
+    ]
 
     # The parent's own remaining call was refused, not executed.
-    tool_result_steps = [s for s in outcome.steps
-                         if s.kind == "tool_result" and s.tool_name == tool_id]
+    tool_result_steps = [
+        s for s in outcome.steps if s.kind == "tool_result" and s.tool_name == tool_id
+    ]
     assert len(tool_result_steps) == 1
     assert tool_result_steps[0].result == f"ERROR: {DENY_REFUSAL}"
-    assert ("local:srv", "run", "denied", "agent", None) in service.record_tool_decision_calls
+    assert (
+        "local:srv",
+        "run",
+        "denied",
+        "agent",
+        None,
+    ) in service.record_tool_decision_calls
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +287,10 @@ def test_parent_deny_is_not_overridden_by_a_same_turn_spawned_childs_approval(db
 # genuine parent approval
 # ---------------------------------------------------------------------------
 
-def test_child_run_does_not_wipe_a_parent_approval_via_its_own_empty_apply(db, running_loop):
+
+def test_child_run_does_not_wipe_a_parent_approval_via_its_own_empty_apply(
+    db, running_loop
+):
     """The child spawned this turn calls a NON-MCP tool (calculator) -- its
     OWN review-hook invocation resolves `pending=[]` and (routinely, every
     turn with tool calls) calls `apply_batch_decisions({})`. That routine
@@ -251,9 +311,13 @@ def test_child_run_does_not_wipe_a_parent_approval_via_its_own_empty_apply(db, r
 
     review_hook = build_mcp_review_hook(provider, request_mcp_approvals)
 
-    spawn_call = ToolCall(name=SPAWN_TOOL_NAME, args={"task": "use the calculator"}, call_id="p-spawn")
+    spawn_call = ToolCall(
+        name=SPAWN_TOOL_NAME, args={"task": "use the calculator"}, call_id="p-spawn"
+    )
     parent_mcp_call = ToolCall(name=tool_id, args={"q": "parent"}, call_id="p-mcp")
-    calc_call = ToolCall(name="calculator", args={"expression": "1+1"}, call_id="c-calc")
+    calc_call = ToolCall(
+        name="calculator", args={"expression": "1+1"}, call_id="c-calc"
+    )
 
     chat = ScriptedChat(
         parent_replies=[_native_turn([spawn_call, parent_mcp_call]), "parent done"],
@@ -261,17 +325,26 @@ def test_child_run_does_not_wipe_a_parent_approval_via_its_own_empty_apply(db, r
     )
 
     agent_service = AgentService(
-        db=db, registry=registry, chat_call=chat,
+        db=db,
+        registry=registry,
+        chat_call=chat,
         review_tool_calls=review_hook,
         review_state_scope=provider.stamp_scope,
     )
     config = AgentConfig(
-        model="m", system_prompt="s",
-        allowed_tools=(tool_id, "calculator", SPAWN_TOOL_NAME), native_tools=True)
+        model="m",
+        system_prompt="s",
+        allowed_tools=(tool_id, "calculator", SPAWN_TOOL_NAME),
+        native_tools=True,
+    )
 
     _run_id, outcome = agent_service.run_turn(
-        conversation_id="c1", messages=[{"role": "user", "content": "go"}],
-        config=config, api_endpoint="openai", should_cancel=lambda: False)
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="openai",
+        should_cancel=lambda: False,
+    )
 
     assert outcome.status == RUN_DONE
     # Only ONE request_mcp_approvals round trip ever happens (the parent's) --
@@ -281,10 +354,12 @@ def test_child_run_does_not_wipe_a_parent_approval_via_its_own_empty_apply(db, r
     # The parent's own approved call still executed after the child (whose
     # own turn cleared the provider's live stamp dict) returned.
     assert service.execute_calls == [
-        ("local:srv", "run", {"q": "parent"}, "agent", "approved")]
+        ("local:srv", "run", {"q": "parent"}, "agent", "approved")
+    ]
 
-    tool_result_steps = [s for s in outcome.steps
-                         if s.kind == "tool_result" and s.tool_name == tool_id]
+    tool_result_steps = [
+        s for s in outcome.steps if s.kind == "tool_result" and s.tool_name == tool_id
+    ]
     assert len(tool_result_steps) == 1
     assert not tool_result_steps[0].result.startswith("ERROR")
 
@@ -293,6 +368,7 @@ def test_child_run_does_not_wipe_a_parent_approval_via_its_own_empty_apply(db, r
 # C1: absent review_state_scope stays byte-identical (no MCP, or no wiring)
 # ---------------------------------------------------------------------------
 
+
 def test_review_state_scope_defaults_to_none_and_spawn_still_works(db):
     """Omitting `review_state_scope` (every caller before this task, and
     every non-MCP run today) must not change existing spawn behavior --
@@ -300,18 +376,28 @@ def test_review_state_scope_defaults_to_none_and_spawn_still_works(db):
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
 
-    spawn_call = ToolCall(name=SPAWN_TOOL_NAME, args={"task": "say hi"}, call_id="p-spawn")
+    spawn_call = ToolCall(
+        name=SPAWN_TOOL_NAME, args={"task": "say hi"}, call_id="p-spawn"
+    )
     chat = ScriptedChat(
         parent_replies=[_native_turn([spawn_call]), "parent done"],
         child_replies=["child done"],
     )
     agent_service = AgentService(db=db, registry=registry, chat_call=chat)
     config = AgentConfig(
-        model="m", system_prompt="s", allowed_tools=(SPAWN_TOOL_NAME,), native_tools=True)
+        model="m",
+        system_prompt="s",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        native_tools=True,
+    )
 
     _run_id, outcome = agent_service.run_turn(
-        conversation_id="c1", messages=[{"role": "user", "content": "go"}],
-        config=config, api_endpoint="openai", should_cancel=lambda: False)
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="openai",
+        should_cancel=lambda: False,
+    )
 
     assert outcome.status == RUN_DONE
     assert outcome.subagents_spawned == 1

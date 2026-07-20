@@ -3,7 +3,10 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
-from tldw_chatbook.UI.Chatbooks_Window_Improved import ChatbooksWindowImproved, EmptyStateWidget
+from tldw_chatbook.UI.Chatbooks_Window_Improved import (
+    ChatbooksWindowImproved,
+    EmptyStateWidget,
+)
 from tldw_chatbook.UI.Screens.chatbooks_screen import ChatbooksScreen
 
 
@@ -19,7 +22,7 @@ async def test_chatbooks_screen_uses_improved_window(monkeypatch):
             yield ChatbooksScreen(self)
 
     app = ChatbooksScreenApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         assert app.screen.query_one(ChatbooksWindowImproved) is not None
         # The master shell's top nav lists owning destinations; chat lives
         # under Console and chatbooks is reachable via the palette, so the
@@ -44,7 +47,9 @@ async def test_chatbooks_empty_state_explains_portable_context_and_escape(monkey
         await pilot.pause()
 
         empty_state = app.screen.query_one(EmptyStateWidget)
-        empty_text = "\n".join(str(widget.render()) for widget in empty_state.query(Static))
+        empty_text = "\n".join(
+            str(widget.render()) for widget in empty_state.query(Static)
+        )
         empty_buttons = [button.label.plain for button in empty_state.query(Button)]
 
         assert "portable knowledge packs" in empty_text
@@ -77,7 +82,7 @@ async def test_improved_window_exposes_server_action_cards(monkeypatch):
             yield ChatbooksWindowImproved(self)
 
     app = ChatbooksWindowApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         window = app.query_one(ChatbooksWindowImproved)
         assert window.query_one("#create-server-action") is not None
         assert window.query_one("#import-server-action") is not None
@@ -95,7 +100,7 @@ async def test_chatbooks_view_toggles_explain_grid_and_list_modes(monkeypatch):
             yield ChatbooksWindowImproved(self)
 
     app = ChatbooksWindowApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         window = app.query_one(ChatbooksWindowImproved)
         grid_button = window.query_one("#view-grid", Button)
         list_button = window.query_one("#view-list", Button)
@@ -116,7 +121,7 @@ async def test_server_create_action_uses_server_mode(monkeypatch):
             yield ChatbooksWindowImproved(self)
 
     app = ChatbooksWindowApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         window = app.query_one(ChatbooksWindowImproved)
         recorded = {}
 
@@ -141,7 +146,7 @@ async def test_server_import_action_uses_server_mode(monkeypatch):
             yield ChatbooksWindowImproved(self)
 
     app = ChatbooksWindowApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         window = app.query_one(ChatbooksWindowImproved)
         recorded = {}
 

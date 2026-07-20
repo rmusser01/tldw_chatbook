@@ -6,15 +6,12 @@ from typing import Any
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, DataTable, Input, ListItem, ListView, Select, Static, Switch, TextArea
+from textual.widgets import Button, DataTable, Input, ListView, Static, Switch, TextArea
 
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
     DictionaryEntryAddRequested,
-    DictionaryEntryDeleteRequested,
-    DictionaryEntriesReorderRequested,
-    DictionaryEntryUpdateRequested,
     DictionarySettingsSaveRequested,
     PersonasDictionaryDetailWidget,
 )
@@ -166,7 +163,9 @@ class FakeDictScopeService:
         self.calls.append(("delete", int(dictionary_id)))
         return {"status": "deleted", "dictionary_id": record["id"], "source": "local"}
 
-    async def add_entry(self, dictionary_id: int, request_data: Any, mode: str = "local") -> dict:
+    async def add_entry(
+        self, dictionary_id: int, request_data: Any, mode: str = "local"
+    ) -> dict:
         record = self.records[int(dictionary_id)]
         entry = dict(request_data)
         entry.setdefault("enabled", True)
@@ -177,7 +176,9 @@ class FakeDictScopeService:
         self.calls.append(("add_entry", int(dictionary_id)))
         return _entry_response(int(dictionary_id), len(record["entries"]) - 1, entry)
 
-    async def list_entries(self, dictionary_id: int, mode: str = "local", **kwargs: Any) -> dict:
+    async def list_entries(
+        self, dictionary_id: int, mode: str = "local", **kwargs: Any
+    ) -> dict:
         record = self.records[int(dictionary_id)]
         return {
             "dictionary_id": int(dictionary_id),
@@ -193,7 +194,9 @@ class FakeDictScopeService:
         parts = str(entry_id).split(":")
         return int(parts[-2]), int(parts[-1])
 
-    async def update_entry(self, entry_id: str, request_data: Any, mode: str = "local") -> dict:
+    async def update_entry(
+        self, entry_id: str, request_data: Any, mode: str = "local"
+    ) -> dict:
         dictionary_id, index = self._parse_entry_id(entry_id)
         record = self.records[dictionary_id]
         record["entries"][index].update(dict(request_data))
@@ -213,18 +216,28 @@ class FakeDictScopeService:
         self.calls.append(("delete_entry", entry_id))
         return {"status": "deleted", "entry_id": entry_id, "source": "local"}
 
-    async def reorder_entries(self, dictionary_id: int, request_data: Any, mode: str = "local") -> dict:
+    async def reorder_entries(
+        self, dictionary_id: int, request_data: Any, mode: str = "local"
+    ) -> dict:
         # Mirrors the real move-to-front semantics: selected + remainder.
         payload = dict(request_data)
         record = self.records[int(dictionary_id)]
         entries = list(record["entries"])
-        selected_indexes = [self._parse_entry_id(eid)[1] for eid in payload.get("entry_ids") or []]
+        selected_indexes = [
+            self._parse_entry_id(eid)[1] for eid in payload.get("entry_ids") or []
+        ]
         selected = [entries[i] for i in selected_indexes if i < len(entries)]
         remainder = [e for i, e in enumerate(entries) if i not in set(selected_indexes)]
         record["entries"] = selected + remainder
         record["version"] += 1
-        self.calls.append(("reorder", int(dictionary_id), list(payload.get("entry_ids") or [])))
-        return {"dictionary_id": int(dictionary_id), "entry_ids": payload.get("entry_ids"), "source": "local"}
+        self.calls.append(
+            ("reorder", int(dictionary_id), list(payload.get("entry_ids") or []))
+        )
+        return {
+            "dictionary_id": int(dictionary_id),
+            "entry_ids": payload.get("entry_ids"),
+            "source": "local",
+        }
 
     async def get_statistics(self, dictionary_id: int, mode: str = "local") -> dict:
         record = self.records[int(dictionary_id)]
@@ -244,31 +257,64 @@ class FakeDictScopeService:
             "name": record["name"],
             "created_at": "2026-07-15T00:00:00Z",
             "snapshot": copy.deepcopy(
-                {k: record[k] for k in ("id", "name", "description", "strategy",
-                                         "max_tokens", "enabled", "version", "entries")}
+                {
+                    k: record[k]
+                    for k in (
+                        "id",
+                        "name",
+                        "description",
+                        "strategy",
+                        "max_tokens",
+                        "enabled",
+                        "version",
+                        "entries",
+                    )
+                }
             ),
         }
         history[:] = [h for h in history if h["revision"] != entry["revision"]]
         history.append(entry)
 
-    async def list_versions(self, dictionary_id: int, mode: str = "local", **kwargs: Any) -> dict:
+    async def list_versions(
+        self, dictionary_id: int, mode: str = "local", **kwargs: Any
+    ) -> dict:
         self._ensure_baseline(int(dictionary_id))
-        versions = sorted(self.history.get(int(dictionary_id), []), key=lambda h: -h["revision"])
+        versions = sorted(
+            self.history.get(int(dictionary_id), []), key=lambda h: -h["revision"]
+        )
         return {
             "dictionary_id": int(dictionary_id),
-            "versions": [{k: h[k] for k in ("dictionary_id", "revision", "action", "name", "created_at")}
-                          for h in versions],
-            "total": len(versions), "limit": 20, "offset": 0, "source": "local",
+            "versions": [
+                {
+                    k: h[k]
+                    for k in (
+                        "dictionary_id",
+                        "revision",
+                        "action",
+                        "name",
+                        "created_at",
+                    )
+                }
+                for h in versions
+            ],
+            "total": len(versions),
+            "limit": 20,
+            "offset": 0,
+            "source": "local",
         }
 
-    async def get_version(self, dictionary_id: int, revision: int, mode: str = "local") -> dict:
+    async def get_version(
+        self, dictionary_id: int, revision: int, mode: str = "local"
+    ) -> dict:
         self._ensure_baseline(int(dictionary_id))
         for h in self.history.get(int(dictionary_id), []):
             if h["revision"] == int(revision):
                 return {**h, "source": "local"}
         raise ValueError(f"local_chat_dictionary_version_not_found:{revision}")
 
-    async def revert_version(self, dictionary_id: int, revision: int, mode: str = "local") -> dict:
+    async def revert_version(
+        self, dictionary_id: int, revision: int, mode: str = "local"
+    ) -> dict:
         target = await self.get_version(dictionary_id, revision)
         record = self.records[int(dictionary_id)]
         snapshot = target["snapshot"]
@@ -337,14 +383,22 @@ class FakeDictScopeService:
                 # candidate is unreachable too — mark the rest, then stop.
                 for r_index, r_entry, r_pattern in candidates[i + 1 :]:
                     diag_entries.append(
-                        {**_base(r_index, r_pattern, r_entry), "status": "skipped:token_budget"}
+                        {
+                            **_base(r_index, r_pattern, r_entry),
+                            "status": "skipped:token_budget",
+                        }
                     )
                 break
             tokens_used += token_cost
             count = processed.count(pattern)
             processed = processed.replace(pattern, entry.get("replacement") or "")
             diag_entries.append(
-                {**base, "status": "fired", "replacements": count, "applied_order": applied_order}
+                {
+                    **base,
+                    "status": "fired",
+                    "replacements": count,
+                    "applied_order": applied_order,
+                }
             )
             applied_order += 1
         self.calls.append(("process", text))
@@ -373,7 +427,8 @@ class FakeDictScopeService:
         return {
             "dictionary_id": int(dictionary_id),
             "data": {
-                "name": record["name"], "description": record.get("description") or "",
+                "name": record["name"],
+                "description": record.get("description") or "",
                 "content": None,
                 "entries": copy.deepcopy(record["entries"]),
                 "strategy": record.get("strategy") or "sorted_evenly",
@@ -386,19 +441,30 @@ class FakeDictScopeService:
 
     async def export_markdown(self, dictionary_id: int, mode: str = "local") -> dict:
         record = self.records[int(dictionary_id)]
-        lines = [f"{e.get('pattern')}: {e.get('replacement')}" for e in record["entries"]]
-        return {"dictionary_id": int(dictionary_id), "name": record["name"],
-                "content": "\n".join(lines) + ("\n" if lines else ""), "source": "local"}
+        lines = [
+            f"{e.get('pattern')}: {e.get('replacement')}" for e in record["entries"]
+        ]
+        return {
+            "dictionary_id": int(dictionary_id),
+            "name": record["name"],
+            "content": "\n".join(lines) + ("\n" if lines else ""),
+            "source": "local",
+        }
 
     async def import_json(self, request_data: Any, mode: str = "local") -> dict:
         payload = dict(request_data)
         data = dict(payload.get("data") or {})
-        name = data.get("name") or payload.get("name") or "Imported Dictionary"  # data.name WINS
+        name = (
+            data.get("name") or payload.get("name") or "Imported Dictionary"
+        )  # data.name WINS
         created = await self.create_dictionary(
-            {"name": name, "description": data.get("description") or "",
-             "max_tokens": data.get("max_tokens") or 1000,
-             "enabled": bool(data.get("enabled", True)),
-             "entries": data.get("entries") or []}
+            {
+                "name": name,
+                "description": data.get("description") or "",
+                "max_tokens": data.get("max_tokens") or 1000,
+                "enabled": bool(data.get("enabled", True)),
+                "entries": data.get("entries") or [],
+            }
         )
         if (data.get("strategy") or "sorted_evenly") != "sorted_evenly":
             await self.update_dictionary(created["id"], {"strategy": data["strategy"]})
@@ -412,36 +478,64 @@ class FakeDictScopeService:
         for line in str(payload.get("content") or "").splitlines():
             if ":" in line:
                 key, _, value = line.partition(":")
-                entries.append({"pattern": key.strip(), "replacement": value.strip(),
-                                "probability": 1.0, "group": None, "timed_effects": None,
-                                "max_replacements": 1, "type": "literal",
-                                "enabled": True, "case_sensitive": False, "priority": 0})
+                entries.append(
+                    {
+                        "pattern": key.strip(),
+                        "replacement": value.strip(),
+                        "probability": 1.0,
+                        "group": None,
+                        "timed_effects": None,
+                        "max_replacements": 1,
+                        "type": "literal",
+                        "enabled": True,
+                        "case_sensitive": False,
+                        "priority": 0,
+                    }
+                )
         created = await self.create_dictionary({"name": name, "entries": entries})
         self.calls.append(("import_markdown", name))
         return {"dictionary_id": created["id"], "source": "local"}
 
-    async def list_dictionary_conversations(self, dictionary_id: int, mode: str = "local") -> dict:
+    async def list_dictionary_conversations(
+        self, dictionary_id: int, mode: str = "local"
+    ) -> dict:
         did = int(dictionary_id)
-        rows = [{"conversation_id": cid, "title": c.get("title") or ""}
-                for cid, c in self.conversations.items()
-                if did in (c.get("active_dictionaries") or [])]
+        rows = [
+            {"conversation_id": cid, "title": c.get("title") or ""}
+            for cid, c in self.conversations.items()
+            if did in (c.get("active_dictionaries") or [])
+        ]
         return {"conversations": rows, "source": "local"}
 
-    async def attach_to_conversation(self, dictionary_id: int, conversation_id: str, mode: str = "local") -> dict:
+    async def attach_to_conversation(
+        self, dictionary_id: int, conversation_id: str, mode: str = "local"
+    ) -> dict:
         conv = self.conversations[str(conversation_id)]
         did = int(dictionary_id)
         ids = conv.setdefault("active_dictionaries", [])
         if did not in ids:
             ids.append(did)
-        return {"dictionary_id": did, "conversation_id": str(conversation_id),
-                "active_dictionaries": list(ids), "source": "local"}
+        return {
+            "dictionary_id": did,
+            "conversation_id": str(conversation_id),
+            "active_dictionaries": list(ids),
+            "source": "local",
+        }
 
-    async def detach_from_conversation(self, dictionary_id: int, conversation_id: str, mode: str = "local") -> dict:
+    async def detach_from_conversation(
+        self, dictionary_id: int, conversation_id: str, mode: str = "local"
+    ) -> dict:
         conv = self.conversations[str(conversation_id)]
         did = int(dictionary_id)
-        conv["active_dictionaries"] = [i for i in conv.get("active_dictionaries") or [] if i != did]
-        return {"dictionary_id": did, "conversation_id": str(conversation_id),
-                "active_dictionaries": list(conv["active_dictionaries"]), "source": "local"}
+        conv["active_dictionaries"] = [
+            i for i in conv.get("active_dictionaries") or [] if i != did
+        ]
+        return {
+            "dictionary_id": did,
+            "conversation_id": str(conversation_id),
+            "active_dictionaries": list(conv["active_dictionaries"]),
+            "source": "local",
+        }
 
 
 def make_dict_record(
@@ -463,19 +557,42 @@ def make_dict_record(
         "entries": entries
         if entries is not None
         else [
-            {"pattern": "BP", "replacement": "blood pressure", "probability": 1.0,
-             "group": None, "timed_effects": None, "max_replacements": 1, "type": "literal",
-             "enabled": True, "case_sensitive": False, "priority": 0},
-            {"pattern": "HR", "replacement": "heart rate", "probability": 1.0,
-             "group": None, "timed_effects": None, "max_replacements": 1, "type": "literal",
-             "enabled": True, "case_sensitive": False, "priority": 0},
+            {
+                "pattern": "BP",
+                "replacement": "blood pressure",
+                "probability": 1.0,
+                "group": None,
+                "timed_effects": None,
+                "max_replacements": 1,
+                "type": "literal",
+                "enabled": True,
+                "case_sensitive": False,
+                "priority": 0,
+            },
+            {
+                "pattern": "HR",
+                "replacement": "heart rate",
+                "probability": 1.0,
+                "group": None,
+                "timed_effects": None,
+                "max_replacements": 1,
+                "type": "literal",
+                "enabled": True,
+                "case_sensitive": False,
+                "priority": 0,
+            },
         ],
     }
 
 
 @pytest.fixture
 def fake_dict_service(mock_app_instance):
-    service = FakeDictScopeService([make_dict_record(1), make_dict_record(2, "Chat-Speak", enabled=False, entries=[])])
+    service = FakeDictScopeService(
+        [
+            make_dict_record(1),
+            make_dict_record(2, "Chat-Speak", enabled=False, entries=[]),
+        ]
+    )
     mock_app_instance.chat_dictionary_scope_service = service
     return service
 
@@ -496,9 +613,19 @@ class PersonasTestApp(App):
     def __init__(self, mock_app_instance):
         super().__init__()
         self._mock = mock_app_instance
-        self.character_persona_scope_service = mock_app_instance.character_persona_scope_service
+        self.character_persona_scope_service = (
+            mock_app_instance.character_persona_scope_service
+        )
 
-    _NON_DELEGATED_PREFIXES = ("_", "watch_", "compute_", "validate_", "action_", "key_", "on_")
+    _NON_DELEGATED_PREFIXES = (
+        "_",
+        "watch_",
+        "compute_",
+        "validate_",
+        "action_",
+        "key_",
+        "on_",
+    )
 
     def __getattr__(self, name):
         if name.startswith(self._NON_DELEGATED_PREFIXES):
@@ -514,7 +641,10 @@ class PersonasTestApp(App):
 
 class StyledPersonasTestApp(PersonasTestApp):
     CSS_PATH = str(
-        Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
     )
 
 
@@ -547,13 +677,22 @@ async def _select_first(pilot, screen):
 
 
 class TestLibraryMetaRows:
-    async def test_meta_row_renders_two_lines(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_meta_row_renders_two_lines(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             pane = screen.query_one(PersonasLibraryPane)
             await pane.update_rows(
-                (LibraryRow(item_id="1", kind="dictionary", name="Medical Abbrev", meta="2 entries · on"),),
+                (
+                    LibraryRow(
+                        item_id="1",
+                        kind="dictionary",
+                        name="Medical Abbrev",
+                        meta="2 entries · on",
+                    ),
+                ),
                 total=1,
                 noun="dictionaries",
             )
@@ -565,7 +704,9 @@ class TestLibraryMetaRows:
             meta = row.query_one(".personas-library-row-meta", Static)
             assert meta is not None
 
-    async def test_metaless_rows_stay_single_line(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_metaless_rows_stay_single_line(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
@@ -579,14 +720,23 @@ class TestLibraryMetaRows:
             row = screen.query_one("#personas-library-rows", ListView).children[0]
             assert len(list(row.query(Static).results())) == 1
 
-    async def test_meta_row_geometry_not_clipped(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_meta_row_geometry_not_clipped(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         """Geometry pilot: the meta line must actually render (rail CSS pins height:1)."""
         app = StyledPersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 48)) as pilot:
             screen = await _mounted(pilot)
             pane = screen.query_one(PersonasLibraryPane)
             await pane.update_rows(
-                (LibraryRow(item_id="1", kind="dictionary", name="Medical Abbrev", meta="2 entries · on"),),
+                (
+                    LibraryRow(
+                        item_id="1",
+                        kind="dictionary",
+                        name="Medical Abbrev",
+                        meta="2 entries · on",
+                    ),
+                ),
                 total=1,
                 noun="dictionaries",
             )
@@ -598,7 +748,9 @@ class TestLibraryMetaRows:
 
 
 class TestDictionariesList:
-    async def test_mode_lists_dictionaries_with_meta(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_mode_lists_dictionaries_with_meta(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _enter_dictionaries(pilot)
@@ -608,16 +760,22 @@ class TestDictionariesList:
             # Disabled dictionaries must still be listed (include_inactive=True).
             assert "Chat-Speak" in texts and "0 entries · off" in texts
             # No placeholder: the mode is live.
-            assert screen.query_one("#personas-mode-placeholder", Static).display is False
+            assert (
+                screen.query_one("#personas-mode-placeholder", Static).display is False
+            )
 
-    async def test_list_requests_inactive_records(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_list_requests_inactive_records(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             await _enter_dictionaries(pilot)
             list_calls = [c for c in fake_dict_service.calls if c[0] == "list"]
             assert list_calls and list_calls[-1][1].get("include_inactive") is True
 
-    async def test_search_filters_by_name(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_search_filters_by_name(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _enter_dictionaries(pilot)
@@ -628,7 +786,9 @@ class TestDictionariesList:
             names = [str(r.query(Static).first().renderable) for r in rows]
             assert names == ["Medical Abbrev"]
 
-    async def test_dictionaries_chip_no_longer_coming_soon(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_dictionaries_chip_no_longer_coming_soon(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
@@ -653,12 +813,23 @@ class DetailHarnessApp(App):
     def compose(self):
         yield PersonasDictionaryDetailWidget(id="personas-dictionary-detail")
 
-    def on_dictionary_entry_add_requested(self, m): self.messages.append(m)
-    def on_dictionary_entry_update_requested(self, m): self.messages.append(m)
-    def on_dictionary_entry_delete_requested(self, m): self.messages.append(m)
-    def on_dictionary_entries_reorder_requested(self, m): self.messages.append(m)
-    def on_dictionary_settings_save_requested(self, m): self.messages.append(m)
-    def on_dictionary_settings_edited(self, m): self.messages.append(m)
+    def on_dictionary_entry_add_requested(self, m):
+        self.messages.append(m)
+
+    def on_dictionary_entry_update_requested(self, m):
+        self.messages.append(m)
+
+    def on_dictionary_entry_delete_requested(self, m):
+        self.messages.append(m)
+
+    def on_dictionary_entries_reorder_requested(self, m):
+        self.messages.append(m)
+
+    def on_dictionary_settings_save_requested(self, m):
+        self.messages.append(m)
+
+    def on_dictionary_settings_edited(self, m):
+        self.messages.append(m)
 
 
 class TestDictionaryDetailWidget:
@@ -666,7 +837,9 @@ class TestDictionaryDetailWidget:
         app = DetailHarnessApp()
         async with app.run_test() as pilot:
             widget = app.query_one(PersonasDictionaryDetailWidget)
-            record = FakeDictScopeService([make_dict_record(1)])._summary(make_dict_record(1))
+            record = FakeDictScopeService([make_dict_record(1)])._summary(
+                make_dict_record(1)
+            )
             widget.load_dictionary(record)
             await pilot.pause()
             assert app.query_one("#personas-dict-name", Input).value == "Medical Abbrev"
@@ -677,7 +850,7 @@ class TestDictionaryDetailWidget:
 
     async def test_form_payload_converts_probability_percent(self):
         app = DetailHarnessApp()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             widget = app.query_one(PersonasDictionaryDetailWidget)
             app.query_one("#personas-dict-entry-pattern", Input).value = "ASAP"
             app.query_one("#personas-dict-entry-probability", Input).value = "85"
@@ -688,7 +861,7 @@ class TestDictionaryDetailWidget:
 
     async def test_form_payload_requires_pattern(self):
         app = DetailHarnessApp()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             widget = app.query_one(PersonasDictionaryDetailWidget)
             app.query_one("#personas-dict-entry-pattern", Input).value = "  "
             assert widget.form_payload() is None
@@ -698,7 +871,7 @@ class TestDictionaryDetailWidget:
     async def test_form_payload_rejects_out_of_range_probability(self):
         """Validate-don't-clamp: 150 is refused, not silently coerced to 100."""
         app = DetailHarnessApp()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             widget = app.query_one(PersonasDictionaryDetailWidget)
             app.query_one("#personas-dict-entry-pattern", Input).value = "ASAP"
             app.query_one("#personas-dict-entry-probability", Input).value = "150"
@@ -709,7 +882,7 @@ class TestDictionaryDetailWidget:
     async def test_form_payload_rejects_non_positive_max_replacements(self):
         """Validate-don't-clamp: 0 is refused, not silently coerced to 1."""
         app = DetailHarnessApp()
-        async with app.run_test() as pilot:
+        async with app.run_test():
             widget = app.query_one(PersonasDictionaryDetailWidget)
             app.query_one("#personas-dict-entry-pattern", Input).value = "ASAP"
             app.query_one("#personas-dict-entry-max-repl", Input).value = "0"
@@ -721,21 +894,28 @@ class TestDictionaryDetailWidget:
         app = DetailHarnessApp()
         async with app.run_test() as pilot:
             app.query_one("#personas-dict-entry-pattern", Input).value = "BP"
-            app.query_one("#personas-dict-entry-replacement", TextArea).text = "blood pressure"
+            app.query_one(
+                "#personas-dict-entry-replacement", TextArea
+            ).text = "blood pressure"
             await pilot.click("#personas-dict-entry-add")
             await pilot.pause()
-            adds = [m for m in app.messages if isinstance(m, DictionaryEntryAddRequested)]
+            adds = [
+                m for m in app.messages if isinstance(m, DictionaryEntryAddRequested)
+            ]
             assert adds and adds[0].payload["pattern"] == "BP"
 
     async def test_settings_save_posts_payload(self):
         app = DetailHarnessApp()
         async with app.run_test() as pilot:
             widget = app.query_one(PersonasDictionaryDetailWidget)
-            record = FakeDictScopeService([make_dict_record(1)])._summary(make_dict_record(1))
+            record = FakeDictScopeService([make_dict_record(1)])._summary(
+                make_dict_record(1)
+            )
             widget.load_dictionary(record)
             await pilot.pause()
             # Switch to Settings tab to make the save button clickable
             from textual.widgets import TabbedContent
+
             tabs = app.query_one("#personas-dict-tabs", TabbedContent)
             tabs.active = "personas-dict-tab-settings"
             await pilot.pause()
@@ -743,7 +923,11 @@ class TestDictionaryDetailWidget:
             await pilot.pause()
             await pilot.click("#personas-dict-settings-save")
             await pilot.pause()
-            saves = [m for m in app.messages if isinstance(m, DictionarySettingsSaveRequested)]
+            saves = [
+                m
+                for m in app.messages
+                if isinstance(m, DictionarySettingsSaveRequested)
+            ]
             assert saves and saves[0].payload["name"] == "Renamed"
             assert saves[0].payload["max_tokens"] == 1000
 
@@ -756,21 +940,31 @@ class TestDictionaryDetailWidget:
         async with app.run_test() as pilot:
             widget = app.query_one(PersonasDictionaryDetailWidget)
             await pilot.pause()
-            record = FakeDictScopeService([make_dict_record(1)])._summary(make_dict_record(1))
+            record = FakeDictScopeService([make_dict_record(1)])._summary(
+                make_dict_record(1)
+            )
             widget.load_dictionary(record)
             await pilot.pause()
             await pilot.pause()
-            edited = [m for m in app.messages if isinstance(m, DictionarySettingsEdited)]
+            edited = [
+                m for m in app.messages if isinstance(m, DictionarySettingsEdited)
+            ]
             assert edited == []  # mount + programmatic load fire nothing
             app.query_one("#personas-dict-name", Input).value = "User typed this"
             await pilot.pause()
-            edited = [m for m in app.messages if isinstance(m, DictionarySettingsEdited)]
+            edited = [
+                m for m in app.messages if isinstance(m, DictionarySettingsEdited)
+            ]
             assert len(edited) >= 1  # a real user change fires
 
 
 class TestDictionarySelection:
-    async def test_select_shows_detail_and_inspector(self, mock_app_instance, stub_characters, fake_dict_service):
-        from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import PersonasInspectorPane
+    async def test_select_shows_detail_and_inspector(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
+            PersonasInspectorPane,
+        )
         from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
             PersonasDictionaryDetailWidget,
         )
@@ -787,8 +981,13 @@ class TestDictionarySelection:
             await pilot.pause()
             detail = screen.query_one(PersonasDictionaryDetailWidget)
             assert detail.display is True
-            assert screen.query_one("#personas-dict-name", Input).value == "Medical Abbrev"
-            assert screen.query_one("#personas-dict-entries-table", DataTable).row_count == 2
+            assert (
+                screen.query_one("#personas-dict-name", Input).value == "Medical Abbrev"
+            )
+            assert (
+                screen.query_one("#personas-dict-entries-table", DataTable).row_count
+                == 2
+            )
             inspector = screen.query_one(PersonasInspectorPane)
             assert "Medical Abbrev" in str(
                 inspector.query_one("#personas-selected-name", Static).renderable
@@ -800,9 +999,14 @@ class TestDictionarySelection:
             # Console actions blocked with the HONEST dictionary reason, not
             # "select a character or persona" while a dictionary IS selected.
             assert not screen._console_action_allowed()
-            assert screen._console_action_block_reason() == "attach arrives in a later update"
+            assert (
+                screen._console_action_block_reason()
+                == "attach arrives in a later update"
+            )
 
-    async def test_mode_switch_clears_detail(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_mode_switch_clears_detail(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
             PersonasDictionaryDetailWidget,
         )
@@ -829,7 +1033,9 @@ class TestDictionaryEntries:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
-    async def test_add_entry_roundtrip(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_add_entry_roundtrip(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import DataTable, TextArea
 
         app = PersonasTestApp(mock_app_instance)
@@ -839,7 +1045,9 @@ class TestDictionaryEntries:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
             screen.query_one("#personas-dict-entry-pattern", Input).value = "ASAP"
-            screen.query_one("#personas-dict-entry-replacement", TextArea).text = "as soon as possible"
+            screen.query_one(
+                "#personas-dict-entry-replacement", TextArea
+            ).text = "as soon as possible"
             await pilot.click("#personas-dict-entry-add")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
@@ -849,10 +1057,16 @@ class TestDictionaryEntries:
             assert table.row_count == 3
             # Row meta refreshed too.
             rows = screen.query_one("#personas-library-rows", ListView).children
-            metas = [str(s.renderable) for r in rows for s in r.query(".personas-library-row-meta").results()]
+            metas = [
+                str(s.renderable)
+                for r in rows
+                for s in r.query(".personas-library-row-meta").results()
+            ]
             assert "3 entries · on" in metas
 
-    async def test_delete_entry_reindexes(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_delete_entry_reindexes(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import DataTable
 
         app = PersonasTestApp(mock_app_instance)
@@ -865,13 +1079,17 @@ class TestDictionaryEntries:
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            assert [e["pattern"] for e in fake_dict_service.records[1]["entries"]] == ["HR"]
+            assert [e["pattern"] for e in fake_dict_service.records[1]["entries"]] == [
+                "HR"
+            ]
             assert table.row_count == 1
             # Positional ids re-derived after reload: remaining row is index 0.
             detail = screen.query_one("#personas-dictionary-detail")
             assert detail.entry_ids_in_order() == ["local:chat_dictionary_entry:1:0"]
 
-    async def test_update_entry_persists(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_update_entry_persists(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import DataTable, TextArea
 
         app = PersonasTestApp(mock_app_instance)
@@ -884,7 +1102,9 @@ class TestDictionaryEntries:
             # before typing over it, mirroring real keyboard navigation.
             await pilot.pause()
             screen.query_one("#personas-dict-entry-pattern", Input).value = "HRV"
-            screen.query_one("#personas-dict-entry-replacement", TextArea).text = "heart rate variability"
+            screen.query_one(
+                "#personas-dict-entry-replacement", TextArea
+            ).text = "heart rate variability"
             await pilot.click("#personas-dict-entry-update")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
@@ -920,7 +1140,9 @@ class TestDictionaryEntries:
             assert fake_dict_service.records[1]["entries"][1]["pattern"] == "HR"
             assert fake_dict_service.records[1]["entries"][0]["pattern"] == "BP"
 
-    async def test_move_down_sends_full_order_and_reorders(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_move_down_sends_full_order_and_reorders(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import DataTable
 
         app = PersonasTestApp(mock_app_instance)
@@ -941,10 +1163,15 @@ class TestDictionaryEntries:
                 "local:chat_dictionary_entry:1:1",
                 "local:chat_dictionary_entry:1:0",
             ]
-            assert [e["pattern"] for e in fake_dict_service.records[1]["entries"]] == ["HR", "BP"]
+            assert [e["pattern"] for e in fake_dict_service.records[1]["entries"]] == [
+                "HR",
+                "BP",
+            ]
             assert str(table.get_cell_at((0, 0))) == "HR"
 
-    async def test_form_roundtrips_new_fields(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_form_roundtrips_new_fields(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import Switch, TextArea
 
         app = PersonasTestApp(mock_app_instance)
@@ -952,7 +1179,9 @@ class TestDictionaryEntries:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
             screen.query_one("#personas-dict-entry-pattern", Input).value = "ICU"
-            screen.query_one("#personas-dict-entry-replacement", TextArea).text = "intensive care"
+            screen.query_one(
+                "#personas-dict-entry-replacement", TextArea
+            ).text = "intensive care"
             screen.query_one("#personas-dict-entry-enabled", Switch).value = False
             screen.query_one("#personas-dict-entry-case", Switch).value = True
             screen.query_one("#personas-dict-entry-priority", Input).value = "5"
@@ -961,9 +1190,15 @@ class TestDictionaryEntries:
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             added = fake_dict_service.records[1]["entries"][-1]
-            assert (added["enabled"], added["case_sensitive"], added["priority"]) == (False, True, 5)
+            assert (added["enabled"], added["case_sensitive"], added["priority"]) == (
+                False,
+                True,
+                5,
+            )
 
-    async def test_priority_input_validates_integer(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_priority_input_validates_integer(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
@@ -972,7 +1207,9 @@ class TestDictionaryEntries:
             screen.query_one("#personas-dict-entry-priority", Input).value = "high"
             detail = screen.query_one("#personas-dictionary-detail")
             assert detail.form_payload() is None
-            error = str(screen.query_one("#personas-dict-entry-error", Static).renderable)
+            error = str(
+                screen.query_one("#personas-dict-entry-error", Static).renderable
+            )
             assert "whole number" in error.lower()
 
 
@@ -985,9 +1222,13 @@ class TestDictionarySettings:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
-    async def test_save_persists_and_refreshes_row(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_save_persists_and_refreshes_row(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import TabbedContent
-        from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import PersonasInspectorPane
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
+            PersonasInspectorPane,
+        )
 
         app = StyledPersonasTestApp(mock_app_instance)
         # The DestinationHeader consumes 5 rows, so at (160, 48) the Save
@@ -1016,7 +1257,9 @@ class TestDictionarySettings:
                 inspector.query_one("#personas-selected-name", Static).renderable
             )
 
-    async def test_settings_edit_marks_dirty_and_guards_navigation(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_settings_edit_marks_dirty_and_guards_navigation(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import TabbedContent
 
         app = PersonasTestApp(mock_app_instance)
@@ -1029,10 +1272,14 @@ class TestDictionarySettings:
             screen.query_one("#personas-dict-name", Input).value = "Half-renamed"
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
-            subtitle = screen.query_one("#personas-header #workbench-header-subtitle", Static)
+            subtitle = screen.query_one(
+                "#personas-header #workbench-header-subtitle", Static
+            )
             assert "- unsaved" in str(subtitle.renderable)
 
-    async def test_reverting_edit_clears_dirty_flag(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_reverting_edit_clears_dirty_flag(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         """Transition-based dirty signaling: editing back to the loaded value
         must clear has_unsaved_changes, not just leave it stuck True."""
         from textual.widgets import TabbedContent
@@ -1049,15 +1296,21 @@ class TestDictionarySettings:
             name_input.value = "Half-renamed"
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
-            subtitle = screen.query_one("#personas-header #workbench-header-subtitle", Static)
+            subtitle = screen.query_one(
+                "#personas-header #workbench-header-subtitle", Static
+            )
             assert "- unsaved" in str(subtitle.renderable)
             name_input.value = original
             await pilot.pause()
             assert screen.state.has_unsaved_changes is False
-            subtitle = screen.query_one("#personas-header #workbench-header-subtitle", Static)
+            subtitle = screen.query_one(
+                "#personas-header #workbench-header-subtitle", Static
+            )
             assert "- unsaved" not in str(subtitle.renderable)
 
-    async def test_conflict_surfaces_status_not_crash(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_conflict_surfaces_status_not_crash(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import TabbedContent
 
         app = StyledPersonasTestApp(mock_app_instance)
@@ -1088,7 +1341,9 @@ class TestDictionaryNewDuplicate:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
-    async def test_new_creates_disambiguated_and_selects(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_new_creates_disambiguated_and_selects(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
@@ -1107,7 +1362,9 @@ class TestDictionaryNewDuplicate:
             names = [r["name"] for r in fake_dict_service.records.values()]
             assert "Untitled dictionary 2" in names
 
-    async def test_duplicate_copies_entries_and_strategy(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_duplicate_copies_entries_and_strategy(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         fake_dict_service.records[1]["strategy"] = "character_lore_first"
         fake_dict_service.records[1]["entries"][0].update(
             {"enabled": False, "case_sensitive": True, "priority": 4}
@@ -1120,18 +1377,34 @@ class TestDictionaryNewDuplicate:
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            copy_rec = next(r for r in fake_dict_service.records.values() if r["name"] == "Medical Abbrev (copy)")
+            copy_rec = next(
+                r
+                for r in fake_dict_service.records.values()
+                if r["name"] == "Medical Abbrev (copy)"
+            )
             assert [e["pattern"] for e in copy_rec["entries"]] == ["BP", "HR"]
             # create_dictionary ignores strategy - the follow-up update must set it.
             assert copy_rec["strategy"] == "character_lore_first"
             # Check all nine fields are carried
             src = fake_dict_service.records[1]["entries"][0]
             dup = copy_rec["entries"][0]
-            for field in ("pattern", "replacement", "probability", "group", "timed_effects",
-                          "max_replacements", "type", "enabled", "case_sensitive", "priority"):
+            for field in (
+                "pattern",
+                "replacement",
+                "probability",
+                "group",
+                "timed_effects",
+                "max_replacements",
+                "type",
+                "enabled",
+                "case_sensitive",
+                "priority",
+            ):
                 assert dup.get(field) == src.get(field), field
 
-    async def test_duplicate_button_hidden_outside_dictionaries(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_duplicate_button_hidden_outside_dictionaries(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _mounted(pilot)
@@ -1141,7 +1414,9 @@ class TestDictionaryNewDuplicate:
             await pilot.pause()
             assert dup.display is True
 
-    async def test_duplicate_survives_failed_strategy_copy(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_duplicate_survives_failed_strategy_copy(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         """Verify that a failed strategy copy doesn't orphan the new dictionary."""
         # Set non-default strategy on source
         fake_dict_service.records[1]["strategy"] = "character_lore_first"
@@ -1153,7 +1428,10 @@ class TestDictionaryNewDuplicate:
 
             # Monkeypatch update_dictionary to fail
             original_update = fake_dict_service.update_dictionary
-            async def _failing_update(dictionary_id, request_data, mode="local", **kwargs):
+
+            async def _failing_update(
+                dictionary_id, request_data, mode="local", **kwargs
+            ):
                 raise RuntimeError("strategy update boom")
 
             fake_dict_service.update_dictionary = _failing_update
@@ -1169,18 +1447,26 @@ class TestDictionaryNewDuplicate:
 
             # Verify the copy EXISTS in the service records
             copy_rec = next(
-                (r for r in fake_dict_service.records.values() if r["name"] == "Medical Abbrev (copy)"),
-                None
+                (
+                    r
+                    for r in fake_dict_service.records.values()
+                    if r["name"] == "Medical Abbrev (copy)"
+                ),
+                None,
             )
-            assert copy_rec is not None, "Duplicate dictionary should exist despite strategy update failure"
+            assert copy_rec is not None, (
+                "Duplicate dictionary should exist despite strategy update failure"
+            )
 
             # Verify its strategy is still default (update failed, so strategy wasn't changed)
-            assert copy_rec["strategy"] == "sorted_evenly", \
+            assert copy_rec["strategy"] == "sorted_evenly", (
                 f"Strategy should remain default after failed update, but got {copy_rec['strategy']}"
+            )
 
             # Verify the screen selected the new copy (not orphaned)
-            assert screen.state.selected_entity_name == "Medical Abbrev (copy)", \
+            assert screen.state.selected_entity_name == "Medical Abbrev (copy)", (
                 f"Screen should have selected the copy despite update failure, but selected {screen.state.selected_entity_name}"
+            )
 
 
 class TestDictionaryToggleDelete:
@@ -1192,7 +1478,9 @@ class TestDictionaryToggleDelete:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
-    async def test_space_toggles_enabled_and_meta(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_space_toggles_enabled_and_meta(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _enter_dictionaries(pilot)
@@ -1211,7 +1499,9 @@ class TestDictionaryToggleDelete:
             ]
             assert "2 entries · off" in metas
 
-    async def test_delete_confirms_then_removes(self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch):
+    async def test_delete_confirms_then_removes(
+        self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
+    ):
         from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
             PersonasDictionaryDetailWidget,
         )
@@ -1233,7 +1523,9 @@ class TestDictionaryToggleDelete:
             assert screen.query_one(PersonasDictionaryDetailWidget).display is False
             assert screen.state.selected_entity_id is None
 
-    async def test_delete_cancelled_keeps_record(self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch):
+    async def test_delete_cancelled_keeps_record(
+        self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
@@ -1297,7 +1589,9 @@ class TestDictionaryToggleDelete:
             await pilot.pause()
 
             assert fake_dict_service.records[1]["enabled"] is False
-            assert screen.query_one("#personas-dict-name", Input).value == "Half-renamed"
+            assert (
+                screen.query_one("#personas-dict-name", Input).value == "Half-renamed"
+            )
             assert screen.state.has_unsaved_changes is True
             assert screen.query_one("#personas-dict-enabled", Switch).value is False
 
@@ -1312,7 +1606,9 @@ class TestDictionaryTryIt:
         await pilot.pause()
 
     async def test_word_diff_marks_changes(self):
-        from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_tryit import word_diff
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_tryit import (
+            word_diff,
+        )
 
         original, processed = word_diff("check BP now", "check blood pressure now")
         assert "BP" in original.plain and "blood pressure" in processed.plain
@@ -1320,12 +1616,16 @@ class TestDictionaryTryIt:
         assert any(span.style == "bold underline" for span in processed.spans)
 
     async def test_word_diff_no_changes_has_no_spans(self):
-        from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_tryit import word_diff
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_tryit import (
+            word_diff,
+        )
 
         original, processed = word_diff("same text", "same text")
         assert not original.spans and not processed.spans
 
-    async def test_run_renders_diff(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_run_renders_diff(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import TextArea
         from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_tryit import (
             PersonasDictionaryTryItWidget,
@@ -1340,7 +1640,9 @@ class TestDictionaryTryIt:
             assert run.disabled is True  # nothing selected yet
             await self._select_first(pilot, screen)
             assert run.disabled is False
-            screen.query_one("#personas-dict-tryit-sample", TextArea).text = "check BP now"
+            screen.query_one(
+                "#personas-dict-tryit-sample", TextArea
+            ).text = "check BP now"
             await pilot.click("#personas-dict-tryit-run")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
@@ -1351,14 +1653,18 @@ class TestDictionaryTryIt:
             run_calls = [c for c in fake_dict_service.calls if c[0] == "process"]
             assert run_calls
 
-    async def test_no_differences_state(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_no_differences_state(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import TextArea
 
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
-            screen.query_one("#personas-dict-tryit-sample", TextArea).text = "no matches here"
+            screen.query_one(
+                "#personas-dict-tryit-sample", TextArea
+            ).text = "no matches here"
             await pilot.click("#personas-dict-tryit-run")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
@@ -1366,8 +1672,12 @@ class TestDictionaryTryIt:
             status = screen.query_one("#personas-dict-tryit-status", Static)
             assert "No differences" in str(status.renderable)
 
-    async def test_preview_pane_swapped_by_mode(self, mock_app_instance, stub_characters, fake_dict_service):
-        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import PersonasPreviewPane
+    async def test_preview_pane_swapped_by_mode(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
         from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_tryit import (
             PersonasDictionaryTryItWidget,
         )
@@ -1386,28 +1696,40 @@ class TestDictionaryTryIt:
             assert screen.query_one(PersonasDictionaryTryItWidget).display is False
             assert screen.query_one(PersonasPreviewPane).display is True
 
-    async def test_tryit_renders_summary_and_fired_lines(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_tryit_renders_summary_and_fired_lines(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import TextArea
 
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
-            screen.query_one("#personas-dict-tryit-sample", TextArea).text = "check BP now"
+            screen.query_one(
+                "#personas-dict-tryit-sample", TextArea
+            ).text = "check BP now"
             await pilot.click("#personas-dict-tryit-run")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            summary = str(screen.query_one("#personas-dict-tryit-summary", Static).renderable)
+            summary = str(
+                screen.query_one("#personas-dict-tryit-summary", Static).renderable
+            )
             assert "1 fired" in summary and "0 skipped" in summary
             assert "/1000 tokens" in summary  # dict max_tokens=1000 rode along
-            fired = str(screen.query_one("#personas-dict-tryit-fired", Static).renderable)
+            fired = str(
+                screen.query_one("#personas-dict-tryit-fired", Static).renderable
+            )
             assert "BP" in fired and "blood pressure" in fired and "×1" in fired
 
-    async def test_tryit_renders_near_miss_with_reason(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_tryit_renders_near_miss_with_reason(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import TextArea
 
-        fake_dict_service.records[1]["entries"][1]["probability"] = 0.0  # HR never fires
+        fake_dict_service.records[1]["entries"][1]["probability"] = (
+            0.0  # HR never fires
+        )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
@@ -1417,15 +1739,23 @@ class TestDictionaryTryIt:
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            nearmiss = str(screen.query_one("#personas-dict-tryit-nearmiss", Static).renderable)
+            nearmiss = str(
+                screen.query_one("#personas-dict-tryit-nearmiss", Static).renderable
+            )
             assert "HR" in nearmiss and "probability roll" in nearmiss
-            summary = str(screen.query_one("#personas-dict-tryit-summary", Static).renderable)
+            summary = str(
+                screen.query_one("#personas-dict-tryit-summary", Static).renderable
+            )
             assert "1 fired" in summary and "1 skipped" in summary
 
-    async def test_tryit_budget_flag_shows(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_tryit_budget_flag_shows(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import TextArea
 
-        fake_dict_service.records[1]["max_tokens"] = 2  # both entries cost 2 -> second is dropped
+        fake_dict_service.records[1]["max_tokens"] = (
+            2  # both entries cost 2 -> second is dropped
+        )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
@@ -1435,12 +1765,18 @@ class TestDictionaryTryIt:
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            summary = str(screen.query_one("#personas-dict-tryit-summary", Static).renderable)
+            summary = str(
+                screen.query_one("#personas-dict-tryit-summary", Static).renderable
+            )
             assert "over budget" in summary
-            nearmiss = str(screen.query_one("#personas-dict-tryit-nearmiss", Static).renderable)
+            nearmiss = str(
+                screen.query_one("#personas-dict-tryit-nearmiss", Static).renderable
+            )
             assert "token budget" in nearmiss
 
-    async def test_tryit_degrades_without_diagnostics(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_tryit_degrades_without_diagnostics(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import TextArea
 
         fake_dict_service.emit_diagnostics = False
@@ -1448,16 +1784,22 @@ class TestDictionaryTryIt:
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
-            screen.query_one("#personas-dict-tryit-sample", TextArea).text = "check BP now"
+            screen.query_one(
+                "#personas-dict-tryit-sample", TextArea
+            ).text = "check BP now"
             await pilot.click("#personas-dict-tryit-run")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             # Diff still renders (P1a behavior)...
-            processed = str(screen.query_one("#personas-dict-tryit-processed", Static).renderable)
+            processed = str(
+                screen.query_one("#personas-dict-tryit-processed", Static).renderable
+            )
             assert "blood pressure" in processed
             # ...and the summary carries the honest unavailable note.
-            summary = str(screen.query_one("#personas-dict-tryit-summary", Static).renderable)
+            summary = str(
+                screen.query_one("#personas-dict-tryit-summary", Static).renderable
+            )
             assert "diagnostics unavailable" in summary
 
 
@@ -1470,13 +1812,24 @@ class TestDictionaryValidationPanel:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
-    async def test_findings_listed_and_jump_moves_cursor(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_findings_listed_and_jump_moves_cursor(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import DataTable, OptionList
 
         fake_dict_service.records[1]["entries"].append(
-            {"pattern": "BP", "replacement": "dup", "probability": 1.0, "group": None,
-             "timed_effects": None, "max_replacements": 1, "type": "literal",
-             "enabled": True, "case_sensitive": False, "priority": 0}
+            {
+                "pattern": "BP",
+                "replacement": "dup",
+                "probability": 1.0,
+                "group": None,
+                "timed_effects": None,
+                "max_replacements": 1,
+                "type": "literal",
+                "enabled": True,
+                "case_sensitive": False,
+                "priority": 0,
+            }
         )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
@@ -1501,33 +1854,53 @@ class TestDictionaryValidationPanel:
         from textual.widgets import DataTable, Input, OptionList
 
         fake_dict_service.records[1]["entries"].append(
-            {"pattern": "BP", "replacement": "dup-and-dead", "probability": 0.0,
-             "group": None, "timed_effects": None, "max_replacements": 1, "type": "literal",
-             "enabled": True, "case_sensitive": False, "priority": 0}
+            {
+                "pattern": "BP",
+                "replacement": "dup-and-dead",
+                "probability": 0.0,
+                "group": None,
+                "timed_effects": None,
+                "max_replacements": 1,
+                "type": "literal",
+                "enabled": True,
+                "case_sensitive": False,
+                "priority": 0,
+            }
         )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)  # must not raise DuplicateID
             panel = screen.query_one("#personas-dict-validation", OptionList)
-            assert panel.option_count == 2  # duplicate_pattern + probability_zero, same entry
+            assert (
+                panel.option_count == 2
+            )  # duplicate_pattern + probability_zero, same entry
             panel.highlighted = 1
             panel.action_select()
             await pilot.pause()
             table = screen.query_one("#personas-dict-entries-table", DataTable)
             assert table.cursor_row == 2  # jumped to the new (index 2) entry
-            assert screen.query_one("#personas-dict-entry-probability", Input).value == "0"
+            assert (
+                screen.query_one("#personas-dict-entry-probability", Input).value == "0"
+            )
 
-    async def test_panel_clears_on_clean_dictionary(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_panel_clears_on_clean_dictionary(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import OptionList
 
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
-            assert screen.query_one("#personas-dict-validation", OptionList).option_count == 0
+            assert (
+                screen.query_one("#personas-dict-validation", OptionList).option_count
+                == 0
+            )
 
-    async def test_entries_tab_scrolls_buttons_reachable_when_short(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_entries_tab_scrolls_buttons_reachable_when_short(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         """AC5b geometry: at a height that can't fit the whole tab, the scroll
         container exists and the button row is scrollable into view."""
         from textual.containers import VerticalScroll
@@ -1545,16 +1918,31 @@ class TestDictionaryValidationPanel:
             add_region = add.region
             # The button's row must actually land inside the scroll container's
             # visible viewport — a broken scroll leaves it below the container.
-            assert container_region.y <= add_region.y < container_region.y + container_region.height
+            assert (
+                container_region.y
+                <= add_region.y
+                < container_region.y + container_region.height
+            )
             assert scroll.scroll_offset.y > 0  # the scroll genuinely moved
 
-    async def test_clear_empties_validation_panel(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_clear_empties_validation_panel(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import OptionList
 
         fake_dict_service.records[1]["entries"].append(
-            {"pattern": "BP", "replacement": "dup", "probability": 1.0, "group": None,
-             "timed_effects": None, "max_replacements": 1, "type": "literal",
-             "enabled": True, "case_sensitive": False, "priority": 0}
+            {
+                "pattern": "BP",
+                "replacement": "dup",
+                "probability": 1.0,
+                "group": None,
+                "timed_effects": None,
+                "max_replacements": 1,
+                "type": "literal",
+                "enabled": True,
+                "case_sensitive": False,
+                "priority": 0,
+            }
         )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
@@ -1570,7 +1958,9 @@ class TestDictionaryValidationPanel:
 
 
 class TestTryItDisabledReason:
-    async def test_disabled_entry_renders_reason(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_disabled_entry_renders_reason(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import TextArea
 
         fake_dict_service.records[1]["entries"][1]["enabled"] = False  # HR off
@@ -1588,7 +1978,9 @@ class TestTryItDisabledReason:
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            nearmiss = str(screen.query_one("#personas-dict-tryit-nearmiss", Static).renderable)
+            nearmiss = str(
+                screen.query_one("#personas-dict-tryit-nearmiss", Static).renderable
+            )
             assert "HR" in nearmiss and "skipped: disabled" in nearmiss
 
 
@@ -1610,9 +2002,18 @@ class TestDictionaryMalformedProbability:
         from textual.widgets import DataTable
 
         fake_dict_service.records[1]["entries"].append(
-            {"pattern": "XYZ", "replacement": "garbage-prob", "probability": "garbage",
-             "group": None, "timed_effects": None, "max_replacements": 1, "type": "literal",
-             "enabled": True, "case_sensitive": False, "priority": 0}
+            {
+                "pattern": "XYZ",
+                "replacement": "garbage-prob",
+                "probability": "garbage",
+                "group": None,
+                "timed_effects": None,
+                "max_replacements": 1,
+                "type": "literal",
+                "enabled": True,
+                "case_sensitive": False,
+                "priority": 0,
+            }
         )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
@@ -1642,12 +2043,30 @@ class TestDictionaryValidationMarkupSafety:
         from textual.widgets import OptionList
 
         fake_dict_service.records[1]["entries"] = [
-            {"pattern": "AB[x]CD", "replacement": "one", "probability": 1.0, "group": None,
-             "timed_effects": None, "max_replacements": 1, "type": "literal",
-             "enabled": True, "case_sensitive": False, "priority": 0},
-            {"pattern": "AB[x]CD", "replacement": "two", "probability": 1.0, "group": None,
-             "timed_effects": None, "max_replacements": 1, "type": "literal",
-             "enabled": True, "case_sensitive": False, "priority": 0},
+            {
+                "pattern": "AB[x]CD",
+                "replacement": "one",
+                "probability": 1.0,
+                "group": None,
+                "timed_effects": None,
+                "max_replacements": 1,
+                "type": "literal",
+                "enabled": True,
+                "case_sensitive": False,
+                "priority": 0,
+            },
+            {
+                "pattern": "AB[x]CD",
+                "replacement": "two",
+                "probability": 1.0,
+                "group": None,
+                "timed_effects": None,
+                "max_replacements": 1,
+                "type": "literal",
+                "enabled": True,
+                "case_sensitive": False,
+                "priority": 0,
+            },
         ]
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
@@ -1674,8 +2093,12 @@ class TestDictionaryStatsTab:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
-    async def test_stats_render_service_plus_client_enrichment(self, mock_app_instance, stub_characters, fake_dict_service):
-        fake_dict_service.records[1]["entries"][1].update({"type": "regex", "pattern": "/hr/i", "enabled": False, "priority": 5})
+    async def test_stats_render_service_plus_client_enrichment(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
+        fake_dict_service.records[1]["entries"][1].update(
+            {"type": "regex", "pattern": "/hr/i", "enabled": False, "priority": 5}
+        )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
@@ -1699,10 +2122,14 @@ class TestDictionaryStatsTab:
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
-            body_before = str(screen.query_one("#personas-dict-stats-body", Static).renderable)
+            body_before = str(
+                screen.query_one("#personas-dict-stats-body", Static).renderable
+            )
             assert "Dictionary enabled: yes" in body_before
 
-            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            screen.query_one(
+                "#personas-dict-tabs", TabbedContent
+            ).active = "personas-dict-tab-settings"
             await pilot.pause()
             screen.query_one("#personas-dict-enabled", Switch).value = False
             await pilot.click("#personas-dict-settings-save")
@@ -1711,7 +2138,9 @@ class TestDictionaryStatsTab:
             await pilot.pause()
 
             assert fake_dict_service.records[1]["enabled"] is False
-            body_after = str(screen.query_one("#personas-dict-stats-body", Static).renderable)
+            body_after = str(
+                screen.query_one("#personas-dict-stats-body", Static).renderable
+            )
             assert "Dictionary enabled: no" in body_after
 
 
@@ -1724,7 +2153,9 @@ class TestDictionaryVersionsTab:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
-    async def test_versions_listed_with_baseline(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_versions_listed_with_baseline(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import DataTable
 
         app = PersonasTestApp(mock_app_instance)
@@ -1735,24 +2166,38 @@ class TestDictionaryVersionsTab:
             assert table.row_count >= 1
             assert str(table.get_cell_at((0, 1))) == "baseline"
 
-    async def test_view_shows_snapshot_summary(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_view_shows_snapshot_summary(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import DataTable, TabbedContent
 
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
-            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-versions"
+            screen.query_one(
+                "#personas-dict-tabs", TabbedContent
+            ).active = "personas-dict-tab-versions"
             await pilot.pause()
-            screen.query_one("#personas-dict-versions-table", DataTable).move_cursor(row=0)
+            screen.query_one("#personas-dict-versions-table", DataTable).move_cursor(
+                row=0
+            )
             await pilot.click("#personas-dict-version-view")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            snapshot = str(screen.query_one("#personas-dict-version-snapshot", Static).renderable)
-            assert "rev 1" in snapshot and "entries: 2" in snapshot and "sorted_evenly" in snapshot
+            snapshot = str(
+                screen.query_one("#personas-dict-version-snapshot", Static).renderable
+            )
+            assert (
+                "rev 1" in snapshot
+                and "entries: 2" in snapshot
+                and "sorted_evenly" in snapshot
+            )
 
-    async def test_revert_confirms_then_restores(self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch):
+    async def test_revert_confirms_then_restores(
+        self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
+    ):
         from textual.widgets import DataTable, TabbedContent
 
         app = PersonasTestApp(mock_app_instance)
@@ -1760,7 +2205,9 @@ class TestDictionaryVersionsTab:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
             # Mutate: rename via settings save to create revision 2.
-            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            screen.query_one(
+                "#personas-dict-tabs", TabbedContent
+            ).active = "personas-dict-tab-settings"
             await pilot.pause()
             screen.query_one("#personas-dict-name", Input).value = "Renamed"
             await pilot.click("#personas-dict-settings-save")
@@ -1781,7 +2228,9 @@ class TestDictionaryVersionsTab:
             # so the tab switch below actually sticks.
             screen.set_focus(None)
             await pilot.pause()
-            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-versions"
+            screen.query_one(
+                "#personas-dict-tabs", TabbedContent
+            ).active = "personas-dict-tab-versions"
             await pilot.pause()
             table = screen.query_one("#personas-dict-versions-table", DataTable)
             # list_versions() sorts newest-first (matching the real local
@@ -1794,7 +2243,9 @@ class TestDictionaryVersionsTab:
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             assert fake_dict_service.records[1]["name"] == "Medical Abbrev"  # restored
-            assert screen.query_one("#personas-dict-name", Input).value == "Medical Abbrev"  # detail reloaded
+            assert (
+                screen.query_one("#personas-dict-name", Input).value == "Medical Abbrev"
+            )  # detail reloaded
 
     async def test_revert_refreshes_inspector_name(
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
@@ -1810,7 +2261,9 @@ class TestDictionaryVersionsTab:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
             # Mutate: rename via settings save to create revision 2.
-            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            screen.query_one(
+                "#personas-dict-tabs", TabbedContent
+            ).active = "personas-dict-tab-settings"
             await pilot.pause()
             screen.query_one("#personas-dict-name", Input).value = "Renamed"
             await pilot.click("#personas-dict-settings-save")
@@ -1830,7 +2283,9 @@ class TestDictionaryVersionsTab:
             # first so the tab switch below actually sticks.
             screen.set_focus(None)
             await pilot.pause()
-            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-versions"
+            screen.query_one(
+                "#personas-dict-tabs", TabbedContent
+            ).active = "personas-dict-tab-versions"
             await pilot.pause()
             table = screen.query_one("#personas-dict-versions-table", DataTable)
             table.move_cursor(row=1)  # revision 1 (baseline, pre-rename)
@@ -1839,9 +2294,10 @@ class TestDictionaryVersionsTab:
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             assert fake_dict_service.records[1]["name"] == "Medical Abbrev"  # restored
-            assert str(
-                screen.query_one("#personas-selected-name", Static).renderable
-            ) == "Selected: Medical Abbrev"
+            assert (
+                str(screen.query_one("#personas-selected-name", Static).renderable)
+                == "Selected: Medical Abbrev"
+            )
 
     async def test_versions_table_renders_bracketed_name_safely(
         self, mock_app_instance, stub_characters, fake_dict_service
@@ -1875,7 +2331,14 @@ class TestDictionaryExport:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
-    async def test_export_json_writes_file_and_reports_path(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path, monkeypatch):
+    async def test_export_json_writes_file_and_reports_path(
+        self,
+        mock_app_instance,
+        stub_characters,
+        fake_dict_service,
+        tmp_path,
+        monkeypatch,
+    ):
         from textual.widgets import TabbedContent
         import tldw_chatbook.UI.Screens.personas_screen as screen_module
 
@@ -1884,7 +2347,9 @@ class TestDictionaryExport:
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
-            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            screen.query_one(
+                "#personas-dict-tabs", TabbedContent
+            ).active = "personas-dict-tab-settings"
             await pilot.pause()
             await pilot.click("#personas-dict-export-json")
             await pilot.pause()
@@ -1893,13 +2358,21 @@ class TestDictionaryExport:
             files = list((tmp_path / "exports").glob("medical-abbrev-*.json"))
             assert len(files) == 1
             import json as jsonlib
+
             payload = jsonlib.loads(files[0].read_text())
             assert payload["data"]["name"] == "Medical Abbrev"
             assert payload["data"]["strategy"] == "sorted_evenly"
             status = str(screen.query_one("#personas-dict-status", Static).renderable)
             assert "Exported to" in status and str(files[0]) in status
 
-    async def test_markdown_export_gates_on_lossy_confirm(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path, monkeypatch):
+    async def test_markdown_export_gates_on_lossy_confirm(
+        self,
+        mock_app_instance,
+        stub_characters,
+        fake_dict_service,
+        tmp_path,
+        monkeypatch,
+    ):
         from textual.widgets import TabbedContent
         import tldw_chatbook.UI.Screens.personas_screen as screen_module
 
@@ -1913,13 +2386,17 @@ class TestDictionaryExport:
                 return False
 
             monkeypatch.setattr(screen, "_confirm_lossy_markdown_export", _declined)
-            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-settings"
+            screen.query_one(
+                "#personas-dict-tabs", TabbedContent
+            ).active = "personas-dict-tab-settings"
             await pilot.pause()
             await pilot.click("#personas-dict-export-md")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            assert list((tmp_path / "exports").glob("*.md")) == []  # declined -> no file
+            assert (
+                list((tmp_path / "exports").glob("*.md")) == []
+            )  # declined -> no file
 
             async def _accepted():
                 return True
@@ -1949,7 +2426,9 @@ class TestDictionaryImport:
         )
         return captured
 
-    async def test_import_button_visible_in_dictionaries_mode(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_import_button_visible_in_dictionaries_mode(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _enter_dictionaries(pilot)
@@ -1957,16 +2436,36 @@ class TestDictionaryImport:
             assert btn.display is True
             assert "dictionary" in str(btn.tooltip).lower()
 
-    async def test_import_json_file_selects_new_dictionary(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path):
+    async def test_import_json_file_selects_new_dictionary(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
+    ):
         import json as jsonlib
 
-        payload = {"data": {"name": "Shipped In", "description": "", "content": None,
-                             "entries": [{"pattern": "RR", "replacement": "resp rate",
-                                          "probability": 1.0, "group": None, "timed_effects": None,
-                                          "max_replacements": 1, "type": "literal",
-                                          "enabled": True, "case_sensitive": False, "priority": 0}],
-                             "strategy": "character_lore_first", "max_tokens": 500,
-                             "enabled": True, "version": 3}}
+        payload = {
+            "data": {
+                "name": "Shipped In",
+                "description": "",
+                "content": None,
+                "entries": [
+                    {
+                        "pattern": "RR",
+                        "replacement": "resp rate",
+                        "probability": 1.0,
+                        "group": None,
+                        "timed_effects": None,
+                        "max_replacements": 1,
+                        "type": "literal",
+                        "enabled": True,
+                        "case_sensitive": False,
+                        "priority": 0,
+                    }
+                ],
+                "strategy": "character_lore_first",
+                "max_tokens": 500,
+                "enabled": True,
+                "version": 3,
+            }
+        }
         source = tmp_path / "shipped.json"
         source.write_text(jsonlib.dumps(payload))
         app = PersonasTestApp(mock_app_instance)
@@ -1979,15 +2478,30 @@ class TestDictionaryImport:
             names = [r["name"] for r in fake_dict_service.records.values()]
             assert "Shipped In" in names
             assert screen.state.selected_entity_name == "Shipped In"
-            imported = next(r for r in fake_dict_service.records.values() if r["name"] == "Shipped In")
+            imported = next(
+                r
+                for r in fake_dict_service.records.values()
+                if r["name"] == "Shipped In"
+            )
             assert imported["strategy"] == "character_lore_first"
 
-    async def test_import_conflict_renames_and_succeeds(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path):
+    async def test_import_conflict_renames_and_succeeds(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
+    ):
         import json as jsonlib
 
-        payload = {"data": {"name": "Medical Abbrev", "description": "", "content": None,
-                             "entries": [], "strategy": "sorted_evenly", "max_tokens": 1000,
-                             "enabled": True, "version": 1}}
+        payload = {
+            "data": {
+                "name": "Medical Abbrev",
+                "description": "",
+                "content": None,
+                "entries": [],
+                "strategy": "sorted_evenly",
+                "max_tokens": 1000,
+                "enabled": True,
+                "version": 1,
+            }
+        }
         source = tmp_path / "clash.json"
         source.write_text(jsonlib.dumps(payload))
         app = PersonasTestApp(mock_app_instance)
@@ -2000,7 +2514,9 @@ class TestDictionaryImport:
             names = [r["name"] for r in fake_dict_service.records.values()]
             assert "Medical Abbrev (imported)" in names  # data.name mutated, retried
 
-    async def test_import_markdown_uses_filename_stem(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path):
+    async def test_import_markdown_uses_filename_stem(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
+    ):
         source = tmp_path / "field-notes.md"
         source.write_text("RR: resp rate\n")
         app = PersonasTestApp(mock_app_instance)
@@ -2013,7 +2529,9 @@ class TestDictionaryImport:
             names = [r["name"] for r in fake_dict_service.records.values()]
             assert "field-notes" in names
 
-    async def test_import_bad_json_creates_nothing(self, mock_app_instance, stub_characters, fake_dict_service, tmp_path):
+    async def test_import_bad_json_creates_nothing(
+        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
+    ):
         source = tmp_path / "broken.json"
         source.write_text("{not json")
         app = PersonasTestApp(mock_app_instance)
@@ -2080,7 +2598,12 @@ class TestDictionaryImport:
             assert any(severity == "error" for _, severity in notifications)
 
     async def test_import_oversized_file_notifies_no_crash(
-        self, mock_app_instance, stub_characters, fake_dict_service, tmp_path, monkeypatch
+        self,
+        mock_app_instance,
+        stub_characters,
+        fake_dict_service,
+        tmp_path,
+        monkeypatch,
     ):
         """A huge import file must be rejected before the read - MemoryError
         from `source.read_text` on a genuinely oversized file is not an
@@ -2135,9 +2658,18 @@ class TestDictionaryImport:
         still succeed."""
         import json as jsonlib
 
-        payload = {"data": {"name": "Late Arrival", "description": "", "content": None,
-                             "entries": [], "strategy": "sorted_evenly", "max_tokens": 1000,
-                             "enabled": True, "version": 1}}
+        payload = {
+            "data": {
+                "name": "Late Arrival",
+                "description": "",
+                "content": None,
+                "entries": [],
+                "strategy": "sorted_evenly",
+                "max_tokens": 1000,
+                "enabled": True,
+                "version": 1,
+            }
+        }
         source = tmp_path / "late.json"
         source.write_text(jsonlib.dumps(payload))
         app = PersonasTestApp(mock_app_instance)
@@ -2160,7 +2692,9 @@ class TestDictionaryImport:
 
 
 class TestDictionaryAttachmentsTab:
-    async def test_empty_state_when_unattached(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_empty_state_when_unattached(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
@@ -2168,8 +2702,11 @@ class TestDictionaryAttachmentsTab:
             empty = screen.query_one("#personas-dict-attachments-empty", Static)
             assert "Not attached" in str(empty.renderable)
 
-    async def test_load_attachments_renders_rows(self, mock_app_instance, stub_characters, fake_dict_service):
+    async def test_load_attachments_renders_rows(
+        self, mock_app_instance, stub_characters, fake_dict_service
+    ):
         from textual.widgets import DataTable
+
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
@@ -2183,12 +2720,18 @@ class TestDictionaryAttachmentsTab:
 
 
 class TestDictionaryAttachFlow:
-    async def test_attach_via_picker_then_detach(self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch):
+    async def test_attach_via_picker_then_detach(
+        self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
+    ):
         from textual.widgets import DataTable, TabbedContent
-        from tldw_chatbook.Widgets.Persona_Widgets.dictionary_attach_picker import DictionaryAttachPicker
+        from tldw_chatbook.Widgets.Persona_Widgets.dictionary_attach_picker import (
+            DictionaryAttachPicker,
+        )
 
         # Seed a conversation the picker can offer + the attach can target.
-        fake_dict_service.conversations = {"c1": {"id": "c1", "title": "Noir case", "active_dictionaries": []}}
+        fake_dict_service.conversations = {
+            "c1": {"id": "c1", "title": "Noir case", "active_dictionaries": []}
+        }
 
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
@@ -2197,25 +2740,33 @@ class TestDictionaryAttachFlow:
             # The attach/detach buttons live in the Attachments TabPane; the
             # default active tab is Entries, so a click won't land on them
             # (and may fall through to whatever's underneath) until switched.
-            screen.query_one("#personas-dict-tabs", TabbedContent).active = "personas-dict-tab-attachments"
+            screen.query_one(
+                "#personas-dict-tabs", TabbedContent
+            ).active = "personas-dict-tab-attachments"
             await pilot.pause()
 
             # Auto-pick "c1" instead of showing the modal (the picker itself is
             # covered by Task 4's dedicated test).
             async def _fake_push(screen_obj):
                 return "c1" if isinstance(screen_obj, DictionaryAttachPicker) else None
-            monkeypatch.setattr(screen.app, "push_screen_wait", _fake_push, raising=False)
+
+            monkeypatch.setattr(
+                screen.app, "push_screen_wait", _fake_push, raising=False
+            )
             # The attach worker also does a sync DB read for the conversation list;
             # stub it to the fake's seeded conversation.
             monkeypatch.setattr(
-                screen, "_list_attachable_conversations",
+                screen,
+                "_list_attachable_conversations",
                 lambda: [{"conversation_id": "c1", "title": "Noir case"}],
             )
             await pilot.click("#personas-dict-attach-add")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            assert 1 in fake_dict_service.conversations["c1"]["active_dictionaries"]  # attached (dict id 1)
+            assert (
+                1 in fake_dict_service.conversations["c1"]["active_dictionaries"]
+            )  # attached (dict id 1)
             table = screen.query_one("#personas-dict-attachments-table", DataTable)
             assert table.row_count == 1
             # detach

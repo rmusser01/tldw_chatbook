@@ -24,5 +24,11 @@ class SourceCacheSyncAdapter:
         del record_conflict
         stable_key = envelope.stable_key or envelope.entity_id
         payload = decrypt_envelope_payload(envelope, dataset_key=dataset_key)
-        call_if_present(local_store, "upsert_source_cache", stable_key, payload, dict(envelope.payload_clear))
+        call_if_present(
+            local_store,
+            "upsert_source_cache",
+            stable_key,
+            payload,
+            dict(envelope.payload_clear),
+        )
         return {"status": "applied"}

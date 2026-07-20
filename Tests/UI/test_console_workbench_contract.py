@@ -191,7 +191,9 @@ async def test_console_workbench_header_is_the_visible_destination_identity():
         # legacy #console-title/#console-purpose compat statics stay hidden.
         header = console.query_one("#console-workbench-header")
         assert _is_displayed(header)
-        assert "Console" in _widget_text(console.query_one("#workbench-header-title", Static))
+        assert "Console" in _widget_text(
+            console.query_one("#workbench-header-title", Static)
+        )
         assert _widget_text(console.query_one("#workbench-header-subtitle", Static))
         assert _widget_text(console.query_one("#workbench-header-status", Static))
         assert not _is_displayed(console.query_one("#console-workbench-mode-strip"))
@@ -256,7 +258,9 @@ async def test_console_control_bar_renders_visible_state_chips():
 
         assert any("Provider:" in text for text in visible_chip_text)
         assert any("Model:" in text for text in visible_chip_text)
-        assert any("Assistant:" in text or "Persona:" in text for text in visible_chip_text)
+        assert any(
+            "Assistant:" in text or "Persona:" in text for text in visible_chip_text
+        )
         assert any("RAG:" in text for text in visible_chip_text)
         assert any("Sources:" in text for text in visible_chip_text)
         assert any("Tools:" in text for text in visible_chip_text)
@@ -270,11 +274,17 @@ async def test_console_counter_chips_dim_when_zero():
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-sources-chip")
-        for chip_id in ("#console-sources-chip", "#console-tools-chip", "#console-approvals-chip"):
+        for chip_id in (
+            "#console-sources-chip",
+            "#console-tools-chip",
+            "#console-approvals-chip",
+        ):
             chip = console.query_one(chip_id)
             assert chip.has_class("console-chip-dim"), chip_id
             assert not chip.has_class("console-chip-alert"), chip_id
-        assert not console.query_one("#console-provider-chip").has_class("console-chip-dim")
+        assert not console.query_one("#console-provider-chip").has_class(
+            "console-chip-dim"
+        )
 
 
 @pytest.mark.asyncio
@@ -475,7 +485,9 @@ async def test_console_inspector_prioritizes_actionable_status_before_secondary_
         assert status_index < tool_action_index < first_secondary_heading_index
         assert status_index < save_action_index < first_secondary_heading_index
         assert console.query_one("#console-inspector-review-approval").disabled is False
-        assert console.query_one("#console-inspector-review-tool-call").disabled is False
+        assert (
+            console.query_one("#console-inspector-review-tool-call").disabled is False
+        )
         assert console.query_one("#console-inspector-save-chatbook").disabled is False
 
 
@@ -604,12 +616,19 @@ async def test_console_empty_transcript_exposes_beginner_activation_actions():
         # control bar (never on the modal).
         modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
         assert _is_displayed(modal)
-        assert _widget_text(console.query_one("#console-setup-modal-title")) == "Get started"
-        assert "Pick a model" in _widget_text(console.query_one("#console-setup-step-2"))
+        assert (
+            _widget_text(console.query_one("#console-setup-modal-title"))
+            == "Get started"
+        )
+        assert "Pick a model" in _widget_text(
+            console.query_one("#console-setup-step-2")
+        )
         assert "Send your first message" in _widget_text(
             console.query_one("#console-setup-step-3")
         )
-        assert "Choose model" in _widget_text(console.query_one("#console-setup-modal-action"))
+        assert "Choose model" in _widget_text(
+            console.query_one("#console-setup-modal-action")
+        )
         # The modal carries no attach/RAG affordances; those stay on the control bar.
         assert not list(console.query("#console-empty-attach-context"))
         assert not list(console.query("#console-empty-run-library-rag"))
@@ -781,7 +800,9 @@ async def test_console_empty_transcript_provider_recovery_label_matches_setup_bl
 
         action = console.query_one("#console-setup-modal-action")
         assert _widget_text(action) == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
-        assert str(action.tooltip or "") == "Configure OpenAI API and API key in Settings"
+        assert (
+            str(action.tooltip or "") == "Configure OpenAI API and API key in Settings"
+        )
 
 
 def test_console_empty_recovery_action_keeps_provider_label_with_empty_tooltip():
@@ -1123,7 +1144,9 @@ async def test_console_workbench_send_action_disables_during_active_run():
 
 
 @pytest.mark.asyncio
-async def test_console_active_stream_sync_skips_unchanged_chrome_and_inspector(monkeypatch):
+async def test_console_active_stream_sync_skips_unchanged_chrome_and_inspector(
+    monkeypatch,
+):
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -1159,7 +1182,9 @@ async def test_console_active_stream_sync_skips_unchanged_chrome_and_inspector(m
             nonlocal inspector_refreshes
             inspector_refreshes += 1
 
-        monkeypatch.setattr(console, "_sync_console_workbench_state", count_workbench_sync)
+        monkeypatch.setattr(
+            console, "_sync_console_workbench_state", count_workbench_sync
+        )
         monkeypatch.setattr(inspector, "refresh", count_inspector_refresh)
 
         for _ in range(5):
@@ -1277,7 +1302,10 @@ async def test_console_registers_footer_workbench_shortcuts():
         # harness's default-screen stand-in (never registered against)
         # keeps the default shortcuts.
         assert footer.parent is None
-        assert host.query_one(AppFooterStatus).shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+        assert (
+            host.query_one(AppFooterStatus).shortcut_text
+            == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+        )
 
 
 @pytest.mark.asyncio

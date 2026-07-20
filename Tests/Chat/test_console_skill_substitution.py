@@ -23,17 +23,33 @@ class _Skills:
         self.executions = []
 
     async def get_context(self, *, mode="local"):
-        return {"available_skills": [{"name": "code-review", "description": "d",
-                                      "user_invocable": True, "trust_blocked": False}],
-                "blocked_skills": []}
+        return {
+            "available_skills": [
+                {
+                    "name": "code-review",
+                    "description": "d",
+                    "user_invocable": True,
+                    "trust_blocked": False,
+                }
+            ],
+            "blocked_skills": [],
+        }
 
     async def execute_skill(self, name, *, mode="local", args=None):
         self.executions.append((name, args))
         if self._raise:
-            raise SkillTrustBlockedError(skill_name=name, reason_code="skill_modified",
-                                         trust_status="quarantined_modified")
-        return {"skill_name": name, "rendered_prompt": f"RENDERED[{args}]",
-                "allowed_tools": None, "execution_mode": self._mode, "fork_output": None}
+            raise SkillTrustBlockedError(
+                skill_name=name,
+                reason_code="skill_modified",
+                trust_status="quarantined_modified",
+            )
+        return {
+            "skill_name": name,
+            "rendered_prompt": f"RENDERED[{args}]",
+            "allowed_tools": None,
+            "execution_mode": self._mode,
+            "fork_output": None,
+        }
 
 
 class _ReadyResolution:
@@ -62,34 +78,44 @@ class _RecordingGateway:
 
 def _controller(skills):
     store = ConsoleChatStore()
-    return ConsoleChatController(store=store, provider_gateway=object(),
-                                 provider="llama_cpp", model="m",
-                                 skills_service=skills), store
+    return ConsoleChatController(
+        store=store,
+        provider_gateway=object(),
+        provider="llama_cpp",
+        model="m",
+        skills_service=skills,
+    ), store
 
 
 @pytest.mark.asyncio
 async def test_inline_substitutes_final_user_message_only():
     controller, _store = _controller(_Skills("inline"))
-    msgs = [{"role": "system", "content": "sys"},
-            {"role": "user", "content": "earlier"},
-            {"role": "assistant", "content": "ok"},
-            {"role": "user", "content": "/code-review fix it"}]
+    msgs = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "earlier"},
+        {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "/code-review fix it"},
+    ]
     out, refuse = await controller._apply_skill_substitution(msgs)
     assert refuse is None
     assert out[-1] == {"role": "user", "content": "RENDERED[fix it]"}
-    assert out[1] == {"role": "user", "content": "earlier"}    # history preserved
+    assert out[1] == {"role": "user", "content": "earlier"}  # history preserved
 
 
 @pytest.mark.asyncio
 async def test_fork_drops_history_keeps_system():
     controller, _store = _controller(_Skills("fork"))
-    msgs = [{"role": "system", "content": "sys"},
-            {"role": "user", "content": "earlier"},
-            {"role": "user", "content": "/code-review go"}]
+    msgs = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "earlier"},
+        {"role": "user", "content": "/code-review go"},
+    ]
     out, refuse = await controller._apply_skill_substitution(msgs)
     assert refuse is None
-    assert out == [{"role": "system", "content": "sys"},
-                   {"role": "user", "content": "RENDERED[go]"}]
+    assert out == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "RENDERED[go]"},
+    ]
 
 
 @pytest.mark.asyncio
@@ -106,15 +132,18 @@ async def test_edited_skill_refuses_at_build():
     msgs = [{"role": "user", "content": "/code-review go"}]
     out, refuse = await controller._apply_skill_substitution(msgs)
     assert out == msgs
-    assert refuse == ('Skill "code-review" isn\'t trusted (skill_modified) — '
-                      "review and approve it in Library ▸ Skills before running it.")
+    assert refuse == (
+        'Skill "code-review" isn\'t trusted (skill_modified) — '
+        "review and approve it in Library ▸ Skills before running it."
+    )
 
 
 @pytest.mark.asyncio
 async def test_no_skills_service_is_a_noop():
     store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=object(),
-                                       provider="llama_cpp", model="m")
+    controller = ConsoleChatController(
+        store=store, provider_gateway=object(), provider="llama_cpp", model="m"
+    )
     msgs = [{"role": "user", "content": "/code-review go"}]
     out, refuse = await controller._apply_skill_substitution(msgs)
     assert out == msgs and refuse is None
@@ -130,9 +159,13 @@ async def test_submit_sends_rendered_payload_but_stores_raw_command():
     skills = _Skills("inline")
     store = ConsoleChatStore()
     gateway = _RecordingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway,
-                                       provider="llama_cpp", model="m",
-                                       skills_service=skills)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="m",
+        skills_service=skills,
+    )
 
     result = await controller.submit_draft("/code-review fix it")
 
@@ -150,13 +183,20 @@ async def test_fork_survives_retry_by_re_rendering_fresh():
     skills = _Skills("fork")
     store = ConsoleChatStore()
     failing = _RecordingGateway(fail=True)
-    controller = ConsoleChatController(store=store, provider_gateway=failing,
-                                       provider="llama_cpp", model="m",
-                                       skills_service=skills)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=failing,
+        provider="llama_cpp",
+        model="m",
+        skills_service=skills,
+    )
     await controller.submit_draft("/code-review go")
     messages = store.messages_for_session(store.active_session_id)
-    failed = next(m for m in reversed(messages)
-                  if m.role is ConsoleMessageRole.ASSISTANT and m.status == "failed")
+    failed = next(
+        m
+        for m in reversed(messages)
+        if m.role is ConsoleMessageRole.ASSISTANT and m.status == "failed"
+    )
 
     retry_gateway = _RecordingGateway()
     controller.provider_gateway = retry_gateway
@@ -175,9 +215,13 @@ async def test_submit_refusal_appends_system_row_and_aborts_without_provider_cal
     skills = _Skills(raise_trust=True)
     store = ConsoleChatStore()
     gateway = _RecordingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway,
-                                       provider="llama_cpp", model="m",
-                                       skills_service=skills)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="m",
+        skills_service=skills,
+    )
 
     result = await controller.submit_draft("/code-review go")
 
@@ -214,9 +258,13 @@ async def test_submit_refusal_never_invokes_accepted_hook():
     skills = _Skills(raise_trust=True)
     store = ConsoleChatStore()
     gateway = _RecordingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway,
-                                       provider="llama_cpp", model="m",
-                                       skills_service=skills)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="m",
+        skills_service=skills,
+    )
     accepted_calls = []
     controller.on_submission_accepted = lambda: accepted_calls.append(True)
 
@@ -235,9 +283,13 @@ async def test_submit_success_still_invokes_accepted_hook_before_assistant_row()
     skills = _Skills("inline")
     store = ConsoleChatStore()
     gateway = _RecordingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway,
-                                       provider="llama_cpp", model="m",
-                                       skills_service=skills)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="m",
+        skills_service=skills,
+    )
     assistant_rows_seen_at_hook_time = []
 
     def _on_accepted():
@@ -260,13 +312,18 @@ async def test_regenerate_refusal_after_skill_edit_keeps_prior_answer():
     skills = _Skills("inline")
     store = ConsoleChatStore()
     gateway = _RecordingGateway()
-    controller = ConsoleChatController(store=store, provider_gateway=gateway,
-                                       provider="llama_cpp", model="m",
-                                       skills_service=skills)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="m",
+        skills_service=skills,
+    )
     await controller.submit_draft("/code-review go")
     messages = store.messages_for_session(store.active_session_id)
-    assistant = next(m for m in reversed(messages)
-                     if m.role is ConsoleMessageRole.ASSISTANT)
+    assistant = next(
+        m for m in reversed(messages) if m.role is ConsoleMessageRole.ASSISTANT
+    )
     assert assistant.content == "reply"
 
     skills._raise = True  # the skill was edited since; now trust-blocked

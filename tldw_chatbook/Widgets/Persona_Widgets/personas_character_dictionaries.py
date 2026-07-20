@@ -55,11 +55,21 @@ class PersonasCharacterDictionariesWidget(Container):
         )
         yield DataTable(id="personas-char-dicts-table", cursor_type="row")
         with Horizontal(classes="personas-dict-form-row"):
-            yield Button("Attach dictionary…", id="personas-char-dicts-add", classes="console-action-secondary")
-            yield Button("Detach", id="personas-char-dicts-detach", classes="console-action-secondary")
+            yield Button(
+                "Attach dictionary…",
+                id="personas-char-dicts-add",
+                classes="console-action-secondary",
+            )
+            yield Button(
+                "Detach",
+                id="personas-char-dicts-detach",
+                classes="console-action-secondary",
+            )
 
     def on_mount(self) -> None:
-        self.query_one("#personas-char-dicts-table", DataTable).add_columns("dictionary", "entries")
+        self.query_one("#personas-char-dicts-table", DataTable).add_columns(
+            "dictionary", "entries"
+        )
         self.load_character_dictionaries([])
 
     def load_character_dictionaries(self, rows: list[dict[str, Any]]) -> None:
@@ -91,7 +101,13 @@ class PersonasCharacterDictionariesWidget(Container):
         for row in self._rows:
             table.add_row(
                 Text(str(row.get("name") or "(unnamed)")),
-                Text(str(row.get("entry_count") if row.get("entry_count") is not None else "")),
+                Text(
+                    str(
+                        row.get("entry_count")
+                        if row.get("entry_count") is not None
+                        else ""
+                    )
+                ),
                 key=str(row.get("name")),
             )
         empty = self.query_one("#personas-char-dicts-empty", Static)
@@ -103,7 +119,9 @@ class PersonasCharacterDictionariesWidget(Container):
         if table.row_count == 0 or table.cursor_row is None or table.cursor_row < 0:
             return None
         try:
-            return str(table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value)
+            return str(
+                table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value
+            )
         except Exception:
             return None
 

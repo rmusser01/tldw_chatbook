@@ -6,6 +6,7 @@ field names, and validates the whole file up front so the import screen can
 reject a bad file before any DB write (``WorldBookManager.import_world_book`` is
 not atomic). Pure and DB-free; raises ``ValueError`` with a user-facing message.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List

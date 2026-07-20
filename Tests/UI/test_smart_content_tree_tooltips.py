@@ -16,7 +16,7 @@ async def test_smart_content_tree_bulk_controls_have_descriptive_tooltips():
 
     app = SmartContentTreeApp()
 
-    async with app.run_test() as pilot:
+    async with app.run_test():
         tree = app.query_one(SmartContentTree)
         expected_tooltips = {
             "apply-filter": "Filter the content tree using the search text and enabled categories.",

@@ -14,7 +14,9 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsReadiness
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
 
 
-def _readiness(label: str, *, ready: bool = False, detail: str = "") -> ConsoleSettingsReadiness:
+def _readiness(
+    label: str, *, ready: bool = False, detail: str = ""
+) -> ConsoleSettingsReadiness:
     return ConsoleSettingsReadiness(
         label=label,
         detail=detail,
@@ -57,15 +59,29 @@ def test_template_default_model_does_not_precheck_step_two():
     blocked_with_default_model = _build(has_model=True)
     assert blocked_with_default_model.steps[1].state == "pending"
 
-    ready_without_model = _build(readiness=_readiness("Ready", ready=True), has_model=False)
+    ready_without_model = _build(
+        readiness=_readiness("Ready", ready=True), has_model=False
+    )
     assert ready_without_model.steps[1].state == "active"
 
 
 def test_endpoint_problems_relabel_step_one():
-    assert _build(readiness=_readiness("Invalid URL")).steps[0].label == "Save the provider endpoint"
-    assert _build(readiness=_readiness("Endpoint not saved")).steps[0].label == "Save the provider endpoint"
-    assert _build(readiness=_readiness("Unknown")).steps[0].label == "Choose a supported provider"
-    assert _build(readiness=_readiness("Pending")).steps[0].label == "Choose a send-capable provider"
+    assert (
+        _build(readiness=_readiness("Invalid URL")).steps[0].label
+        == "Save the provider endpoint"
+    )
+    assert (
+        _build(readiness=_readiness("Endpoint not saved")).steps[0].label
+        == "Save the provider endpoint"
+    )
+    assert (
+        _build(readiness=_readiness("Unknown")).steps[0].label
+        == "Choose a supported provider"
+    )
+    assert (
+        _build(readiness=_readiness("Pending")).steps[0].label
+        == "Choose a send-capable provider"
+    )
 
 
 def test_provider_ready_without_model_activates_model_step():
@@ -129,7 +145,10 @@ def test_detected_server_action_offers_labeled_affordance_with_model():
 
     assert action is not None
     assert action.label == "Use detected llama.cpp (127.0.0.1:8080)"
-    assert action.tooltip == "Sets provider to llama.cpp at 127.0.0.1:8080 and model to qwen-3."
+    assert (
+        action.tooltip
+        == "Sets provider to llama.cpp at 127.0.0.1:8080 and model to qwen-3."
+    )
     assert action.provider_key == "llama_cpp"
     assert action.base_url == "http://127.0.0.1:8080"
     assert action.model_id == "qwen-3"
@@ -147,7 +166,10 @@ def test_detected_server_action_without_models_asks_for_model_next():
 
     assert action is not None
     assert action.label == "Use detected Ollama (localhost:11434)"
-    assert action.tooltip == "Sets provider to Ollama at localhost:11434. Pick a model next."
+    assert (
+        action.tooltip
+        == "Sets provider to Ollama at localhost:11434. Pick a model next."
+    )
     assert action.model_id is None
 
 

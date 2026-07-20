@@ -186,7 +186,9 @@ class ConsoleChatStore:
         """Return the active session, creating one when needed."""
         if self.active_session_id is not None:
             return self._sessions[self.active_session_id]
-        return self.create_session(title=title, workspace_id=workspace_id, settings=settings)
+        return self.create_session(
+            title=title, workspace_id=workspace_id, settings=settings
+        )
 
     def create_session(
         self,
@@ -531,7 +533,9 @@ class ConsoleChatStore:
         self._session_or_raise(session_id)
         for message in self._messages_by_session[session_id]:
             self._materialize_stream_buffer(message)
-        return [self._snapshot(message) for message in self._messages_by_session[session_id]]
+        return [
+            self._snapshot(message) for message in self._messages_by_session[session_id]
+        ]
 
     def get_message(self, message_id: str) -> ConsoleChatMessage:
         """Return a message by native message ID."""
@@ -553,7 +557,9 @@ class ConsoleChatStore:
         self._persist_existing_message(message, update_feedback=True)
         return self._snapshot(message)
 
-    def update_message_content(self, message_id: str, content: str) -> ConsoleChatMessage:
+    def update_message_content(
+        self, message_id: str, content: str
+    ) -> ConsoleChatMessage:
         """Update a complete Console message or its currently selected variant."""
         if not content.strip():
             raise ValueError("Message content cannot be blank.")
@@ -578,7 +584,9 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._materialize_stream_buffer(message)
         if message.status in {"pending", "streaming"}:
-            raise ValueError("Wait for response to finish before deleting this message.")
+            raise ValueError(
+                "Wait for response to finish before deleting this message."
+            )
         session_id = self._message_session_index.pop(message_id)
         messages = self._messages_by_session[session_id]
         self._messages_by_session[session_id] = [
@@ -743,7 +751,9 @@ class ConsoleChatStore:
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can be retried.")
         if message.status != "failed":
-            raise ValueError(f"Only failed messages can be retried, not {message.status}.")
+            raise ValueError(
+                f"Only failed messages can be retried, not {message.status}."
+            )
         message.content = ""
         message.status = "pending"
         self._stream_chunks_by_message.pop(message.id, None)
@@ -831,7 +841,9 @@ class ConsoleChatStore:
         self._persist_existing_message(message)
         return self._snapshot(message)
 
-    def select_variant(self, message_id: str, selected_index: int) -> ConsoleChatMessage:
+    def select_variant(
+        self, message_id: str, selected_index: int
+    ) -> ConsoleChatMessage:
         """Select one existing variant by index."""
         message = self._message_or_raise(message_id)
         self._materialize_stream_buffer(message)
@@ -858,7 +870,9 @@ class ConsoleChatStore:
             conversation_title=session.title,
             workspace_id=persisted_workspace_id,
             scope_type=scope_type,
-            system_prompt=session.settings.system_prompt if session.settings is not None else None,
+            system_prompt=session.settings.system_prompt
+            if session.settings is not None
+            else None,
         )
         return session.persisted_conversation_id
 
@@ -901,11 +915,18 @@ class ConsoleChatStore:
             needed (session not yet saved, or no persistence configured).
         """
         session = self._session_or_raise(session_id)
-        normalized = system_prompt if isinstance(system_prompt, str) and system_prompt.strip() else None
+        normalized = (
+            system_prompt
+            if isinstance(system_prompt, str) and system_prompt.strip()
+            else None
+        )
         if session.settings is not None:
             session.settings = replace(session.settings, system_prompt=normalized)
         persisted = True
-        if session.persisted_conversation_id is not None and self.persistence is not None:
+        if (
+            session.persisted_conversation_id is not None
+            and self.persistence is not None
+        ):
             update_system_prompt = getattr(
                 self.persistence,
                 "update_conversation_system_prompt",
@@ -928,7 +949,9 @@ class ConsoleChatStore:
                     )
         return session, persisted
 
-    def _persist_new_message_or_defer(self, *, session_id: str, message: ConsoleChatMessage) -> None:
+    def _persist_new_message_or_defer(
+        self, *, session_id: str, message: ConsoleChatMessage
+    ) -> None:
         if self.persistence is None:
             return
         if not message.content and not message.attachments:
@@ -960,7 +983,9 @@ class ConsoleChatStore:
             for parameter in parameters.values()
         )
 
-    def _persist_new_message(self, *, session_id: str, message: ConsoleChatMessage) -> None:
+    def _persist_new_message(
+        self, *, session_id: str, message: ConsoleChatMessage
+    ) -> None:
         if self.persistence is None:
             return
         conversation_id = self.persist_session_if_needed(session_id)
@@ -1063,7 +1088,9 @@ class ConsoleChatStore:
         if session_id is None:
             return
         session = self._sessions.get(session_id)
-        conversation_id = session.persisted_conversation_id if session is not None else None
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
         if conversation_id is None:
             return
         variant_metadata = self._sync_variant_metadata(message)
@@ -1129,7 +1156,9 @@ class ConsoleChatStore:
         return None
 
     @staticmethod
-    def _sync_variant_metadata(message: ConsoleChatMessage) -> dict[str, str | int | None]:
+    def _sync_variant_metadata(
+        message: ConsoleChatMessage,
+    ) -> dict[str, str | int | None]:
         if message.variants is None:
             return {
                 "variant_turn_id": None,
@@ -1144,7 +1173,9 @@ class ConsoleChatStore:
             "selected_variant_id": message.variants.current.id,
         }
 
-    def _record_sync_v2_message_version(self, stable_key: str, result: dict[str, Any]) -> None:
+    def _record_sync_v2_message_version(
+        self, stable_key: str, result: dict[str, Any]
+    ) -> None:
         if result.get("status") != "enqueued":
             return
         entry = result.get("outbox_entry")
@@ -1211,12 +1242,16 @@ class ConsoleChatStore:
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can receive stream chunks.")
         if message.status not in {"pending", "streaming"}:
-            raise ValueError(f"Cannot append stream chunks to a {message.status} message.")
+            raise ValueError(
+                f"Cannot append stream chunks to a {message.status} message."
+            )
 
     @staticmethod
     def _validate_can_mark_terminal(message: ConsoleChatMessage) -> None:
         if message.role is not ConsoleMessageRole.ASSISTANT:
-            raise ValueError("Only assistant messages can enter terminal stream states.")
+            raise ValueError(
+                "Only assistant messages can enter terminal stream states."
+            )
         if message.status not in {"pending", "streaming"}:
             raise ValueError(f"Cannot mark a {message.status} message terminal.")
 

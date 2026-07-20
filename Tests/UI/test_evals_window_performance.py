@@ -12,7 +12,9 @@ from tldw_chatbook.UI.Evals.screens import EvaluationBrowserScreen
 
 
 class LargeScopeService:
-    async def list_evaluations(self, *, mode=None, limit=100, offset=0, after=None, eval_type=None):
+    async def list_evaluations(
+        self, *, mode=None, limit=100, offset=0, after=None, eval_type=None
+    ):
         return [
             {
                 "record_id": f"local:evaluation:eval_{index}",
@@ -44,7 +46,9 @@ class LargeScopeService:
             for index in range(150)
         ]
 
-    async def list_runs(self, *, mode=None, eval_id, limit=100, offset=0, after=None, status=None):
+    async def list_runs(
+        self, *, mode=None, eval_id, limit=100, offset=0, after=None, status=None
+    ):
         return [
             {
                 "record_id": f"local:evaluation_run:{eval_id}:run_{index}",
@@ -56,7 +60,11 @@ class LargeScopeService:
                 "status": "completed",
                 "target_model": "openai:gpt-4.1-mini",
                 "created_at": "1713571400",
-                "progress": {"completed_samples": 20, "total_samples": 20, "percent_complete": 100.0},
+                "progress": {
+                    "completed_samples": 20,
+                    "total_samples": 20,
+                    "percent_complete": 100.0,
+                },
                 "results": {"accuracy": 0.9},
             }
             for index in range(25)
@@ -72,7 +80,9 @@ class LargeScopeService:
 class EvaluationBrowserHost(App[None]):
     def __init__(self, app_instance):
         super().__init__()
-        self._screen = EvaluationBrowserScreen(app_instance=app_instance, view_mode="results")
+        self._screen = EvaluationBrowserScreen(
+            app_instance=app_instance, view_mode="results"
+        )
 
     async def on_mount(self) -> None:
         await self.push_screen(self._screen)

@@ -16,14 +16,29 @@ class FakeOutputsClient:
 
     async def list_output_templates(self, **kwargs):
         self.calls.append(("list_output_templates", kwargs))
-        return type("Response", (), {"model_dump": lambda self, **kwargs: {"items": [], "total": 0}})()
+        return type(
+            "Response",
+            (),
+            {"model_dump": lambda self, **kwargs: {"items": [], "total": 0}},
+        )()
 
     async def create_output_template(self, request_data):
-        self.calls.append(("create_output_template", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "create_output_template",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"id": 1, "name": "Newsletter"}
 
     async def preview_output_template(self, template_id, request_data):
-        self.calls.append(("preview_output_template", template_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "preview_output_template",
+                template_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"rendered": "# Digest", "format": "md"}
 
     async def list_outputs(self, **kwargs):
@@ -31,7 +46,9 @@ class FakeOutputsClient:
         return {"items": [], "total": 0, "page": 1, "size": 50}
 
     async def create_output(self, request_data):
-        self.calls.append(("create_output", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            ("create_output", request_data.model_dump(exclude_none=True, mode="json"))
+        )
         return {"id": 9, "title": "Digest"}
 
     async def delete_output(self, output_id, **kwargs):
@@ -108,7 +125,9 @@ async def test_server_outputs_service_direct_client_takes_precedence_over_provid
 
     assert result["total"] == 0
     assert provider.build_calls == 0
-    assert client.calls == [("list_output_templates", {"q": None, "limit": 25, "offset": 0})]
+    assert client.calls == [
+        ("list_output_templates", {"q": None, "limit": 25, "offset": 0})
+    ]
 
 
 @pytest.mark.asyncio
@@ -132,7 +151,9 @@ async def test_server_outputs_service_from_server_context_provider_is_lazy(
     assert result["total"] == 0
     assert service.client is None
     assert provider.build_calls == 1
-    assert client.calls == [("list_output_templates", {"q": None, "limit": 25, "offset": 0})]
+    assert client.calls == [
+        ("list_output_templates", {"q": None, "limit": 25, "offset": 0})
+    ]
 
 
 @pytest.mark.asyncio
@@ -152,8 +173,12 @@ async def test_server_outputs_service_re_resolves_provider_without_service_local
     assert provider.build_calls == 2
     assert len(provider.clients) == 2
     assert provider.clients[0] is not provider.clients[1]
-    assert provider.clients[0].calls == [("list_output_templates", {"q": None, "limit": 25, "offset": 0})]
-    assert provider.clients[1].calls == [("list_output_templates", {"q": None, "limit": 10, "offset": 0})]
+    assert provider.clients[0].calls == [
+        ("list_output_templates", {"q": None, "limit": 25, "offset": 0})
+    ]
+    assert provider.clients[1].calls == [
+        ("list_output_templates", {"q": None, "limit": 10, "offset": 0})
+    ]
     for built_client in provider.clients:
         assert all(value is not built_client for value in vars(service).values())
 
@@ -194,7 +219,9 @@ async def test_server_outputs_service_routes_templates_artifacts_and_render_with
     )
     preview = await service.preview_template(1, data={"title": "Digest"})
     artifacts = await service.list_artifacts(type="newsletter_markdown")
-    created_artifact = await service.create_artifact(template_id=1, data={"title": "Digest"})
+    created_artifact = await service.create_artifact(
+        template_id=1, data={"title": "Digest"}
+    )
     deleted_artifact = await service.delete_artifact(9, hard=True)
 
     assert templates["total"] == 0
@@ -203,7 +230,9 @@ async def test_server_outputs_service_routes_templates_artifacts_and_render_with
     assert artifacts["total"] == 0
     assert created_artifact["id"] == 9
     assert deleted_artifact["success"] is True
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "outputs.templates.list.server",
         "outputs.templates.create.server",
         "outputs.render_jobs.launch.server",

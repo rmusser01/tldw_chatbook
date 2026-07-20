@@ -8,22 +8,43 @@ import json
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictStr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 
 PersonaMode = Literal["session_scoped", "persistent_scoped"]
 PersonaSessionStatus = Literal["active", "paused", "closed", "archived"]
-PersonaExemplarKind = Literal["style", "catchphrase", "boundary", "scenario_demo", "tool_behavior"]
-PersonaExemplarSourceType = Literal["manual", "transcript_import", "character_seed", "generated_candidate"]
+PersonaExemplarKind = Literal[
+    "style", "catchphrase", "boundary", "scenario_demo", "tool_behavior"
+]
+PersonaExemplarSourceType = Literal[
+    "manual", "transcript_import", "character_seed", "generated_candidate"
+]
 PersonaExemplarReviewAction = Literal["approve", "reject"]
 PersonaConfirmationMode = Literal["always", "destructive_only", "never"]
 PersonaSetupStatus = Literal["not_started", "in_progress", "completed"]
-PersonaSetupStep = Literal["archetype", "persona", "voice", "commands", "safety", "test"]
+PersonaSetupStep = Literal[
+    "archetype", "persona", "voice", "commands", "safety", "test"
+]
 PersonaSetupTestType = Literal["dry_run", "live_session"]
 CharacterChatSessionState = Literal["in-progress", "resolved", "backlog", "non-viable"]
 CharacterAssistantKind = Literal["character", "persona"]
 PersonaMemoryMode = Literal["read_only", "read_write"]
 MCPAuthType = Literal["none", "bearer", "api_key"]
+
+# Aliases used by the server-backed chat schemas
+CharacterChatAssistantKind = CharacterAssistantKind
+CharacterChatPersonaMemoryMode = PersonaMemoryMode
+CharacterChatScopeType = Literal["server", "local", "workspace", "global"]
+CharacterChatMessageRole = Literal["user", "assistant", "system", "tool"]
+CharacterMemoryType = Literal["manual", "auto", "imported", "archived"]
 
 
 class ArchetypePersonaDefaults(BaseModel):
@@ -66,7 +87,9 @@ class ArchetypeStarterCommand(BaseModel):
         has_template = self.template_key is not None
         has_custom = self.custom is not None
         if has_template == has_custom:
-            raise ValueError("Exactly one of 'template_key' or 'custom' must be provided")
+            raise ValueError(
+                "Exactly one of 'template_key' or 'custom' must be provided"
+            )
         return self
 
 
@@ -98,7 +121,9 @@ class ArchetypePreviewResponse(BaseModel):
     system_prompt: str | None = None
     archetype_key: str
     voice_defaults: dict[str, Any] = Field(default_factory=dict)
-    setup: ArchetypePreviewSetupState = Field(default_factory=ArchetypePreviewSetupState)
+    setup: ArchetypePreviewSetupState = Field(
+        default_factory=ArchetypePreviewSetupState
+    )
 
 
 class MCPCatalogEntry(BaseModel):
@@ -134,7 +159,9 @@ def _parse_jsonish_collection(value: Any, *, field_name: str) -> Any:
     return value
 
 
-def _normalize_chat_session_state(value: str | None) -> CharacterChatSessionState | None:
+def _normalize_chat_session_state(
+    value: str | None,
+) -> CharacterChatSessionState | None:
     if value is None:
         return None
     normalized = str(value).strip().lower()
@@ -142,7 +169,9 @@ def _normalize_chat_session_state(value: str | None) -> CharacterChatSessionStat
         raise ValueError("state cannot be empty")
     allowed = {"in-progress", "resolved", "backlog", "non-viable"}
     if normalized not in allowed:
-        raise ValueError("state must be one of: in-progress, resolved, backlog, non-viable")
+        raise ValueError(
+            "state must be one of: in-progress, resolved, backlog, non-viable"
+        )
     return normalized  # type: ignore[return-value]
 
 
@@ -204,7 +233,14 @@ class CharacterQueryRequest(BaseModel):
     updated_to: str | None = None
     include_deleted: bool = False
     deleted_only: bool = False
-    sort_by: Literal["name", "creator", "created_at", "updated_at", "last_used_at", "conversation_count"] = "name"
+    sort_by: Literal[
+        "name",
+        "creator",
+        "created_at",
+        "updated_at",
+        "last_used_at",
+        "conversation_count",
+    ] = "name"
     sort_order: Literal["asc", "desc"] = "asc"
     include_image_base64: bool = False
 
@@ -237,9 +273,13 @@ class CharacterExemplarSource(BaseModel):
 
 class CharacterExemplarLabels(BaseModel):
     emotion: Literal["angry", "neutral", "happy", "other"] = "other"
-    scenario: Literal["press_challenge", "fan_banter", "debate", "boardroom", "small_talk", "other"] = "other"
+    scenario: Literal[
+        "press_challenge", "fan_banter", "debate", "boardroom", "small_talk", "other"
+    ] = "other"
     rhetorical: list[str] = Field(default_factory=list)
-    register_: str | None = Field(default=None, alias="register", serialization_alias="register")
+    register_: str | None = Field(
+        default=None, alias="register", serialization_alias="register"
+    )
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
@@ -285,13 +325,25 @@ class CharacterExemplarResponse(CharacterExemplarCreate):
 
 class CharacterExemplarSearchFilter(BaseModel):
     emotion: Literal["angry", "neutral", "happy", "other"] | None = None
-    scenario: Literal["press_challenge", "fan_banter", "debate", "boardroom", "small_talk", "other"] | None = None
+    scenario: (
+        Literal[
+            "press_challenge",
+            "fan_banter",
+            "debate",
+            "boardroom",
+            "small_talk",
+            "other",
+        ]
+        | None
+    ) = None
     rhetorical: list[str] = Field(default_factory=list)
 
 
 class CharacterExemplarSearchRequest(BaseModel):
     query: str | None = None
-    filter: CharacterExemplarSearchFilter = Field(default_factory=CharacterExemplarSearchFilter)
+    filter: CharacterExemplarSearchFilter = Field(
+        default_factory=CharacterExemplarSearchFilter
+    )
     limit: int = Field(default=20, ge=1, le=200)
     offset: int = Field(default=0, ge=0)
     use_embedding_scores: bool = False
@@ -313,7 +365,9 @@ class CharacterExemplarSelectionConfig(BaseModel):
 
 class CharacterExemplarSelectionDebugRequest(BaseModel):
     user_turn: str = Field(..., min_length=1, max_length=100_000)
-    selection_config: CharacterExemplarSelectionConfig = Field(default_factory=CharacterExemplarSelectionConfig)
+    selection_config: CharacterExemplarSelectionConfig = Field(
+        default_factory=CharacterExemplarSelectionConfig
+    )
 
 
 class CharacterExemplarCoverage(BaseModel):
@@ -331,7 +385,9 @@ class CharacterExemplarScore(BaseModel):
 class CharacterExemplarSelectionDebug(BaseModel):
     selected: list[CharacterExemplarResponse] = Field(default_factory=list)
     budget_tokens: int = Field(..., ge=0)
-    coverage: CharacterExemplarCoverage = Field(default_factory=CharacterExemplarCoverage)
+    coverage: CharacterExemplarCoverage = Field(
+        default_factory=CharacterExemplarCoverage
+    )
     scores: list[CharacterExemplarScore] = Field(default_factory=list)
 
 
@@ -339,37 +395,6 @@ class CharacterExemplarDeletionResponse(BaseModel):
     message: str
     character_id: int
     exemplar_id: str
-
-
-class CharacterChatSessionCreate(BaseModel):
-    """Request body for server-backed character/persona chat session creation."""
-
-    character_id: int | None = Field(default=None, gt=0)
-    assistant_kind: CharacterChatAssistantKind | None = None
-    assistant_id: str | None = Field(default=None, min_length=1)
-    persona_memory_mode: CharacterChatPersonaMemoryMode | None = None
-    title: str | None = None
-    parent_conversation_id: str | None = None
-    forked_from_message_id: str | None = None
-    state: CharacterChatSessionState | None = None
-    topic_label: str | None = None
-    cluster_id: str | None = None
-    source: str | None = None
-    external_ref: str | None = None
-    scope_type: CharacterChatScopeType | None = None
-    workspace_id: str | None = None
-
-
-class CharacterChatSessionUpdate(BaseModel):
-    """Request body for server-backed character/persona chat session metadata updates."""
-
-    title: str | None = None
-    rating: int | None = Field(default=None, ge=1, le=5)
-    state: CharacterChatSessionState | None = None
-    topic_label: str | None = None
-    cluster_id: str | None = None
-    source: str | None = None
-    external_ref: str | None = None
 
 
 class CharacterChatSettingsUpdate(BaseModel):
@@ -384,7 +409,9 @@ class CharacterChatMessageCreate(BaseModel):
 
     @model_validator(mode="after")
     def _validate_content_or_image(self) -> "CharacterChatMessageCreate":
-        if not (self.content and self.content.strip()) and not (self.image_base64 and self.image_base64.strip()):
+        if not (self.content and self.content.strip()) and not (
+            self.image_base64 and self.image_base64.strip()
+        ):
             raise ValueError("Provide either non-empty content or image_base64.")
         return self
 
@@ -458,7 +485,9 @@ class PersonaVoiceDefaults(BaseModel):
     turn_stop_secs: float | None = None
     min_utterance_secs: float | None = None
 
-    @field_validator("stt_language", "stt_model", "tts_provider", "tts_voice", mode="before")
+    @field_validator(
+        "stt_language", "stt_model", "tts_provider", "tts_voice", mode="before"
+    )
     @classmethod
     def _strip_optional_text_fields(cls, value: Any) -> Any:
         return _strip_optional_text(value)
@@ -479,9 +508,13 @@ class PersonaVoiceDefaults(BaseModel):
             normalized.append(text)
         return normalized
 
-    @field_validator("vad_threshold", "turn_stop_secs", "min_utterance_secs", mode="before")
+    @field_validator(
+        "vad_threshold", "turn_stop_secs", "min_utterance_secs", mode="before"
+    )
     @classmethod
-    def _normalize_turn_detection_floats(cls, value: Any, info: ValidationInfo) -> float | None:
+    def _normalize_turn_detection_floats(
+        cls, value: Any, info: ValidationInfo
+    ) -> float | None:
         if value is None or value == "":
             return None
         bounds = {
@@ -666,12 +699,16 @@ class CharacterChatSessionCreate(BaseModel):
         if self.assistant_kind is None:
             self.assistant_kind = "character" if self.character_id is not None else None
         if self.assistant_kind is None:
-            raise ValueError("Provide either character_id or assistant_kind + assistant_id.")
+            raise ValueError(
+                "Provide either character_id or assistant_kind + assistant_id."
+            )
 
         if self.assistant_kind == "character":
             if self.character_id is None:
                 if not self.assistant_id:
-                    raise ValueError("Character chats require character_id or a numeric assistant_id.")
+                    raise ValueError(
+                        "Character chats require character_id or a numeric assistant_id."
+                    )
                 try:
                     self.character_id = int(self.assistant_id)
                 except ValueError as exc:
@@ -703,7 +740,9 @@ class CharacterChatSessionUpdate(BaseModel):
     def _validate_state(cls, value: str | None) -> CharacterChatSessionState | None:
         return _normalize_chat_session_state(value)
 
-    @field_validator("title", "topic_label", "cluster_id", "source", "external_ref", mode="before")
+    @field_validator(
+        "title", "topic_label", "cluster_id", "source", "external_ref", mode="before"
+    )
     @classmethod
     def _strip_optional_text_fields(cls, value: Any) -> Any:
         return _strip_optional_text(value)

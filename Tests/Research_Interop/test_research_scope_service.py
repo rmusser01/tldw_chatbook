@@ -6,7 +6,9 @@ import pytest
 
 from tldw_chatbook.DB.Research_DB import ResearchDatabase
 from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
-from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
+from tldw_chatbook.Notifications.notification_dispatch_service import (
+    NotificationDispatchService,
+)
 from tldw_chatbook.Research_Interop import (
     LocalResearchService,
     ResearchScopeService,
@@ -41,7 +43,9 @@ async def test_local_research_service_creates_and_lists_standalone_runs(tmp_path
 async def test_local_research_service_controls_and_artifacts_are_persisted(tmp_path):
     db = ResearchDatabase(tmp_path / "research.db", client_id="tester")
     service = LocalResearchService(db)
-    run = await service.create_run(query="Explain agent governance", source_policy="local_only")
+    run = await service.create_run(
+        query="Explain agent governance", source_policy="local_only"
+    )
 
     resumed = await service.resume_run(run.id)
     paused = await service.pause_run(run.id)
@@ -64,7 +68,9 @@ async def test_local_research_service_controls_and_artifacts_are_persisted(tmp_p
 async def test_local_research_service_streams_snapshot_and_bundle_events(tmp_path):
     db = ResearchDatabase(tmp_path / "research.db", client_id="tester")
     service = LocalResearchService(db)
-    run = await service.create_run(query="Explain local event observation", source_policy="local_only")
+    run = await service.create_run(
+        query="Explain local event observation", source_policy="local_only"
+    )
     await service.save_artifact(
         run.id,
         artifact_name="notes.md",
@@ -73,7 +79,9 @@ async def test_local_research_service_streams_snapshot_and_bundle_events(tmp_pat
     )
 
     events = [event async for event in service.stream_run_events(run.id)]
-    events_after_snapshot = [event async for event in service.stream_run_events(run.id, after_id=1)]
+    events_after_snapshot = [
+        event async for event in service.stream_run_events(run.id, after_id=1)
+    ]
 
     assert events[0]["event"] == "snapshot"
     assert events[0]["id"] == "1"
@@ -96,7 +104,9 @@ async def test_local_research_service_dispatches_lifecycle_notifications(tmp_pat
     dispatcher = NotificationDispatchService(store=notifications)
     service = LocalResearchService(db, notification_dispatch_service=dispatcher)
 
-    run = await service.create_run(query="Explain local research notifications", source_policy="local_only")
+    run = await service.create_run(
+        query="Explain local research notifications", source_policy="local_only"
+    )
     await service.cancel_run(run.id)
 
     rows = notifications.list_notifications(limit=10, category="research")
@@ -152,7 +162,9 @@ async def test_server_research_service_streams_events_as_plain_dicts():
         yield ResearchRunStreamEvent(
             event="snapshot",
             id="3",
-            data={"run": {"id": "rs-server", "status": "running", "phase": "collecting"}},
+            data={
+                "run": {"id": "rs-server", "status": "running", "phase": "collecting"}
+            },
         )
         yield ResearchRunStreamEvent(
             event="progress",
@@ -172,7 +184,9 @@ async def test_server_research_service_streams_events_as_plain_dicts():
         {
             "event": "snapshot",
             "id": "3",
-            "data": {"run": {"id": "rs-server", "status": "running", "phase": "collecting"}},
+            "data": {
+                "run": {"id": "rs-server", "status": "running", "phase": "collecting"}
+            },
         },
         {
             "event": "progress",
@@ -185,10 +199,14 @@ async def test_server_research_service_streams_events_as_plain_dicts():
 
 @pytest.mark.asyncio
 async def test_research_scope_service_routes_without_cross_source_mutation(tmp_path):
-    local_service = LocalResearchService(ResearchDatabase(tmp_path / "research.db", client_id="tester"))
+    local_service = LocalResearchService(
+        ResearchDatabase(tmp_path / "research.db", client_id="tester")
+    )
     server_service = AsyncMock()
     server_service.create_run.return_value = "server-created"
-    scope = ResearchScopeService(local_service=local_service, server_service=server_service)
+    scope = ResearchScopeService(
+        local_service=local_service, server_service=server_service
+    )
 
     local_run = await scope.create_run(mode="local", query="Local query")
     server_run = await scope.create_run(mode="server", query="Server query")
@@ -208,7 +226,9 @@ async def test_research_scope_service_enforces_action_level_policy(tmp_path):
         def require_allowed(self, *, action_id):
             self.action_ids.append(action_id)
 
-    local_service = LocalResearchService(ResearchDatabase(tmp_path / "research.db", client_id="tester"))
+    local_service = LocalResearchService(
+        ResearchDatabase(tmp_path / "research.db", client_id="tester")
+    )
     server_service = AsyncMock()
     server_service.resume_run.return_value = "resumed"
     server_service.get_bundle.return_value = {"report.md": "# Report"}
@@ -249,9 +269,15 @@ async def test_research_scope_service_streams_server_events_with_policy(tmp_path
 
     async def fake_stream():
         yield {"event": "snapshot", "id": "3", "data": {"run": {"id": "rs-server"}}}
-        yield {"event": "progress", "id": "4", "data": {"progress_message": "Synthesizing"}}
+        yield {
+            "event": "progress",
+            "id": "4",
+            "data": {"progress_message": "Synthesizing"},
+        }
 
-    local_service = LocalResearchService(ResearchDatabase(tmp_path / "research.db", client_id="tester"))
+    local_service = LocalResearchService(
+        ResearchDatabase(tmp_path / "research.db", client_id="tester")
+    )
     server_service = Mock()
     server_service.stream_run_events = Mock(return_value=fake_stream())
     policy = RecordingPolicyEnforcer()
@@ -262,7 +288,10 @@ async def test_research_scope_service_streams_server_events_with_policy(tmp_path
     )
 
     events = [
-        event async for event in scope.stream_run_events("rs-server", mode="server", after_id=3)
+        event
+        async for event in scope.stream_run_events(
+            "rs-server", mode="server", after_id=3
+        )
     ]
 
     assert events[0]["event"] == "snapshot"
@@ -280,7 +309,9 @@ async def test_research_scope_service_streams_local_events_with_policy(tmp_path)
         def require_allowed(self, *, action_id):
             self.action_ids.append(action_id)
 
-    local_service = LocalResearchService(ResearchDatabase(tmp_path / "research.db", client_id="tester"))
+    local_service = LocalResearchService(
+        ResearchDatabase(tmp_path / "research.db", client_id="tester")
+    )
     run = await local_service.create_run(query="Local event stream")
     await local_service.save_artifact(
         run.id,

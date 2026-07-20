@@ -19,7 +19,9 @@ class ServerWebClipperScopeService:
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: WebClipperBackend | str | None) -> WebClipperBackend:
+    def _normalize_mode(
+        self, mode: WebClipperBackend | str | None
+    ) -> WebClipperBackend:
         if mode is None:
             return WebClipperBackend.LOCAL
         if isinstance(mode, WebClipperBackend):
@@ -88,12 +90,16 @@ class ServerWebClipperScopeService:
         normalized = self._as_dict(payload)
         clip_id = normalized.get("clip_id")
         enrichment_type = normalized.get("enrichment_type") or "unknown"
-        normalized["id"] = f"{self._server_clip_id(clip_id)}:enrichment:{enrichment_type}"
+        normalized["id"] = (
+            f"{self._server_clip_id(clip_id)}:enrichment:{enrichment_type}"
+        )
         normalized["backend"] = "server"
         normalized["entity_kind"] = "web_clip_enrichment"
         return normalized
 
-    async def save_clip(self, *, mode: WebClipperBackend | str | None = None, **payload: Any) -> dict[str, Any]:
+    async def save_clip(
+        self, *, mode: WebClipperBackend | str | None = None, **payload: Any
+    ) -> dict[str, Any]:
         self._require_server_mode(mode)
         self._enforce_policy("web_clipper.capture.server")
         service = self._require_service()
@@ -123,5 +129,7 @@ class ServerWebClipperScopeService:
         self._enforce_policy("web_clipper.capture.server")
         service = self._require_service()
         request_payload = {"clip_id": clip_id, **payload}
-        result = await self._maybe_await(service.persist_enrichment(clip_id, **request_payload))
+        result = await self._maybe_await(
+            service.persist_enrichment(clip_id, **request_payload)
+        )
         return self._normalize_enrichment_payload(result)

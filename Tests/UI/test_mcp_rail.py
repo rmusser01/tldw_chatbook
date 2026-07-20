@@ -8,7 +8,11 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Select
 
 import tldw_chatbook
-from tldw_chatbook.MCP.readiness import STATE_CSS_CLASSES, ReadinessSnapshot, ReadinessState
+from tldw_chatbook.MCP.readiness import (
+    STATE_CSS_CLASSES,
+    ReadinessSnapshot,
+    ReadinessState,
+)
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import (
     _MAX_ROW_LABEL,
     MCP_RAIL_ROW_PREFIX,
@@ -16,13 +20,21 @@ from tldw_chatbook.UI.MCP_Modules.mcp_rail import (
     _row_label,
 )
 
-_BUNDLED_CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
+_BUNDLED_CSS_PATH = str(
+    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+)
 
 
-def _snap(key: str, label: str, state: ReadinessState = ReadinessState.READY) -> ReadinessSnapshot:
+def _snap(
+    key: str, label: str, state: ReadinessState = ReadinessState.READY
+) -> ReadinessSnapshot:
     return ReadinessSnapshot(
-        server_key=key, label=label, source=key.split(":", 1)[0],
-        state=state, reasons=(), message="",
+        server_key=key,
+        label=label,
+        source=key.split(":", 1)[0],
+        state=state,
+        reasons=(),
+        message="",
     )
 
 
@@ -59,8 +71,8 @@ class RailApp(App):
 @pytest.mark.asyncio
 async def test_rail_renders_all_servers_row_plus_one_row_per_snapshot():
     app = RailApp()
-    async with app.run_test() as pilot:
-        rows = list(app.query(f"Button.mcp-rail-row"))
+    async with app.run_test():
+        rows = list(app.query("Button.mcp-rail-row"))
         # "All servers" + builtin + docs
         assert len(rows) == 3
         labels = [str(row.label) for row in rows]
@@ -92,7 +104,7 @@ async def test_rail_source_select_posts_source_changed():
 @pytest.mark.asyncio
 async def test_rail_hides_scope_section_for_local_source():
     app = RailApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         assert not list(app.query("#mcp-rail-scope"))
 
 
@@ -124,7 +136,7 @@ async def test_rail_clamps_scope_value_not_in_options_instead_of_crashing():
     restored scope lives in the workbench, not the rail.
     """
     app = RailScopeMismatchApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         select = app.query_one("#mcp-rail-scope-select", Select)
         assert select.value == "personal"
         ref_select = app.query_one("#mcp-rail-scope-ref", Select)
@@ -150,7 +162,7 @@ class RailScopeRefMismatchApp(App):
 @pytest.mark.asyncio
 async def test_rail_clamps_scope_ref_value_not_in_options_to_no_selection():
     app = RailScopeRefMismatchApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         select = app.query_one("#mcp-rail-scope-select", Select)
         assert select.value == "team"  # present among options — no clamp needed here
         ref_select = app.query_one("#mcp-rail-scope-ref", Select)
@@ -200,7 +212,7 @@ async def test_rail_active_row_label_is_not_blank_with_bundled_css():
     height 1 and its label stays visible.
     """
     app = RailAppWithBundledCSS()
-    async with app.run_test(size=(80, 30)) as pilot:
+    async with app.run_test(size=(80, 30)):
         active_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}0", Button)
         assert "is-active" in active_row.classes
         # A round border needs >=2 lines; if one leaked back in, the row's
@@ -208,14 +220,16 @@ async def test_rail_active_row_label_is_not_blank_with_bundled_css():
         assert active_row.styles.border.top[0] == ""
         assert active_row.size.height >= 1
         rendered_text = "".join(
-            _strip_text(active_row.render_line(y)) for y in range(active_row.size.height)
+            _strip_text(active_row.render_line(y))
+            for y in range(active_row.size.height)
         )
         assert "All servers" in rendered_text
 
         inactive_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}2", Button)
         assert "is-active" not in inactive_row.classes
         inactive_text = "".join(
-            _strip_text(inactive_row.render_line(y)) for y in range(inactive_row.size.height)
+            _strip_text(inactive_row.render_line(y))
+            for y in range(inactive_row.size.height)
         )
         assert "docs" in inactive_text
 
@@ -238,13 +252,13 @@ def test_row_label_truncation_budget_fits_full_builtin_label():
 
 @pytest.mark.asyncio
 async def test_all_servers_row_shares_left_gutter_with_glyph_prefixed_rows():
-    """"All servers" has no readiness glyph, but its label must start at the
+    """ "All servers" has no readiness glyph, but its label must start at the
     same column as glyph-prefixed rows ("<glyph> label...") so the rail's
     label column has one hard left edge instead of "All servers" sitting
     flush against the rail edge while every other row is indented.
     """
     app = RailApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         all_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}0", Button)
         glyph_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}2", Button)  # local:docs
         all_label = str(all_row.label)
@@ -264,7 +278,7 @@ async def test_rail_rows_are_left_aligned_with_bundled_css():
     both to left, mirroring `.library-rail-row` in _agentic_terminal.tcss.
     """
     app = RailAppWithBundledCSS()
-    async with app.run_test(size=(80, 30)) as pilot:
+    async with app.run_test(size=(80, 30)):
         row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}0", Button)
         assert row.styles.text_align == "left"
         assert row.styles.content_align_horizontal == "left"
@@ -308,12 +322,22 @@ class AdaptiveCountRailApp(App):
             source="local",
             snapshots=[
                 ReadinessSnapshot(
-                    server_key="local:a", label="a", source="local",
-                    state=ReadinessState.READY, reasons=(), message="", tool_count=3,
+                    server_key="local:a",
+                    label="a",
+                    source="local",
+                    state=ReadinessState.READY,
+                    reasons=(),
+                    message="",
+                    tool_count=3,
                 ),
                 ReadinessSnapshot(
-                    server_key="local:bb", label="a-longer-profile-name", source="local",
-                    state=ReadinessState.READY, reasons=(), message="", tool_count=12,
+                    server_key="local:bb",
+                    label="a-longer-profile-name",
+                    source="local",
+                    state=ReadinessState.READY,
+                    reasons=(),
+                    message="",
+                    tool_count=12,
                 ),
             ],
             selected_server_key=None,
@@ -338,9 +362,11 @@ async def test_row_label_right_aligns_tool_count_at_adaptive_column():
     for a standalone call (e.g. the blank-count check below).
     """
     app = AdaptiveCountRailApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         short_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}1", Button)  # "a"
-        long_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}2", Button)   # "a-longer-profile-name"
+        long_row = app.query_one(
+            f"#{MCP_RAIL_ROW_PREFIX}2", Button
+        )  # "a-longer-profile-name"
         short_label = str(short_row.label)
         long_label = str(long_row.label)
         assert len(short_label) == len(long_label)
@@ -373,12 +399,22 @@ class AdaptiveCountWithMarkupCharsRailApp(App):
             source="local",
             snapshots=[
                 ReadinessSnapshot(
-                    server_key="local:docs", label="docs", source="local",
-                    state=ReadinessState.READY, reasons=(), message="", tool_count=3,
+                    server_key="local:docs",
+                    label="docs",
+                    source="local",
+                    state=ReadinessState.READY,
+                    reasons=(),
+                    message="",
+                    tool_count=3,
                 ),
                 ReadinessSnapshot(
-                    server_key="local:brk", label="[test-server]", source="local",
-                    state=ReadinessState.READY, reasons=(), message="", tool_count=12,
+                    server_key="local:brk",
+                    label="[test-server]",
+                    source="local",
+                    state=ReadinessState.READY,
+                    reasons=(),
+                    message="",
+                    tool_count=12,
                 ),
             ],
             selected_server_key=None,
@@ -393,7 +429,7 @@ class AdaptiveCountWithMarkupCharsRailApp(App):
 @pytest.mark.asyncio
 async def test_adaptive_pad_width_measures_escaped_text_not_raw_label():
     app = AdaptiveCountWithMarkupCharsRailApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         docs_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}1", Button)
         bracket_row = app.query_one(f"#{MCP_RAIL_ROW_PREFIX}2", Button)
         docs_label = str(docs_row.label)
@@ -501,11 +537,11 @@ async def test_scope_a_b_a_dispatches_three_changes_and_mount_echo_zero():
         changes = [e for e in app.events if isinstance(e, MCPRail.ScopeChanged)]
         assert changes == []  # mount echo suppressed
         select = app.query_one("#mcp-rail-scope-select", Select)
-        select.value = "team"       # A -> B
+        select.value = "team"  # A -> B
         await pilot.pause()
-        select.value = "personal"   # B -> A (must NOT be swallowed as echo)
+        select.value = "personal"  # B -> A (must NOT be swallowed as echo)
         await pilot.pause()
-        select.value = "team"       # A -> B again
+        select.value = "team"  # A -> B again
         await pilot.pause()
         changes = [e.scope for e in app.events if isinstance(e, MCPRail.ScopeChanged)]
         assert changes == ["team", "personal", "team"]

@@ -4,7 +4,6 @@ Root application state container.
 
 from dataclasses import dataclass, field
 from typing import Optional
-from textual.reactive import reactive
 
 from ..runtime_policy.types import RuntimeSourceState
 from .navigation_state import NavigationState
@@ -19,24 +18,24 @@ class AppState:
     Root state container for the entire application.
     This is the single source of truth for all application state.
     """
-    
+
     # Sub-states
     navigation: NavigationState = field(default_factory=NavigationState)
     chat: ChatState = field(default_factory=ChatState)
     notes: NotesState = field(default_factory=NotesState)
     ui: UIState = field(default_factory=UIState)
     runtime_source: RuntimeSourceState = field(default_factory=RuntimeSourceState)
-    
+
     # App-level state
     version: str = "1.0.0"
     is_ready: bool = False
     encryption_enabled: bool = False
     encryption_password: Optional[str] = None
-    
+
     # Configuration
     config_path: Optional[str] = None
     data_path: Optional[str] = None
-    
+
     def reset(self) -> None:
         """Reset all state to defaults."""
         self.navigation = NavigationState()
@@ -45,7 +44,7 @@ class AppState:
         self.ui = UIState()
         self.runtime_source = RuntimeSourceState()
         self.is_ready = False
-    
+
     def to_dict(self) -> dict:
         """Convert state to dictionary for serialization."""
         return {
@@ -78,26 +77,28 @@ class AppState:
             },
             "runtime_source": self.runtime_source.to_dict(),
         }
-    
+
     @classmethod
-    def from_dict(cls, data: dict) -> 'AppState':
+    def from_dict(cls, data: dict) -> "AppState":
         """Create state from dictionary."""
         state = cls()
-        
+
         # Navigation state
         if "navigation" in data:
             nav = data["navigation"]
             state.navigation.current_screen = nav.get("current_screen", "chat")
             state.navigation.history = nav.get("history", [])
-        
+
         # Chat state
         if "chat" in data:
             chat = data["chat"]
             state.chat.provider = chat.get("provider", "openai")
             state.chat.model = chat.get("model", "gpt-4")
             state.chat.sidebar_collapsed = chat.get("sidebar_collapsed", False)
-            state.chat.right_sidebar_collapsed = chat.get("right_sidebar_collapsed", False)
-        
+            state.chat.right_sidebar_collapsed = chat.get(
+                "right_sidebar_collapsed", False
+            )
+
         # Notes state
         if "notes" in data:
             notes = data["notes"]
@@ -106,7 +107,7 @@ class AppState:
             state.notes.sort_ascending = notes.get("sort_ascending", False)
             state.notes.preview_mode = notes.get("preview_mode", False)
             state.notes.auto_save_enabled = notes.get("auto_save_enabled", True)
-        
+
         # UI state
         if "ui" in data:
             ui = data["ui"]
@@ -120,5 +121,5 @@ class AppState:
 
         if "runtime_source" in data:
             state.runtime_source = RuntimeSourceState.from_dict(data["runtime_source"])
-        
+
         return state

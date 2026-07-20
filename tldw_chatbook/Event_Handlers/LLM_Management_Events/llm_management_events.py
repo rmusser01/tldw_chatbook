@@ -3,9 +3,9 @@
 #
 # Imports
 from __future__ import annotations
+
 #
 import functools
-import logging
 from loguru import logger as _loguru_fallback_logger
 import os
 import shlex
@@ -14,14 +14,21 @@ import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional
+
 #
 # Third-party Imports
 from textual.worker import Worker, WorkerState
 from textual.widgets import Input, RichLog, TextArea, Button
 from textual.css.query import QueryError
+
 #
 # Local Imports
-from tldw_chatbook.Constants import LLAMA_CPP_SERVER_ARGS_HELP_TEXT, LLAMAFILE_SERVER_ARGS_HELP_TEXT, MLX_LM_SERVER_ARGS_HELP_TEXT
+from tldw_chatbook.Constants import (
+    LLAMA_CPP_SERVER_ARGS_HELP_TEXT,
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT,
+    MLX_LM_SERVER_ARGS_HELP_TEXT,
+)
+
 #
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -53,7 +60,10 @@ __all__ = [
 
 # --- Generic Helpers ---
 
-def _make_path_update_callback(app: "TldwCli", input_widget_id: str, is_directory: bool = False):
+
+def _make_path_update_callback(
+    app: "TldwCli", input_widget_id: str, is_directory: bool = False
+):
     """
     Return a callback that sets an input widget's value to a picked path.
     If is_directory is True, it uses the parent directory of the selected file.
@@ -68,10 +78,15 @@ def _make_path_update_callback(app: "TldwCli", input_widget_id: str, is_director
                 input_widget.value = str(final_path)
                 logger.info(f"Updated input {input_widget_id} with path: {final_path}")
             except Exception as err:
-                logger.opt(exception=True).error(f"Error updating input #{input_widget_id}: {err}")
-                app.notify(f"Error setting path for {input_widget_id}.", severity="error")
+                logger.opt(exception=True).error(
+                    f"Error updating input #{input_widget_id}: {err}"
+                )
+                app.notify(
+                    f"Error setting path for {input_widget_id}.", severity="error"
+                )
         else:
             logger.info("File/Directory selection cancelled for #%s.", input_widget_id)
+
     return _callback
 
 
@@ -80,35 +95,41 @@ def _make_path_update_callback(app: "TldwCli", input_widget_id: str, is_director
 ###############################################################################
 
 
-async def handle_llamafile_browse_exec_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_llamafile_browse_exec_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Llamafile browse executable button pressed.")
 
-    exec_filters = Filters(("Executables", lambda p: p.is_file()))
+    Filters(("Executables", lambda p: p.is_file()))
     await app.push_screen(
         FileOpen(
             location=str(Path.home()),
             title="Select Llamafile Executable",
-            context="llm_models"
+            context="llm_models",
         ),
-        callback=_make_path_update_callback(app, "llamafile-exec-path"))
+        callback=_make_path_update_callback(app, "llamafile-exec-path"),
+    )
 
 
-async def handle_llamafile_browse_model_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_llamafile_browse_model_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Llamafile browse model button pressed.")
 
     gguf_filters = Filters(
         ("GGUF Models (*.gguf)", lambda p: p.suffix.lower() == ".gguf"),
-        ("All files (*.*)", lambda p: True))
+        ("All files (*.*)", lambda p: True),
+    )
     await app.push_screen(
         FileOpen(
             location=str(Path.home()),
             title="Select Llamafile Model (.gguf)",
             filters=gguf_filters,
-            context="llm_models"
+            context="llm_models",
         ),
-        callback=_make_path_update_callback(app, "llamafile-model-path")
+        callback=_make_path_update_callback(app, "llamafile-model-path"),
     )
 
 
@@ -120,7 +141,10 @@ async def handle_llamafile_browse_model_button_pressed(app: "TldwCli", event: Bu
 # Each run_…_worker uses the same streaming pattern – consider refactoring, but
 # explicit duplication keeps each implementation easy to tweak individually.
 
-def _stream_process(app_instance: "TldwCli", log_fn_name: str, process: subprocess.Popen):
+
+def _stream_process(
+    app_instance: "TldwCli", log_fn_name: str, process: subprocess.Popen
+):
     """Utility: pump *process* stdout into *app_instance.log_fn_name*."""
 
     log_fn = getattr(app_instance, log_fn_name)
@@ -130,21 +154,31 @@ def _stream_process(app_instance: "TldwCli", log_fn_name: str, process: subproce
         process.stdout.close()
 
 
-def _set_llamafile_process_on_app(app_instance: "TldwCli", process: Optional[subprocess.Popen]):
-    app_instance.llamafile_server_process = process  # Assumes app_instance has this attribute
-    if process and hasattr(process, 'pid') and process.pid is not None:
-        app_instance.loguru_logger.info(f"Stored Llamafile process PID {process.pid} on app instance.")
+def _set_llamafile_process_on_app(
+    app_instance: "TldwCli", process: Optional[subprocess.Popen]
+):
+    app_instance.llamafile_server_process = (
+        process  # Assumes app_instance has this attribute
+    )
+    if process and hasattr(process, "pid") and process.pid is not None:
+        app_instance.loguru_logger.info(
+            f"Stored Llamafile process PID {process.pid} on app instance."
+        )
     else:
-        app_instance.loguru_logger.info("Cleared Llamafile process from app instance (or process was None).")
+        app_instance.loguru_logger.info(
+            "Cleared Llamafile process from app instance (or process was None)."
+        )
 
 
 def run_llamafile_server_worker(app_instance: "TldwCli", command: List[str]) -> str:
     logger = getattr(app_instance, "loguru_logger", _loguru_fallback_logger)
-    quoted_command = ' '.join(shlex.quote(c) for c in command)
+    quoted_command = " ".join(shlex.quote(c) for c in command)
     logger.info(f"Llamafile WORKER (diag v2) starting with command: {quoted_command}")
 
     process: Optional[subprocess.Popen] = None
-    final_status_message = f"Llamafile WORKER (diag v2): Default status for {quoted_command}"
+    final_status_message = (
+        f"Llamafile WORKER (diag v2): Default status for {quoted_command}"
+    )
     pid_str = "N/A"
 
     # --- Determine the directory of the llamafile executable ---
@@ -154,7 +188,9 @@ def run_llamafile_server_worker(app_instance: "TldwCli", command: List[str]) -> 
 
     # Log a snippet of the current PATH for comparison
     current_env_path = os.environ.get("PATH", "PATH not found in os.environ")
-    logger.debug(f"Llamafile WORKER: Python's current PATH (first 200 chars): {current_env_path[:200]}")
+    logger.debug(
+        f"Llamafile WORKER: Python's current PATH (first 200 chars): {current_env_path[:200]}"
+    )
 
     try:
         logger.debug("Llamafile WORKER (diag v2): Attempting to start subprocess...")
@@ -167,61 +203,94 @@ def run_llamafile_server_worker(app_instance: "TldwCli", command: List[str]) -> 
             bufsize=1,
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
             cwd=llamafile_dir,
-            env=os.environ.copy()  # Pass a copy of the current environment
+            env=os.environ.copy(),  # Pass a copy of the current environment
         )
         pid_str = str(process.pid) if process and process.pid else "UnknownPID"
-        logger.info(f"Llamafile WORKER (diag v2): Subprocess launched, PID: {pid_str}, CWD: {llamafile_dir}")
+        logger.info(
+            f"Llamafile WORKER (diag v2): Subprocess launched, PID: {pid_str}, CWD: {llamafile_dir}"
+        )
 
-        app_instance.call_from_thread(_set_llamafile_process_on_app, app_instance, process)
-        app_instance.call_from_thread(app_instance._update_llamafile_log,
-                                      f"[PID:{pid_str}] Llamafile server attempting to start (diag v2)...\n")
+        app_instance.call_from_thread(
+            _set_llamafile_process_on_app, app_instance, process
+        )
+        app_instance.call_from_thread(
+            app_instance._update_llamafile_log,
+            f"[PID:{pid_str}] Llamafile server attempting to start (diag v2)...\n",
+        )
 
         # --- DIAGNOSTIC: Use communicate() with a short timeout for initial output ---
         initial_stdout = ""
         initial_stderr = ""
         quick_exit_code = None
         try:
-            logger.debug(f"Llamafile WORKER (PID:{pid_str}): Attempting immediate communicate(timeout=5s)...")
+            logger.debug(
+                f"Llamafile WORKER (PID:{pid_str}): Attempting immediate communicate(timeout=5s)..."
+            )
             # This will block until process terminates OR timeout
             initial_stdout, initial_stderr = process.communicate(timeout=5)
             quick_exit_code = process.returncode
-            logger.info(f"Llamafile WORKER (PID:{pid_str}): communicate() completed. Exit code: {quick_exit_code}")
+            logger.info(
+                f"Llamafile WORKER (PID:{pid_str}): communicate() completed. Exit code: {quick_exit_code}"
+            )
             if initial_stdout:
-                logger.info(f"Llamafile WORKER (PID:{pid_str}) Initial STDOUT:\n{initial_stdout.strip()}")
-                app_instance.call_from_thread(app_instance._update_llamafile_log,
-                                              f"--- Initial STDOUT (PID:{pid_str}) ---\n{initial_stdout.strip()}\n")
+                logger.info(
+                    f"Llamafile WORKER (PID:{pid_str}) Initial STDOUT:\n{initial_stdout.strip()}"
+                )
+                app_instance.call_from_thread(
+                    app_instance._update_llamafile_log,
+                    f"--- Initial STDOUT (PID:{pid_str}) ---\n{initial_stdout.strip()}\n",
+                )
             if initial_stderr:
-                logger.error(f"Llamafile WORKER (PID:{pid_str}) Initial STDERR:\n{initial_stderr.strip()}")
-                app_instance.call_from_thread(app_instance._update_llamafile_log,
-                                              f"--- Initial STDERR (PID:{pid_str}) ---\n[bold red]{initial_stderr.strip()}[/]\n")
+                logger.error(
+                    f"Llamafile WORKER (PID:{pid_str}) Initial STDERR:\n{initial_stderr.strip()}"
+                )
+                app_instance.call_from_thread(
+                    app_instance._update_llamafile_log,
+                    f"--- Initial STDERR (PID:{pid_str}) ---\n[bold red]{initial_stderr.strip()}[/]\n",
+                )
 
             if quick_exit_code is not None:  # Process terminated within timeout
                 if quick_exit_code != 0:
                     final_status_message = f"Llamafile server (PID:{pid_str}) EXITED QUICKLY with ERROR code: {quick_exit_code}."
-                    if initial_stderr: final_status_message += f"\nInitial STDERR: {initial_stderr.strip()}"
+                    if initial_stderr:
+                        final_status_message += (
+                            f"\nInitial STDERR: {initial_stderr.strip()}"
+                        )
                 else:
                     final_status_message = f"Llamafile server (PID:{pid_str}) EXITED QUICKLY with code: {quick_exit_code} (SUCCESS)."
-                    if initial_stdout: final_status_message += f"\nInitial STDOUT: {initial_stdout.strip()}"
+                    if initial_stdout:
+                        final_status_message += (
+                            f"\nInitial STDOUT: {initial_stdout.strip()}"
+                        )
                 logger.info(final_status_message)
-                app_instance.call_from_thread(app_instance._update_llamafile_log, f"{final_status_message}\n")
+                app_instance.call_from_thread(
+                    app_instance._update_llamafile_log, f"{final_status_message}\n"
+                )
                 return final_status_message  # Worker is done if process exited quickly
 
         except subprocess.TimeoutExpired:
             logger.info(
-                f"Llamafile WORKER (PID:{pid_str}): communicate(timeout=5s) EXPIRED. Server is likely running (this is expected for a server).")
-            app_instance.call_from_thread(app_instance._update_llamafile_log,
-                                          f"[PID:{pid_str}] Server running after 5s. Switching to streaming...\n")
+                f"Llamafile WORKER (PID:{pid_str}): communicate(timeout=5s) EXPIRED. Server is likely running (this is expected for a server)."
+            )
+            app_instance.call_from_thread(
+                app_instance._update_llamafile_log,
+                f"[PID:{pid_str}] Server running after 5s. Switching to streaming...\n",
+            )
             # If it timed out, the server is running. Now proceed to the normal streaming loop.
             # The process object is still valid.
         # --- END DIAGNOSTIC ---
 
         # If communicate() timed out, the process is still running. Proceed with streaming.
-        logger.info(f"Llamafile WORKER (PID:{pid_str}): Proceeding to continuous streaming as server is running...")
+        logger.info(
+            f"Llamafile WORKER (PID:{pid_str}): Proceeding to continuous streaming as server is running..."
+        )
         stderr_lines_captured = []
         while True:  # Streaming loop
             output_received_in_iteration = False
             if process.poll() is not None:
-                logger.info(f"Llamafile WORKER (PID:{pid_str}): Process terminated. Exit code: {process.returncode}")
+                logger.info(
+                    f"Llamafile WORKER (PID:{pid_str}): Process terminated. Exit code: {process.returncode}"
+                )
                 break
 
             if process.stdout:
@@ -230,13 +299,19 @@ def run_llamafile_server_worker(app_instance: "TldwCli", command: List[str]) -> 
                     if line:
                         line = line.strip()
                         if line:
-                            logger.info(f"Llamafile WORKER STDOUT (PID:{pid_str}): {line}")
-                            app_instance.call_from_thread(app_instance._update_llamafile_log, f"{line}\n")
+                            logger.info(
+                                f"Llamafile WORKER STDOUT (PID:{pid_str}): {line}"
+                            )
+                            app_instance.call_from_thread(
+                                app_instance._update_llamafile_log, f"{line}\n"
+                            )
                             output_received_in_iteration = True
                     elif process.poll() is not None:
                         break
                 except Exception as e_stdout:
-                    logger.error(f"Llamafile WORKER (PID:{pid_str}): Exception reading stdout: {e_stdout}")
+                    logger.error(
+                        f"Llamafile WORKER (PID:{pid_str}): Exception reading stdout: {e_stdout}"
+                    )
                     break
 
             if process.stderr:
@@ -245,15 +320,23 @@ def run_llamafile_server_worker(app_instance: "TldwCli", command: List[str]) -> 
                     if line:
                         line = line.strip()
                         if line:
-                            logger.error(f"Llamafile WORKER STDERR (PID:{pid_str}): {line}")
-                            stderr_lines_captured.append(line)  # Capture for final message
-                            app_instance.call_from_thread(app_instance._update_llamafile_log,
-                                                          f"[STDERR] [bold red]{line}[/]\n")
+                            logger.error(
+                                f"Llamafile WORKER STDERR (PID:{pid_str}): {line}"
+                            )
+                            stderr_lines_captured.append(
+                                line
+                            )  # Capture for final message
+                            app_instance.call_from_thread(
+                                app_instance._update_llamafile_log,
+                                f"[STDERR] [bold red]{line}[/]\n",
+                            )
                             output_received_in_iteration = True
                     elif process.poll() is not None:
                         break
                 except Exception as e_stderr:
-                    logger.error(f"Llamafile WORKER (PID:{pid_str}): Exception reading stderr: {e_stderr}")
+                    logger.error(
+                        f"Llamafile WORKER (PID:{pid_str}): Exception reading stderr: {e_stderr}"
+                    )
                     break
 
             if not output_received_in_iteration and process.poll() is None:
@@ -273,67 +356,99 @@ def run_llamafile_server_worker(app_instance: "TldwCli", command: List[str]) -> 
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            logger.warning(f"Llamafile WORKER (PID:{pid_str}): Timeout on final wait post-streaming.")
+            logger.warning(
+                f"Llamafile WORKER (PID:{pid_str}): Timeout on final wait post-streaming."
+            )
 
         exit_code = process.returncode if process.returncode is not None else -1
         logger.info(
-            f"Llamafile WORKER (PID:{pid_str}): Subprocess finally exited post-streaming with code: {exit_code}")
+            f"Llamafile WORKER (PID:{pid_str}): Subprocess finally exited post-streaming with code: {exit_code}"
+        )
 
         if exit_code != 0:
             final_status_message = f"Llamafile server (PID:{pid_str}) exited post-streaming with non-zero code: {exit_code}."
-            if stderr_lines_captured: final_status_message += "\nSTDERR:\n" + "\n".join(stderr_lines_captured)
+            if stderr_lines_captured:
+                final_status_message += "\nSTDERR:\n" + "\n".join(stderr_lines_captured)
         else:
             final_status_message = f"Llamafile server (PID:{pid_str}) exited post-streaming successfully (code: {exit_code})."
 
-        app_instance.call_from_thread(app_instance._update_llamafile_log, f"{final_status_message}\n")
+        app_instance.call_from_thread(
+            app_instance._update_llamafile_log, f"{final_status_message}\n"
+        )
         return final_status_message
 
     except FileNotFoundError:
         msg = f"ERROR: Llamafile executable not found: {command[0]}"
         logger.error(msg)
-        app_instance.call_from_thread(app_instance._update_llamafile_log, f"[bold red]{msg}[/]\n")
+        app_instance.call_from_thread(
+            app_instance._update_llamafile_log, f"[bold red]{msg}[/]\n"
+        )
         raise
     except Exception as err:
         msg = f"CRITICAL ERROR in Llamafile worker: {err} (Command: {quoted_command})"
         logger.opt(exception=True).error(msg)
-        app_instance.call_from_thread(app_instance._update_llamafile_log, f"[bold red]{msg}[/]\n")
+        app_instance.call_from_thread(
+            app_instance._update_llamafile_log, f"[bold red]{msg}[/]\n"
+        )
         raise
     finally:
-        logger.info(f"Llamafile WORKER (persistent stream): Worker function for command '{quoted_command}' finishing.")
+        logger.info(
+            f"Llamafile WORKER (persistent stream): Worker function for command '{quoted_command}' finishing."
+        )
         # app_instance.call_from_thread(_set_llamafile_process_on_app, app_instance, None) # If managing process
         app_instance.call_from_thread(_set_llamafile_process_on_app, app_instance, None)
         if process and process.poll() is None:
-            logger.warning(f"Llamafile WORKER (PID:{pid_str}): Process still running in finally. Terminating.")
+            logger.warning(
+                f"Llamafile WORKER (PID:{pid_str}): Process still running in finally. Terminating."
+            )
             process.terminate()
             try:
                 process.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                logger.error(f"Llamafile WORKER (PID:{pid_str}): Process kill failed after terminate timeout.")
+                logger.error(
+                    f"Llamafile WORKER (PID:{pid_str}): Process kill failed after terminate timeout."
+                )
                 process.kill()
 
 
 # Helper to set/clear the process on the app instance from the worker thread
 # This can be defined in this file or in app.py and imported.
-def _set_llamacpp_process_on_app(app_instance: "TldwCli", process: Optional[subprocess.Popen]):
+def _set_llamacpp_process_on_app(
+    app_instance: "TldwCli", process: Optional[subprocess.Popen]
+):
     """Helper to set/clear the Llama.cpp process on the app instance from the worker thread."""
-    app_instance.llamacpp_server_process = process  # Assumes app_instance has this attribute
-    if process and hasattr(process, 'pid') and process.pid is not None:
-        app_instance.loguru_logger.info(f"Stored Llama.cpp process PID {process.pid} on app instance.")
+    app_instance.llamacpp_server_process = (
+        process  # Assumes app_instance has this attribute
+    )
+    if process and hasattr(process, "pid") and process.pid is not None:
+        app_instance.loguru_logger.info(
+            f"Stored Llama.cpp process PID {process.pid} on app instance."
+        )
     else:
-        app_instance.loguru_logger.info("Cleared Llama.cpp process from app instance (or process was None).")
+        app_instance.loguru_logger.info(
+            "Cleared Llama.cpp process from app instance (or process was None)."
+        )
 
 
-def run_llamacpp_server_worker(app_instance: "TldwCli", command: List[str]) -> str | None:
+def run_llamacpp_server_worker(
+    app_instance: "TldwCli", command: List[str]
+) -> str | None:
     logger = getattr(app_instance, "loguru_logger", _loguru_fallback_logger)
-    quoted_command = ' '.join(shlex.quote(c) for c in command)
-    logger.info(f"Llama.cpp WORKER (persistent stream) starting with command: {quoted_command}")
+    quoted_command = " ".join(shlex.quote(c) for c in command)
+    logger.info(
+        f"Llama.cpp WORKER (persistent stream) starting with command: {quoted_command}"
+    )
 
     process: Optional[subprocess.Popen] = None  # Ensure type hint
-    final_status_message = f"Llama.cpp WORKER (persistent stream): Default status for {quoted_command}"
+    final_status_message = (
+        f"Llama.cpp WORKER (persistent stream): Default status for {quoted_command}"
+    )
     pid_str = "N/A"
 
     try:
-        logger.debug("Llama.cpp WORKER (persistent stream): Attempting to start subprocess...")
+        logger.debug(
+            "Llama.cpp WORKER (persistent stream): Attempting to start subprocess..."
+        )
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
@@ -341,16 +456,22 @@ def run_llamacpp_server_worker(app_instance: "TldwCli", command: List[str]) -> s
             text=True,
             universal_newlines=True,
             bufsize=1,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
         pid_str = str(process.pid) if process and process.pid else "UnknownPID"
-        logger.info(f"Llama.cpp WORKER (persistent stream): Subprocess launched, PID: {pid_str}")
+        logger.info(
+            f"Llama.cpp WORKER (persistent stream): Subprocess launched, PID: {pid_str}"
+        )
 
         # Store the process object on the app instance
-        app_instance.call_from_thread(_set_llamacpp_process_on_app, app_instance, process)
+        app_instance.call_from_thread(
+            _set_llamacpp_process_on_app, app_instance, process
+        )
 
-        app_instance.call_from_thread(app_instance._update_llamacpp_log,
-                                      f"[PID:{pid_str}] Llama.cpp server starting...\n")
+        app_instance.call_from_thread(
+            app_instance._update_llamacpp_log,
+            f"[PID:{pid_str}] Llama.cpp server starting...\n",
+        )
 
         # Non-blocking read loop
         while True:
@@ -359,7 +480,8 @@ def run_llamacpp_server_worker(app_instance: "TldwCli", command: List[str]) -> s
             # Check process health first
             if process.poll() is not None:  # Process has terminated
                 logger.info(
-                    f"Llama.cpp WORKER (PID:{pid_str}): Process terminated during read loop. Exit code: {process.returncode}")
+                    f"Llama.cpp WORKER (PID:{pid_str}): Process terminated during read loop. Exit code: {process.returncode}"
+                )
                 break  # Exit the while True loop
 
             # Check stdout
@@ -372,13 +494,21 @@ def run_llamacpp_server_worker(app_instance: "TldwCli", command: List[str]) -> s
                     if line:  # If readline returns empty string, pipe is closed or EOF
                         line = line.strip()
                         if line:
-                            logger.info(f"Llama.cpp WORKER STDOUT (PID:{pid_str}): {line}")
-                            app_instance.call_from_thread(app_instance._update_llamacpp_log, f"{line}\n")
+                            logger.info(
+                                f"Llama.cpp WORKER STDOUT (PID:{pid_str}): {line}"
+                            )
+                            app_instance.call_from_thread(
+                                app_instance._update_llamacpp_log, f"{line}\n"
+                            )
                             output_received_in_iteration = True
-                    elif process.poll() is not None:  # Check again if process ended after readline returned empty
+                    elif (
+                        process.poll() is not None
+                    ):  # Check again if process ended after readline returned empty
                         break
                 except Exception as e_stdout:
-                    logger.error(f"Llama.cpp WORKER (PID:{pid_str}): Exception reading stdout: {e_stdout}")
+                    logger.error(
+                        f"Llama.cpp WORKER (PID:{pid_str}): Exception reading stdout: {e_stdout}"
+                    )
                     break
 
                     # Check stderr
@@ -388,18 +518,26 @@ def run_llamacpp_server_worker(app_instance: "TldwCli", command: List[str]) -> s
                     if line:
                         line = line.strip()
                         if line:
-                            logger.error(f"Llama.cpp WORKER STDERR (PID:{pid_str}): {line}")
-                            app_instance.call_from_thread(app_instance._update_llamacpp_log,
-                                                          f"[STDERR] [bold red]{line}[/]\n")
+                            logger.error(
+                                f"Llama.cpp WORKER STDERR (PID:{pid_str}): {line}"
+                            )
+                            app_instance.call_from_thread(
+                                app_instance._update_llamacpp_log,
+                                f"[STDERR] [bold red]{line}[/]\n",
+                            )
                             output_received_in_iteration = True
                     elif process.poll() is not None:  # Check again
                         break
                 except Exception as e_stderr:
-                    logger.error(f"Llama.cpp WORKER (PID:{pid_str}): Exception reading stderr: {e_stderr}")
+                    logger.error(
+                        f"Llama.cpp WORKER (PID:{pid_str}): Exception reading stderr: {e_stderr}"
+                    )
                     break
 
             if not output_received_in_iteration and process.poll() is None:
-                time.sleep(0.1)  # Small sleep if no output and process is alive, to prevent tight loop
+                time.sleep(
+                    0.1
+                )  # Small sleep if no output and process is alive, to prevent tight loop
 
         # Cleanup after loop (process has terminated or error occurred)
         if process.stdout:
@@ -417,54 +555,72 @@ def run_llamacpp_server_worker(app_instance: "TldwCli", command: List[str]) -> s
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            logger.warning(f"Llama.cpp WORKER (PID:{pid_str}): Timeout on final wait, process might be stuck.")
+            logger.warning(
+                f"Llama.cpp WORKER (PID:{pid_str}): Timeout on final wait, process might be stuck."
+            )
 
-        exit_code = process.returncode if process.returncode is not None else -1  # Default if somehow None
-        logger.info(f"Llama.cpp WORKER (PID:{pid_str}): Subprocess finally exited with code: {exit_code}")
+        exit_code = (
+            process.returncode if process.returncode is not None else -1
+        )  # Default if somehow None
+        logger.info(
+            f"Llama.cpp WORKER (PID:{pid_str}): Subprocess finally exited with code: {exit_code}"
+        )
 
         if exit_code != 0:
             final_status_message = f"Llama.cpp server (PID:{pid_str}) exited with non-zero code: {exit_code}."
         else:
             final_status_message = f"Llama.cpp server (PID:{pid_str}) exited successfully (code: {exit_code})."
 
-        app_instance.call_from_thread(app_instance._update_llamacpp_log, f"{final_status_message}\n")
+        app_instance.call_from_thread(
+            app_instance._update_llamacpp_log, f"{final_status_message}\n"
+        )
         return final_status_message
 
     except FileNotFoundError:
         msg = f"ERROR: Llama.cpp executable not found: {command[0]}"
         logger.error(msg)
-        app_instance.call_from_thread(app_instance._update_llamacpp_log, f"[bold red]{msg}[/]\n")
+        app_instance.call_from_thread(
+            app_instance._update_llamacpp_log, f"[bold red]{msg}[/]\n"
+        )
         raise
     except Exception as err:
         msg = f"CRITICAL ERROR in Llama.cpp worker (persistent stream): {err} (Command: {quoted_command})"
         logger.opt(exception=True).error(msg)
-        app_instance.call_from_thread(app_instance._update_llamacpp_log, f"[bold red]{msg}[/]\n")
+        app_instance.call_from_thread(
+            app_instance._update_llamacpp_log, f"[bold red]{msg}[/]\n"
+        )
         raise
     finally:
-        logger.info(f"Llama.cpp WORKER (persistent stream): Worker function for command '{quoted_command}' finishing.")
+        logger.info(
+            f"Llama.cpp WORKER (persistent stream): Worker function for command '{quoted_command}' finishing."
+        )
         # Clear the process from the app instance when the worker finishes
         app_instance.call_from_thread(_set_llamacpp_process_on_app, app_instance, None)
         if process and process.poll() is None:
-            logger.warning(f"Llama.cpp WORKER (PID:{pid_str}): Process still running in finally. Terminating.")
+            logger.warning(
+                f"Llama.cpp WORKER (PID:{pid_str}): Process still running in finally. Terminating."
+            )
             process.terminate()
             try:
                 process.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                logger.error(f"Llama.cpp WORKER (PID:{pid_str}): Process kill failed after terminate timeout.")
+                logger.error(
+                    f"Llama.cpp WORKER (PID:{pid_str}): Process kill failed after terminate timeout."
+                )
                 process.kill()
 
 
 class ModelDownloadWorker(Worker):
     """Textual worker for downloading models using huggingface-cli.
-    
+
     This worker executes the huggingface-cli command to download models
     without adding a direct dependency on huggingface-hub.
     """
-    
+
     def __init__(self, app_instance: "TldwCli", command: List[str]):
         """
         Initialize the worker.
-        
+
         Args:
             app_instance: The application instance
             command: The command to execute
@@ -473,11 +629,11 @@ class ModelDownloadWorker(Worker):
         self.app_instance = app_instance
         self.command = command
         self.logger = getattr(app_instance, "loguru_logger", _loguru_fallback_logger)
-    
+
     async def run(self):
         """Run the model download process."""
         self.logger.info("Model download worker begins: %s", " ".join(self.command))
-        
+
         try:
             process = subprocess.Popen(
                 self.command,
@@ -487,27 +643,32 @@ class ModelDownloadWorker(Worker):
                 bufsize=1,
                 cwd=str(Path.home()),  # run in a writable location
             )
-            
+
             self.app_instance.call_from_thread(
                 self.app_instance._update_model_download_log,
-                f"Download started (PID: {process.pid})…\n")
-            
+                f"Download started (PID: {process.pid})…\n",
+            )
+
             _stream_process(self.app_instance, "_update_model_download_log", process)
             process.wait()
-            
+
             final_message = f"Download command exited with code: {process.returncode}\n"
             yield final_message
-            
+
         except FileNotFoundError:
             msg = "ERROR: huggingface‑cli (or specified executable) not found.\n"
             self.logger.error(msg.rstrip())
-            self.app_instance.call_from_thread(self.app_instance._update_model_download_log, msg)
+            self.app_instance.call_from_thread(
+                self.app_instance._update_model_download_log, msg
+            )
             yield msg
-            
+
         except Exception as err:  # pragma: no cover
             msg = f"ERROR in model‑download worker: {err}\n"
             self.logger.opt(exception=True).error(msg.rstrip())
-            self.app_instance.call_from_thread(self.app_instance._update_model_download_log, msg)
+            self.app_instance.call_from_thread(
+                self.app_instance._update_model_download_log, msg
+            )
             yield msg
 
 
@@ -516,7 +677,9 @@ class ModelDownloadWorker(Worker):
 ###############################################################################
 
 
-async def stream_worker_output_to_log(app: "TldwCli", worker: Worker, log_widget_id: str):
+async def stream_worker_output_to_log(
+    app: "TldwCli", worker: Worker, log_widget_id: str
+):
     """Forward *worker*'s yielded final messages to *log_widget_id*."""
 
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
@@ -544,7 +707,9 @@ async def stream_worker_output_to_log(app: "TldwCli", worker: Worker, log_widget
                 if worker.result is not None:
                     log_widget.write(f"Error details: {worker.result}")
     except QueryError:
-        logger.error("RichLog %s not found to attach worker %s", log_widget_id, worker.name)
+        logger.error(
+            "RichLog %s not found to attach worker %s", log_widget_id, worker.name
+        )
 
 
 ###############################################################################
@@ -552,7 +717,9 @@ async def stream_worker_output_to_log(app: "TldwCli", worker: Worker, log_widget
 ###############################################################################
 
 
-async def handle_start_llamafile_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_start_llamafile_server_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to start Llamafile server.")
 
@@ -575,7 +742,9 @@ async def handle_start_llamafile_server_button_pressed(app: "TldwCli", event: Bu
             exec_path_input.focus()
             return
         if not Path(exec_path).is_file():
-            app.notify(f"Llamafile executable not found at: {exec_path}", severity="error")
+            app.notify(
+                f"Llamafile executable not found at: {exec_path}", severity="error"
+            )
             exec_path_input.focus()
             return
 
@@ -601,27 +770,35 @@ async def handle_start_llamafile_server_button_pressed(app: "TldwCli", event: Bu
             command.extend(shlex.split(additional_args_str))
 
         log_output_widget.clear()
-        log_output_widget.write(f"Executing: {' '.join(shlex.quote(c) for c in command)}\n")
+        log_output_widget.write(
+            f"Executing: {' '.join(shlex.quote(c) for c in command)}\n"
+        )
 
         worker_callable = functools.partial(run_llamafile_server_worker, app, command)
 
-        logger.debug(f"Preparing to call app.run_worker for Llamafile with partial: {worker_callable}")
+        logger.debug(
+            f"Preparing to call app.run_worker for Llamafile with partial: {worker_callable}"
+        )
 
         app.run_worker(
             worker_callable,
             group="llamafile_server",
             description="Running Llamafile server process",
             exclusive=True,  # Typically one server instance
-            thread=True
+            thread=True,
             # NO 'args' or 'done' parameters
         )
         app.notify("Llamafile server starting…")
     except Exception as err:
-        logger.opt(exception=True).error(f"Error preparing to start Llamafile server: {err}")
+        logger.opt(exception=True).error(
+            f"Error preparing to start Llamafile server: {err}"
+        )
         app.notify("Error setting up Llamafile server start.", severity="error")
 
 
-async def handle_stop_llamafile_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_stop_llamafile_server_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to stop Llamafile server.")
 
@@ -629,54 +806,81 @@ async def handle_stop_llamafile_server_button_pressed(app: "TldwCli", event: But
     try:
         log_output_widget = app.query_one("#llamafile-log-output", RichLog)
     except QueryError:
-        logger.error("Failed to find #llamafile-log-output widget for stop server messages.")
+        logger.error(
+            "Failed to find #llamafile-log-output widget for stop server messages."
+        )
         # Attempt to notify even if log widget is missing
         app.notify("Log output widget for Llamafile not found.", severity="error")
         return  # Can't proceed meaningfully without log output for user feedback
 
-    process_to_stop = app.llamafile_server_process  # Assumes app.llamafile_server_process exists
+    process_to_stop = (
+        app.llamafile_server_process
+    )  # Assumes app.llamafile_server_process exists
 
     if process_to_stop and process_to_stop.poll() is None:
         pid = process_to_stop.pid
         logger.info(f"Attempting to stop Llamafile server process (PID: {pid}).")
-        if log_output_widget: log_output_widget.write(f"Stopping Llamafile server (PID: {pid})...\n")
+        if log_output_widget:
+            log_output_widget.write(f"Stopping Llamafile server (PID: {pid})...\n")
 
         process_to_stop.terminate()
         try:
             process_to_stop.wait(timeout=10)
             logger.info(f"Llamafile server process (PID: {pid}) terminated gracefully.")
-            if log_output_widget: log_output_widget.write(f"Llamafile server (PID: {pid}) stopped.\n")
+            if log_output_widget:
+                log_output_widget.write(f"Llamafile server (PID: {pid}) stopped.\n")
             app.notify("Llamafile server stopped.")
         except subprocess.TimeoutExpired:
-            logger.warning(f"Timeout waiting for Llamafile server (PID: {pid}) to terminate. Killing.")
-            if log_output_widget: log_output_widget.write(
-                f"Llamafile server (PID: {pid}) did not stop gracefully, killing...\n")
+            logger.warning(
+                f"Timeout waiting for Llamafile server (PID: {pid}) to terminate. Killing."
+            )
+            if log_output_widget:
+                log_output_widget.write(
+                    f"Llamafile server (PID: {pid}) did not stop gracefully, killing...\n"
+                )
             process_to_stop.kill()
             try:
                 process_to_stop.wait(timeout=5)
                 logger.info(f"Llamafile server process (PID: {pid}) killed.")
-                if log_output_widget: log_output_widget.write(f"Llamafile server (PID: {pid}) killed.\n")
+                if log_output_widget:
+                    log_output_widget.write(f"Llamafile server (PID: {pid}) killed.\n")
             except Exception as e_kill_wait:
-                logger.error(f"Error waiting for Llamafile server (PID: {pid}) to die after kill: {e_kill_wait}")
-                if log_output_widget: log_output_widget.write(
-                    f"Error ensuring Llamafile server (PID: {pid}) was killed: {e_kill_wait}\n")
+                logger.error(
+                    f"Error waiting for Llamafile server (PID: {pid}) to die after kill: {e_kill_wait}"
+                )
+                if log_output_widget:
+                    log_output_widget.write(
+                        f"Error ensuring Llamafile server (PID: {pid}) was killed: {e_kill_wait}\n"
+                    )
             app.notify("Llamafile server killed after timeout.", severity="warning")
         except Exception as e_term:
-            logger.opt(exception=True).error(f"Error during Llamafile server termination (PID: {pid}): {e_term}")
-            if log_output_widget: log_output_widget.write(f"Error stopping Llamafile server (PID: {pid}): {e_term}\n")
+            logger.opt(exception=True).error(
+                f"Error during Llamafile server termination (PID: {pid}): {e_term}"
+            )
+            if log_output_widget:
+                log_output_widget.write(
+                    f"Error stopping Llamafile server (PID: {pid}): {e_term}\n"
+                )
             app.notify(f"Error stopping Llamafile server: {e_term}", severity="error")
         finally:
             if app.llamafile_server_process is process_to_stop:
                 app.llamafile_server_process = None
-            logger.info(f"Cleared Llamafile server process reference (PID: {pid}) after stop attempt.")
+            logger.info(
+                f"Cleared Llamafile server process reference (PID: {pid}) after stop attempt."
+            )
             try:
                 app.query_one("#llamafile-start-server-button", Button).disabled = False
                 app.query_one("#llamafile-stop-server-button", Button).disabled = True
             except QueryError:
-                logger.warning("Could not find Llamafile server buttons to update after stop action.")
+                logger.warning(
+                    "Could not find Llamafile server buttons to update after stop action."
+                )
     else:
-        logger.info("Llamafile server is not running or process attribute is missing/stale.")
-        if log_output_widget: log_output_widget.write("Llamafile server is not currently running.\n")
+        logger.info(
+            "Llamafile server is not running or process attribute is missing/stale."
+        )
+        if log_output_widget:
+            log_output_widget.write("Llamafile server is not currently running.\n")
         app.notify("Llamafile server is not running.", severity="warning")
         if app.llamafile_server_process is not None:
             app.llamafile_server_process = None
@@ -684,7 +888,9 @@ async def handle_stop_llamafile_server_button_pressed(app: "TldwCli", event: But
             app.query_one("#llamafile-start-server-button", Button).disabled = False
             app.query_one("#llamafile-stop-server-button", Button).disabled = True
         except QueryError:
-            logger.warning("Could not find Llamafile server buttons to update (server not running).")
+            logger.warning(
+                "Could not find Llamafile server buttons to update (server not running)."
+            )
 
 
 ###############################################################################
@@ -692,7 +898,9 @@ async def handle_stop_llamafile_server_button_pressed(app: "TldwCli", event: But
 ###############################################################################
 
 
-async def handle_llamacpp_browse_exec_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_llamacpp_browse_exec_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Llama.cpp browse executable button pressed.")
 
@@ -702,28 +910,33 @@ async def handle_llamacpp_browse_exec_button_pressed(app: "TldwCli", event: Butt
             location=str(Path.home()),
             title="Select Llama.cpp executable (e.g. main, server.py)",
             filters=exec_filters,
-            context="llm_models"
+            context="llm_models",
         ),
-        callback=_make_path_update_callback(app, "llamacpp-exec-path")
+        callback=_make_path_update_callback(app, "llamacpp-exec-path"),
     )
 
 
-async def handle_llamacpp_browse_model_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_llamacpp_browse_model_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     gguf_filters = Filters(
         ("GGUF Models (*.gguf)", lambda p: p.suffix.lower() == ".gguf"),
-        ("All files (*.*)", lambda p: True))
+        ("All files (*.*)", lambda p: True),
+    )
     await app.push_screen(
         FileOpen(
             location=str(Path.home()),
             title="Select Llama.cpp Model (.gguf)",
             filters=gguf_filters,
-            context="llm_models"
+            context="llm_models",
         ),
-        callback=_make_path_update_callback(app, "llamacpp-model-path")
+        callback=_make_path_update_callback(app, "llamacpp-model-path"),
     )
 
 
-async def handle_start_llamacpp_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_start_llamacpp_server_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to start Llama.cpp server.")
 
@@ -772,29 +985,37 @@ async def handle_start_llamacpp_server_button_pressed(app: "TldwCli", event: But
             command.extend(shlex.split(additional_args_str))
 
         log_output_widget.clear()
-        log_output_widget.write(f"Executing: {' '.join(shlex.quote(c) for c in command)}\n")
+        log_output_widget.write(
+            f"Executing: {' '.join(shlex.quote(c) for c in command)}\n"
+        )
 
         worker_callable = functools.partial(run_llamacpp_server_worker, app, command)
 
         logger.debug(f"Type of 'app' object: {type(app)}")
         logger.debug(f"Bound 'app.run_worker' method: {app.run_worker}")
-        logger.debug(f"Preparing to call app.run_worker for Llama.cpp with partial: {worker_callable}")
+        logger.debug(
+            f"Preparing to call app.run_worker for Llama.cpp with partial: {worker_callable}"
+        )
 
         app.run_worker(
             worker_callable,
             group="llamacpp_server",
             description="Running Llama.cpp server process",
             exclusive=True,
-            thread=True
+            thread=True,
         )
 
         app.notify("Llama.cpp server starting…")
     except Exception as err:
-        logger.opt(exception=True).error(f"Error preparing to start Llama.cpp server: {err}")
+        logger.opt(exception=True).error(
+            f"Error preparing to start Llama.cpp server: {err}"
+        )
         app.notify("Error setting up Llama.cpp server start.", severity="error")
 
 
-async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_stop_llamacpp_server_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     """Stops the Llama.cpp server process if it is running."""
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("User requested to stop Llama.cpp server.")
@@ -803,16 +1024,20 @@ async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Butt
     try:
         log_output_widget = app.query_one("#llamacpp-log-output", RichLog)
 
-        if hasattr(app, 'llamacpp_server_process') and \
-                app.llamacpp_server_process and \
-                app.llamacpp_server_process.poll() is None:
+        if (
+            hasattr(app, "llamacpp_server_process")
+            and app.llamacpp_server_process
+            and app.llamacpp_server_process.poll() is None
+        ):
             pid = app.llamacpp_server_process.pid
             logger.info(f"Stopping Llama.cpp server (PID: {pid}).")
             log_output_widget.write(f"Stopping Llama.cpp server (PID: {pid})...\n")
 
             app.llamacpp_server_process.terminate()
             try:
-                app.llamacpp_server_process.wait(timeout=5)  # Wait for graceful termination
+                app.llamacpp_server_process.wait(
+                    timeout=5
+                )  # Wait for graceful termination
                 logger.info("Llama.cpp server terminated.")
                 log_output_widget.write("Llama.cpp server stopped successfully.\n")
                 app.notify("Llama.cpp server stopped.")
@@ -822,8 +1047,12 @@ async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Butt
                 start_button.disabled = False
                 stop_button.disabled = True
             except subprocess.TimeoutExpired:
-                logger.warning(f"Llama.cpp server (PID: {pid}) did not terminate gracefully. Killing.")
-                log_output_widget.write(f"Llama.cpp server (PID: {pid}) did not stop in time, killing...\n")
+                logger.warning(
+                    f"Llama.cpp server (PID: {pid}) did not terminate gracefully. Killing."
+                )
+                log_output_widget.write(
+                    f"Llama.cpp server (PID: {pid}) did not stop in time, killing...\n"
+                )
                 app.llamacpp_server_process.kill()  # Force kill
                 app.llamacpp_server_process.wait()  # Wait for kill to complete
                 logger.info("Llama.cpp server killed.")
@@ -835,20 +1064,32 @@ async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Butt
                 start_button.disabled = False
                 stop_button.disabled = True
             except Exception as e:  # Catch other errors during wait/terminate like process already exited
-                logger.opt(exception=True).error(f"Error during Llama.cpp server termination (PID: {pid}): {e}")
-                log_output_widget.write(f"Error stopping Llama.cpp server (PID: {pid}): {e}\n")
+                logger.opt(exception=True).error(
+                    f"Error during Llama.cpp server termination (PID: {pid}): {e}"
+                )
+                log_output_widget.write(
+                    f"Error stopping Llama.cpp server (PID: {pid}): {e}\n"
+                )
                 app.notify(f"Error stopping Llama.cpp server: {e}", severity="error")
                 # Attempt to reset buttons on error
                 try:
-                    start_button = app.query_one("#llamacpp-start-server-button", Button)
+                    start_button = app.query_one(
+                        "#llamacpp-start-server-button", Button
+                    )
                     stop_button = app.query_one("#llamacpp-stop-server-button", Button)
                     start_button.disabled = False
                     stop_button.disabled = True
                 except QueryError as q_err:  # pragma: no cover
-                    logger.opt(exception=True).error(f"Failed to query buttons to reset state after termination error: {q_err}")
+                    logger.opt(exception=True).error(
+                        f"Failed to query buttons to reset state after termination error: {q_err}"
+                    )
         else:
-            logger.info("Llama.cpp server is not running or process attribute is missing.")
-            log_output_widget.write("Llama.cpp server is not running or was already stopped.\n")
+            logger.info(
+                "Llama.cpp server is not running or process attribute is missing."
+            )
+            log_output_widget.write(
+                "Llama.cpp server is not running or was already stopped.\n"
+            )
             app.notify("Llama.cpp server is not running.", severity="warning")
             # Update button states
             start_button = app.query_one("#llamacpp-start-server-button", Button)
@@ -857,8 +1098,12 @@ async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Butt
             stop_button.disabled = True
 
     except QueryError as e:  # pragma: no cover
-        logger.opt(exception=True).error(f"Could not find #llamacpp-log-output or a button: {e}")
-        app.notify("Error: UI widget not found during stop operation.", severity="error")
+        logger.opt(exception=True).error(
+            f"Could not find #llamacpp-log-output or a button: {e}"
+        )
+        app.notify(
+            "Error: UI widget not found during stop operation.", severity="error"
+        )
         # Attempt to reset buttons even if log widget is missing
         try:
             start_button = app.query_one("#llamacpp-start-server-button", Button)
@@ -866,11 +1111,15 @@ async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Butt
             start_button.disabled = False
             stop_button.disabled = True
         except QueryError as q_err:  # pragma: no cover
-            logger.opt(exception=True).error(f"Failed to query buttons to reset state after QueryError: {q_err}")
+            logger.opt(exception=True).error(
+                f"Failed to query buttons to reset state after QueryError: {q_err}"
+            )
     except Exception as e:  # Catch any other unexpected errors
         logger.opt(exception=True).error(f"Error stopping Llama.cpp server: {e}")
         if log_output_widget:  # Check if log_widget was found before error
-            log_output_widget.write(f"An unexpected error occurred while stopping the server: {e}\n")
+            log_output_widget.write(
+                f"An unexpected error occurred while stopping the server: {e}\n"
+            )
         app.notify(f"An unexpected error occurred: {e}", severity="error")
         # Attempt to reset buttons on generic error
         try:
@@ -879,9 +1128,11 @@ async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Butt
             start_button.disabled = False
             stop_button.disabled = True
         except QueryError as q_err:  # pragma: no cover
-            logger.opt(exception=True).error(f"Failed to query buttons to reset state after generic error: {q_err}")
+            logger.opt(exception=True).error(
+                f"Failed to query buttons to reset state after generic error: {q_err}"
+            )
     finally:
-        if hasattr(app, 'llamacpp_server_process'):
+        if hasattr(app, "llamacpp_server_process"):
             app.llamacpp_server_process = None
         logger.debug("Set app.llamacpp_server_process to None.")
         # Final attempt to ensure buttons are in a consistent state
@@ -889,14 +1140,18 @@ async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Butt
             start_button = app.query_one("#llamacpp-start-server-button", Button)
             stop_button = app.query_one("#llamacpp-stop-server-button", Button)
             # If server process is None here, it means it's stopped or was never started.
-            is_running = hasattr(app, 'llamacpp_server_process') and \
-                         app.llamacpp_server_process and \
-                         app.llamacpp_server_process.poll() is None
+            is_running = (
+                hasattr(app, "llamacpp_server_process")
+                and app.llamacpp_server_process
+                and app.llamacpp_server_process.poll() is None
+            )
 
             start_button.disabled = is_running
             stop_button.disabled = not is_running
         except QueryError as q_err:  # pragma: no cover
-            logger.opt(exception=True).error(f"Failed to query buttons in finally block: {q_err}")
+            logger.opt(exception=True).error(
+                f"Failed to query buttons in finally block: {q_err}"
+            )
 
 
 ###############################################################################
@@ -904,19 +1159,23 @@ async def handle_stop_llamacpp_server_button_pressed(app: "TldwCli", event: Butt
 ###############################################################################
 
 
-async def handle_browse_models_dir_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_browse_models_dir_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     """Open a directory picker so the user can choose the *models* directory."""
     await app.push_screen(
         FileOpen(
             location=str(Path.home()),
             title="Select Models Directory (select any file inside)",
-            context="llm_models"
+            context="llm_models",
         ),
-        callback=_make_path_update_callback(app, "models-dir-path", is_directory=True)
+        callback=_make_path_update_callback(app, "models-dir-path", is_directory=True),
     )
 
 
-async def handle_start_model_download_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
+async def handle_start_model_download_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     """Validate inputs and launch *run_model_download_worker*."""
 
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
@@ -937,7 +1196,10 @@ async def handle_start_model_download_button_pressed(app: "TldwCli", event: Butt
             models_dir_input.focus()
             return
         if not Path(models_dir).is_dir():
-            app.notify(f"Models directory not found or is not a directory: {models_dir}", severity="error")
+            app.notify(
+                f"Models directory not found or is not a directory: {models_dir}",
+                severity="error",
+            )
             models_dir_input.focus()
             return
         if not url_or_repo:
@@ -950,7 +1212,9 @@ async def handle_start_model_download_button_pressed(app: "TldwCli", event: Butt
             "download",
             url_or_repo,
             "--local-dir",
-            str(Path(models_dir) / url_or_repo.split("/")[-1]),  # Download into a subfolder
+            str(
+                Path(models_dir) / url_or_repo.split("/")[-1]
+            ),  # Download into a subfolder
             "--local-dir-use-symlinks",
             "False",  # Explicitly False for actual copy
         ]
@@ -967,49 +1231,64 @@ async def handle_start_model_download_button_pressed(app: "TldwCli", event: Butt
             exclusive=False,  # Can run multiple downloads
             done=lambda w: app.call_from_thread(
                 stream_worker_output_to_log, app, w, "#model-download-log-output"
-            ))
+            ),
+        )
         app.notify("Model download started…")
     except Exception as err:  # pragma: no cover
         logger.opt(exception=True).error("Error preparing model download: %s", err)
         app.notify("Error setting up model download.", severity="error")
 
-async def populate_llm_help_texts(app: 'TldwCli') -> None:
+
+async def populate_llm_help_texts(app: "TldwCli") -> None:
     """Populates the RichLog widgets with help text for LLM arguments."""
     app.loguru_logger.info("Populating LLM argument help texts...")
-    
+
     # Check if LLM Management Window exists first
     try:
         llm_window = app.query_one("#llm_management-window")
     except QueryError:
-        app.loguru_logger.debug("LLM Management Window not found, skipping help text population.")
+        app.loguru_logger.debug(
+            "LLM Management Window not found, skipping help text population."
+        )
         return
-    
+
     # Wait a bit for widgets to be fully mounted
     import asyncio
+
     await asyncio.sleep(0.1)
-    
+
     try:
         # Llama.cpp - only populate if the view is active
         if app.llm_active_view == "llm-view-llama-cpp":
-            llamacpp_help_widget = llm_window.query_one("#llamacpp-args-help-display", RichLog)
+            llamacpp_help_widget = llm_window.query_one(
+                "#llamacpp-args-help-display", RichLog
+            )
             llamacpp_help_widget.clear()  # Clear any old content
             llamacpp_help_widget.write(LLAMA_CPP_SERVER_ARGS_HELP_TEXT)
             app.loguru_logger.debug("Populated Llama.cpp args help.")
     except QueryError:
         app.loguru_logger.debug("Failed to find #llamacpp-args-help-display widget.")
     except Exception as e:
-        app.loguru_logger.opt(exception=True).error(f"Error populating Llama.cpp help: {e}")
+        app.loguru_logger.opt(exception=True).error(
+            f"Error populating Llama.cpp help: {e}"
+        )
     try:
         # Llamafile - only populate if the view is active
         if app.llm_active_view == "llm-view-llamafile":
-            llamafile_help_widget = llm_window.query_one("#llamafile-args-help-display", RichLog)
+            llamafile_help_widget = llm_window.query_one(
+                "#llamafile-args-help-display", RichLog
+            )
             llamafile_help_widget.clear()  # Clear existing content
-            llamafile_help_widget.write(LLAMAFILE_SERVER_ARGS_HELP_TEXT)  # Write new content
+            llamafile_help_widget.write(
+                LLAMAFILE_SERVER_ARGS_HELP_TEXT
+            )  # Write new content
             app.loguru_logger.debug("Populated Llamafile args help.")
     except QueryError:
         app.loguru_logger.debug("Failed to find #llamafile-args-help-display widget.")
     except Exception as e:
-        app.loguru_logger.opt(exception=True).error(f"Error populating Llamafile help: {e}")
+        app.loguru_logger.opt(exception=True).error(
+            f"Error populating Llamafile help: {e}"
+        )
     try:
         # MLX-LM - only populate if the view is active
         if app.llm_active_view == "llm-view-mlx-lm":
@@ -1020,7 +1299,10 @@ async def populate_llm_help_texts(app: 'TldwCli') -> None:
     except QueryError:
         app.loguru_logger.debug("Failed to find #mlx-args-help-display widget.")
     except Exception as e:
-        app.loguru_logger.opt(exception=True).error(f"Error populating MLX-LM help: {e}")
+        app.loguru_logger.opt(exception=True).error(
+            f"Error populating MLX-LM help: {e}"
+        )
+
 
 # --- Button Handler Map ---
 LLM_MANAGEMENT_BUTTON_HANDLERS = {

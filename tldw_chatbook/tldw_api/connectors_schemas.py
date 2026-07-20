@@ -7,14 +7,18 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ConnectorProviderName = Literal["drive", "notion", "gmail", "onedrive", "zotero"]
 ConnectorAuthType = Literal["oauth1", "oauth2", "token"]
-ConnectorSourceType = Literal["folder", "file", "page", "database", "link", "collection"]
+ConnectorSourceType = Literal[
+    "folder", "file", "page", "database", "link", "collection"
+]
 
 
 def _validate_connector_source_type(provider: str, type_: str) -> None:
     normalized_provider = str(provider or "").strip().lower()
     normalized_type = str(type_ or "").strip().lower()
     if normalized_type == "collection" and normalized_provider != "zotero":
-        raise ValueError("Connector source type 'collection' is only supported for provider 'zotero'.")
+        raise ValueError(
+            "Connector source type 'collection' is only supported for provider 'zotero'."
+        )
     if normalized_provider == "zotero" and normalized_type != "collection":
         raise ValueError("Zotero sources must use type 'collection'.")
 
@@ -97,7 +101,9 @@ class ConnectorImportJob(BaseModel):
     type: str = "import"
     status: Literal["queued", "running", "succeeded", "failed", "canceled"] = "queued"
     progress_pct: int = 0
-    counts: dict[str, int] = Field(default_factory=lambda: {"processed": 0, "skipped": 0, "failed": 0})
+    counts: dict[str, int] = Field(
+        default_factory=lambda: {"processed": 0, "skipped": 0, "failed": 0}
+    )
     started_at: str | None = None
     finished_at: str | None = None
     error: str | None = None
@@ -110,7 +116,9 @@ class ConnectorSyncJobSummary(BaseModel):
     type: str = "import"
     status: str
     progress_pct: int = 0
-    counts: dict[str, int] = Field(default_factory=lambda: {"processed": 0, "skipped": 0, "failed": 0})
+    counts: dict[str, int] = Field(
+        default_factory=lambda: {"processed": 0, "skipped": 0, "failed": 0}
+    )
 
     model_config = ConfigDict(from_attributes=True, extra="allow")
 

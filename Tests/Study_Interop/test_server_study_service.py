@@ -42,7 +42,13 @@ class FakeClient:
         self.calls = []
 
     async def update_flashcard_deck(self, deck_id, request_data):
-        self.calls.append(("update_flashcard_deck", deck_id, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "update_flashcard_deck",
+                deck_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return FlashcardDeckResponse.model_validate(
             {
                 "id": deck_id,
@@ -79,10 +85,20 @@ class FakeClient:
 
     async def get_flashcard_asset_content(self, asset_uuid):
         self.calls.append(("get_flashcard_asset_content", asset_uuid))
-        return ReadingExportResponse(content=b"pngdata", content_type="image/png", filename="cell.png")
+        return ReadingExportResponse(
+            content=b"pngdata", content_type="image/png", filename="cell.png"
+        )
 
     async def create_flashcards_bulk(self, request_data):
-        self.calls.append(("create_flashcards_bulk", [item.model_dump(mode="json", exclude_none=True) for item in request_data]))
+        self.calls.append(
+            (
+                "create_flashcards_bulk",
+                [
+                    item.model_dump(mode="json", exclude_none=True)
+                    for item in request_data
+                ],
+            )
+        )
         return FlashcardListResponse.model_validate(
             {
                 "items": [
@@ -112,7 +128,15 @@ class FakeClient:
         )
 
     async def update_flashcards_bulk(self, request_data):
-        self.calls.append(("update_flashcards_bulk", [item.model_dump(mode="json", exclude_none=True) for item in request_data]))
+        self.calls.append(
+            (
+                "update_flashcards_bulk",
+                [
+                    item.model_dump(mode="json", exclude_none=True)
+                    for item in request_data
+                ],
+            )
+        )
         return FlashcardBulkUpdateResponse.model_validate(
             {
                 "results": [
@@ -168,11 +192,23 @@ class FakeClient:
         )
 
     async def reset_flashcard_scheduling(self, card_uuid, request_data):
-        self.calls.append(("reset_flashcard_scheduling", card_uuid, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "reset_flashcard_scheduling",
+                card_uuid,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return await self.get_flashcard(card_uuid)
 
     async def set_flashcard_tags(self, card_uuid, request_data):
-        self.calls.append(("set_flashcard_tags", card_uuid, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "set_flashcard_tags",
+                card_uuid,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return await self.get_flashcard(card_uuid)
 
     async def get_flashcard_tags(self, card_uuid):
@@ -180,7 +216,13 @@ class FakeClient:
         return {"uuid": card_uuid, "tags": ["science", "biology"]}
 
     async def preview_structured_qa_import(self, request_data, **limits):
-        self.calls.append(("preview_structured_qa_import", request_data.model_dump(mode="json"), limits))
+        self.calls.append(
+            (
+                "preview_structured_qa_import",
+                request_data.model_dump(mode="json"),
+                limits,
+            )
+        )
         return StructuredQaImportPreviewResponse.model_validate(
             {
                 "drafts": [
@@ -199,16 +241,34 @@ class FakeClient:
         )
 
     async def import_flashcards(self, request_data, **limits):
-        self.calls.append(("import_flashcards", request_data.model_dump(mode="json", exclude_none=True), limits))
-        return {"imported": 1, "items": [{"uuid": CARD_UUID, "deck_id": 9}], "errors": []}
+        self.calls.append(
+            (
+                "import_flashcards",
+                request_data.model_dump(mode="json", exclude_none=True),
+                limits,
+            )
+        )
+        return {
+            "imported": 1,
+            "items": [{"uuid": CARD_UUID, "deck_id": 9}],
+            "errors": [],
+        }
 
     async def import_flashcards_json(self, file, **limits):
         self.calls.append(("import_flashcards_json", file, limits))
-        return {"imported": 1, "items": [{"uuid": CARD_UUID, "deck_id": 9}], "errors": []}
+        return {
+            "imported": 1,
+            "items": [{"uuid": CARD_UUID, "deck_id": 9}],
+            "errors": [],
+        }
 
     async def import_flashcards_apkg(self, file, **limits):
         self.calls.append(("import_flashcards_apkg", file, limits))
-        return {"imported": 1, "items": [{"uuid": CARD_UUID, "deck_id": 9}], "errors": []}
+        return {
+            "imported": 1,
+            "items": [{"uuid": CARD_UUID, "deck_id": 9}],
+            "errors": [],
+        }
 
     async def list_flashcard_tag_suggestions(self, *, q=None, limit=50):
         self.calls.append(("list_flashcard_tag_suggestions", q, limit))
@@ -216,8 +276,17 @@ class FakeClient:
             {"items": [{"tag": "science", "count": 12}], "count": 1}
         )
 
-    async def get_flashcard_analytics_summary(self, *, deck_id=None, workspace_id=None, include_workspace_items=None):
-        self.calls.append(("get_flashcard_analytics_summary", deck_id, workspace_id, include_workspace_items))
+    async def get_flashcard_analytics_summary(
+        self, *, deck_id=None, workspace_id=None, include_workspace_items=None
+    ):
+        self.calls.append(
+            (
+                "get_flashcard_analytics_summary",
+                deck_id,
+                workspace_id,
+                include_workspace_items,
+            )
+        )
         return FlashcardAnalyticsSummaryResponse.model_validate(
             {
                 "reviewed_today": 4,
@@ -237,8 +306,12 @@ class FakeClient:
             }
         )
 
-    async def list_flashcard_review_sessions(self, *, deck_id=None, scope_key=None, status=None, limit=20):
-        self.calls.append(("list_flashcard_review_sessions", deck_id, scope_key, status, limit))
+    async def list_flashcard_review_sessions(
+        self, *, deck_id=None, scope_key=None, status=None, limit=20
+    ):
+        self.calls.append(
+            ("list_flashcard_review_sessions", deck_id, scope_key, status, limit)
+        )
         return [
             FlashcardReviewSessionSummary.model_validate(
                 {
@@ -289,7 +362,13 @@ class FakeClient:
         )
 
     async def respond_flashcard_assistant(self, card_uuid, request_data):
-        self.calls.append(("respond_flashcard_assistant", card_uuid, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "respond_flashcard_assistant",
+                card_uuid,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return StudyAssistantRespondResponse.model_validate(
             {
                 "thread": {
@@ -323,16 +402,32 @@ class FakeClient:
         )
 
     async def generate_flashcards(self, request_data):
-        self.calls.append(("generate_flashcards", request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "generate_flashcards",
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return FlashcardGenerateResponse.model_validate(
             {
-                "flashcards": [{"front": "Generated Q", "back": "Generated A", "tags": ["generated"]}],
+                "flashcards": [
+                    {
+                        "front": "Generated Q",
+                        "back": "Generated A",
+                        "tags": ["generated"],
+                    }
+                ],
                 "count": 1,
             }
         )
 
     async def create_flashcard_template(self, request_data):
-        self.calls.append(("create_flashcard_template", request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "create_flashcard_template",
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return FlashcardTemplateResponse.model_validate(
             {
                 "id": 3,
@@ -383,7 +478,13 @@ class FakeClient:
         )
 
     async def update_flashcard_template(self, template_id, request_data):
-        self.calls.append(("update_flashcard_template", template_id, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "update_flashcard_template",
+                template_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return FlashcardTemplateResponse.model_validate(
             {
                 "id": template_id,
@@ -402,7 +503,13 @@ class FakeClient:
         return {"deleted": True}
 
     async def update_flashcard(self, card_uuid, request_data):
-        self.calls.append(("update_flashcard", card_uuid, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "update_flashcard",
+                card_uuid,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return FlashcardResponse.model_validate(
             {
                 "uuid": card_uuid,
@@ -430,7 +537,12 @@ class FakeClient:
         return {"deleted": True}
 
     async def create_study_pack_job(self, request_data):
-        self.calls.append(("create_study_pack_job", request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "create_study_pack_job",
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return StudyPackJobAcceptedResponse.model_validate(
             {
                 "job": {
@@ -524,7 +636,12 @@ class FakeClient:
     async def get_study_suggestion_status(self, *, anchor_type, anchor_id):
         self.calls.append(("get_study_suggestion_status", anchor_type, anchor_id))
         return SuggestionStatusResponse.model_validate(
-            {"anchor_type": anchor_type, "anchor_id": anchor_id, "status": "ready", "snapshot_id": 11}
+            {
+                "anchor_type": anchor_type,
+                "anchor_id": anchor_id,
+                "status": "ready",
+                "snapshot_id": 11,
+            }
         )
 
     async def get_study_suggestion_snapshot(self, snapshot_id):
@@ -546,11 +663,25 @@ class FakeClient:
         )
 
     async def refresh_study_suggestion_snapshot(self, snapshot_id, request_data):
-        self.calls.append(("refresh_study_suggestion_snapshot", snapshot_id, request_data.model_dump(mode="json", exclude_none=True)))
-        return SuggestionJobAcceptedResponse.model_validate({"job": {"id": 44, "status": "queued"}})
+        self.calls.append(
+            (
+                "refresh_study_suggestion_snapshot",
+                snapshot_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
+        return SuggestionJobAcceptedResponse.model_validate(
+            {"job": {"id": 44, "status": "queued"}}
+        )
 
     async def trigger_study_suggestion_action(self, snapshot_id, request_data):
-        self.calls.append(("trigger_study_suggestion_action", snapshot_id, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "trigger_study_suggestion_action",
+                snapshot_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return SuggestionActionResponse.model_validate(
             {
                 "disposition": "generated",
@@ -673,7 +804,9 @@ async def test_server_study_service_moves_flashcards_via_update_flashcard():
     client = FakeClient()
     service = ServerStudyService(client=client)
 
-    moved = await service.move_flashcard(CARD_UUID, target_deck_id=9, expected_version=2)
+    moved = await service.move_flashcard(
+        CARD_UUID, target_deck_id=9, expected_version=2
+    )
 
     assert moved["uuid"] == CARD_UUID
     assert moved["deck_id"] == 9
@@ -712,7 +845,9 @@ async def test_server_study_service_wraps_broad_flashcard_helper_endpoints():
     client = FakeClient()
     service = ServerStudyService(client=client)
 
-    deck = await service.update_deck(9, name="Biology Updated", description="Cells and genetics", expected_version=3)
+    deck = await service.update_deck(
+        9, name="Biology Updated", description="Cells and genetics", expected_version=3
+    )
     card = await service.get_flashcard(CARD_UUID)
     reset = await service.reset_flashcard_scheduling(CARD_UUID, expected_version=3)
     tagged = await service.set_flashcard_tags(CARD_UUID, tags=["science", "biology"])
@@ -727,7 +862,9 @@ async def test_server_study_service_wraps_broad_flashcard_helper_endpoints():
         message="Why?",
         expected_thread_version=1,
     )
-    generated = await service.generate_flashcards(text="Cells divide by mitosis.", num_cards=1, focus_topics=["mitosis"])
+    generated = await service.generate_flashcards(
+        text="Cells divide by mitosis.", num_cards=1, focus_topics=["mitosis"]
+    )
 
     assert deck["version"] == 4
     assert card["uuid"] == CARD_UUID
@@ -741,7 +878,15 @@ async def test_server_study_service_wraps_broad_flashcard_helper_endpoints():
     assert assistant_response["assistant_message"]["content"] == "Because."
     assert generated["flashcards"][0]["front"] == "Generated Q"
     assert client.calls == [
-        ("update_flashcard_deck", 9, {"name": "Biology Updated", "description": "Cells and genetics", "expected_version": 3}),
+        (
+            "update_flashcard_deck",
+            9,
+            {
+                "name": "Biology Updated",
+                "description": "Cells and genetics",
+                "expected_version": 3,
+            },
+        ),
         ("get_flashcard", CARD_UUID),
         ("reset_flashcard_scheduling", CARD_UUID, {"expected_version": 3}),
         ("get_flashcard", CARD_UUID),
@@ -752,7 +897,16 @@ async def test_server_study_service_wraps_broad_flashcard_helper_endpoints():
         ("get_flashcard_analytics_summary", 9, None, None),
         ("list_flashcard_review_sessions", 9, None, "active", 2),
         ("get_flashcard_assistant", CARD_UUID),
-        ("respond_flashcard_assistant", CARD_UUID, {"action": "follow_up", "message": "Why?", "input_modality": "text", "expected_thread_version": 1}),
+        (
+            "respond_flashcard_assistant",
+            CARD_UUID,
+            {
+                "action": "follow_up",
+                "message": "Why?",
+                "input_modality": "text",
+                "expected_thread_version": 1,
+            },
+        ),
         (
             "generate_flashcards",
             {
@@ -771,7 +925,9 @@ async def test_server_study_service_wraps_flashcard_bulk_import_export_and_asset
     client = FakeClient()
     service = ServerStudyService(client=client)
 
-    uploaded = await service.upload_flashcard_asset(("cell.png", b"pngdata", "image/png"))
+    uploaded = await service.upload_flashcard_asset(
+        ("cell.png", b"pngdata", "image/png")
+    )
     content = await service.get_flashcard_asset_content(CARD_UUID)
     created_bulk = await service.create_flashcards_bulk(
         [{"deck_id": 9, "front": "Question", "back": "Answer", "tags": ["science"]}]
@@ -779,11 +935,21 @@ async def test_server_study_service_wraps_flashcard_bulk_import_export_and_asset
     updated_bulk = await service.update_flashcards_bulk(
         [{"uuid": CARD_UUID, "front": "Updated", "expected_version": 1}]
     )
-    preview = await service.preview_structured_qa_import("Q: What powers the cell?\nA: ATP", max_lines=10)
-    imported = await service.import_flashcards("Deck\tFront\tBack\nBio\tQ\tA", has_header=True)
-    imported_json = await service.import_flashcards_json(("cards.json", b"[]", "application/json"), max_items=10)
-    imported_apkg = await service.import_flashcards_apkg(("cards.apkg", b"apkg", "application/octet-stream"))
-    exported = await service.export_flashcards(deck_id=9, format="tsv", delimiter="\t", include_header=True)
+    preview = await service.preview_structured_qa_import(
+        "Q: What powers the cell?\nA: ATP", max_lines=10
+    )
+    imported = await service.import_flashcards(
+        "Deck\tFront\tBack\nBio\tQ\tA", has_header=True
+    )
+    imported_json = await service.import_flashcards_json(
+        ("cards.json", b"[]", "application/json"), max_items=10
+    )
+    imported_apkg = await service.import_flashcards_apkg(
+        ("cards.apkg", b"apkg", "application/octet-stream")
+    )
+    exported = await service.export_flashcards(
+        deck_id=9, format="tsv", delimiter="\t", include_header=True
+    )
 
     assert uploaded["asset_uuid"] == CARD_UUID
     assert content.content == b"pngdata"
@@ -797,12 +963,46 @@ async def test_server_study_service_wraps_flashcard_bulk_import_export_and_asset
     assert client.calls == [
         ("upload_flashcard_asset", ("cell.png", b"pngdata", "image/png")),
         ("get_flashcard_asset_content", CARD_UUID),
-        ("create_flashcards_bulk", [{"deck_id": 9, "front": "Question", "back": "Answer", "tags": ["science"], "source_ref_type": "manual"}]),
-        ("update_flashcards_bulk", [{"front": "Updated", "expected_version": 1, "uuid": CARD_UUID}]),
-        ("preview_structured_qa_import", {"content": "Q: What powers the cell?\nA: ATP"}, {"max_lines": 10, "max_line_length": None, "max_field_length": None}),
-        ("import_flashcards", {"content": "Deck\tFront\tBack\nBio\tQ\tA", "delimiter": "\t", "has_header": True}, {"max_lines": None, "max_line_length": None, "max_field_length": None}),
-        ("import_flashcards_json", ("cards.json", b"[]", "application/json"), {"max_items": 10, "max_field_length": None}),
-        ("import_flashcards_apkg", ("cards.apkg", b"apkg", "application/octet-stream"), {"max_items": None, "max_field_length": None}),
+        (
+            "create_flashcards_bulk",
+            [
+                {
+                    "deck_id": 9,
+                    "front": "Question",
+                    "back": "Answer",
+                    "tags": ["science"],
+                    "source_ref_type": "manual",
+                }
+            ],
+        ),
+        (
+            "update_flashcards_bulk",
+            [{"front": "Updated", "expected_version": 1, "uuid": CARD_UUID}],
+        ),
+        (
+            "preview_structured_qa_import",
+            {"content": "Q: What powers the cell?\nA: ATP"},
+            {"max_lines": 10, "max_line_length": None, "max_field_length": None},
+        ),
+        (
+            "import_flashcards",
+            {
+                "content": "Deck\tFront\tBack\nBio\tQ\tA",
+                "delimiter": "\t",
+                "has_header": True,
+            },
+            {"max_lines": None, "max_line_length": None, "max_field_length": None},
+        ),
+        (
+            "import_flashcards_json",
+            ("cards.json", b"[]", "application/json"),
+            {"max_items": 10, "max_field_length": None},
+        ),
+        (
+            "import_flashcards_apkg",
+            ("cards.apkg", b"apkg", "application/octet-stream"),
+            {"max_items": None, "max_field_length": None},
+        ),
         (
             "export_flashcards",
             {
@@ -841,7 +1041,9 @@ async def test_server_study_service_wraps_flashcard_template_endpoints():
     )
     listed = await service.list_flashcard_templates(limit=5, offset=1)
     fetched = await service.get_flashcard_template(3)
-    updated = await service.update_flashcard_template(3, name="Updated science", expected_version=1)
+    updated = await service.update_flashcard_template(
+        3, name="Updated science", expected_version=1
+    )
     deleted = await service.delete_flashcard_template(3, expected_version=2)
 
     assert created["id"] == 3
@@ -869,14 +1071,20 @@ async def test_server_study_service_wraps_flashcard_template_endpoints():
         ),
         ("list_flashcard_templates", 5, 1),
         ("get_flashcard_template", 3),
-        ("update_flashcard_template", 3, {"name": "Updated science", "expected_version": 1}),
+        (
+            "update_flashcard_template",
+            3,
+            {"name": "Updated science", "expected_version": 1},
+        ),
         ("delete_flashcard_template", 3, 2),
     ]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("expected_version", [0, -1])
-async def test_server_study_service_rejects_non_positive_expected_version_for_delete(expected_version):
+async def test_server_study_service_rejects_non_positive_expected_version_for_delete(
+    expected_version,
+):
     client = FakeClient()
     service = ServerStudyService(client=client)
 
@@ -884,7 +1092,9 @@ async def test_server_study_service_rejects_non_positive_expected_version_for_de
         ValueError,
         match="expected_version must be >= 1 for server flashcard deletion\\.",
     ):
-        await service.delete_flashcard("card-server-1", expected_version=expected_version)
+        await service.delete_flashcard(
+            "card-server-1", expected_version=expected_version
+        )
 
     assert client.calls == []
 
@@ -927,7 +1137,14 @@ async def test_server_study_service_wraps_study_pack_job_endpoints():
                 "title": "Cell biology pack",
                 "workspace_id": "ws-1",
                 "deck_mode": "new",
-                "source_items": [{"source_type": "note", "source_id": "note-1", "label": "Notes", "locator": {}}],
+                "source_items": [
+                    {
+                        "source_type": "note",
+                        "source_id": "note-1",
+                        "label": "Notes",
+                        "locator": {},
+                    }
+                ],
             },
         ),
         ("list_study_pack_jobs", "queued", 25),
@@ -944,7 +1161,9 @@ async def test_server_study_service_wraps_study_suggestion_endpoints():
 
     status = await service.get_study_suggestion_status(anchor_type="deck", anchor_id=7)
     snapshot = await service.get_study_suggestion_snapshot(11)
-    refresh = await service.refresh_study_suggestion_snapshot(11, reason="user_requested")
+    refresh = await service.refresh_study_suggestion_snapshot(
+        11, reason="user_requested"
+    )
     action = await service.trigger_study_suggestion_action(
         11,
         target_service="quiz",
@@ -1007,7 +1226,9 @@ async def test_server_study_service_enforces_remote_study_pack_and_suggestion_ac
         has_explicit_selection=True,
     )
 
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "study.packs.jobs.launch.server",
         "study.packs.jobs.list.server",
         "study.packs.jobs.observe.server",
