@@ -10209,6 +10209,7 @@ class LibraryScreen(BaseAppScreen):
             return
         submit(
             source_path=submitted_source,
+            ingest_options=self._build_ingest_options_snapshot(),
             title=self._safe_text(form.title, max_length=300),
             author=self._safe_text(form.author, max_length=200),
             keywords=parse_keywords(form.keywords),
@@ -10219,6 +10220,28 @@ class LibraryScreen(BaseAppScreen):
         form.path = ""
         form.title = ""
         self.refresh(recompose=True)
+
+    def _build_ingest_options_snapshot(self) -> dict[str, dict[str, Any]]:
+        """Capture the current per-type ingestion options as a snapshot.
+
+        Returns a shallow copy of ``self._library_ingest_form.type_options``,
+        with the top-level generic toggles (analyze, chunk, chunk_size)
+        merged into the ``generic`` group so the downstream pipeline has a
+        single canonical options map.
+
+        Returns:
+            A group-keyed dict mapping type group ids (``generic``, ``pdf``,
+            ``audio_video``, ``ebook``) to their option name/value maps.
+        """
+        form = self._library_ingest_form
+        snapshot: dict[str, dict[str, Any]] = {
+            group: dict(opts) for group, opts in form.type_options.items()
+        }
+        generic = snapshot.setdefault("generic", {})
+        generic["analyze"] = form.analyze
+        generic["chunk"] = form.chunk
+        generic["chunk_size"] = clamp_chunk_size(form.chunk_size)
+        return snapshot
 
     @staticmethod
     def _ingest_job_id_from_button(button_id: str | None, prefix: str) -> str | None:

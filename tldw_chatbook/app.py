@@ -111,6 +111,7 @@ from tldw_chatbook.Chat import (
 )
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
+from tldw_chatbook.Library.ingest_capabilities import get_type_group
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
     IngestJobState,
@@ -1391,6 +1392,7 @@ class LibraryIngestQueueMixin:
         self,
         *,
         source_path: str,
+        ingest_options: dict[str, Any] | None = None,
         title: str = "",
         author: str = "",
         keywords: tuple[str, ...] = (),
@@ -1407,6 +1409,10 @@ class LibraryIngestQueueMixin:
 
         Args:
             source_path: The file path to ingest.
+            ingest_options: Per-type ingestion options snapshot captured at
+                submit time. This is the canonical source of ingestion
+                settings; the older ``perform_analysis``/``chunk_enabled``/
+                ``chunk_size`` arguments are deprecated fallbacks.
             title: Optional title form field.
             author: Optional author form field.
             keywords: Keywords form field.
@@ -1442,6 +1448,7 @@ class LibraryIngestQueueMixin:
             chunk_enabled=chunk_enabled,
             chunk_size=chunk_size,
             detected_type=detected_type,
+            ingest_options=ingest_options or {},
         )
         if self.media_db is None:
             failed = self.library_ingest_jobs.mark_failed(
@@ -1639,31 +1646,76 @@ class LibraryIngestQueueMixin:
         thread.start()
         return thread
 
-    @staticmethod
-    def _ingest_job_options(job: LibraryIngestJob) -> Dict[str, Any]:
+    def _ingest_job_options(self, job: LibraryIngestJob) -> Dict[str, Any]:
         """Build ``run_parse_job``'s ``options`` dict from a job's fields.
 
-        Mechanical 1:1 translation documented in
-        ``ingest_parse_worker``'s module docstring -- the Library queue
-        never sets ``custom_prompt``/``system_prompt``/``api_name``/
-        ``api_key``/``metadata``, so they're simply absent (``None`` inside
-        the worker's ``options.get(...)`` reads).
+        ``job.ingest_options`` is the canonical source of ingestion settings.
+        It is expected to be a group-keyed snapshot (e.g. ``{"generic": {...},
+        "pdf": {...}}``); values from the detected type group override values
+        from the ``generic`` group. The older scalar fields
+        (``perform_analysis``, ``chunk_enabled``, ``chunk_size``) are used only
+        as deprecated fallbacks when ``ingest_options`` is empty or does not
+        contain a value.
+
+        The Library queue never sets ``custom_prompt``/``system_prompt``/
+        ``api_name``/``api_key``/``metadata``, so they're simply absent (``None``
+        inside the worker's ``options.get(...)`` reads).
         """
-        return {
+        opts = job.ingest_options or {}
+        group = get_type_group(job.source_path)
+
+        # Resolve a flat option map from the generic group and the detected
+        # type-specific group, with type-specific values taking precedence.
+        flat_opts: dict[str, Any] = dict(opts.get("generic", {}))
+        flat_opts.update(opts.get(group, {}) or {})
+
+        options: dict[str, Any] = {
             "title": job.title or None,
             "author": job.author or None,
             "keywords": list(job.keywords) or None,
-            "perform_analysis": job.perform_analysis,
+            "perform_analysis": flat_opts.get(
+                "analyze", job.perform_analysis
+            ),
             "chunk_options": (
                 {
                     "method": "sentences",
-                    "size": job.chunk_size,
-                    "overlap": 100,
+                    "size": flat_opts.get("chunk_size", job.chunk_size),
+                    "overlap": flat_opts.get("chunk_overlap", 50),
                 }
-                if job.chunk_enabled
+                if flat_opts.get("chunk", job.chunk_enabled)
                 else None
             ),
         }
+
+        if group == "pdf":
+            options["pdf_engine"] = (
+                flat_opts.get("engine")
+                or flat_opts.get("pdf_engine")
+            )
+            options["page_range"] = flat_opts.get("pages")
+            options["ocr"] = flat_opts.get(
+                "ocr", flat_opts.get("enable_ocr", False)
+            )
+            options["extract_images"] = flat_opts.get("extract_images", False)
+        elif group == "audio_video":
+            options["transcription_model"] = (
+                flat_opts.get("model")
+                or flat_opts.get("transcription_model")
+            )
+            options["language"] = flat_opts.get("language", "auto")
+            options["timestamps"] = flat_opts.get("timestamps", True)
+            options["diarization"] = flat_opts.get("diarization", False)
+        elif group == "ebook":
+            options["extraction_method"] = (
+                flat_opts.get("method")
+                or flat_opts.get("html_converter")
+            )
+            options["split_chapters"] = flat_opts.get("split_chapters", True)
+            options["include_toc"] = flat_opts.get(
+                "include_toc", flat_opts.get("extract_toc", True)
+            )
+
+        return options
 
     def _top_up_ingest_parse_pool(self) -> None:
         """Submit ``QUEUED`` jobs to the parse pool up to the worker cap.
