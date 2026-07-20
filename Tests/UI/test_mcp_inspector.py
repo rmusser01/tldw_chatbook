@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -1006,6 +1007,131 @@ async def test_advanced_reveal_button_persists_setting_and_mounts_collapsible(mo
         assert ("mcp.hub_state", "advanced_visible", True) in save_calls
         assert app.query_one("#mcp-adv-collapsible", Collapsible)
         assert not app.query("#mcp-inspector-advanced-reveal")
+
+
+@pytest.mark.asyncio
+async def test_advanced_reveal_expands_regardless_of_persisted_collapsed_state(monkeypatch):
+    """Task 6 review fold: a fresh install has never persisted
+    `advanced_open` (it reads as `False`, the same as an explicit "keep it
+    collapsed" preference). Pressing "Advanced..." must still land the
+    panel EXPANDED -- the user just asked to see it -- and must persist
+    `advanced_open=True` (via the same helper the disclosure's own toggle
+    uses) so a future mount opens directly instead of reverting to
+    collapsed."""
+    monkeypatch.setattr(
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_visible=False, advanced_open=False),
+    )
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_save(section, key, value):
+        save_calls.append((section, key, value))
+        return True
+
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", fake_save)
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-advanced-reveal")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        assert not collapsible.collapsed, (
+            "explicit reveal must land expanded even though advanced_open "
+            "persisted (or defaulted to) False"
+        )
+        assert ("mcp.hub_state", "advanced_open", True) in save_calls
+        assert ("mcp.hub_state", "advanced_visible", True) in save_calls
+
+
+@pytest.mark.asyncio
+async def test_advanced_reveal_button_mount_time_path_keeps_pure_persistence(monkeypatch):
+    """Companion to the reveal-time forcing test above: the mount-time path
+    (`compose()`'s `advanced_visible=True` branch, a returning opted-in
+    user) must NOT be forced open -- a persisted `advanced_open=False`
+    stands, exactly as before this fold."""
+    monkeypatch.setattr(
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_visible=True, advanced_open=False),
+    )
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        assert collapsible.collapsed
+
+
+@pytest.mark.asyncio
+async def test_advanced_reveal_second_press_while_saving_is_a_no_op(monkeypatch):
+    """Review fix: a second press while worker A is genuinely mid-save
+    (blocked inside the `asyncio.to_thread(save_setting_to_cli_config,
+    ...)` call, not merely queued-but-not-started) must be a no-op, not a
+    cancel-and-restart. Before the fix, `on_button_pressed` unconditionally
+    rescheduled `_reveal_advanced()` into the same `exclusive=True` group
+    on every Pressed with no synchronous disable -- a second press landing
+    here CANCELLED worker A after it had already set
+    `self._advanced_visible = True` but before it removed the button or
+    mounted the collapsible, leaving a dead-looking button stuck forever
+    (every future call short-circuits on that same flag, since it's
+    already True). `save_setting_to_cli_config` runs on a real thread (via
+    `asyncio.to_thread`) -- a real `threading.Event` gate lets this test
+    hold worker A there deterministically while the second press fires,
+    unlike a synchronous double `Button.press()` (which races worker A's
+    own task-start and typically cancels it before it runs at all rather
+    than mid-save).
+    """
+    monkeypatch.setattr(
+        mcp_inspector_module, "get_cli_setting",
+        _fake_get_cli_setting(advanced_visible=False),
+    )
+    gate = threading.Event()
+    save_calls: list[tuple[str, str, Any]] = []
+
+    def fake_save(section, key, value):
+        save_calls.append((section, key, value))
+        if key == "advanced_visible":
+            # Block here (on the real to_thread worker thread) until the
+            # test explicitly releases it -- this is "mid-save".
+            assert gate.wait(timeout=5), "test gate was never released"
+        return True
+
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", fake_save)
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        reveal_button = app.query_one("#mcp-inspector-advanced-reveal", Button)
+        reveal_button.press()
+        # Let worker A actually start and reach the blocked save call --
+        # several pumps to give the `asyncio.to_thread` dispatch a real
+        # chance to land on the gate before the second press fires.
+        for _ in range(5):
+            await pilot.pause()
+
+        # With the fix, the handler disabled the button synchronously
+        # before scheduling worker A -- `Button.press()` itself refuses to
+        # post a second `Pressed` at all for an already-disabled button
+        # (returns early without `post_message`), so this second call is a
+        # genuine no-op rather than a swallowed message.
+        assert reveal_button.disabled
+        reveal_button.press()
+        await pilot.pause()
+
+        gate.set()  # release worker A's blocked save
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        collapsibles = app.query("#mcp-adv-collapsible")
+        assert len(collapsibles) == 1, (
+            f"expected exactly one mounted collapsible, got {len(collapsibles)}"
+        )
+        assert not app.query("#mcp-inspector-advanced-reveal")
+        assert save_calls.count(("mcp.hub_state", "advanced_visible", True)) == 1
 
 
 @pytest.mark.asyncio

@@ -756,7 +756,7 @@ class MCPInspector(Vertical):
                 tooltip="Show the legacy control-plane action runner.",
             )
 
-    def _build_advanced_collapsible(self) -> Collapsible:
+    def _build_advanced_collapsible(self, *, force_open: bool = False) -> Collapsible:
         """Construct the Advanced (legacy control plane) Collapsible tree.
 
         Shared by `compose()` (`advanced_visible=True` at mount) and
@@ -769,9 +769,20 @@ class MCPInspector(Vertical):
         T12: default collapsed unless the user has previously opened it --
         per-user GLOBAL preference (Console rail section-preference
         precedent), NOT per-server.
+
+        `force_open` (Task 6 review fold, MCP Hub Phase 6): `True` only
+        from `_reveal_advanced()`'s explicit opt-in path. A fresh install
+        has never persisted `advanced_open` at all, so honoring the
+        persisted value unconditionally would land the panel COLLAPSED
+        the very moment the user pressed "Advanced..." asking to see it --
+        they just asked, so open it regardless of whatever was last
+        persisted (or never persisted). `compose()`'s mount-time path
+        passes nothing and keeps pure persistence semantics: whatever the
+        user set last session stands, with no forcing.
         """
         persisted_open = bool(get_cli_setting("mcp.hub_state", "advanced_open", False))
-        self._advanced_last_collapsed = not persisted_open
+        open_state = True if force_open else persisted_open
+        self._advanced_last_collapsed = not open_state
         return Collapsible(
             Static(self._advanced_object_label(), id="mcp-adv-object", markup=False),
             VerticalScroll(
@@ -796,7 +807,7 @@ class MCPInspector(Vertical):
                 id="mcp-adv-scroll",
             ),
             title="Advanced (legacy control plane)",
-            collapsed=not persisted_open,
+            collapsed=not open_state,
             id="mcp-adv-collapsible",
         )
 
@@ -828,6 +839,21 @@ class MCPInspector(Vertical):
         whatever object is actually selected right now instead of opening
         blank -- reusing that method's own population logic rather than
         duplicating it here.
+
+        Task 6 review fold: the collapsible mounts EXPANDED
+        (`_build_advanced_collapsible(force_open=True)`) regardless of
+        whatever `advanced_open` was last persisted -- the user just
+        pressed this button asking to see the panel, so a fresh install's
+        never-persisted (False) default must not land it collapsed.
+        `advanced_open=True` is persisted alongside `advanced_visible` via
+        `_persist_advanced_open()` (the same helper the disclosure's own
+        Toggled handler uses) so a future mount also opens directly. That
+        handler's own mount-echo guard (below) will NOT do this write
+        itself here: `_build_advanced_collapsible()` sets
+        `_advanced_last_collapsed` to match the forced (already-expanded)
+        state before construction, so the Toggled the reactive fires on
+        construction reads as a no-op echo and is dropped -- this call is
+        the only place the persist happens.
         """
         if self._advanced_visible:
             return
@@ -838,13 +864,14 @@ class MCPInspector(Vertical):
             )
         except Exception as exc:
             logger.warning(f"MCP advanced-visible preference save failed: {exc}")
+        await self._persist_advanced_open(True)
         try:
             reveal_button = self.query_one("#mcp-inspector-advanced-reveal", Button)
         except NoMatches:
             pass
         else:
             await reveal_button.remove()
-        await self.mount(self._build_advanced_collapsible())
+        await self.mount(self._build_advanced_collapsible(force_open=True))
         self.set_service_context(
             self._service, self._sections,
             source=self._advanced_source, target_label=self._advanced_target_label,
@@ -1865,7 +1892,26 @@ class MCPInspector(Vertical):
         button_id = event.button.id or ""
         if button_id == "mcp-inspector-advanced-reveal":
             event.stop()
-            self.run_worker(self._reveal_advanced(), group="mcp-adv-reveal", exclusive=True)
+            # Task 6 review fold: check-then-disable synchronously, BEFORE
+            # scheduling. Textual's message pump runs this (synchronous,
+            # non-`async def`) handler to full completion before it even
+            # looks at the next queued message, so a second `Pressed`
+            # already queued for this same button (the message-pump race
+            # documented on mcp_workbench.py's profile-save Save button)
+            # sees `disabled=True` here and bails before re-scheduling --
+            # without the check, `exclusive=True` would let it CANCEL
+            # worker A mid-save (`_reveal_advanced()`'s
+            # `self._advanced_visible = True` already landed, but the
+            # button removal + collapsible mount never ran) and leave a
+            # dead-looking button no further press could ever recover,
+            # since every future call into `_reveal_advanced()` now
+            # short-circuits on that same flag.
+            if event.button.disabled:
+                return
+            event.button.disabled = True
+            # A CALLABLE, not a pre-created coroutine -- same rationale as
+            # `set_service_context()`'s own schedule for `mcp-adv-section`.
+            self.run_worker(partial(self._reveal_advanced), group="mcp-adv-reveal", exclusive=True)
             return
         if button_id == "mcp-adv-run":
             event.stop()
