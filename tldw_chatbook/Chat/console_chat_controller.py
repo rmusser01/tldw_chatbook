@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import re
 import threading
 import time
@@ -1226,9 +1227,7 @@ class ConsoleChatController:
         redacted_system = self._redact_secrets(self._leading_system_message())
 
         # Deep-copy messages so the snapshot is independent of the store.
-        from dataclasses import replace
-
-        copied_messages = [replace(msg) for msg in current_messages]
+        copied_messages = copy.deepcopy(current_messages)
 
         return ConsoleContextSnapshot(
             current_messages=copied_messages,
