@@ -1901,6 +1901,49 @@ async def test_build_context_snapshot_redacts_historical_image_data():
     assert "[image: data redacted for preview]" in payload_text
 
 
+def test_replace_image_data_preserves_detail_and_handles_string_url():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,abc", "detail": "auto"},
+                },
+                {"type": "image_url", "image_url": "http://example.com/img.png"},
+            ],
+        }
+    ]
+
+    redacted = ConsoleChatController._replace_image_data_with_placeholders(messages)
+
+    dict_url = redacted[0]["content"][0]["image_url"]
+    assert dict_url["url"] == "[image: data redacted for preview]"
+    assert dict_url["detail"] == "auto"
+    string_url = redacted[0]["content"][1]["image_url"]
+    assert string_url == {"url": "[image: data redacted for preview]"}
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_next_send_payload_independent_of_store():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
+
+    snapshot = await controller.build_context_snapshot(draft="Follow up")
+    original = str(snapshot.next_send_payload)
+
+    # Mutate the returned payload in place; frozen only prevents reassignment
+    # of the top-level field, not mutation of the nested dict/list structures.
+    snapshot.next_send_payload["messages"].append(
+        {"role": "user", "content": "injected"}
+    )
+
+    snapshot2 = await controller.build_context_snapshot(draft="Follow up")
+    assert str(snapshot2.next_send_payload) == original
+
+
 @pytest.mark.asyncio
 async def test_build_context_snapshot_no_active_session_returns_empty():
     store = ConsoleChatStore()
@@ -1940,6 +1983,26 @@ async def test_build_context_snapshot_includes_staged_sources():
     assert staged[1] == {"source_id": "file-2", "label": "File two", "type": "file"}
 
 
+def test_annotate_skill_commands_multimodal_text_part():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "/search tools"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+            ],
+        }
+    ]
+
+    annotated = ConsoleChatController._annotate_skill_commands(messages)
+
+    text_part = annotated[0]["content"][0]
+    assert text_part["type"] == "text"
+    assert text_part["text"].startswith("/search tools")
+    assert "Skill command not resolved in preview" in text_part["text"]
+    assert annotated[0]["content"][1] == messages[0]["content"][1]
+
+
 def test_build_tools_info_for_snapshot_no_bridge():
     controller = ConsoleChatController(
         store=ConsoleChatStore(), provider_gateway=StreamingGateway()
@@ -1949,6 +2012,8 @@ def test_build_tools_info_for_snapshot_no_bridge():
 
     assert info["native_schemas"] == []
     assert info["mcp_note"] is None
+    assert info["preview_note"] is not None
+    assert "builtin native tools" in info["preview_note"]
 
 
 def test_build_tools_info_for_snapshot_with_native_schemas():
@@ -1967,6 +2032,8 @@ def test_build_tools_info_for_snapshot_with_native_schemas():
         {"name": "calculator", "description": "Compute arithmetic.", "parameters": {}},
     ]
     assert info["mcp_note"] is None
+    assert info["preview_note"] is not None
+    assert "live run" in info["preview_note"]
 
 
 def test_build_tools_info_for_snapshot_mcp_provider_present():
@@ -1981,6 +2048,8 @@ def test_build_tools_info_for_snapshot_mcp_provider_present():
     assert info["native_schemas"] == []
     assert info["mcp_note"] is not None
     assert "MCP tools are configured" in info["mcp_note"]
+    assert info["preview_note"] is not None
+    assert "skills/MCP" in info["preview_note"]
 
 
 def test_build_tools_info_for_snapshot_mcp_provider_absent():
@@ -1994,3 +2063,5 @@ def test_build_tools_info_for_snapshot_mcp_provider_absent():
 
     assert info["native_schemas"] == []
     assert info["mcp_note"] is None
+    assert info["preview_note"] is not None
+    assert "preview" in info["preview_note"]

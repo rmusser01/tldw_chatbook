@@ -1271,25 +1271,53 @@ class ConsoleChatController:
     @staticmethod
     def _annotate_skill_commands(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         result = copy.deepcopy(messages)
-        if result and result[-1].get("role") == "user":
-            text = result[-1].get("content", "")
-            if isinstance(text, str) and text.startswith("/"):
-                result[-1]["content"] = (
-                    f"{text}\n\n[Skill command not resolved in preview; "
-                    "actual substitution happens at send time.]"
-                )
+        if not result or result[-1].get("role") != "user":
+            return result
+
+        content = result[-1].get("content", "")
+        annotation = (
+            "[Skill command not resolved in preview; "
+            "actual substitution happens at send time.]"
+        )
+
+        if isinstance(content, str) and content.startswith("/"):
+            result[-1]["content"] = f"{content}\n\n{annotation}"
+            return result
+
+        if isinstance(content, list):
+            new_parts: list[Any] = []
+            annotated = False
+            for part in content:
+                if (
+                    not annotated
+                    and isinstance(part, dict)
+                    and part.get("type") == "text"
+                    and isinstance(part.get("text"), str)
+                    and part["text"].startswith("/")
+                ):
+                    new_parts.append({**part, "text": f"{part['text']}\n\n{annotation}"})
+                    annotated = True
+                else:
+                    new_parts.append(part)
+            if annotated:
+                result[-1]["content"] = new_parts
         return result
 
     def _build_tools_info_for_snapshot(self) -> dict[str, Any]:
-        """Return native tool schemas and an MCP note for the snapshot."""
+        """Return native tool schemas and preview notes for the snapshot."""
         tools: list[dict[str, Any]] = []
         if self._agent_bridge is not None:
             # Native tools only; live MCP catalog composition is out of scope.
             tools = getattr(self._agent_bridge, "native_tool_schemas", lambda: [])()
         mcp_note = "MCP tools are configured but live catalog composition is not shown in this preview."
+        preview_note = (
+            "This preview shows only builtin native tools. "
+            "The live run may add skills/MCP tools."
+        )
         return {
             "native_schemas": tools,
             "mcp_note": mcp_note if self._mcp_provider else None,
+            "preview_note": preview_note,
         }
 
     _SECRET_REDACTION_KEYS = {"api_key", "apikey", "token", "password", "secret", "bearer"}
