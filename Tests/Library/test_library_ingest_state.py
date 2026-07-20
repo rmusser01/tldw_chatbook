@@ -314,6 +314,29 @@ def test_non_permanent_failed_row_can_retry():
     assert row.can_dismiss is True
 
 
+def test_unsupported_file_type_category_cannot_retry():
+    """A failed job whose error_detail category is unsupported_file_type
+    cannot be retried even when ``permanent`` is False."""
+    jobs = (
+        _job(
+            state=IngestJobState.FAILED,
+            source_path="/tmp/report.xyz",
+            started_at=100.0,
+            finished_at=101.0,
+            error="Unsupported file type",
+            permanent=False,
+            error_detail={
+                "category": "unsupported_file_type",
+                "message": "Unsupported extension",
+            },
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    row = state.queue_rows[0]
+    assert row.can_retry is False
+    assert row.can_dismiss is True
+
+
 # --- L4 (fix batch F1b): short row reason, supported list on the form -----
 
 

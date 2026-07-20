@@ -275,6 +275,10 @@ class IngestQueueRow:
     can_retry: bool
     can_dismiss: bool = False
     media_id: int | None = None
+    state: IngestJobState | None = None
+    source_path: str = ""
+    progress: dict[str, Any] | None = None
+    error_detail: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -435,6 +439,10 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
             can_open=False,
             can_retry=False,
             media_id=job.media_id,
+            state=job.state,
+            source_path=job.source_path,
+            progress=job.progress,
+            error_detail=job.error_detail,
         )
     if job.state == IngestJobState.WRITING:
         line = f"{_GLYPH_ACTIVE} writing · {basename}"
@@ -447,6 +455,10 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
             can_open=False,
             can_retry=False,
             media_id=job.media_id,
+            state=job.state,
+            source_path=job.source_path,
+            progress=job.progress,
+            error_detail=job.error_detail,
         )
     if job.state == IngestJobState.QUEUED:
         return IngestQueueRow(
@@ -456,6 +468,10 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
             can_open=False,
             can_retry=False,
             media_id=job.media_id,
+            state=job.state,
+            source_path=job.source_path,
+            progress=job.progress,
+            error_detail=job.error_detail,
         )
     if job.state == IngestJobState.DONE:
         elapsed = _format_elapsed(job.started_at, job.finished_at, now=now)
@@ -466,17 +482,29 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
             can_open=job.media_id is not None,
             can_retry=False,
             media_id=job.media_id,
+            state=job.state,
+            source_path=job.source_path,
+            progress=job.progress,
+            error_detail=job.error_detail,
         )
     # FAILED -- the only remaining IngestJobState member.
     short_error = short_ingest_error(job.error)
+    is_unsupported = (
+        job.error_detail is not None
+        and job.error_detail.get("category") == "unsupported_file_type"
+    )
     return IngestQueueRow(
         job_id=job.job_id,
         glyph=_GLYPH_FAILED,
         line=f"{_GLYPH_FAILED} failed · {basename} · {short_error}{_retry_suffix(job)}",
         can_open=False,
-        can_retry=not job.permanent,
+        can_retry=not job.permanent and not is_unsupported,
         can_dismiss=True,
         media_id=job.media_id,
+        state=job.state,
+        source_path=job.source_path,
+        progress=job.progress,
+        error_detail=job.error_detail,
     )
 
 

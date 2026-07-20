@@ -115,8 +115,6 @@ from ...Library.library_skills_state import (
     build_skills_list_state,
     classify_skill_save_error,
     compose_skill_markdown,
-    save_marks_needs_review,
-    skill_name_shadows_builtin,
 )
 from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
 from ...Prompt_Management.Prompts_Interop import (
@@ -10348,6 +10346,29 @@ class LibraryScreen(BaseAppScreen):
             # ever acts on a currently-FAILED, not-yet-hidden job_id.
             dismiss(job_id)
         self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-ingest-details")
+    def _on_ingest_job_details(self, event: Button.Pressed) -> None:
+        """Show a notification with a failed ingest job's structured error details.
+
+        Args:
+            event: Button press event emitted by a "Show details" row action.
+        """
+        event.stop()
+        job_id = self._ingest_job_id_from_button(
+            event.button.id, "library-ingest-details-"
+        )
+        if job_id is None:
+            return
+        registry = self._library_ingest_registry()
+        get_job = getattr(registry, "get_job", None)
+        if not callable(get_job):
+            return
+        job = get_job(job_id)
+        if job is None or not job.error_detail:
+            return
+        detail = job.error_detail.get("message") or str(job.error_detail)
+        self.notify(f"Error details: {detail}", title="Ingest error", timeout=10)
 
     @on(Button.Pressed, "#library-ingest-clear-finished")
     def handle_library_ingest_clear_finished(self, event: Button.Pressed) -> None:

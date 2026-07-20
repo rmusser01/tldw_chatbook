@@ -820,6 +820,25 @@ class LibraryIngestJobRegistry:
             and job.detected_type in types
         )
 
+    def get_job(self, job_id: str) -> LibraryIngestJob | None:
+        """Return a copy of the job with ``job_id``, or ``None`` if unknown.
+
+        Looks at the registry's internal job list (including hidden jobs)
+        so detail handlers can resolve a job even after it has been
+        superseded or dismissed.
+
+        Args:
+            job_id: The registry-assigned job id.
+
+        Returns:
+            A shallow copy of the stored job, or ``None`` when ``job_id``
+            is not found.
+        """
+        for job in self._jobs:
+            if job.job_id == job_id:
+                return replace(job)
+        return None
+
 
 # -- restore (Task 2, 161) --------------------------------------------------
 

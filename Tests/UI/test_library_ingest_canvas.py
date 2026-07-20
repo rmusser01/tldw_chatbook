@@ -15,6 +15,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
 
 from tldw_chatbook.Library.ingest_types import PreflightResult
+from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
 from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestCanvasState,
     LibraryIngestFormState,
@@ -377,7 +378,7 @@ async def test_dependent_controls_disabled_when_dependency_missing():
     ):
         async with app.run_test() as pilot:
             engine_select = pilot.app.query_one("#opt-pdf-pdf_engine", Select)
-            extract_checkbox = pilot.app.query_one("#opt-pdf-extract_images", Checkbox)
+            extract_checkbox = pilot.app.query_one("#opt-pdf-ocr", Checkbox)
             assert engine_select.disabled is True
             assert extract_checkbox.disabled is True
 
@@ -426,7 +427,7 @@ async def test_option_value_changed_posted_on_checkbox_change():
         return_value=True,
     ):
         async with app.run_test() as pilot:
-            checkbox = pilot.app.query_one("#opt-pdf-extract_images", Checkbox)
+            checkbox = pilot.app.query_one("#opt-pdf-ocr", Checkbox)
             checkbox.value = True
             await pilot.pause()
 
@@ -434,7 +435,7 @@ async def test_option_value_changed_posted_on_checkbox_change():
         event
         for event in app.option_changes
         if event.group == "pdf"
-        and event.name == "extract_images"
+        and event.name == "ocr"
         and event.value is True
     ]
     assert len(matching) == 1
@@ -552,3 +553,156 @@ async def test_type_group_number_input_renders_with_value_and_placeholder():
         chunk_input = pilot.app.query_one("#opt-generic-chunk_size", Input)
         assert chunk_input.value == "750"
         assert chunk_input.placeholder == "Chunk size"
+
+
+# --- Progress, structured errors, retry, and recent ingests -----------------
+
+
+@pytest.mark.asyncio
+async def test_progress_line_renders_when_present():
+    """A parsing job with structured progress shows a progress line."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.PARSING,
+        progress={"message": "Extracting text…"},
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        progress = pilot.app.query_one(
+            "#library-ingest-progress-ingest-job-1", Static
+        )
+        text = str(progress.renderable)
+        assert "parsing" in text
+        assert "Extracting text…" in text
+
+
+@pytest.mark.asyncio
+async def test_progress_line_absent_when_not_present():
+    """A queued job without progress does not render a progress line."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.QUEUED,
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        assert len(pilot.app.query("#library-ingest-progress-ingest-job-1")) == 0
+
+
+@pytest.mark.asyncio
+async def test_show_details_button_renders_for_error_detail():
+    """A failed job with structured error detail gets a Show details button."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.FAILED,
+        error="Bad codec",
+        error_detail={"category": "codec_error", "message": "Codec missing"},
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        btn = pilot.app.query_one("#library-ingest-details-ingest-job-1", Button)
+        assert "Show details" in str(btn.label)
+
+
+@pytest.mark.asyncio
+async def test_show_details_button_absent_without_error_detail():
+    """A failed job without error detail does not render Show details."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.FAILED,
+        error="Bad codec",
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        assert len(pilot.app.query("#library-ingest-details-ingest-job-1")) == 0
+
+
+@pytest.mark.asyncio
+async def test_retry_button_renders_for_retryable_failure():
+    """A retryable failed job still renders the Retry action."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.FAILED,
+        error="Network error",
+        permanent=False,
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        btn = pilot.app.query_one("#library-ingest-retry-ingest-job-1", Button)
+        assert "Retry" in str(btn.label)
+
+
+@pytest.mark.asyncio
+async def test_retry_button_hidden_for_unsupported_file_type():
+    """Retry is withheld when the error category is unsupported_file_type."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.xyz",
+        state=IngestJobState.FAILED,
+        error="Unsupported file type",
+        permanent=False,
+        error_detail={
+            "category": "unsupported_file_type",
+            "message": "Unsupported extension",
+        },
+    )
+    state = build_library_ingest_state((job,), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        assert len(pilot.app.query("#library-ingest-retry-ingest-job-1")) == 0
+        # The structured-error surface is still available.
+        assert pilot.app.query_one("#library-ingest-details-ingest-job-1", Button)
+
+
+@pytest.mark.asyncio
+async def test_recent_ingests_section_renders_terminal_jobs():
+    """The Recent ingests collapsible lists done/failed jobs but not queued."""
+    done = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/done.txt",
+        state=IngestJobState.DONE,
+        media_id=1,
+    )
+    failed = LibraryIngestJob(
+        job_id="ingest-job-2",
+        source_path="/tmp/failed.txt",
+        state=IngestJobState.FAILED,
+        error="boom",
+    )
+    queued = LibraryIngestJob(
+        job_id="ingest-job-3",
+        source_path="/tmp/queued.txt",
+        state=IngestJobState.QUEUED,
+    )
+    state = build_library_ingest_state(
+        (done, failed, queued), form=_default_form()
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        recent = pilot.app.query_one("#library-ingest-recent", Collapsible)
+        assert str(recent.title) == "Recent ingests"
+        assert recent.collapsed is True
+        items = pilot.app.query(".library-ingest-recent-item")
+        texts = [str(item.renderable) for item in items]
+        assert any("done.txt" in t and "done" in t for t in texts)
+        assert any("failed.txt" in t and "failed" in t for t in texts)
+        assert not any("queued.txt" in t for t in texts)
+
+
+@pytest.mark.asyncio
+async def test_recent_ingests_section_renders_when_queue_empty():
+    """Recent ingests is visible even when there are no jobs at all."""
+    state = build_library_ingest_state((), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#library-ingest-recent", Collapsible)
+        assert len(pilot.app.query("#library-ingest-queue-empty")) == 1

@@ -12,7 +12,6 @@ from textual.message import Message
 from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
 
 from tldw_chatbook.Library.ingest_capabilities import (
-    OptionField,
     TypeGroupCapabilities,
     _is_installed,
     get_capabilities,
@@ -297,7 +296,6 @@ class LibraryIngestCanvas(VerticalScroll):
                 id="library-ingest-queue-empty",
                 markup=False,
             )
-            return
         for index, row in enumerate(state.queue_rows):
             # A source filename can contain Rich markup syntax (e.g. a
             # literal "[/bracket]" in the name) -- escape_markup here is
@@ -305,7 +303,12 @@ class LibraryIngestCanvas(VerticalScroll):
             # mount time (the L3a lesson; mirrors
             # ``library_rag_history_children``'s escaped Button labels).
             row_classes = "library-ingest-row"
-            has_actions = row.can_open or row.can_retry or row.can_dismiss
+            has_actions = (
+                row.can_open
+                or row.can_retry
+                or row.can_dismiss
+                or bool(row.error_detail)
+            )
             if has_actions:
                 # A row with action buttons below it gets its own
                 # bottom-margin trimmed to 0 (A3) -- the actions row's own
@@ -321,6 +324,14 @@ class LibraryIngestCanvas(VerticalScroll):
                 id=f"library-ingest-row-{index}",
                 classes=row_classes,
             )
+            if row.progress:
+                progress_line = row.progress.get("message") if row.progress else ""
+                yield Static(
+                    f"{row.state.value} {progress_line}",
+                    id=f"library-ingest-progress-{row.job_id}",
+                    classes="library-ingest-progress",
+                    markup=False,
+                )
             # Row-action buttons are keyed by the job's registry-assigned
             # ``job_id`` (e.g. ``"library-ingest-open-ingest-job-3"``), NOT
             # by ``index`` -- unlike the row Static above, these ARE click
@@ -354,6 +365,16 @@ class LibraryIngestCanvas(VerticalScroll):
                             ),
                             compact=True,
                         )
+                    if row.error_detail:
+                        yield Button(
+                            "Show details",
+                            id=f"library-ingest-details-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-details "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
                     if row.can_retry:
                         yield Button(
                             "Retry",
@@ -381,6 +402,15 @@ class LibraryIngestCanvas(VerticalScroll):
                 classes="library-canvas-action",
                 compact=True,
             )
+        with Collapsible(
+            title="Recent ingests", collapsed=True, id="library-ingest-recent"
+        ):
+            for job in state.recent_jobs:
+                yield Static(
+                    f"{escape_markup(job.source_path)} — {job.state.value}",
+                    classes="library-ingest-recent-item",
+                    markup=False,
+                )
 
     @on(Checkbox.Changed)
     @on(Select.Changed)
