@@ -265,7 +265,7 @@ class ConsoleVariantSet:
 
 @dataclass
 class ConsoleContextSnapshot:
-    """Read-only snapshot of current transcript and next-send provider payload."""
+    """Independent snapshot of current transcript and next-send provider payload."""
 
     current_messages: list[ConsoleChatMessage]
     next_send_payload: dict[str, Any]

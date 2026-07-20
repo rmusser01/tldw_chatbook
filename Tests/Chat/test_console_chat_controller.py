@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
     ConsoleStagedSource,
     ConsoleWorkspaceContext,
+    MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -1834,3 +1835,106 @@ async def test_build_context_snapshot_is_immutable():
 
     reloaded = store.get_message(msg.id)
     assert reloaded.content == original_content
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_attachment_only_preview():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        provider="openai",
+        model="gpt-4o",
+    )
+    store.ensure_session(title="Chat 1")
+
+    attachment = MessageAttachment(
+        data=b"fake-image-data",
+        mime_type="image/png",
+        display_name="image.png",
+        position=0,
+    )
+
+    snapshot = await controller.build_context_snapshot(draft="", attachments=[attachment])
+
+    messages = snapshot.next_send_payload["messages"]
+    assert len(messages) == 1
+    assert messages[0]["role"] == "user"
+    content = messages[0]["content"]
+    assert isinstance(content, list)
+    assert any(
+        part.get("type") == "image_url"
+        and part.get("image_url", {}).get("url") == "[image: data redacted for preview]"
+        for part in content
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_redacts_historical_image_data():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        provider="openai",
+        model="gpt-4o",
+    )
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Previous image",
+        attachments=(
+            MessageAttachment(
+                data=b"historical-image-data",
+                mime_type="image/png",
+                display_name="previous.png",
+                position=0,
+            ),
+        ),
+    )
+
+    snapshot = await controller.build_context_snapshot(draft="Describe it")
+
+    payload_text = str(snapshot.next_send_payload)
+    assert "data:image/png;base64," not in payload_text
+    assert "[image: data redacted for preview]" in payload_text
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_no_active_session_returns_empty():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    snapshot = await controller.build_context_snapshot(draft="hello")
+
+    assert snapshot.current_messages == []
+    assert snapshot.next_send_payload == {}
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_includes_staged_sources():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    store.ensure_session(title="Chat 1")
+
+    sources = [
+        ConsoleStagedSource(
+            source_id="note-1",
+            label="Note one",
+            source_type="note",
+            workspace_id="workspace-a",
+        ),
+        ConsoleStagedSource(
+            source_id="file-2",
+            label="File two",
+            source_type="file",
+        ),
+    ]
+
+    snapshot = await controller.build_context_snapshot(draft="Summarize", staged_sources=sources)
+
+    staged = snapshot.next_send_payload["staged_sources"]
+    assert len(staged) == 2
+    assert staged[0] == {"source_id": "note-1", "label": "Note one", "type": "note"}
+    assert staged[1] == {"source_id": "file-2", "label": "File two", "type": "file"}

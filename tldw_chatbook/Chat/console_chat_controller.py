@@ -1197,19 +1197,18 @@ class ConsoleChatController:
         provider_messages = self._provider_messages_for_session(session_id)
 
         # Append a synthetic user turn for the draft so the preview matches what would be sent.
-        if draft.strip():
+        attachment_tuple = tuple(attachments or ())
+        if draft.strip() or attachment_tuple:
             synthetic_user = self._provider_message_payloads(
                 [
                     ConsoleChatMessage(
                         role=ConsoleMessageRole.USER,
                         content=draft,
-                        attachments=tuple(attachments or ()),
+                        attachments=attachment_tuple,
                     )
                 ],
                 skip_failed=True,
             )
-            # Replace image data with placeholders for the preview.
-            synthetic_user = self._replace_image_data_with_placeholders(synthetic_user)
             provider_messages.extend(synthetic_user)
 
         # Do NOT call _apply_skill_substitution because it may execute skills with side effects.
@@ -1218,6 +1217,9 @@ class ConsoleChatController:
 
         # Chat dictionaries are safe to apply (string replacements only).
         provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
+
+        # Replace image data with placeholders for the preview, including historical images.
+        provider_messages = self._replace_image_data_with_placeholders(provider_messages)
 
         # Gather native tool schemas and MCP note.
         tools_info = self._build_tools_info_for_snapshot()
@@ -1245,8 +1247,6 @@ class ConsoleChatController:
 
     @staticmethod
     def _replace_image_data_with_placeholders(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        import copy
-
         result = copy.deepcopy(messages)
         for message in result:
             content = message.get("content")
@@ -1260,8 +1260,6 @@ class ConsoleChatController:
 
     @staticmethod
     def _annotate_skill_commands(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        import copy
-
         result = copy.deepcopy(messages)
         if result and result[-1].get("role") == "user":
             text = result[-1].get("content", "")
@@ -1294,9 +1292,12 @@ class ConsoleChatController:
 
     @staticmethod
     def _redact_secrets(payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Return a deep-copied payload with likely secret values replaced."""
-        import copy
+        """Return a deep-copied payload with likely secret values replaced.
 
+        Redaction is best-effort and intended for preview/export convenience
+        only. Do not rely on it for security-sensitive export or disclosure
+        scenarios.
+        """
         redacted = copy.deepcopy(payload)
 
         def _redact_string(value: str) -> str:
