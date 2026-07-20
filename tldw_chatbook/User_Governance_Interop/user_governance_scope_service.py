@@ -42,7 +42,9 @@ class UserGovernanceScopeService:
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: UserGovernanceBackend | str | None) -> UserGovernanceBackend:
+    def _normalize_mode(
+        self, mode: UserGovernanceBackend | str | None
+    ) -> UserGovernanceBackend:
         if mode is None:
             return UserGovernanceBackend.SERVER
         if isinstance(mode, UserGovernanceBackend):
@@ -73,7 +75,9 @@ class UserGovernanceScopeService:
         self.policy_enforcer.require_allowed(action_id=action_id)
 
     @staticmethod
-    def _consent_record_id(mode: UserGovernanceBackend, item: dict[str, Any]) -> str | None:
+    def _consent_record_id(
+        mode: UserGovernanceBackend, item: dict[str, Any]
+    ) -> str | None:
         source_id = item.get("id")
         if source_id is None:
             purpose = item.get("purpose")
@@ -84,7 +88,9 @@ class UserGovernanceScopeService:
         return f"{mode.value}:consent:{source_id}"
 
     @staticmethod
-    def _privilege_record_id(mode: UserGovernanceBackend, item: dict[str, Any], *, user_id: str | None = None) -> str | None:
+    def _privilege_record_id(
+        mode: UserGovernanceBackend, item: dict[str, Any], *, user_id: str | None = None
+    ) -> str | None:
         privilege_scope_id = item.get("privilege_scope_id")
         method = item.get("method")
         endpoint = item.get("endpoint")
@@ -92,9 +98,13 @@ class UserGovernanceScopeService:
             return None
         if user_id is None:
             return f"{mode.value}:privilege:{privilege_scope_id}:{method}:{endpoint}"
-        return f"{mode.value}:privilege:{user_id}:{privilege_scope_id}:{method}:{endpoint}"
+        return (
+            f"{mode.value}:privilege:{user_id}:{privilege_scope_id}:{method}:{endpoint}"
+        )
 
-    def _with_consent_record_id(self, mode: UserGovernanceBackend, item: dict[str, Any]) -> dict[str, Any]:
+    def _with_consent_record_id(
+        self, mode: UserGovernanceBackend, item: dict[str, Any]
+    ) -> dict[str, Any]:
         record = dict(item or {})
         record.setdefault("backend", mode.value)
         record_id = self._consent_record_id(mode, record)
@@ -102,15 +112,21 @@ class UserGovernanceScopeService:
             record.setdefault("record_id", record_id)
         return record
 
-    def _normalize_consent_preferences(self, mode: UserGovernanceBackend, result: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_consent_preferences(
+        self, mode: UserGovernanceBackend, result: dict[str, Any]
+    ) -> dict[str, Any]:
         payload = dict(result or {})
         payload.setdefault("backend", mode.value)
         user_id = payload.get("user_id")
         if user_id is not None:
-            payload.setdefault("record_id", f"{mode.value}:consent_preferences:{user_id}")
+            payload.setdefault(
+                "record_id", f"{mode.value}:consent_preferences:{user_id}"
+            )
         if isinstance(payload.get("consents"), list):
             payload["consents"] = [
-                self._with_consent_record_id(mode, item) if isinstance(item, dict) else item
+                self._with_consent_record_id(mode, item)
+                if isinstance(item, dict)
+                else item
                 for item in payload["consents"]
             ]
         return payload
@@ -134,7 +150,9 @@ class UserGovernanceScopeService:
                     continue
                 record = dict(item)
                 record.setdefault("backend", mode.value)
-                record_id = self._privilege_record_id(mode, record, user_id=item_user_id)
+                record_id = self._privilege_record_id(
+                    mode, record, user_id=item_user_id
+                )
                 if record_id is not None:
                     record.setdefault("record_id", record_id)
                 normalized_items.append(record)
@@ -163,7 +181,9 @@ class UserGovernanceScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy(action_id)
-        result = await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
+        result = await self._maybe_await(
+            getattr(service, method_name)(*args, **(kwargs or {}))
+        )
         return normalized_mode, result
 
     async def get_consent_preferences(
@@ -234,4 +254,6 @@ class UserGovernanceScopeService:
             args=(user_id,),
             kwargs=kwargs,
         )
-        return self._normalize_privilege_map(normalized_mode, result, map_id=user_id, item_user_id=user_id)
+        return self._normalize_privilege_map(
+            normalized_mode, result, map_id=user_id, item_user_id=user_id
+        )

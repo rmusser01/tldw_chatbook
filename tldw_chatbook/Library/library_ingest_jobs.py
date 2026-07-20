@@ -283,7 +283,9 @@ class LibraryIngestJobRegistry:
         try:
             self._store.delete_job(job_id)
         except Exception:
-            logger.opt(exception=True).debug(f"ingest job delete-persist failed: {job_id}")
+            logger.opt(exception=True).debug(
+                f"ingest job delete-persist failed: {job_id}"
+            )
 
     def restore(self, jobs: list[LibraryIngestJob], next_id: int) -> None:
         """Seed the registry from a prior session's persisted jobs.
@@ -358,7 +360,9 @@ class LibraryIngestJobRegistry:
                 # stdlib `exc_info=True` kwarg -- the latter is a silent
                 # no-op under loguru and would otherwise drop the traceback
                 # entirely.
-                logger.opt(exception=True).debug("LibraryIngestJobRegistry listener raised")
+                logger.opt(exception=True).debug(
+                    "LibraryIngestJobRegistry listener raised"
+                )
 
     # -- mutations -----------------------------------------------------
 
@@ -412,7 +416,9 @@ class LibraryIngestJobRegistry:
         self._persist(job)
         return replace(job)
 
-    def next_queued(self, *, skip_types: frozenset[str] = frozenset()) -> LibraryIngestJob | None:
+    def next_queued(
+        self, *, skip_types: frozenset[str] = frozenset()
+    ) -> LibraryIngestJob | None:
         """Return the oldest still-``QUEUED`` job, or ``None`` if none.
 
         Args:
@@ -427,7 +433,10 @@ class LibraryIngestJobRegistry:
             such job is queued.
         """
         for job in self._jobs:
-            if job.state == IngestJobState.QUEUED and job.detected_type not in skip_types:
+            if (
+                job.state == IngestJobState.QUEUED
+                and job.detected_type not in skip_types
+            ):
                 return replace(job)
         return None
 
@@ -437,7 +446,9 @@ class LibraryIngestJobRegistry:
                 return index
         return None
 
-    def mark_parsing(self, job_id: str, *, detected_type: str = "") -> LibraryIngestJob | None:
+    def mark_parsing(
+        self, job_id: str, *, detected_type: str = ""
+    ) -> LibraryIngestJob | None:
         """Transition a ``QUEUED`` job to ``PARSING`` and stamp ``started_at``.
 
         Args:
@@ -720,7 +731,11 @@ class LibraryIngestJobRegistry:
         if index is None:
             return None
         current = self._jobs[index]
-        if current.state != IngestJobState.FAILED or current.superseded or current.dismissed:
+        if (
+            current.state != IngestJobState.FAILED
+            or current.superseded
+            or current.dismissed
+        ):
             return None
         updated = replace(current, dismissed=True)
         self._jobs[index] = updated
@@ -867,7 +882,11 @@ class RestorePlan:
     delete_ids: list[str]  # pruned jobs to delete from the store
 
 
-_INTERRUPTED_STATES = (IngestJobState.QUEUED, IngestJobState.PARSING, IngestJobState.WRITING)
+_INTERRUPTED_STATES = (
+    IngestJobState.QUEUED,
+    IngestJobState.PARSING,
+    IngestJobState.WRITING,
+)
 
 
 def _job_from_row(row: dict) -> "LibraryIngestJob":
@@ -907,7 +926,9 @@ def _job_from_row(row: dict) -> "LibraryIngestJob":
         progress=json.loads(row["progress"]) if row.get("progress") else None,
         content_hash=row.get("content_hash"),
         # monotonic fields are not round-trippable -- leave defaults.
-        submitted_at=0.0, started_at=None, finished_at=None,
+        submitted_at=0.0,
+        started_at=None,
+        finished_at=None,
     )
 
 
@@ -940,8 +961,10 @@ def plan_restore(rows: list[dict], *, max_persisted: int, now_iso: str) -> Resto
     for i, job in enumerate(jobs):
         if job.state in _INTERRUPTED_STATES:
             jobs[i] = replace(
-                job, state=IngestJobState.FAILED,
-                error="Interrupted by app restart", permanent=False,
+                job,
+                state=IngestJobState.FAILED,
+                error="Interrupted by app restart",
+                permanent=False,
                 finished_at_wall=now_iso,
             )
             normalized_ids.add(job.job_id)

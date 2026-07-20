@@ -12,10 +12,17 @@ POLICY_FRESHNESS_WINDOW = timedelta(minutes=5)
 
 _VALID_ACTIVE_SOURCES = {"local", "server"}
 _VALID_SERVER_REACHABILITY = {"unknown", "reachable", "unreachable"}
-_VALID_SERVER_AUTH_STATES = {"unknown", "authenticated", "auth_required", "session_invalid"}
+_VALID_SERVER_AUTH_STATES = {
+    "unknown",
+    "authenticated",
+    "auth_required",
+    "session_invalid",
+}
 
 
-def _is_fresh(checked_at: datetime | None, *, now: datetime, freshness_window: timedelta) -> bool:
+def _is_fresh(
+    checked_at: datetime | None, *, now: datetime, freshness_window: timedelta
+) -> bool:
     if checked_at is None:
         return False
     if checked_at.tzinfo is None:
@@ -72,7 +79,9 @@ def runtime_source_state_to_dict(state: RuntimeSourceState) -> dict:
         "active_server_id": state.active_server_id,
         "server_configured": state.server_configured,
         "server_reachability": state.server_reachability,
-        "server_reachability_checked_at": _datetime_to_iso(state.server_reachability_checked_at),
+        "server_reachability_checked_at": _datetime_to_iso(
+            state.server_reachability_checked_at
+        ),
         "server_auth_state": state.server_auth_state,
         "server_auth_checked_at": _datetime_to_iso(state.server_auth_checked_at),
         "last_known_server_label": state.last_known_server_label,
@@ -96,7 +105,9 @@ def runtime_source_state_from_dict(data) -> RuntimeSourceState:
             valid_values=_VALID_SERVER_REACHABILITY,
             default="unknown",
         ),
-        server_reachability_checked_at=_iso_to_datetime(data.get("server_reachability_checked_at")),
+        server_reachability_checked_at=_iso_to_datetime(
+            data.get("server_reachability_checked_at")
+        ),
         server_auth_state=_coerce_choice(
             data.get("server_auth_state", "unknown"),
             valid_values=_VALID_SERVER_AUTH_STATES,

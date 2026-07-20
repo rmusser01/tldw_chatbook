@@ -9,19 +9,40 @@ class FakeDocumentIntelligenceClient:
 
     async def get_document_outline(self, media_id):
         self.calls.append(("get_document_outline", media_id))
-        return {"media_id": media_id, "has_outline": True, "entries": [], "total_pages": 1}
+        return {
+            "media_id": media_id,
+            "has_outline": True,
+            "entries": [],
+            "total_pages": 1,
+        }
 
     async def get_document_figures(self, media_id, **params):
         self.calls.append(("get_document_figures", media_id, params))
-        return {"media_id": media_id, "has_figures": False, "figures": [], "total_count": 0}
+        return {
+            "media_id": media_id,
+            "has_figures": False,
+            "figures": [],
+            "total_count": 0,
+        }
 
     async def get_document_references(self, media_id, **params):
         self.calls.append(("get_document_references", media_id, params))
         return {"media_id": media_id, "has_references": False, "references": []}
 
     async def generate_document_insights(self, media_id, request_data):
-        self.calls.append(("generate_document_insights", media_id, request_data.model_dump(exclude_none=True, mode="json")))
-        return {"media_id": media_id, "insights": [], "model_used": "test-model", "cached": False}
+        self.calls.append(
+            (
+                "generate_document_insights",
+                media_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
+        return {
+            "media_id": media_id,
+            "insights": [],
+            "model_used": "test-model",
+            "cached": False,
+        }
 
 
 @pytest.mark.asyncio
@@ -32,7 +53,9 @@ async def test_server_media_service_routes_document_intelligence_operations():
     outline = await service.get_document_outline(7)
     figures = await service.get_document_figures(7, min_size=80)
     references = await service.get_document_references(7, enrich=True, limit=10)
-    insights = await service.generate_document_insights(7, categories=["summary"], model="test-model", force=True)
+    insights = await service.generate_document_insights(
+        7, categories=["summary"], model="test-model", force=True
+    )
 
     assert outline["has_outline"] is True
     assert figures["has_figures"] is False

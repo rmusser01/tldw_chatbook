@@ -18,7 +18,9 @@ async def test_research_search_client_routes_websearch_and_paper_search(monkeypa
     mocked = AsyncMock(
         side_effect=[
             {
-                "web_search_results_dict": {"results": [{"title": "A", "url": "https://example.com"}]},
+                "web_search_results_dict": {
+                    "results": [{"title": "A", "url": "https://example.com"}]
+                },
                 "sub_query_dict": {"queries": ["mcp governance"]},
             },
             {
@@ -89,15 +91,25 @@ async def test_research_search_client_routes_websearch_and_paper_search(monkeypa
     )
     monkeypatch.setattr(client, "_request", mocked)
 
-    web = await client.research_websearch(WebSearchRequest(query="mcp governance", engine="searxng"))
-    arxiv = await client.search_arxiv_papers(query="agents", page=1, results_per_page=10)
-    semantic = await client.search_semantic_scholar_papers(query="agents", page=1, results_per_page=10)
-    biorxiv = await client.search_biorxiv_papers(q="genomics", server="biorxiv", page=1, results_per_page=10)
+    web = await client.research_websearch(
+        WebSearchRequest(query="mcp governance", engine="searxng")
+    )
+    arxiv = await client.search_arxiv_papers(
+        query="agents", page=1, results_per_page=10
+    )
+    semantic = await client.search_semantic_scholar_papers(
+        query="agents", page=1, results_per_page=10
+    )
+    biorxiv = await client.search_biorxiv_papers(
+        q="genomics", server="biorxiv", page=1, results_per_page=10
+    )
     biorxiv_detail = await client.get_biorxiv_paper_by_doi(
         doi="10.1101/2026.01.01.000001",
         server="biorxiv",
     )
-    pubmed = await client.search_pubmed_papers(q="governance", free_full_text=True, page=1, results_per_page=10)
+    pubmed = await client.search_pubmed_papers(
+        q="governance", free_full_text=True, page=1, results_per_page=10
+    )
     pubmed_detail = await client.get_pubmed_paper_by_id(pmid="12345678")
 
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/research/websearch")
@@ -115,9 +127,20 @@ async def test_research_search_client_routes_websearch_and_paper_search(monkeypa
         "aggregate": False,
     }
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/paper-search/arxiv")
-    assert mocked.await_args_list[1].kwargs["params"] == {"query": "agents", "page": 1, "results_per_page": 10}
-    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/paper-search/semantic-scholar")
-    assert mocked.await_args_list[2].kwargs["params"] == {"query": "agents", "page": 1, "results_per_page": 10}
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "query": "agents",
+        "page": 1,
+        "results_per_page": 10,
+    }
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/paper-search/semantic-scholar",
+    )
+    assert mocked.await_args_list[2].kwargs["params"] == {
+        "query": "agents",
+        "page": 1,
+        "results_per_page": 10,
+    }
     assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/paper-search/biorxiv")
     assert mocked.await_args_list[3].kwargs["params"] == {
         "q": "genomics",
@@ -125,7 +148,10 @@ async def test_research_search_client_routes_websearch_and_paper_search(monkeypa
         "page": 1,
         "results_per_page": 10,
     }
-    assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/paper-search/biorxiv/by-doi")
+    assert mocked.await_args_list[4].args[:2] == (
+        "GET",
+        "/api/v1/paper-search/biorxiv/by-doi",
+    )
     assert mocked.await_args_list[4].kwargs["params"] == {
         "doi": "10.1101/2026.01.01.000001",
         "server": "biorxiv",
@@ -137,7 +163,10 @@ async def test_research_search_client_routes_websearch_and_paper_search(monkeypa
         "page": 1,
         "results_per_page": 10,
     }
-    assert mocked.await_args_list[6].args[:2] == ("GET", "/api/v1/paper-search/pubmed/by-id")
+    assert mocked.await_args_list[6].args[:2] == (
+        "GET",
+        "/api/v1/paper-search/pubmed/by-id",
+    )
     assert mocked.await_args_list[6].kwargs["params"] == {"pmid": "12345678"}
 
     assert web.web_search_results_dict["results"][0]["title"] == "A"
@@ -272,19 +301,34 @@ async def test_research_search_client_routes_generic_paper_search_gateway(monkey
     )
     monkeypatch.setattr(client, "_request", mocked)
 
-    listed = await client.paper_search(PaperSearchRequest(endpoint="chemrxiv/categories", params={"q": "bio"}))
+    listed = await client.paper_search(
+        PaperSearchRequest(endpoint="chemrxiv/categories", params={"q": "bio"})
+    )
     detail = await client.paper_search_detail(
-        PaperSearchDetailRequest(endpoint="pmc-oai/get-record", params={"identifier": "oai:pmc:1"})
+        PaperSearchDetailRequest(
+            endpoint="pmc-oai/get-record", params={"identifier": "oai:pmc:1"}
+        )
     )
     ingested = await client.paper_search_ingest(
-        PaperSearchIngestRequest(endpoint="pmc-oa/ingest-pdf", payload={"pmcid": "PMC1"})
+        PaperSearchIngestRequest(
+            endpoint="pmc-oa/ingest-pdf", payload={"pmcid": "PMC1"}
+        )
     )
 
-    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/paper-search/chemrxiv/categories")
+    assert mocked.await_args_list[0].args[:2] == (
+        "GET",
+        "/api/v1/paper-search/chemrxiv/categories",
+    )
     assert mocked.await_args_list[0].kwargs["params"] == {"q": "bio"}
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/paper-search/pmc-oai/get-record")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/paper-search/pmc-oai/get-record",
+    )
     assert mocked.await_args_list[1].kwargs["params"] == {"identifier": "oai:pmc:1"}
-    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/paper-search/pmc-oa/ingest-pdf")
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/paper-search/pmc-oa/ingest-pdf",
+    )
     assert mocked.await_args_list[2].kwargs["json_data"] == {"pmcid": "PMC1"}
 
     assert listed.items[0]["name"] == "Biology"
@@ -294,7 +338,9 @@ async def test_research_search_client_routes_generic_paper_search_gateway(monkey
 
 
 @pytest.mark.asyncio
-async def test_research_search_client_routes_paper_detail_and_medrxiv_aliases(monkeypatch):
+async def test_research_search_client_routes_paper_detail_and_medrxiv_aliases(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
@@ -331,12 +377,22 @@ async def test_research_search_client_routes_paper_detail_and_medrxiv_aliases(mo
 
     arxiv_detail = await client.get_arxiv_paper_by_id(id="2401.00001")
     semantic_detail = await client.get_semantic_scholar_paper_by_id(paper_id="abc")
-    medrxiv = await client.search_medrxiv_papers(q="genomics", page=1, results_per_page=10)
-    medrxiv_detail = await client.get_medrxiv_paper_by_doi(doi="10.1101/2026.01.01.000001")
+    medrxiv = await client.search_medrxiv_papers(
+        q="genomics", page=1, results_per_page=10
+    )
+    medrxiv_detail = await client.get_medrxiv_paper_by_doi(
+        doi="10.1101/2026.01.01.000001"
+    )
 
-    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/paper-search/arxiv/by-id")
+    assert mocked.await_args_list[0].args[:2] == (
+        "GET",
+        "/api/v1/paper-search/arxiv/by-id",
+    )
     assert mocked.await_args_list[0].kwargs["params"] == {"id": "2401.00001"}
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/paper-search/semantic-scholar/by-id")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/paper-search/semantic-scholar/by-id",
+    )
     assert mocked.await_args_list[1].kwargs["params"] == {"paper_id": "abc"}
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/paper-search/medrxiv")
     assert mocked.await_args_list[2].kwargs["params"] == {
@@ -344,8 +400,13 @@ async def test_research_search_client_routes_paper_detail_and_medrxiv_aliases(mo
         "page": 1,
         "results_per_page": 10,
     }
-    assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/paper-search/medrxiv/by-doi")
-    assert mocked.await_args_list[3].kwargs["params"] == {"doi": "10.1101/2026.01.01.000001"}
+    assert mocked.await_args_list[3].args[:2] == (
+        "GET",
+        "/api/v1/paper-search/medrxiv/by-doi",
+    )
+    assert mocked.await_args_list[3].kwargs["params"] == {
+        "doi": "10.1101/2026.01.01.000001"
+    }
 
     assert arxiv_detail.id == "2401.00001"
     assert semantic_detail.paperId == "abc"

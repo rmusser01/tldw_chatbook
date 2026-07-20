@@ -55,10 +55,15 @@ def test_common_base_and_prefixed_openai_paths_map_to_models(endpoint, expected)
 
 
 def test_space_separated_provider_label_can_infer_openai_compatible_base_url():
-    assert supports_openai_compatible_model_discovery("Local LLM", "http://127.0.0.1:8000") is True
+    assert (
+        supports_openai_compatible_model_discovery("Local LLM", "http://127.0.0.1:8000")
+        is True
+    )
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "google", "cohere", "huggingface", "ollama"])
+@pytest.mark.parametrize(
+    "provider", ["anthropic", "google", "cohere", "huggingface", "ollama"]
+)
 def test_native_provider_base_urls_do_not_infer_openai_compatibility(provider):
     assert (
         supports_openai_compatible_model_discovery(provider, "https://api.example.test")
@@ -66,7 +71,9 @@ def test_native_provider_base_urls_do_not_infer_openai_compatibility(provider):
     )
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "google", "cohere", "huggingface", "ollama"])
+@pytest.mark.parametrize(
+    "provider", ["anthropic", "google", "cohere", "huggingface", "ollama"]
+)
 def test_native_provider_explicit_openai_compatible_paths_are_eligible(provider):
     assert (
         supports_openai_compatible_model_discovery(
@@ -169,9 +176,7 @@ def test_response_metadata_does_not_include_sensitive_headers():
         now_iso="2026-06-04T12:00:00Z",
     )
 
-    assert "authorization" not in {
-        key.lower() for key in models[0].metadata_raw_safe
-    }
+    assert "authorization" not in {key.lower() for key in models[0].metadata_raw_safe}
     assert "api_key" not in models[0].metadata_raw_safe
     assert "sessionToken" not in models[0].metadata_raw_safe
     assert "access_token" not in models[0].metadata_raw_safe["metadata"]
@@ -322,7 +327,7 @@ async def test_discovery_owned_async_client_uses_context_manager(monkeypatch):
         async def __aexit__(self, exc_type, exc, traceback):
             events.append("exit")
 
-        async def get(self, url, headers=None):
+        async def get(self, url, headers=None, params=None):
             events.append(f"get:{url}")
             return httpx.Response(
                 200,
@@ -430,3 +435,130 @@ async def test_discovery_returns_typed_error_for_unsupported_endpoint():
     assert result.status == "unsupported"
     assert result.error is not None
     assert result.error.kind == "unsupported_endpoint"
+
+
+def test_openrouter_api_v1_path_maps_to_models():
+    assert supports_openai_compatible_model_discovery(
+        "openrouter", "https://openrouter.ai/api/v1"
+    ) is True
+    assert (
+        build_models_url("https://openrouter.ai/api/v1", "openrouter")
+        == "https://openrouter.ai/api/v1/models"
+    )
+
+
+def test_zai_paas_v4_path_maps_to_models():
+    assert supports_openai_compatible_model_discovery(
+        "zai", "https://api.z.ai/api/paas/v4"
+    ) is True
+    assert (
+        build_models_url("https://api.z.ai/api/paas/v4", "zai")
+        == "https://api.z.ai/api/paas/v4/models"
+    )
+
+
+def test_anthropic_uses_x_api_key_headers():
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        build_discovery_auth_headers,
+    )
+
+    headers = build_discovery_auth_headers("anthropic", "sk-ant-test")
+    assert headers == {"x-api-key": "sk-ant-test", "anthropic-version": "2023-06-01"}
+    assert build_discovery_auth_headers("openai", "sk-test") == {
+        "Authorization": "Bearer sk-test"
+    }
+    assert build_discovery_auth_headers("anthropic", None) == {}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_paginates_with_after_id():
+    requests: list[dict] = []
+    seen_headers: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(dict(request.url.params))
+        seen_headers.update({k.lower(): v for k, v in request.headers.items()})
+        page = len(requests)
+        payload = (
+            {"data": [{"id": f"claude-{page}"}], "has_more": True, "last_id": f"claude-{page}"}
+            if page == 1
+            else {"data": [{"id": "claude-2"}], "has_more": False, "last_id": "claude-2"}
+        )
+        return httpx.Response(200, json=payload)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await discover_openai_compatible_models(
+            provider="anthropic",
+            provider_list_key="Anthropic",
+            endpoint="https://api.anthropic.com/v1",
+            api_key="sk-ant-test",
+            client=client,
+        )
+    assert result.status == "success"
+    assert [m.model_id for m in result.models] == ["claude-1", "claude-2"]
+    assert requests[0] == {"limit": "1000"}
+    assert requests[1] == {"limit": "1000", "after_id": "claude-1"}
+    # Anthropic auth headers, not Bearer:
+    assert seen_headers["x-api-key"] == "sk-ant-test"
+    assert seen_headers["anthropic-version"] == "2023-06-01"
+    assert "authorization" not in seen_headers
+
+
+@pytest.mark.asyncio
+async def test_openai_does_not_paginate():
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        assert "limit" not in dict(request.url.params)
+        return httpx.Response(200, json={"data": [{"id": "gpt-x"}]})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await discover_openai_compatible_models(
+            provider="openai",
+            provider_list_key="OpenAI",
+            endpoint="https://api.openai.com/v1",
+            api_key="sk-test",
+            client=client,
+        )
+    assert result.status == "success"
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_discovery_maps_401_to_missing_credentials():
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(401))
+    ) as client:
+        result = await discover_openai_compatible_models(
+            provider="openai",
+            provider_list_key="OpenAI",
+            endpoint="https://api.openai.com/v1",
+            api_key="sk-bad",
+            client=client,
+        )
+
+    assert result.status == "error"
+    assert result.error is not None
+    assert result.error.kind == "missing_credentials"
+
+
+@pytest.mark.asyncio
+async def test_discovery_maps_500_to_request_failed():
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(500))
+    ) as client:
+        result = await discover_openai_compatible_models(
+            provider="openai",
+            provider_list_key="OpenAI",
+            endpoint="https://api.openai.com/v1",
+            api_key="sk-test",
+            client=client,
+        )
+
+    assert result.status == "error"
+    assert result.error is not None
+    assert result.error.kind == "request_failed"

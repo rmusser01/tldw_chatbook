@@ -18,8 +18,9 @@ from loguru import logger
 # Functions:
 
 # Sensible default locations for logs
-DEFAULT_APP_LOG_PATH = '~/.local/tldw_cli/Logs/tldw_app.log'
-DEFAULT_METRICS_LOG_PATH = '~/.local/tldw_cli/Logs/tldw_metrics.json'
+DEFAULT_APP_LOG_PATH = "~/.local/tldw_cli/Logs/tldw_app.log"
+DEFAULT_METRICS_LOG_PATH = "~/.local/tldw_cli/Logs/tldw_metrics.json"
+
 
 def _ensure_log_dir_exists(file_path: str):
     """Ensure the directory for the log file exists."""
@@ -29,6 +30,7 @@ def _ensure_log_dir_exists(file_path: str):
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
     return expanded_path
+
 
 def retention_function(files):
     """
@@ -75,10 +77,12 @@ def json_formatter(record):
         return json.dumps(log_record)
     except Exception as e:
         # Fallback to a safe JSON structure if serialization fails
-        return json.dumps({
-            "error": f"Log formatting failed: {str(e)}",
-            "original_message": record.get("message", "")
-        })
+        return json.dumps(
+            {
+                "error": f"Log formatting failed: {str(e)}",
+                "original_message": record.get("message", ""),
+            }
+        )
 
 
 def setup_logger(
@@ -103,11 +107,7 @@ def setup_logger(
     logger.remove()
 
     # 1. Console Sink (always enabled)
-    logger.add(
-        sys.stdout,
-        level=log_level.upper(),
-        format=console_format
-    )
+    logger.add(sys.stdout, level=log_level.upper(), format=console_format)
 
     # 2. Standard Application File Sink
     if app_log_path:
@@ -117,10 +117,10 @@ def setup_logger(
             level=log_level.upper(),
             format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
             rotation="10 MB",  # Rotate file when it reaches 10 MB
-            retention="7 days", # Keep logs for 7 days
-            enqueue=True,      # Make logging non-blocking
-            backtrace=True,    # Show full stack trace on exceptions
-            diagnose=True,     # Add exception variable values
+            retention="7 days",  # Keep logs for 7 days
+            enqueue=True,  # Make logging non-blocking
+            backtrace=True,  # Show full stack trace on exceptions
+            diagnose=True,  # Add exception variable values
         )
         logger.info(f"Application logs will be written to: {path}")
 
@@ -129,15 +129,16 @@ def setup_logger(
         path = _ensure_log_dir_exists(metrics_log_path)
         logger.add(
             path,
-            level="DEBUG",     # Typically, you want all levels for metrics
-            serialize=True,    # This is the key for JSON output
+            level="DEBUG",  # Typically, you want all levels for metrics
+            serialize=True,  # This is the key for JSON output
             rotation="10 MB",
-            retention=5,       # Keeps the 5 most recent log files
+            retention=5,  # Keeps the 5 most recent log files
             enqueue=True,
         )
         logger.info(f"JSON metrics logs will be written to: {path}")
 
     return logger
+
 
 # def setup_logger(log_file_path="tldw_app_logs.json"):
 #     """

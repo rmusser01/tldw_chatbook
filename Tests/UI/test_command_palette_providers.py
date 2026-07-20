@@ -9,17 +9,18 @@
 #
 # Imports
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock, PropertyMock
-from typing import List, AsyncIterator
+from unittest.mock import MagicMock, patch, PropertyMock
+from typing import List
 
 # 3rd-party Libraries
 from textual.app import App
 from textual.command import Hit
 
-# Local Imports  
+# Local Imports
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 try:
     # First try to import the base Provider class from textual
@@ -50,6 +51,7 @@ try:
     )
     from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
     IMPORTS_AVAILABLE = True
 
     ALL_PROVIDERS = [
@@ -101,9 +103,18 @@ except ImportError as e:
     TAB_LIBRARY = "library"
     LIBRARY_NAV_CONTEXT_NOTES_CREATE = "notes_create"
     ALL_TABS = [
-        TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH,
-        TAB_INGEST, TAB_EVALS, TAB_LLM, TAB_STTS,
-        TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_CODING, TAB_STATS,
+        TAB_CHAT,
+        TAB_CCP,
+        TAB_MEDIA,
+        TAB_SEARCH,
+        TAB_INGEST,
+        TAB_EVALS,
+        TAB_LLM,
+        TAB_STTS,
+        TAB_TOOLS_SETTINGS,
+        TAB_LOGS,
+        TAB_CODING,
+        TAB_STATS,
     ]
 
     def get_tab_display_label(tab_id):
@@ -118,13 +129,14 @@ except ImportError as e:
 # --- Skip marker for tests requiring imports ---
 
 requires_imports = pytest.mark.skipif(
-    not IMPORTS_AVAILABLE, 
-    reason="Command palette providers not available due to import errors"
+    not IMPORTS_AVAILABLE,
+    reason="Command palette providers not available due to import errors",
 )
 
 #######################################################################################################################
 #
 # --- Fixtures ---
+
 
 @pytest.fixture
 def mock_app():
@@ -135,6 +147,7 @@ def mock_app():
     app.notify = MagicMock()
     return app
 
+
 @pytest.fixture
 def mock_matcher():
     """Create a mock matcher for search testing."""
@@ -143,14 +156,16 @@ def mock_matcher():
     matcher.highlight = MagicMock(side_effect=lambda x: x)
     return matcher
 
+
 #######################################################################################################################
 #
 # --- ThemeProvider Tests ---
 
+
 @requires_imports
 class TestThemeProvider:
     """Test suite for ThemeProvider functionality."""
-    
+
     @pytest.fixture
     def theme_provider(self, mock_app):
         """Create a ThemeProvider instance with mock app."""
@@ -164,104 +179,109 @@ class TestThemeProvider:
         # Set provider.matcher as a callable that returns the matcher object
         provider.matcher = MagicMock(return_value=mock_matcher)
         return provider
-    
+
     @pytest.mark.asyncio
     async def test_discover_shows_single_change_theme_command(self, theme_provider):
         """Test that discover() shows only one 'Change Theme' command."""
         hits = []
         async for hit in theme_provider.discover():
             hits.append(hit)
-        
+
         assert len(hits) == 1
         assert hits[0].text == "Theme: Change Theme"
         assert "Open theme selection menu" in hits[0].help
-    
+
     @pytest.mark.asyncio
     async def test_search_shows_change_theme_command(self, theme_provider):
         """Test that search shows 'Change Theme' command for general queries."""
         hits = []
         async for hit in theme_provider.search("change"):
             hits.append(hit)
-        
+
         # Should show at least the main command
         assert len(hits) >= 1
         change_theme_hits = [h for h in hits if "Theme: Change Theme" in h.text]
         assert len(change_theme_hits) == 1
-    
+
     @pytest.mark.asyncio
-    async def test_search_shows_specific_themes_for_theme_keywords(self, theme_provider):
+    async def test_search_shows_specific_themes_for_theme_keywords(
+        self, theme_provider
+    ):
         """Test that search shows specific themes when theme keywords are used."""
-        with patch('tldw_chatbook.app.ALL_THEMES', []):  # Mock empty themes list
+        with patch("tldw_chatbook.app.ALL_THEMES", []):  # Mock empty themes list
             hits = []
             async for hit in theme_provider.search("theme dark"):
                 hits.append(hit)
-            
+
             # Should show both main command and specific theme commands
             theme_specific_hits = [h for h in hits if "Switch to" in h.text]
             change_theme_hits = [h for h in hits if "Theme: Change Theme" in h.text]
-            
+
             assert len(change_theme_hits) == 1
             # Should show built-in themes
             assert len(theme_specific_hits) >= 1
-    
+
     @pytest.mark.asyncio
     async def test_search_filters_themes_correctly(self, theme_provider):
         """Test that theme search filters work correctly."""
         test_keywords = ["dark", "light", "gruvbox", "solarized", "dracula"]
-        
+
         for keyword in test_keywords:
             hits = []
             async for hit in theme_provider.search(keyword):
                 hits.append(hit)
-            
+
             # Should show both main command and filtered themes
             assert len(hits) >= 1
             change_theme_hits = [h for h in hits if "Theme: Change Theme" in h.text]
             assert len(change_theme_hits) == 1
-    
+
     def test_show_theme_submenu(self, theme_provider):
         """Test that show_theme_submenu provides helpful instruction."""
         theme_provider.show_theme_submenu()
-        
+
         theme_provider.app.notify.assert_called_once()
         call_args = theme_provider.app.notify.call_args[0]
         assert "Type 'theme'" in call_args[0]
         assert "command palette" in call_args[0]
-    
+
     def test_switch_theme_success(self, theme_provider):
         """Test successful theme switching."""
-        with patch('tldw_chatbook.config.save_setting_to_cli_config') as mock_save:
+        with patch("tldw_chatbook.config.save_setting_to_cli_config") as mock_save:
             theme_provider.switch_theme("test-theme")
-            
+
             assert theme_provider.app.theme == "test-theme"
             theme_provider.app.notify.assert_called_once_with(
                 "Theme changed to test-theme", severity="information"
             )
             mock_save.assert_called_once_with("general", "default_theme", "test-theme")
-    
+
     def test_switch_theme_failure(self, theme_provider):
         """Test theme switching with error handling."""
         # Mock the theme property to raise an exception when set
-        type(theme_provider.app).theme = PropertyMock(side_effect=Exception("Theme error"))
-        
+        type(theme_provider.app).theme = PropertyMock(
+            side_effect=Exception("Theme error")
+        )
+
         theme_provider.switch_theme("invalid-theme")
-        
+
         theme_provider.app.notify.assert_called_once()
         call_args = theme_provider.app.notify.call_args
         # Check that the error message contains the expected text (partial match)
         assert "Failed to apply theme" in call_args[0][0]
         assert "Theme error" in call_args[0][0]  # The exception message is included
-        assert call_args[1]['severity'] == "error"
+        assert call_args[1]["severity"] == "error"
 
 
 #######################################################################################################################
 #
 # --- TabNavigationProvider Tests ---
 
+
 @requires_imports
 class TestTabNavigationProvider:
     """Test suite for TabNavigationProvider functionality."""
-    
+
     @pytest.fixture
     def tab_provider(self, mock_app):
         """Create a TabNavigationProvider instance with mock app."""
@@ -275,14 +295,14 @@ class TestTabNavigationProvider:
         # Set provider.matcher as a callable that returns the matcher object
         provider.matcher = MagicMock(return_value=mock_matcher)
         return provider
-    
+
     @pytest.mark.asyncio
     async def test_discover_shows_popular_tabs(self, tab_provider):
         """Test that discover() shows popular tab navigation commands."""
         hits = []
         async for hit in tab_provider.discover():
             hits.append(hit)
-        
+
         assert len(hits) == 6  # Popular tabs defined in discover method
         tab_names = [hit.text for hit in hits]
         assert any("Console" in name for name in tab_names)
@@ -290,7 +310,7 @@ class TestTabNavigationProvider:
         assert any("Artifacts" in name for name in tab_names)
         assert any("MCP" in name for name in tab_names)
         assert any("Settings" in name for name in tab_names)
-    
+
     @pytest.mark.asyncio
     async def test_search_shows_one_command_per_shell_destination(self, tab_provider):
         """Palette search yields exactly one labeled command per destination."""
@@ -312,7 +332,9 @@ class TestTabNavigationProvider:
         assert not any("Skills" in text for text in tab_texts)
 
     @pytest.mark.asyncio
-    async def test_search_uses_destination_labels_without_duplicates(self, tab_provider):
+    async def test_search_uses_destination_labels_without_duplicates(
+        self, tab_provider
+    ):
         """Command palette labels match shell destinations exactly once each."""
         hits = []
         async for hit in tab_provider.search("tab"):
@@ -320,9 +342,20 @@ class TestTabNavigationProvider:
 
         texts = [hit.text for hit in hits]
 
-        for label in ("Console", "Library", "Artifacts", "Personas", "Watchlists",
-                      "Schedules", "Workflows", "MCP", "ACP", "Lab",
-                      "Settings", "Home"):
+        for label in (
+            "Console",
+            "Library",
+            "Artifacts",
+            "Personas",
+            "Watchlists",
+            "Schedules",
+            "Workflows",
+            "MCP",
+            "ACP",
+            "Lab",
+            "Settings",
+            "Home",
+        ):
             expected_text = f"Tab Navigation: Switch to {label}"
             assert texts.count(expected_text) == 1, expected_text
 
@@ -334,7 +367,9 @@ class TestTabNavigationProvider:
         assert "Tools & Settings" not in joined_text
 
     def test_tab_navigation_provider_uses_watchlists_label(self, tab_provider):
-        command_text, tab_id, help_text = tab_provider._tab_command(TAB_WATCHLISTS_COLLECTIONS)
+        command_text, tab_id, help_text = tab_provider._tab_command(
+            TAB_WATCHLISTS_COLLECTIONS
+        )
 
         assert tab_id == TAB_WATCHLISTS_COLLECTIONS
         assert "Watchlists" in command_text
@@ -380,7 +415,9 @@ class TestTabNavigationProvider:
             assert any(expected_label in hit.text for hit in hits), query
 
     @pytest.mark.asyncio
-    async def test_search_resolves_legacy_alias_to_owning_destination(self, tab_provider):
+    async def test_search_resolves_legacy_alias_to_owning_destination(
+        self, tab_provider
+    ):
         class QueryMatcher:
             def __init__(self, query: str):
                 self.query = query.lower()
@@ -410,7 +447,7 @@ class TestTabNavigationProvider:
                 hits.append(hit)
 
             assert any(hit.text == expected_text for hit in hits), query
-    
+
     def test_switch_tab_success(self, tab_provider):
         """Test successful tab switching."""
         tab_provider.switch_tab(TAB_MEDIA)
@@ -420,20 +457,20 @@ class TestTabNavigationProvider:
         assert message.screen_name == TabNavigationProvider.route_for_tab(TAB_MEDIA)
         tab_provider.app.notify.assert_called_once()
         assert "Switched to" in tab_provider.app.notify.call_args.args[0]
-    
+
     def test_switch_tab_failure(self, tab_provider):
         """Test tab switching with error handling."""
         tab_provider.app.post_message.side_effect = Exception("Tab error")
-        
+
         tab_provider.switch_tab(TAB_CHAT)
-        
+
         tab_provider.app.notify.assert_called_once()
         call_args = tab_provider.app.notify.call_args
         # Check that the error message contains the expected text (partial match)
         assert "Failed to switch tab" in call_args[0][0]
         assert "Tab error" in call_args[0][0]  # The exception message is included
-        assert call_args[1]['severity'] == "error"
-    
+        assert call_args[1]["severity"] == "error"
+
     def test_all_command_palette_tabs_are_navigable(self, tab_provider):
         """Test that all command palette tabs can be routed."""
         assert "notes" not in TabNavigationProvider.command_palette_tab_ids()
@@ -444,11 +481,22 @@ class TestTabNavigationProvider:
             message = tab_provider.app.post_message.call_args.args[0]
             assert message.screen_name == TabNavigationProvider.route_for_tab(tab_id)
 
-    @pytest.mark.parametrize("tab_id", [
-        TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH,
-        TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS,
-        TAB_STATS, TAB_EVALS, TAB_CODING
-    ])
+    @pytest.mark.parametrize(
+        "tab_id",
+        [
+            TAB_CHAT,
+            TAB_CCP,
+            TAB_MEDIA,
+            TAB_SEARCH,
+            TAB_INGEST,
+            TAB_TOOLS_SETTINGS,
+            TAB_LLM,
+            TAB_LOGS,
+            TAB_STATS,
+            TAB_EVALS,
+            TAB_CODING,
+        ],
+    )
     def test_all_legacy_tabs_switchable(self, tab_provider, tab_id):
         """Test that legacy tabs remain switchable through route aliases."""
         tab_provider.switch_tab(tab_id)
@@ -460,10 +508,11 @@ class TestTabNavigationProvider:
 #
 # --- QuickActionsProvider Tests ---
 
+
 @requires_imports
 class TestQuickActionsProvider:
     """Test suite for QuickActionsProvider functionality."""
-    
+
     @pytest.fixture
     def quick_actions_provider(self, mock_app):
         """Create a QuickActionsProvider instance with mock app."""
@@ -477,44 +526,44 @@ class TestQuickActionsProvider:
         # Set provider.matcher as a callable that returns the matcher object
         provider.matcher = MagicMock(return_value=mock_matcher)
         return provider
-    
+
     @pytest.mark.asyncio
     async def test_discover_shows_popular_actions(self, quick_actions_provider):
         """Test that discover() shows popular quick actions."""
         hits = []
         async for hit in quick_actions_provider.discover():
             hits.append(hit)
-        
+
         assert len(hits) == 4  # Popular actions defined in discover method
         action_names = [hit.text for hit in hits]
         assert any("New Chat" in name for name in action_names)
         assert any("New Note" in name for name in action_names)
         assert any("Search All" in name for name in action_names)
-    
+
     @pytest.mark.asyncio
     async def test_search_shows_all_actions(self, quick_actions_provider):
         """Test that search shows all available quick actions."""
         hits = []
         async for hit in quick_actions_provider.search("quick"):
             hits.append(hit)
-        
+
         assert len(hits) == 5  # All actions defined in search method
         action_texts = [hit.text for hit in hits]
         assert any("New Chat Conversation" in text for text in action_texts)
         assert any("Import Media" in text for text in action_texts)
-    
+
     @pytest.mark.asyncio
     async def test_search_excludes_unwired_actions(self, quick_actions_provider):
         """Placebo actions (clear/export chat, refresh db) were removed, not half-wired."""
         hits = []
         async for hit in quick_actions_provider.search("quick"):
             hits.append(hit)
-        
+
         action_texts = [hit.text for hit in hits]
         assert not any("Clear Current Chat" in text for text in action_texts)
         assert not any("Export Chat" in text for text in action_texts)
         assert not any("Refresh Database" in text for text in action_texts)
-    
+
     def test_execute_new_chat_action(self, quick_actions_provider):
         """Test new chat action execution."""
         quick_actions_provider.execute_quick_action("new_chat")
@@ -526,7 +575,7 @@ class TestQuickActionsProvider:
         quick_actions_provider.app.notify.assert_called_once()
         call_args = quick_actions_provider.app.notify.call_args[0]
         assert "Console" in call_args[0]
-    
+
     def test_execute_new_note_action(self, quick_actions_provider):
         """Test new note action execution.
 
@@ -540,29 +589,30 @@ class TestQuickActionsProvider:
         assert message.screen_name == TAB_LIBRARY
         assert message.screen_context == {LIBRARY_NAV_CONTEXT_NOTES_CREATE: True}
         quick_actions_provider.app.notify.assert_called_once()
-    
+
     def test_execute_action_failure(self, quick_actions_provider):
         """Test quick action execution with error handling."""
         quick_actions_provider.app.post_message.side_effect = Exception("Action error")
-        
+
         quick_actions_provider.execute_quick_action("new_chat")
-        
+
         quick_actions_provider.app.notify.assert_called_once()
         call_args = quick_actions_provider.app.notify.call_args
         # Check that the error message contains the expected text (partial match)
         assert "Failed to execute quick action" in call_args[0][0]
         assert "Action error" in call_args[0][0]  # The exception message is included
-        assert call_args[1]['severity'] == "error"
+        assert call_args[1]["severity"] == "error"
 
 
 #######################################################################################################################
 #
 # --- LLMProviderProvider Tests ---
 
+
 @requires_imports
 class TestLLMProviderProvider:
     """Test suite for LLMProviderProvider functionality."""
-    
+
     @pytest.fixture
     def llm_provider(self, mock_app):
         """Create an LLMProviderProvider instance with mock app."""
@@ -576,45 +626,45 @@ class TestLLMProviderProvider:
         # Set provider.matcher as a callable that returns the matcher object
         provider.matcher = MagicMock(return_value=mock_matcher)
         return provider
-    
+
     @pytest.mark.asyncio
     async def test_discover_shows_popular_providers(self, llm_provider):
         """Test that discover() shows popular LLM providers."""
         hits = []
         async for hit in llm_provider.discover():
             hits.append(hit)
-        
+
         assert len(hits) == 6  # Show current + 5 popular providers
         provider_names = [hit.text for hit in hits]
         assert any("Show Current Provider" in name for name in provider_names)
         assert any("OpenAI" in name for name in provider_names)
         assert any("Anthropic" in name for name in provider_names)
-    
+
     def test_show_current_provider(self, llm_provider):
         """Test showing current provider reads the live chat provider reactive."""
         llm_provider.app.chat_api_provider_value = "OpenAI"
         llm_provider.handle_llm_command(None, "show_current")
-        
+
         llm_provider.app.notify.assert_called_once()
         call_args = llm_provider.app.notify.call_args[0]
         assert "Current LLM provider: OpenAI" in call_args[0]
-    
+
     def test_provider_switch_sets_chat_provider_reactive(self, llm_provider):
         """Switch commands set the same reactive the Settings screen drives."""
         llm_provider.handle_llm_command("Anthropic", "switch_Anthropic")
-        
+
         assert llm_provider.app.chat_api_provider_value == "Anthropic"
         llm_provider.app.notify.assert_called_once()
         call_args = llm_provider.app.notify.call_args[0]
         assert "Switched LLM provider to Anthropic" in call_args[0]
-    
+
     @pytest.mark.asyncio
     async def test_search_excludes_placeholder_test_connection(self, llm_provider):
         """The notify-only 'Test API Connection' command was removed."""
         hits = []
         async for hit in llm_provider.search("test"):
             hits.append(hit)
-        
+
         assert not any("Test API Connection" in hit.text for hit in hits)
 
 
@@ -622,10 +672,11 @@ class TestLLMProviderProvider:
 #
 # --- SettingsProvider Tests ---
 
+
 @requires_imports
 class TestSettingsProvider:
     """Test suite for SettingsProvider functionality."""
-    
+
     @pytest.fixture
     def settings_provider(self, mock_app):
         """Create a SettingsProvider instance with mock app."""
@@ -639,19 +690,19 @@ class TestSettingsProvider:
         # Set provider.matcher as a callable that returns the matcher object
         provider.matcher = MagicMock(return_value=mock_matcher)
         return provider
-    
+
     @pytest.mark.asyncio
     async def test_discover_shows_popular_settings(self, settings_provider):
         """Test that discover() shows popular settings commands."""
         hits = []
         async for hit in settings_provider.discover():
             hits.append(hit)
-        
+
         assert len(hits) == 3  # Popular settings defined in discover method
         setting_names = [hit.text for hit in hits]
         assert any("Open Settings Tab" in name for name in setting_names)
         assert any("Open Config File" in name for name in setting_names)
-    
+
     def test_open_settings_tab(self, settings_provider):
         """Test opening settings tab."""
         settings_provider.handle_setting("open_settings")
@@ -661,16 +712,16 @@ class TestSettingsProvider:
         assert isinstance(message, NavigateToScreen)
         assert message.screen_name == TAB_SETTINGS
         settings_provider.app.notify.assert_called_once()
-    
+
     def test_show_config_path(self, settings_provider):
         """Test showing config file path."""
-        with patch('tldw_chatbook.config.DEFAULT_CONFIG_PATH', '/test/config.toml'):
+        with patch("tldw_chatbook.config.DEFAULT_CONFIG_PATH", "/test/config.toml"):
             settings_provider.handle_setting("open_config")
-            
+
             settings_provider.app.notify.assert_called_once()
             call_args = settings_provider.app.notify.call_args[0]
             assert "Config file location" in call_args[0]
-    
+
     def test_db_stats_navigates_to_stats_screen(self, settings_provider):
         """Show Database Stats routes to the live statistics screen."""
         settings_provider.handle_setting("db_stats")
@@ -680,14 +731,14 @@ class TestSettingsProvider:
         assert isinstance(message, NavigateToScreen)
         assert message.screen_name == TAB_STATS
         settings_provider.app.notify.assert_called_once()
-    
+
     @pytest.mark.asyncio
     async def test_search_excludes_unwired_settings(self, settings_provider):
         """Notify-only settings commands (temperature, streaming, reload, reset) were removed."""
         hits = []
         async for hit in settings_provider.search("settings"):
             hits.append(hit)
-        
+
         setting_texts = [hit.text for hit in hits]
         assert not any("Temperature" in text for text in setting_texts)
         assert not any("Streaming" in text for text in setting_texts)
@@ -699,10 +750,11 @@ class TestSettingsProvider:
 #
 # --- MediaProvider / CharacterProvider / DeveloperProvider Tests ---
 
+
 @requires_imports
 class TestMediaProvider:
     """Test suite for MediaProvider functionality."""
-    
+
     @pytest.fixture
     def media_provider(self, mock_app):
         """Create a MediaProvider instance with mock app."""
@@ -714,14 +766,14 @@ class TestMediaProvider:
         mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
         provider.matcher = MagicMock(return_value=mock_matcher)
         return provider
-    
+
     @pytest.mark.asyncio
     async def test_search_shows_only_wired_actions(self, media_provider):
         """Media palette only lists commands that navigate somewhere real."""
         hits = []
         async for hit in media_provider.search("media"):
             hits.append(hit)
-        
+
         assert len(hits) == 3
         media_texts = [hit.text for hit in hits]
         assert any("Open Media Library" in text for text in media_texts)
@@ -731,7 +783,7 @@ class TestMediaProvider:
         assert not any("Recent Media" in text for text in media_texts)
         assert not any("Refresh" in text for text in media_texts)
         assert not any("Export" in text for text in media_texts)
-    
+
     def test_open_media_navigates(self, media_provider):
         media_provider.handle_media_action("open_media")
 
@@ -824,7 +876,7 @@ class TestLibraryIngestProvider:
 @requires_imports
 class TestCharacterProvider:
     """Test suite for CharacterProvider functionality."""
-    
+
     @pytest.fixture
     def character_provider(self, mock_app):
         """Create a CharacterProvider instance with mock app."""
@@ -836,14 +888,14 @@ class TestCharacterProvider:
         mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
         provider.matcher = MagicMock(return_value=mock_matcher)
         return provider
-    
+
     @pytest.mark.asyncio
     async def test_search_excludes_unwired_character_actions(self, character_provider):
         """Character commands needing in-screen state (edit/delete/import/export) were removed."""
         hits = []
         async for hit in character_provider.search("character"):
             hits.append(hit)
-        
+
         assert len(hits) == 3
         character_texts = [hit.text for hit in hits]
         assert not any("Edit" in text for text in character_texts)
@@ -856,7 +908,7 @@ class TestCharacterProvider:
 @requires_imports
 class TestDeveloperProvider:
     """Test suite for DeveloperProvider functionality."""
-    
+
     @pytest.fixture
     def developer_provider(self, mock_app):
         """Create a DeveloperProvider instance with mock app."""
@@ -868,14 +920,14 @@ class TestDeveloperProvider:
         mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
         provider.matcher = MagicMock(return_value=mock_matcher)
         return provider
-    
+
     @pytest.mark.asyncio
     async def test_search_shows_only_wired_actions(self, developer_provider):
         """Developer palette only lists live commands."""
         hits = []
         async for hit in developer_provider.search("debug"):
             hits.append(hit)
-        
+
         assert len(hits) == 3
         dev_texts = [hit.text for hit in hits]
         assert not any("Clear Cache" in text for text in dev_texts)
@@ -883,7 +935,7 @@ class TestDeveloperProvider:
         assert not any("Memory Usage" in text for text in dev_texts)
         assert not any("Integrity" in text for text in dev_texts)
         assert not any("Export Debug" in text for text in dev_texts)
-    
+
     def test_show_keybindings_pushes_generated_panel(self, developer_provider):
         """Show Keybindings opens a panel generated from the app's BINDINGS."""
         from textual.binding import Binding
@@ -910,10 +962,11 @@ class TestDeveloperProvider:
 #
 # --- Integration Tests ---
 
+
 @requires_imports
 class TestCommandPaletteIntegration:
     """Integration tests for command palette providers."""
-    
+
     def test_all_providers_have_required_methods(self):
         """Test that all providers implement required methods."""
         providers = ALL_PROVIDERS
@@ -924,17 +977,20 @@ class TestCommandPaletteIntegration:
 
         for provider_class in providers:
             provider = provider_class(screen=mock_screen)
-            
+
             # Check required async methods
-            assert hasattr(provider, 'search')
-            assert hasattr(provider, 'discover')
-            
+            assert hasattr(provider, "search")
+            assert hasattr(provider, "discover")
+
             # Check methods are callable
-            import inspect
             # Check if the provider has the correct methods
-            assert callable(provider.search), f"{provider_class.__name__}.search is not callable"
-            assert callable(provider.discover), f"{provider_class.__name__}.discover is not callable"
-    
+            assert callable(provider.search), (
+                f"{provider_class.__name__}.search is not callable"
+            )
+            assert callable(provider.discover), (
+                f"{provider_class.__name__}.discover is not callable"
+            )
+
     @pytest.mark.asyncio
     async def test_all_providers_return_hits_from_discover(self, mock_app):
         """Test that all providers return Hit objects from discover()."""
@@ -951,18 +1007,20 @@ class TestCommandPaletteIntegration:
             mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
             # Set provider.matcher as a callable that returns the matcher object
             provider.matcher = MagicMock(return_value=mock_matcher)
-            
+
             hits = []
             async for hit in provider.discover():
                 hits.append(hit)
-            
-            assert len(hits) > 0, f"{provider.__class__.__name__} should return at least one hit"
-            
+
+            assert len(hits) > 0, (
+                f"{provider.__class__.__name__} should return at least one hit"
+            )
+
             for hit in hits:
-                assert isinstance(hit, Hit), f"All items should be Hit objects"
-                assert hasattr(hit, 'text'), f"Hit should have text attribute"
-                assert hasattr(hit, 'help'), f"Hit should have help attribute"
-    
+                assert isinstance(hit, Hit), "All items should be Hit objects"
+                assert hasattr(hit, "text"), "Hit should have text attribute"
+                assert hasattr(hit, "help"), "Hit should have help attribute"
+
     @pytest.mark.asyncio
     async def test_search_consistency_across_providers(self, mock_app):
         """Test that search behaves consistently across providers."""
@@ -972,7 +1030,7 @@ class TestCommandPaletteIntegration:
         providers = [ProviderClass(screen=mock_screen) for ProviderClass in ALL_PROVIDERS]
 
         test_queries = ["test", "switch", "open", "new"]
-        
+
         for provider in providers:
             # provider.app is accessed via provider.screen.app, no need to set directly
             # Create a mock matcher object
@@ -981,25 +1039,31 @@ class TestCommandPaletteIntegration:
             mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
             # Set provider.matcher as a callable that returns the matcher object
             provider.matcher = MagicMock(return_value=mock_matcher)
-            
+
             for query in test_queries:
                 hits = []
                 async for hit in provider.search(query):
                     hits.append(hit)
-                
+
                 # Each provider should handle search gracefully
                 # (may return 0 or more hits, but shouldn't error)
-                assert isinstance(hits, list), f"{provider.__class__.__name__} search should return list-like results"
-    
+                assert isinstance(hits, list), (
+                    f"{provider.__class__.__name__} search should return list-like results"
+                )
+
     def test_provider_error_handling(self, mock_app):
         """Test that providers handle errors gracefully."""
         mock_screen = MagicMock()
         mock_screen.app = mock_app
-        
+
         providers = [
             (ThemeProvider(screen=mock_screen), "switch_theme", ["test-theme"]),
             (TabNavigationProvider(screen=mock_screen), "switch_tab", [TAB_CHAT]),
-            (QuickActionsProvider(screen=mock_screen), "execute_quick_action", ["new_chat"]),
+            (
+                QuickActionsProvider(screen=mock_screen),
+                "execute_quick_action",
+                ["new_chat"],
+            ),
             (SettingsProvider(screen=mock_screen), "handle_setting", ["open_settings"]),
             (LibraryIngestProvider(screen=mock_screen), "handle_library_ingest_action", ["open_library_ingest"]),
         ]
@@ -1013,19 +1077,25 @@ class TestCommandPaletteIntegration:
                 provider.app.post_message.side_effect = Exception("Test error")
             elif method_name == "switch_theme":
                 # This method sets theme
-                type(provider.app).theme = PropertyMock(side_effect=Exception("Test error"))
-            
+                type(provider.app).theme = PropertyMock(
+                    side_effect=Exception("Test error")
+                )
+
             # Method should not raise exception
             method = getattr(provider, method_name)
             try:
                 method(*args)
             except Exception as e:
-                pytest.fail(f"{provider.__class__.__name__}.{method_name} should handle errors gracefully, but raised: {e}")
-            
+                pytest.fail(
+                    f"{provider.__class__.__name__}.{method_name} should handle errors gracefully, but raised: {e}"
+                )
+
             # Should call notify with error
             provider.app.notify.assert_called()
             call_args = provider.app.notify.call_args
-            assert call_args[1].get('severity') == 'error', f"Expected error severity for {provider.__class__.__name__}.{method_name}"
+            assert call_args[1].get("severity") == "error", (
+                f"Expected error severity for {provider.__class__.__name__}.{method_name}"
+            )
             assert "Failed" in call_args[0][0] or "error" in call_args[0][0].lower()
 
 
@@ -1033,10 +1103,11 @@ class TestCommandPaletteIntegration:
 #
 # --- Performance Tests ---
 
+
 @requires_imports
 class TestCommandPalettePerformance:
     """Performance-related tests for command palette providers."""
-    
+
     @pytest.mark.asyncio
     async def test_discover_performance(self, mock_app):
         """Test that discover() methods complete quickly."""
@@ -1055,16 +1126,18 @@ class TestCommandPalettePerformance:
             mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
             # Set provider.matcher as a callable that returns the matcher object
             provider.matcher = MagicMock(return_value=mock_matcher)
-            
+
             start_time = time.time()
             hits = []
             async for hit in provider.discover():
                 hits.append(hit)
             end_time = time.time()
-            
+
             # Discover should complete in under 100ms
-            assert (end_time - start_time) < 0.1, f"{provider.__class__.__name__}.discover() took too long"
-    
+            assert (end_time - start_time) < 0.1, (
+                f"{provider.__class__.__name__}.discover() took too long"
+            )
+
     @pytest.mark.asyncio
     async def test_search_performance(self, mock_app):
         """Test that search() methods complete quickly."""
@@ -1083,28 +1156,35 @@ class TestCommandPalettePerformance:
             mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
             # Set provider.matcher as a callable that returns the matcher object
             provider.matcher = MagicMock(return_value=mock_matcher)
-            
+
             start_time = time.time()
             hits = []
             async for hit in provider.search("test query"):
                 hits.append(hit)
             end_time = time.time()
-            
+
             # Search should complete in under 100ms
-            assert (end_time - start_time) < 0.1, f"{provider.__class__.__name__}.search() took too long"
+            assert (end_time - start_time) < 0.1, (
+                f"{provider.__class__.__name__}.search() took too long"
+            )
 
 
 #######################################################################################################################
 #
 # --- Helper Functions for Testing ---
 
+
 def extract_hit_texts(hits: List[Hit]) -> List[str]:
     """Helper function to extract text from Hit objects."""
     return [hit.text for hit in hits]
 
+
 def assert_hit_contains_text(hits: List[Hit], expected_text: str):
     """Helper function to assert that hits contain expected text."""
     hit_texts = extract_hit_texts(hits)
-    assert any(expected_text in text for text in hit_texts), f"Expected '{expected_text}' in hits: {hit_texts}"
+    assert any(expected_text in text for text in hit_texts), (
+        f"Expected '{expected_text}' in hits: {hit_texts}"
+    )
+
 
 # End of test_command_palette_providers.py

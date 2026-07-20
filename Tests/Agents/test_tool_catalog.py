@@ -1,12 +1,23 @@
 # Tests/Agents/test_tool_catalog.py
 """Catalog registry + real builtin tools (no network, no DB)."""
+
 from tldw_chatbook.Agents.agent_models import (
-    DIRECT_DISCLOSE_THRESHOLD, FIND_TOOLS_NAME, LOAD_TOOLS_NAME,
-    RunBudget, SPAWN_TOOL_NAME, ToolCatalogEntry, ToolResult, ToolSchema,
+    DIRECT_DISCLOSE_THRESHOLD,
+    FIND_TOOLS_NAME,
+    LOAD_TOOLS_NAME,
+    RunBudget,
+    SPAWN_TOOL_NAME,
+    ToolCatalogEntry,
+    ToolResult,
+    ToolSchema,
 )
 from tldw_chatbook.Agents.tool_catalog import (
-    FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA, SPAWN_TOOL_SCHEMA,
-    BuiltinToolProvider, ToolCatalogRegistry, initial_disclosure,
+    FIND_TOOLS_SCHEMA,
+    LOAD_TOOLS_SCHEMA,
+    SPAWN_TOOL_SCHEMA,
+    BuiltinToolProvider,
+    ToolCatalogRegistry,
+    initial_disclosure,
 )
 
 
@@ -52,7 +63,8 @@ def test_invoke_by_name_unknown_tool_is_error_result():
 
 def test_invoke_captures_tool_exception_as_error_result():
     result = registry().invoke_by_name(
-        "get_current_datetime", {"timezone": "Not/AZone"})
+        "get_current_datetime", {"timezone": "Not/AZone"}
+    )
     assert result.ok is False
     assert result.error  # message captured, no exception escaped
 
@@ -68,14 +80,23 @@ class FakeBigProvider:
     """A provider with more tools than the threshold."""
 
     def list_catalog(self):
-        return [ToolCatalogEntry(id=f"fake:t{i}", name=f"t{i}",
-                                 one_line_description=f"tool {i}",
-                                 source="fake")
-                for i in range(DIRECT_DISCLOSE_THRESHOLD + 3)]
+        return [
+            ToolCatalogEntry(
+                id=f"fake:t{i}",
+                name=f"t{i}",
+                one_line_description=f"tool {i}",
+                source="fake",
+            )
+            for i in range(DIRECT_DISCLOSE_THRESHOLD + 3)
+        ]
 
     def load_schema(self, tool_id):
-        return ToolSchema(id=tool_id, name=tool_id.split(":")[1],
-                          description="fake", parameters={"type": "object"})
+        return ToolSchema(
+            id=tool_id,
+            name=tool_id.split(":")[1],
+            description="fake",
+            parameters={"type": "object"},
+        )
 
     def invoke(self, tool_id, args):
         return ToolResult(ok=True, content="fake")
@@ -95,8 +116,7 @@ def test_initial_disclosure_large_catalog_defers_to_find_load():
 
 
 def test_initial_disclosure_respects_max_active_tools():
-    schemas, _ = initial_disclosure(registry(),
-                                    RunBudget(max_active_tools=1))
+    schemas, _ = initial_disclosure(registry(), RunBudget(max_active_tools=1))
     assert len(schemas) == 1
 
 
@@ -123,9 +143,11 @@ class VanishingProvider:
     def list_catalog(self):
         self.calls += 1
         if self.calls == 1:
-            return [ToolCatalogEntry(id="vanish:x", name="x",
-                                     one_line_description="d",
-                                     source="vanish")]
+            return [
+                ToolCatalogEntry(
+                    id="vanish:x", name="x", one_line_description="d", source="vanish"
+                )
+            ]
         return []
 
     def load_schema(self, tool_id):

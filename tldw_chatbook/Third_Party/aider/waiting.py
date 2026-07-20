@@ -161,7 +161,9 @@ class Spinner:
 
     def end(self) -> None:
         if self.visible and self.is_tty:
-            clear_len = self.last_display_len  # Use the length of the last displayed content
+            clear_len = (
+                self.last_display_len
+            )  # Use the length of the last displayed content
             sys.stdout.write("\r" + " " * clear_len + "\r")
             sys.stdout.flush()
             self.console.show_cursor(True)

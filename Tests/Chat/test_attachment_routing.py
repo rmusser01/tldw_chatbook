@@ -13,7 +13,8 @@ from tldw_chatbook.Utils.file_handlers import ImageFileHandler
 def defaults_config(monkeypatch):
     """Simulate a config with no [chat.images] overrides (never read live config)."""
     monkeypatch.setattr(
-        config_mod, "get_cli_setting",
+        config_mod,
+        "get_cli_setting",
         lambda section, key=None, default=None: default,
     )
 
@@ -28,10 +29,12 @@ def test_routing_matches_effective_formats(defaults_config, monkeypatch):
 
 def test_routing_respects_config_narrowing(monkeypatch):
     monkeypatch.setattr(
-        config_mod, "get_cli_setting",
+        config_mod,
+        "get_cli_setting",
         lambda section, key=None, default=None: (
             {"supported_formats": [".png"]}
-            if (section, key) == ("chat", "images") else default
+            if (section, key) == ("chat", "images")
+            else default
         ),
     )
     handler = ImageFileHandler()
@@ -47,7 +50,9 @@ def test_svg_routing_gated_by_capability(defaults_config, monkeypatch):
     assert handler.can_handle(Path("logo.svg")) is True
 
 
-def test_looks_attachable_follows_effective_formats(tmp_path, defaults_config, monkeypatch):
+def test_looks_attachable_follows_effective_formats(
+    tmp_path, defaults_config, monkeypatch
+):
     monkeypatch.setattr(console_paste_attach, "is_safe_path", lambda p, r: True)
     svg = tmp_path / "logo.svg"
     svg.write_text("<svg/>")

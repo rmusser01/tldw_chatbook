@@ -1,24 +1,26 @@
 """Note selection dialog for TTS audio generation"""
+
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
 from textual.widgets import Button, Label, Static, Input, Checkbox
 from textual.screen import ModalScreen
 from textual.reactive import reactive
 from typing import Optional, List, Dict, Any
-from loguru import logger
 
 
 class NoteItem(Container):
     """A single note item in the selection list"""
-    
-    def __init__(self, note_id: int, title: str, content_preview: str, created_at: str) -> None:
+
+    def __init__(
+        self, note_id: int, title: str, content_preview: str, created_at: str
+    ) -> None:
         super().__init__()
         self.note_id = note_id
         self.title = title
         self.content_preview = content_preview
         self.created_at = created_at
         self.selected = False
-    
+
     def compose(self) -> ComposeResult:
         """Build the note item UI"""
         with Horizontal(classes="note-item"):
@@ -31,7 +33,7 @@ class NoteItem(Container):
 
 class NoteSelectionDialog(ModalScreen[Optional[List[int]]]):
     """Dialog for selecting notes to convert to audio"""
-    
+
     CSS = """
     NoteSelectionDialog {
         align: center middle;
@@ -115,36 +117,34 @@ class NoteSelectionDialog(ModalScreen[Optional[List[int]]]):
         margin: 0 1;
     }
     """
-    
+
     def __init__(self, notes: List[Dict[str, Any]], **kwargs) -> None:
         super().__init__(**kwargs)
         self.notes = notes
         self.note_items: List[NoteItem] = []
         self.selected_count = reactive(0)
-    
+
     def compose(self) -> ComposeResult:
         """Build the dialog UI"""
         with Container(id="note-selection-container"):
             yield Label("Select Notes for Audio Generation", classes="dialog-title")
-            
+
             # Search input
             with Horizontal(classes="search-row"):
                 yield Input(
                     placeholder="Search notes by title or content...",
-                    id="note-search-input"
+                    id="note-search-input",
                 )
-            
+
             # Notes list
             with ScrollableContainer(id="notes-list-container"):
                 yield Vertical(id="notes-list")
-            
+
             # Selection info
             yield Static(
-                "0 notes selected",
-                id="selection-info",
-                classes="selection-info"
+                "0 notes selected", id="selection-info", classes="selection-info"
             )
-            
+
             # Action buttons
             with Horizontal(classes="button-row"):
                 yield Button(
@@ -159,60 +159,65 @@ class NoteSelectionDialog(ModalScreen[Optional[List[int]]]):
                     variant="default",
                     tooltip="Clear every selected note.",
                 )
-                yield Button("Generate Audio", id="generate-btn", variant="primary", disabled=True)
+                yield Button(
+                    "Generate Audio",
+                    id="generate-btn",
+                    variant="primary",
+                    disabled=True,
+                )
                 yield Button("Cancel", id="cancel-btn", variant="default")
-    
+
     def on_mount(self) -> None:
         """Initialize with notes data"""
         self.load_notes(self.notes)
-    
+
     def load_notes(self, notes: List[Dict[str, Any]]) -> None:
         """Load notes into the list"""
         notes_list = self.query_one("#notes-list", Vertical)
         notes_list.clear()
         self.note_items.clear()
-        
+
         for note in notes:
             # Create preview from content (first 100 chars)
             content = note.get("content", "")
             preview = content[:100] + "..." if len(content) > 100 else content
             preview = preview.replace("\n", " ")  # Single line preview
-            
+
             # Create note item
             item = NoteItem(
                 note_id=note["note_id"],
                 title=note.get("title", ""),
                 content_preview=preview,
-                created_at=note.get("created_at", "Unknown")
+                created_at=note.get("created_at", "Unknown"),
             )
-            
+
             self.note_items.append(item)
             notes_list.mount(item)
-    
+
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle search input changes"""
         if event.input.id == "note-search-input":
             search_term = event.value.lower()
             self.filter_notes(search_term)
-    
+
     def filter_notes(self, search_term: str) -> None:
         """Filter notes based on search term"""
         for item in self.note_items:
             if search_term:
                 # Search in title and content preview
                 visible = (
-                    search_term in item.title.lower() or
-                    search_term in item.content_preview.lower()
+                    search_term in item.title.lower()
+                    or search_term in item.content_preview.lower()
                 )
                 item.display = visible
             else:
                 item.display = True
-    
+
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         """Handle checkbox state changes"""
         # Update selection count
         self.update_selection_count()
-    
+
     def update_selection_count(self) -> None:
         """Update the selected notes count"""
         count = 0
@@ -220,16 +225,16 @@ class NoteSelectionDialog(ModalScreen[Optional[List[int]]]):
             checkbox = item.query_one(f"#note-checkbox-{item.note_id}", Checkbox)
             if checkbox.value:
                 count += 1
-        
+
         self.selected_count = count
-        
+
         # Update UI
         info = self.query_one("#selection-info", Static)
         info.update(f"{count} note{'s' if count != 1 else ''} selected")
-        
+
         # Enable/disable generate button
         self.query_one("#generate-btn", Button).disabled = count == 0
-    
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
         if event.button.id == "select-all-btn":
@@ -240,7 +245,7 @@ class NoteSelectionDialog(ModalScreen[Optional[List[int]]]):
             self.generate_audio()
         elif event.button.id == "cancel-btn":
             self.dismiss(None)
-    
+
     def select_all_notes(self) -> None:
         """Select all visible notes"""
         for item in self.note_items:
@@ -248,14 +253,14 @@ class NoteSelectionDialog(ModalScreen[Optional[List[int]]]):
                 checkbox = item.query_one(f"#note-checkbox-{item.note_id}", Checkbox)
                 checkbox.value = True
         self.update_selection_count()
-    
+
     def clear_all_notes(self) -> None:
         """Clear all selections"""
         for item in self.note_items:
             checkbox = item.query_one(f"#note-checkbox-{item.note_id}", Checkbox)
             checkbox.value = False
         self.update_selection_count()
-    
+
     def generate_audio(self) -> None:
         """Generate audio for selected notes"""
         selected_ids = []
@@ -263,7 +268,7 @@ class NoteSelectionDialog(ModalScreen[Optional[List[int]]]):
             checkbox = item.query_one(f"#note-checkbox-{item.note_id}", Checkbox)
             if checkbox.value:
                 selected_ids.append(item.note_id)
-        
+
         if selected_ids:
             self.dismiss(selected_ids)
         else:

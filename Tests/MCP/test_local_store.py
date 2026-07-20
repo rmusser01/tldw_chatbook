@@ -39,7 +39,9 @@ def test_local_store_profile_crud_persists_env_placeholders_and_safe_literals(tm
     assert restored == saved
     assert store.list_profiles() == [saved]
 
-    raw_payload = json.loads((tmp_path / "local_mcp_store.json").read_text(encoding="utf-8"))
+    raw_payload = json.loads(
+        (tmp_path / "local_mcp_store.json").read_text(encoding="utf-8")
+    )
     assert raw_payload["profiles"][0]["env_placeholders"]["API_KEY"] == "${API_KEY}"
     assert raw_payload["profiles"][0]["env_literals"]["LOG_LEVEL"] == "debug"
 
@@ -65,7 +67,9 @@ def test_local_store_rejects_secret_bearing_literal_env_entries(tmp_path):
     assert not (tmp_path / "local_mcp_store.json").exists()
 
 
-def test_local_store_rejects_raw_secret_like_literal_values_under_neutral_keys(tmp_path):
+def test_local_store_rejects_raw_secret_like_literal_values_under_neutral_keys(
+    tmp_path,
+):
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
 
     with pytest.raises(ValueError):
@@ -95,7 +99,9 @@ def test_local_store_rejects_arbitrary_literal_strings_under_neutral_keys(tmp_pa
     assert not (tmp_path / "local_mcp_store.json").exists()
 
 
-def test_local_store_rejects_non_placeholder_secret_env_entries_even_when_declared_as_placeholders(tmp_path):
+def test_local_store_rejects_non_placeholder_secret_env_entries_even_when_declared_as_placeholders(
+    tmp_path,
+):
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
 
     with pytest.raises(ValueError):
@@ -155,7 +161,9 @@ def test_local_store_rejects_blank_governance_rule_writes_before_persistence(tmp
 
     with pytest.raises(ValueError, match="rule_id"):
         store.save_governance_rule(
-            LocalGovernanceRule(rule_id="", capability_id="mcp.inventory.list.local", decision="allow")
+            LocalGovernanceRule(
+                rule_id="", capability_id="mcp.inventory.list.local", decision="allow"
+            )
         )
 
     with pytest.raises(ValueError, match="capability_id"):
@@ -165,13 +173,17 @@ def test_local_store_rejects_blank_governance_rule_writes_before_persistence(tmp
 
     with pytest.raises(ValueError, match="decision"):
         store.save_governance_rule(
-            LocalGovernanceRule(rule_id="rule-a", capability_id="mcp.inventory.list.local", decision="")
+            LocalGovernanceRule(
+                rule_id="rule-a", capability_id="mcp.inventory.list.local", decision=""
+            )
         )
 
     assert not (tmp_path / "local_mcp_store.json").exists()
 
 
-def test_local_store_rejects_blank_discovery_snapshot_profile_id_before_persistence(tmp_path):
+def test_local_store_rejects_blank_discovery_snapshot_profile_id_before_persistence(
+    tmp_path,
+):
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
 
     with pytest.raises(ValueError, match="profile_id"):
@@ -230,7 +242,9 @@ def test_local_store_loads_legacy_env_payload_and_drops_unsafe_entries(tmp_path)
     assert "API_KEY" not in round_tripped.env
 
 
-def test_local_store_save_profile_canonicalizes_prebuilt_profiles_and_drops_legacy_env_literals(tmp_path):
+def test_local_store_save_profile_canonicalizes_prebuilt_profiles_and_drops_legacy_env_literals(
+    tmp_path,
+):
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
     profile = LocalExternalMCPProfile(
         profile_id="profile-b",
@@ -286,9 +300,17 @@ def test_local_store_persists_discovery_snapshots_and_governance_updates(tmp_pat
     assert saved_rule.capability_id == rule.capability_id
     assert rules[0].decision == "allow"
 
-    raw_payload = json.loads((tmp_path / "local_mcp_store.json").read_text(encoding="utf-8"))
-    assert raw_payload["discovery_snapshots"]["profile-a"]["prompts"][0]["name"] == "remote_prompt"
-    assert raw_payload["governance_rules"][0]["capability_id"] == "mcp.inventory.list.local"
+    raw_payload = json.loads(
+        (tmp_path / "local_mcp_store.json").read_text(encoding="utf-8")
+    )
+    assert (
+        raw_payload["discovery_snapshots"]["profile-a"]["prompts"][0]["name"]
+        == "remote_prompt"
+    )
+    assert (
+        raw_payload["governance_rules"][0]["capability_id"]
+        == "mcp.inventory.list.local"
+    )
 
 
 def test_local_store_deletes_governance_rules(tmp_path):
@@ -335,7 +357,9 @@ def test_local_store_persists_and_resolves_approval_requests(tmp_path):
     assert requests[0].payload_fingerprint == "fp-notes-list"
     assert requests[0].status == "approved"
 
-    raw_payload = json.loads((tmp_path / "local_mcp_store.json").read_text(encoding="utf-8"))
+    raw_payload = json.loads(
+        (tmp_path / "local_mcp_store.json").read_text(encoding="utf-8")
+    )
     assert raw_payload["approval_requests"][0]["request_id"] == "approval-a"
     assert raw_payload["approval_requests"][0]["status"] == "approved"
 
@@ -357,7 +381,9 @@ def test_local_store_deletes_approval_requests(tmp_path):
     assert store.delete_approval_request("approval-a") is False
 
 
-def test_local_store_clears_stale_discovery_snapshot_only_when_launch_config_changes(tmp_path):
+def test_local_store_clears_stale_discovery_snapshot_only_when_launch_config_changes(
+    tmp_path,
+):
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
     profile = LocalExternalMCPProfile(
         profile_id="profile-a",
@@ -399,7 +425,9 @@ def test_local_store_clears_stale_discovery_snapshot_only_when_launch_config_cha
     assert store.get_discovery_snapshot("profile-a") is None
 
 
-def test_local_store_raises_on_corrupt_payload_instead_of_treating_it_as_empty_state(tmp_path):
+def test_local_store_raises_on_corrupt_payload_instead_of_treating_it_as_empty_state(
+    tmp_path,
+):
     path = tmp_path / "local_mcp_store.json"
     corrupt_payload = '{"profiles": [}'
     path.write_text(corrupt_payload, encoding="utf-8")

@@ -13,7 +13,10 @@ import pytest
 from textual.widgets import Button, Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    MainNavigationBar,
+    NavigateToScreen,
+)
 from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
 if TYPE_CHECKING:
@@ -23,11 +26,17 @@ if TYPE_CHECKING:
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EVIDENCE = Path("Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-5-visual-broken-state-audit.md")
+EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-5-visual-broken-state-audit.md"
+)
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 PHASE_1_README = Path("Docs/superpowers/qa/product-maturity/phase-1/README.md")
-TASK = Path("backlog/tasks/task-8.5 - Product-Maturity-Phase-1.5-Visual-Broken-State-Audit.md")
-TOP_LEVEL_DESTINATION_IDS = tuple(destination.destination_id for destination in SHELL_DESTINATION_ORDER)
+TASK = Path(
+    "backlog/tasks/task-8.5 - Product-Maturity-Phase-1.5-Visual-Broken-State-Audit.md"
+)
+TOP_LEVEL_DESTINATION_IDS = tuple(
+    destination.destination_id for destination in SHELL_DESTINATION_ORDER
+)
 DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
     "home": ("#home-triage-grid",),
     # The live-work readiness card only mounts while a launch is pending and
@@ -74,7 +83,9 @@ def _text(path: Path) -> str:
 
 def _assert_no_local_path_prefixes(text: str) -> None:
     leaked_prefixes = [prefix for prefix in LOCAL_PATH_PREFIXES if prefix in text]
-    assert not leaked_prefixes, f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    assert not leaked_prefixes, (
+        f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    )
 
 
 def _test_cli_setting(section: str, key: str, default=None):
@@ -95,7 +106,9 @@ def _prepare_clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
         monkeypatch.setenv(env_var, str(path))
 
 
-def _build_clean_visual_audit_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> "TldwCli":
+def _build_clean_visual_audit_app(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> "TldwCli":
     _prepare_clean_environment(monkeypatch, tmp_path)
     app = _build_test_app()
     app.app_config["_first_run"] = True
@@ -113,10 +126,14 @@ def _screen_text(app: "TldwCli") -> str:
     return "\n".join(piece for piece in pieces if piece.strip())
 
 
-def _assert_destination_body_mounted(app: "TldwCli", destination_id: str, size_label: str) -> None:
+def _assert_destination_body_mounted(
+    app: "TldwCli", destination_id: str, size_label: str
+) -> None:
     selectors = DESTINATION_BODY_SELECTORS[destination_id]
     content = app.screen.query_one("#screen-content")
-    missing_selectors = [selector for selector in selectors if not list(content.query(selector))]
+    missing_selectors = [
+        selector for selector in selectors if not list(content.query(selector))
+    ]
     assert not missing_selectors, (
         f"{destination_id} missing primary body selector(s) at {size_label}: "
         f"{', '.join(missing_selectors)}"
@@ -132,7 +149,9 @@ def _has_visual_chrome(app: "TldwCli") -> bool:
     # chrome as incomplete until it is present too.
     if len(app.screen.query("#nav-overflow-hint")) != 1:
         return False
-    return nav_buttons == tuple(f"nav-{destination_id}" for destination_id in TOP_LEVEL_DESTINATION_IDS)
+    return nav_buttons == tuple(
+        f"nav-{destination_id}" for destination_id in TOP_LEVEL_DESTINATION_IDS
+    )
 
 
 async def _wait_until(
@@ -151,19 +170,27 @@ async def _wait_until(
     if condition():
         return
     context_suffix = f" for {context}" if context else ""
-    raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s{context_suffix}")
+    raise AssertionError(
+        f"condition was not met within {timeout_seconds:.1f}s{context_suffix}"
+    )
 
 
-def _assert_visual_snapshot_is_healthy(app: "TldwCli", destination_id: str, size_label: str) -> None:
+def _assert_visual_snapshot_is_healthy(
+    app: "TldwCli", destination_id: str, size_label: str
+) -> None:
     nav_bar = app.screen.query_one(MainNavigationBar)
     nav_ids = tuple(button.id.removeprefix("nav-") for button in nav_bar.query(Button))
     assert nav_ids == TOP_LEVEL_DESTINATION_IDS
     assert nav_bar.query_one(f"#nav-{destination_id}", Button).has_class("is-active")
-    assert "Ctrl+P" in str(app.screen.query_one("#nav-overflow-hint", Static).renderable)
+    assert "Ctrl+P" in str(
+        app.screen.query_one("#nav-overflow-hint", Static).renderable
+    )
     _assert_destination_body_mounted(app, destination_id, size_label)
 
     text = _screen_text(app)
-    svg = app.export_screenshot(title=f"Phase 1.5 {size_label} {destination_id}", simplify=True)
+    svg = app.export_screenshot(
+        title=f"Phase 1.5 {size_label} {destination_id}", simplify=True
+    )
 
     assert text.strip(), f"{destination_id} rendered empty content at {size_label}"
     assert "<svg" in svg
@@ -188,22 +215,29 @@ async def test_clean_run_top_level_visual_snapshots_survive_terminal_size(
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
-            _initial_screen_name, initial_tab, initial_screen_class = app._resolve_screen_navigation_target("home")
+            _initial_screen_name, initial_tab, initial_screen_class = (
+                app._resolve_screen_navigation_target("home")
+            )
             assert initial_screen_class is not None
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == initial_tab and isinstance(app.screen, initial_screen_class),
+                lambda: (
+                    app.current_tab == initial_tab
+                    and isinstance(app.screen, initial_screen_class)
+                ),
                 context=f"{size_label}:home:initial",
             )
 
             for destination in SHELL_DESTINATION_ORDER:
-                _screen_name, expected_tab, expected_screen_class = app._resolve_screen_navigation_target(
-                    destination.primary_route
+                _screen_name, expected_tab, expected_screen_class = (
+                    app._resolve_screen_navigation_target(destination.primary_route)
                 )
                 assert expected_screen_class is not None, destination.primary_route
 
                 if app.current_tab != expected_tab:
-                    await app.handle_screen_navigation(NavigateToScreen(destination.primary_route))
+                    await app.handle_screen_navigation(
+                        NavigateToScreen(destination.primary_route)
+                    )
                     await _wait_until(
                         pilot,
                         lambda expected_tab=expected_tab, expected_screen_class=expected_screen_class: (
@@ -218,9 +252,10 @@ async def test_clean_run_top_level_visual_snapshots_survive_terminal_size(
                     context=f"{size_label}:{destination.destination_id}:chrome",
                 )
 
-                _assert_visual_snapshot_is_healthy(app, destination.destination_id, size_label)
+                _assert_visual_snapshot_is_healthy(
+                    app, destination.destination_id, size_label
+                )
 
 
 def test_visual_audit_destination_body_selectors_cover_top_level_destinations() -> None:
     assert set(DESTINATION_BODY_SELECTORS) == set(TOP_LEVEL_DESTINATION_IDS)
-

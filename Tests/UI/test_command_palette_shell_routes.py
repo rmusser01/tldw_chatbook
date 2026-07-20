@@ -3,7 +3,6 @@ from tldw_chatbook.Constants import (
     TAB_CCP,
     TAB_CHATBOOKS,
     TAB_CODING,
-    TAB_CUSTOMIZE,
     TAB_EVALS,
     TAB_INGEST,
     TAB_LLM,
@@ -59,7 +58,9 @@ def test_legacy_routes_are_searchable_alias_terms_on_their_destination():
 
     alias_terms = {
         destination_id: set(
-            TabNavigationProvider._destination_alias_terms(get_shell_destination(destination_id))
+            TabNavigationProvider._destination_alias_terms(
+                get_shell_destination(destination_id)
+            )
         )
         for destination_id in (
             "console",
@@ -74,17 +75,39 @@ def test_legacy_routes_are_searchable_alias_terms_on_their_destination():
     }
 
     assert {"coding", "Coding"} <= alias_terms["console"]
-    assert {"media", "Media", "search", "Search", "study", "Study"} <= alias_terms["library"]
-    assert {"writing", "Writing", "research", "Research", "ingest", "Ingest"} <= alias_terms["library"]
+    assert {"media", "Media", "search", "Search", "study", "Study"} <= alias_terms[
+        "library"
+    ]
+    assert {
+        "writing",
+        "Writing",
+        "research",
+        "Research",
+        "ingest",
+        "Ingest",
+    } <= alias_terms["library"]
     # Upstream retirements adopted on rebase: prompts and skills fold into Library.
     assert {"prompts", "skills"} <= alias_terms["library"]
-    assert {"ccp", "conversations_characters_prompts", "characters"} <= alias_terms["personas"]
-    assert "Personas" in alias_terms["personas"]  # TAB_CCP display label, deduped to one command
-    assert {"subscriptions", "subscription", "Subscriptions"} <= alias_terms["watchlists_collections"]
+    assert {"ccp", "conversations_characters_prompts", "characters"} <= alias_terms[
+        "personas"
+    ]
+    assert (
+        "Personas" in alias_terms["personas"]
+    )  # TAB_CCP display label, deduped to one command
+    assert {"subscriptions", "subscription", "Subscriptions"} <= alias_terms[
+        "watchlists_collections"
+    ]
     assert {"tools_settings", "MCP"} <= alias_terms["mcp"]
     assert {"chatbooks", "Chatbooks"} <= alias_terms["artifacts"]
-    assert {"llm_management", "Models", "stts", "Speech", "evals", "Evals"} <= alias_terms["lab"]
-    assert {"customize", "Customize", "logs", "Logs", "stats", "Stats"} <= alias_terms["settings"]
+    assert {
+        "llm_management",
+        "Models",
+        "stts",
+        "Speech",
+        "evals",
+        "Evals",
+    } <= alias_terms["lab"]
+    assert {"logs", "Logs", "stats", "Stats"} <= alias_terms["settings"]
 
 
 def test_legacy_tab_ids_still_switch_through_route_aliases():
@@ -104,7 +127,6 @@ def test_legacy_tab_ids_still_switch_through_route_aliases():
         TAB_CODING,
         TAB_LOGS,
         TAB_STATS,
-        TAB_CUSTOMIZE,
         TAB_WRITING,
         TAB_RESEARCH,
     ]

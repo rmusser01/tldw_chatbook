@@ -8,7 +8,16 @@ from typing import Any
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Input, Label, ListItem, ListView, Select, Static, TextArea
+from textual.widgets import (
+    Button,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    Select,
+    Static,
+    TextArea,
+)
 
 from tldw_chatbook.UI.Research_Modules import ResearchController
 
@@ -54,17 +63,24 @@ class ResearchWindow(Vertical):
                     yield Button("Watch Events", id="research-watch-events")
                     yield Button("Cancel", id="research-cancel-run", variant="error")
                 with Horizontal(id="research-observe-actions"):
-                    yield Input(placeholder="Artifact name", id="research-artifact-name")
+                    yield Input(
+                        placeholder="Artifact name", id="research-artifact-name"
+                    )
                     yield Button("Load Artifact", id="research-load-artifact")
                     yield Button("Load Bundle", id="research-load-bundle")
-                yield Input(placeholder="Checkpoint id (defaults to latest)", id="research-checkpoint-id")
+                yield Input(
+                    placeholder="Checkpoint id (defaults to latest)",
+                    id="research-checkpoint-id",
+                )
                 yield TextArea("{}", id="research-checkpoint-patch")
                 with Horizontal(id="research-checkpoint-actions"):
                     yield Button("Approve Checkpoint", id="research-approve-checkpoint")
                     yield Button("Clear Events", id="research-clear-events")
                 yield Static("No bundle loaded.", id="research-bundle-detail")
                 yield Static("No artifact loaded.", id="research-artifact-detail")
-                yield Static("No research events captured yet.", id="research-event-log")
+                yield Static(
+                    "No research events captured yet.", id="research-event-log"
+                )
 
     def save_state(self) -> dict[str, Any]:
         return {"source": self.current_source}
@@ -130,7 +146,9 @@ class ResearchWindow(Vertical):
             first_artifact_name = next(iter(self.current_bundle.keys()), "")
             if first_artifact_name:
                 try:
-                    self.query_one("#research-artifact-name", Input).value = str(first_artifact_name)
+                    self.query_one("#research-artifact-name", Input).value = str(
+                        first_artifact_name
+                    )
                 except Exception:
                     pass
         self._set_status(f"Loaded research bundle for {run_id}.")
@@ -142,7 +160,9 @@ class ResearchWindow(Vertical):
         if not resolved_artifact_name:
             self._set_status("Artifact name is required.")
             return None
-        artifact = await self.controller.get_artifact(self.current_source, run_id, resolved_artifact_name)
+        artifact = await self.controller.get_artifact(
+            self.current_source, run_id, resolved_artifact_name
+        )
         self.current_artifact = artifact
         self._render_artifact_detail()
         self._set_status(f"Loaded research artifact {resolved_artifact_name}.")
@@ -162,7 +182,9 @@ class ResearchWindow(Vertical):
             if not resolved_checkpoint_id:
                 resolved_checkpoint_id = "local-checkpoint-unavailable"
             resolved_patch_payload = (
-                patch_payload if patch_payload is not None else self._parse_checkpoint_patch_payload()
+                patch_payload
+                if patch_payload is not None
+                else self._parse_checkpoint_patch_payload()
             )
             updated = await self.controller.patch_and_approve_checkpoint(
                 self.current_source,
@@ -177,7 +199,9 @@ class ResearchWindow(Vertical):
         self._set_status(f"Approved research checkpoint {resolved_checkpoint_id}.")
         return updated
 
-    async def watch_selected_run_events(self, *, after_id: int = 0) -> list[dict[str, Any]]:
+    async def watch_selected_run_events(
+        self, *, after_id: int = 0
+    ) -> list[dict[str, Any]]:
         run_id = self._selected_run_id()
         events: list[dict[str, Any]] = []
         try:
@@ -203,7 +227,9 @@ class ResearchWindow(Vertical):
         await list_view.clear()
         for run in self.runs:
             title = self._run_title(run)
-            item = ListItem(Static(title), id=f"research-run-{self._record_get(run, 'id')}")
+            item = ListItem(
+                Static(title), id=f"research-run-{self._record_get(run, 'id')}"
+            )
             item.run_record = run
             await list_view.append(item)
         try:
@@ -229,9 +255,15 @@ class ResearchWindow(Vertical):
 
     def _apply_stream_event(self, event: dict[str, Any]) -> None:
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
-        if event.get("event") == "snapshot" and isinstance(data, dict) and isinstance(data.get("run"), dict):
+        if (
+            event.get("event") == "snapshot"
+            and isinstance(data, dict)
+            and isinstance(data.get("run"), dict)
+        ):
             run_payload = dict(data["run"])
-            run_payload.setdefault("query", self._record_get(self.selected_run, "query", ""))
+            run_payload.setdefault(
+                "query", self._record_get(self.selected_run, "query", "")
+            )
             self._set_selected_run(run_payload, reset_payload_state=False)
         message = self._stream_event_message(event)
         self._set_status(message)
@@ -286,7 +318,9 @@ class ResearchWindow(Vertical):
             return
         renderable = "No bundle loaded."
         if self.current_bundle is not None:
-            renderable = json.dumps(self.current_bundle, indent=2, sort_keys=True, default=str)
+            renderable = json.dumps(
+                self.current_bundle, indent=2, sort_keys=True, default=str
+            )
         try:
             self.query_one("#research-bundle-detail", Static).update(renderable)
         except Exception:
@@ -312,7 +346,11 @@ class ResearchWindow(Vertical):
     def _render_event_log(self) -> None:
         if not self.is_mounted:
             return
-        renderable = "\n".join(self.event_log_entries) if self.event_log_entries else "No research events captured yet."
+        renderable = (
+            "\n".join(self.event_log_entries)
+            if self.event_log_entries
+            else "No research events captured yet."
+        )
         try:
             self.query_one("#research-event-log", Static).update(renderable)
         except Exception:
@@ -322,7 +360,9 @@ class ResearchWindow(Vertical):
         resolved = str(artifact_name or "").strip()
         if not resolved and self.is_mounted:
             try:
-                resolved = self.query_one("#research-artifact-name", Input).value.strip()
+                resolved = self.query_one(
+                    "#research-artifact-name", Input
+                ).value.strip()
             except Exception:
                 resolved = ""
         if not resolved and self.current_bundle:
@@ -333,18 +373,24 @@ class ResearchWindow(Vertical):
         resolved = str(checkpoint_id or "").strip()
         if not resolved and self.is_mounted:
             try:
-                resolved = self.query_one("#research-checkpoint-id", Input).value.strip()
+                resolved = self.query_one(
+                    "#research-checkpoint-id", Input
+                ).value.strip()
             except Exception:
                 resolved = ""
         if not resolved:
-            resolved = str(self._record_get(self.selected_run, "latest_checkpoint_id", "") or "").strip()
+            resolved = str(
+                self._record_get(self.selected_run, "latest_checkpoint_id", "") or ""
+            ).strip()
         return resolved
 
     def _parse_checkpoint_patch_payload(self) -> dict[str, Any] | None:
         raw_text = ""
         if self.is_mounted:
             try:
-                raw_text = self.query_one("#research-checkpoint-patch", TextArea).text.strip()
+                raw_text = self.query_one(
+                    "#research-checkpoint-patch", TextArea
+                ).text.strip()
             except Exception:
                 raw_text = ""
         if not raw_text:

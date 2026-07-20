@@ -555,7 +555,7 @@ ConsoleSystemPromptModal {
 #console-mode-bar,
 #artifacts-mode-strip,
 #personas-mode-strip,
-#watchlists-filter-strip,
+#watchlists-header-bar,
 #schedules-filter-strip,
 #workflows-mode-strip,
 #mcp-mode-strip,
@@ -568,6 +568,12 @@ ConsoleSystemPromptModal {
     padding: 0 1;
     margin: 0;
     border: none;
+}
+
+#watchlists-header-bar {
+    /* The backend Select widget needs more than one row to render. */
+    height: auto;
+    min-height: 3;
 }
 
 .destination-action-button {
@@ -587,9 +593,6 @@ ConsoleSystemPromptModal {
 #watchlists-list-pane,
 #watchlists-detail-pane,
 #watchlists-inspector-pane,
-#schedules-list-pane,
-#schedules-detail-pane,
-#schedules-inspector-pane,
 #workflows-list-pane,
 #workflows-detail-pane,
 #workflows-inspector-pane,
@@ -3174,7 +3177,6 @@ ConsoleSystemPromptModal {
 #artifacts-workbench,
 #personas-workbench,
 #watchlists-workbench,
-#schedules-workbench,
 #workflows-workbench,
 #mcp-workbench,
 #acp-workbench,
@@ -3202,9 +3204,6 @@ ConsoleSystemPromptModal {
 #watchlists-list-pane,
 #watchlists-detail-pane,
 #watchlists-inspector-pane,
-#schedules-list-pane,
-#schedules-detail-pane,
-#schedules-inspector-pane,
 #workflows-list-pane,
 #workflows-detail-pane,
 #workflows-inspector-pane,
@@ -3219,7 +3218,6 @@ ConsoleSystemPromptModal {
 #artifacts-inspector-pane,
 #personas-inspector-pane,
 #watchlists-inspector-pane,
-#schedules-inspector-pane,
 #workflows-inspector-pane,
 #mcp-readiness-pane,
 #acp-inspector-pane {
@@ -3232,9 +3230,6 @@ ConsoleSystemPromptModal {
 #watchlists-list-pane,
 #watchlists-detail-pane,
 #watchlists-inspector-pane,
-#schedules-list-pane,
-#schedules-detail-pane,
-#schedules-inspector-pane,
 #workflows-list-pane,
 #workflows-detail-pane,
 #workflows-inspector-pane,
@@ -3296,7 +3291,6 @@ ConsoleSystemPromptModal {
     padding: 0 1;
 }
 
-#schedules-list-pane,
 #workflows-list-pane,
 #acp-list-pane {
     width: 2fr;
@@ -3305,7 +3299,6 @@ ConsoleSystemPromptModal {
     padding: 1;
 }
 
-#schedules-detail-pane,
 #workflows-detail-pane,
 #acp-detail-pane {
     width: 4fr;
@@ -3314,7 +3307,6 @@ ConsoleSystemPromptModal {
     padding: 1;
 }
 
-#schedules-inspector-pane,
 #workflows-inspector-pane,
 #acp-inspector-pane {
     width: 2fr;

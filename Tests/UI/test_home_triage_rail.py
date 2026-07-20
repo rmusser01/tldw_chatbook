@@ -23,7 +23,9 @@ def _triage_input(**overrides) -> HomeDashboardInput:
                 status="pending_approval",
                 detail_route="workflows",
                 console_available=True,
-                updated_at=(datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat(),
+                updated_at=(
+                    datetime.now(timezone.utc) - timedelta(minutes=3)
+                ).isoformat(),
             ),
             HomeActiveWorkItem(
                 item_id="watch:run-1",
@@ -82,7 +84,9 @@ async def test_home_rail_renders_sections_with_counts_and_selection():
         assert "Running (1)" in text
         assert "Approval: publish chatbook" in text
         assert "3m" in text  # age label from the now-relative fixture timestamp
-        assert home.query_one("#home-rail-section-body-details").styles.display == "none"
+        assert (
+            home.query_one("#home-rail-section-body-details").styles.display == "none"
+        )
 
 
 @pytest.mark.asyncio
@@ -94,15 +98,20 @@ async def test_home_row_click_switches_canvas():
         home = _active_home_screen(host)
         await _wait_for_selector(home, pilot, "#home-rail")
         title = home.query_one("#home-canvas-title")
-        assert "Approval: publish chatbook" in str(getattr(title.renderable, "plain", title.renderable))
+        assert "Approval: publish chatbook" in str(
+            getattr(title.renderable, "plain", title.renderable)
+        )
         running_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == "watch:run-1"
         )
         running_button.press()
         await pilot.pause(0.1)
         title = home.query_one("#home-canvas-title")
-        assert "Watchlist sweep" in str(getattr(title.renderable, "plain", title.renderable))
+        assert "Watchlist sweep" in str(
+            getattr(title.renderable, "plain", title.renderable)
+        )
 
 
 @pytest.mark.asyncio
@@ -146,7 +155,9 @@ async def test_home_details_toggle_persists():
         toggle = home.query_one("#console-rail-section-toggle-home-details")
         toggle.press()
         await pilot.pause(0.15)
-        assert home.query_one("#home-rail-section-body-details").styles.display != "none"
+        assert (
+            home.query_one("#home-rail-section-body-details").styles.display != "none"
+        )
     sections = app.app_config.get("home", {}).get("rail_state", {}).get("sections", {})
     assert sections.get("details_open") is True
 
@@ -164,7 +175,9 @@ async def test_home_rail_rows_truncate_titles_and_keep_source_line():
                 status="pending_approval",
                 detail_route="workflows",
                 console_available=True,
-                updated_at=(datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat(),
+                updated_at=(
+                    datetime.now(timezone.utc) - timedelta(minutes=3)
+                ).isoformat(),
             ),
         ),
     )
@@ -173,7 +186,8 @@ async def test_home_rail_rows_truncate_titles_and_keep_source_line():
         home = _active_home_screen(host)
         await _wait_for_selector(home, pilot, "#home-rail")
         row = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == "wf:approve-long"
         )
         title_line, source_line = str(row.label).split("\n")

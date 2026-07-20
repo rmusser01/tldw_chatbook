@@ -73,7 +73,9 @@ class ServerOutputsScopeService:
         normalized["entity_kind"] = "output_template"
         return normalized
 
-    def _normalize_output(self, payload: Any, *, entity_kind: str = "output_artifact") -> dict[str, Any]:
+    def _normalize_output(
+        self, payload: Any, *, entity_kind: str = "output_artifact"
+    ) -> dict[str, Any]:
         normalized = self._as_dict(payload)
         source_id = normalized.get("source_id", normalized.get("id"))
         normalized["source_id"] = source_id
@@ -84,14 +86,18 @@ class ServerOutputsScopeService:
 
     def _normalize_template_list(self, payload: Any) -> dict[str, Any]:
         normalized = self._as_dict(payload)
-        normalized["items"] = [self._normalize_template(item) for item in normalized.get("items", [])]
+        normalized["items"] = [
+            self._normalize_template(item) for item in normalized.get("items", [])
+        ]
         normalized["backend"] = "server"
         normalized["entity_kind"] = "output_template_list"
         return normalized
 
     def _normalize_output_list(self, payload: Any) -> dict[str, Any]:
         normalized = self._as_dict(payload)
-        normalized["items"] = [self._normalize_output(item) for item in normalized.get("items", [])]
+        normalized["items"] = [
+            self._normalize_output(item) for item in normalized.get("items", [])
+        ]
         normalized["backend"] = "server"
         normalized["entity_kind"] = "output_artifact_list"
         return normalized
@@ -112,7 +118,11 @@ class ServerOutputsScopeService:
     ) -> dict[str, Any]:
         self._require_server_mode(mode)
         self._enforce_policy("outputs.templates.list.server")
-        result = await self._maybe_await(self._require_service().list_output_templates(q=q, limit=limit, offset=offset))
+        result = await self._maybe_await(
+            self._require_service().list_output_templates(
+                q=q, limit=limit, offset=offset
+            )
+        )
         return self._normalize_template_list(result)
 
     async def create_output_template(
@@ -123,7 +133,9 @@ class ServerOutputsScopeService:
     ) -> dict[str, Any]:
         self._require_server_mode(mode)
         self._enforce_policy("outputs.templates.create.server")
-        result = await self._maybe_await(self._require_service().create_output_template(**payload))
+        result = await self._maybe_await(
+            self._require_service().create_output_template(**payload)
+        )
         return self._normalize_template(result)
 
     async def get_output_template(
@@ -134,7 +146,9 @@ class ServerOutputsScopeService:
     ) -> dict[str, Any]:
         self._require_server_mode(mode)
         self._enforce_policy("outputs.templates.detail.server")
-        result = await self._maybe_await(self._require_service().get_output_template(template_id))
+        result = await self._maybe_await(
+            self._require_service().get_output_template(template_id)
+        )
         return self._normalize_template(result)
 
     async def update_output_template(
@@ -146,7 +160,9 @@ class ServerOutputsScopeService:
     ) -> dict[str, Any]:
         self._require_server_mode(mode)
         self._enforce_policy("outputs.templates.update.server")
-        result = await self._maybe_await(self._require_service().update_output_template(template_id, **payload))
+        result = await self._maybe_await(
+            self._require_service().update_output_template(template_id, **payload)
+        )
         return self._normalize_template(result)
 
     async def delete_output_template(
@@ -157,8 +173,12 @@ class ServerOutputsScopeService:
     ) -> dict[str, Any]:
         self._require_server_mode(mode)
         self._enforce_policy("outputs.templates.delete.server")
-        result = await self._maybe_await(self._require_service().delete_output_template(template_id))
-        normalized = self._normalize_simple(result, entity_kind="output_template_delete")
+        result = await self._maybe_await(
+            self._require_service().delete_output_template(template_id)
+        )
+        normalized = self._normalize_simple(
+            result, entity_kind="output_template_delete"
+        )
         normalized["template_id"] = template_id
         return normalized
 
@@ -171,8 +191,12 @@ class ServerOutputsScopeService:
     ) -> dict[str, Any]:
         self._require_server_mode(mode)
         self._enforce_policy("outputs.templates.detail.server")
-        result = await self._maybe_await(self._require_service().preview_output_template(template_id, **payload))
-        normalized = self._normalize_simple(result, entity_kind="output_template_preview")
+        result = await self._maybe_await(
+            self._require_service().preview_output_template(template_id, **payload)
+        )
+        normalized = self._normalize_simple(
+            result, entity_kind="output_template_preview"
+        )
         normalized["template_id"] = template_id
         return normalized
 
@@ -184,7 +208,9 @@ class ServerOutputsScopeService:
     ) -> dict[str, Any]:
         self._require_server_mode(mode)
         self._enforce_policy("outputs.artifacts.list.server")
-        result = await self._maybe_await(self._require_service().list_outputs(**payload))
+        result = await self._maybe_await(
+            self._require_service().list_outputs(**payload)
+        )
         return self._normalize_output_list(result)
 
     async def list_deleted_outputs(
@@ -196,7 +222,9 @@ class ServerOutputsScopeService:
     ) -> dict[str, Any]:
         self._require_server_mode(mode)
         self._enforce_policy("outputs.artifacts.list.server")
-        result = await self._maybe_await(self._require_service().list_deleted_outputs(page=page, size=size))
+        result = await self._maybe_await(
+            self._require_service().list_deleted_outputs(page=page, size=size)
+        )
         return self._normalize_output_list(result)
 
     async def create_output(
@@ -207,7 +235,9 @@ class ServerOutputsScopeService:
     ) -> dict[str, Any]:
         self._require_server_mode(mode)
         self._enforce_policy("outputs.render_jobs.launch.server")
-        result = await self._maybe_await(self._require_service().create_output(**payload))
+        result = await self._maybe_await(
+            self._require_service().create_output(**payload)
+        )
         return self._normalize_output(result, entity_kind="output_render_result")
 
     async def get_output(
@@ -230,7 +260,9 @@ class ServerOutputsScopeService:
     ) -> dict[str, Any]:
         self._require_server_mode(mode)
         self._enforce_policy("outputs.artifacts.update.server")
-        result = await self._maybe_await(self._require_service().update_output(output_id, **payload))
+        result = await self._maybe_await(
+            self._require_service().update_output(output_id, **payload)
+        )
         return self._normalize_output(result)
 
     async def delete_output(
@@ -244,7 +276,9 @@ class ServerOutputsScopeService:
         self._require_server_mode(mode)
         self._enforce_policy("outputs.artifacts.delete.server")
         result = await self._maybe_await(
-            self._require_service().delete_output(output_id, hard=hard, delete_file=delete_file)
+            self._require_service().delete_output(
+                output_id, hard=hard, delete_file=delete_file
+            )
         )
         normalized = self._normalize_simple(result, entity_kind="output_delete")
         normalized["output_id"] = output_id
@@ -258,7 +292,9 @@ class ServerOutputsScopeService:
     ) -> bytes:
         self._require_server_mode(mode)
         self._enforce_policy("outputs.artifacts.detail.server")
-        return await self._maybe_await(self._require_service().download_output(output_id))
+        return await self._maybe_await(
+            self._require_service().download_output(output_id)
+        )
 
     async def download_output_by_name(
         self,
@@ -269,7 +305,9 @@ class ServerOutputsScopeService:
     ) -> bytes:
         self._require_server_mode(mode)
         self._enforce_policy("outputs.artifacts.detail.server")
-        return await self._maybe_await(self._require_service().download_output_by_name(title, format=format))
+        return await self._maybe_await(
+            self._require_service().download_output_by_name(title, format=format)
+        )
 
     async def purge_outputs(
         self,
@@ -279,5 +317,7 @@ class ServerOutputsScopeService:
     ) -> dict[str, Any]:
         self._require_server_mode(mode)
         self._enforce_policy("outputs.artifacts.delete.server")
-        result = await self._maybe_await(self._require_service().purge_outputs(**payload))
+        result = await self._maybe_await(
+            self._require_service().purge_outputs(**payload)
+        )
         return self._normalize_simple(result, entity_kind="output_purge")

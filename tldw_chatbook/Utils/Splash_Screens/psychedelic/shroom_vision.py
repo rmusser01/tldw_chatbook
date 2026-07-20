@@ -1,7 +1,7 @@
 """ShroomVision splash screen effect."""
 
 import math
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any
 
 from ..base_effect import BaseEffect, register_effect
 
@@ -9,16 +9,17 @@ from ..base_effect import BaseEffect, register_effect
 @register_effect("shroom_vision")
 class ShroomVisionEffect(BaseEffect):
     """Simulates a 'mushroom vision' effect with distorted, breathing visuals."""
+
     def __init__(self, parent_widget: Any, title: str = "tldw chatbook", **kwargs):
         super().__init__(parent_widget, **kwargs)
-        self.width = kwargs.get('width', 80)
-        self.height = kwargs.get('height', 24)
+        self.width = kwargs.get("width", 80)
+        self.height = kwargs.get("height", 24)
         self.title = title
         self.time = 0
 
     def update(self) -> Optional[str]:
         self.time += 0.05
-        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        grid = [[" " for _ in range(self.width)] for _ in range(self.height)]
         styles = [[None for _ in range(self.width)] for _ in range(self.height)]
         center_x, center_y = self.width / 2, self.height / 2
 
@@ -36,12 +37,15 @@ class ShroomVisionEffect(BaseEffect):
 
                 if 0 <= new_x < self.width and 0 <= new_y < self.height:
                     title_x_start = (self.width - len(self.title)) // 2
-                    if new_y == self.height // 2 and title_x_start <= new_x < title_x_start + len(self.title):
-                         char_index = new_x - title_x_start
-                         grid[y][x] = self.title[char_index]
-                         hue = int((dist * 10 + self.time * 50)) % 360
-                         r = int(128 + 127 * math.sin(math.radians(hue)))
-                         g = int(128 + 127 * math.sin(math.radians(hue + 120)))
-                         b = int(128 + 127 * math.sin(math.radians(hue + 240)))
-                         styles[y][x] = f"bold rgb({r},{g},{b})"
+                    if (
+                        new_y == self.height // 2
+                        and title_x_start <= new_x < title_x_start + len(self.title)
+                    ):
+                        char_index = new_x - title_x_start
+                        grid[y][x] = self.title[char_index]
+                        hue = int((dist * 10 + self.time * 50)) % 360
+                        r = int(128 + 127 * math.sin(math.radians(hue)))
+                        g = int(128 + 127 * math.sin(math.radians(hue + 120)))
+                        b = int(128 + 127 * math.sin(math.radians(hue + 240)))
+                        styles[y][x] = f"bold rgb({r},{g},{b})"
         return self._grid_to_string(grid, styles)

@@ -56,7 +56,9 @@ async def test_evals_window_navigation_pushes_stack_and_go_back() -> None:
 
         window = app.query_one(EvalsWindow)
 
-        with patch.object(window, "_create_screen", return_value=Screen(id="dummy-eval-screen")):
+        with patch.object(
+            window, "_create_screen", return_value=Screen(id="dummy-eval-screen")
+        ):
             window.handle_navigation(NavigateToEvalScreen("quick_test"))
             await pilot.pause()
 

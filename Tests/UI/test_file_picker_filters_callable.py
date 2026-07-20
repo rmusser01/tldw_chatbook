@@ -30,7 +30,7 @@ def test_eval_default_filters_are_callable():
     from tldw_chatbook.Widgets.file_picker_dialog import EvalFilePickerDialog
 
     dialog = EvalFilePickerDialog()
-    _assert_filters_callable(dialog._get_default_filters())
+    _assert_filters_callable(dialog._default_filters())
 
 
 def test_create_filter_helper_is_callable_and_matches():
@@ -39,7 +39,7 @@ def test_create_filter_helper_is_callable_and_matches():
     f = create_filter("*.yaml;*.yml;*.json")
     assert callable(f)
     assert f(Path("x.json")) is True
-    assert f(Path("x.YAML")) is False  # case-sensitive fnmatch on name
+    assert f(Path("x.YAML")) is True  # create_filter is case-insensitive
     assert f(Path("x.txt")) is False
 
 
@@ -48,7 +48,10 @@ def test_eval_dialogs_dataset_filters_are_callable():
 
     # The Filters live inline in a method/function; rebuild the exact spec.
     filters = Filters(
-        ("Dataset Files", lambda p: p.suffix.lower() in (".json", ".jsonl", ".csv", ".parquet")),
+        (
+            "Dataset Files",
+            lambda p: p.suffix.lower() in (".json", ".jsonl", ".csv", ".parquet"),
+        ),
         ("JSON Files", lambda p: p.suffix.lower() in (".json", ".jsonl")),
         ("CSV Files", lambda p: p.suffix.lower() == ".csv"),
         ("Parquet Files", lambda p: p.suffix.lower() == ".parquet"),

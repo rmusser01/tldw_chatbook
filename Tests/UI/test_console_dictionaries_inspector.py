@@ -5,7 +5,9 @@ from textual.app import App, ComposeResult
 from textual.widgets import Static, Button
 
 from tldw_chatbook.Chat.console_display_state import (
-    ConsoleInspectorState, ConsoleDisplayRow, ConsoleInspectorAction,
+    ConsoleInspectorState,
+    ConsoleDisplayRow,
+    ConsoleInspectorAction,
 )
 from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
 
@@ -27,6 +29,7 @@ class _Host(App):
 
 async def test_dictionaries_block_renders_rows_and_actions():
     from dataclasses import replace
+
     state = replace(
         _state(),
         dictionary_rows=(
@@ -34,8 +37,12 @@ async def test_dictionaries_block_renders_rows_and_actions():
             ConsoleDisplayRow("Period", "from character (shadowed)"),
         ),
         dictionary_actions=(
-            ConsoleInspectorAction("console-inspector-dictionaries-attach", "Attach dictionary…", True),
-            ConsoleInspectorAction("console-inspector-dictionaries-detach", "Detach dictionary…", True),
+            ConsoleInspectorAction(
+                "console-inspector-dictionaries-attach", "Attach dictionary…", True
+            ),
+            ConsoleInspectorAction(
+                "console-inspector-dictionaries-detach", "Detach dictionary…", True
+            ),
         ),
     )
     async with _Host(state).run_test(size=(120, 50)) as pilot:

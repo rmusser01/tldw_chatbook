@@ -12,7 +12,9 @@ TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 BACKLOG_POINTER = Path("backlog/docs/product-maturity-roadmap.md")
 PUBLIC_ROADMAP = Path("Docs/Product_Roadmap.md")
 POST_UX_QA_README = Path("Docs/superpowers/qa/product-maturity/post-ux/README.md")
-POST_UX_QA_TEMPLATE = Path("Docs/superpowers/qa/product-maturity/post-ux/walkthrough-template.md")
+POST_UX_QA_TEMPLATE = Path(
+    "Docs/superpowers/qa/product-maturity/post-ux/walkthrough-template.md"
+)
 
 
 def _text(path: Path) -> str:
@@ -80,4 +82,6 @@ def test_public_roadmap_is_directional_and_commitment_free():
         r"\bPhase\s+1\.1\b",
         r"\bPhase\s+2\.5\b",
     )
-    assert not any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in forbidden_patterns)
+    assert not any(
+        re.search(pattern, text, flags=re.IGNORECASE) for pattern in forbidden_patterns
+    )

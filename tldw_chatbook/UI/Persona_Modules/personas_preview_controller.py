@@ -144,10 +144,9 @@ class PersonasPreviewController:
         """
         if self.gateway is None:
             self.gateway = ConsoleProviderGateway(
-                config_provider=lambda: getattr(
-                    self.screen.app_instance, "app_config", {}
-                )
-                or {},
+                config_provider=lambda: (
+                    getattr(self.screen.app_instance, "app_config", {}) or {}
+                ),
             )
         return self.gateway
 
@@ -163,7 +162,9 @@ class PersonasPreviewController:
             if screen._edit_mode in ("edit", "create"):
                 try:
                     record = (
-                        screen.query_one(PersonasCharacterEditorWidget).get_character_data()
+                        screen.query_one(
+                            PersonasCharacterEditorWidget
+                        ).get_character_data()
                         or {}
                     )
                 except Exception:
@@ -177,9 +178,12 @@ class PersonasPreviewController:
                     )
                     record = {}
             else:
-                record = screen._full_character_record(
-                    str(screen.state.selected_entity_id or "")
-                ) or {}
+                record = (
+                    screen._full_character_record(
+                        str(screen.state.selected_entity_id or "")
+                    )
+                    or {}
+                )
         elif screen.state.active_mode == "personas":
             record = screen._profile_record(screen.state.selected_entity_id) or {}
         parts = [
@@ -267,9 +271,14 @@ class PersonasPreviewController:
         defaults = config.get("character_defaults", {}) or {}
         provider = str(defaults.get("provider") or "")
         model = str(defaults.get("model") or "")
-        selection = ConsoleProviderSelection(provider=provider, explicit_model=model or None)
+        selection = ConsoleProviderSelection(
+            provider=provider, explicit_model=model or None
+        )
         gateway = self.ensure_gateway()
-        selection_key = (screen.state.selected_entity_kind, screen.state.selected_entity_id)
+        selection_key = (
+            screen.state.selected_entity_kind,
+            screen.state.selected_entity_id,
+        )
         generation = self.generation
 
         def _stale() -> bool:
@@ -299,7 +308,8 @@ class PersonasPreviewController:
             if not _stale():
                 self._pop_orphaned_user_turn()
                 pane.set_status(
-                    resolution.visible_copy or "Provider unavailable - configure in Settings"
+                    resolution.visible_copy
+                    or "Provider unavailable - configure in Settings"
                 )
             return
         pane.set_status("Running")

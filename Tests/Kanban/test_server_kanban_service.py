@@ -17,15 +17,28 @@ class FakeKanbanClient:
 
     async def list_kanban_boards(self, **kwargs):
         self.calls.append(("list_kanban_boards", kwargs))
-        return {"boards": [{"id": 1, "name": "Project Board"}], "pagination": {"total": 1}}
+        return {
+            "boards": [{"id": 1, "name": "Project Board"}],
+            "pagination": {"total": 1},
+        }
 
     async def get_kanban_board(self, board_id, **kwargs):
         self.calls.append(("get_kanban_board", board_id, kwargs))
-        return {"id": board_id, "name": "Project Board", "lists": [{"id": 10, "board_id": board_id, "cards": [{"id": 100, "list_id": 10}]}]}
+        return {
+            "id": board_id,
+            "name": "Project Board",
+            "lists": [
+                {"id": 10, "board_id": board_id, "cards": [{"id": 100, "list_id": 10}]}
+            ],
+        }
 
     async def update_kanban_board(self, board_id, request_data, **kwargs):
         self.calls.append(("update_kanban_board", board_id, request_data, kwargs))
-        return {"id": board_id, "name": request_data.name, "version": kwargs.get("expected_version")}
+        return {
+            "id": board_id,
+            "name": request_data.name,
+            "version": kwargs.get("expected_version"),
+        }
 
     async def archive_kanban_board(self, board_id):
         self.calls.append(("archive_kanban_board", board_id))
@@ -61,19 +74,36 @@ class FakeKanbanClient:
 
     async def list_kanban_board_activities(self, board_id, **kwargs):
         self.calls.append(("list_kanban_board_activities", board_id, kwargs))
-        return {"activities": [{"id": 900, "board_id": board_id, "action_type": "create"}], "pagination": {"total": 1}}
+        return {
+            "activities": [{"id": 900, "board_id": board_id, "action_type": "create"}],
+            "pagination": {"total": 1},
+        }
 
     async def export_kanban_board(self, board_id, request_data):
         self.calls.append(("export_kanban_board", board_id, request_data))
-        return {"format": "json", "exported_at": "2026-04-25T00:00:00Z", "board": {"id": board_id}, "labels": [], "lists": []}
+        return {
+            "format": "json",
+            "exported_at": "2026-04-25T00:00:00Z",
+            "board": {"id": board_id},
+            "labels": [],
+            "lists": [],
+        }
 
     async def import_kanban_board(self, request_data):
         self.calls.append(("import_kanban_board", request_data))
-        return {"board": {"id": 2, "name": request_data.board_name or "Imported"}, "import_stats": {"board_id": 2}}
+        return {
+            "board": {"id": 2, "name": request_data.board_name or "Imported"},
+            "import_stats": {"board_id": 2},
+        }
 
     async def create_kanban_label(self, board_id, request_data):
         self.calls.append(("create_kanban_label", board_id, request_data))
-        return {"id": 7, "board_id": board_id, "name": request_data.name, "color": request_data.color}
+        return {
+            "id": 7,
+            "board_id": board_id,
+            "name": request_data.name,
+            "color": request_data.color,
+        }
 
     async def assign_kanban_label_to_card(self, card_id, label_id):
         self.calls.append(("assign_kanban_label_to_card", card_id, label_id))
@@ -97,7 +127,11 @@ class FakeKanbanClient:
 
     async def search_kanban_cards(self, request_data):
         self.calls.append(("search_kanban_cards", request_data))
-        return {"query": request_data.query, "search_mode": request_data.search_mode, "results": [{"id": 100, "card_id": 100, "title": "Task"}]}
+        return {
+            "query": request_data.query,
+            "search_mode": request_data.search_mode,
+            "results": [{"id": 100, "card_id": 100, "title": "Task"}],
+        }
 
     async def get_kanban_search_status(self):
         self.calls.append(("get_kanban_search_status",))
@@ -105,15 +139,32 @@ class FakeKanbanClient:
 
     async def add_kanban_card_link(self, card_id, request_data):
         self.calls.append(("add_kanban_card_link", card_id, request_data))
-        return {"id": 55, "card_id": card_id, "linked_type": request_data.linked_type, "linked_id": request_data.linked_id}
+        return {
+            "id": 55,
+            "card_id": card_id,
+            "linked_type": request_data.linked_type,
+            "linked_id": request_data.linked_id,
+        }
 
-    async def list_kanban_cards_by_linked_content(self, linked_type, linked_id, **kwargs):
-        self.calls.append(("list_kanban_cards_by_linked_content", linked_type, linked_id, kwargs))
-        return {"linked_type": linked_type, "linked_id": linked_id, "cards": [{"id": 100, "title": "Task", "link_id": 55}]}
+    async def list_kanban_cards_by_linked_content(
+        self, linked_type, linked_id, **kwargs
+    ):
+        self.calls.append(
+            ("list_kanban_cards_by_linked_content", linked_type, linked_id, kwargs)
+        )
+        return {
+            "linked_type": linked_type,
+            "linked_id": linked_id,
+            "cards": [{"id": 100, "title": "Task", "link_id": 55}],
+        }
 
     async def bulk_move_kanban_cards(self, request_data):
         self.calls.append(("bulk_move_kanban_cards", request_data))
-        return {"success": True, "moved_count": len(request_data.card_ids), "cards": [{"id": card_id} for card_id in request_data.card_ids]}
+        return {
+            "success": True,
+            "moved_count": len(request_data.card_ids),
+            "cards": [{"id": card_id} for card_id in request_data.card_ids],
+        }
 
 
 class FakePolicyEnforcer:
@@ -217,13 +268,17 @@ async def test_server_kanban_service_re_resolves_provider_without_service_local_
     assert len(provider.clients) == 2
     assert provider.clients[0] is not provider.clients[1]
     assert provider.clients[0].calls == [("list_kanban_boards", {})]
-    assert provider.clients[1].calls == [("list_kanban_boards", {"include_archived": True})]
+    assert provider.clients[1].calls == [
+        ("list_kanban_boards", {"include_archived": True})
+    ]
     for built_client in provider.clients:
         assert all(value is not built_client for value in vars(service).values())
 
 
 @pytest.mark.asyncio
-async def test_server_kanban_service_from_config_returns_provider_backed_service(monkeypatch):
+async def test_server_kanban_service_from_config_returns_provider_backed_service(
+    monkeypatch,
+):
     provider = FakeClientProvider(FakeKanbanClient())
     build_provider_calls = []
 
@@ -231,7 +286,9 @@ async def test_server_kanban_service_from_config_returns_provider_backed_service
         build_provider_calls.append(app_config)
         return provider
 
-    monkeypatch.setattr(kanban_module, "build_runtime_api_client_provider_from_config", build_provider)
+    monkeypatch.setattr(
+        kanban_module, "build_runtime_api_client_provider_from_config", build_provider
+    )
 
     config = {"tldw_api": {"base_url": "https://example.com"}}
     service = ServerKanbanService.from_config(config)
@@ -255,10 +312,14 @@ async def test_server_kanban_service_routes_core_and_subresources_with_policy_an
     policy = FakePolicyEnforcer()
     service = ServerKanbanService(client, policy_enforcer=policy)
 
-    board = await service.create_board({"name": "Project Board", "client_id": "board-1"})
+    board = await service.create_board(
+        {"name": "Project Board", "client_id": "board-1"}
+    )
     boards = await service.list_boards(include_archived=True)
     loaded_board = await service.get_board(1)
-    updated_board = await service.update_board(1, {"name": "Renamed"}, expected_version=3)
+    updated_board = await service.update_board(
+        1, {"name": "Renamed"}, expected_version=3
+    )
     archived_board = await service.archive_board(1)
     deleted_board = await service.delete_board(1)
     kanban_list = await service.create_list(1, {"name": "Todo", "client_id": "list-1"})
@@ -269,7 +330,9 @@ async def test_server_kanban_service_routes_core_and_subresources_with_policy_an
     moved_card = await service.move_card(100, {"target_list_id": 11})
     activities = await service.list_board_activities(1)
     exported = await service.export_board(1, {"include_archived": True})
-    imported = await service.import_board({"data": {"board": {}}, "board_name": "Imported"})
+    imported = await service.import_board(
+        {"data": {"board": {}}, "board_name": "Imported"}
+    )
     label = await service.create_label(1, {"name": "Blocked", "color": "red"})
     assigned = await service.assign_label_to_card(100, 7)
     checklist = await service.create_checklist(100, {"name": "Steps"})
@@ -278,9 +341,13 @@ async def test_server_kanban_service_routes_core_and_subresources_with_policy_an
     comment = await service.create_comment(100, {"content": "Looks good"})
     search = await service.search_cards({"query": "Task"})
     search_status = await service.get_search_status()
-    link = await service.add_card_link(100, {"linked_type": "note", "linked_id": "note-1"})
+    link = await service.add_card_link(
+        100, {"linked_type": "note", "linked_id": "note-1"}
+    )
     linked_cards = await service.list_cards_by_linked_content("note", "note-1")
-    bulk_move = await service.bulk_move_cards({"card_ids": [100, 101], "target_list_id": 11})
+    bulk_move = await service.bulk_move_cards(
+        {"card_ids": [100, 101], "target_list_id": 11}
+    )
 
     assert board["record_id"] == "server:kanban_board:1"
     assert boards["boards"][0]["record_id"] == "server:kanban_board:1"
@@ -342,7 +409,9 @@ async def test_server_kanban_service_routes_core_and_subresources_with_policy_an
 @pytest.mark.asyncio
 async def test_server_kanban_service_denies_before_dispatch():
     client = FakeKanbanClient()
-    service = ServerKanbanService(client, policy_enforcer=FakePolicyEnforcer("authority_denied"))
+    service = ServerKanbanService(
+        client, policy_enforcer=FakePolicyEnforcer("authority_denied")
+    )
 
     with pytest.raises(PolicyDeniedError):
         await service.list_boards()

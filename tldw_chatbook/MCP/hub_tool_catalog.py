@@ -168,7 +168,9 @@ def _extra_tags(raw_tool: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(tags[:_MAX_TAGS])
 
 
-def server_tools_from_inventory(payload: dict, *, target_id: str, target_label: str) -> list[HubTool]:
+def server_tools_from_inventory(
+    payload: dict, *, target_id: str, target_label: str
+) -> list[HubTool]:
     """Derive `HubTool`s from a remote server's raw tool-inventory payload.
 
     Reads defensively since the payload comes straight off the wire: skips

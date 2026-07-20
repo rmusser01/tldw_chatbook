@@ -29,7 +29,9 @@ class WritingSourcePanel(Vertical):
                 allow_blank=False,
                 id="writing-source-select",
             )
-            yield Button("Create Project", id="writing-create-project", variant="primary")
+            yield Button(
+                "Create Project", id="writing-create-project", variant="primary"
+            )
         yield Static(self.notice, id="writing-source-status")
         yield ListView(id="writing-project-list", classes="writing-project-list")
 

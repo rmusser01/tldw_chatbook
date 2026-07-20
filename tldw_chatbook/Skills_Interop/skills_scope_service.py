@@ -27,7 +27,13 @@ _LOCAL_BACKEND_UNAVAILABLE_CAPABILITY = [
 class SkillsScopeService:
     """Route source-aware SKILL.md actions across local and server backends."""
 
-    def __init__(self, *, local_service: Any = None, server_service: Any = None, policy_enforcer: Any = None):
+    def __init__(
+        self,
+        *,
+        local_service: Any = None,
+        server_service: Any = None,
+        policy_enforcer: Any = None,
+    ):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
@@ -65,11 +71,13 @@ class SkillsScopeService:
     @staticmethod
     def _source_action_id(action_id: str, mode: SkillsBackend) -> str:
         if mode == SkillsBackend.LOCAL and action_id.endswith(".server"):
-            return f"{action_id[:-len('.server')]}.local"
+            return f"{action_id[: -len('.server')]}.local"
         return action_id
 
     @staticmethod
-    def _with_record_id(mode: SkillsBackend, kind: str, item: dict[str, Any]) -> dict[str, Any]:
+    def _with_record_id(
+        mode: SkillsBackend, kind: str, item: dict[str, Any]
+    ) -> dict[str, Any]:
         record = dict(item or {})
         record.setdefault("backend", mode.value)
         source_id = record.get("name") or record.get("skill_name") or record.get("id")
@@ -86,16 +94,20 @@ class SkillsScopeService:
         payload.setdefault("backend", mode.value)
         normalized_collection = False
         if isinstance(payload.get("skills"), list):
-            payload["skills"] = [self._with_record_id(mode, "skill", item) for item in payload["skills"]]
+            payload["skills"] = [
+                self._with_record_id(mode, "skill", item) for item in payload["skills"]
+            ]
             normalized_collection = True
         if isinstance(payload.get("available_skills"), list):
             payload["available_skills"] = [
-                self._with_record_id(mode, "skill", item) for item in payload["available_skills"]
+                self._with_record_id(mode, "skill", item)
+                for item in payload["available_skills"]
             ]
             normalized_collection = True
         if isinstance(payload.get("blocked_skills"), list):
             payload["blocked_skills"] = [
-                self._with_record_id(mode, "skill", item) for item in payload["blocked_skills"]
+                self._with_record_id(mode, "skill", item)
+                for item in payload["blocked_skills"]
             ]
             normalized_collection = True
         if normalized_collection:
@@ -135,10 +147,14 @@ class SkillsScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_service(normalized_mode)
         self._enforce_policy(self._source_action_id(action_id, normalized_mode))
-        result = await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
+        result = await self._maybe_await(
+            getattr(service, method_name)(*args, **(kwargs or {}))
+        )
         return self._normalize_response(normalized_mode, result)
 
-    async def list_skills(self, *, mode: SkillsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def list_skills(
+        self, *, mode: SkillsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="skills.list.server",
@@ -146,14 +162,18 @@ class SkillsScopeService:
             kwargs=kwargs,
         )
 
-    async def get_context(self, *, mode: SkillsBackend | str | None = None) -> dict[str, Any]:
+    async def get_context(
+        self, *, mode: SkillsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="skills.context.list.server",
             method_name="get_context",
         )
 
-    async def count_skills(self, *, mode: SkillsBackend | str | None = None, **kwargs: Any) -> int:
+    async def count_skills(
+        self, *, mode: SkillsBackend | str | None = None, **kwargs: Any
+    ) -> int:
         """Return the total managed skills count for one backend.
 
         Unlike ``list_skills``/``get_context``, the result is a bare ``int``
@@ -173,11 +193,15 @@ class SkillsScopeService:
         """
         normalized_mode = self._normalize_mode(mode)
         service = self._require_service(normalized_mode)
-        self._enforce_policy(self._source_action_id("skills.context.list.server", normalized_mode))
+        self._enforce_policy(
+            self._source_action_id("skills.context.list.server", normalized_mode)
+        )
         result = await self._maybe_await(service.count_skills(**kwargs))
         return int(result)
 
-    async def get_skill(self, skill_name: str, *, mode: SkillsBackend | str | None = None) -> dict[str, Any]:
+    async def get_skill(
+        self, skill_name: str, *, mode: SkillsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="skills.detail.server",
@@ -185,7 +209,9 @@ class SkillsScopeService:
             args=(skill_name,),
         )
 
-    async def create_skill(self, *, mode: SkillsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def create_skill(
+        self, *, mode: SkillsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="skills.create.server",
@@ -217,13 +243,17 @@ class SkillsScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_service(normalized_mode)
-        self._enforce_policy(self._source_action_id("skills.delete.server", normalized_mode))
+        self._enforce_policy(
+            self._source_action_id("skills.delete.server", normalized_mode)
+        )
         result = await self._maybe_await(service.delete_skill(skill_name, **kwargs))
         if not isinstance(result, dict):
             result = {"name": skill_name, "deleted": bool(result)}
         return self._normalize_response(normalized_mode, result)
 
-    async def import_skill(self, *, mode: SkillsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def import_skill(
+        self, *, mode: SkillsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="skills.import.launch.server",
@@ -246,7 +276,9 @@ class SkillsScopeService:
             kwargs=kwargs,
         )
 
-    async def export_skill(self, skill_name: str, *, mode: SkillsBackend | str | None = None) -> Any:
+    async def export_skill(
+        self, skill_name: str, *, mode: SkillsBackend | str | None = None
+    ) -> Any:
         return await self._call(
             mode=mode,
             action_id="skills.export.launch.server",
@@ -269,7 +301,9 @@ class SkillsScopeService:
             kwargs=kwargs,
         )
 
-    async def seed_builtin_skills(self, *, mode: SkillsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def seed_builtin_skills(
+        self, *, mode: SkillsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="skills.seed.launch.server",

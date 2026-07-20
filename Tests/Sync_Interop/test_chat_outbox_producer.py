@@ -84,17 +84,22 @@ def test_chat_producer_enqueues_encrypted_message_and_updates_summary(tmp_path) 
         selected_variant_id="variant-2",
         entity_version=3,
     )
-    assert len(
-        repo.list_pending_sync_v2_outbox_envelopes(
-            server_profile_id="server-a",
-            authenticated_principal_id="user-a",
-            workspace_scope=None,
-            dataset_id="dataset-1",
+    assert (
+        len(
+            repo.list_pending_sync_v2_outbox_envelopes(
+                server_profile_id="server-a",
+                authenticated_principal_id="user-a",
+                workspace_scope=None,
+                dataset_id="dataset-1",
+            )
         )
-    ) == 1
+        == 1
+    )
 
 
-def test_chat_producer_skips_without_local_first_profile_or_dataset_key(tmp_path) -> None:
+def test_chat_producer_skips_without_local_first_profile_or_dataset_key(
+    tmp_path,
+) -> None:
     repo = SyncStateRepository(tmp_path / "sync_state.db")
     repo.set_sync_v2_profile_state(
         server_profile_id="server-a",
@@ -117,12 +122,15 @@ def test_chat_producer_skips_without_local_first_profile_or_dataset_key(tmp_path
     )
 
     assert result == {"status": "skipped", "reason": "profile_not_local_first"}
-    assert repo.list_sync_v2_outbox_entries(
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope=None,
-        dataset_id="dataset-1",
-    ) == []
+    assert (
+        repo.list_sync_v2_outbox_entries(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope=None,
+            dataset_id="dataset-1",
+        )
+        == []
+    )
 
 
 def _local_first_repo(tmp_path) -> SyncStateRepository:

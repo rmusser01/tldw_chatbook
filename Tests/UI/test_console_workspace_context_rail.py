@@ -10,7 +10,9 @@ import pytest
 from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_destination_shells import _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.console_glyphs import GLYPH_ACTIVE
@@ -51,7 +53,9 @@ def _visible_text(screen) -> str:
     visible_chunks: list[str] = []
     for widget in screen.query(Static):
         if widget.display and hasattr(widget, "renderable"):
-            visible_chunks.append(getattr(widget.renderable, "plain", str(widget.renderable)))
+            visible_chunks.append(
+                getattr(widget.renderable, "plain", str(widget.renderable))
+            )
     for button in screen.query(Button):
         if button.display:
             visible_chunks.append(str(button.label))
@@ -317,11 +321,16 @@ async def test_console_workspace_context_renders_grouped_conversation_browser() 
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_grouped_workspace_state())
         await pilot.pause()
 
-        assert _static_plain(console, "#console-conversation-browser-starred-title") == "Starred"
+        assert (
+            _static_plain(console, "#console-conversation-browser-starred-title")
+            == "Starred"
+        )
         assert "Workspaces" in _visible_text(console)
         assert "Chats" in _visible_text(console)
         assert len(console.query("#console-workspace-conversation-search")) == 1
@@ -353,7 +362,9 @@ async def test_console_workspace_context_renders_grouped_conversation_browser() 
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_preserves_duplicate_starred_workspace_row_keys() -> None:
+async def test_console_workspace_context_preserves_duplicate_starred_workspace_row_keys() -> (
+    None
+):
     rows = (
         _browser_row(
             "conv-duplicate",
@@ -369,7 +380,9 @@ async def test_console_workspace_context_preserves_duplicate_starred_workspace_r
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_grouped_workspace_state(rows=rows))
         await pilot.pause()
 
@@ -390,12 +403,18 @@ async def test_console_workspace_context_preserves_duplicate_starred_workspace_r
         assert len({button.id for button in star_buttons}) == len(star_buttons)
         assert len(duplicate_rows) == 2
         assert len(duplicate_stars) == 2
-        assert all(button.conversation_id == "conv-duplicate" for button in duplicate_rows)
-        assert all(button.conversation_id == "conv-duplicate" for button in duplicate_stars)
+        assert all(
+            button.conversation_id == "conv-duplicate" for button in duplicate_rows
+        )
+        assert all(
+            button.conversation_id == "conv-duplicate" for button in duplicate_stars
+        )
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_keeps_status_rows_below_grouped_browser() -> None:
+async def test_console_workspace_context_keeps_status_rows_below_grouped_browser() -> (
+    None
+):
     rows = tuple(
         _browser_row(
             f"conv-{index}",
@@ -410,7 +429,9 @@ async def test_console_workspace_context_keeps_status_rows_below_grouped_browser
     async with host.run_test(size=(120, 34)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_grouped_workspace_state(rows=rows))
         # Status rows now live in the collapsible Details section below the
         # grouped conversation browser; expand it to lay out those rows.
@@ -422,7 +443,9 @@ async def test_console_workspace_context_keeps_status_rows_below_grouped_browser
         left_rail_body = console.query_one("#console-left-rail-body")
         conversation_list = console.query_one("#console-workspace-conversations")
         sync_label = console.query_one("#console-workspace-sync-label")
-        server_readiness = console.query_one("#console-workspace-server-readiness-label")
+        server_readiness = console.query_one(
+            "#console-workspace-server-readiness-label"
+        )
         handoff_label = console.query_one("#console-workspace-handoff-label")
         composer = console.query_one("#console-native-composer")
         details_bottom = details_tray.region.y + details_tray.region.height
@@ -443,7 +466,9 @@ async def test_console_workspace_context_keeps_status_rows_below_grouped_browser
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_renders_disabled_star_for_unpersisted_native_session() -> None:
+async def test_console_workspace_context_renders_disabled_star_for_unpersisted_native_session() -> (
+    None
+):
     rows = (
         _browser_row(
             "native:native-session-1",
@@ -460,7 +485,9 @@ async def test_console_workspace_context_renders_disabled_star_for_unpersisted_n
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_grouped_workspace_state(rows=rows))
         await pilot.pause()
 
@@ -472,14 +499,18 @@ async def test_console_workspace_context_renders_disabled_star_for_unpersisted_n
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_disables_star_controls_when_marks_unavailable() -> None:
+async def test_console_workspace_context_disables_star_controls_when_marks_unavailable() -> (
+    None
+):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_grouped_workspace_state(marks_available=False))
         await pilot.pause()
 
@@ -499,12 +530,16 @@ async def test_console_workspace_context_search_controls_keep_stable_ids() -> No
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_grouped_workspace_state(query="planning"))
         await pilot.pause()
 
         search = console.query_one("#console-workspace-conversation-search", Input)
-        clear = console.query_one("#console-workspace-conversation-search-clear", Button)
+        clear = console.query_one(
+            "#console-workspace-conversation-search-clear", Button
+        )
         list_container = console.query_one("#console-workspace-conversations")
 
         assert search.value == "planning"
@@ -585,7 +620,9 @@ def _configure_native_ready_console(app, model: str = "local-model") -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_conversations_render_bounded_expanded_section() -> None:
+async def test_console_workspace_conversations_render_bounded_expanded_section() -> (
+    None
+):
     app = _build_test_app()
     section = _section_state(collapsed=False, rows=8)
     host = ConsoleHarness(app)
@@ -593,12 +630,20 @@ async def test_console_workspace_conversations_render_bounded_expanded_section()
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_workspace_state(section))
         await pilot.pause()
 
-        assert _static_plain(console, "#console-workspace-conversations-title") == "Conversations (8)"
-        assert _static_plain(console, "#console-workspace-selected-conversation") == "Conversation 2 - saved chat"
+        assert (
+            _static_plain(console, "#console-workspace-conversations-title")
+            == "Conversations (8)"
+        )
+        assert (
+            _static_plain(console, "#console-workspace-selected-conversation")
+            == "Conversation 2 - saved chat"
+        )
         assert len(console.query("#console-workspace-conversation-search")) == 1
         assert len(console.query("#console-workspace-conversation-search-clear")) == 1
         assert len(console.query("#console-new-workspace-conversation")) == 1
@@ -610,7 +655,9 @@ async def test_console_workspace_conversations_render_bounded_expanded_section()
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_conversations_collapsed_shows_selected_summary_only() -> None:
+async def test_console_workspace_conversations_collapsed_shows_selected_summary_only() -> (
+    None
+):
     app = _build_test_app()
     section = _section_state(collapsed=True, rows=8)
     host = ConsoleHarness(app)
@@ -618,19 +665,29 @@ async def test_console_workspace_conversations_collapsed_shows_selected_summary_
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_workspace_state(section))
         await pilot.pause()
 
-        assert _static_plain(console, "#console-workspace-conversations-title") == "Conversations (8)"
-        assert _static_plain(console, "#console-workspace-selected-conversation") == "Conversation 2 - saved chat"
+        assert (
+            _static_plain(console, "#console-workspace-conversations-title")
+            == "Conversations (8)"
+        )
+        assert (
+            _static_plain(console, "#console-workspace-selected-conversation")
+            == "Conversation 2 - saved chat"
+        )
         assert len(console.query("#console-workspace-conversation-search")) == 0
         assert len(console.query("#console-workspace-conversations")) == 0
         assert len(console.query("#console-new-workspace-conversation")) == 0
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_legacy_conversation_toggle_collapses_and_expands() -> None:
+async def test_console_workspace_legacy_conversation_toggle_collapses_and_expands() -> (
+    None
+):
     app = _build_test_app()
     section = _section_state(collapsed=False, rows=3)
     host = ConsoleHarness(app)
@@ -638,38 +695,51 @@ async def test_console_workspace_legacy_conversation_toggle_collapses_and_expand
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_workspace_state(section))
         await pilot.pause()
 
         toggle = console.query_one("#console-workspace-conversations-toggle", Button)
         assert toggle.disabled is False
         assert len(console.query("#console-workspace-conversations")) == 1
-        assert any("Conversation 0" in text for text in _conversation_row_texts(console))
+        assert any(
+            "Conversation 0" in text for text in _conversation_row_texts(console)
+        )
 
         toggle.press()
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversations-toggle")) == 1
         assert len(console.query("#console-workspace-conversations")) == 0
-        assert _static_plain(
-            console,
-            "#console-workspace-selected-conversation",
-        ) == "Conversation 2 - saved chat"
-        assert app.app_config["console"]["conversation_section"]["ws-a"][
-            "collapsed"
-        ] is True
+        assert (
+            _static_plain(
+                console,
+                "#console-workspace-selected-conversation",
+            )
+            == "Conversation 2 - saved chat"
+        )
+        assert (
+            app.app_config["console"]["conversation_section"]["ws-a"]["collapsed"]
+            is True
+        )
 
         console.query_one("#console-workspace-conversations-toggle", Button).press()
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversations")) == 1
-        assert any("Conversation 0" in text for text in _conversation_row_texts(console))
-        assert app.app_config["console"]["conversation_section"]["ws-a"][
-            "collapsed"
-        ] is False
+        assert any(
+            "Conversation 0" in text for text in _conversation_row_texts(console)
+        )
+        assert (
+            app.app_config["console"]["conversation_section"]["ws-a"]["collapsed"]
+            is False
+        )
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_conversations_fallback_disables_unowned_controls() -> None:
+async def test_console_workspace_conversations_fallback_disables_unowned_controls() -> (
+    None
+):
     app = _build_test_app()
     section = _section_state(collapsed=False, rows=3)
     state = _base_workspace_state(section)
@@ -693,11 +763,15 @@ async def test_console_workspace_conversations_fallback_disables_unowned_control
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(legacy_state)
         await pilot.pause()
 
-        search_input = console.query_one("#console-workspace-conversation-search", Input)
+        search_input = console.query_one(
+            "#console-workspace-conversation-search", Input
+        )
         clear_button = console.query_one(
             "#console-workspace-conversation-search-clear",
             Button,
@@ -726,11 +800,15 @@ async def test_console_workspace_conversations_clear_requires_enabled_search() -
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_workspace_state(section))
         await pilot.pause()
 
-        search_input = console.query_one("#console-workspace-conversation-search", Input)
+        search_input = console.query_one(
+            "#console-workspace-conversation-search", Input
+        )
         clear_button = console.query_one(
             "#console-workspace-conversation-search-clear",
             Button,
@@ -741,7 +819,9 @@ async def test_console_workspace_conversations_clear_requires_enabled_search() -
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_many_conversations_keep_lower_status_reachable() -> None:
+async def test_console_workspace_many_conversations_keep_lower_status_reachable() -> (
+    None
+):
     app = _build_test_app()
     _configure_native_ready_console(app)
     service = app.workspace_registry_service
@@ -769,8 +849,12 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
         details_tray = console.query_one("#console-workspace-details")
         left_rail_body = console.query_one("#console-left-rail-body")
         conversation_list = console.query_one("#console-workspace-conversations")
-        new_conversation = console.query_one("#console-new-workspace-conversation", Button)
-        server_readiness = console.query_one("#console-workspace-server-readiness-label")
+        new_conversation = console.query_one(
+            "#console-new-workspace-conversation", Button
+        )
+        server_readiness = console.query_one(
+            "#console-workspace-server-readiness-label"
+        )
         handoff_label = console.query_one("#console-workspace-handoff-label")
         composer = console.query_one("#console-native-composer")
         hit_x = new_conversation.region.x + max(0, new_conversation.region.width // 2)
@@ -781,8 +865,14 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
         details_bottom = details_tray.region.y + details_tray.region.height
 
         assert conversation_list.region.height > left_rail_body.region.height
-        assert new_conversation.region.y + new_conversation.region.height <= composer.region.y
-        assert new_conversation.region.y + new_conversation.region.height <= workspace_bottom
+        assert (
+            new_conversation.region.y + new_conversation.region.height
+            <= composer.region.y
+        )
+        assert (
+            new_conversation.region.y + new_conversation.region.height
+            <= workspace_bottom
+        )
         assert hit_widget is new_conversation
         assert server_readiness.region.y > conversation_list.region.y
 
@@ -798,7 +888,9 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_sync_while_scrolled_keeps_scroll_range_stable() -> None:
+async def test_console_workspace_sync_while_scrolled_keeps_scroll_range_stable() -> (
+    None
+):
     app = _build_test_app()
     _configure_native_ready_console(app)
     service = app.workspace_registry_service
@@ -875,7 +967,9 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
 
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         assert (
             console.query_one(
                 "#console-workspace-conversation-search",
@@ -884,11 +978,15 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
             is False
         )
         assert len(console.query("#console-workspace-conversations-toggle")) == 0
-        assert any("Collapse Chat A" in text for text in _conversation_row_texts(console))
+        assert any(
+            "Collapse Chat A" in text for text in _conversation_row_texts(console)
+        )
 
         _browser_group_toggle(console, "section:chats").press()
         await pilot.pause(0.1)
-        assert all("Collapse Chat A" not in text for text in _conversation_row_texts(console))
+        assert all(
+            "Collapse Chat A" not in text for text in _conversation_row_texts(console)
+        )
         collapsed_groups = app.app_config["console"]["conversation_browser"][
             "collapsed_groups"
         ]
@@ -898,20 +996,23 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
         console._sync_console_workspace_context()
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversations")) == 1
-        assert all("Collapse Chat A" not in text for text in _conversation_row_texts(console))
+        assert all(
+            "Collapse Chat A" not in text for text in _conversation_row_texts(console)
+        )
 
         service.set_active_workspace(default_workspace.workspace_id)
         console._sync_console_workspace_context()
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversations")) == 1
-        assert all("Collapse Chat A" not in text for text in _conversation_row_texts(console))
+        assert all(
+            "Collapse Chat A" not in text for text in _conversation_row_texts(console)
+        )
 
 
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
     for _ in range(40):
-        if (
-            host.screen_stack
-            and host.screen_stack[-1].query("#console-workspace-switcher-modal")
+        if host.screen_stack and host.screen_stack[-1].query(
+            "#console-workspace-switcher-modal"
         ):
             await pilot.pause()
             return host.screen_stack[-1]
@@ -999,12 +1100,16 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         )
         assert staged_context.region.width == workspace_context.region.width
         assert workspace_context.region.height > staged_context.region.height
-        conversations_title = console.query_one("#console-workspace-conversations-title")
+        conversations_title = console.query_one(
+            "#console-workspace-conversations-title"
+        )
         assert conversations_title.region.y > workspace_context.region.y
         assert len(console.query("#console-workspace-recovery")) == 0
         switch_button = console.query_one("#console-change-workspace", Button)
         assert switch_button.disabled is True
-        new_conversation = console.query_one("#console-new-workspace-conversation", Button)
+        new_conversation = console.query_one(
+            "#console-new-workspace-conversation", Button
+        )
         assert new_conversation.disabled is False
         text = _visible_text(console)
         assert "Sources" in text
@@ -1023,7 +1128,9 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_exposes_new_conversation_for_default_workspace() -> None:
+async def test_console_workspace_context_exposes_new_conversation_for_default_workspace() -> (
+    None
+):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1031,7 +1138,9 @@ async def test_console_workspace_context_exposes_new_conversation_for_default_wo
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
 
-        new_conversation = console.query_one("#console-new-workspace-conversation", Button)
+        new_conversation = console.query_one(
+            "#console-new-workspace-conversation", Button
+        )
         assert new_conversation.disabled is False
 
         text = _visible_text(console)
@@ -1190,7 +1299,9 @@ async def test_console_workspace_conversation_list_expands_for_multiple_rows() -
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_renders_server_readiness_handoff_and_acp_contracts() -> None:
+async def test_console_workspace_context_renders_server_readiness_handoff_and_acp_contracts() -> (
+    None
+):
     app = _build_test_app()
     app.workspace_server_adapter_state = ConsoleWorkspaceServerAdapterState(
         available=False,
@@ -1365,7 +1476,9 @@ async def test_console_workspace_context_renders_markup_titles_literally() -> No
 
 
 @pytest.mark.asyncio
-async def test_console_change_workspace_switches_active_context_and_conversation_rows() -> None:
+async def test_console_change_workspace_switches_active_context_and_conversation_rows() -> (
+    None
+):
     app = _build_test_app()
     service = app.workspace_registry_service
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
@@ -1510,8 +1623,8 @@ def test_console_workspace_aggregate_height_pins_badge_row_cost() -> None:
     )
 
     assert actual_height == expected_height == 17
-    assert actual_height == ConsoleWorkspaceContextTray._conversation_browser_rows_height(
-        plain_rows
-    ) + ConsoleWorkspaceContextTray._conversation_browser_rows_height(
-        badge_rows
+    assert (
+        actual_height
+        == ConsoleWorkspaceContextTray._conversation_browser_rows_height(plain_rows)
+        + ConsoleWorkspaceContextTray._conversation_browser_rows_height(badge_rows)
     )

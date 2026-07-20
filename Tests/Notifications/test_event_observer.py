@@ -11,7 +11,10 @@ from tldw_chatbook.Notifications.event_observer import (
     StaleCursorError,
     UnsupportedCursorError,
 )
-from tldw_chatbook.runtime_policy.server_parity_models import EventCursor, NormalizedEventRecord
+from tldw_chatbook.runtime_policy.server_parity_models import (
+    EventCursor,
+    NormalizedEventRecord,
+)
 
 _USE_CURSOR = object()
 
@@ -134,10 +137,12 @@ class CloseableTransport:
 async def test_observer_reconnects_with_injectable_backoff_and_resumes_cursor():
     store = EventCursorStore()
     backoff = RecordingBackoff()
-    transport = FakeTransport([
-        [_event("cursor-1"), RuntimeError("disconnect")],
-        [_event("cursor-2")],
-    ])
+    transport = FakeTransport(
+        [
+            [_event("cursor-1"), RuntimeError("disconnect")],
+            [_event("cursor-2")],
+        ]
+    )
     observed = []
     observer = EventObserver(store=store, transport=transport, backoff=backoff)
 
@@ -159,13 +164,17 @@ async def test_observer_reconnects_with_injectable_backoff_and_resumes_cursor():
 @pytest.mark.asyncio
 async def test_observer_dedupes_duplicate_reconnect_event():
     store = EventCursorStore()
-    transport = FakeTransport([
-        [_event("cursor-1"), RuntimeError("disconnect")],
-        [_event("cursor-1"), _event("cursor-2")],
-    ])
+    transport = FakeTransport(
+        [
+            [_event("cursor-1"), RuntimeError("disconnect")],
+            [_event("cursor-1"), _event("cursor-2")],
+        ]
+    )
     observed = []
 
-    await EventObserver(store=store, transport=transport, backoff=lambda attempt: None).run(
+    await EventObserver(
+        store=store, transport=transport, backoff=lambda attempt: None
+    ).run(
         source_authority="server",
         server_profile_id="server-a",
         stream_name="notifications",
@@ -182,14 +191,18 @@ async def test_observer_dedupes_duplicate_reconnect_event():
 async def test_unacknowledged_duplicate_after_reconnect_is_retried_and_can_advance_cursor():
     store = EventCursorStore()
     duplicate = _event("cursor-1")
-    transport = FakeTransport([
-        [duplicate, RuntimeError("disconnect")],
-        [duplicate],
-    ])
+    transport = FakeTransport(
+        [
+            [duplicate, RuntimeError("disconnect")],
+            [duplicate],
+        ]
+    )
     observed = []
     acknowledgements = iter([False, True])
 
-    await EventObserver(store=store, transport=transport, backoff=lambda attempt: None).run(
+    await EventObserver(
+        store=store, transport=transport, backoff=lambda attempt: None
+    ).run(
         source_authority="server",
         server_profile_id="server-a",
         stream_name="notifications",
@@ -213,10 +226,14 @@ async def test_unacknowledged_duplicate_after_reconnect_is_retried_and_can_advan
 async def test_no_cursor_event_after_existing_cursor_does_not_clear_expected_cursor():
     store = EventCursorStore()
     store.acknowledge_event(_event("cursor-start"))
-    transport = FakeTransport([[
-        _event("no-cursor", server_cursor=None),
-        _event("cursor-next"),
-    ]])
+    transport = FakeTransport(
+        [
+            [
+                _event("no-cursor", server_cursor=None),
+                _event("cursor-next"),
+            ]
+        ]
+    )
     observed = []
 
     result = await EventObserver(store=store, transport=transport).run(
@@ -300,13 +317,17 @@ async def test_observer_does_not_advance_cursor_for_unacknowledged_events():
 async def test_observer_returns_typed_reset_result_for_stale_cursor_and_requeries():
     store = EventCursorStore()
     store.acknowledge_event(_event("cursor-old"))
-    transport = FakeTransport([
-        StaleCursorError("expired"),
-        [_event("cursor-new")],
-    ])
+    transport = FakeTransport(
+        [
+            StaleCursorError("expired"),
+            [_event("cursor-new")],
+        ]
+    )
     observed = []
 
-    result = await EventObserver(store=store, transport=transport, backoff=lambda attempt: None).run(
+    result = await EventObserver(
+        store=store, transport=transport, backoff=lambda attempt: None
+    ).run(
         source_authority="server",
         server_profile_id="server-a",
         stream_name="notifications",
@@ -326,13 +347,17 @@ async def test_observer_returns_typed_reset_result_for_stale_cursor_and_requerie
 async def test_unsupported_cursor_stream_does_not_reuse_another_stream_cursor():
     store = EventCursorStore()
     store.acknowledge_event(_event("cursor-notifications", stream_name="notifications"))
-    transport = FakeTransport([
-        UnsupportedCursorError("cursor unsupported"),
-        [_event("cursor-jobs", stream_name="jobs")],
-    ])
+    transport = FakeTransport(
+        [
+            UnsupportedCursorError("cursor unsupported"),
+            [_event("cursor-jobs", stream_name="jobs")],
+        ]
+    )
     observed = []
 
-    await EventObserver(store=store, transport=transport, backoff=lambda attempt: None).run(
+    await EventObserver(
+        store=store, transport=transport, backoff=lambda attempt: None
+    ).run(
         source_authority="server",
         server_profile_id="server-a",
         stream_name="jobs",
@@ -367,12 +392,15 @@ async def test_active_server_switch_and_credential_clear_cancel_observation():
     )
 
     assert cancel.is_set()
-    assert store.get_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor == "cursor-1"
+    assert (
+        store.get_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        == "cursor-1"
+    )
 
 
 @pytest.mark.asyncio
@@ -437,7 +465,9 @@ async def test_cancel_event_wakes_pending_handler_without_acknowledging_event():
 async def test_stream_iterator_is_closed_on_max_events_return():
     iterator = CloseableAsyncIterator([_event("cursor-1"), _event("cursor-2")])
 
-    await EventObserver(store=EventCursorStore(), transport=CloseableTransport(iterator)).run(
+    await EventObserver(
+        store=EventCursorStore(), transport=CloseableTransport(iterator)
+    ).run(
         source_authority="server",
         server_profile_id="server-a",
         stream_name="notifications",
@@ -454,7 +484,9 @@ async def test_stream_iterator_is_closed_on_cancelled_wait():
     cancel = asyncio.Event()
     iterator = CloseableIdleIterator()
     task = asyncio.create_task(
-        EventObserver(store=EventCursorStore(), transport=CloseableTransport(iterator)).run(
+        EventObserver(
+            store=EventCursorStore(), transport=CloseableTransport(iterator)
+        ).run(
             source_authority="server",
             server_profile_id="server-a",
             stream_name="notifications",

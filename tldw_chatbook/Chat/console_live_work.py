@@ -130,7 +130,10 @@ def resolve_console_live_work_primary_action(
     """Resolve launch payloads that can safely route to an existing detail surface."""
     source = launch.source.strip().lower()
     target_id = str(launch.payload.get("target_id") or "").strip()
-    if source in {"w+c", "watchlists", "watchlists+collections"} and ":watchlist_run:" in target_id:
+    if (
+        source in {"w+c", "watchlists", "watchlists+collections"}
+        and ":watchlist_run:" in target_id
+    ):
         return ConsoleLiveWorkPrimaryAction(
             label=launch.action_label,
             target_route="subscriptions",
@@ -164,7 +167,9 @@ class ConsoleLiveWorkStatusCardState:
     badge_classes: str = "ds-status-badge console-live-work-status-badge"
 
     @classmethod
-    def from_launch(cls, launch: ConsoleLiveWorkLaunch) -> "ConsoleLiveWorkStatusCardState":
+    def from_launch(
+        cls, launch: ConsoleLiveWorkLaunch
+    ) -> "ConsoleLiveWorkStatusCardState":
         rows = [
             ConsoleLiveWorkStatusCardRow(
                 widget_id="console-live-work-source",
@@ -246,8 +251,6 @@ class ConsoleLiveWorkSourceReadinessState:
                 Schedules, Workflows, RAG, and Artifacts as connected while
                 MCP as unavailable until its payload producer is wired.
         """
-        connected = "destination-section console-live-work-source-row console-live-work-source-connected"
-        unavailable = "destination-section console-live-work-source-row console-live-work-source-unavailable"
         return cls.from_acp_runtime_status("not_configured")
 
     @classmethod

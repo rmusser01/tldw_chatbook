@@ -4,10 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Select, Static, TextArea
+from textual.widgets import Input, Select, Static, TextArea
 
 from tldw_chatbook.UI.CodeRepoCopyPasteWindow import CodeRepoCopyPasteWindow
-from Tests.textual_test_utils import app_pilot
 
 
 async def _active_window(pilot) -> CodeRepoCopyPasteWindow:
@@ -27,15 +26,21 @@ class TestCodeRepoCopyPasteWindow:
 
     @pytest.fixture
     def mock_api_client(self):
-        with patch("tldw_chatbook.UI.CodeRepoCopyPasteWindow.GitHubAPIClient") as mock_class:
+        with patch(
+            "tldw_chatbook.UI.CodeRepoCopyPasteWindow.GitHubAPIClient"
+        ) as mock_class:
             mock_instance = MagicMock()
             mock_class.return_value = mock_instance
-            mock_instance.parse_github_url = Mock(return_value=("test-owner", "test-repo"))
-            mock_instance.get_repository_info = AsyncMock(return_value={
-                "name": "test-repo",
-                "full_name": "test-owner/test-repo",
-                "description": "Test repository",
-            })
+            mock_instance.parse_github_url = Mock(
+                return_value=("test-owner", "test-repo")
+            )
+            mock_instance.get_repository_info = AsyncMock(
+                return_value={
+                    "name": "test-repo",
+                    "full_name": "test-owner/test-repo",
+                    "description": "Test repository",
+                }
+            )
             mock_instance.get_branches = AsyncMock(return_value=["main", "develop"])
             mock_instance.get_repository_tree = AsyncMock(return_value=[])
             mock_instance.get_file_content = AsyncMock(return_value="print('Hello')")
@@ -135,13 +140,19 @@ class TestCodeRepoCopyPasteWindow:
             mock_api_client.parse_github_url.assert_called_with(
                 "https://github.com/test-owner/test-repo"
             )
-            mock_api_client.get_repository_info.assert_called_with("test-owner", "test-repo")
+            mock_api_client.get_repository_info.assert_called_with(
+                "test-owner", "test-repo"
+            )
             mock_api_client.get_branches.assert_called_with("test-owner", "test-repo")
             window.notify.assert_called()
 
     @pytest.mark.asyncio
-    async def test_loading_repository_invalid_url(self, app_pilot, mock_app, mock_api_client):
-        mock_api_client.parse_github_url.side_effect = ValueError("Invalid GitHub repository URL")
+    async def test_loading_repository_invalid_url(
+        self, app_pilot, mock_app, mock_api_client
+    ):
+        mock_api_client.parse_github_url.side_effect = ValueError(
+            "Invalid GitHub repository URL"
+        )
 
         class TestApp(App):
             def on_mount(self) -> None:
@@ -159,11 +170,15 @@ class TestCodeRepoCopyPasteWindow:
 
             window.notify.assert_called()
             call_args = window.notify.call_args
-            assert "Failed to load repository: Invalid GitHub repository URL" in str(call_args)
+            assert "Failed to load repository: Invalid GitHub repository URL" in str(
+                call_args
+            )
             assert call_args.kwargs.get("severity") == "error"
 
     @pytest.mark.asyncio
-    async def test_quick_filter_buttons_update_select(self, app_pilot, mock_app, mock_api_client):
+    async def test_quick_filter_buttons_update_select(
+        self, app_pilot, mock_app, mock_api_client
+    ):
         class TestApp(App):
             def on_mount(self) -> None:
                 self.push_screen(CodeRepoCopyPasteWindow(mock_app))
@@ -185,7 +200,9 @@ class TestCodeRepoCopyPasteWindow:
             assert filter_select.value == "config"
 
     @pytest.mark.asyncio
-    async def test_copy_to_clipboard_requires_compilation(self, app_pilot, mock_app, mock_api_client):
+    async def test_copy_to_clipboard_requires_compilation(
+        self, app_pilot, mock_app, mock_api_client
+    ):
         class TestApp(App):
             def on_mount(self) -> None:
                 self.push_screen(CodeRepoCopyPasteWindow(mock_app))
@@ -223,7 +240,9 @@ class TestCodeRepoCopyPasteWindow:
             window.notify.assert_called_with("No files selected", severity="warning")
 
     @pytest.mark.asyncio
-    async def test_reset_clears_selection_and_compilation(self, app_pilot, mock_app, mock_api_client):
+    async def test_reset_clears_selection_and_compilation(
+        self, app_pilot, mock_app, mock_api_client
+    ):
         class TestApp(App):
             def on_mount(self) -> None:
                 self.push_screen(CodeRepoCopyPasteWindow(mock_app))
@@ -247,10 +266,14 @@ class TestCodeRepoCopyPasteWindow:
                 window.query_one("#aggregated-text", TextArea).text
                 == "Click 'Generate Compilation' to aggregate selected files"
             )
-            window.notify.assert_called_with("Reset selection and compilation", severity="info")
+            window.notify.assert_called_with(
+                "Reset selection and compilation", severity="info"
+            )
 
     @pytest.mark.asyncio
-    async def test_loading_overlay_visibility(self, app_pilot, mock_app, mock_api_client):
+    async def test_loading_overlay_visibility(
+        self, app_pilot, mock_app, mock_api_client
+    ):
         class TestApp(App):
             def on_mount(self) -> None:
                 self.push_screen(CodeRepoCopyPasteWindow(mock_app))
@@ -290,7 +313,9 @@ class TestCodeRepoCopyPasteWindow:
             window.dismiss.assert_called_with(None)
 
     @pytest.mark.asyncio
-    async def test_initial_focus_is_repo_input(self, app_pilot, mock_app, mock_api_client):
+    async def test_initial_focus_is_repo_input(
+        self, app_pilot, mock_app, mock_api_client
+    ):
         class TestApp(App):
             def on_mount(self) -> None:
                 self.push_screen(CodeRepoCopyPasteWindow(mock_app))

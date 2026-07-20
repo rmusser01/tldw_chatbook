@@ -32,12 +32,15 @@ SVG_RED_RECT = (
 def defaults_config(monkeypatch):
     """Simulate a config with no [chat.images] overrides (never read live config)."""
     monkeypatch.setattr(
-        config_mod, "get_cli_setting",
+        config_mod,
+        "get_cli_setting",
         lambda section, key=None, default=None: default,
     )
 
 
-def _write_image(tmp_path: Path, name: str, fmt: str, size=(64, 64), mode="RGB") -> Path:
+def _write_image(
+    tmp_path: Path, name: str, fmt: str, size=(64, 64), mode="RGB"
+) -> Path:
     path = tmp_path / name
     PILImage.new(mode, size, color="red").save(path, format=fmt)
     return path
@@ -88,10 +91,12 @@ async def test_cmyk_tiff_transcodes_without_crash(tmp_path, defaults_config):
 @pytest.mark.asyncio
 async def test_custom_resize_dimension_honored(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        config_mod, "get_cli_setting",
+        config_mod,
+        "get_cli_setting",
         lambda section, key=None, default=None: (
             {"resize_max_dimension": 512}
-            if (section, key) == ("chat", "images") else default
+            if (section, key) == ("chat", "images")
+            else default
         ),
     )
     png = _write_image(tmp_path, "wide.png", "PNG", size=(1024, 800))
@@ -102,10 +107,10 @@ async def test_custom_resize_dimension_honored(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_custom_size_cap_rejects_through_real_path(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        config_mod, "get_cli_setting",
+        config_mod,
+        "get_cli_setting",
         lambda section, key=None, default=None: (
-            {"max_size_mb": 0.0001}
-            if (section, key) == ("chat", "images") else default
+            {"max_size_mb": 0.0001} if (section, key) == ("chat", "images") else default
         ),
     )
     png = _write_image(tmp_path, "pic.png", "PNG")
@@ -116,10 +121,12 @@ async def test_custom_size_cap_rejects_through_real_path(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_custom_formats_reject_through_real_path(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        config_mod, "get_cli_setting",
+        config_mod,
+        "get_cli_setting",
         lambda section, key=None, default=None: (
             {"supported_formats": [".png"]}
-            if (section, key) == ("chat", "images") else default
+            if (section, key) == ("chat", "images")
+            else default
         ),
     )
     gif = _write_image(tmp_path, "anim.gif", "GIF")
@@ -139,7 +146,9 @@ async def test_process_attachment_bytes_mime_matches_bytes(defaults_config):
 
 
 @pytest.mark.asyncio
-async def test_process_attachment_bytes_fallback_probes_mime(defaults_config, monkeypatch):
+async def test_process_attachment_bytes_fallback_probes_mime(
+    defaults_config, monkeypatch
+):
     async def boom(*args, **kwargs):
         raise RuntimeError("simulated processing failure")
 
@@ -147,14 +156,18 @@ async def test_process_attachment_bytes_fallback_probes_mime(defaults_config, mo
     buffer = BytesIO()
     PILImage.new("RGB", (32, 32), "blue").save(buffer, format="PNG")
     pending = await attachment_core.process_attachment_bytes(
-        buffer.getvalue(), display_name="clip.png", mime_type="image/jpeg"  # caller lies
+        buffer.getvalue(),
+        display_name="clip.png",
+        mime_type="image/jpeg",  # caller lies
     )
     assert pending.data == buffer.getvalue()  # fallback keeps original bytes
     assert pending.mime_type == "image/png"  # probed from the actual bytes
 
 
 @pytest.mark.asyncio
-async def test_svg_rejected_when_capability_absent(tmp_path, monkeypatch, defaults_config):
+async def test_svg_rejected_when_capability_absent(
+    tmp_path, monkeypatch, defaults_config
+):
     monkeypatch.setattr(attachment_core, "svg_rendering_available", lambda: False)
     svg = tmp_path / "logo.svg"
     svg.write_bytes(SVG_RED_RECT)
@@ -232,10 +245,12 @@ async def test_post_process_size_cap_rejects_grown_svg_raster(tmp_path, monkeypa
     just the source bytes, or an oversized-after-processing image slips
     through with a rejection copy that only ever checked the source."""
     monkeypatch.setattr(
-        config_mod, "get_cli_setting",
+        config_mod,
+        "get_cli_setting",
         lambda section, key=None, default=None: (
             {"max_size_mb": 0.0005}  # ~524 bytes
-            if (section, key) == ("chat", "images") else default
+            if (section, key) == ("chat", "images")
+            else default
         ),
     )
     svg = tmp_path / "grown.svg"
@@ -244,7 +259,7 @@ async def test_post_process_size_cap_rejects_grown_svg_raster(tmp_path, monkeypa
         b'<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">'
         b'<rect width="200" height="200" fill="red"/>'
         b'<circle cx="100" cy="100" r="80" fill="blue"/>'
-        b'</svg>'
+        b"</svg>"
     )
     assert len(svg.read_bytes()) < 524
     with pytest.raises(ValueError, match="Processed image too large"):

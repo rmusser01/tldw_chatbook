@@ -52,8 +52,14 @@ class DictionaryPicker(ModalScreen[int | None]):
             yield Input(placeholder="Search dictionaries…", id="dict-pick-search")
             yield ListView(id="dict-pick-list")
             with Vertical(id="dict-pick-actions"):
-                yield Button(self._confirm_label, id="dict-pick-confirm", classes="console-action-secondary")
-                yield Button("Cancel", id="dict-pick-cancel", classes="console-action-secondary")
+                yield Button(
+                    self._confirm_label,
+                    id="dict-pick-confirm",
+                    classes="console-action-secondary",
+                )
+                yield Button(
+                    "Cancel", id="dict-pick-cancel", classes="console-action-secondary"
+                )
 
     def on_mount(self) -> None:
         self._populate(self._dictionaries)
@@ -63,7 +69,9 @@ class DictionaryPicker(ModalScreen[int | None]):
         listing.clear()
         self._row_ids = []
         for row in rows:
-            listing.append(ListItem(Static(str(row.get("name") or "(unnamed)"), markup=False)))
+            listing.append(
+                ListItem(Static(str(row.get("name") or "(unnamed)"), markup=False))
+            )
             self._row_ids.append(int(row.get("dictionary_id")))
         listing.index = None
 
@@ -71,7 +79,15 @@ class DictionaryPicker(ModalScreen[int | None]):
     def _filter(self, event: Input.Changed) -> None:
         event.stop()
         needle = event.value.strip().lower()
-        rows = [d for d in self._dictionaries if needle in str(d.get("name") or "").lower()] if needle else self._dictionaries
+        rows = (
+            [
+                d
+                for d in self._dictionaries
+                if needle in str(d.get("name") or "").lower()
+            ]
+            if needle
+            else self._dictionaries
+        )
         self._populate(rows)
 
     def _selected_id(self) -> int | None:

@@ -166,8 +166,18 @@ class FakeServerPromptService:
             deleted=False,
         )
 
-    async def list_prompts(self, *, page=1, per_page=10, include_deleted=False, sort_by="last_modified", sort_order="desc"):
-        self.calls.append(("list_prompts", page, per_page, include_deleted, sort_by, sort_order))
+    async def list_prompts(
+        self,
+        *,
+        page=1,
+        per_page=10,
+        include_deleted=False,
+        sort_by="last_modified",
+        sort_order="desc",
+    ):
+        self.calls.append(
+            ("list_prompts", page, per_page, include_deleted, sort_by, sort_order)
+        )
         return PaginatedPromptsResponse(
             items=[
                 PromptBriefResponse(
@@ -259,9 +269,13 @@ async def test_prompt_scope_lists_local_and_server_prompts_with_stable_ids():
     policy = FakePolicyEnforcer()
     local = FakeLocalPromptService()
     server = FakeServerPromptService()
-    service = PromptScopeService(local_service=local, server_service=server, policy_enforcer=policy)
+    service = PromptScopeService(
+        local_service=local, server_service=server, policy_enforcer=policy
+    )
 
-    local_result = await service.list_prompts(mode=PromptBackend.LOCAL, page=1, per_page=10)
+    local_result = await service.list_prompts(
+        mode=PromptBackend.LOCAL, page=1, per_page=10
+    )
     server_result = await service.list_prompts(
         mode=PromptBackend.SERVER,
         page=2,
@@ -284,7 +298,9 @@ async def test_prompt_scope_saves_and_deletes_against_selected_backend():
     policy = FakePolicyEnforcer()
     local = FakeLocalPromptService()
     server = FakeServerPromptService()
-    service = PromptScopeService(local_service=local, server_service=server, policy_enforcer=policy)
+    service = PromptScopeService(
+        local_service=local, server_service=server, policy_enforcer=policy
+    )
 
     created = await service.save_prompt(
         mode="local",
@@ -303,7 +319,9 @@ async def test_prompt_scope_saves_and_deletes_against_selected_backend():
         prompt_schema_version=1,
         prompt_definition={"schema_version": 1, "messages": []},
     )
-    deleted = await service.delete_prompt(mode="server", prompt_identifier="server-uuid-9")
+    deleted = await service.delete_prompt(
+        mode="server", prompt_identifier="server-uuid-9"
+    )
 
     assert created["id"] == "local:prompt:local-uuid-8"
     assert local.calls[0][0] == "create_prompt"
@@ -319,7 +337,9 @@ async def test_prompt_scope_saves_and_deletes_against_selected_backend():
 
 
 @pytest.mark.asyncio
-async def test_build_prompt_scope_service_wires_local_and_server_backends_lazily(monkeypatch):
+async def test_build_prompt_scope_service_wires_local_and_server_backends_lazily(
+    monkeypatch,
+):
     client = FakeServerPromptService()
     build_client = Mock(return_value=client)
     monkeypatch.setattr(
@@ -352,7 +372,9 @@ async def test_build_prompt_scope_service_wires_local_and_server_backends_lazily
 
 
 def test_build_prompt_scope_service_keeps_server_backend_unavailable_without_config():
-    service = build_prompt_scope_service(prompt_db=None, app_config={}, policy_enforcer=None)
+    service = build_prompt_scope_service(
+        prompt_db=None, app_config={}, policy_enforcer=None
+    )
 
     assert service.local_service is None
     assert isinstance(service.server_service, ServerPromptService)
@@ -361,8 +383,12 @@ def test_build_prompt_scope_service_keeps_server_backend_unavailable_without_con
 
 
 @pytest.mark.asyncio
-async def test_scope_server_prompt_service_from_config_can_use_provider_backed_client(monkeypatch):
-    build_client = Mock(side_effect=AssertionError("legacy config builder should not run"))
+async def test_scope_server_prompt_service_from_config_can_use_provider_backed_client(
+    monkeypatch,
+):
+    build_client = Mock(
+        side_effect=AssertionError("legacy config builder should not run")
+    )
     monkeypatch.setattr(
         "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client",
         build_client,
@@ -383,17 +409,26 @@ async def test_scope_server_prompt_service_from_config_can_use_provider_backed_c
 
 
 @pytest.mark.asyncio
-async def test_scope_server_prompt_service_from_config_uses_shared_provider_lazily(monkeypatch):
+async def test_scope_server_prompt_service_from_config_uses_shared_provider_lazily(
+    monkeypatch,
+):
     client = FakeServerPromptService()
-    direct_builder = Mock(side_effect=AssertionError("service should not call direct legacy builder"))
+    direct_builder = Mock(
+        side_effect=AssertionError("service should not call direct legacy builder")
+    )
     provider_builder = Mock(return_value=client)
-    monkeypatch.setattr("tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client", direct_builder)
+    monkeypatch.setattr(
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client",
+        direct_builder,
+    )
     monkeypatch.setattr(
         "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
         provider_builder,
     )
 
-    service = ServerPromptService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+    service = ServerPromptService.from_config(
+        {"tldw_api": {"base_url": "https://example.com"}}
+    )
 
     assert isinstance(service, ServerPromptService)
     assert service.client is None
@@ -405,7 +440,9 @@ async def test_scope_server_prompt_service_from_config_uses_shared_provider_lazi
 
     assert result.items[0].id == 9
     assert service.client is None
-    provider_builder.assert_called_once_with({"tldw_api": {"base_url": "https://example.com"}})
+    provider_builder.assert_called_once_with(
+        {"tldw_api": {"base_url": "https://example.com"}}
+    )
 
 
 @pytest.mark.asyncio
@@ -430,8 +467,12 @@ async def test_prompt_scope_routes_server_usage_versions_and_restore():
         policy_enforcer=policy,
     )
 
-    used = await service.record_prompt_usage(mode="server", prompt_identifier="server-uuid-9")
-    versions = await service.list_prompt_versions(mode="server", prompt_identifier="server-uuid-9")
+    used = await service.record_prompt_usage(
+        mode="server", prompt_identifier="server-uuid-9"
+    )
+    versions = await service.list_prompt_versions(
+        mode="server", prompt_identifier="server-uuid-9"
+    )
     restored = await service.restore_prompt_version(
         mode="server",
         prompt_identifier="server-uuid-9",
@@ -477,7 +518,9 @@ async def test_prompt_scope_rejects_local_version_history_until_supported():
     )
 
     with pytest.raises(ValueError, match="Local prompt version history is unavailable"):
-        await service.list_prompt_versions(mode="local", prompt_identifier="local-uuid-7")
+        await service.list_prompt_versions(
+            mode="local", prompt_identifier="local-uuid-7"
+        )
 
     with pytest.raises(ValueError, match="Local prompt version restore is unavailable"):
         await service.restore_prompt_version(
@@ -513,15 +556,30 @@ async def test_prompt_scope_routes_server_prompt_collections_with_policy():
         prompt_ids=[9, 10],
     )
 
-    assert created == {"id": "server:prompt_collection:7", "backend": "server", "collection_id": 7}
+    assert created == {
+        "id": "server:prompt_collection:7",
+        "backend": "server",
+        "collection_id": 7,
+    }
     assert listed["collections"][0]["id"] == "server:prompt_collection:7"
     assert fetched["name"] == "Server Collection"
     assert updated["name"] == "Renamed"
     assert server.calls[-4:] == [
-        ("create_prompt_collection", {"name": "Server Collection", "description": "Remote prompts", "prompt_ids": [9]}),
+        (
+            "create_prompt_collection",
+            {
+                "name": "Server Collection",
+                "description": "Remote prompts",
+                "prompt_ids": [9],
+            },
+        ),
         ("list_prompt_collections", 50, 5),
         ("get_prompt_collection", 7),
-        ("update_prompt_collection", 7, {"name": "Renamed", "description": "Updated", "prompt_ids": [9, 10]}),
+        (
+            "update_prompt_collection",
+            7,
+            {"name": "Renamed", "description": "Updated", "prompt_ids": [9, 10]},
+        ),
     ]
     assert policy.actions[-4:] == [
         "prompts.collections.create.server",
@@ -557,15 +615,30 @@ async def test_prompt_scope_routes_local_prompt_collections_with_policy():
         prompt_ids=[7, 8],
     )
 
-    assert created == {"id": "local:prompt_collection:3", "backend": "local", "collection_id": 3}
+    assert created == {
+        "id": "local:prompt_collection:3",
+        "backend": "local",
+        "collection_id": 3,
+    }
     assert listed["collections"][0]["id"] == "local:prompt_collection:3"
     assert fetched["name"] == "Local Collection"
     assert updated["name"] == "Renamed"
     assert local.calls[-4:] == [
-        ("create_prompt_collection", {"name": "Local Collection", "description": "Offline prompts", "prompt_ids": [7]}),
+        (
+            "create_prompt_collection",
+            {
+                "name": "Local Collection",
+                "description": "Offline prompts",
+                "prompt_ids": [7],
+            },
+        ),
         ("list_prompt_collections", 50, 5),
         ("get_prompt_collection", 3),
-        ("update_prompt_collection", 3, {"name": "Renamed", "description": "Updated", "prompt_ids": [7, 8]}),
+        (
+            "update_prompt_collection",
+            3,
+            {"name": "Renamed", "description": "Updated", "prompt_ids": [7, 8]},
+        ),
     ]
     assert policy.actions[-4:] == [
         "prompts.collections.create.local",

@@ -1,7 +1,11 @@
 import pytest
 
-from tldw_chatbook.Prompt_Studio_Interop.server_prompt_studio_service import ServerPromptStudioService
-from tldw_chatbook.Prompt_Studio_Interop.prompt_studio_scope_service import PromptStudioScopeService
+from tldw_chatbook.Prompt_Studio_Interop.server_prompt_studio_service import (
+    ServerPromptStudioService,
+)
+from tldw_chatbook.Prompt_Studio_Interop.prompt_studio_scope_service import (
+    PromptStudioScopeService,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -11,11 +15,18 @@ class FakeServerPromptStudioService:
 
     async def list_projects(self, **kwargs):
         self.calls.append(("list_projects", kwargs))
-        return {"success": True, "data": [{"id": 1, "name": "Smoke", "status": "draft"}]}
+        return {
+            "success": True,
+            "data": [{"id": 1, "name": "Smoke", "status": "draft"}],
+        }
 
     async def create_prompt(self, request_data, idempotency_key=None):
         self.calls.append(("create_prompt", request_data, idempotency_key))
-        return {"id": 11, "project_id": request_data["project_id"], "name": request_data["name"]}
+        return {
+            "id": 11,
+            "project_id": request_data["project_id"],
+            "name": request_data["name"],
+        }
 
     async def export_test_cases(self, project_id, request_data):
         self.calls.append(("export_test_cases", project_id, request_data))
@@ -23,7 +34,12 @@ class FakeServerPromptStudioService:
 
     async def create_evaluation(self, request_data):
         self.calls.append(("create_evaluation", request_data))
-        return {"id": 31, "project_id": request_data["project_id"], "prompt_id": request_data["prompt_id"], "status": "pending"}
+        return {
+            "id": 31,
+            "project_id": request_data["project_id"],
+            "prompt_id": request_data["prompt_id"],
+            "status": "pending",
+        }
 
     async def cancel_optimization(self, optimization_id, reason=None):
         self.calls.append(("cancel_optimization", optimization_id, reason))
@@ -94,7 +110,10 @@ async def test_server_prompt_studio_service_prefers_direct_client_over_provider(
             self.project_id = project_id
 
         async def list_prompt_studio_projects(self, **_kwargs):
-            return {"success": True, "data": [{"id": self.project_id, "name": "Project"}]}
+            return {
+                "success": True,
+                "data": [{"id": self.project_id, "name": "Project"}],
+            }
 
     provider = FakeClientProvider(FakeClient(8))
     service = ServerPromptStudioService(client=FakeClient(9), client_provider=provider)
@@ -118,10 +137,17 @@ async def test_prompt_studio_scope_service_routes_server_and_normalizes_records(
         idempotency_key="create-prompt-1",
     )
     exported = await scope.export_test_cases(1, {"format": "json"}, mode="server")
-    evaluation = await scope.create_evaluation({"project_id": 1, "prompt_id": 11}, mode="server")
+    evaluation = await scope.create_evaluation(
+        {"project_id": 1, "prompt_id": 11}, mode="server"
+    )
     cancelled = await scope.cancel_optimization(41, reason="stop", mode="server")
     status = await scope.get_status(mode="server", warn_seconds=60)
-    events = [event async for event in scope.stream_events(mode="server", client_id="chatbook-1", project_id=1)]
+    events = [
+        event
+        async for event in scope.stream_events(
+            mode="server", client_id="chatbook-1", project_id=1
+        )
+    ]
 
     assert projects["data"][0]["record_id"] == "server:prompt_studio_project:1"
     assert prompt["record_id"] == "server:prompt_studio_prompt:11"
@@ -164,7 +190,9 @@ async def test_prompt_studio_scope_service_rejects_local_mode_without_dispatch()
 @pytest.mark.asyncio
 async def test_prompt_studio_scope_service_blocks_denied_action_before_dispatch():
     server = FakeServerPromptStudioService()
-    scope = PromptStudioScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer("authority_denied"))
+    scope = PromptStudioScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer("authority_denied")
+    )
 
     with pytest.raises(PolicyDeniedError):
         await scope.list_projects(mode="server")
@@ -201,6 +229,8 @@ def test_prompt_studio_scope_service_reports_local_and_server_contract_gaps():
 
 
 def test_prompt_studio_scope_service_omits_websocket_gap_for_capable_adapter():
-    scope = PromptStudioScopeService(server_service=WebSocketCapablePromptStudioService())
+    scope = PromptStudioScopeService(
+        server_service=WebSocketCapablePromptStudioService()
+    )
 
     assert scope.list_unsupported_capabilities(mode="server") == []

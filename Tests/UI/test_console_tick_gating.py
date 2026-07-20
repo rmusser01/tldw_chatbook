@@ -41,7 +41,9 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.UI.Screens.chat_screen import CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS
+from tldw_chatbook.UI.Screens.chat_screen import (
+    CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS,
+)
 from tldw_chatbook.Widgets.Console import (
     ConsoleRunInspector,
     ConsoleSettingsSummary,
@@ -97,7 +99,9 @@ async def test_console_persisted_rows_cache_gates_list_conversations_calls():
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         await pilot.pause()
 
         # Start from a known-clean cache regardless of what mount-time syncs
@@ -201,7 +205,9 @@ async def test_console_workspace_context_tray_sync_state_always_recomposes():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
 
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
 
         refresh_calls: list[int] = []
         original_refresh = ConsoleWorkspaceContextTray.refresh
@@ -315,7 +321,9 @@ async def test_console_inspector_content_stays_fresh_while_right_rail_hidden():
         await console._sync_native_console_chat_ui()
         await pilot.pause()
 
-        inspector = console.query_one("#console-run-inspector-state", ConsoleRunInspector)
+        inspector = console.query_one(
+            "#console-run-inspector-state", ConsoleRunInspector
+        )
         selected_row = next(
             (row for row in inspector.state.rows if row.label == "Selected message"),
             None,

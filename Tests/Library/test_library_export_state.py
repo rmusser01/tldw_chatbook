@@ -269,13 +269,21 @@ def test_next_media_quality_cycles_and_wraps():
 
 
 def test_normalize_destination_appends_zip_suffix_when_absent():
-    assert normalize_export_destination(PurePath("/tmp/foo")) == PurePath("/tmp/foo.zip")
+    assert normalize_export_destination(PurePath("/tmp/foo")) == PurePath(
+        "/tmp/foo.zip"
+    )
 
 
 def test_normalize_destination_replaces_a_different_suffix():
-    assert normalize_export_destination(PurePath("/tmp/foo.txt")) == PurePath("/tmp/foo.zip")
+    assert normalize_export_destination(PurePath("/tmp/foo.txt")) == PurePath(
+        "/tmp/foo.zip"
+    )
 
 
 def test_normalize_destination_leaves_zip_suffix_untouched_case_insensitive():
-    assert normalize_export_destination(PurePath("/tmp/foo.ZIP")) == PurePath("/tmp/foo.ZIP")
-    assert normalize_export_destination(PurePath("/tmp/foo.zip")) == PurePath("/tmp/foo.zip")
+    assert normalize_export_destination(PurePath("/tmp/foo.ZIP")) == PurePath(
+        "/tmp/foo.ZIP"
+    )
+    assert normalize_export_destination(PurePath("/tmp/foo.zip")) == PurePath(
+        "/tmp/foo.zip"
+    )

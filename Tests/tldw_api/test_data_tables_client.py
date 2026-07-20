@@ -62,17 +62,32 @@ async def test_data_table_routes_wire_and_serialize_payloads(monkeypatch):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
-            {"job_id": 101, "job_uuid": "job-101", "status": "queued", "table": _summary()},
+            {
+                "job_id": 101,
+                "job_uuid": "job-101",
+                "status": "queued",
+                "table": _summary(),
+            },
             {"tables": [_summary()], "count": 1, "limit": 5, "offset": 10, "total": 1},
             _detail(),
             {
                 "table_uuid": "table-1",
                 "file_id": 77,
-                "export": {"status": "ready", "format": "csv", "url": "/download/77", "bytes": 123},
+                "export": {
+                    "status": "ready",
+                    "format": "csv",
+                    "url": "/download/77",
+                    "bytes": 123,
+                },
             },
             _detail(),
             _summary(description="Updated"),
-            {"job_id": 102, "job_uuid": "job-102", "status": "queued", "table": _summary()},
+            {
+                "job_id": 102,
+                "job_uuid": "job-102",
+                "status": "queued",
+                "table": _summary(),
+            },
             {
                 "id": 102,
                 "uuid": "job-102",
@@ -90,7 +105,12 @@ async def test_data_table_routes_wire_and_serialize_payloads(monkeypatch):
                 "error_message": None,
                 "table_uuid": "table-1",
             },
-            {"success": True, "job_id": 102, "status": "cancelled", "message": "Job cancellation requested"},
+            {
+                "success": True,
+                "job_id": 102,
+                "status": "cancelled",
+                "message": "Job cancellation requested",
+            },
             {"success": True},
         ]
     )
@@ -106,9 +126,23 @@ async def test_data_table_routes_wire_and_serialize_payloads(monkeypatch):
         wait_for_completion=True,
         wait_timeout_seconds=30,
     )
-    listed = await client.list_data_tables(status_filter="ready", search="entities", workspace_tag="workspace:one", limit=5, offset=10)
-    detail = await client.get_data_table("table-1", rows_limit=25, rows_offset=5, include_rows=False, include_sources=True)
-    exported = await client.export_data_table("table-1", format="csv", async_mode="sync", mode="url", download=False)
+    listed = await client.list_data_tables(
+        status_filter="ready",
+        search="entities",
+        workspace_tag="workspace:one",
+        limit=5,
+        offset=10,
+    )
+    detail = await client.get_data_table(
+        "table-1",
+        rows_limit=25,
+        rows_offset=5,
+        include_rows=False,
+        include_sources=True,
+    )
+    exported = await client.export_data_table(
+        "table-1", format="csv", async_mode="sync", mode="url", download=False
+    )
     await client.update_data_table_content(
         "table-1",
         DataTableContentUpdateRequest(
@@ -116,18 +150,27 @@ async def test_data_table_routes_wire_and_serialize_payloads(monkeypatch):
             rows=[{"Name": "Ada"}],
         ),
     )
-    patched = await client.update_data_table("table-1", DataTableUpdateRequest(description="Updated"))
-    regenerated = await client.regenerate_data_table("table-1", DataTableRegenerateRequest(prompt="refresh"))
+    patched = await client.update_data_table(
+        "table-1", DataTableUpdateRequest(description="Updated")
+    )
+    regenerated = await client.regenerate_data_table(
+        "table-1", DataTableRegenerateRequest(prompt="refresh")
+    )
     job = await client.get_data_table_job(102)
     cancelled = await client.cancel_data_table_job(102, reason="no longer needed")
     deleted = await client.delete_data_table("table-1")
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/data-tables/generate")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/data-tables/generate",
+    )
     assert mocked.await_args_list[0].kwargs["params"] == {
         "wait_for_completion": "true",
         "wait_timeout_seconds": 30,
     }
-    assert mocked.await_args_list[0].kwargs["json_data"]["sources"] == [{"source_type": "document", "source_id": "doc-1"}]
+    assert mocked.await_args_list[0].kwargs["json_data"]["sources"] == [
+        {"source_type": "document", "source_id": "doc-1"}
+    ]
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/data-tables")
     assert mocked.await_args_list[1].kwargs["params"] == {
         "status": "ready",
@@ -143,26 +186,44 @@ async def test_data_table_routes_wire_and_serialize_payloads(monkeypatch):
         "include_rows": "false",
         "include_sources": "true",
     }
-    assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/data-tables/table-1/export")
+    assert mocked.await_args_list[3].args[:2] == (
+        "GET",
+        "/api/v1/data-tables/table-1/export",
+    )
     assert mocked.await_args_list[3].kwargs["params"] == {
         "format": "csv",
         "async_mode": "sync",
         "mode": "url",
         "download": "false",
     }
-    assert mocked.await_args_list[4].args[:2] == ("PUT", "/api/v1/data-tables/table-1/content")
+    assert mocked.await_args_list[4].args[:2] == (
+        "PUT",
+        "/api/v1/data-tables/table-1/content",
+    )
     assert mocked.await_args_list[4].kwargs["json_data"] == {
         "columns": [{"name": "Name", "type": "text"}],
         "rows": [{"Name": "Ada"}],
     }
-    assert mocked.await_args_list[5].args[:2] == ("PATCH", "/api/v1/data-tables/table-1")
+    assert mocked.await_args_list[5].args[:2] == (
+        "PATCH",
+        "/api/v1/data-tables/table-1",
+    )
     assert mocked.await_args_list[5].kwargs["json_data"] == {"description": "Updated"}
-    assert mocked.await_args_list[6].args[:2] == ("POST", "/api/v1/data-tables/table-1/regenerate")
+    assert mocked.await_args_list[6].args[:2] == (
+        "POST",
+        "/api/v1/data-tables/table-1/regenerate",
+    )
     assert mocked.await_args_list[6].kwargs["json_data"] == {"prompt": "refresh"}
     assert mocked.await_args_list[7].args[:2] == ("GET", "/api/v1/data-tables/jobs/102")
-    assert mocked.await_args_list[8].args[:2] == ("DELETE", "/api/v1/data-tables/jobs/102")
+    assert mocked.await_args_list[8].args[:2] == (
+        "DELETE",
+        "/api/v1/data-tables/jobs/102",
+    )
     assert mocked.await_args_list[8].kwargs["params"] == {"reason": "no longer needed"}
-    assert mocked.await_args_list[9].args[:2] == ("DELETE", "/api/v1/data-tables/table-1")
+    assert mocked.await_args_list[9].args[:2] == (
+        "DELETE",
+        "/api/v1/data-tables/table-1",
+    )
     assert isinstance(generated, DataTableGenerateResponse)
     assert isinstance(listed, DataTablesListResponse)
     assert detail.table.uuid == "table-1"

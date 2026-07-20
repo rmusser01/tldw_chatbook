@@ -66,7 +66,9 @@ class SkillTrustService:
         self._salt: bytes | None = None
         self._reviews: dict[str, dict[str, Any]] = {}
 
-    def unlock_with_passphrase(self, passphrase: str, *, salt: bytes | None = None) -> None:
+    def unlock_with_passphrase(
+        self, passphrase: str, *, salt: bytes | None = None
+    ) -> None:
         """Derive in-memory trust keys from a passphrase and manifest salt."""
 
         if salt is None:
@@ -78,7 +80,9 @@ class SkillTrustService:
         """Persist derived trust keys in secure keyring storage, never a passphrase."""
 
         if self.key_cache is None:
-            raise SkillTrustMarkerUnavailable("No secure OS-backed key cache is available.")
+            raise SkillTrustMarkerUnavailable(
+                "No secure OS-backed key cache is available."
+            )
         keys = self._require_keys()
         salt = self._require_salt()
         self.key_cache.save_keys(keys, salt=salt)
@@ -125,11 +129,15 @@ class SkillTrustService:
                 return status.trust_status
         return TRUST_STATUS_TRUSTED
 
-    def bootstrap_trust(self, passphrase: str | None = None, *, salt: bytes | None = None) -> None:
+    def bootstrap_trust(
+        self, passphrase: str | None = None, *, salt: bytes | None = None
+    ) -> None:
         """Trust the current local skill directories as the initial baseline."""
 
         if passphrase is not None:
-            self.unlock_with_passphrase(passphrase, salt=salt or secrets.token_bytes(32))
+            self.unlock_with_passphrase(
+                passphrase, salt=salt or secrets.token_bytes(32)
+            )
         keys = self._require_keys()
         manifest_salt = self._require_salt()
         generation = 1
@@ -210,7 +218,9 @@ class SkillTrustService:
                 trust_status=TRUST_STATUS_QUARANTINED_ADDED,
                 trust_reason_code=TRUST_REASON_SKILL_ADDED,
                 trust_blocked=True,
-                changed_files=tuple(item.relative_path for item in current.fingerprints),
+                changed_files=tuple(
+                    item.relative_path for item in current.fingerprints
+                ),
                 manifest_generation=generation,
                 last_verified_at=_now_iso(),
             )
@@ -223,7 +233,8 @@ class SkillTrustService:
                 self._manifest_error_reason(exc),
             )
         current_files = {
-            item.relative_path: item.as_manifest_entry() for item in current.fingerprints
+            item.relative_path: item.as_manifest_entry()
+            for item in current.fingerprints
         }
         missing = set(trusted_files) - set(current_files)
         added = set(current_files) - set(trusted_files)
@@ -355,7 +366,9 @@ class SkillTrustService:
             "manifest_generation": status.manifest_generation,
             "current_digest": self._fingerprints_digest(current),
             "current_files": dict(current.text_files),
-            "current_fingerprints": [item.as_manifest_entry() for item in current.fingerprints],
+            "current_fingerprints": [
+                item.as_manifest_entry() for item in current.fingerprints
+            ],
             "changed_files": list(status.changed_files),
             "captured_at": _now_iso(),
         }
@@ -400,7 +413,9 @@ class SkillTrustService:
             self._reviews.pop(review_id, None)
             raise ValueError("snapshot_mismatch")
         self._reviews.pop(review_id, None)
-        self.trust_current_skill(skill_name, audit_event="trust_approved", snapshot=current)
+        self.trust_current_skill(
+            skill_name, audit_event="trust_approved", snapshot=current
+        )
 
     def trust_current_skill(
         self,
@@ -538,7 +553,9 @@ class SkillTrustService:
 
     def _normalize_skill_name(self, skill_name: str) -> str:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api.skills_schemas import _normalize_skill_name as _normalize_api_skill_name
+        from ..tldw_api.skills_schemas import (
+            _normalize_skill_name as _normalize_api_skill_name,
+        )
 
         try:
             return _normalize_api_skill_name(skill_name)
@@ -574,9 +591,13 @@ class SkillTrustService:
                 TRUST_REASON_ROLLBACK_MARKER_UNAVAILABLE,
             )
         except Exception:
-            return self._manifest_error_status(skill_name, TRUST_REASON_MANIFEST_INVALID)
+            return self._manifest_error_status(
+                skill_name, TRUST_REASON_MANIFEST_INVALID
+            )
         if marker:
-            return self._manifest_error_status(skill_name, TRUST_REASON_MANIFEST_INVALID)
+            return self._manifest_error_status(
+                skill_name, TRUST_REASON_MANIFEST_INVALID
+            )
         return SkillTrustStatus(
             skill_name=skill_name,
             trust_status=TRUST_STATUS_UNINITIALIZED,
@@ -598,7 +619,9 @@ class SkillTrustService:
             last_verified_at=_now_iso(),
         )
 
-    def _manifest_error_status(self, skill_name: str, reason_code: str) -> SkillTrustStatus:
+    def _manifest_error_status(
+        self, skill_name: str, reason_code: str
+    ) -> SkillTrustStatus:
         return SkillTrustStatus(
             skill_name=skill_name,
             trust_status=TRUST_STATUS_QUARANTINED_MANIFEST_ERROR,
@@ -639,7 +662,9 @@ class SkillTrustService:
             raise ValueError("manifest schema invalid")
         result: dict[str, dict[str, Any]] = {}
         for item in files:
-            if not isinstance(item, dict) or not isinstance(item.get("relative_path"), str):
+            if not isinstance(item, dict) or not isinstance(
+                item.get("relative_path"), str
+            ):
                 raise ValueError("manifest schema invalid")
             result[str(item["relative_path"])] = dict(item)
         return result
@@ -663,11 +688,15 @@ class SkillTrustService:
             )
         return files
 
-    def _content_manifest_entry(self, *, relative_path: str, content: str) -> dict[str, Any]:
+    def _content_manifest_entry(
+        self, *, relative_path: str, content: str
+    ) -> dict[str, Any]:
         raw = content.encode("utf-8")
         return {
             "relative_path": relative_path,
-            "file_type": "skill" if relative_path == _SKILL_FILENAME else "supporting_text",
+            "file_type": "skill"
+            if relative_path == _SKILL_FILENAME
+            else "supporting_text",
             "byte_length": len(raw),
             "sha256": sha256_hex(raw),
         }

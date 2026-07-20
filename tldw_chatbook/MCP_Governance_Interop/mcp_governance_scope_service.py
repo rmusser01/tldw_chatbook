@@ -29,12 +29,20 @@ _SERVER_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
 class MCPGovernanceScopeService:
     """Present local and server MCP as one control-plane boundary with explicit source scope."""
 
-    def __init__(self, *, server_service: Any = None, local_service: Any = None, policy_enforcer: Any = None):
+    def __init__(
+        self,
+        *,
+        server_service: Any = None,
+        local_service: Any = None,
+        policy_enforcer: Any = None,
+    ):
         self.server_service = server_service
         self.local_service = local_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: MCPGovernanceBackend | str | None) -> MCPGovernanceBackend:
+    def _normalize_mode(
+        self, mode: MCPGovernanceBackend | str | None
+    ) -> MCPGovernanceBackend:
         if mode is None:
             return MCPGovernanceBackend.SERVER
         if isinstance(mode, MCPGovernanceBackend):
@@ -46,7 +54,9 @@ class MCPGovernanceScopeService:
 
     def _require_server_service(self, mode: MCPGovernanceBackend) -> Any:
         if mode == MCPGovernanceBackend.LOCAL:
-            raise ValueError("Remote MCP governance is server-only; local MCP runtime governance remains Chatbook-owned.")
+            raise ValueError(
+                "Remote MCP governance is server-only; local MCP runtime governance remains Chatbook-owned."
+            )
         if self.server_service is None:
             raise ValueError("Server MCP governance backend is unavailable.")
         return self.server_service
@@ -64,7 +74,13 @@ class MCPGovernanceScopeService:
 
     @staticmethod
     def _record_identifier(item: dict[str, Any]) -> Any:
-        return item.get("server_id") or item.get("id") or item.get("mapping_id") or item.get("tool_name") or item.get("name")
+        return (
+            item.get("server_id")
+            or item.get("id")
+            or item.get("mapping_id")
+            or item.get("tool_name")
+            or item.get("name")
+        )
 
     @classmethod
     def _normalize_record(
@@ -79,15 +95,24 @@ class MCPGovernanceScopeService:
             item = {"value": item}
         record = dict(item)
         record.setdefault("backend", mode.value)
-        identifier = source_id if source_id is not None else cls._record_identifier(record)
+        identifier = (
+            source_id if source_id is not None else cls._record_identifier(record)
+        )
         if identifier is not None:
             record.setdefault("record_id", f"{mode.value}:{kind}:{identifier}")
         return record
 
     @classmethod
-    def _normalize_list(cls, mode: MCPGovernanceBackend, kind: str, result: Any) -> list[dict[str, Any]]:
+    def _normalize_list(
+        cls, mode: MCPGovernanceBackend, kind: str, result: Any
+    ) -> list[dict[str, Any]]:
         if isinstance(result, dict):
-            items = result.get("items") or result.get("entries") or result.get("results") or []
+            items = (
+                result.get("items")
+                or result.get("entries")
+                or result.get("results")
+                or []
+            )
         else:
             items = result or []
         return [cls._normalize_record(mode, kind, item) for item in items]
@@ -113,7 +138,9 @@ class MCPGovernanceScopeService:
         service = self._require_server_service(normalized_mode)
         self._enforce_policy("mcp.governance.external_servers.list.server")
         result = await self._maybe_await(
-            service.list_external_servers(owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id)
+            service.list_external_servers(
+                owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id
+            )
         )
         return self._normalize_list(normalized_mode, "mcp_external_server", result)
 
@@ -202,13 +229,22 @@ class MCPGovernanceScopeService:
         service = self._require_server_service(normalized_mode)
         self._enforce_policy("mcp.governance.catalogs.list.server")
         if scope_type == "org":
-            result = await self._maybe_await(service.list_org_tool_catalogs(org_id=scope_id))
+            result = await self._maybe_await(
+                service.list_org_tool_catalogs(org_id=scope_id)
+            )
         elif scope_type == "team":
-            result = await self._maybe_await(service.list_team_tool_catalogs(team_id=scope_id))
+            result = await self._maybe_await(
+                service.list_team_tool_catalogs(team_id=scope_id)
+            )
         else:
             raise ValueError("MCP catalog scope_type must be 'org' or 'team'.")
         return [
-            self._normalize_record(normalized_mode, "mcp_tool_catalog", item, source_id=f"{scope_type}:{item.get('id')}")
+            self._normalize_record(
+                normalized_mode,
+                "mcp_tool_catalog",
+                item,
+                source_id=f"{scope_type}:{item.get('id')}",
+            )
             for item in (result or [])
         ]
 
@@ -240,7 +276,9 @@ class MCPGovernanceScopeService:
             )
         else:
             raise ValueError("MCP catalog scope_type must be 'org' or 'team'.")
-        result["record_id"] = f"{self._normalize_mode(mode).value}:mcp_tool_catalog:{scope_type}:{result.get('id')}"
+        result["record_id"] = (
+            f"{self._normalize_mode(mode).value}:mcp_tool_catalog:{scope_type}:{result.get('id')}"
+        )
         return result
 
     async def delete_tool_catalog(
@@ -346,20 +384,24 @@ class MCPGovernanceScopeService:
         service = self._require_server_service(normalized_mode)
         self._enforce_policy("mcp.governance.effective_policy.detail.server")
         result = await self._maybe_await(
-            service.get_effective_policy(persona_id=persona_id, group_id=group_id, org_id=org_id, team_id=team_id)
+            service.get_effective_policy(
+                persona_id=persona_id, group_id=group_id, org_id=org_id, team_id=team_id
+            )
         )
         scope_id = (
             f"team:{team_id}"
             if team_id is not None
             else f"org:{org_id}"
             if org_id is not None
-            else persona_id
-            or group_id
-            or "current_user"
+            else persona_id or group_id or "current_user"
         )
-        return self._normalize_record(normalized_mode, "mcp_effective_policy", result, source_id=scope_id)
+        return self._normalize_record(
+            normalized_mode, "mcp_effective_policy", result, source_id=scope_id
+        )
 
-    async def list_tool_registry(self, *, mode: MCPGovernanceBackend | str | None = None) -> list[dict[str, Any]]:
+    async def list_tool_registry(
+        self, *, mode: MCPGovernanceBackend | str | None = None
+    ) -> list[dict[str, Any]]:
         return await self.__getattr_dispatch(
             "list_tool_registry",
             "mcp.governance.tool_registry.list.server",
@@ -367,7 +409,9 @@ class MCPGovernanceScopeService:
             mode=mode,
         )
 
-    async def list_tool_registry_modules(self, *, mode: MCPGovernanceBackend | str | None = None) -> list[dict[str, Any]]:
+    async def list_tool_registry_modules(
+        self, *, mode: MCPGovernanceBackend | str | None = None
+    ) -> list[dict[str, Any]]:
         return await self.__getattr_dispatch(
             "list_tool_registry_modules",
             "mcp.governance.tool_registry.list.server",
@@ -375,7 +419,9 @@ class MCPGovernanceScopeService:
             mode=mode,
         )
 
-    async def get_tool_registry_summary(self, *, mode: MCPGovernanceBackend | str | None = None) -> dict[str, Any]:
+    async def get_tool_registry_summary(
+        self, *, mode: MCPGovernanceBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self.__getattr_dispatch(
             "get_tool_registry_summary",
             "mcp.governance.tool_registry.detail.server",
@@ -383,7 +429,9 @@ class MCPGovernanceScopeService:
             mode=mode,
         )
 
-    async def __getattr_dispatch(self, method_name: str, action_id: str, kind: str, *args: Any, **kwargs: Any) -> Any:
+    async def __getattr_dispatch(
+        self, method_name: str, action_id: str, kind: str, *args: Any, **kwargs: Any
+    ) -> Any:
         mode = kwargs.pop("mode", None)
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
@@ -395,7 +443,9 @@ class MCPGovernanceScopeService:
             return self._normalize_record(normalized_mode, kind, result)
         return result
 
-    async def list_permission_profiles(self, *, mode: MCPGovernanceBackend | str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_permission_profiles(
+        self, *, mode: MCPGovernanceBackend | str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         return await self.__getattr_dispatch(
             "list_permission_profiles",
             "mcp.governance.permission_profiles.list.server",
@@ -404,7 +454,9 @@ class MCPGovernanceScopeService:
             **kwargs,
         )
 
-    async def list_policy_assignments(self, *, mode: MCPGovernanceBackend | str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_policy_assignments(
+        self, *, mode: MCPGovernanceBackend | str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         return await self.__getattr_dispatch(
             "list_policy_assignments",
             "mcp.governance.policy_assignments.list.server",
@@ -413,7 +465,9 @@ class MCPGovernanceScopeService:
             **kwargs,
         )
 
-    async def list_approval_policies(self, *, mode: MCPGovernanceBackend | str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_approval_policies(
+        self, *, mode: MCPGovernanceBackend | str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         return await self.__getattr_dispatch(
             "list_approval_policies",
             "mcp.governance.approval_policies.list.server",
@@ -422,7 +476,9 @@ class MCPGovernanceScopeService:
             **kwargs,
         )
 
-    async def list_capability_mappings(self, *, mode: MCPGovernanceBackend | str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_capability_mappings(
+        self, *, mode: MCPGovernanceBackend | str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         return await self.__getattr_dispatch(
             "list_capability_mappings",
             "mcp.governance.capability_mappings.list.server",

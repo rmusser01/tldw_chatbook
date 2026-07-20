@@ -6,7 +6,11 @@ import pytest
 from tldw_chatbook.Sync_Interop import ServerSyncService
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
-from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError, RuntimeSourceState
+from tldw_chatbook.runtime_policy.types import (
+    PolicyDecision,
+    PolicyDeniedError,
+    RuntimeSourceState,
+)
 from tldw_chatbook.tldw_api import (
     ClientChangesPayload,
     SyncOperation,
@@ -71,7 +75,9 @@ def _sync_v2_envelope(
 
 
 class FakeSyncClient:
-    def __init__(self, *, push_response=None, pull_response=None, capabilities_response=None):
+    def __init__(
+        self, *, push_response=None, pull_response=None, capabilities_response=None
+    ):
         self.calls = []
         self.push_response = push_response
         self.pull_response = pull_response
@@ -110,8 +116,20 @@ class FakeSyncClient:
             "operations": {
                 "notes": ["upsert", "delete", "link", "unlink", "resolve_conflict"],
                 "chat": ["upsert", "delete", "link", "unlink", "resolve_conflict"],
-                "workspaces": ["upsert", "delete", "link", "unlink", "resolve_conflict"],
-                "source_cache": ["upsert", "delete", "link", "unlink", "resolve_conflict"],
+                "workspaces": [
+                    "upsert",
+                    "delete",
+                    "link",
+                    "unlink",
+                    "resolve_conflict",
+                ],
+                "source_cache": [
+                    "upsert",
+                    "delete",
+                    "link",
+                    "unlink",
+                    "resolve_conflict",
+                ],
                 "media": ["upsert", "delete", "link", "unlink", "resolve_conflict"],
             },
             "encryption_policies": ["client_private_v1"],
@@ -121,7 +139,9 @@ class FakeSyncClient:
         }
 
     async def register_sync_v2_device(self, request_data):
-        self.calls.append(("register_sync_v2_device", request_data.model_dump(mode="json")))
+        self.calls.append(
+            ("register_sync_v2_device", request_data.model_dump(mode="json"))
+        )
         return {
             "device_id": request_data.device_id or "device-1",
             "server_capabilities": await self.get_sync_v2_capabilities(),
@@ -129,7 +149,9 @@ class FakeSyncClient:
         }
 
     async def enroll_sync_v2_dataset(self, request_data):
-        self.calls.append(("enroll_sync_v2_dataset", request_data.model_dump(mode="json")))
+        self.calls.append(
+            ("enroll_sync_v2_dataset", request_data.model_dump(mode="json"))
+        )
         return {
             "dataset_id": request_data.dataset_id or "dataset-1",
             "scope_type": request_data.scope_type,
@@ -141,10 +163,18 @@ class FakeSyncClient:
         }
 
     async def push_sync_v2_envelopes(self, request_data):
-        self.calls.append(("push_sync_v2_envelopes", request_data.model_dump(mode="json")))
+        self.calls.append(
+            ("push_sync_v2_envelopes", request_data.model_dump(mode="json"))
+        )
         if self.push_response is not None:
             return self.push_response
-        return {"dataset_id": request_data.dataset_id, "accepted": [], "rejected": [], "conflicts": [], "next_cursor": "5"}
+        return {
+            "dataset_id": request_data.dataset_id,
+            "accepted": [],
+            "rejected": [],
+            "conflicts": [],
+            "next_cursor": "5",
+        }
 
     async def pull_sync_v2_envelopes(
         self,
@@ -169,7 +199,12 @@ class FakeSyncClient:
         )
         if self.pull_response is not None:
             return self.pull_response
-        return {"dataset_id": dataset_id, "envelopes": [], "next_cursor": "6", "has_more": False}
+        return {
+            "dataset_id": dataset_id,
+            "envelopes": [],
+            "next_cursor": "6",
+            "has_more": False,
+        }
 
     async def get_sync_v2_restore_manifest(self, *, dataset_ids=None, domains=None):
         self.calls.append(("get_sync_v2_restore_manifest", dataset_ids, domains))
@@ -204,7 +239,13 @@ class FakeSyncClient:
         ]
 
     async def resolve_sync_v2_conflict(self, conflict_id, request_data):
-        self.calls.append(("resolve_sync_v2_conflict", conflict_id, request_data.model_dump(mode="json")))
+        self.calls.append(
+            (
+                "resolve_sync_v2_conflict",
+                conflict_id,
+                request_data.model_dump(mode="json"),
+            )
+        )
         return {
             "conflict_id": conflict_id,
             "dataset_id": "dataset-1",
@@ -216,7 +257,9 @@ class FakeSyncClient:
         }
 
     async def store_sync_v2_key_recovery_bundle(self, request_data):
-        self.calls.append(("store_sync_v2_key_recovery_bundle", request_data.model_dump(mode="json")))
+        self.calls.append(
+            ("store_sync_v2_key_recovery_bundle", request_data.model_dump(mode="json"))
+        )
         return {
             "key_record_id": "key-record-1",
             "dataset_id": request_data.dataset_id,
@@ -233,7 +276,9 @@ class FakeSyncClient:
         device_id=None,
         key_purpose="dataset_recovery",
     ):
-        self.calls.append(("list_sync_v2_key_recovery_bundles", dataset_id, device_id, key_purpose))
+        self.calls.append(
+            ("list_sync_v2_key_recovery_bundles", dataset_id, device_id, key_purpose)
+        )
         return {
             "dataset_id": dataset_id,
             "key_records": [
@@ -260,7 +305,9 @@ async def test_server_sync_service_routes_transport_with_policy_actions():
     service = ServerSyncService(client=client, policy_enforcer=policy)
 
     sent = await service.send_changes(_payload())
-    pulled = await service.get_changes(client_id="chatbook-client-1", since_change_id=30)
+    pulled = await service.get_changes(
+        client_id="chatbook-client-1", since_change_id=30
+    )
 
     assert sent == {"status": "success"}
     assert pulled["latest_change_id"] == 33
@@ -286,18 +333,27 @@ async def test_server_sync_service_routes_transport_with_policy_actions():
         ),
         ("get_sync_changes", "chatbook-client-1", 30),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "sync.changes.launch.server",
         "sync.changes.observe.server",
     ]
 
 
 @pytest.mark.asyncio
-async def test_server_sync_service_dry_run_maps_coarse_requests_to_m1_dotted_domains(tmp_path):
+async def test_server_sync_service_dry_run_maps_coarse_requests_to_m1_dotted_domains(
+    tmp_path,
+):
     client = FakeSyncClient(
         capabilities_response={
             "protocol_version": "sync-v2-m1",
-            "domains": ["notes.note", "chat.conversation", "chat.message", "attachment.ref"],
+            "domains": [
+                "notes.note",
+                "chat.conversation",
+                "chat.message",
+                "attachment.ref",
+            ],
             "operations": {
                 "notes.note": ["upsert", "tombstone"],
                 "chat.conversation": ["upsert", "tombstone"],
@@ -317,7 +373,9 @@ async def test_server_sync_service_dry_run_maps_coarse_requests_to_m1_dotted_dom
         domains=["notes", "chat"],
     )
 
-    register_call = next(call for call in client.calls if call[0] == "register_sync_v2_device")
+    register_call = next(
+        call for call in client.calls if call[0] == "register_sync_v2_device"
+    )
     assert register_call[1]["supported_domains"] == [
         "notes.note",
         "chat.conversation",
@@ -326,7 +384,9 @@ async def test_server_sync_service_dry_run_maps_coarse_requests_to_m1_dotted_dom
 
 
 @pytest.mark.asyncio
-async def test_server_sync_service_dry_run_falls_back_when_domains_value_is_none(tmp_path):
+async def test_server_sync_service_dry_run_falls_back_when_domains_value_is_none(
+    tmp_path,
+):
     client = FakeSyncClient(
         capabilities_response={
             "protocol_version": "sync-v2-m1",
@@ -346,7 +406,9 @@ async def test_server_sync_service_dry_run_falls_back_when_domains_value_is_none
         domains=["notes"],
     )
 
-    register_call = next(call for call in client.calls if call[0] == "register_sync_v2_device")
+    register_call = next(
+        call for call in client.calls if call[0] == "register_sync_v2_device"
+    )
     assert register_call[1]["supported_domains"] == ["notes.note"]
 
 
@@ -459,11 +521,15 @@ def test_server_sync_service_from_config_returns_provider_backed_service():
 
 
 @pytest.mark.asyncio
-async def test_server_sync_service_runs_sync_v2_no_content_dry_run_and_persists_state(tmp_path):
+async def test_server_sync_service_runs_sync_v2_no_content_dry_run_and_persists_state(
+    tmp_path,
+):
     client = FakeSyncClient()
     policy = Mock()
     repo = SyncStateRepository(tmp_path / "sync_state.db")
-    service = ServerSyncService(client=client, policy_enforcer=policy, state_repository=repo)
+    service = ServerSyncService(
+        client=client, policy_enforcer=policy, state_repository=repo
+    )
 
     result = await service.run_v2_dry_run(
         server_profile_id="server-a",
@@ -506,9 +572,9 @@ async def test_server_sync_service_runs_sync_v2_no_content_dry_run_and_persists_
         1,
         False,
     )
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
-        "sync.v2.dry_run.server"
-    ]
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == ["sync.v2.dry_run.server"]
 
 
 @pytest.mark.asyncio
@@ -559,19 +625,25 @@ async def test_server_sync_service_rejects_mismatched_dry_run_push_response_befo
             domains=["notes"],
         )
 
-    assert repo.get_sync_v2_profile_state(
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-    ) is None
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor is None
+    assert (
+        repo.get_sync_v2_profile_state(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+        )
+        is None
+    )
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        is None
+    )
     assert [call[0] for call in client.calls] == [
         "get_sync_v2_capabilities",
         "register_sync_v2_device",
@@ -606,19 +678,25 @@ async def test_server_sync_service_rejects_uncheckpointed_dry_run_pull_response_
             domains=["notes"],
         )
 
-    assert repo.get_sync_v2_profile_state(
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-    ) is None
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor is None
+    assert (
+        repo.get_sync_v2_profile_state(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+        )
+        is None
+    )
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        is None
+    )
     assert client.calls[-1] == (
         "pull_sync_v2_envelopes",
         "dataset-1",
@@ -879,7 +957,10 @@ async def test_server_sync_service_stores_v2_recovery_bundle_with_policy_gate():
             "rotation_of_key_record_id": None,
         },
     )
-    assert policy.require_allowed.call_args.kwargs["action_id"] == "sync.v2.keys.store.server"
+    assert (
+        policy.require_allowed.call_args.kwargs["action_id"]
+        == "sync.v2.keys.store.server"
+    )
 
 
 @pytest.mark.asyncio
@@ -901,11 +982,16 @@ async def test_server_sync_service_lists_v2_recovery_bundles_with_policy_gate():
         "device-1",
         "dataset_recovery",
     )
-    assert policy.require_allowed.call_args.kwargs["action_id"] == "sync.v2.keys.retrieve.server"
+    assert (
+        policy.require_allowed.call_args.kwargs["action_id"]
+        == "sync.v2.keys.retrieve.server"
+    )
 
 
 @pytest.mark.asyncio
-async def test_server_sync_service_sync_v2_methods_are_allowed_by_real_runtime_policy(tmp_path):
+async def test_server_sync_service_sync_v2_methods_are_allowed_by_real_runtime_policy(
+    tmp_path,
+):
     client = FakeSyncClient()
     service = ServerSyncService(
         client=client,
@@ -928,8 +1014,12 @@ async def test_server_sync_service_sync_v2_methods_are_allowed_by_real_runtime_p
     )
     await service.list_v2_recovery_bundles(dataset_id="dataset-1", device_id="device-1")
     await service.get_v2_restore_manifest(dataset_ids=["dataset-1"], domains=["notes"])
-    await service.push_v2_envelopes(dataset_id="dataset-1", device_id="device-1", envelopes=[])
-    await service.pull_v2_envelopes(dataset_id="dataset-1", device_id="device-1", domains=["notes"])
+    await service.push_v2_envelopes(
+        dataset_id="dataset-1", device_id="device-1", envelopes=[]
+    )
+    await service.pull_v2_envelopes(
+        dataset_id="dataset-1", device_id="device-1", domains=["notes"]
+    )
     await service.list_v2_conflicts(dataset_id="dataset-1")
     await service.resolve_v2_conflict(
         conflict_id="conflict-1",
@@ -976,7 +1066,9 @@ async def test_server_sync_service_routes_restore_manifest_pull_and_conflicts_wi
     policy = Mock()
     service = ServerSyncService(client=client, policy_enforcer=policy)
 
-    manifest = await service.get_v2_restore_manifest(dataset_ids=["dataset-1"], domains=["notes"])
+    manifest = await service.get_v2_restore_manifest(
+        dataset_ids=["dataset-1"], domains=["notes"]
+    )
     pushed = await service.push_v2_envelopes(
         dataset_id="dataset-1",
         device_id="device-1",
@@ -991,7 +1083,9 @@ async def test_server_sync_service_routes_restore_manifest_pull_and_conflicts_wi
         domains=["notes"],
         page_size=25,
     )
-    conflicts = await service.list_v2_conflicts(dataset_id="dataset-1", status="unresolved")
+    conflicts = await service.list_v2_conflicts(
+        dataset_id="dataset-1", status="unresolved"
+    )
     resolved = await service.resolve_v2_conflict(
         conflict_id="conflict-1",
         action="accept_remote",
@@ -1016,7 +1110,15 @@ async def test_server_sync_service_routes_restore_manifest_pull_and_conflicts_wi
                 "last_known_cursor": "cursor-0",
             },
         ),
-        ("pull_sync_v2_envelopes", "dataset-1", "device-1", "cursor-1", ["notes"], 25, False),
+        (
+            "pull_sync_v2_envelopes",
+            "dataset-1",
+            "device-1",
+            "cursor-1",
+            ["notes"],
+            25,
+            False,
+        ),
         ("list_sync_v2_conflicts", "dataset-1", "unresolved"),
         (
             "resolve_sync_v2_conflict",
@@ -1030,7 +1132,9 @@ async def test_server_sync_service_routes_restore_manifest_pull_and_conflicts_wi
             },
         ),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "sync.v2.restore_manifest.observe.server",
         "sync.v2.push.server",
         "sync.v2.restore.pull.server",

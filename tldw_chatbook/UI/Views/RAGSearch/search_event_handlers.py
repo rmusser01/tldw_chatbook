@@ -4,20 +4,14 @@ Event Handlers for RAG Search Window
 This module contains all the event handling logic separated from the main window
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 import asyncio
-from datetime import datetime
-import json
-import tempfile
-from pathlib import Path
 
 from textual import on, work
-from textual.widgets import Button, Select, Checkbox, Input, ListView, ListItem, DataTable, Static
-from textual.css.query import NoMatches
-from rich.text import Text
+from textual.containers import Container
+from textual.widgets import Button, Select, Checkbox, Input, Static
 from loguru import logger
 
-from .search_result import SearchResult
 from .constants import MAX_CONCURRENT_SEARCHES, DEFAULT_TOP_K, DEFAULT_TEMPERATURE
 
 # Import required dependencies conditionally
@@ -26,21 +20,41 @@ from ....Utils.optional_deps import DEPENDENCIES_AVAILABLE
 WEB_SEARCH_AVAILABLE = DEPENDENCIES_AVAILABLE.get('websearch', False)
 if WEB_SEARCH_AVAILABLE:
     try:
-        from ....Web_Scraping.WebSearch_APIs import search_web_bing, parse_bing_results
+        from ....Web_Scraping.WebSearch_APIs import (  # noqa: F401
+            search_web_bing,
+            parse_bing_results,
+        )
     except (ImportError, ModuleNotFoundError):
         WEB_SEARCH_AVAILABLE = False
 
 try:
-    from ....Event_Handlers.Chat_Events.chat_rag_events import (
-        perform_plain_rag_search, perform_full_rag_pipeline, perform_hybrid_rag_search
+    from ....Event_Handlers.Chat_Events.chat_rag_events import (  # noqa: F401
+        perform_plain_rag_search,
+        perform_full_rag_pipeline,
+        perform_hybrid_rag_search,
     )
     RAG_EVENTS_AVAILABLE = True
 except ImportError:
     RAG_EVENTS_AVAILABLE = False
 
 
-class SearchEventHandlersMixin:
-    """Mixin class containing all event handlers for SearchRAGWindow"""
+class SearchEventHandlersMixin(metaclass=type(Container)):
+    """Mixin class containing all event handlers for SearchRAGWindow.
+
+    The mixin must be created through Textual's message-pump metaclass:
+    ``@on`` registration happens per-class at class-creation time and message
+    dispatch walks each MRO class's own registered handlers. As a plain
+    class, NONE of these ``@on`` handlers (including the Search button's)
+    were ever dispatched -- found and fixed in task-251.
+
+    ``type(Container)`` derives that metaclass from Textual's public
+    ``Container`` (the other base of ``SearchRAGWindow``) without importing
+    a private symbol, and by construction can never conflict with the
+    combined class's metaclass across Textual upgrades. Dispatch of these
+    handlers is regression-tested via real button presses in
+    Tests/UI/test_search_rag_window.py, so a future Textual change to the
+    registration mechanism fails loudly there.
+    """
     
     @on(Button.Pressed, "#search-button")
     @work(exclusive=True)
@@ -258,7 +272,54 @@ class SearchEventHandlersMixin:
                 "Hybrid search combines keyword and semantic search",
                 severity="information"
             )
-    
+
+    # Results-header, pagination, history, and Maintenance controls (task-251):
+    # every rendered control routes to a real implementation.
+
+    @on(Button.Pressed, "#export-results")
+    def handle_export_results(self, event: Button.Pressed) -> None:
+        """Export the current results (same path as the Ctrl+E action)."""
+        self.action_export()
+
+    @on(Button.Pressed, "#prev-page")
+    async def handle_prev_page(self, event: Button.Pressed) -> None:
+        """Show the previous page of search results."""
+        if self.current_page > 1:
+            self.current_page -= 1
+            await self._display_results()
+
+    @on(Button.Pressed, "#next-page")
+    async def handle_next_page(self, event: Button.Pressed) -> None:
+        """Show the next page of search results."""
+        total_pages = max(
+            1,
+            (self.total_results + self.results_per_page - 1) // self.results_per_page,
+        )
+        if self.current_page < total_pages:
+            self.current_page += 1
+            await self._display_results()
+
+    @on(Button.Pressed, "#refresh-history")
+    def handle_refresh_history(self, event: Button.Pressed) -> None:
+        """Reload the history table for the selected time range."""
+        self._refresh_history_view()
+
+    @on(Select.Changed, "#history-range-select")
+    def handle_history_range_change(self, event: Select.Changed) -> None:
+        """Apply a newly selected history time range immediately."""
+        self._refresh_history_view()
+
+    @on(Button.Pressed, "#refresh-collections")
+    def handle_refresh_collections(self, event: Button.Pressed) -> None:
+        """Refresh the Maintenance tab's collections list and index statistics."""
+        self._refresh_collections_list()
+        self._refresh_index_stats()
+
+    @on(Button.Pressed, "#start-indexing")
+    def handle_start_indexing(self, event: Button.Pressed) -> None:
+        """Run the real bulk semantic-index backfill (task-251)."""
+        self._start_indexing_run()
+
     # Helper methods for search functionality
     def _get_search_config(self) -> Dict[str, Any]:
         """Get current search configuration from UI"""
@@ -295,7 +356,7 @@ class SearchEventHandlersMixin:
         
         if self.parent_retrieval_strategy == "full":
             preview_text.update(
-                f"[dim]Will retrieve full parent documents[/dim]"
+                "[dim]Will retrieve full parent documents[/dim]"
             )
         elif self.parent_retrieval_strategy == "sentence_window":
             preview_text.update(

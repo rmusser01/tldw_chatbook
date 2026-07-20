@@ -80,18 +80,27 @@ def test_section_header_allows_border_height():
 
 def test_console_glyph_constants():
     from tldw_chatbook.Chat.console_glyphs import (
-        GLYPH_ACTIVE, GLYPH_CLOSE, GLYPH_COLLAPSED, GLYPH_COLLAPSE_LEFT,
-        GLYPH_DONE, GLYPH_EXPANDED, GLYPH_IN_PROGRESS,
+        GLYPH_ACTIVE,
+        GLYPH_CLOSE,
+        GLYPH_COLLAPSED,
+        GLYPH_COLLAPSE_LEFT,
+        GLYPH_DONE,
+        GLYPH_EXPANDED,
+        GLYPH_IN_PROGRESS,
     )
+
     assert (GLYPH_EXPANDED, GLYPH_COLLAPSED) == ("▾", "▸")
     assert (GLYPH_ACTIVE, GLYPH_IN_PROGRESS, GLYPH_DONE) == ("▸", "●", "✓")
     assert (GLYPH_CLOSE, GLYPH_COLLAPSE_LEFT) == ("✕", "◂")
 
 
 def test_console_active_row_marker_and_close_glyphs():
-    from tldw_chatbook.Chat.console_glyphs import GLYPH_ACTIVE, GLYPH_CLOSE
-    from tldw_chatbook.Widgets.Console import console_workspace_context, console_session_surface
+    from tldw_chatbook.Widgets.Console import (
+        console_workspace_context,
+        console_session_surface,
+    )
     import inspect
+
     assert '"> "' not in inspect.getsource(console_workspace_context)
     assert '"x"' not in inspect.getsource(console_session_surface)
 
@@ -236,11 +245,17 @@ async def test_setup_modal_card_mode_renders_title_steps_and_primary_action():
         assert modal.display is True
         assert modal.is_blocking
         title = app.query_one("#console-setup-modal-title", Static)
-        assert "Get started" in str(getattr(title.renderable, "plain", title.renderable))
+        assert "Get started" in str(
+            getattr(title.renderable, "plain", title.renderable)
+        )
         step1 = app.query_one("#console-setup-step-1", Static)
-        assert "1. ● Add an API key" in str(getattr(step1.renderable, "plain", step1.renderable))
+        assert "1. ● Add an API key" in str(
+            getattr(step1.renderable, "plain", step1.renderable)
+        )
         step2 = app.query_one("#console-setup-step-2", Static)
-        assert "2. ✓ Pick a model" in str(getattr(step2.renderable, "plain", step2.renderable))
+        assert "2. ✓ Pick a model" in str(
+            getattr(step2.renderable, "plain", step2.renderable)
+        )
         step3 = app.query_one("#console-setup-step-3", Static)
         text3 = str(getattr(step3.renderable, "plain", step3.renderable))
         assert "3. ○ Send your first message" in text3
@@ -268,7 +283,9 @@ async def test_setup_modal_hides_when_state_leaves_card_mode():
         modal = app.query_one("#console-setup-modal", ConsoleSetupModal)
         assert modal.display is True
         modal.sync_card_state(
-            ConsoleSetupCardState(mode="ready_line", body_copy=CONSOLE_READY_EMPTY_COPY),
+            ConsoleSetupCardState(
+                mode="ready_line", body_copy=CONSOLE_READY_EMPTY_COPY
+            ),
             action_label="Choose model",
             action_tooltip="Pick a model.",
         )
@@ -284,7 +301,9 @@ async def test_setup_panel_ready_line_hides_steps_and_actions():
     )
     async with app.run_test(size=(100, 30)):
         body = app.query_one("#console-empty-body", Static)
-        assert CONSOLE_READY_EMPTY_COPY in str(getattr(body.renderable, "plain", body.renderable))
+        assert CONSOLE_READY_EMPTY_COPY in str(
+            getattr(body.renderable, "plain", body.renderable)
+        )
         assert not list(app.query("#console-setup-step-1"))
         assert not list(app.query("#console-empty-action-row"))
         assert not list(app.query("#console-empty-title"))
@@ -297,7 +316,9 @@ async def test_setup_panel_quiet_mode_shows_only_quiet_copy():
     )
     async with app.run_test(size=(100, 30)):
         body = app.query_one("#console-empty-body", Static)
-        assert CONSOLE_QUIET_EMPTY_COPY in str(getattr(body.renderable, "plain", body.renderable))
+        assert CONSOLE_QUIET_EMPTY_COPY in str(
+            getattr(body.renderable, "plain", body.renderable)
+        )
         assert not list(app.query("#console-setup-step-1"))
         assert not list(app.query("#console-empty-action-row"))
 
@@ -308,14 +329,18 @@ async def test_setup_panel_sync_card_state_transitions_modes():
     async with app.run_test(size=(100, 30)) as pilot:
         panel = app.query_one(ConsoleTranscriptEmptyPanel)
         panel.sync_card_state(
-            ConsoleSetupCardState(mode="ready_line", body_copy=CONSOLE_READY_EMPTY_COPY),
+            ConsoleSetupCardState(
+                mode="ready_line", body_copy=CONSOLE_READY_EMPTY_COPY
+            ),
             provider_action_label="Choose model",
             provider_action_tooltip="Pick a model.",
         )
         await pilot.pause()
         assert not list(app.query("#console-setup-step-1"))
         body = app.query_one("#console-empty-body", Static)
-        assert CONSOLE_READY_EMPTY_COPY in str(getattr(body.renderable, "plain", body.renderable))
+        assert CONSOLE_READY_EMPTY_COPY in str(
+            getattr(body.renderable, "plain", body.renderable)
+        )
 
 
 @pytest.mark.asyncio
@@ -326,7 +351,9 @@ async def test_setup_panel_coerces_non_card_state_to_quiet_copy():
     app = _SetupPanelApp("not-a-card-state")
     async with app.run_test(size=(100, 30)):
         body = app.query_one("#console-empty-body", Static)
-        assert CONSOLE_QUIET_EMPTY_COPY in str(getattr(body.renderable, "plain", body.renderable))
+        assert CONSOLE_QUIET_EMPTY_COPY in str(
+            getattr(body.renderable, "plain", body.renderable)
+        )
         assert not list(app.query("#console-setup-step-1"))
         assert not list(app.query("#console-empty-action-row"))
 
@@ -420,7 +447,9 @@ async def test_setup_modal_snow_timer_paused_until_blocking():
 
         modal = app.query_one("#console-setup-modal", ConsoleSetupModal)
         modal.sync_card_state(
-            ConsoleSetupCardState(mode="ready_line", body_copy=CONSOLE_READY_EMPTY_COPY),
+            ConsoleSetupCardState(
+                mode="ready_line", body_copy=CONSOLE_READY_EMPTY_COPY
+            ),
             action_label="Choose model",
             action_tooltip="Pick a model.",
         )
@@ -476,12 +505,11 @@ async def test_setup_backdrop_no_resume_intent_stays_paused_after_mount():
 # Console session switcher modal (Ctrl+K).
 # ---------------------------------------------------------------------------
 
-from tldw_chatbook.Chat.console_switcher_state import ConsoleSwitcherEntry
-from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
+from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (  # noqa: E402
     ConsoleSessionSwitcherModal,
     ConsoleSwitcherChoice,
 )
-from tldw_chatbook.Workspaces.conversation_browser_state import (
+from tldw_chatbook.Workspaces.conversation_browser_state import (  # noqa: E402
     ConsoleConversationBrowserInputRow,
 )
 
@@ -489,11 +517,17 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 def _switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:
     def row(key, title, native=None, **kw):
         return ConsoleConversationBrowserInputRow(
-            row_key=key, conversation_id=None if native else key,
-            native_session_id=native, title=title, scope_type="workspace",
-            workspace_id="ws-1", workspace_label="Workspace 1",
-            updated_sort="2026-07-04T10:00:00+00:00", **kw,
+            row_key=key,
+            conversation_id=None if native else key,
+            native_session_id=native,
+            title=title,
+            scope_type="workspace",
+            workspace_id="ws-1",
+            workspace_label="Workspace 1",
+            updated_sort="2026-07-04T10:00:00+00:00",
+            **kw,
         )
+
     return (
         row("native-1", "Groq testing", native="sess-1", selected=True),
         row("conv-2", "API refactor plan"),
@@ -509,6 +543,7 @@ class _SwitcherApp(App):
     async def on_mount(self) -> None:
         def _capture(choice):
             self.result = choice
+
         await self.push_screen(
             ConsoleSessionSwitcherModal(rows=_switcher_rows()), callback=_capture
         )
@@ -556,11 +591,17 @@ async def test_switcher_f2_requests_rename_for_native_entry():
 def _two_native_switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:
     def row(key, title, native, **kw):
         return ConsoleConversationBrowserInputRow(
-            row_key=key, conversation_id=None, native_session_id=native,
-            title=title, scope_type="workspace", workspace_id="ws-1",
+            row_key=key,
+            conversation_id=None,
+            native_session_id=native,
+            title=title,
+            scope_type="workspace",
+            workspace_id="ws-1",
             workspace_label="Workspace 1",
-            updated_sort="2026-07-04T10:00:00+00:00", **kw,
+            updated_sort="2026-07-04T10:00:00+00:00",
+            **kw,
         )
+
     return (
         row("native-1", "Groq testing", "sess-1", selected=True),
         row("native-2", "Claude testing", "sess-2"),
@@ -575,8 +616,10 @@ class _TwoNativeSwitcherApp(App):
     async def on_mount(self) -> None:
         def _capture(choice):
             self.result = choice
+
         await self.push_screen(
-            ConsoleSessionSwitcherModal(rows=_two_native_switcher_rows()), callback=_capture
+            ConsoleSessionSwitcherModal(rows=_two_native_switcher_rows()),
+            callback=_capture,
         )
 
 
@@ -640,9 +683,7 @@ class _PopoverApp(App):
             self.result = result
 
         await self.push_screen(
-            ConsoleModelPopover(
-                settings=settings, providers_models=_POPOVER_PROVIDERS
-            ),
+            ConsoleModelPopover(settings=settings, providers_models=_POPOVER_PROVIDERS),
             callback=_capture,
         )
 
@@ -723,3 +764,82 @@ async def test_popover_apply_accepts_in_range_temperature():
         await pilot.pause()
         assert isinstance(app.result, ConsoleSessionSettings)
         assert app.result.temperature == 1.2
+
+
+class _PopoverSearchScope:
+    """Minimal llm_provider_catalog_scope_service stand-in for search tests."""
+
+    def __init__(self, entries):
+        self._entries = entries
+
+    async def merge_saved_and_discovered_models(self, *, mode, provider):
+        return self._entries
+
+
+_POPOVER_SEARCH_PROVIDERS = {"openrouter": ["saved-model"]}
+_POPOVER_SEARCH_MODEL_IDS = ["anthropic/claude-x", "openai/gpt-y"]
+
+
+def _popover_search_entries():
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        MergedModelEntry,
+    )
+
+    return tuple(
+        MergedModelEntry(
+            provider="openrouter",
+            provider_list_key="openrouter",
+            model_id=m,
+            display_name=m,
+            source="runtime_discovered",
+            capability_status="unknown",
+            persisted=False,
+        )
+        for m in _POPOVER_SEARCH_MODEL_IDS
+    )
+
+
+class _PopoverSearchApp(App):
+    """Popover host app exposing the catalog scope the search picker reads."""
+
+    def __init__(self):
+        super().__init__()
+        self.result = "unset"
+        self.providers_models = _POPOVER_SEARCH_PROVIDERS
+        self.llm_provider_catalog_scope_service = _PopoverSearchScope(
+            _popover_search_entries()
+        )
+
+    async def on_mount(self) -> None:
+        settings = ConsoleSessionSettings(provider="openrouter", model="saved-model")
+
+        def _capture(result):
+            self.result = result
+
+        await self.push_screen(
+            ConsoleModelPopover(
+                settings=settings, providers_models=self.providers_models
+            ),
+            callback=_capture,
+        )
+
+
+@pytest.mark.asyncio
+async def test_popover_model_search_inserts_transient_option():
+    """Picking a search result inserts it as a transient option and selects it."""
+    from textual.widgets import Input, OptionList, Select
+
+    app = _PopoverSearchApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        search_input = app.screen.query_one("#model-search-picker-input", Input)
+        search_input.value = "claude"
+        await pilot.pause()
+        results = app.screen.query_one("#model-search-picker-results", OptionList)
+        assert results.display
+        option = results.get_option_at_index(0)
+        results.post_message(OptionList.OptionSelected(results, option, 0))
+        await pilot.pause()
+        model_select = app.screen.query_one("#console-popover-model", Select)
+        option_values = [value for _, value in model_select._options]
+        assert "anthropic/claude-x" in option_values
+        assert model_select.value == "anthropic/claude-x"

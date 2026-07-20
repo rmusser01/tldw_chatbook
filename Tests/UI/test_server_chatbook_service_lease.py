@@ -46,7 +46,9 @@ async def test_lease_uses_app_server_context_provider_when_service_is_unwired():
     policy_enforcer = object()
     app = SimpleNamespace(server_context_provider=provider)
 
-    lease = server_chatbook_service_lease(app, config={}, policy_enforcer=policy_enforcer)
+    lease = server_chatbook_service_lease(
+        app, config={}, policy_enforcer=policy_enforcer
+    )
 
     assert lease.service.client is None
     assert lease.service.client_provider is provider
@@ -76,7 +78,9 @@ async def test_lease_closes_owned_config_provider_cached_client():
 
 
 @pytest.mark.asyncio
-async def test_lease_config_fallback_builds_provider_lazily_and_closes_owned_cache(monkeypatch):
+async def test_lease_config_fallback_builds_provider_lazily_and_closes_owned_cache(
+    monkeypatch,
+):
     provider = FakeProvider()
     build_calls = []
 
@@ -84,7 +88,9 @@ async def test_lease_config_fallback_builds_provider_lazily_and_closes_owned_cac
         build_calls.append(config)
         return provider
 
-    monkeypatch.setattr(lease_module, "build_runtime_api_client_provider_from_config", build_provider)
+    monkeypatch.setattr(
+        lease_module, "build_runtime_api_client_provider_from_config", build_provider
+    )
 
     policy_enforcer = object()
     config = {"tldw_api": {"base_url": "https://server.test", "api_key": "secret"}}

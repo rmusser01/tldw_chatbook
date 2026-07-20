@@ -26,10 +26,16 @@ from textual.widgets import Button
 from Tests.UI.test_console_internals_decomposition import _open_console_inspector
 from Tests.UI.test_console_native_chat_flow import _select_llamacpp_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from tldw_chatbook.Character_Chat import Chat_Dictionary_Lib as cdl
-from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
-from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
+from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import (
+    ChatDictionaryScopeService,
+)
+from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
+    LocalChatDictionaryService,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
     console_attached_dictionaries,
@@ -74,11 +80,16 @@ async def _press_and_await_worker(pilot, screen, selector: str) -> None:
 
 # --- Real-DB round-trip (load-bearing) --------------------------------------
 
+
 @pytest.mark.asyncio
-async def test_console_attach_then_detach_round_trips_through_real_db(dictionary_db, monkeypatch):
+async def test_console_attach_then_detach_round_trips_through_real_db(
+    dictionary_db, monkeypatch
+):
     app = _build_test_app()
     local_service = LocalChatDictionaryService(dictionary_db)
-    scope_service = ChatDictionaryScopeService(local_service=local_service, server_service=None)
+    scope_service = ChatDictionaryScopeService(
+        local_service=local_service, server_service=None
+    )
     app.chachanotes_db = dictionary_db
     app.chat_dictionary_scope_service = scope_service
 
@@ -100,14 +111,21 @@ async def test_console_attach_then_detach_round_trips_through_real_db(dictionary
         async def _fake_push_screen_wait(picker):
             return dict_id if isinstance(picker, DictionaryPicker) else None
 
-        monkeypatch.setattr(screen.app_instance, "push_screen_wait", _fake_push_screen_wait, raising=False)
+        monkeypatch.setattr(
+            screen.app_instance,
+            "push_screen_wait",
+            _fake_push_screen_wait,
+            raising=False,
+        )
 
         await screen.refresh_active_dictionaries_summary()
         await pilot.pause()
         assert _active_dictionaries(dictionary_db, conv_id) == []
 
         # --- Attach ---
-        await _press_and_await_worker(pilot, screen, "#console-inspector-dictionaries-attach")
+        await _press_and_await_worker(
+            pilot, screen, "#console-inspector-dictionaries-attach"
+        )
 
         assert cdl.conversation_dictionary_ids(dictionary_db, conv_id) == [dict_id]
         assert _active_dictionaries(dictionary_db, conv_id) == [dict_id]
@@ -120,7 +138,9 @@ async def test_console_attach_then_detach_round_trips_through_real_db(dictionary
         assert entries[0]["source"] == "conversation"
 
         # --- Detach (same monkeypatched picker returns the same id) ---
-        await _press_and_await_worker(pilot, screen, "#console-inspector-dictionaries-detach")
+        await _press_and_await_worker(
+            pilot, screen, "#console-inspector-dictionaries-detach"
+        )
 
         assert cdl.conversation_dictionary_ids(dictionary_db, conv_id) == []
         assert _active_dictionaries(dictionary_db, conv_id) == []
@@ -130,7 +150,9 @@ async def test_console_attach_then_detach_round_trips_through_real_db(dictionary
 
 
 @pytest.mark.asyncio
-async def test_console_attach_notifies_and_noops_without_a_conversation(dictionary_db, monkeypatch):
+async def test_console_attach_notifies_and_noops_without_a_conversation(
+    dictionary_db, monkeypatch
+):
     """No active native-session conversation -> attach must not touch the DB
     or the (unrelated) app-level ``current_chat_conversation_id`` reactive.
 
@@ -141,7 +163,9 @@ async def test_console_attach_notifies_and_noops_without_a_conversation(dictiona
     """
     app = _build_test_app()
     local_service = LocalChatDictionaryService(dictionary_db)
-    scope_service = ChatDictionaryScopeService(local_service=local_service, server_service=None)
+    scope_service = ChatDictionaryScopeService(
+        local_service=local_service, server_service=None
+    )
     app.chachanotes_db = dictionary_db
     app.chat_dictionary_scope_service = scope_service
 
@@ -154,7 +178,9 @@ async def test_console_attach_notifies_and_noops_without_a_conversation(dictiona
         assert _active_native_session(screen).persisted_conversation_id is None
 
         actions = screen._console_dictionary_inspector_actions()
-        attach_action = next(a for a in actions if a.widget_id == "console-inspector-dictionaries-attach")
+        attach_action = next(
+            a for a in actions if a.widget_id == "console-inspector-dictionaries-attach"
+        )
         assert attach_action.enabled is False
 
         push_calls: list = []
@@ -163,7 +189,12 @@ async def test_console_attach_notifies_and_noops_without_a_conversation(dictiona
             push_calls.append(picker)
             return None
 
-        monkeypatch.setattr(screen.app_instance, "push_screen_wait", _fake_push_screen_wait, raising=False)
+        monkeypatch.setattr(
+            screen.app_instance,
+            "push_screen_wait",
+            _fake_push_screen_wait,
+            raising=False,
+        )
 
         await screen._console_dictionary_attach_worker()
         await pilot.pause()
@@ -176,7 +207,10 @@ async def test_console_attach_notifies_and_noops_without_a_conversation(dictiona
 
 # --- Focused unit assertion: character-source dicts never leak in ----------
 
-def test_console_attached_dictionaries_excludes_character_source_even_when_active(dictionary_db):
+
+def test_console_attached_dictionaries_excludes_character_source_even_when_active(
+    dictionary_db,
+):
     """``console_attached_dictionaries`` must return ONLY conversation-source
     dictionaries -- even when a character dictionary is also active for the
     same DB. Character-scoped attachment is out of scope for the Console
@@ -201,14 +235,19 @@ def test_console_attached_dictionaries_excludes_character_source_even_when_activ
 
 # --- Spec AC5: ConflictError -> notify + refresh ----------------------------
 
+
 @pytest.mark.asyncio
-async def test_console_attach_conflict_notifies_and_refreshes(dictionary_db, monkeypatch):
+async def test_console_attach_conflict_notifies_and_refreshes(
+    dictionary_db, monkeypatch
+):
     """A ConflictError during attach must NOTIFY the user AND re-run the
     summary refresh (re-read the current DB truth), not leave the cached
     inspector summary stale until the next session switch (spec AC5)."""
     app = _build_test_app()
     local_service = LocalChatDictionaryService(dictionary_db)
-    scope_service = ChatDictionaryScopeService(local_service=local_service, server_service=None)
+    scope_service = ChatDictionaryScopeService(
+        local_service=local_service, server_service=None
+    )
     app.chachanotes_db = dictionary_db
     app.chat_dictionary_scope_service = scope_service
 
@@ -222,7 +261,9 @@ async def test_console_attach_conflict_notifies_and_refreshes(dictionary_db, mon
     async def _raise_conflict(*a, **k):
         raise ConflictError("stale version")
 
-    monkeypatch.setattr(scope_service, "attach_to_conversation", _raise_conflict, raising=False)
+    monkeypatch.setattr(
+        scope_service, "attach_to_conversation", _raise_conflict, raising=False
+    )
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
@@ -232,7 +273,12 @@ async def test_console_attach_conflict_notifies_and_refreshes(dictionary_db, mon
         async def _fake_push_screen_wait(picker):
             return dict_id if isinstance(picker, DictionaryPicker) else None
 
-        monkeypatch.setattr(screen.app_instance, "push_screen_wait", _fake_push_screen_wait, raising=False)
+        monkeypatch.setattr(
+            screen.app_instance,
+            "push_screen_wait",
+            _fake_push_screen_wait,
+            raising=False,
+        )
 
         refresh_calls: list = []
         original_refresh = screen.refresh_active_dictionaries_summary
@@ -241,7 +287,9 @@ async def test_console_attach_conflict_notifies_and_refreshes(dictionary_db, mon
             refresh_calls.append(True)
             await original_refresh()
 
-        monkeypatch.setattr(screen, "refresh_active_dictionaries_summary", _spy_refresh, raising=False)
+        monkeypatch.setattr(
+            screen, "refresh_active_dictionaries_summary", _spy_refresh, raising=False
+        )
 
         await screen._console_dictionary_attach_worker()
         await pilot.pause()

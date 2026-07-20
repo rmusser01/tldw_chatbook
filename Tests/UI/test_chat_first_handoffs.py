@@ -11,7 +11,10 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Static, TextArea
 
 from tldw_chatbook.Chat.chat_models import ChatSessionData
-from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload, HANDOFF_BODY_CHAR_LIMIT
+from tldw_chatbook.Chat.chat_handoff_models import (
+    ChatHandoffPayload,
+    HANDOFF_BODY_CHAR_LIMIT,
+)
 from tldw_chatbook.config import CONFIG_TOML_CONTENT
 from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -32,7 +35,10 @@ def test_chat_handoff_ui_smoke_consumes_server_parity_fixture_payloads():
     assert fixtures["server"]["active_server_profile_id"] == "srv-primary"
     assert fixtures["unavailable_server"]["server_reachability"] == "unreachable"
     assert fixtures["auth_failure"]["reason_code"] == "auth_required"
-    assert fixtures["unsupported_action"]["unsupported_reason_code"] == "server_contract_missing"
+    assert (
+        fixtures["unsupported_action"]["unsupported_reason_code"]
+        == "server_contract_missing"
+    )
     assert fixtures["workspace_isolation"]["workspace_scope_id"] == "workspace-a"
     assert fixtures["sync_dry_run_report"]["write_enabled"] is False
 
@@ -72,7 +78,9 @@ def test_open_chat_with_handoff_stores_payload_and_navigates():
     app.pending_chat_handoff = None
     app.post_message = Mock()
     app.notify = Mock()
-    payload = ChatHandoffPayload(source="notes", item_type="note", title="Note", body="Body")
+    payload = ChatHandoffPayload(
+        source="notes", item_type="note", title="Note", body="Body"
+    )
 
     from tldw_chatbook.app import TldwCli
 
@@ -90,7 +98,9 @@ def test_open_chat_with_handoff_refuses_when_tabs_disabled():
     app.pending_chat_handoff = None
     app.post_message = Mock()
     app.notify = Mock()
-    payload = ChatHandoffPayload(source="notes", item_type="note", title="Note", body="Body")
+    payload = ChatHandoffPayload(
+        source="notes", item_type="note", title="Note", body="Body"
+    )
 
     from tldw_chatbook.app import TldwCli
 
@@ -114,7 +124,9 @@ def test_open_chat_with_handoff_blocked_message_defaults_to_use_in_chat():
     app.pending_chat_handoff = None
     app.post_message = Mock()
     app.notify = Mock()
-    payload = ChatHandoffPayload(source="notes", item_type="note", title="Note", body="Body")
+    payload = ChatHandoffPayload(
+        source="notes", item_type="note", title="Note", body="Body"
+    )
 
     from tldw_chatbook.app import TldwCli
 
@@ -122,7 +134,9 @@ def test_open_chat_with_handoff_blocked_message_defaults_to_use_in_chat():
         TldwCli.open_chat_with_handoff(app, payload)
 
     app.notify.assert_called_once()
-    assert app.notify.call_args.args[0] == "Use in Chat requires chat tabs to be enabled."
+    assert (
+        app.notify.call_args.args[0] == "Use in Chat requires chat tabs to be enabled."
+    )
 
 
 def test_open_chat_with_handoff_blocked_message_honors_caller_action_label():
@@ -136,7 +150,9 @@ def test_open_chat_with_handoff_blocked_message_honors_caller_action_label():
     app.pending_chat_handoff = None
     app.post_message = Mock()
     app.notify = Mock()
-    payload = ChatHandoffPayload(source="library", item_type="media", title="Media", body="Body")
+    payload = ChatHandoffPayload(
+        source="library", item_type="media", title="Media", body="Body"
+    )
 
     from tldw_chatbook.app import TldwCli
 
@@ -144,7 +160,10 @@ def test_open_chat_with_handoff_blocked_message_honors_caller_action_label():
         TldwCli.open_chat_with_handoff(app, payload, action_label="Use in Console")
 
     app.notify.assert_called_once()
-    assert app.notify.call_args.args[0] == "Use in Console requires chat tabs to be enabled."
+    assert (
+        app.notify.call_args.args[0]
+        == "Use in Console requires chat tabs to be enabled."
+    )
 
 
 @pytest.mark.asyncio
@@ -163,7 +182,9 @@ async def test_chat_screen_consumes_pending_handoff_into_fresh_ephemeral_tab():
         discovery_entity_id="source-1",
         scope_type="workspace",
         workspace_id="workspace-1",
-        backend_contracts={"workspace_isolation": {"workspace_scope_id": "workspace-1"}},
+        backend_contracts={
+            "workspace_isolation": {"workspace_scope_id": "workspace-1"}
+        },
     )
     app = Mock()
     app.pending_chat_handoff = payload
@@ -361,7 +382,10 @@ def test_chat_handoff_payload_round_trip_preserves_runtime_scope_and_metadata():
     assert restored.active_server_profile_id == "srv-primary"
     assert restored.scope_type == "workspace"
     assert restored.workspace_id == "workspace-1"
-    assert restored.backend_contracts["workspace_isolation"]["workspace_scope_id"] == "workspace-1"
+    assert (
+        restored.backend_contracts["workspace_isolation"]["workspace_scope_id"]
+        == "workspace-1"
+    )
     assert "credential_source" not in restored.backend_contracts["active_server"]
     assert restored.unsupported_reports[0]["reason_code"] == "scope_not_supported"
     assert restored.sync_dry_run_report["write_enabled"] is False
@@ -379,7 +403,9 @@ def test_chat_handoff_payload_persistence_redacts_secrets_and_normalizes_tuples(
                 "active_server_profile_id": "srv-primary",
                 "credential_source": "keyring:chatbook:server:srv-primary:access",
             },
-            "source_selector": {"source_options": ({"source": "local"}, {"source": "server"})},
+            "source_selector": {
+                "source_options": ({"source": "local"}, {"source": "server"})
+            },
         },
         sync_dry_run_report={"conflict_ids": ("conflict-1",)},
     )
@@ -445,7 +471,10 @@ def test_chat_handoff_payload_model_context_formats_evidence_bundle_readably():
     assert "[Staged evidence]" in context
     assert "Evidence bundle: library-rag:incident" in context
     assert "Evidence status: available" in context
-    assert "[S1] Incident Review (note-42) - Source authority: local - available" in context
+    assert (
+        "[S1] Incident Review (note-42) - Source authority: local - available"
+        in context
+    )
     assert "Snippet: Expired credential caused the incident." in context
     assert "evidence_bundle:" not in context
 
@@ -726,7 +755,9 @@ def test_handoff_payload_formats_model_prompt_with_context_and_user_prompt():
 
 
 def test_apply_current_handoff_context_wraps_unsent_payload_only():
-    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import apply_current_handoff_context
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
+        apply_current_handoff_context,
+    )
 
     payload = ChatHandoffPayload(
         source="notes",
@@ -748,7 +779,9 @@ def test_apply_current_handoff_context_wraps_unsent_payload_only():
 
 
 def test_apply_current_handoff_context_ignores_mock_auto_attributes():
-    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import apply_current_handoff_context
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
+        apply_current_handoff_context,
+    )
 
     app = AsyncMock()
 

@@ -25,9 +25,7 @@ async def test_staged_context_renders_source_count() -> None:
                 ConsoleStagedContextState(
                     heading="Context",
                     summary="",
-                    rows=(
-                        ConsoleDisplayRow("Source", "readme.md", status="ready"),
-                    ),
+                    rows=(ConsoleDisplayRow("Source", "readme.md", status="ready"),),
                 )
             )
 

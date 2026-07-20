@@ -130,14 +130,19 @@ def test_manuscript_chapter_scene_hierarchy_and_assignment(db):
     assert structure["project"]["id"] == project["id"]
     assert structure["manuscripts"][0]["id"] == manuscript["id"]
     assert structure["unassigned_chapters"][0]["id"] == unassigned["id"]
-    assert structure["unassigned_chapters"][0]["scenes"][0]["id"] == scene_under_chapter["id"]
+    assert (
+        structure["unassigned_chapters"][0]["scenes"][0]["id"]
+        == scene_under_chapter["id"]
+    )
     assert structure["manuscripts"][0]["direct_scenes"][0]["id"] == direct_scene["id"]
 
 
 def test_soft_deleted_records_are_excluded_from_lists_and_present_in_trash(db):
     project = db.create_project(title="Project")
     manuscript = db.create_manuscript(project["id"], title="Book")
-    chapter = db.create_chapter(project["id"], manuscript_id=manuscript["id"], title="Chapter")
+    chapter = db.create_chapter(
+        project["id"], manuscript_id=manuscript["id"], title="Chapter"
+    )
     scene = db.create_scene(
         project["id"],
         manuscript_id=manuscript["id"],
@@ -151,7 +156,10 @@ def test_soft_deleted_records_are_excluded_from_lists_and_present_in_trash(db):
 
     assert db.list_manuscripts(project["id"]) == []
     assert db.list_chapters(project["id"], manuscript_id=manuscript["id"]) == []
-    assert db.list_scenes(project["id"], manuscript_id=manuscript["id"], chapter_id=None) == []
+    assert (
+        db.list_scenes(project["id"], manuscript_id=manuscript["id"], chapter_id=None)
+        == []
+    )
 
     trash = db.list_trash(project["id"])
     assert [(item["entity_kind"], item["id"]) for item in trash] == [
@@ -191,7 +199,10 @@ def test_manual_version_snapshot_increments_without_changing_working_version(db)
         expected_version=1,
     )
     assert updated["version"] == 2
-    assert [item["version_number"] for item in db.list_versions("manuscript", manuscript["id"])] == [
+    assert [
+        item["version_number"]
+        for item in db.list_versions("manuscript", manuscript["id"])
+    ] == [
         1,
         2,
     ]
@@ -201,7 +212,9 @@ def test_scene_parent_invariants_require_single_same_project_parent(db):
     project = db.create_project(title="Project")
     other_project = db.create_project(title="Other")
     manuscript = db.create_manuscript(project["id"], title="Book")
-    chapter = db.create_chapter(project["id"], manuscript_id=manuscript["id"], title="Chapter")
+    chapter = db.create_chapter(
+        project["id"], manuscript_id=manuscript["id"], title="Chapter"
+    )
     other_manuscript = db.create_manuscript(other_project["id"], title="Other Book")
     other_chapter = db.create_chapter(
         other_project["id"],
@@ -218,10 +231,16 @@ def test_scene_parent_invariants_require_single_same_project_parent(db):
         )
 
     with pytest.raises(WritingDBConflictError, match="does not belong to project"):
-        db.create_scene(project["id"], title="Cross Manuscript", manuscript_id=other_manuscript["id"])
+        db.create_scene(
+            project["id"],
+            title="Cross Manuscript",
+            manuscript_id=other_manuscript["id"],
+        )
 
     with pytest.raises(WritingDBConflictError, match="does not belong to project"):
-        db.create_scene(project["id"], title="Cross Chapter", chapter_id=other_chapter["id"])
+        db.create_scene(
+            project["id"], title="Cross Chapter", chapter_id=other_chapter["id"]
+        )
 
     scene = db.create_scene(project["id"], title="Valid", chapter_id=chapter["id"])
 
@@ -250,7 +269,9 @@ def test_chapter_assignment_requires_same_project_manuscript(db):
     chapter = db.create_chapter(project["id"], manuscript_id=None, title="Loose")
 
     with pytest.raises(WritingDBConflictError, match="does not belong to project"):
-        db.create_chapter(project["id"], manuscript_id=other_manuscript["id"], title="Cross")
+        db.create_chapter(
+            project["id"], manuscript_id=other_manuscript["id"], title="Cross"
+        )
 
     with pytest.raises(WritingDBConflictError, match="does not belong to project"):
         db.assign_chapter(
@@ -298,7 +319,9 @@ def test_restore_version_preserves_structural_identity(db):
 def test_non_scene_versions_reject_markdown_body(db):
     project = db.create_project(title="Project")
     manuscript = db.create_manuscript(project["id"], title="Book")
-    chapter = db.create_chapter(project["id"], manuscript_id=manuscript["id"], title="Chapter")
+    chapter = db.create_chapter(
+        project["id"], manuscript_id=manuscript["id"], title="Chapter"
+    )
 
     with pytest.raises(ValueError, match="Only scene versions"):
         db.create_version("chapter", chapter["id"], body_markdown="illegal")
@@ -337,7 +360,9 @@ def test_outer_transaction_rolls_back_nested_public_methods(db):
 
     with pytest.raises(RuntimeError, match="abort"):
         with db.transaction():
-            db.update_project(project["id"], {"title": "Committed Too Early"}, expected_version=1)
+            db.update_project(
+                project["id"], {"title": "Committed Too Early"}, expected_version=1
+            )
             raise RuntimeError("abort")
 
     current = db.get_project(project["id"])

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+
 if TYPE_CHECKING:
     from ..tldw_api import TLDWAPIClient
 from .writing_markdown_adapter import markdown_to_plain_text, markdown_to_server_content
@@ -15,12 +16,12 @@ from .writing_normalizers import normalize_writing_record, normalize_writing_str
 
 _UNSET = object()
 
-REASON_DIRECT_MANUSCRIPT_SCENE = (
-    "Direct manuscript-level scenes are not exposed by the current server writing contract."
-)
+REASON_DIRECT_MANUSCRIPT_SCENE = "Direct manuscript-level scenes are not exposed by the current server writing contract."
 REASON_VERSION_HISTORY = "Server writing version history is not exposed by the current server writing contract."
 REASON_TRASH_RESTORE = "Server writing trash listing and restore are not exposed by the current server writing contract."
-REASON_SCENE_REPARENT = "Server scene reparenting is not exposed by the current server writing contract."
+REASON_SCENE_REPARENT = (
+    "Server scene reparenting is not exposed by the current server writing contract."
+)
 
 
 class ServerWritingService:
@@ -74,7 +75,9 @@ class ServerWritingService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -83,10 +86,14 @@ class ServerWritingService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server writing action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server writing action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -107,11 +114,17 @@ class ServerWritingService:
         response = await self._require_client().create_manuscript_project(
             ManuscriptProjectCreate(title=title, **kwargs)
         )
-        return normalize_writing_record("server", "project", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "project", self._model_to_dict(response)
+        )
 
-    async def list_projects(self, *, limit: int = 100, offset: int = 0, status: str | None = None) -> list[dict[str, Any]]:
+    async def list_projects(
+        self, *, limit: int = 100, offset: int = 0, status: str | None = None
+    ) -> list[dict[str, Any]]:
         self._enforce(self._action_id("projects", "list"))
-        response = await self._require_client().list_manuscript_projects(status=status, limit=limit, offset=offset)
+        response = await self._require_client().list_manuscript_projects(
+            status=status, limit=limit, offset=offset
+        )
         payload = self._model_to_dict(response)
         return [
             normalize_writing_record("server", "project", item)
@@ -121,7 +134,9 @@ class ServerWritingService:
     async def get_project(self, project_id: str) -> dict[str, Any] | None:
         self._enforce(self._action_id("projects", "detail"))
         response = await self._require_client().get_manuscript_project(project_id)
-        return normalize_writing_record("server", "project", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "project", self._model_to_dict(response)
+        )
 
     async def update_project(
         self,
@@ -139,7 +154,9 @@ class ServerWritingService:
             ManuscriptProjectUpdate(**fields),
             expected_version=expected_version,
         )
-        return normalize_writing_record("server", "project", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "project", self._model_to_dict(response)
+        )
 
     async def delete_project(self, project_id: str, *, expected_version: int) -> bool:
         self._enforce(self._action_id("projects", "delete"))
@@ -148,7 +165,9 @@ class ServerWritingService:
             expected_version=expected_version,
         )
 
-    async def create_manuscript(self, project_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+    async def create_manuscript(
+        self, project_id: str, *, title: str, **kwargs: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import ManuscriptPartCreate
 
@@ -157,7 +176,9 @@ class ServerWritingService:
             project_id,
             ManuscriptPartCreate(title=title, **kwargs),
         )
-        return normalize_writing_record("server", "manuscript", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "manuscript", self._model_to_dict(response)
+        )
 
     async def list_manuscripts(self, project_id: str) -> list[dict[str, Any]]:
         self._enforce(self._action_id("manuscripts", "list"))
@@ -170,7 +191,9 @@ class ServerWritingService:
     async def get_manuscript(self, manuscript_id: str) -> dict[str, Any] | None:
         self._enforce(self._action_id("manuscripts", "detail"))
         response = await self._require_client().get_manuscript(manuscript_id)
-        return normalize_writing_record("server", "manuscript", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "manuscript", self._model_to_dict(response)
+        )
 
     async def update_manuscript(
         self,
@@ -188,9 +211,13 @@ class ServerWritingService:
             ManuscriptPartUpdate(**fields),
             expected_version=expected_version,
         )
-        return normalize_writing_record("server", "manuscript", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "manuscript", self._model_to_dict(response)
+        )
 
-    async def delete_manuscript(self, manuscript_id: str, *, expected_version: int) -> bool:
+    async def delete_manuscript(
+        self, manuscript_id: str, *, expected_version: int
+    ) -> bool:
         self._enforce(self._action_id("manuscripts", "delete"))
         return await self._require_client().delete_manuscript(
             manuscript_id,
@@ -213,11 +240,17 @@ class ServerWritingService:
             project_id,
             ManuscriptChapterCreate(title=title, part_id=manuscript_id, **kwargs),
         )
-        return normalize_writing_record("server", "chapter", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "chapter", self._model_to_dict(response)
+        )
 
-    async def list_chapters(self, project_id: str, manuscript_id: str | None = None) -> list[dict[str, Any]]:
+    async def list_chapters(
+        self, project_id: str, manuscript_id: str | None = None
+    ) -> list[dict[str, Any]]:
         self._enforce(self._action_id("chapters", "list"))
-        response = await self._require_client().list_manuscript_chapters(project_id, part_id=manuscript_id)
+        response = await self._require_client().list_manuscript_chapters(
+            project_id, part_id=manuscript_id
+        )
         return [
             normalize_writing_record("server", "chapter", self._model_to_dict(item))
             for item in list(response or [])
@@ -226,7 +259,9 @@ class ServerWritingService:
     async def get_chapter(self, chapter_id: str) -> dict[str, Any] | None:
         self._enforce(self._action_id("chapters", "detail"))
         response = await self._require_client().get_manuscript_chapter(chapter_id)
-        return normalize_writing_record("server", "chapter", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "chapter", self._model_to_dict(response)
+        )
 
     async def update_chapter(
         self,
@@ -247,7 +282,9 @@ class ServerWritingService:
             ManuscriptChapterUpdate(**fields),
             expected_version=expected_version,
         )
-        return normalize_writing_record("server", "chapter", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "chapter", self._model_to_dict(response)
+        )
 
     async def delete_chapter(self, chapter_id: str, *, expected_version: int) -> bool:
         self._enforce(self._action_id("chapters", "delete"))
@@ -280,7 +317,9 @@ class ServerWritingService:
                 **kwargs,
             ),
         )
-        return normalize_writing_record("server", "scene", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "scene", self._model_to_dict(response)
+        )
 
     async def list_scenes(
         self,
@@ -300,7 +339,9 @@ class ServerWritingService:
     async def get_scene(self, scene_id: str) -> dict[str, Any] | None:
         self._enforce(self._action_id("scenes", "detail"))
         response = await self._require_client().get_manuscript_scene(scene_id)
-        return normalize_writing_record("server", "scene", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "scene", self._model_to_dict(response)
+        )
 
     async def update_scene(
         self,
@@ -322,7 +363,9 @@ class ServerWritingService:
             ManuscriptSceneUpdate(**fields),
             expected_version=expected_version,
         )
-        return normalize_writing_record("server", "scene", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "scene", self._model_to_dict(response)
+        )
 
     async def delete_scene(self, scene_id: str, *, expected_version: int) -> bool:
         self._enforce(self._action_id("scenes", "delete"))
@@ -336,7 +379,9 @@ class ServerWritingService:
         response = await self._require_client().get_manuscript_structure(project_id)
         return normalize_writing_structure("server", self._model_to_dict(response))
 
-    async def reorder_entities(self, project_id: str, entity_type: str, items: list[dict[str, Any]]) -> bool:
+    async def reorder_entities(
+        self, project_id: str, entity_type: str, items: list[dict[str, Any]]
+    ) -> bool:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import ReorderRequest
 
@@ -348,7 +393,9 @@ class ServerWritingService:
         )
         return bool(response)
 
-    async def create_character(self, project_id: str, *, name: str, **kwargs: Any) -> dict[str, Any]:
+    async def create_character(
+        self, project_id: str, *, name: str, **kwargs: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import ManuscriptCharacterCreate
 
@@ -357,7 +404,9 @@ class ServerWritingService:
             project_id,
             ManuscriptCharacterCreate(name=name, **kwargs),
         )
-        return normalize_writing_record("server", "character", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "character", self._model_to_dict(response)
+        )
 
     async def list_characters(
         self,
@@ -380,7 +429,9 @@ class ServerWritingService:
     async def get_character(self, character_id: str) -> dict[str, Any] | None:
         self._enforce(self._action_id("characters", "detail"))
         response = await self._require_client().get_manuscript_character(character_id)
-        return normalize_writing_record("server", "character", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "character", self._model_to_dict(response)
+        )
 
     async def update_character(
         self,
@@ -398,16 +449,22 @@ class ServerWritingService:
             ManuscriptCharacterUpdate(**fields),
             expected_version=expected_version,
         )
-        return normalize_writing_record("server", "character", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "character", self._model_to_dict(response)
+        )
 
-    async def delete_character(self, character_id: str, *, expected_version: int) -> bool:
+    async def delete_character(
+        self, character_id: str, *, expected_version: int
+    ) -> bool:
         self._enforce(self._action_id("characters", "delete"))
         return await self._require_client().delete_manuscript_character(
             character_id,
             expected_version=expected_version,
         )
 
-    async def create_relationship(self, project_id: str, **fields: Any) -> dict[str, Any]:
+    async def create_relationship(
+        self, project_id: str, **fields: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import ManuscriptRelationshipCreate
 
@@ -416,24 +473,34 @@ class ServerWritingService:
             project_id,
             ManuscriptRelationshipCreate(**fields),
         )
-        return normalize_writing_record("server", "relationship", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "relationship", self._model_to_dict(response)
+        )
 
     async def list_relationships(self, project_id: str) -> list[dict[str, Any]]:
         self._enforce(self._action_id("relationships", "list"))
-        response = await self._require_client().list_manuscript_relationships(project_id)
+        response = await self._require_client().list_manuscript_relationships(
+            project_id
+        )
         return [
-            normalize_writing_record("server", "relationship", self._model_to_dict(item))
+            normalize_writing_record(
+                "server", "relationship", self._model_to_dict(item)
+            )
             for item in list(response or [])
         ]
 
-    async def delete_relationship(self, relationship_id: str, *, expected_version: int) -> bool:
+    async def delete_relationship(
+        self, relationship_id: str, *, expected_version: int
+    ) -> bool:
         self._enforce(self._action_id("relationships", "delete"))
         return await self._require_client().delete_manuscript_relationship(
             relationship_id,
             expected_version=expected_version,
         )
 
-    async def create_world_info(self, project_id: str, *, kind: str, name: str, **kwargs: Any) -> dict[str, Any]:
+    async def create_world_info(
+        self, project_id: str, *, kind: str, name: str, **kwargs: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import ManuscriptWorldInfoCreate
 
@@ -442,11 +509,17 @@ class ServerWritingService:
             project_id,
             ManuscriptWorldInfoCreate(kind=kind, name=name, **kwargs),
         )
-        return normalize_writing_record("server", "world_info", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "world_info", self._model_to_dict(response)
+        )
 
-    async def list_world_info(self, project_id: str, *, kind: str | None = None) -> list[dict[str, Any]]:
+    async def list_world_info(
+        self, project_id: str, *, kind: str | None = None
+    ) -> list[dict[str, Any]]:
         self._enforce(self._action_id("world_info", "list"))
-        response = await self._require_client().list_manuscript_world_info(project_id, kind=kind)
+        response = await self._require_client().list_manuscript_world_info(
+            project_id, kind=kind
+        )
         return [
             normalize_writing_record("server", "world_info", self._model_to_dict(item))
             for item in list(response or [])
@@ -455,7 +528,9 @@ class ServerWritingService:
     async def get_world_info(self, item_id: str) -> dict[str, Any] | None:
         self._enforce(self._action_id("world_info", "detail"))
         response = await self._require_client().get_manuscript_world_info(item_id)
-        return normalize_writing_record("server", "world_info", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "world_info", self._model_to_dict(response)
+        )
 
     async def update_world_info(
         self,
@@ -473,7 +548,9 @@ class ServerWritingService:
             ManuscriptWorldInfoUpdate(**fields),
             expected_version=expected_version,
         )
-        return normalize_writing_record("server", "world_info", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "world_info", self._model_to_dict(response)
+        )
 
     async def delete_world_info(self, item_id: str, *, expected_version: int) -> bool:
         self._enforce(self._action_id("world_info", "delete"))
@@ -482,7 +559,9 @@ class ServerWritingService:
             expected_version=expected_version,
         )
 
-    async def create_plot_line(self, project_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+    async def create_plot_line(
+        self, project_id: str, *, title: str, **kwargs: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import ManuscriptPlotLineCreate
 
@@ -491,7 +570,9 @@ class ServerWritingService:
             project_id,
             ManuscriptPlotLineCreate(title=title, **kwargs),
         )
-        return normalize_writing_record("server", "plot_line", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "plot_line", self._model_to_dict(response)
+        )
 
     async def list_plot_lines(self, project_id: str) -> list[dict[str, Any]]:
         self._enforce(self._action_id("plot_lines", "list"))
@@ -517,16 +598,22 @@ class ServerWritingService:
             ManuscriptPlotLineUpdate(**fields),
             expected_version=expected_version,
         )
-        return normalize_writing_record("server", "plot_line", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "plot_line", self._model_to_dict(response)
+        )
 
-    async def delete_plot_line(self, plot_line_id: str, *, expected_version: int) -> bool:
+    async def delete_plot_line(
+        self, plot_line_id: str, *, expected_version: int
+    ) -> bool:
         self._enforce(self._action_id("plot_lines", "delete"))
         return await self._require_client().delete_manuscript_plot_line(
             plot_line_id,
             expected_version=expected_version,
         )
 
-    async def create_plot_event(self, plot_line_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+    async def create_plot_event(
+        self, plot_line_id: str, *, title: str, **kwargs: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import ManuscriptPlotEventCreate
 
@@ -535,11 +622,15 @@ class ServerWritingService:
             plot_line_id,
             ManuscriptPlotEventCreate(title=title, **kwargs),
         )
-        return normalize_writing_record("server", "plot_event", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "plot_event", self._model_to_dict(response)
+        )
 
     async def list_plot_events(self, plot_line_id: str) -> list[dict[str, Any]]:
         self._enforce(self._action_id("plot_events", "list"))
-        response = await self._require_client().list_manuscript_plot_events(plot_line_id)
+        response = await self._require_client().list_manuscript_plot_events(
+            plot_line_id
+        )
         return [
             normalize_writing_record("server", "plot_event", self._model_to_dict(item))
             for item in list(response or [])
@@ -561,16 +652,22 @@ class ServerWritingService:
             ManuscriptPlotEventUpdate(**fields),
             expected_version=expected_version,
         )
-        return normalize_writing_record("server", "plot_event", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "plot_event", self._model_to_dict(response)
+        )
 
-    async def delete_plot_event(self, plot_event_id: str, *, expected_version: int) -> bool:
+    async def delete_plot_event(
+        self, plot_event_id: str, *, expected_version: int
+    ) -> bool:
         self._enforce(self._action_id("plot_events", "delete"))
         return await self._require_client().delete_manuscript_plot_event(
             plot_event_id,
             expected_version=expected_version,
         )
 
-    async def create_plot_hole(self, project_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+    async def create_plot_hole(
+        self, project_id: str, *, title: str, **kwargs: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import ManuscriptPlotHoleCreate
 
@@ -579,11 +676,17 @@ class ServerWritingService:
             project_id,
             ManuscriptPlotHoleCreate(title=title, **kwargs),
         )
-        return normalize_writing_record("server", "plot_hole", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "plot_hole", self._model_to_dict(response)
+        )
 
-    async def list_plot_holes(self, project_id: str, *, status: str | None = None) -> list[dict[str, Any]]:
+    async def list_plot_holes(
+        self, project_id: str, *, status: str | None = None
+    ) -> list[dict[str, Any]]:
         self._enforce(self._action_id("plot_holes", "list"))
-        response = await self._require_client().list_manuscript_plot_holes(project_id, status=status)
+        response = await self._require_client().list_manuscript_plot_holes(
+            project_id, status=status
+        )
         return [
             normalize_writing_record("server", "plot_hole", self._model_to_dict(item))
             for item in list(response or [])
@@ -605,9 +708,13 @@ class ServerWritingService:
             ManuscriptPlotHoleUpdate(**fields),
             expected_version=expected_version,
         )
-        return normalize_writing_record("server", "plot_hole", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "plot_hole", self._model_to_dict(response)
+        )
 
-    async def delete_plot_hole(self, plot_hole_id: str, *, expected_version: int) -> bool:
+    async def delete_plot_hole(
+        self, plot_hole_id: str, *, expected_version: int
+    ) -> bool:
         self._enforce(self._action_id("plot_holes", "delete"))
         return await self._require_client().delete_manuscript_plot_hole(
             plot_hole_id,
@@ -630,23 +737,33 @@ class ServerWritingService:
             SceneCharacterLink(character_id=character_id, is_pov=is_pov),
         )
         return [
-            normalize_writing_record("server", "scene_character_link", self._model_to_dict(item))
+            normalize_writing_record(
+                "server", "scene_character_link", self._model_to_dict(item)
+            )
             for item in list(response or [])
         ]
 
     async def list_scene_characters(self, scene_id: str) -> list[dict[str, Any]]:
         self._enforce(self._action_id("scene_characters", "list"))
-        response = await self._require_client().list_manuscript_scene_characters(scene_id)
+        response = await self._require_client().list_manuscript_scene_characters(
+            scene_id
+        )
         return [
-            normalize_writing_record("server", "scene_character_link", self._model_to_dict(item))
+            normalize_writing_record(
+                "server", "scene_character_link", self._model_to_dict(item)
+            )
             for item in list(response or [])
         ]
 
     async def unlink_scene_character(self, scene_id: str, character_id: str) -> bool:
         self._enforce(self._action_id("scene_characters", "delete"))
-        return await self._require_client().unlink_manuscript_scene_character(scene_id, character_id)
+        return await self._require_client().unlink_manuscript_scene_character(
+            scene_id, character_id
+        )
 
-    async def link_scene_world_info(self, scene_id: str, *, world_info_id: str) -> list[dict[str, Any]]:
+    async def link_scene_world_info(
+        self, scene_id: str, *, world_info_id: str
+    ) -> list[dict[str, Any]]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SceneWorldInfoLink
 
@@ -656,23 +773,33 @@ class ServerWritingService:
             SceneWorldInfoLink(world_info_id=world_info_id),
         )
         return [
-            normalize_writing_record("server", "scene_world_info_link", self._model_to_dict(item))
+            normalize_writing_record(
+                "server", "scene_world_info_link", self._model_to_dict(item)
+            )
             for item in list(response or [])
         ]
 
     async def list_scene_world_info(self, scene_id: str) -> list[dict[str, Any]]:
         self._enforce(self._action_id("scene_world_info", "list"))
-        response = await self._require_client().list_manuscript_scene_world_info(scene_id)
+        response = await self._require_client().list_manuscript_scene_world_info(
+            scene_id
+        )
         return [
-            normalize_writing_record("server", "scene_world_info_link", self._model_to_dict(item))
+            normalize_writing_record(
+                "server", "scene_world_info_link", self._model_to_dict(item)
+            )
             for item in list(response or [])
         ]
 
     async def unlink_scene_world_info(self, scene_id: str, world_info_id: str) -> bool:
         self._enforce(self._action_id("scene_world_info", "delete"))
-        return await self._require_client().unlink_manuscript_scene_world_info(scene_id, world_info_id)
+        return await self._require_client().unlink_manuscript_scene_world_info(
+            scene_id, world_info_id
+        )
 
-    async def create_citation(self, scene_id: str, *, source_type: str, **kwargs: Any) -> dict[str, Any]:
+    async def create_citation(
+        self, scene_id: str, *, source_type: str, **kwargs: Any
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import ManuscriptCitationCreate
 
@@ -681,7 +808,9 @@ class ServerWritingService:
             scene_id,
             ManuscriptCitationCreate(source_type=source_type, **kwargs),
         )
-        return normalize_writing_record("server", "citation", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "citation", self._model_to_dict(response)
+        )
 
     async def list_citations(self, scene_id: str) -> list[dict[str, Any]]:
         self._enforce(self._action_id("citations", "list"))
@@ -698,7 +827,9 @@ class ServerWritingService:
             expected_version=expected_version,
         )
 
-    async def research_scene(self, scene_id: str, *, query: str, top_k: int = 5) -> dict[str, Any]:
+    async def research_scene(
+        self, scene_id: str, *, query: str, top_k: int = 5
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import ManuscriptResearchRequest
 
@@ -709,7 +840,9 @@ class ServerWritingService:
         )
         payload = self._model_to_dict(response)
         payload["results"] = [
-            normalize_writing_record("server", "research_result", self._model_to_dict(item))
+            normalize_writing_record(
+                "server", "research_result", self._model_to_dict(item)
+            )
             for item in list(payload.get("results", []))
         ]
         return payload
@@ -726,8 +859,12 @@ class ServerWritingService:
         from ..tldw_api import ManuscriptAnalysisRequest
 
         self._enforce(self._action_id("analysis", "launch"))
-        request_data = ManuscriptAnalysisRequest(analysis_types=analysis_types, provider=provider, model=model)
-        response = await self._require_client().analyze_manuscript_scene(scene_id, request_data)
+        request_data = ManuscriptAnalysisRequest(
+            analysis_types=analysis_types, provider=provider, model=model
+        )
+        response = await self._require_client().analyze_manuscript_scene(
+            scene_id, request_data
+        )
         return [
             normalize_writing_record("server", "analysis", self._model_to_dict(item))
             for item in list(response or [])
@@ -745,8 +882,12 @@ class ServerWritingService:
         from ..tldw_api import ManuscriptAnalysisRequest
 
         self._enforce(self._action_id("analysis", "launch"))
-        request_data = ManuscriptAnalysisRequest(analysis_types=analysis_types, provider=provider, model=model)
-        response = await self._require_client().analyze_manuscript_chapter(chapter_id, request_data)
+        request_data = ManuscriptAnalysisRequest(
+            analysis_types=analysis_types, provider=provider, model=model
+        )
+        response = await self._require_client().analyze_manuscript_chapter(
+            chapter_id, request_data
+        )
         return [
             normalize_writing_record("server", "analysis", self._model_to_dict(item))
             for item in list(response or [])
@@ -769,7 +910,9 @@ class ServerWritingService:
             provider=provider,
             model=model,
         )
-        response = await self._require_client().analyze_manuscript_project_plot_holes(project_id, request_data)
+        response = await self._require_client().analyze_manuscript_project_plot_holes(
+            project_id, request_data
+        )
         return [
             normalize_writing_record("server", "analysis", self._model_to_dict(item))
             for item in list(response or [])
@@ -792,7 +935,9 @@ class ServerWritingService:
             provider=provider,
             model=model,
         )
-        response = await self._require_client().analyze_manuscript_project_consistency(project_id, request_data)
+        response = await self._require_client().analyze_manuscript_project_consistency(
+            project_id, request_data
+        )
         return [
             normalize_writing_record("server", "analysis", self._model_to_dict(item))
             for item in list(response or [])
@@ -820,7 +965,9 @@ class ServerWritingService:
         ]
         return payload
 
-    async def create_version(self, entity_type: str, entity_id: str, *, label: str | None = None) -> dict[str, Any]:
+    async def create_version(
+        self, entity_type: str, entity_id: str, *, label: str | None = None
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import ManuscriptVersionCreateRequest
 
@@ -830,21 +977,33 @@ class ServerWritingService:
             entity_id,
             ManuscriptVersionCreateRequest(label=label),
         )
-        return normalize_writing_record("server", "version", self._model_to_dict(response))
+        return normalize_writing_record(
+            "server", "version", self._model_to_dict(response)
+        )
 
-    async def list_versions(self, entity_type: str, entity_id: str) -> list[dict[str, Any]]:
+    async def list_versions(
+        self, entity_type: str, entity_id: str
+    ) -> list[dict[str, Any]]:
         self._enforce(self._action_id("versions", "list"))
-        response = await self._require_client().list_manuscript_versions(entity_type, entity_id)
+        response = await self._require_client().list_manuscript_versions(
+            entity_type, entity_id
+        )
         payload = self._model_to_dict(response)
         return [
             normalize_writing_record("server", "version", self._model_to_dict(item))
             for item in list(payload.get("versions", []))
         ]
 
-    async def get_version(self, entity_type: str, entity_id: str, version_number: int) -> dict[str, Any]:
+    async def get_version(
+        self, entity_type: str, entity_id: str, version_number: int
+    ) -> dict[str, Any]:
         self._enforce(self._action_id("versions", "detail"))
-        response = await self._require_client().get_manuscript_version(entity_type, entity_id, version_number)
-        return normalize_writing_record("server", "version", self._model_to_dict(response))
+        response = await self._require_client().get_manuscript_version(
+            entity_type, entity_id, version_number
+        )
+        return normalize_writing_record(
+            "server", "version", self._model_to_dict(response)
+        )
 
     async def restore_version(
         self,
@@ -861,14 +1020,32 @@ class ServerWritingService:
             version_number,
             expected_version=expected_version,
         )
-        return normalize_writing_record("server", self._normalize_entity_type(entity_type), self._model_to_dict(response))
+        return normalize_writing_record(
+            "server",
+            self._normalize_entity_type(entity_type),
+            self._model_to_dict(response),
+        )
 
-    async def list_trash(self, *, entity_type: str | None = None) -> list[dict[str, Any]]:
+    async def list_trash(
+        self, *, entity_type: str | None = None
+    ) -> list[dict[str, Any]]:
         self._enforce(self._action_id("trash", "list"))
-        response = await self._require_client().list_manuscript_trash(entity_type=entity_type)
+        response = await self._require_client().list_manuscript_trash(
+            entity_type=entity_type
+        )
         payload = self._model_to_dict(response)
         return [
-            normalize_writing_record("server", self._normalize_entity_type(str(item.get("entity_type") or entity_type or self._infer_entity_type(item))), item)
+            normalize_writing_record(
+                "server",
+                self._normalize_entity_type(
+                    str(
+                        item.get("entity_type")
+                        or entity_type
+                        or self._infer_entity_type(item)
+                    )
+                ),
+                item,
+            )
             for item in list(payload.get("items", []))
         ]
 
@@ -885,7 +1062,11 @@ class ServerWritingService:
             entity_id,
             expected_version=expected_version,
         )
-        return normalize_writing_record("server", self._normalize_entity_type(entity_type), self._model_to_dict(response))
+        return normalize_writing_record(
+            "server",
+            self._normalize_entity_type(entity_type),
+            self._model_to_dict(response),
+        )
 
     @staticmethod
     def _normalize_entity_type(entity_type: str) -> str:

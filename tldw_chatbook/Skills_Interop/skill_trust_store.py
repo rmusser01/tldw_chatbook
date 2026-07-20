@@ -170,7 +170,9 @@ def build_skill_trust_marker_store_with_fallback(
     """Return a marker store and whether reduced rollback protection is active."""
 
     try:
-        return KeyringSkillTrustGenerationMarkerStore(keyring_backend=keyring_backend), False
+        return KeyringSkillTrustGenerationMarkerStore(
+            keyring_backend=keyring_backend
+        ), False
     except Exception:
         return FileSkillTrustGenerationMarkerStore(fallback_marker_path), True
 
@@ -185,7 +187,9 @@ class KeyringSkillTrustKeyCache:
     def __post_init__(self) -> None:
         keyring_backend = _resolve_keyring_backend(self.keyring_backend)
         if not is_secure_keyring_backend(keyring_backend):
-            raise SkillTrustMarkerUnavailable("No secure OS-backed key cache is available.")
+            raise SkillTrustMarkerUnavailable(
+                "No secure OS-backed key cache is available."
+            )
         self.keyring_backend = keyring_backend
 
     def __repr__(self) -> str:
@@ -213,7 +217,9 @@ class KeyringSkillTrustKeyCache:
         """Load cached derived trust keys from the secure keyring."""
 
         expected_salt_digest = _salt_digest(expected_salt)
-        payload = self.keyring_backend.get_password(self.service_name, _KEY_CACHE_USERNAME)
+        payload = self.keyring_backend.get_password(
+            self.service_name, _KEY_CACHE_USERNAME
+        )
         if not payload:
             return None
         data = json.loads(payload)
@@ -268,7 +274,9 @@ class SkillTrustStore:
     def load_salt(self) -> bytes:
         """Load and validate the 32-byte KDF salt stored with the manifest."""
 
-        payload = json.loads(self._validated_manifest_path().read_text(encoding="utf-8"))
+        payload = json.loads(
+            self._validated_manifest_path().read_text(encoding="utf-8")
+        )
         encoded = payload.get("kdf_salt")
         if not isinstance(encoded, str):
             raise ValueError("skill trust salt missing")
@@ -305,8 +313,14 @@ class SkillTrustStore:
         }
         _ensure_trust_directory(self.store_dir)
         manifest_path = self._validated_manifest_path()
-        previous_manifest_bytes = manifest_path.read_bytes() if self.has_manifest() else None
-        previous_marker = self.marker_store.load_marker() if previous_manifest_bytes is not None else None
+        previous_manifest_bytes = (
+            manifest_path.read_bytes() if self.has_manifest() else None
+        )
+        previous_marker = (
+            self.marker_store.load_marker()
+            if previous_manifest_bytes is not None
+            else None
+        )
         _atomic_write_json(manifest_path, payload, indent=2, base_dir=self.store_dir)
         try:
             self.marker_store.save_marker(
@@ -317,14 +331,18 @@ class SkillTrustStore:
             if previous_manifest_bytes is None:
                 manifest_path.unlink(missing_ok=True)
             else:
-                _atomic_write_bytes(manifest_path, previous_manifest_bytes, base_dir=self.store_dir)
+                _atomic_write_bytes(
+                    manifest_path, previous_manifest_bytes, base_dir=self.store_dir
+                )
             _restore_previous_marker(self.marker_store, previous_marker)
             raise
 
     def load_manifest(self, keys: SkillTrustKeys) -> dict[str, Any]:
         """Load a manifest after verifying its HMAC and generation marker."""
 
-        payload = json.loads(self._validated_manifest_path().read_text(encoding="utf-8"))
+        payload = json.loads(
+            self._validated_manifest_path().read_text(encoding="utf-8")
+        )
         if not isinstance(payload, dict):
             raise ValueError("manifest authentication failed")
         manifest = payload.get("manifest")
@@ -434,7 +452,9 @@ def _atomic_write_json(
     temp_path.replace(path)
 
 
-def _atomic_write_bytes(path: Path, payload: bytes, *, base_dir: Path | None = None) -> None:
+def _atomic_write_bytes(
+    path: Path, payload: bytes, *, base_dir: Path | None = None
+) -> None:
     base_dir = _ensure_trust_directory(base_dir or path.parent)
     path = _validated_trust_file_path(path, base_dir=base_dir)
     temp_path = path.with_name(f".{path.name}.tmp")
@@ -472,7 +492,9 @@ def _restore_previous_marker(
     generation = previous_marker.get("generation")
     manifest_digest = previous_marker.get("manifest_digest")
     if not isinstance(generation, int) or not isinstance(manifest_digest, str):
-        logger.warning("Skipping invalid previous skill trust generation marker during rollback.")
+        logger.warning(
+            "Skipping invalid previous skill trust generation marker during rollback."
+        )
         return
     try:
         marker_store.save_marker(generation=generation, manifest_digest=manifest_digest)
@@ -515,7 +537,9 @@ def _json_safe_payload(payload: Any) -> Any:
         return result
     if isinstance(payload, tuple):
         return [_json_safe_payload(value) for value in payload]
-    if isinstance(payload, Sequence) and not isinstance(payload, (str, bytes, bytearray)):
+    if isinstance(payload, Sequence) and not isinstance(
+        payload, (str, bytes, bytearray)
+    ):
         return [_json_safe_payload(value) for value in payload]
     if isinstance(payload, float) and not math.isfinite(payload):
         raise ValueError("skill trust JSON numbers must be finite")

@@ -1,4 +1,5 @@
 """AgentRunsDB against a real on-disk SQLite file."""
+
 import pytest
 
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -10,8 +11,9 @@ def db(tmp_path):
 
 
 def test_create_and_get_run(db):
-    run_id = db.create_run(conversation_id="conv1", agent_kind="primary",
-                           budget={"max_steps": 8})
+    run_id = db.create_run(
+        conversation_id="conv1", agent_kind="primary", budget={"max_steps": 8}
+    )
     run = db.get_run(run_id)
     assert run["conversation_id"] == "conv1"
     assert run["agent_kind"] == "primary"
@@ -28,16 +30,18 @@ def test_get_missing_run_returns_none(db):
 def test_append_steps_accumulates_and_parses(db):
     run_id = db.create_run(conversation_id="c", agent_kind="primary")
     db.append_steps(run_id, [{"index": 0, "kind": "model", "summary": "hi"}])
-    db.append_steps(run_id, [{"index": 1, "kind": "tool_call",
-                              "tool_name": "calculator"}])
+    db.append_steps(
+        run_id, [{"index": 1, "kind": "tool_call", "tool_name": "calculator"}]
+    )
     steps = db.get_run(run_id)["steps"]
     assert [s["index"] for s in steps] == [0, 1]
     assert steps[1]["tool_name"] == "calculator"
 
 
 def test_set_status_and_result(db):
-    run_id = db.create_run(conversation_id="c", agent_kind="subagent",
-                           task="do x", parent_run_id="p1")
+    run_id = db.create_run(
+        conversation_id="c", agent_kind="subagent", task="do x", parent_run_id="p1"
+    )
     db.set_status(run_id, "done", result="the answer")
     run = db.get_run(run_id)
     assert run["status"] == "done" and run["result"] == "the answer"
@@ -48,24 +52,38 @@ def test_count_subagents_counts_only_subagent_kind(db):
     db.create_run(conversation_id="c", agent_kind="primary")
     parent = db.create_run(conversation_id="c", agent_kind="primary")
     for i in range(3):
-        db.create_run(conversation_id="c", agent_kind="subagent",
-                      task=f"t{i}", parent_run_id=parent)
-    db.create_run(conversation_id="other", agent_kind="subagent", task="x",
-                  parent_run_id="zzz")
+        db.create_run(
+            conversation_id="c",
+            agent_kind="subagent",
+            task=f"t{i}",
+            parent_run_id=parent,
+        )
+    db.create_run(
+        conversation_id="other", agent_kind="subagent", task="x", parent_run_id="zzz"
+    )
     assert db.count_subagent_runs("c") == 3
 
 
 # --- Finding A: batched per-conversation sub-agent counts (single query,
 # not one connection/query per conversation row per poll tick). ---
 
+
 def test_count_subagents_by_conversation_batches_single_query(db, monkeypatch):
     parent_a = db.create_run(conversation_id="conv-a", agent_kind="primary")
     for i in range(2):
-        db.create_run(conversation_id="conv-a", agent_kind="subagent",
-                      task=f"a{i}", parent_run_id=parent_a)
+        db.create_run(
+            conversation_id="conv-a",
+            agent_kind="subagent",
+            task=f"a{i}",
+            parent_run_id=parent_a,
+        )
     parent_b = db.create_run(conversation_id="conv-b", agent_kind="primary")
-    db.create_run(conversation_id="conv-b", agent_kind="subagent",
-                  task="b0", parent_run_id=parent_b)
+    db.create_run(
+        conversation_id="conv-b",
+        agent_kind="subagent",
+        task="b0",
+        parent_run_id=parent_b,
+    )
     # conv-c has only a primary run -- zero sub-agents, must be absent.
     db.create_run(conversation_id="conv-c", agent_kind="primary")
 
@@ -81,9 +99,9 @@ def test_count_subagents_by_conversation_batches_single_query(db, monkeypatch):
     counts = db.count_subagents_by_conversation(["conv-a", "conv-b", "conv-c"])
 
     assert counts == {"conv-a": 2, "conv-b": 1}
-    assert "conv-c" not in counts   # zero-absent, not zero-valued
+    assert "conv-c" not in counts  # zero-absent, not zero-valued
     select_calls = [c for c in executed if c.strip().upper().startswith("SELECT")]
-    assert len(select_calls) == 1   # one batched query, not one per conversation
+    assert len(select_calls) == 1  # one batched query, not one per conversation
 
 
 def test_count_subagents_by_conversation_empty_input_returns_empty_dict(db):
@@ -92,16 +110,18 @@ def test_count_subagents_by_conversation_empty_input_returns_empty_dict(db):
 
 def test_count_subagents_by_conversation_dedupes_ids_and_ignores_blanks(db):
     parent = db.create_run(conversation_id="conv-a", agent_kind="primary")
-    db.create_run(conversation_id="conv-a", agent_kind="subagent",
-                  task="x", parent_run_id=parent)
+    db.create_run(
+        conversation_id="conv-a", agent_kind="subagent", task="x", parent_run_id=parent
+    )
     counts = db.count_subagents_by_conversation(["conv-a", "conv-a", "", None])
     assert counts == {"conv-a": 1}
 
 
 def test_supersede_run_tree_marks_run_and_children(db):
     parent = db.create_run(conversation_id="c", agent_kind="primary")
-    child = db.create_run(conversation_id="c", agent_kind="subagent",
-                          task="t", parent_run_id=parent)
+    child = db.create_run(
+        conversation_id="c", agent_kind="subagent", task="t", parent_run_id=parent
+    )
     other = db.create_run(conversation_id="c", agent_kind="primary")
     changed = db.supersede_run_tree(parent)
     assert changed == 2
@@ -120,14 +140,18 @@ def test_list_runs_filters_superseded_when_asked(db):
 
 
 def test_sql_is_parameterized_against_quotes(db):
-    run_id = db.create_run(conversation_id="c''; DROP TABLE agent_runs;--",
-                           agent_kind="primary", task="a 'quoted' task")
+    run_id = db.create_run(
+        conversation_id="c''; DROP TABLE agent_runs;--",
+        agent_kind="primary",
+        task="a 'quoted' task",
+    )
     assert db.get_run(run_id)["task"] == "a 'quoted' task"
 
 
 # --- G2: writes must take the write lock up front (BEGIN IMMEDIATE), not
 # lazily (plain BEGIN / deferred), to avoid the two-reader-upgrade-deadlock
 # hazard when multiple workers write concurrently. ---
+
 
 def test_transaction_begins_immediate_not_deferred(db, monkeypatch):
     # sqlite3.Connection is a C type — can't monkeypatch .execute on it —
@@ -149,6 +173,7 @@ def test_transaction_begins_immediate_not_deferred(db, monkeypatch):
 
 
 # --- Q3: list_runs pagination. ---
+
 
 def test_list_runs_limit_returns_newest_only(db):
     for _ in range(3):

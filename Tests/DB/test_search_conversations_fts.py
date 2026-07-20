@@ -32,11 +32,13 @@ def db(tmp_path):
 
 def _conversation_with_message(db, *, title: str, content: str) -> str:
     conv_id = db.add_conversation({"title": title})
-    db.add_message({
-        "conversation_id": conv_id,
-        "sender": "user",
-        "content": content,
-    })
+    db.add_message(
+        {
+            "conversation_id": conv_id,
+            "sender": "user",
+            "content": content,
+        }
+    )
     return conv_id
 
 
@@ -78,11 +80,13 @@ class TestMessageContentMatch:
 
     def test_deleted_message_does_not_resurrect_conversation(self, db):
         conv_id = db.add_conversation({"title": "Soon Empty"})
-        msg_id = db.add_message({
-            "conversation_id": conv_id,
-            "sender": "user",
-            "content": "uniquemarkerword should vanish",
-        })
+        msg_id = db.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": "user",
+                "content": "uniquemarkerword should vanish",
+            }
+        )
         db.soft_delete_message(msg_id, expected_version=1)
 
         rows, total, _ = db.search_conversations_page("uniquemarkerword")
@@ -115,9 +119,7 @@ class TestFtsSyntaxHazardsDoNotRaise:
         assert isinstance(total, int)
 
     def test_quote_in_query_matches_literal_content_containing_it(self, db):
-        conv_id = _conversation_with_message(
-            db, title="Alpha", content='He said "hello" to me'
-        )
+        _conversation_with_message(db, title="Alpha", content='He said "hello" to me')
         rows, total, _ = db.search_conversations_page('"hello"')
         # Must not raise; whether or not it matches, the call completes.
         assert isinstance(rows, list)

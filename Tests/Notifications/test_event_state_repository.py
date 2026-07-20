@@ -90,30 +90,46 @@ def test_repository_persists_events_dedupe_and_processed_cursor(tmp_path):
     assert [row["event_id"] for row in reopened.list_events(limit=10)] == ["event-1"]
 
 
-def test_repository_scopes_processed_cursor_and_dedupe_by_authenticated_principal(tmp_path):
+def test_repository_scopes_processed_cursor_and_dedupe_by_authenticated_principal(
+    tmp_path,
+):
     repo = EventStateRepository(tmp_path / "events.db")
-    first = _event(authenticated_principal_id="user-a", server_cursor="cursor-a", event_id="event-1")
-    second = _event(authenticated_principal_id="user-b", server_cursor="cursor-b", event_id="event-1")
+    first = _event(
+        authenticated_principal_id="user-a",
+        server_cursor="cursor-a",
+        event_id="event-1",
+    )
+    second = _event(
+        authenticated_principal_id="user-b",
+        server_cursor="cursor-b",
+        event_id="event-1",
+    )
 
     first_result = repo.record_event_and_advance_processed_cursor(first)
     second_result = repo.record_event_and_advance_processed_cursor(second)
 
     assert first_result.is_duplicate is False
     assert second_result.is_duplicate is False
-    assert repo.get_processed_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor == "cursor-a"
-    assert repo.get_processed_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-b",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor == "cursor-b"
+    assert (
+        repo.get_processed_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        == "cursor-a"
+    )
+    assert (
+        repo.get_processed_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-b",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        == "cursor-b"
+    )
     assert len(repo.list_events(limit=10)) == 2
 
 
@@ -139,7 +155,9 @@ def test_duplicate_event_does_not_insert_second_record_or_advance_cursor(tmp_pat
     assert [row["server_cursor"] for row in repo.list_events(limit=10)] == ["cursor-1"]
 
 
-def test_event_record_and_cursor_advance_roll_back_atomically_on_cursor_failure(tmp_path, monkeypatch):
+def test_event_record_and_cursor_advance_roll_back_atomically_on_cursor_failure(
+    tmp_path, monkeypatch
+):
     repo = EventStateRepository(tmp_path / "events.db")
     event = _event(event_id="event-1", server_cursor="cursor-1")
 
@@ -153,13 +171,16 @@ def test_event_record_and_cursor_advance_roll_back_atomically_on_cursor_failure(
 
     assert repo.list_events(limit=10) == []
     assert repo.is_duplicate_event(event) is False
-    assert repo.get_processed_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor is None
+    assert (
+        repo.get_processed_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        is None
+    )
 
 
 def test_presented_high_water_is_separate_from_processed_cursor(tmp_path):
@@ -168,13 +189,16 @@ def test_presented_high_water_is_separate_from_processed_cursor(tmp_path):
 
     record = repo.record_event_and_advance_processed_cursor(event)
 
-    assert repo.get_presented_high_water(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor is None
+    assert (
+        repo.get_presented_high_water(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        is None
+    )
 
     presentation = repo.mark_event_presented_and_advance_high_water(
         event_key=record.event_key,
@@ -184,20 +208,26 @@ def test_presented_high_water_is_separate_from_processed_cursor(tmp_path):
 
     assert presentation.event_key == record.event_key
     assert presentation.local_delivery_state == "delivered"
-    assert repo.get_processed_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor == "cursor-1"
-    assert repo.get_presented_high_water(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor == "cursor-1"
+    assert (
+        repo.get_processed_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        == "cursor-1"
+    )
+    assert (
+        repo.get_presented_high_water(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        == "cursor-1"
+    )
 
 
 def test_cursor_upsert_handles_null_server_and_principal_scope(tmp_path):
@@ -219,17 +249,22 @@ def test_cursor_upsert_handles_null_server_and_principal_scope(tmp_path):
         )
     )
 
-    assert repo.get_processed_cursor(
-        source_authority="local",
-        server_profile_id=None,
-        authenticated_principal_id=None,
-        stream_name="local_notifications",
-        stream_instance_id="local",
-    ).cursor == "local-cursor-2"
+    assert (
+        repo.get_processed_cursor(
+            source_authority="local",
+            server_profile_id=None,
+            authenticated_principal_id=None,
+            stream_name="local_notifications",
+            stream_instance_id="local",
+        ).cursor
+        == "local-cursor-2"
+    )
 
 
 @pytest.mark.asyncio
-async def test_repository_can_back_event_observer_without_in_memory_cursor_store(tmp_path):
+async def test_repository_can_back_event_observer_without_in_memory_cursor_store(
+    tmp_path,
+):
     db_path = tmp_path / "events.db"
     repo = EventStateRepository(db_path)
     event = _event()
@@ -246,13 +281,16 @@ async def test_repository_can_back_event_observer_without_in_memory_cursor_store
     repo.close()
 
     reopened = EventStateRepository(db_path)
-    assert reopened.get_processed_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor == "cursor-1"
+    assert (
+        reopened.get_processed_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        == "cursor-1"
+    )
     assert reopened.is_duplicate_event(event) is True
 
 
@@ -281,23 +319,32 @@ def test_prune_stream_state_removes_oldest_events_but_preserves_cursors(tmp_path
     )
 
     assert pruned == 1
-    assert [row["event_id"] for row in repo.list_events(limit=10)] == ["event-2", "event-3"]
+    assert [row["event_id"] for row in repo.list_events(limit=10)] == [
+        "event-2",
+        "event-3",
+    ]
     assert repo.is_duplicate_event(first) is False
     assert repo.is_duplicate_event(third) is True
-    assert repo.get_processed_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor == "cursor-3"
-    assert repo.get_presented_high_water(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor == "cursor-3"
+    assert (
+        repo.get_processed_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        == "cursor-3"
+    )
+    assert (
+        repo.get_presented_high_water(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        == "cursor-3"
+    )
 
 
 def test_prune_stream_state_records_replay_window_gap(tmp_path):
@@ -373,16 +420,21 @@ def test_prune_stream_state_supports_age_cutoff_and_preserves_cursors(tmp_path):
     assert pruned == 2
     assert repo.list_events(limit=10) == []
     assert repo.is_duplicate_event(first) is False
-    assert repo.get_processed_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor == "cursor-2"
+    assert (
+        repo.get_processed_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        == "cursor-2"
+    )
 
 
-def test_observer_status_records_survive_restart_and_reset_cursor_records_status(tmp_path):
+def test_observer_status_records_survive_restart_and_reset_cursor_records_status(
+    tmp_path,
+):
     db_path = tmp_path / "events.db"
     repo = EventStateRepository(db_path)
     cursor = repo.get_processed_cursor(
@@ -439,10 +491,18 @@ def test_observer_status_can_record_degraded_dedupe_only_mode(tmp_path):
 def test_reset_stream_cursor_is_scoped_by_principal_and_records_status(tmp_path):
     repo = EventStateRepository(tmp_path / "events.db")
     repo.record_event_and_advance_processed_cursor(
-        _event(authenticated_principal_id="user-a", event_id="event-a", server_cursor="cursor-a")
+        _event(
+            authenticated_principal_id="user-a",
+            event_id="event-a",
+            server_cursor="cursor-a",
+        )
     )
     repo.record_event_and_advance_processed_cursor(
-        _event(authenticated_principal_id="user-b", event_id="event-b", server_cursor="cursor-b")
+        _event(
+            authenticated_principal_id="user-b",
+            event_id="event-b",
+            server_cursor="cursor-b",
+        )
     )
 
     result = repo.reset_stream_cursor(
@@ -455,33 +515,44 @@ def test_reset_stream_cursor_is_scoped_by_principal_and_records_status(tmp_path)
     )
 
     assert result.cursor.cursor is None
-    assert repo.get_processed_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor is None
-    assert repo.get_processed_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-b",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor == "cursor-b"
-    assert repo.get_observer_status(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    )["reason"] == "manual_replay"
+    assert (
+        repo.get_processed_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        is None
+    )
+    assert (
+        repo.get_processed_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-b",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        == "cursor-b"
+    )
+    assert (
+        repo.get_observer_status(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        )["reason"]
+        == "manual_replay"
+    )
 
 
 def test_clear_server_profile_state_removes_scoped_event_state_only(tmp_path):
     repo = EventStateRepository(tmp_path / "events.db")
     server_a = _event(event_id="event-a", server_cursor="cursor-a")
-    server_b = _event(server_profile_id="server-b", event_id="event-b", server_cursor="cursor-b")
+    server_b = _event(
+        server_profile_id="server-b", event_id="event-b", server_cursor="cursor-b"
+    )
     server_a_record = repo.record_event_and_advance_processed_cursor(server_a)
     repo.record_event_and_advance_processed_cursor(server_b)
     repo.mark_event_presented_and_advance_high_water(
@@ -498,7 +569,9 @@ def test_clear_server_profile_state_removes_scoped_event_state_only(tmp_path):
         reason="stable_cursor_missing",
     )
 
-    cleared = repo.clear_server_profile_state(server_profile_id="server-a", authenticated_principal_id="user-a")
+    cleared = repo.clear_server_profile_state(
+        server_profile_id="server-a", authenticated_principal_id="user-a"
+    )
 
     assert cleared["events"] == 1
     assert cleared["dedupe_records"] == 1
@@ -506,41 +579,57 @@ def test_clear_server_profile_state_removes_scoped_event_state_only(tmp_path):
     assert cleared["presented_high_water"] == 1
     assert cleared["observer_status"] == 1
     assert repo.is_duplicate_event(server_a) is False
-    assert repo.get_processed_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor is None
-    assert repo.get_presented_high_water(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor is None
-    assert repo.get_observer_status(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ) is None
+    assert (
+        repo.get_processed_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        is None
+    )
+    assert (
+        repo.get_presented_high_water(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        is None
+    )
+    assert (
+        repo.get_observer_status(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        )
+        is None
+    )
     assert repo.is_duplicate_event(server_b) is True
-    assert repo.get_processed_cursor(
-        source_authority="server",
-        server_profile_id="server-b",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor == "cursor-b"
+    assert (
+        repo.get_processed_cursor(
+            source_authority="server",
+            server_profile_id="server-b",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        == "cursor-b"
+    )
 
 
 def test_clear_server_profile_state_removes_replay_window(tmp_path):
     repo = EventStateRepository(tmp_path / "events.db")
-    repo.record_event_and_advance_processed_cursor(_event(event_id="event-a", server_cursor="1"))
-    repo.record_event_and_advance_processed_cursor(_event(event_id="event-b", server_cursor="2"))
+    repo.record_event_and_advance_processed_cursor(
+        _event(event_id="event-a", server_cursor="1")
+    )
+    repo.record_event_and_advance_processed_cursor(
+        _event(event_id="event-b", server_cursor="2")
+    )
     repo.prune_stream_state(
         source_authority="server",
         server_profile_id="server-a",
@@ -550,16 +639,21 @@ def test_clear_server_profile_state_removes_replay_window(tmp_path):
         max_count=1,
     )
 
-    cleared = repo.clear_server_profile_state(server_profile_id="server-a", authenticated_principal_id="user-a")
+    cleared = repo.clear_server_profile_state(
+        server_profile_id="server-a", authenticated_principal_id="user-a"
+    )
 
     assert cleared["replay_windows"] == 1
-    assert repo.get_replay_window(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).state == "empty"
+    assert (
+        repo.get_replay_window(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).state
+        == "empty"
+    )
 
 
 def test_retention_policy_has_durable_default_and_stream_override(tmp_path):

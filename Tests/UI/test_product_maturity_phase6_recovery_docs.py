@@ -54,7 +54,9 @@ def _text(path: Path) -> str:
 
 def _assert_no_local_path_prefixes(text: str) -> None:
     leaked_prefixes = [prefix for prefix in LOCAL_PATH_PREFIXES if prefix in text]
-    assert not leaked_prefixes, f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    assert not leaked_prefixes, (
+        f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    )
 
 
 def _test_cli_setting(section: str, key: str, default=None):
@@ -149,13 +151,17 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
     app.app_config["_first_run"] = False
     app._initial_tab_value = "home"
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting), patch(
-        "tldw_chatbook.config.get_cli_setting", side_effect=_test_cli_setting
+    with (
+        patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting),
+        patch("tldw_chatbook.config.get_cli_setting", side_effect=_test_cli_setting),
     ):
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                ),
             )
             home_text = _screen_text(app)
             assert "Model: Blocked" in home_text
@@ -168,11 +174,17 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             await app.handle_screen_navigation(NavigateToScreen("chat"))
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
             )
             console_text = _screen_text(app)
             assert "Credential: check setup" in console_text
-            assert "OPENAI_API_KEY" in console_text or "Provider setup needed" in console_text
+            assert (
+                "OPENAI_API_KEY" in console_text
+                or "Provider setup needed" in console_text
+            )
             assert "Sources: not staged" in console_text
             assert "RAG/source:" not in console_text
             assert "MCP: Not wired - MCP servers." in console_text
@@ -181,7 +193,10 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             await app.handle_screen_navigation(NavigateToScreen("acp"))
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "acp" and app.screen.__class__.__name__ == "ACPScreen",
+                lambda: (
+                    app.current_tab == "acp"
+                    and app.screen.__class__.__name__ == "ACPScreen"
+                ),
             )
             acp_text = _screen_text(app)
             assert "Runtime not configured" in acp_text
@@ -192,10 +207,16 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             await app.handle_screen_navigation(NavigateToScreen("mcp"))
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "mcp" and app.screen.__class__.__name__ == "MCPScreen",
+                lambda: (
+                    app.current_tab == "mcp"
+                    and app.screen.__class__.__name__ == "MCPScreen"
+                ),
             )
             mcp_text = _screen_text(app)
-            assert "Manage MCP servers, scoped tools, permissions, and audit readiness." in mcp_text
+            assert (
+                "Manage MCP servers, scoped tools, permissions, and audit readiness."
+                in mcp_text
+            )
             # The legacy panel's "Select Section: Inventory ..." line was
             # retired with the MCP Hub workbench; the Unified MCP Overview
             # section's next-step line is the surviving guidance copy.
@@ -204,16 +225,27 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             await app.handle_screen_navigation(NavigateToScreen("library"))
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
+                lambda: (
+                    app.current_tab == "library"
+                    and app.screen.__class__.__name__ == "LibraryScreen"
+                ),
             )
             await _wait_until(
                 pilot,
-                lambda: "Library source services unavailable; retry Library later." in _screen_text(app),
+                lambda: (
+                    "Library source services unavailable; retry Library later."
+                    in _screen_text(app)
+                ),
             )
             library_text = _screen_text(app)
-            assert "Library source services unavailable; retry Library later." in library_text
+            assert (
+                "Library source services unavailable; retry Library later."
+                in library_text
+            )
             # The retired inspector pane's "No source selected." placeholder
             # went away with the legacy workbench chrome; the shell canvas
             # landing copy is the surviving empty/no-source cue (design: the
             # canvas empty state carries the landing-page guidance).
-            assert "Search, pick a content type, or ingest something new." in library_text
+            assert (
+                "Search, pick a content type, or ingest something new." in library_text
+            )

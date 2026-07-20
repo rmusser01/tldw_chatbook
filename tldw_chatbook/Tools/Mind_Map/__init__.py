@@ -19,15 +19,12 @@ from .mermaid_parser import (
     MermaidMindmapParser,
     ExtendedMermaidParser,
     NodeShape,
-    MindmapNode
+    MindmapNode,
 )
 
 from .mindmap_model import MindmapModel
 
-from .mindmap_renderer import (
-    MindmapRenderer,
-    ThemedMindmapRenderer
-)
+from .mindmap_renderer import MindmapRenderer, ThemedMindmapRenderer
 
 from .mindmap_integration import MindmapIntegration
 
@@ -35,21 +32,17 @@ from .mindmap_exporter import MindmapExporter
 
 __all__ = [
     # Parser classes
-    'MermaidMindmapParser',
-    'ExtendedMermaidParser',
-    'NodeShape',
-    'MindmapNode',
-    
+    "MermaidMindmapParser",
+    "ExtendedMermaidParser",
+    "NodeShape",
+    "MindmapNode",
     # Model
-    'MindmapModel',
-    
+    "MindmapModel",
     # Renderers
-    'MindmapRenderer',
-    'ThemedMindmapRenderer',
-    
+    "MindmapRenderer",
+    "ThemedMindmapRenderer",
     # Integration
-    'MindmapIntegration',
-    
+    "MindmapIntegration",
     # Exporter
-    'MindmapExporter'
+    "MindmapExporter",
 ]

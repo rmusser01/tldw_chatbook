@@ -11,6 +11,7 @@ guarantees the rewrite dropped nothing: every name the old file exported
 must still resolve, from the correct defining submodule, with no import
 errors -- while a bare package import stays cheap.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -83,7 +84,9 @@ def test_module_level_alias_preserves_identity():
     from tldw_chatbook.tldw_api import WebProcessResponse, IngestWebContentResponse
 
     assert WebProcessResponse is IngestWebContentResponse
-    assert WebProcessResponse.__module__ == "tldw_chatbook.tldw_api.media_reading_schemas"
+    assert (
+        WebProcessResponse.__module__ == "tldw_chatbook.tldw_api.media_reading_schemas"
+    )
 
 
 def test_unknown_attribute_raises_attribute_error_naming_the_package():
@@ -110,7 +113,9 @@ def test_all_dunder_all_names_resolve_without_error():
             getattr(tldw_api, name)
         except Exception as exc:  # pragma: no cover - failure path
             failed.append((name, repr(exc)))
-    assert not failed, f"{len(failed)} of {len(tldw_api.__all__)} names in __all__ failed to resolve: {failed[:20]}"
+    assert not failed, (
+        f"{len(failed)} of {len(tldw_api.__all__)} names in __all__ failed to resolve: {failed[:20]}"
+    )
 
 
 def test_app_import_does_not_load_tldw_api_client():
@@ -156,6 +161,8 @@ def test_full_submodule_mapping_resolves_without_error():
             getattr(tldw_api, name)
         except Exception as exc:  # pragma: no cover - failure path
             failed.append((name, repr(exc)))
-    assert not failed, f"{len(failed)} of {len(names)} mapped names failed to resolve: {failed[:20]}"
+    assert not failed, (
+        f"{len(failed)} of {len(names)} mapped names failed to resolve: {failed[:20]}"
+    )
     # Sanity: the mapping is genuinely a superset of __all__.
     assert set(tldw_api.__all__) <= set(names)

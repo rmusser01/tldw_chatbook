@@ -13,18 +13,28 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 class FakeDB:
     conversations_page_rows: list[dict[str, Any]] = field(default_factory=list)
     conversations_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
-    keywords_by_conversation: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    keywords_by_conversation: dict[str, list[dict[str, Any]]] = field(
+        default_factory=dict
+    )
     keyword_lookup: dict[str, dict[str, Any] | None] = field(default_factory=dict)
     keyword_add_results: dict[str, int | None] = field(default_factory=dict)
     message_counts: dict[str, int] = field(default_factory=dict)
     message_count_by_conversation: dict[str, int] = field(default_factory=dict)
     root_counts: dict[str, int] = field(default_factory=dict)
-    root_messages: dict[tuple[str, int, int, str], list[dict[str, Any]]] = field(default_factory=dict)
-    child_messages: dict[tuple[str, tuple[str, ...], str], list[dict[str, Any]]] = field(default_factory=dict)
+    root_messages: dict[tuple[str, int, int, str], list[dict[str, Any]]] = field(
+        default_factory=dict
+    )
+    child_messages: dict[tuple[str, tuple[str, ...], str], list[dict[str, Any]]] = (
+        field(default_factory=dict)
+    )
     latest_message: dict[str, dict[str, Any] | None] = field(default_factory=dict)
     messages_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
-    messages_by_conversation: dict[tuple[str, int, int, str], list[dict[str, Any]]] = field(default_factory=dict)
-    calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = field(default_factory=list)
+    messages_by_conversation: dict[tuple[str, int, int, str], list[dict[str, Any]]] = (
+        field(default_factory=dict)
+    )
+    calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = field(
+        default_factory=list
+    )
     replaced_keyword_ids: list[tuple[str, list[int]]] = field(default_factory=list)
     updates: list[tuple[str, dict[str, Any], int]] = field(default_factory=list)
     deletes: list[tuple[str, int]] = field(default_factory=list)
@@ -33,20 +43,31 @@ class FakeDB:
     def search_conversations_page(self, query, **kwargs):
         self.calls.append(("search_conversations_page", (query,), kwargs))
         offset = kwargs.get("offset", 0) or 0
-        limit = kwargs.get("limit", len(self.conversations_page_rows)) or len(self.conversations_page_rows)
+        limit = kwargs.get("limit", len(self.conversations_page_rows)) or len(
+            self.conversations_page_rows
+        )
         rows = self.conversations_page_rows[offset : offset + limit]
         return rows, len(self.conversations_page_rows), 0.0
 
     def count_messages_for_conversations(self, conversation_ids, **kwargs):
-        self.calls.append(("count_messages_for_conversations", (tuple(conversation_ids),), kwargs))
-        return {conversation_id: self.message_counts.get(conversation_id, 0) for conversation_id in conversation_ids}
+        self.calls.append(
+            ("count_messages_for_conversations", (tuple(conversation_ids),), kwargs)
+        )
+        return {
+            conversation_id: self.message_counts.get(conversation_id, 0)
+            for conversation_id in conversation_ids
+        }
 
     def count_messages_for_conversation(self, conversation_id, **kwargs):
-        self.calls.append(("count_messages_for_conversation", (conversation_id,), kwargs))
+        self.calls.append(
+            ("count_messages_for_conversation", (conversation_id,), kwargs)
+        )
         return self.message_count_by_conversation.get(conversation_id, 0)
 
     def get_keywords_for_conversations(self, conversation_ids):
-        self.calls.append(("get_keywords_for_conversations", (tuple(conversation_ids),), {}))
+        self.calls.append(
+            ("get_keywords_for_conversations", (tuple(conversation_ids),), {})
+        )
         return {
             conversation_id: self.keywords_by_conversation.get(conversation_id, [])
             for conversation_id in conversation_ids
@@ -65,12 +86,24 @@ class FakeDB:
         return self.keyword_add_results.get(keyword_text)
 
     def replace_keywords_for_conversation(self, conversation_id, keyword_ids):
-        self.calls.append(("replace_keywords_for_conversation", (conversation_id, list(keyword_ids)), {}))
+        self.calls.append(
+            (
+                "replace_keywords_for_conversation",
+                (conversation_id, list(keyword_ids)),
+                {},
+            )
+        )
         self.replaced_keyword_ids.append((conversation_id, list(keyword_ids)))
         return True
 
     def get_conversation_by_id(self, conversation_id, include_deleted=False):
-        self.calls.append(("get_conversation_by_id", (conversation_id,), {"include_deleted": include_deleted}))
+        self.calls.append(
+            (
+                "get_conversation_by_id",
+                (conversation_id,),
+                {"include_deleted": include_deleted},
+            )
+        )
         return self.conversations_by_id.get(conversation_id)
 
     def update_conversation(self, conversation_id, update_data, expected_version):
@@ -85,12 +118,24 @@ class FakeDB:
         return True
 
     def soft_delete_conversation(self, conversation_id, expected_version):
-        self.calls.append(("soft_delete_conversation", (conversation_id,), {"expected_version": expected_version}))
+        self.calls.append(
+            (
+                "soft_delete_conversation",
+                (conversation_id,),
+                {"expected_version": expected_version},
+            )
+        )
         self.deletes.append((conversation_id, expected_version))
         return True
 
     def restore_conversation(self, conversation_id, expected_version):
-        self.calls.append(("restore_conversation", (conversation_id,), {"expected_version": expected_version}))
+        self.calls.append(
+            (
+                "restore_conversation",
+                (conversation_id,),
+                {"expected_version": expected_version},
+            )
+        )
         self.restores.append((conversation_id, expected_version))
         return True
 
@@ -126,7 +171,9 @@ class FakeDB:
                 },
             )
         )
-        return self.root_messages.get((conversation_id, limit, offset, order_by_timestamp), [])
+        return self.root_messages.get(
+            (conversation_id, limit, offset, order_by_timestamp), []
+        )
 
     def get_messages_for_conversation_by_parent_ids(
         self,
@@ -145,21 +192,31 @@ class FakeDB:
                 },
             )
         )
-        return self.child_messages.get((conversation_id, tuple(parent_ids), order_by_timestamp), [])
+        return self.child_messages.get(
+            (conversation_id, tuple(parent_ids), order_by_timestamp), []
+        )
 
     def get_message_by_id(self, message_id):
         self.calls.append(("get_message_by_id", (message_id,), {}))
         return self.messages_by_id.get(message_id)
 
-    def get_messages_for_conversation(self, conversation_id, limit=100, offset=0, order_by_timestamp="ASC"):
+    def get_messages_for_conversation(
+        self, conversation_id, limit=100, offset=0, order_by_timestamp="ASC"
+    ):
         self.calls.append(
             (
                 "get_messages_for_conversation",
                 (conversation_id,),
-                {"limit": limit, "offset": offset, "order_by_timestamp": order_by_timestamp},
+                {
+                    "limit": limit,
+                    "offset": offset,
+                    "order_by_timestamp": order_by_timestamp,
+                },
             )
         )
-        return self.messages_by_conversation.get((conversation_id, limit, offset, order_by_timestamp), [])
+        return self.messages_by_conversation.get(
+            (conversation_id, limit, offset, order_by_timestamp), []
+        )
 
 
 def test_normalize_conversation_and_message_rows_preserve_stable_shape():
@@ -194,7 +251,10 @@ def test_normalize_conversation_and_message_rows_preserve_stable_shape():
     assert conversation["keywords"] == []
     assert conversation["message_count"] == 0
     assert conversation["system_prompt"] == "Be terse."
-    assert service.derive_conversation_title({"assistant_kind": None, "title": None}) == "New Chat"
+    assert (
+        service.derive_conversation_title({"assistant_kind": None, "title": None})
+        == "New Chat"
+    )
 
 
 def test_normalize_conversation_row_defaults_missing_system_prompt_to_none():
@@ -288,9 +348,16 @@ def test_list_conversations_normalizes_pagination_and_enforces_global_defaults()
     )
     service = ChatConversationService(db)
 
-    result = service.list_conversations(query="billing", limit=1, offset=0, state="resolved", topic_label="billing")
+    result = service.list_conversations(
+        query="billing", limit=1, offset=0, state="resolved", topic_label="billing"
+    )
 
-    assert result["pagination"] == {"limit": 1, "offset": 0, "total": 2, "has_more": True}
+    assert result["pagination"] == {
+        "limit": 1,
+        "offset": 0,
+        "total": 2,
+        "has_more": True,
+    }
     assert [item["id"] for item in result["items"]] == ["conv-1"]
     assert result["items"][0]["title"] == "Chat with Persona persona.alpha"
     assert result["items"][0]["keywords"] == ["alpha", "beta"]
@@ -299,14 +366,20 @@ def test_list_conversations_normalizes_pagination_and_enforces_global_defaults()
     assert result["items"][0]["discovery_owner"] == "general_chat"
     assert result["items"][0]["discovery_entity_id"] is None
 
-    search_call = next(call for call in db.calls if call[0] == "search_conversations_page")
+    search_call = next(
+        call for call in db.calls if call[0] == "search_conversations_page"
+    )
     assert search_call[2]["scope_type"] == "global"
     assert search_call[2]["include_deleted"] is False
     assert search_call[2]["deleted_only"] is False
 
-    workspace_result = service.list_conversations(scope_type="workspace", workspace_id="ws-99", include_deleted=True)
+    workspace_result = service.list_conversations(
+        scope_type="workspace", workspace_id="ws-99", include_deleted=True
+    )
     assert workspace_result["pagination"]["limit"] == 50
-    workspace_call = [call for call in db.calls if call[0] == "search_conversations_page"][-1]
+    workspace_call = [
+        call for call in db.calls if call[0] == "search_conversations_page"
+    ][-1]
     assert workspace_call[2]["scope_type"] == "workspace"
     assert workspace_call[2]["workspace_id"] == "ws-99"
     assert workspace_call[2]["include_deleted"] is True
@@ -329,19 +402,25 @@ def test_list_conversations_scope_all_passes_through_without_workspace_filter():
 
     service.list_conversations(scope_type="all", limit=50, offset=0)
 
-    search_call = [call for call in db.calls if call[0] == "search_conversations_page"][-1]
+    search_call = [call for call in db.calls if call[0] == "search_conversations_page"][
+        -1
+    ]
     assert search_call[2]["scope_type"] == "all"
     assert search_call[2]["workspace_id"] is None
 
     # An explicit workspace_id always wins over the 'all' sentinel.
     service.list_conversations(scope_type="all", workspace_id="ws-chats")
-    narrowed_call = [call for call in db.calls if call[0] == "search_conversations_page"][-1]
+    narrowed_call = [
+        call for call in db.calls if call[0] == "search_conversations_page"
+    ][-1]
     assert narrowed_call[2]["scope_type"] == "workspace"
     assert narrowed_call[2]["workspace_id"] == "ws-chats"
 
     deleted_only_result = service.list_conversations(deleted_only=True)
     assert deleted_only_result["pagination"]["limit"] == 50
-    deleted_only_call = [call for call in db.calls if call[0] == "search_conversations_page"][-1]
+    deleted_only_call = [
+        call for call in db.calls if call[0] == "search_conversations_page"
+    ][-1]
     assert deleted_only_call[2]["deleted_only"] is True
     assert deleted_only_call[2]["include_deleted"] is False
 
@@ -356,7 +435,9 @@ def test_replace_conversation_keywords_resolves_ids_before_replacing():
     )
     service = ChatConversationService(db)
 
-    result = service.replace_conversation_keywords("conv-1", [" alpha ", "beta", "ALPHA", ""])
+    result = service.replace_conversation_keywords(
+        "conv-1", [" alpha ", "beta", "ALPHA", ""]
+    )
 
     assert result == ["alpha", "beta"]
     assert db.replaced_keyword_ids == [("conv-1", [11, 22])]
@@ -443,7 +524,9 @@ def test_get_and_update_conversation_metadata_routes_normalized_fields():
                 "version": 9,
             }
         },
-        keywords_by_conversation={"conv-1": [{"keyword": "ops"}, {"keyword": "urgent"}]},
+        keywords_by_conversation={
+            "conv-1": [{"keyword": "ops"}, {"keyword": "urgent"}]
+        },
     )
     service = ChatConversationService(db)
 
@@ -508,8 +591,12 @@ def test_update_conversation_metadata_merges_scope_from_current_state_before_val
     )
     service = ChatConversationService(db)
 
-    service.update_conversation_metadata("conv-1", {"scope_type": "workspace"}, expected_version=3)
-    service.update_conversation_metadata("conv-1", {"workspace_id": "ws-2"}, expected_version=3)
+    service.update_conversation_metadata(
+        "conv-1", {"scope_type": "workspace"}, expected_version=3
+    )
+    service.update_conversation_metadata(
+        "conv-1", {"workspace_id": "ws-2"}, expected_version=3
+    )
 
     assert db.updates[0][1] == {"scope_type": "workspace", "workspace_id": "ws-1"}
     assert db.updates[1][1] == {"scope_type": "workspace", "workspace_id": "ws-2"}
@@ -532,7 +619,9 @@ def test_update_conversation_metadata_rejects_workspace_id_clears_without_explic
     service = ChatConversationService(db)
 
     with pytest.raises(ValueError, match="workspace_id is required"):
-        service.update_conversation_metadata("conv-1", {"workspace_id": None}, expected_version=3)
+        service.update_conversation_metadata(
+            "conv-1", {"workspace_id": None}, expected_version=3
+        )
 
 
 def test_delete_conversation_metadata_routes_soft_delete():
@@ -543,7 +632,11 @@ def test_delete_conversation_metadata_routes_soft_delete():
 
     assert result is True
     assert db.deletes == [("conv-1", 4)]
-    assert db.calls[-1] == ("soft_delete_conversation", ("conv-1",), {"expected_version": 4})
+    assert db.calls[-1] == (
+        "soft_delete_conversation",
+        ("conv-1",),
+        {"expected_version": 4},
+    )
 
 
 def test_get_conversation_metadata_uses_real_message_count_when_missing_from_row():
@@ -589,7 +682,9 @@ def test_title_updates_are_trimmed_and_whitespace_only_titles_collapse_to_none()
     )
     service = ChatConversationService(db)
 
-    service.update_conversation_metadata("conv-1", {"title": "  Fresh Title  "}, expected_version=3)
+    service.update_conversation_metadata(
+        "conv-1", {"title": "  Fresh Title  "}, expected_version=3
+    )
     service.update_conversation_metadata("conv-1", {"title": "   "}, expected_version=3)
 
     assert db.updates[0][1]["title"] == "Fresh Title"
@@ -672,7 +767,12 @@ def test_get_conversation_tree_wraps_root_and_child_rows():
     tree = service.get_conversation_tree("conv-1")
 
     assert tree["conversation"]["title"] == "New Chat"
-    assert tree["pagination"] == {"limit": 50, "offset": 0, "total_root_threads": 2, "has_more": False}
+    assert tree["pagination"] == {
+        "limit": 50,
+        "offset": 0,
+        "total_root_threads": 2,
+        "has_more": False,
+    }
     assert [node["id"] for node in tree["root_threads"]] == ["msg-root-1", "msg-root-2"]
     assert tree["root_threads"][0]["children"][0]["id"] == "msg-child-1"
     assert tree["root_threads"][0]["children"][0]["variant"]["variant_number"] == 2
@@ -690,10 +790,12 @@ def test_get_conversation_tree_carries_system_prompt_through_real_db(tmp_path):
     """
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test-client")
     try:
-        conversation_id = db.add_conversation({
-            "title": "Saved chat",
-            "system_prompt": "Answer only in French.",
-        })
+        conversation_id = db.add_conversation(
+            {
+                "title": "Saved chat",
+                "system_prompt": "Answer only in French.",
+            }
+        )
         service = ChatConversationService(db)
 
         tree = service.get_conversation_tree(conversation_id)
@@ -740,7 +842,14 @@ def test_local_rag_context_adjuncts_are_persisted_and_reloaded(tmp_path):
     assert messages[0]["citations"][0]["message_id"] == "msg-1"
     assert citations == {
         "conversation_id": "conv-1",
-        "citations": [{"id": "cite-1", "source_id": "note-1", "quote": "fact", "message_id": "msg-1"}],
+        "citations": [
+            {
+                "id": "cite-1",
+                "source_id": "note-1",
+                "quote": "fact",
+                "message_id": "msg-1",
+            }
+        ],
         "total_count": 1,
     }
     assert reloaded_messages[0]["rag_context"]["chunks"] == [{"source_id": "note-1"}]
@@ -758,7 +867,11 @@ def test_local_rag_context_rejects_message_conversation_mismatches(tmp_path):
             }
         }
     )
-    service = ChatConversationService(db, rag_context_store_path=tmp_path / "chat_rag_context.json")
+    service = ChatConversationService(
+        db, rag_context_store_path=tmp_path / "chat_rag_context.json"
+    )
 
     with pytest.raises(ValueError, match="message does not belong to conversation"):
-        service.record_message_rag_context("conv-1", "msg-1", rag_context={"search_query": "alpha"})
+        service.record_message_rag_context(
+            "conv-1", "msg-1", rag_context={"search_query": "alpha"}
+        )

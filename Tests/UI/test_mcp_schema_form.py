@@ -7,6 +7,7 @@ tested standalone first; the widget tests mirror the small `App` subclass
 harness style used throughout `Tests/UI/test_mcp_workbench.py` (no app
 stylesheet is loaded in this harness, so nothing here asserts on styling).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -40,20 +41,33 @@ def test_parse_schema_happy_path_string_number_bool_enum_required():
     by_name = {f.name: f for f in fields}
 
     assert by_name["name"] == SchemaField(
-        name="name", kind="string", required=True,
-        description="The widget's name", default=None,
+        name="name",
+        kind="string",
+        required=True,
+        description="The widget's name",
+        default=None,
     )
     assert by_name["count"] == SchemaField(
-        name="count", kind="number", required=False,
-        description="", default=1,
+        name="count",
+        kind="number",
+        required=False,
+        description="",
+        default=1,
     )
     assert by_name["active"] == SchemaField(
-        name="active", kind="boolean", required=False,
-        description="", default=True,
+        name="active",
+        kind="boolean",
+        required=False,
+        description="",
+        default=True,
     )
     assert by_name["mode"] == SchemaField(
-        name="mode", kind="enum", required=True,
-        description="Speed", default=None, choices=("fast", "slow"),
+        name="mode",
+        kind="enum",
+        required=True,
+        description="Speed",
+        default=None,
+        choices=("fast", "slow"),
     )
 
 

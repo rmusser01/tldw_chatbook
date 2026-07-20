@@ -13,11 +13,16 @@ from tldw_chatbook.Media.media_reading_normalizers import (
 
 
 def test_build_canonical_media_id_stringifies_all_parts():
-    assert build_canonical_media_id("server", "reading_item", 41) == "server:reading_item:41"
+    assert (
+        build_canonical_media_id("server", "reading_item", 41)
+        == "server:reading_item:41"
+    )
 
 
 def test_build_media_entity_id_matches_spec_helper_name():
-    assert build_media_entity_id("server", "reading_item", 41) == "server:reading_item:41"
+    assert (
+        build_media_entity_id("server", "reading_item", 41) == "server:reading_item:41"
+    )
 
 
 def test_normalize_local_media_row_exposes_shared_contract():

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+
 if TYPE_CHECKING:
     from ..tldw_api import TLDWAPIClient
 
@@ -55,13 +56,17 @@ class ServerResearchSearchService:
             return self.client
         if self.client_provider is not None:
             return self.client_provider.build_client()
-        raise ValueError("TLDW API client is required for server research search operations.")
+        raise ValueError(
+            "TLDW API client is required for server research search operations."
+        )
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -70,11 +75,14 @@ class ServerResearchSearchService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
                     user_message=getattr(decision, "user_message", None)
                     or "Server research search action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -119,7 +127,9 @@ class ServerResearchSearchService:
             **kwargs,
         )
         client = self._require_client()
-        method = getattr(client, "run_research_websearch", None) or getattr(client, "research_websearch")
+        method = getattr(client, "run_research_websearch", None) or getattr(
+            client, "research_websearch"
+        )
         return self._dump(await method(request))
 
     async def paper_search(self, *, endpoint: str, **params: Any) -> dict[str, Any]:
@@ -144,7 +154,9 @@ class ServerResearchSearchService:
         from ..tldw_api.research_search_schemas import PaperSearchDetailRequest
 
         self._enforce("research.search.providers.observe.server")
-        request = PaperSearchDetailRequest(endpoint=endpoint, params=self._params(**params))
+        request = PaperSearchDetailRequest(
+            endpoint=endpoint, params=self._params(**params)
+        )
         client = self._require_client()
         method = getattr(client, "get_paper_search_detail", None)
         if callable(method):
@@ -167,7 +179,9 @@ class ServerResearchSearchService:
         from ..tldw_api.research_search_schemas import PaperSearchIngestRequest
 
         self._enforce("research.search.providers.launch.server")
-        request = PaperSearchIngestRequest(endpoint=endpoint, params=self._params(**params), payload=payload)
+        request = PaperSearchIngestRequest(
+            endpoint=endpoint, params=self._params(**params), payload=payload
+        )
         client = self._require_client()
         method = getattr(client, "run_paper_search_ingest", None)
         if callable(method):
@@ -232,7 +246,11 @@ class ServerResearchSearchService:
 
     async def get_semantic_scholar_by_id(self, *, paper_id: str) -> dict[str, Any]:
         self._enforce("research.search.providers.launch.server")
-        return self._dump(await self._require_client().get_semantic_scholar_paper_by_id(paper_id=paper_id))
+        return self._dump(
+            await self._require_client().get_semantic_scholar_paper_by_id(
+                paper_id=paper_id
+            )
+        )
 
     async def search_biorxiv(
         self,
@@ -269,7 +287,11 @@ class ServerResearchSearchService:
         server: str = "biorxiv",
     ) -> dict[str, Any]:
         self._enforce("research.search.providers.launch.server")
-        return self._dump(await self._require_client().get_biorxiv_paper_by_doi(doi=doi, server=server))
+        return self._dump(
+            await self._require_client().get_biorxiv_paper_by_doi(
+                doi=doi, server=server
+            )
+        )
 
     async def search_medrxiv(
         self,
@@ -299,7 +321,9 @@ class ServerResearchSearchService:
 
     async def get_medrxiv_by_doi(self, *, doi: str) -> dict[str, Any]:
         self._enforce("research.search.providers.launch.server")
-        return self._dump(await self._require_client().get_medrxiv_paper_by_doi(doi=doi))
+        return self._dump(
+            await self._require_client().get_medrxiv_paper_by_doi(doi=doi)
+        )
 
     async def search_pubmed(
         self,
@@ -325,4 +349,6 @@ class ServerResearchSearchService:
 
     async def get_pubmed_by_id(self, *, pmid: str) -> dict[str, Any]:
         self._enforce("research.search.providers.launch.server")
-        return self._dump(await self._require_client().get_pubmed_paper_by_id(pmid=pmid))
+        return self._dump(
+            await self._require_client().get_pubmed_paper_by_id(pmid=pmid)
+        )

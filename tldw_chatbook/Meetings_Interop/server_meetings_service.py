@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+
 if TYPE_CHECKING:
     from ..tldw_api import (
         MeetingArtifactCreate,
@@ -71,7 +72,9 @@ class ServerMeetingsService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -80,10 +83,14 @@ class ServerMeetingsService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server meeting action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server meeting action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @classmethod
@@ -103,11 +110,17 @@ class ServerMeetingsService:
         return model_type(**dict(request_data or {}))
 
     @staticmethod
-    def _with_record_id(kind: str, payload: dict[str, Any], identifier: Any | None = None) -> dict[str, Any]:
+    def _with_record_id(
+        kind: str, payload: dict[str, Any], identifier: Any | None = None
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", "server")
         if identifier is None:
-            identifier = record.get("id") or record.get("session_id") or record.get("dispatch_id")
+            identifier = (
+                record.get("id")
+                or record.get("session_id")
+                or record.get("dispatch_id")
+            )
         if identifier is not None:
             record.setdefault("record_id", f"server:{kind}:{identifier}")
         return record
@@ -126,26 +139,36 @@ class ServerMeetingsService:
         if kind == "meeting_artifact":
             return cls._with_record_id("meeting_artifact", payload)
         if kind == "meeting_share":
-            return cls._with_record_id("meeting_share", payload, payload.get("dispatch_id"))
+            return cls._with_record_id(
+                "meeting_share", payload, payload.get("dispatch_id")
+            )
         if kind == "meeting_health":
             return cls._with_record_id("meetings", payload, "health")
 
         record = dict(payload)
         record.setdefault("backend", "server")
         if record.get("session_id") is not None:
-            record = cls._with_record_id("meeting_session", record, record.get("session_id"))
+            record = cls._with_record_id(
+                "meeting_session", record, record.get("session_id")
+            )
         if isinstance(record.get("artifacts"), list):
             record["artifacts"] = [
-                cls._with_record_id("meeting_artifact", item) if isinstance(item, dict) else item
+                cls._with_record_id("meeting_artifact", item)
+                if isinstance(item, dict)
+                else item
                 for item in record["artifacts"]
             ]
         return record
 
     async def get_meetings_health(self) -> dict[str, Any]:
         self._enforce("meetings.health.detail.server")
-        return self._normalize_response(await self._require_client().get_meetings_health(), kind="meeting_health")
+        return self._normalize_response(
+            await self._require_client().get_meetings_health(), kind="meeting_health"
+        )
 
-    async def create_meeting_session(self, request_data: MeetingSessionCreate | dict[str, Any]) -> dict[str, Any]:
+    async def create_meeting_session(
+        self, request_data: MeetingSessionCreate | dict[str, Any]
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import MeetingSessionCreate
 
@@ -181,11 +204,15 @@ class ServerMeetingsService:
         self._enforce("meetings.sessions.update.server")
         request = self._model(request_data, MeetingSessionStatusUpdate)
         return self._normalize_response(
-            await self._require_client().update_meeting_session_status(session_id, request),
+            await self._require_client().update_meeting_session_status(
+                session_id, request
+            ),
             kind="meeting_session",
         )
 
-    async def create_meeting_template(self, request_data: MeetingTemplateCreate | dict[str, Any]) -> dict[str, Any]:
+    async def create_meeting_template(
+        self, request_data: MeetingTemplateCreate | dict[str, Any]
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import MeetingTemplateCreate
 
@@ -242,7 +269,9 @@ class ServerMeetingsService:
 
         self._enforce("meetings.sessions.launch.server")
         request = self._model(request_data, MeetingFinalizeRequest)
-        return self._normalize_response(await self._require_client().finalize_meeting_session(session_id, request))
+        return self._normalize_response(
+            await self._require_client().finalize_meeting_session(session_id, request)
+        )
 
     async def share_meeting_session_to_slack(
         self,
@@ -255,7 +284,9 @@ class ServerMeetingsService:
         self._enforce("meetings.share.launch.server")
         request = self._model(request_data, MeetingShareRequest)
         return self._normalize_response(
-            await self._require_client().share_meeting_session_to_slack(session_id, request),
+            await self._require_client().share_meeting_session_to_slack(
+                session_id, request
+            ),
             kind="meeting_share",
         )
 
@@ -270,13 +301,19 @@ class ServerMeetingsService:
         self._enforce("meetings.share.launch.server")
         request = self._model(request_data, MeetingShareRequest)
         return self._normalize_response(
-            await self._require_client().share_meeting_session_to_webhook(session_id, request),
+            await self._require_client().share_meeting_session_to_webhook(
+                session_id, request
+            ),
             kind="meeting_share",
         )
 
-    async def stream_meeting_session_events(self, session_id: str) -> AsyncGenerator[dict[str, Any], None]:
+    async def stream_meeting_session_events(
+        self, session_id: str
+    ) -> AsyncGenerator[dict[str, Any], None]:
         self._enforce("meetings.events.observe.server")
-        async for event in self._require_client().stream_meeting_session_events(session_id):
+        async for event in self._require_client().stream_meeting_session_events(
+            session_id
+        ):
             payload = self._dump(event)
             if isinstance(payload, dict):
                 payload.setdefault("backend", "server")

@@ -31,12 +31,19 @@ class ExecutionRecord:
     result_excerpt: str | None = None
 
 
-def build_record(*, server_key: str, tool_name: str, initiator: str, ok: bool,
-                 duration_ms: int, error: str | None = None,
-                 arguments: dict[str, Any] | None = None,
-                 result_excerpt: str | None = None,
-                 decision: str = "allowed",
-                 capture_args: bool = True) -> ExecutionRecord:
+def build_record(
+    *,
+    server_key: str,
+    tool_name: str,
+    initiator: str,
+    ok: bool,
+    duration_ms: int,
+    error: str | None = None,
+    arguments: dict[str, Any] | None = None,
+    result_excerpt: str | None = None,
+    decision: str = "allowed",
+    capture_args: bool = True,
+) -> ExecutionRecord:
     """Build a redacted, timestamped execution record.
 
     Args:
@@ -63,10 +70,15 @@ def build_record(*, server_key: str, tool_name: str, initiator: str, ok: bool,
         excerpt = str(result_excerpt)[:RESULT_EXCERPT_LIMIT]
     return ExecutionRecord(
         ts=datetime.now(timezone.utc).isoformat(),
-        server_key=server_key, tool_name=tool_name, initiator=initiator,
-        decision=decision, ok=ok, duration_ms=int(duration_ms),
+        server_key=server_key,
+        tool_name=tool_name,
+        initiator=initiator,
+        decision=decision,
+        ok=ok,
+        duration_ms=int(duration_ms),
         error=(str(error)[:300] if error else None),
-        arguments=kept_arguments, result_excerpt=excerpt,
+        arguments=kept_arguments,
+        result_excerpt=excerpt,
     )
 
 

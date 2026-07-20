@@ -113,19 +113,29 @@ class ManualSyncControlService:
         if profile is None:
             return self._blocked("No Sync v2 server profile is configured.")
         if not is_local_first_sync_profile_mode(profile.get("profile_mode")):
-            return self._blocked("Manual Sync v2 requires a local-first sync profile.", profile)
+            return self._blocked(
+                "Manual Sync v2 requires a local-first sync profile.", profile
+            )
 
         dataset_id = str(profile.get("dataset_id") or "").strip()
         device_id = str(profile.get("device_id") or "").strip()
         if not dataset_id or not device_id:
-            return self._blocked("Manual Sync v2 requires dataset and device identity.", profile)
+            return self._blocked(
+                "Manual Sync v2 requires dataset and device identity.", profile
+            )
         if dataset_id not in self.dataset_keys:
-            return self._blocked("Manual Sync v2 is blocked because the dataset key is unavailable.", profile)
+            return self._blocked(
+                "Manual Sync v2 is blocked because the dataset key is unavailable.",
+                profile,
+            )
         if (
             self.local_first_sync_service is None
             or getattr(self.local_first_sync_service, "local_store", None) is None
         ):
-            return self._blocked("Manual Sync v2 is blocked because the local apply store is unavailable.", profile)
+            return self._blocked(
+                "Manual Sync v2 is blocked because the local apply store is unavailable.",
+                profile,
+            )
 
         entries = self.state_repository.list_pending_sync_v2_outbox_envelopes(
             server_profile_id=server_profile_id,
@@ -140,9 +150,7 @@ class ManualSyncControlService:
             if domain in pending_by_domain:
                 pending_by_domain[domain] += 1
         pending_by_domain = {
-            domain: count
-            for domain, count in pending_by_domain.items()
-            if count > 0
+            domain: count for domain, count in pending_by_domain.items() if count > 0
         }
         pending_total = sum(pending_by_domain.values())
         if pending_total == 0:
@@ -155,8 +163,7 @@ class ManualSyncControlService:
                 profile=profile,
             )
         domain_copy = ", ".join(
-            f"{domain}: {count}"
-            for domain, count in pending_by_domain.items()
+            f"{domain}: {count}" for domain, count in pending_by_domain.items()
         )
         return ManualSyncPreview(
             status="ready",
@@ -257,7 +264,9 @@ class ManualSyncControlService:
         )
 
     def _domains(self, domains: Sequence[str] | None) -> tuple[str, ...]:
-        selected = tuple(str(domain).strip() for domain in (domains or self.default_domains))
+        selected = tuple(
+            str(domain).strip() for domain in (domains or self.default_domains)
+        )
         return tuple(domain for domain in selected if domain)
 
     def _conflict_review_items(
@@ -282,7 +291,9 @@ class ManualSyncControlService:
 
     @staticmethod
     def _result_copy(summary: Mapping[str, Any]) -> tuple[ManualSyncStatus, str]:
-        conflicts = list(summary.get("push_conflicts") or []) + list(summary.get("conflicts") or [])
+        conflicts = list(summary.get("push_conflicts") or []) + list(
+            summary.get("conflicts") or []
+        )
         if conflicts:
             return (
                 "conflict",

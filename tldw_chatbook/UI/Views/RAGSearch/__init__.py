@@ -11,7 +11,7 @@ from .search_rag_window import SearchRAGWindow
 
 __all__ = [
     "SearchHistoryDropdown",
-    "SearchResult", 
+    "SearchResult",
     "SavedSearchesPanel",
-    "SearchRAGWindow"
+    "SearchRAGWindow",
 ]

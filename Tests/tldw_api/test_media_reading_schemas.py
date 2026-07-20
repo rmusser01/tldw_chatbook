@@ -27,7 +27,6 @@ from tldw_chatbook.tldw_api import (
     MediaMetadataSearchResponse,
     MediaNavigationContentResponse,
     MediaNavigationResponse,
-    MediaSearchRequest,
     MediaTrashEmptyResponse,
     MediaTranscriptionModelsResponse,
     MediaUpdateRequest,
@@ -225,7 +224,10 @@ def test_media_item_models_match_server_contracts():
         "analysis": "Analysis 2",
         "prompt": "Prompt 2",
     }
-    assert keywords_update.model_dump(mode="json") == {"keywords": ["ai", "ml"], "mode": "set"}
+    assert keywords_update.model_dump(mode="json") == {
+        "keywords": ["ai", "ml"],
+        "mode": "set",
+    }
     assert keywords_response.keywords == ["ai", "ml"]
 
 
@@ -378,7 +380,9 @@ def test_document_annotation_requests_and_responses_match_server_contracts():
         annotation_type="highlight",
         percentage=42.5,
     )
-    update = DocumentAnnotationUpdateRequest(text="Updated", color="green", note="Changed")
+    update = DocumentAnnotationUpdateRequest(
+        text="Updated", color="green", note="Changed"
+    )
     listed = DocumentAnnotationListResponse(
         media_id=99,
         annotations=[
@@ -451,7 +455,9 @@ def test_document_version_request_and_response_match_server_contract():
 
 
 def test_reading_update_request_strips_tag_whitespace():
-    payload = ReadingUpdateRequest(status="read", favorite=True, tags=[" ai ", "priority "])
+    payload = ReadingUpdateRequest(
+        status="read", favorite=True, tags=[" ai ", "priority "]
+    )
     assert payload.status == "read"
     assert payload.favorite is True
     assert payload.tags == ["ai", "priority"]
@@ -497,7 +503,9 @@ def test_ingestion_source_patch_rejects_extra_fields():
 
 
 def test_ingestion_source_create_defaults():
-    request = IngestionSourceCreateRequest(source_type="local_directory", sink_type="media")
+    request = IngestionSourceCreateRequest(
+        source_type="local_directory", sink_type="media"
+    )
     assert request.enabled is True
     assert request.schedule_enabled is False
 
@@ -510,7 +518,12 @@ def test_reading_progress_update_serializes_mode_default():
 def test_reading_saved_search_normalizes_query_and_sort():
     request = ReadingSavedSearchCreateRequest(
         name=" Morning ",
-        query={"status": [" saved "], "tags": [" ai "], "favorite": True, "sort": "UPDATED_DESC"},
+        query={
+            "status": [" saved "],
+            "tags": [" ai "],
+            "favorite": True,
+            "sort": "UPDATED_DESC",
+        },
         sort="created_desc",
     )
 
@@ -550,7 +563,13 @@ def test_reading_import_job_status_accepts_server_payload():
         job_uuid="job-uuid-42",
         status="completed",
         progress_percent=100,
-        result={"source": "pocket", "imported": 3, "updated": 1, "skipped": 0, "errors": []},
+        result={
+            "source": "pocket",
+            "imported": 3,
+            "updated": 1,
+            "skipped": 0,
+            "errors": [],
+        },
     )
 
     assert status.job_id == 42

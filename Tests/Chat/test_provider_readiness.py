@@ -95,7 +95,10 @@ def test_placeholder_config_key_is_not_ready():
 
     assert readiness.ready is False
     assert readiness.api_key is None
-    assert readiness.recovery == "Set OPENROUTER_API_KEY or add api_key under [api_settings.openrouter]."
+    assert (
+        readiness.recovery
+        == "Set OPENROUTER_API_KEY or add api_key under [api_settings.openrouter]."
+    )
 
 
 @pytest.mark.parametrize(
@@ -107,7 +110,9 @@ def test_public_provider_api_key_validator_rejects_placeholder_values(value):
 
 
 def test_public_provider_api_key_validator_accepts_real_trimmed_key():
-    assert provider_readiness_module.is_valid_provider_api_key("  sk-real-key  ") is True
+    assert (
+        provider_readiness_module.is_valid_provider_api_key("  sk-real-key  ") is True
+    )
 
 
 def test_key_required_provider_names_are_case_insensitive():
@@ -119,7 +124,10 @@ def test_key_required_provider_names_are_case_insensitive():
 
     assert readiness.requires_api_key is True
     assert readiness.ready is False
-    assert readiness.recovery == "Set OPENAI_API_KEY or add api_key under [api_settings.openai]."
+    assert (
+        readiness.recovery
+        == "Set OPENAI_API_KEY or add api_key under [api_settings.openai]."
+    )
 
 
 def test_provider_settings_lookup_uses_normalized_config_key():

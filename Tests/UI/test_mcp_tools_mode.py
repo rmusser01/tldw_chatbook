@@ -69,16 +69,25 @@ async def test_rows_render_grouped_sorted_with_tags_and_schema_columns():
         canvas = app.query_one(MCPToolsMode)
         tools = [
             _tool(
-                server_key="server:main", server_label="Main", name="web_search",
+                server_key="server:main",
+                server_label="Main",
+                name="web_search",
                 tags=("high", "network"),
                 input_schema={"type": "object", "properties": {}},
             ),
             _tool(
-                server_key="local:docs", server_label="docs", name="search",
-                input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
+                server_key="local:docs",
+                server_label="docs",
+                name="search",
+                input_schema={
+                    "type": "object",
+                    "properties": {"q": {"type": "string"}},
+                },
             ),
             _tool(
-                server_key="local:docs", server_label="docs", name="bare",
+                server_key="local:docs",
+                server_label="docs",
+                name="bare",
                 input_schema=None,
             ),
         ]
@@ -127,8 +136,12 @@ async def test_state_column_renders_marker_labels_from_states_dict():
             _tool(server_key="local:docs", server_label="docs", name="risk_floored"),
         ]
         states = {
-            ("local:docs", "allowed"): EffectiveToolState(state="allow", origin="tool_override"),
-            ("local:docs", "asked"): EffectiveToolState(state="ask", origin="global_default"),
+            ("local:docs", "allowed"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            ),
+            ("local:docs", "asked"): EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
             ("local:docs", "rug_pulled"): EffectiveToolState(
                 state="ask", origin="tool_override", config_changed=True
             ),
@@ -140,7 +153,10 @@ async def test_state_column_renders_marker_labels_from_states_dict():
         await pilot.pause()
 
         table = app.query_one("#mcp-tools-table", DataTable)
-        rows_by_tool = {_row_texts(table, i)[0]: _row_texts(table, i)[1] for i in range(table.row_count)}
+        rows_by_tool = {
+            _row_texts(table, i)[0]: _row_texts(table, i)[1]
+            for i in range(table.row_count)
+        }
         assert rows_by_tool["allowed"] == "Allow •"
         assert rows_by_tool["asked"] == "Ask"
         assert rows_by_tool["rug_pulled"] == "Ask ⚠"
@@ -168,10 +184,17 @@ async def test_state_column_renders_em_dash_when_states_none_or_missing():
         assert _row_texts(table, 1)[1] == "—"
 
         # states present but missing an entry for "unknown".
-        states = {("local:docs", "known"): EffectiveToolState(state="allow", origin="tool_override")}
+        states = {
+            ("local:docs", "known"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        }
         await canvas.update_tools(tools, empty_diagnosis=None, states=states)
         await pilot.pause()
-        rows_by_tool = {_row_texts(table, i)[0]: _row_texts(table, i)[1] for i in range(table.row_count)}
+        rows_by_tool = {
+            _row_texts(table, i)[0]: _row_texts(table, i)[1]
+            for i in range(table.row_count)
+        }
         assert rows_by_tool["known"] == "Allow •"
         assert rows_by_tool["unknown"] == "—"
 
@@ -182,7 +205,14 @@ async def test_stale_tool_gets_stale_suffix_on_server_cell():
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPToolsMode)
         await canvas.update_tools(
-            [_tool(server_key="local:docs", server_label="docs", name="search", stale=True)],
+            [
+                _tool(
+                    server_key="local:docs",
+                    server_label="docs",
+                    name="search",
+                    stale=True,
+                )
+            ],
             empty_diagnosis=None,
         )
         await pilot.pause()
@@ -337,7 +367,11 @@ async def test_empty_diagnosis_renders_message_and_action_button_posts():
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPToolsMode)
         await canvas.update_tools(
-            [], empty_diagnosis=("No servers configured — add one to see its tools.", "add_server")
+            [],
+            empty_diagnosis=(
+                "No servers configured — add one to see its tools.",
+                "add_server",
+            ),
         )
         await pilot.pause()
 
@@ -364,7 +398,11 @@ async def test_empty_diagnosis_connect_action_key_round_trips():
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPToolsMode)
         await canvas.update_tools(
-            [], empty_diagnosis=("No tools discovered yet — connect or refresh a server.", "connect")
+            [],
+            empty_diagnosis=(
+                "No tools discovered yet — connect or refresh a server.",
+                "connect",
+            ),
         )
         await pilot.pause()
         await pilot.click("#mcp-tools-empty-action")
@@ -536,7 +574,9 @@ async def test_tags_column_shown_when_any_tool_has_tags():
             [
                 _tool(server_key="local:docs", server_label="docs", name="bare"),
                 _tool(
-                    server_key="local:docs", server_label="docs", name="tagged",
+                    server_key="local:docs",
+                    server_label="docs",
+                    name="tagged",
                     tags=("network",),
                 ),
             ],
@@ -562,7 +602,9 @@ async def test_tags_column_stays_stable_while_filtering_to_a_tagless_subset():
             [
                 _tool(server_key="local:docs", server_label="docs", name="bare"),
                 _tool(
-                    server_key="local:docs", server_label="docs", name="tagged",
+                    server_key="local:docs",
+                    server_label="docs",
+                    name="tagged",
                     tags=("network",),
                 ),
             ],
@@ -605,8 +647,12 @@ def test_tools_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
         assert start != -1, f"{label} is missing {selector!r}"
         end = text.find("}", start)
         block = text[start:end]
-        assert "height: auto;" in block, f"{label}'s {selector!r} block is missing 'height: auto;'"
-        assert "max-height: 70%;" in block, f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+        assert "height: auto;" in block, (
+            f"{label}'s {selector!r} block is missing 'height: auto;'"
+        )
+        assert "max-height: 70%;" in block, (
+            f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+        )
 
 
 def test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:
@@ -635,7 +681,9 @@ def test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle() ->
         assert start != -1, f"{label} is missing {selector!r}"
         end = text.find("}", start)
         block = text[start:end]
-        assert "width: 28;" in block, f"{label}'s {selector!r} block is missing 'width: 28;'"
+        assert "width: 28;" in block, (
+            f"{label}'s {selector!r} block is missing 'width: 28;'"
+        )
 
 
 class ToolsModeAppWithBundledCSS(App):
@@ -663,8 +711,16 @@ async def test_filter_server_select_has_nonzero_geometry_with_bundled_css():
         canvas = app.query_one(MCPToolsMode)
         await canvas.update_tools(
             [
-                _tool(server_key="local:docs", server_label="docs-server", name="search_docs"),
-                _tool(server_key="server:weather", server_label="weather-api", name="get_forecast"),
+                _tool(
+                    server_key="local:docs",
+                    server_label="docs-server",
+                    name="search_docs",
+                ),
+                _tool(
+                    server_key="server:weather",
+                    server_label="weather-api",
+                    name="get_forecast",
+                ),
             ],
             empty_diagnosis=None,
         )

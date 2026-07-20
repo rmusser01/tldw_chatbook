@@ -18,8 +18,12 @@ def test_store_creates_session_and_appends_messages():
     store = ConsoleChatStore()
     session = store.ensure_session(title="Chat 1", workspace_id="global")
 
-    user_message = store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
-    assistant_message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    user_message = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="hello"
+    )
+    assistant_message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
 
     assert store.active_session_id == session.id
     assert user_message.content == "hello"
@@ -33,7 +37,9 @@ def test_store_creates_session_and_appends_messages():
 def test_store_records_message_feedback():
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="answer")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
+    )
 
     updated = store.set_message_feedback(message.id, "up")
 
@@ -44,7 +50,9 @@ def test_store_records_message_feedback():
 def test_store_deletes_message_from_transcript():
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="answer")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
+    )
 
     deleted = store.delete_message(message.id)
 
@@ -66,7 +74,9 @@ def test_stop_mid_regenerate_restores_base_and_does_not_orphan_it():
     only covered `delete_message` itself, not this root cause.)"""
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="answer")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
+    )
     store.begin_variant_stream(message.id)
     store.append_stream_chunk(message.id, "partial")
 
@@ -87,7 +97,9 @@ def test_stop_mid_regenerate_leaves_existing_variants_untouched():
     variants recorded by earlier, successfully-finalized regenerates."""
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="v1")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="v1"
+    )
     store.add_variant(message.id, "v2")
     store.begin_variant_stream(message.id)
     store.append_stream_chunk(message.id, "v3-partial")
@@ -108,7 +120,9 @@ def test_stop_mid_plain_send_keeps_partial_content_and_stopped_status():
     "stopped", not silently reverted."""
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     store.append_stream_chunk(message.id, "par")
     store.append_stream_chunk(message.id, "tial")
 
@@ -122,7 +136,9 @@ def test_stop_mid_plain_send_keeps_partial_content_and_stopped_status():
 def test_store_updates_message_content():
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="answer")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
+    )
 
     updated = store.update_message_content(message.id, "edited answer")
 
@@ -133,7 +149,9 @@ def test_store_updates_message_content():
 def test_store_updates_current_variant_content():
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="first")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="first"
+    )
     store.add_variant(message.id, "second")
 
     updated = store.update_message_content(message.id, "edited second")
@@ -148,7 +166,9 @@ def test_store_updates_current_variant_content():
 def test_store_updates_streaming_message_and_marks_stopped():
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
 
     store.append_stream_chunk(message.id, "hel")
     store.append_stream_chunk(message.id, "lo")
@@ -162,7 +182,9 @@ def test_store_updates_streaming_message_and_marks_stopped():
 def test_store_buffers_stream_chunks_until_messages_are_materialized():
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
 
     chunk_result = store.append_stream_chunk(message.id, "hel")
 
@@ -179,7 +201,9 @@ def test_reset_stream_content_discards_leaked_prose_but_keeps_streaming_status()
     already-flushed leaked prose."""
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
 
     store.append_stream_chunk(message.id, "Let me check that for you.")
     reset = store.reset_stream_content(message.id)
@@ -202,7 +226,9 @@ def test_reset_stream_content_noops_on_already_stopped_message():
     stuck "streaming" forever."""
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
 
     store.append_stream_chunk(message.id, "before stop")
     stopped = store.mark_message_stopped(message.id)
@@ -224,7 +250,9 @@ def test_store_tracks_active_workspace_context():
 
     assert store.workspace_context.active_workspace_id == "workspace-a"
 
-    store.set_workspace_context(ConsoleWorkspaceContext(active_workspace_id="workspace-b"))
+    store.set_workspace_context(
+        ConsoleWorkspaceContext(active_workspace_id="workspace-b")
+    )
 
     assert store.workspace_context.active_workspace_id == "workspace-b"
 
@@ -294,8 +322,12 @@ def test_store_rejects_blank_session_title_without_mutating_existing_title():
 
 def test_console_sessions_store_independent_settings_snapshots() -> None:
     store = ConsoleChatStore()
-    first_settings = ConsoleSessionSettings(provider="llama_cpp", model="a", temperature=0.1)
-    second_settings = ConsoleSessionSettings(provider="openai", model="b", temperature=0.9)
+    first_settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="a", temperature=0.1
+    )
+    second_settings = ConsoleSessionSettings(
+        provider="openai", model="b", temperature=0.9
+    )
 
     first = store.create_session(title="A", settings=first_settings)
     second = store.create_session(title="B", settings=second_settings)
@@ -306,8 +338,12 @@ def test_console_sessions_store_independent_settings_snapshots() -> None:
 
 def test_replacing_session_settings_does_not_mutate_other_sessions() -> None:
     store = ConsoleChatStore()
-    first = store.create_session(settings=ConsoleSessionSettings(provider="llama_cpp", model="a"))
-    second = store.create_session(settings=ConsoleSessionSettings(provider="llama_cpp", model="b"))
+    first = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="a")
+    )
+    second = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="b")
+    )
 
     store.replace_session_settings(
         first.id,
@@ -320,7 +356,9 @@ def test_replacing_session_settings_does_not_mutate_other_sessions() -> None:
 
 def test_replace_session_settings_returns_stored_session_instance() -> None:
     store = ConsoleChatStore()
-    session = store.create_session(settings=ConsoleSessionSettings(provider="llama_cpp", model="a"))
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="a")
+    )
 
     returned = store.replace_session_settings(
         session.id,
@@ -500,7 +538,9 @@ def test_store_can_persist_user_and_assistant_messages_through_adapter():
     session = store.ensure_session(title="Chat 1")
 
     store.persist_session_if_needed(session.id)
-    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello", persist=True)
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="hello", persist=True
+    )
 
     assert persistence.created_conversations[0]["conversation_title"] == "Chat 1"
     assert persistence.created_messages[0]["conversation_id"] == "conv-1"
@@ -515,7 +555,9 @@ def test_persist_session_if_needed_passes_system_prompt_from_settings():
     store = ConsoleChatStore(persistence=persistence)
     session = store.ensure_session(
         title="Chat 1",
-        settings=ConsoleSessionSettings(provider="llama_cpp", system_prompt="Be terse."),
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp", system_prompt="Be terse."
+        ),
     )
 
     store.persist_session_if_needed(session.id)
@@ -541,7 +583,9 @@ def test_set_session_system_prompt_updates_settings_without_persisting_when_unsa
         settings=ConsoleSessionSettings(provider="llama_cpp"),
     )
 
-    updated, persisted = store.set_session_system_prompt(session.id, "New system prompt")
+    updated, persisted = store.set_session_system_prompt(
+        session.id, "New system prompt"
+    )
 
     assert updated.settings.system_prompt == "New system prompt"
     assert persisted is True
@@ -558,7 +602,9 @@ def test_set_session_system_prompt_persists_change_when_conversation_already_sav
     )
     store.persist_session_if_needed(session.id)
 
-    updated, persisted = store.set_session_system_prompt(session.id, "Answer in French.")
+    updated, persisted = store.set_session_system_prompt(
+        session.id, "Answer in French."
+    )
 
     assert updated.settings.system_prompt == "Answer in French."
     assert persisted is True
@@ -595,7 +641,9 @@ def test_set_session_system_prompt_normalizes_blank_to_none():
     store = ConsoleChatStore(persistence=persistence)
     session = store.ensure_session(
         title="Chat 1",
-        settings=ConsoleSessionSettings(provider="llama_cpp", system_prompt="Old prompt"),
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp", system_prompt="Old prompt"
+        ),
     )
     store.persist_session_if_needed(session.id)
 
@@ -824,7 +872,9 @@ def test_store_enqueues_selected_variant_with_restore_metadata():
     assert sync_producer.enqueued[-1]["variant_turn_id"] == updated.variants.turn_id
     assert sync_producer.enqueued[-1]["variant_index"] == 1
     assert sync_producer.enqueued[-1]["variant_count"] == 2
-    assert sync_producer.enqueued[-1]["selected_variant_id"] == updated.variants.current.id
+    assert (
+        sync_producer.enqueued[-1]["selected_variant_id"] == updated.variants.current.id
+    )
 
 
 def test_store_sequences_only_sync_eligible_messages():
@@ -886,7 +936,9 @@ def test_store_updates_persisted_streaming_assistant_content_and_status():
     store.mark_message_complete(assistant.id)
 
     completed = store.get_message(assistant.id)
-    assert persistence.updated_messages[-1]["message_id"] == completed.persisted_message_id
+    assert (
+        persistence.updated_messages[-1]["message_id"] == completed.persisted_message_id
+    )
     assert persistence.updated_messages[-1]["content"] == "hello"
     assert persistence.updated_messages[-1]["image_data"] is None
     assert persistence.updated_messages[-1]["image_mime_type"] is None
@@ -935,7 +987,9 @@ def test_store_persists_default_workspace_chat_without_runtime_access(tmp_path):
         store = ConsoleChatStore(
             persistence=ChatPersistenceService(db, workspace_registry=registry)
         )
-        session = store.ensure_session(title="Chat 1", workspace_id=DEFAULT_WORKSPACE_ID)
+        session = store.ensure_session(
+            title="Chat 1", workspace_id=DEFAULT_WORKSPACE_ID
+        )
 
         conversation_id = store.persist_session_if_needed(session.id)
         message = store.append_message(
@@ -947,7 +1001,9 @@ def test_store_persists_default_workspace_chat_without_runtime_access(tmp_path):
 
         conversation = db.get_conversation_by_id(conversation_id)
         persisted_message = db.get_message_by_id(message.persisted_message_id)
-        workspace_conversations = registry.list_workspace_conversations(DEFAULT_WORKSPACE_ID)
+        workspace_conversations = registry.list_workspace_conversations(
+            DEFAULT_WORKSPACE_ID
+        )
         assert conversation is not None
         assert persisted_message is not None
         assert conversation["scope_type"] == "workspace"
@@ -959,7 +1015,9 @@ def test_store_persists_default_workspace_chat_without_runtime_access(tmp_path):
         db.close()
 
 
-def test_store_system_prompt_round_trips_through_real_chat_persistence_service(tmp_path):
+def test_store_system_prompt_round_trips_through_real_chat_persistence_service(
+    tmp_path,
+):
     """Persistence round-trip: create, apply a system prompt, reload from the real DB.
 
     Covers the Task 0 persistence seam end to end: creating a conversation
@@ -973,11 +1031,15 @@ def test_store_system_prompt_round_trips_through_real_chat_persistence_service(t
         store = ConsoleChatStore(persistence=ChatPersistenceService(db))
         session = store.ensure_session(
             title="Chat 1",
-            settings=ConsoleSessionSettings(provider="llama_cpp", system_prompt="Be terse."),
+            settings=ConsoleSessionSettings(
+                provider="llama_cpp", system_prompt="Be terse."
+            ),
         )
 
         conversation_id = store.persist_session_if_needed(session.id)
-        assert db.get_conversation_by_id(conversation_id)["system_prompt"] == "Be terse."
+        assert (
+            db.get_conversation_by_id(conversation_id)["system_prompt"] == "Be terse."
+        )
 
         store.set_session_system_prompt(session.id, "Answer only in French.")
 
@@ -985,12 +1047,16 @@ def test_store_system_prompt_round_trips_through_real_chat_persistence_service(t
         # confirm the update is durable, the way a reload/reopen would see it.
         reloaded = db.get_conversation_by_id(conversation_id)
         assert reloaded["system_prompt"] == "Answer only in French."
-        assert store.session_settings(session.id).system_prompt == "Answer only in French."
+        assert (
+            store.session_settings(session.id).system_prompt == "Answer only in French."
+        )
     finally:
         db.close()
 
 
-def test_store_delays_empty_assistant_persistence_until_terminal_content_with_real_service(tmp_path):
+def test_store_delays_empty_assistant_persistence_until_terminal_content_with_real_service(
+    tmp_path,
+):
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
     try:
         store = ConsoleChatStore(persistence=ChatPersistenceService(db))
@@ -1121,7 +1187,7 @@ def test_append_message_touches_session_updated_at():
     assert datetime.fromisoformat(touched) >= datetime.fromisoformat(original)
 
 
-from tldw_chatbook.Chat.attachment_core import PendingAttachment
+from tldw_chatbook.Chat.attachment_core import PendingAttachment  # noqa: E402
 
 
 def _image_attachment(name="photo.png"):
@@ -1229,8 +1295,8 @@ def test_editing_message_content_does_not_wipe_persisted_image():
     assert persistence.updated[-1]["image_mime_type"] == "image/png"
 
 
-from tldw_chatbook.Chat.console_chat_models import MessageAttachment
-from tldw_chatbook.Chat.console_chat_store import MAX_PENDING_ATTACHMENTS
+from tldw_chatbook.Chat.console_chat_models import MessageAttachment  # noqa: E402
+from tldw_chatbook.Chat.console_chat_store import MAX_PENDING_ATTACHMENTS  # noqa: E402
 
 
 def _att(name="a.png", data=b"img", position=1):
@@ -1280,13 +1346,20 @@ def test_pending_list_appends_caps_and_clears():
 
     def _pending(name):
         return PendingAttachment(
-            file_path=f"/tmp/{name}", display_name=name, file_type="image",
-            insert_mode="attachment", data=b"x", mime_type="image/png",
-            original_size=1, processed_size=1,
+            file_path=f"/tmp/{name}",
+            display_name=name,
+            file_type="image",
+            insert_mode="attachment",
+            data=b"x",
+            mime_type="image/png",
+            original_size=1,
+            processed_size=1,
         )
 
     for index in range(MAX_PENDING_ATTACHMENTS):
-        assert store.add_pending_attachment(session.id, _pending(f"f{index}.png")) is True
+        assert (
+            store.add_pending_attachment(session.id, _pending(f"f{index}.png")) is True
+        )
     assert store.add_pending_attachment(session.id, _pending("overflow.png")) is False
     assert len(store.pending_attachments(session.id)) == MAX_PENDING_ATTACHMENTS
 
@@ -1304,9 +1377,14 @@ def test_legacy_set_pending_attachment_replaces_all():
 
     def _pending(name):
         return PendingAttachment(
-            file_path=f"/tmp/{name}", display_name=name, file_type="image",
-            insert_mode="attachment", data=b"x", mime_type="image/png",
-            original_size=1, processed_size=1,
+            file_path=f"/tmp/{name}",
+            display_name=name,
+            file_type="image",
+            insert_mode="attachment",
+            data=b"x",
+            mime_type="image/png",
+            original_size=1,
+            processed_size=1,
         )
 
     store.add_pending_attachment(session.id, _pending("a.png"))
@@ -1379,8 +1457,11 @@ def test_persist_edit_leaves_attachments_none():
     store = ConsoleChatStore(persistence=persistence)
     session = store.ensure_session()
     message = store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="x",
-        attachments=(_att("a.png", b"img"),), persist=True,
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="x",
+        attachments=(_att("a.png", b"img"),),
+        persist=True,
     )
     store.update_message_content(message.id, "edited")
     assert persistence.updated[-1]["attachments"] is None
@@ -1396,7 +1477,9 @@ def test_persist_edit_leaves_attachments_none():
 def test_materialize_collapses_stream_buffer_after_join():
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
 
     store.append_stream_chunk(message.id, "one ")
     store.append_stream_chunk(message.id, "two ")
@@ -1408,14 +1491,18 @@ def test_materialize_collapses_stream_buffer_after_join():
     store.append_stream_chunk(message.id, " four")
     store.append_stream_chunk(message.id, " five")
 
-    assert store.messages_for_session(session.id)[0].content == "one two three four five"
+    assert (
+        store.messages_for_session(session.id)[0].content == "one two three four five"
+    )
     assert store._stream_chunks_by_message[message.id] == ["one two three four five"]
 
 
 def test_materialize_between_ticks_is_noop_without_new_chunks():
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
 
     store.append_stream_chunk(message.id, "steady")
     first = store.messages_for_session(session.id)[0].content
@@ -1428,7 +1515,9 @@ def test_materialize_between_ticks_is_noop_without_new_chunks():
 def test_collapsed_buffer_keeps_terminal_flush_content_exact():
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
 
     store.append_stream_chunk(message.id, "hel")
     # Mid-stream materialize (as the 0.2s tick does) collapses the buffer...
@@ -1448,7 +1537,9 @@ def test_collapsed_buffer_preserves_seeded_retry_content():
     mid-stream must never drop that seed."""
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
 
     store.append_stream_chunk(message.id, "base")
     assert store.messages_for_session(session.id)[0].content == "base"
@@ -1463,7 +1554,9 @@ def test_collapsed_buffer_preserves_seeded_retry_content():
 def test_collapsed_buffer_variant_stream_finalizes_full_content():
     store = ConsoleChatStore()
     session = store.ensure_session()
-    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="original")
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="original"
+    )
 
     store.begin_variant_stream(message.id)
     store.append_stream_chunk(message.id, "re")

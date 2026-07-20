@@ -4,16 +4,16 @@
 # Disable progress bars early to prevent interference with TUI
 import os
 
-os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
-os.environ['TQDM_DISABLE'] = '1'
-os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
-os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
-os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+os.environ["TQDM_DISABLE"] = "1"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Disable Textual logging in production
 # Set to a path to enable logging for debugging: os.environ['TEXTUAL_LOG'] = '/tmp/textual.log'
-if 'TEXTUAL_LOG' not in os.environ:
-    os.environ['TEXTUAL_LOG'] = ''  # Empty string disables logging
+if "TEXTUAL_LOG" not in os.environ:
+    os.environ["TEXTUAL_LOG"] = ""  # Empty string disables logging
 
 # Imports
 import concurrent.futures
@@ -32,6 +32,7 @@ import time
 import traceback
 from typing import TYPE_CHECKING, Union, Optional, Any, Dict, List, Callable
 from textual.widget import Widget
+
 #
 # 3rd-Party Libraries
 import asyncio
@@ -41,7 +42,19 @@ from rich.markup import escape as escape_markup
 from textual import on, work
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.widgets import (
-    Static, Button, Input, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch, Markdown
+    Static,
+    Button,
+    Input,
+    RichLog,
+    TextArea,
+    Select,
+    ListView,
+    Checkbox,
+    Collapsible,
+    ListItem,
+    Label,
+    Switch,
+    Markdown,
 )
 from textual.containers import Container, VerticalScroll
 from textual.reactive import reactive
@@ -56,59 +69,103 @@ from pathlib import Path
 
 from tldw_chatbook.Utils.text import slugify
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
+
 # from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
-from tldw_chatbook.Metrics.metrics import log_histogram, log_counter, log_resource_usage, init_metrics_server
+from tldw_chatbook.Metrics.metrics import (
+    log_histogram,
+    log_counter,
+    log_resource_usage,
+    init_metrics_server,
+)
 from tldw_chatbook.Metrics.Otel_Metrics import init_metrics as init_otel_metrics
+
 #
 # --- Local API library Imports ---
-from .Event_Handlers.LLM_Management_Events import (llm_management_events, llm_management_events_mlx_lm,
-    llm_management_events_ollama, llm_management_events_onnx, llm_management_events_transformers,
-                                                   llm_management_events_vllm)
-from tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events import handle_streaming_chunk, handle_stream_done
+from .Event_Handlers.LLM_Management_Events import (
+    llm_management_events,
+    llm_management_events_mlx_lm,
+    llm_management_events_ollama,
+    llm_management_events_onnx,
+    llm_management_events_transformers,
+    llm_management_events_vllm,
+)
+from tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events import (
+    handle_streaming_chunk,
+    handle_stream_done,
+)
 from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
 from .config import (
     get_cli_setting,
     get_library_collections_db_path,
     get_library_ingest_jobs_db_path,
     get_media_db_path,
-    get_notifications_db_path,
     get_prompts_db_path,
     get_notifications_db_path,
     get_research_db_path,
+    get_scheduled_tasks_db_path,
     get_subscriptions_db_path,
     get_user_data_dir,
     get_workspaces_db_path,
     get_writing_db_path,
 )
 from .Logging_Config import configure_application_logging
-from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_LOGS, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
-    TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, TAB_LIBRARY, TAB_ARTIFACTS, TAB_PERSONAS, TAB_WATCHLISTS_COLLECTIONS, \
-    TAB_SCHEDULES, TAB_WORKFLOWS, TAB_MCP, TAB_ACP, TAB_SKILLS, TAB_SETTINGS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, \
-    LIBRARY_NAV_CONTEXT_MODE, LIBRARY_NAV_CONTEXT_NOTE_ID, LIBRARY_NAV_CONTEXT_NOTES_CREATE, \
-    LIBRARY_NAV_CONTEXT_INGEST, \
-    get_tab_display_label
-from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
+from tldw_chatbook.Constants import (
+    ALL_TABS,
+    TAB_CCP,
+    TAB_CHAT,
+    TAB_HOME,
+    TAB_LOGS,
+    TAB_STATS,
+    TAB_TOOLS_SETTINGS,
+    TAB_INGEST,
+    TAB_LLM,
+    TAB_MEDIA,
+    TAB_SEARCH,
+    TAB_EVALS,
+    TAB_LIBRARY,
+    TAB_ARTIFACTS,
+    TAB_PERSONAS,
+    TAB_WATCHLISTS_COLLECTIONS,
+    TAB_SCHEDULES,
+    TAB_WORKFLOWS,
+    TAB_MCP,
+    TAB_ACP,
+    TAB_SKILLS,
+    TAB_SETTINGS,
+    LLAMA_CPP_SERVER_ARGS_HELP_TEXT,
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT,
+    TAB_STTS,
+    TAB_STUDY,
+    TAB_WRITING,
+    TAB_RESEARCH,
+    TAB_SUBSCRIPTIONS,
+    TAB_CHATBOOKS,
+    LIBRARY_NAV_CONTEXT_MODE,
+    LIBRARY_NAV_CONTEXT_NOTE_ID,
+    LIBRARY_NAV_CONTEXT_NOTES_CREATE,
+    LIBRARY_NAV_CONTEXT_INGEST,
+    get_tab_display_label,
+)
+from tldw_chatbook.Chat.chat_conversation_scope_service import (
+    ChatConversationScopeService,
+)
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
-from tldw_chatbook.Chat.conversation_local_marks_service import ConversationLocalMarksService
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
     resolve_console_live_work_primary_action,
 )
-from tldw_chatbook.Chat.chat_loop_scope_service import ServerChatLoopScopeService
-from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
-from tldw_chatbook.Chat.server_chat_loop_service import ServerChatLoopService
+from tldw_chatbook.Chat.server_chat_conversation_service import (
+    ServerChatConversationService,
+)
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
-from tldw_chatbook.Chat import (
-    ChatConversationScopeService,
-    ChatConversationService,
-    ServerChatConversationService,
-)
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
 from tldw_chatbook.Library.ingest_capabilities import get_type_group
@@ -118,10 +175,18 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJob,
     LibraryIngestJobRegistry,
 )
-from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
+from tldw_chatbook.Library.library_local_rag_search_service import (
+    LibraryLocalRagSearchService,
+)
 from tldw_chatbook.Local_Ingestion import FileIngestionError
-from tldw_chatbook.Local_Ingestion.ingest_parse_worker import classify_parse_failure, run_parse_job
-from tldw_chatbook.Local_Ingestion.local_file_ingestion import classify_ingest_source, persist_parsed_media
+from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
+    classify_parse_failure,
+    run_parse_job,
+)
+from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+    classify_ingest_source,
+    persist_parsed_media,
+)
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
@@ -136,39 +201,59 @@ from tldw_chatbook.Prompt_Management import (
     Prompts_Interop as prompts_interop,
     ServerPromptService,
 )
-from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN, supports_emoji
+from tldw_chatbook.Utils.Emoji_Handling import (
+    get_char,
+    EMOJI_TITLE_BRAIN,
+    FALLBACK_TITLE_BRAIN,
+    supports_emoji,
+)
 from tldw_chatbook.Utils.log_widget_manager import LogWidgetManager
 from tldw_chatbook.Utils.ui_helpers import UIHelpers
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 from tldw_chatbook.Event_Handlers.worker_handlers import (
-    WorkerHandlerRegistry, ChatWorkerHandler, ServerWorkerHandler,
-    AIGenerationHandler, MiscWorkerHandler
+    WorkerHandlerRegistry,
+    ChatWorkerHandler,
+    ServerWorkerHandler,
+    AIGenerationHandler,
+    MiscWorkerHandler,
 )
 from .config import (
     CONFIG_TOML_CONTENT,
     DEFAULT_CONFIG_PATH,
     load_settings,
-    get_cli_setting,
     get_cli_providers_and_models,
     API_MODELS_BY_PROVIDER,
     LOCAL_PROVIDERS,
     load_cli_config_and_ensure_existence,
-    set_encryption_password, )
+    set_encryption_password,
+)
 from .Event_Handlers import (
     conv_char_events as ccp_handlers,
-    notes_events as notes_handlers,
-    worker_events, ingest_events,
-    llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
-    subscription_events,
+    worker_events,
+    ingest_events,
+    llm_nav_events,
+    media_events,
+    app_lifecycle,
 )
-from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks
+from .Event_Handlers.Chat_Events import (
+    chat_events as chat_handlers,
+    chat_events_sidebar,
+    chat_events_worldbooks,
+)
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
-    TTSRequestEvent, TTSCompleteEvent, TTSPlaybackEvent, TTSProgressEvent, TTSEventHandler
+    TTSRequestEvent,
+    TTSCompleteEvent,
+    TTSPlaybackEvent,
+    TTSProgressEvent,
+    TTSEventHandler,
 )
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
-    STTSEventHandler, STTSPlaygroundGenerateEvent, STTSSettingsSaveEvent, STTSAudioBookGenerateEvent
+    STTSEventHandler,
+    STTSPlaygroundGenerateEvent,
+    STTSSettingsSaveEvent,
+    STTSAudioBookGenerateEvent,
 )
 from .Notes.Notes_Library import NotesInteropService
 from .Notes.notes_scope_service import NotesScopeService
@@ -178,7 +263,9 @@ from .Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeSer
 from .Character_Chat.local_character_persona_service import LocalCharacterPersonaService
 from .Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
 from .Character_Chat.server_chat_dictionary_service import ServerChatDictionaryService
-from .Character_Chat.server_character_persona_service import ServerCharacterPersonaService
+from .Character_Chat.server_character_persona_service import (
+    ServerCharacterPersonaService,
+)
 from .RAG_Admin.local_rag_admin_service import LocalRAGAdminService
 from .RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
 from .RAG_Admin.server_rag_admin_service import ServerRAGAdminService
@@ -200,6 +287,13 @@ from .Research_Interop import (
     ResearchScopeService,
     ServerResearchService,
 )
+from .Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from .Scheduling.services.scheduling_service import SchedulingService
+from .Scheduling.services.server_client import SchedulingServerClient
+from .Scheduling.scheduler.loop import SchedulerLoop, Handler
+from .Scheduling.scheduler.handlers.reminder_handler import ReminderHandler
+from .Scheduling.scheduler.handlers.watchlist_check_handler import WatchlistCheckHandler
+from .Scheduling.services.watchlist_projection import WatchlistProjection
 from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
 from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
@@ -208,61 +302,97 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessage
 from .Widgets.AppFooterStatus import AppFooterStatus
 from .Widgets.splash_screen import SplashScreen
 from .LLM_Calls.LLM_API_Calls import (
-        chat_with_openai, chat_with_anthropic, chat_with_cohere,
-        chat_with_groq, chat_with_openrouter, chat_with_huggingface,
-        chat_with_deepseek, chat_with_mistral, chat_with_google,
+    chat_with_openai,
+    chat_with_anthropic,
+    chat_with_cohere,
+    chat_with_groq,
+    chat_with_openrouter,
+    chat_with_huggingface,
+    chat_with_deepseek,
+    chat_with_mistral,
+    chat_with_google,
 )
 from .LLM_Calls.LLM_API_Calls_Local import (
-    chat_with_llama, chat_with_kobold, chat_with_oobabooga,
-    chat_with_vllm, chat_with_tabbyapi, chat_with_aphrodite,
-    chat_with_ollama, chat_with_custom_openai, chat_with_custom_openai_2, chat_with_local_llm
+    chat_with_llama,
+    chat_with_kobold,
+    chat_with_oobabooga,
+    chat_with_vllm,
+    chat_with_tabbyapi,
+    chat_with_aphrodite,
+    chat_with_ollama,
+    chat_with_custom_openai,
+    chat_with_custom_openai_2,
+    chat_with_local_llm,
 )
-from tldw_chatbook.config import get_chachanotes_db_path, settings, get_chachanotes_db_lazy
+from tldw_chatbook.config import (
+    get_chachanotes_db_path,
+    settings,
+    get_chachanotes_db_lazy,
+)
 from .UI.Navigation.main_navigation import NavigateToScreen
 from .UI.Navigation.screen_registry import resolve_screen_target
 from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from .UI.Screens.media_runtime_state import MediaRuntimeState
 from .UI.Screens.study_scope_models import StudyScopeContext
+
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
 # The legacy per-view navigation (ingest-nav-*/ingest-view-*) is not used anymore.
 # Keep these as empty to avoid wiring legacy handlers.
 USE_REBUILT_INGEST = True
 INGEST_NAV_BUTTON_IDS: list[str] = []
 INGEST_VIEW_IDS: list[str] = []
-from .UI.Tools_Settings_Window import ToolsSettingsWindow
-from .UI.LLM_Management_Window import LLMManagementWindow
-from .UI.Customize_Window import CustomizeWindow
-from .UI.console_command_provider import ConsoleCommandProvider
-from tldw_chatbook.Chat_Grammars_Interop import (
+from .UI.Tools_Settings_Window import ToolsSettingsWindow  # noqa: E402
+from .UI.console_command_provider import ConsoleCommandProvider  # noqa: E402
+from tldw_chatbook.Chat_Grammars_Interop import (  # noqa: E402
     ChatGrammarsScopeService,
     LocalChatGrammarsService,
     ServerChatGrammarsService,
 )
-from tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService
-from tldw_chatbook.Companion_Interop import CompanionScopeService, ServerCompanionService
-from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
-from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
-from tldw_chatbook.Feedback_Interop import FeedbackScopeService, LocalFeedbackService, ServerFeedbackService
-from tldw_chatbook.Kanban_Interop import KanbanScopeService, LocalKanbanService, ServerKanbanService
-from tldw_chatbook.LLM_Provider_Catalog import (
+from tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService  # noqa: E402
+from tldw_chatbook.Companion_Interop import (  # noqa: E402
+    CompanionScopeService,
+    ServerCompanionService,
+)
+from tldw_chatbook.Collections_Interop import (  # noqa: E402
+    CollectionsFeedsScopeService,
+    ServerCollectionsFeedsService,
+)
+from tldw_chatbook.External_Connectors_Interop import (  # noqa: E402
+    ConnectorsScopeService,
+    ServerConnectorsService,
+)
+from tldw_chatbook.Feedback_Interop import (  # noqa: E402
+    FeedbackScopeService,
+    LocalFeedbackService,
+    ServerFeedbackService,
+)
+from tldw_chatbook.Kanban_Interop import (  # noqa: E402
+    KanbanScopeService,
+    LocalKanbanService,
+    ServerKanbanService,
+)
+from tldw_chatbook.LLM_Provider_Catalog import (  # noqa: E402
     LLMProviderCatalogScopeService,
     LocalLLMProviderCatalogService,
     ServerLLMProviderCatalogService,
 )
-from tldw_chatbook.Media import (
+from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import ModelCatalogRefreshed  # noqa: E402
+from tldw_chatbook.Media import (  # noqa: E402
     LocalMediaReadingService,
     MediaReadingScopeService,
     ServerMediaReadingService,
 )
-from tldw_chatbook.Meetings_Interop import MeetingsScopeService, ServerMeetingsService
-from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
-from tldw_chatbook.MCP.local_store import LocalMCPStore
-from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
-from tldw_chatbook.MCP.server_unified_service import ServerUnifiedMCPService
-from tldw_chatbook.MCP.unified_context_store import UnifiedMCPContextStore
-from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
-from tldw_chatbook.Notifications import (
+from tldw_chatbook.Meetings_Interop import MeetingsScopeService, ServerMeetingsService  # noqa: E402
+from tldw_chatbook.MCP.local_control_service import LocalMCPControlService  # noqa: E402
+from tldw_chatbook.MCP.local_store import LocalMCPStore  # noqa: E402
+from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore  # noqa: E402
+from tldw_chatbook.MCP.server_unified_service import ServerUnifiedMCPService  # noqa: E402
+from tldw_chatbook.MCP.unified_context_store import UnifiedMCPContextStore  # noqa: E402
+from tldw_chatbook.MCP.unified_control_plane_service import (  # noqa: E402
+    UnifiedMCPControlPlaneService,
+)
+from tldw_chatbook.Notifications import (  # noqa: E402
     ClientNotificationsDB,
     ClientNotificationsService,
     EventStateRepository,
@@ -270,92 +400,121 @@ from tldw_chatbook.Notifications import (
     NotificationDispatchService,
     ServerNotificationsService,
 )
-from tldw_chatbook.Outputs_Interop import OutputsScopeService, ServerOutputsService
-from tldw_chatbook.Personalization_Interop import (
+from tldw_chatbook.Outputs_Interop import OutputsScopeService, ServerOutputsService  # noqa: E402
+from tldw_chatbook.Personalization_Interop import (  # noqa: E402
     PersonalizationScopeService,
     ServerPersonalizationService,
 )
-from tldw_chatbook.Prompt_Management.prompt_scope_service import build_prompt_scope_service
-from tldw_chatbook.Prompt_Studio_Interop import PromptStudioScopeService, ServerPromptStudioService
-from tldw_chatbook.Research_Interop import (
-    LocalResearchSearchService,
-    LocalResearchService,
-    ResearchSearchScopeService,
-    ResearchScopeService,
-    ServerResearchSearchService,
-    ServerResearchService,
+from tldw_chatbook.Prompt_Management.prompt_scope_service import (  # noqa: E402
+    build_prompt_scope_service,
 )
-from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeScopeService, ServerRuntimeService
-from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
-from tldw_chatbook.Skills_Interop import (
+from tldw_chatbook.Prompt_Studio_Interop import (  # noqa: E402
+    PromptStudioScopeService,
+    ServerPromptStudioService,
+)
+from tldw_chatbook.Research_Interop import (  # noqa: E402
+    LocalResearchSearchService,
+    ResearchSearchScopeService,
+    ServerResearchSearchService,
+)
+from tldw_chatbook.Server_Runtime_Interop import (  # noqa: E402
+    ServerRuntimeScopeService,
+    ServerRuntimeService,
+)
+from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService  # noqa: E402
+from tldw_chatbook.Skills_Interop import (  # noqa: E402
     LocalSkillsService,
     ServerSkillsService,
     SkillTrustService,
     SkillsScopeService,
 )
-from tldw_chatbook.Skills_Interop.skill_trust_store import (
+from tldw_chatbook.Skills_Interop.skill_trust_store import (  # noqa: E402
     SkillTrustStore,
     build_default_skill_trust_key_cache,
     build_skill_trust_marker_store_with_fallback,
 )
-from tldw_chatbook.Sync_Interop import (
+from tldw_chatbook.Sync_Interop import (  # noqa: E402
     LocalFirstSyncService,
     ManualSyncControlService,
     ServerSyncService,
     SyncScopeService,
     SyncStateRepository,
 )
-from tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService
-from tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService
-from tldw_chatbook.MCP_Governance_Interop import MCPGovernanceScopeService, ServerMCPGovernanceService
-from tldw_chatbook.User_Governance_Interop import ServerUserGovernanceService, UserGovernanceScopeService
-from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService, WebClipperScopeService
-from tldw_chatbook.Web_Scraping_Interop import ServerWebScrapingService, WebScrapingScopeService
-from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
-from tldw_chatbook.Writing_Interop import LocalWritingService, ServerWritingService, WritingScopeService
-from tldw_chatbook.Subscriptions import (
+from tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService  # noqa: E402
+from tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService  # noqa: E402
+from tldw_chatbook.MCP_Governance_Interop import (  # noqa: E402
+    MCPGovernanceScopeService,
+    ServerMCPGovernanceService,
+)
+from tldw_chatbook.User_Governance_Interop import (  # noqa: E402
+    ServerUserGovernanceService,
+    UserGovernanceScopeService,
+)
+from tldw_chatbook.Web_Clipper_Interop import (  # noqa: E402
+    ServerWebClipperService,
+    WebClipperScopeService,
+)
+from tldw_chatbook.Web_Scraping_Interop import (  # noqa: E402
+    ServerWebScrapingService,
+    WebScrapingScopeService,
+)
+from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService  # noqa: E402
+from tldw_chatbook.Subscriptions import (  # noqa: E402
     LocalWatchlistsService,
     ServerWatchlistsService,
     WatchlistScopeService,
 )
-from tldw_chatbook.Translation_Interop import ServerTranslationService, TranslationScopeService
-from tldw_chatbook.Voice_Assistant_Interop import ServerVoiceAssistantService, VoiceAssistantScopeService
-from tldw_chatbook.Evaluations_Interop import (
+from tldw_chatbook.Translation_Interop import (  # noqa: E402
+    ServerTranslationService,
+    TranslationScopeService,
+)
+from tldw_chatbook.Voice_Assistant_Interop import (  # noqa: E402
+    ServerVoiceAssistantService,
+    VoiceAssistantScopeService,
+)
+from tldw_chatbook.Evaluations_Interop import (  # noqa: E402
     EvaluationScopeService,
     LocalEvaluationsService,
     ServerEvaluationsService,
 )
-from tldw_chatbook.runtime_policy.bootstrap import (
+from tldw_chatbook.runtime_policy.bootstrap import (  # noqa: E402
     add_runtime_policy_snapshot,
     build_runtime_api_client,
     load_runtime_policy_for_app,
     reconcile_saved_screen_state,
     set_authoritative_runtime_source,
 )
-from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
-from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider
-from tldw_chatbook.runtime_policy.server_credentials import (
+from tldw_chatbook.runtime_policy.server_capabilities import (  # noqa: E402
+    ActiveServerCapabilityService,
+)
+from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider  # noqa: E402
+from tldw_chatbook.runtime_policy.server_credentials import (  # noqa: E402
     CredentialStoreUnavailable,
     UnavailableServerCredentialStore,
     build_default_server_credential_store,
 )
-from tldw_chatbook.runtime_policy.server_event_scope import event_principal_id_from_active_context
-from tldw_chatbook.runtime_policy.server_parity_state import (
+from tldw_chatbook.runtime_policy.server_event_scope import (  # noqa: E402
+    event_principal_id_from_active_context,
+)
+from tldw_chatbook.runtime_policy.server_parity_state import (  # noqa: E402
     ServerParityStateRepositories,
     build_server_parity_state_repositories,
 )
-from tldw_chatbook.runtime_policy.engine import PolicyEngine
-from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
-from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
-from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState
-from tldw_chatbook.state import AppState
-from tldw_chatbook.Auth_Account_Interop import AuthAccountScopeService, ServerAuthAccountService
-from tldw_chatbook.Audio_Services_Interop import (
+from tldw_chatbook.runtime_policy.engine import PolicyEngine  # noqa: E402
+from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer  # noqa: E402
+from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY  # noqa: E402
+from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState  # noqa: E402
+from tldw_chatbook.state import AppState  # noqa: E402
+from tldw_chatbook.Auth_Account_Interop import (  # noqa: E402
+    AuthAccountScopeService,
+    ServerAuthAccountService,
+)
+from tldw_chatbook.Audio_Services_Interop import (  # noqa: E402
     AudioServicesScopeService,
     LocalAudioServicesService,
     ServerAudioServicesService,
 )
-from .Evals.eval_orchestrator import EvaluationOrchestrator
+from .Evals.eval_orchestrator import EvaluationOrchestrator  # noqa: E402
 
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import MCPUnifiedClient
@@ -385,7 +544,7 @@ if API_IMPORTS_SUCCESSFUL:
         "Cohere": chat_with_cohere,
         "HuggingFace": chat_with_huggingface,
         "DeepSeek": chat_with_deepseek,
-        "Google": chat_with_google, # Key from config
+        "Google": chat_with_google,  # Key from config
         "Groq": chat_with_groq,
         "koboldcpp": chat_with_kobold,  # Key from config
         "llama_cpp": chat_with_llama,  # Key from config
@@ -398,15 +557,18 @@ if API_IMPORTS_SUCCESSFUL:
         "Ollama": chat_with_ollama,  # Key from config
         "Custom": chat_with_custom_openai,  # Key from config
         "Custom_2": chat_with_custom_openai_2,  # Key from config
-        "local-llm": chat_with_local_llm
+        "local-llm": chat_with_local_llm,
     }
     logging.info(f"API_FUNCTION_MAP populated with {len(API_FUNCTION_MAP)} entries.")
 else:
     API_FUNCTION_MAP = {}
     logging.error("API_FUNCTION_MAP is empty due to import failures.")
 
-ALL_API_MODELS = {**API_MODELS_BY_PROVIDER, **LOCAL_PROVIDERS} # If needed for sidebar defaults
-AVAILABLE_PROVIDERS = list(ALL_API_MODELS.keys()) # If needed
+ALL_API_MODELS = {
+    **API_MODELS_BY_PROVIDER,
+    **LOCAL_PROVIDERS,
+}  # If needed for sidebar defaults
+AVAILABLE_PROVIDERS = list(ALL_API_MODELS.keys())  # If needed
 #
 #
 #####################################################################################################################
@@ -421,15 +583,15 @@ APP_CONFIG = load_settings()
 
 class ThemeProvider(Provider):
     """A command provider for theme switching."""
-    
+
     def __init__(self, screen, *args, **kwargs):
         """Initialize the ThemeProvider with required screen parameter."""
         super().__init__(screen, *args, **kwargs)
-    
+
     async def search(self, query: str) -> Hits:
         """Search for theme commands."""
         matcher = self.matcher(query)
-        
+
         # Always show the main "Change Theme" command
         main_command_score = matcher.match("Theme: Change Theme")
         if main_command_score > 0:
@@ -437,18 +599,30 @@ class ThemeProvider(Provider):
                 main_command_score,
                 matcher.highlight("Theme: Change Theme"),
                 partial(self.show_theme_submenu),
-                help="Open theme selection menu"
+                help="Open theme selection menu",
             )
-        
+
         # Only show individual themes if user is specifically searching for theme-related terms
-        if any(term in query.lower() for term in ["switch", "theme", "dark", "light", "color", "solarized", "gruvbox", "dracula"]):
+        if any(
+            term in query.lower()
+            for term in [
+                "switch",
+                "theme",
+                "dark",
+                "light",
+                "color",
+                "solarized",
+                "gruvbox",
+                "dracula",
+            ]
+        ):
             # Get available theme names from registered themes
             available_themes = ["textual-dark", "textual-light"]  # Built-in themes
             # Add custom themes from ALL_THEMES
             for theme in ALL_THEMES:
-                theme_name = theme.name if hasattr(theme, 'name') else str(theme)
+                theme_name = theme.name if hasattr(theme, "name") else str(theme)
                 available_themes.append(theme_name)
-            
+
             for theme_name in available_themes:
                 command_text = f"Theme: Switch to {theme_name.replace('_', ' ').replace('-', ' ').title()}"
                 score = matcher.match(command_text)
@@ -457,32 +631,36 @@ class ThemeProvider(Provider):
                         score * 0.9,  # Slightly lower priority than main command
                         matcher.highlight(command_text),
                         partial(self.switch_theme, theme_name),
-                        help=f"Change theme to {theme_name}"
+                        help=f"Change theme to {theme_name}",
                     )
-    
+
     async def discover(self) -> Hits:
         """Show only the main theme command when palette is first opened."""
         yield Hit(
             1.0,
             "Theme: Change Theme",
             partial(self.show_theme_submenu),
-            help="Open theme selection menu"
+            help="Open theme selection menu",
         )
-    
+
     def show_theme_submenu(self) -> None:
         """Show a notification with instruction to search for themes."""
-        self.app.notify("Type 'theme' in the command palette to see all available themes", severity="information")
-    
+        self.app.notify(
+            "Type 'theme' in the command palette to see all available themes",
+            severity="information",
+        )
+
     def switch_theme(self, theme_name: str) -> None:
         """Switch to the specified theme and save to config."""
         try:
             self.app.theme = theme_name
             self.app.notify(f"Theme changed to {theme_name}", severity="information")
-            
+
             # Save the theme preference to config
             from .config import save_setting_to_cli_config
+
             save_setting_to_cli_config("general", "default_theme", theme_name)
-            
+
         except Exception as e:
             self.app.notify(f"Failed to apply theme: {e}", severity="error")
 
@@ -541,12 +719,11 @@ class TabNavigationProvider(Provider):
         TAB_STUDY: "Switch to flashcards and quizzes",
         TAB_WRITING: "Switch to writing tools",
         TAB_RESEARCH: "Switch to research workflows",
-        TAB_SUBSCRIPTIONS: "Switch to subscriptions and watchlists",
+        TAB_WATCHLISTS_COLLECTIONS: "Switch to watchlists",
         TAB_CHATBOOKS: "Switch to portable Chatbook context packs",
         TAB_TOOLS_SETTINGS: "Open MCP for legacy tools and settings",
         TAB_LOGS: "Switch to application logs",
         TAB_STATS: "Switch to statistics view",
-        TAB_CUSTOMIZE: "Switch to appearance customization",
     }
 
     NAVIGATION_TABS = tuple(
@@ -591,7 +768,10 @@ class TabNavigationProvider(Provider):
 
     @classmethod
     def _shell_destination_for_tab(cls, tab_id: str):
-        from .UI.Navigation.shell_destinations import get_shell_destination, resolve_shell_route
+        from .UI.Navigation.shell_destinations import (
+            get_shell_destination,
+            resolve_shell_route,
+        )
 
         resolved = resolve_shell_route(cls.route_for_tab(tab_id))
         try:
@@ -628,13 +808,17 @@ class TabNavigationProvider(Provider):
             if destination is not None
             else get_tab_display_label(tab_id)
         )
-        help_text = self._shell_help_text(tab_id) or self.TAB_HELP_TEXT.get(tab_id, f"Switch to {label}")
+        help_text = self._shell_help_text(tab_id) or self.TAB_HELP_TEXT.get(
+            tab_id, f"Switch to {label}"
+        )
         return f"Tab Navigation: Switch to {label}", tab_id, help_text
 
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
 
-        tab_commands = [self._tab_command(tab_id) for tab_id in self.command_palette_tab_ids()]
+        tab_commands = [
+            self._tab_command(tab_id) for tab_id in self.command_palette_tab_ids()
+        ]
 
         for command_text, tab_id, help_text in tab_commands:
             destination = self._shell_destination_for_tab(tab_id)
@@ -653,7 +837,7 @@ class TabNavigationProvider(Provider):
                     score,
                     matcher.highlight(command_text),
                     partial(self.switch_tab, tab_id),
-                    help=help_text
+                    help=help_text,
                 )
 
     async def discover(self) -> Hits:
@@ -661,10 +845,7 @@ class TabNavigationProvider(Provider):
 
         for command_text, tab_id, help_text in popular_tabs:
             yield Hit(
-                1.0,
-                command_text,
-                partial(self.switch_tab, tab_id),
-                help=help_text
+                1.0, command_text, partial(self.switch_tab, tab_id), help=help_text
             )
 
     def switch_tab(self, tab_id: str) -> None:
@@ -685,27 +866,35 @@ class TabNavigationProvider(Provider):
 
 class LLMProviderProvider(Provider):
     """Provider for LLM provider management commands."""
-    
+
     def __init__(self, screen, *args, **kwargs):
         """Initialize the LLMProviderProvider with required screen parameter."""
         super().__init__(screen, *args, **kwargs)
-    
+
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
-        
+
         # Get available providers from the app
-        available_providers = AVAILABLE_PROVIDERS if 'AVAILABLE_PROVIDERS' in globals() else []
-        
+        available_providers = (
+            AVAILABLE_PROVIDERS if "AVAILABLE_PROVIDERS" in globals() else []
+        )
+
         provider_commands = [
-            ("LLM Provider Management: Show Current Provider", None, "Display currently selected LLM provider"),
+            (
+                "LLM Provider Management: Show Current Provider",
+                None,
+                "Display currently selected LLM provider",
+            ),
         ]
-        
+
         # Add provider switching commands
         for provider in available_providers:
-            provider_name = provider.replace('_', ' ').title()
+            provider_name = provider.replace("_", " ").title()
             command_text = f"LLM Provider Management: Switch to {provider_name}"
-            provider_commands.append((command_text, provider, f"Switch to {provider_name} provider"))
-        
+            provider_commands.append(
+                (command_text, provider, f"Switch to {provider_name} provider")
+            )
+
         for command_text, provider_id, help_text in provider_commands:
             score = matcher.match(command_text)
             if score > 0:
@@ -713,61 +902,83 @@ class LLMProviderProvider(Provider):
                     score,
                     matcher.highlight(command_text),
                     partial(self.handle_llm_command, provider_id, command_text),
-                    help=help_text
+                    help=help_text,
                 )
-    
+
     async def discover(self) -> Hits:
         popular_providers = ["OpenAI", "Anthropic", "Cohere", "Groq", "Ollama"]
-        
+
         yield Hit(
             1.0,
             "LLM Provider Management: Show Current Provider",
             partial(self.handle_llm_command, None, "show_current"),
-            help="Display currently selected LLM provider"
+            help="Display currently selected LLM provider",
         )
-        
+
         for provider in popular_providers:
             yield Hit(
                 0.9,
                 f"LLM Provider Management: Switch to {provider}",
                 partial(self.handle_llm_command, provider, f"switch_{provider}"),
-                help=f"Switch to {provider} provider"
+                help=f"Switch to {provider} provider",
             )
-    
+
     def handle_llm_command(self, provider_id: str, command: str) -> None:
         """Handle LLM provider commands."""
         try:
             if provider_id is None or "show_current" in command:
                 # Show current provider (the app-level chat provider reactive)
-                current = getattr(self.app, 'chat_api_provider_value', None) or 'Unknown'
-                self.app.notify(f"Current LLM provider: {current}", severity="information")
+                current = (
+                    getattr(self.app, "chat_api_provider_value", None) or "Unknown"
+                )
+                self.app.notify(
+                    f"Current LLM provider: {current}", severity="information"
+                )
             else:
                 # Switch provider for real: same reactive the Settings screen and
                 # Console model popover drive, whose watcher refreshes model selects.
                 self.app.chat_api_provider_value = provider_id
-                self.app.notify(f"Switched LLM provider to {provider_id}", severity="information")
+                self.app.notify(
+                    f"Switched LLM provider to {provider_id}", severity="information"
+                )
         except Exception as e:
             self.app.notify(f"Failed to execute LLM command: {e}", severity="error")
 
 
 class QuickActionsProvider(Provider):
     """Provider for quick action commands."""
-    
+
     def __init__(self, screen, *args, **kwargs):
         """Initialize the QuickActionsProvider with required screen parameter."""
         super().__init__(screen, *args, **kwargs)
-    
+
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
-        
+
         quick_actions = [
-            ("Quick Actions: New Chat Conversation", "new_chat", "Start a new chat conversation"),
-            ("Quick Actions: New Character Chat", "new_character", "Start a new character-based conversation"),
+            (
+                "Quick Actions: New Chat Conversation",
+                "new_chat",
+                "Start a new chat conversation",
+            ),
+            (
+                "Quick Actions: New Character Chat",
+                "new_character",
+                "Start a new character-based conversation",
+            ),
             ("Quick Actions: New Note", "new_note", "Create a new note"),
-            ("Quick Actions: Import Media File", "import_media", "Import a new media file for processing"),
-            ("Quick Actions: Search All Content", "search_all", "Search across all content"),
+            (
+                "Quick Actions: Import Media File",
+                "import_media",
+                "Import a new media file for processing",
+            ),
+            (
+                "Quick Actions: Search All Content",
+                "search_all",
+                "Search across all content",
+            ),
         ]
-        
+
         for command_text, action_id, help_text in quick_actions:
             score = matcher.match(command_text)
             if score > 0:
@@ -775,32 +986,48 @@ class QuickActionsProvider(Provider):
                     score,
                     matcher.highlight(command_text),
                     partial(self.execute_quick_action, action_id),
-                    help=help_text
+                    help=help_text,
                 )
-    
+
     async def discover(self) -> Hits:
         popular_actions = [
-            ("Quick Actions: New Chat Conversation", "new_chat", "Start a new chat conversation"),
+            (
+                "Quick Actions: New Chat Conversation",
+                "new_chat",
+                "Start a new chat conversation",
+            ),
             ("Quick Actions: New Note", "new_note", "Create a new note"),
-            ("Quick Actions: Search All Content", "search_all", "Search across all content"),
-            ("Quick Actions: Import Media File", "import_media", "Import a new media file for processing"),
+            (
+                "Quick Actions: Search All Content",
+                "search_all",
+                "Search across all content",
+            ),
+            (
+                "Quick Actions: Import Media File",
+                "import_media",
+                "Import a new media file for processing",
+            ),
         ]
-        
+
         for command_text, action_id, help_text in popular_actions:
             yield Hit(
                 1.0,
                 command_text,
                 partial(self.execute_quick_action, action_id),
-                help=help_text
+                help=help_text,
             )
-    
+
     def execute_quick_action(self, action_id: str) -> None:
         """Execute the specified quick action."""
         try:
             if action_id == "new_chat":
-                _navigate_via_screen(self.app, TAB_CHAT, "Opened Console for a new conversation")
+                _navigate_via_screen(
+                    self.app, TAB_CHAT, "Opened Console for a new conversation"
+                )
             elif action_id == "new_character":
-                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas for character setup")
+                _navigate_via_screen(
+                    self.app, TAB_PERSONAS, "Opened Personas for character setup"
+                )
             elif action_id == "new_note":
                 _navigate_via_screen(
                     self.app,
@@ -811,27 +1038,41 @@ class QuickActionsProvider(Provider):
             elif action_id == "search_all":
                 _navigate_via_screen(self.app, TAB_SEARCH, "Opened Search/RAG")
             elif action_id == "import_media":
-                _navigate_via_screen(self.app, TAB_INGEST, "Opened Import/Export for media import")
+                _navigate_via_screen(
+                    self.app, TAB_INGEST, "Opened Import/Export for media import"
+                )
         except Exception as e:
             self.app.notify(f"Failed to execute quick action: {e}", severity="error")
 
 
 class SettingsProvider(Provider):
     """Provider for settings and preferences commands."""
-    
+
     def __init__(self, screen, *args, **kwargs):
         """Initialize the SettingsProvider with required screen parameter."""
         super().__init__(screen, *args, **kwargs)
-    
+
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
-        
+
         settings_commands = [
-            ("Settings & Preferences: Open Config File", "open_config", "Open the configuration file for editing"),
-            ("Settings & Preferences: Show Database Stats", "db_stats", "Show database size and statistics"),
-            ("Settings & Preferences: Open Settings Tab", "open_settings", "Navigate to Tools & Settings tab"),
+            (
+                "Settings & Preferences: Open Config File",
+                "open_config",
+                "Open the configuration file for editing",
+            ),
+            (
+                "Settings & Preferences: Show Database Stats",
+                "db_stats",
+                "Show database size and statistics",
+            ),
+            (
+                "Settings & Preferences: Open Settings Tab",
+                "open_settings",
+                "Navigate to Tools & Settings tab",
+            ),
         ]
-        
+
         for command_text, setting_id, help_text in settings_commands:
             score = matcher.match(command_text)
             if score > 0:
@@ -839,24 +1080,36 @@ class SettingsProvider(Provider):
                     score,
                     matcher.highlight(command_text),
                     partial(self.handle_setting, setting_id),
-                    help=help_text
+                    help=help_text,
                 )
-    
+
     async def discover(self) -> Hits:
         popular_settings = [
-            ("Settings & Preferences: Open Settings Tab", "open_settings", "Navigate to Tools & Settings tab"),
-            ("Settings & Preferences: Open Config File", "open_config", "Open the configuration file for editing"),
-            ("Settings & Preferences: Show Database Stats", "db_stats", "Show database size and statistics"),
+            (
+                "Settings & Preferences: Open Settings Tab",
+                "open_settings",
+                "Navigate to Tools & Settings tab",
+            ),
+            (
+                "Settings & Preferences: Open Config File",
+                "open_config",
+                "Open the configuration file for editing",
+            ),
+            (
+                "Settings & Preferences: Show Database Stats",
+                "db_stats",
+                "Show database size and statistics",
+            ),
         ]
-        
+
         for command_text, setting_id, help_text in popular_settings:
             yield Hit(
                 1.0,
                 command_text,
                 partial(self.handle_setting, setting_id),
-                help=help_text
+                help=help_text,
             )
-    
+
     def handle_setting(self, setting_id: str) -> None:
         """Handle settings commands."""
         try:
@@ -864,29 +1117,47 @@ class SettingsProvider(Provider):
                 _navigate_via_screen(self.app, TAB_SETTINGS, "Opened Settings")
             elif setting_id == "open_config":
                 from .config import DEFAULT_CONFIG_PATH
-                self.app.notify(f"Config file location: {DEFAULT_CONFIG_PATH}", severity="information")
+
+                self.app.notify(
+                    f"Config file location: {DEFAULT_CONFIG_PATH}",
+                    severity="information",
+                )
             elif setting_id == "db_stats":
                 _navigate_via_screen(self.app, TAB_STATS, "Opened Statistics")
         except Exception as e:
-            self.app.notify(f"Failed to execute settings command: {e}", severity="error")
+            self.app.notify(
+                f"Failed to execute settings command: {e}", severity="error"
+            )
 
 
 class CharacterProvider(Provider):
     """Provider for character and persona management commands."""
-    
+
     def __init__(self, screen, *args, **kwargs):
         """Initialize the CharacterProvider with required screen parameter."""
         super().__init__(screen, *args, **kwargs)
-    
+
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
-        
+
         character_commands = [
-            ("Character/Persona Management: Create New Character", "new_character", "Create a new character or persona"),
-            ("Character/Persona Management: Show All Characters", "list_characters", "Display all available characters"),
-            ("Character/Persona Management: Open Character Tab", "open_character_tab", "Navigate to Character Chat tab"),
+            (
+                "Character/Persona Management: Create New Character",
+                "new_character",
+                "Create a new character or persona",
+            ),
+            (
+                "Character/Persona Management: Show All Characters",
+                "list_characters",
+                "Display all available characters",
+            ),
+            (
+                "Character/Persona Management: Open Character Tab",
+                "open_character_tab",
+                "Navigate to Character Chat tab",
+            ),
         ]
-        
+
         for command_text, action_id, help_text in character_commands:
             score = matcher.match(command_text)
             if score > 0:
@@ -894,53 +1165,83 @@ class CharacterProvider(Provider):
                     score,
                     matcher.highlight(command_text),
                     partial(self.handle_character_action, action_id),
-                    help=help_text
+                    help=help_text,
                 )
-    
+
     async def discover(self) -> Hits:
         popular_character_actions = [
-            ("Character/Persona Management: Open Character Tab", "open_character_tab", "Navigate to Character Chat tab"),
-            ("Character/Persona Management: Create New Character", "new_character", "Create a new character or persona"),
-            ("Character/Persona Management: Show All Characters", "list_characters", "Display all available characters"),
+            (
+                "Character/Persona Management: Open Character Tab",
+                "open_character_tab",
+                "Navigate to Character Chat tab",
+            ),
+            (
+                "Character/Persona Management: Create New Character",
+                "new_character",
+                "Create a new character or persona",
+            ),
+            (
+                "Character/Persona Management: Show All Characters",
+                "list_characters",
+                "Display all available characters",
+            ),
         ]
-        
+
         for command_text, action_id, help_text in popular_character_actions:
             yield Hit(
                 1.0,
                 command_text,
                 partial(self.handle_character_action, action_id),
-                help=help_text
+                help=help_text,
             )
-    
+
     def handle_character_action(self, action_id: str) -> None:
         """Handle character management actions."""
         try:
             if action_id == "open_character_tab":
                 _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas")
             elif action_id == "new_character":
-                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas to create a character")
+                _navigate_via_screen(
+                    self.app, TAB_PERSONAS, "Opened Personas to create a character"
+                )
             elif action_id == "list_characters":
-                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas to list characters")
+                _navigate_via_screen(
+                    self.app, TAB_PERSONAS, "Opened Personas to list characters"
+                )
         except Exception as e:
-            self.app.notify(f"Failed to execute character action: {e}", severity="error")
+            self.app.notify(
+                f"Failed to execute character action: {e}", severity="error"
+            )
 
 
 class MediaProvider(Provider):
     """Provider for media and content management commands."""
-    
+
     def __init__(self, screen, *args, **kwargs):
         """Initialize the MediaProvider with required screen parameter."""
         super().__init__(screen, *args, **kwargs)
-    
+
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
-        
+
         media_commands = [
-            ("Media & Content: Open Media Library", "open_media", "Navigate to media library"),
-            ("Media & Content: Search Transcripts", "search_transcripts", "Search through media transcripts"),
-            ("Media & Content: Import New Media", "import_new", "Import new media file"),
+            (
+                "Media & Content: Open Media Library",
+                "open_media",
+                "Navigate to media library",
+            ),
+            (
+                "Media & Content: Search Transcripts",
+                "search_transcripts",
+                "Search through media transcripts",
+            ),
+            (
+                "Media & Content: Import New Media",
+                "import_new",
+                "Import new media file",
+            ),
         ]
-        
+
         for command_text, action_id, help_text in media_commands:
             score = matcher.match(command_text)
             if score > 0:
@@ -948,33 +1249,49 @@ class MediaProvider(Provider):
                     score,
                     matcher.highlight(command_text),
                     partial(self.handle_media_action, action_id),
-                    help=help_text
+                    help=help_text,
                 )
-    
+
     async def discover(self) -> Hits:
         popular_media_actions = [
-            ("Media & Content: Open Media Library", "open_media", "Navigate to media library"),
-            ("Media & Content: Import New Media", "import_new", "Import new media file"),
-            ("Media & Content: Search Transcripts", "search_transcripts", "Search through media transcripts"),
+            (
+                "Media & Content: Open Media Library",
+                "open_media",
+                "Navigate to media library",
+            ),
+            (
+                "Media & Content: Import New Media",
+                "import_new",
+                "Import new media file",
+            ),
+            (
+                "Media & Content: Search Transcripts",
+                "search_transcripts",
+                "Search through media transcripts",
+            ),
         ]
-        
+
         for command_text, action_id, help_text in popular_media_actions:
             yield Hit(
                 1.0,
                 command_text,
                 partial(self.handle_media_action, action_id),
-                help=help_text
+                help=help_text,
             )
-    
+
     def handle_media_action(self, action_id: str) -> None:
         """Handle media management actions."""
         try:
             if action_id == "open_media":
                 _navigate_via_screen(self.app, TAB_MEDIA, "Opened Media Library")
             elif action_id == "import_new":
-                _navigate_via_screen(self.app, TAB_INGEST, "Opened Import/Export for media import")
+                _navigate_via_screen(
+                    self.app, TAB_INGEST, "Opened Import/Export for media import"
+                )
             elif action_id == "search_transcripts":
-                _navigate_via_screen(self.app, TAB_SEARCH, "Opened Search/RAG for transcript search")
+                _navigate_via_screen(
+                    self.app, TAB_SEARCH, "Opened Search/RAG for transcript search"
+                )
         except Exception as e:
             self.app.notify(f"Failed to execute media action: {e}", severity="error")
 
@@ -1032,20 +1349,32 @@ class LibraryIngestProvider(Provider):
 
 class DeveloperProvider(Provider):
     """Provider for developer and debug commands."""
-    
+
     def __init__(self, screen, *args, **kwargs):
         """Initialize the DeveloperProvider with required screen parameter."""
         super().__init__(screen, *args, **kwargs)
-    
+
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
-        
+
         dev_commands = [
-            ("Developer/Debug Commands: Show App Info", "app_info", "Display application version and build info"),
-            ("Developer/Debug Commands: Open Log File", "open_logs", "Navigate to application logs"),
-            ("Developer/Debug Commands: Show Keybindings", "show_keys", "Display all keyboard shortcuts"),
+            (
+                "Developer/Debug Commands: Show App Info",
+                "app_info",
+                "Display application version and build info",
+            ),
+            (
+                "Developer/Debug Commands: Open Log File",
+                "open_logs",
+                "Navigate to application logs",
+            ),
+            (
+                "Developer/Debug Commands: Show Keybindings",
+                "show_keys",
+                "Display all keyboard shortcuts",
+            ),
         ]
-        
+
         for command_text, action_id, help_text in dev_commands:
             score = matcher.match(command_text)
             if score > 0:
@@ -1053,35 +1382,51 @@ class DeveloperProvider(Provider):
                     score,
                     matcher.highlight(command_text),
                     partial(self.handle_dev_action, action_id),
-                    help=help_text
+                    help=help_text,
                 )
-    
+
     async def discover(self) -> Hits:
         popular_dev_actions = [
-            ("Developer/Debug Commands: Open Log File", "open_logs", "Navigate to application logs"),
-            ("Developer/Debug Commands: Show App Info", "app_info", "Display application version and build info"),
-            ("Developer/Debug Commands: Show Keybindings", "show_keys", "Display all keyboard shortcuts"),
+            (
+                "Developer/Debug Commands: Open Log File",
+                "open_logs",
+                "Navigate to application logs",
+            ),
+            (
+                "Developer/Debug Commands: Show App Info",
+                "app_info",
+                "Display application version and build info",
+            ),
+            (
+                "Developer/Debug Commands: Show Keybindings",
+                "show_keys",
+                "Display all keyboard shortcuts",
+            ),
         ]
-        
+
         for command_text, action_id, help_text in popular_dev_actions:
             yield Hit(
                 1.0,
                 command_text,
                 partial(self.handle_dev_action, action_id),
-                help=help_text
+                help=help_text,
             )
-    
+
     def handle_dev_action(self, action_id: str) -> None:
         """Handle developer/debug actions."""
         try:
             if action_id == "open_logs":
                 _navigate_via_screen(self.app, TAB_LOGS, "Opened Logs")
             elif action_id == "app_info":
-                self.app.notify("tldw_chatbook - TUI for LLM interactions", severity="information")
+                self.app.notify(
+                    "tldw_chatbook - TUI for LLM interactions", severity="information"
+                )
             elif action_id == "show_keys":
                 self.show_keybindings()
         except Exception as e:
-            self.app.notify(f"Failed to execute developer action: {e}", severity="error")
+            self.app.notify(
+                f"Failed to execute developer action: {e}", severity="error"
+            )
 
     def show_keybindings(self) -> None:
         """Show a generated keybindings panel built from the app's BINDINGS."""
@@ -1099,8 +1444,14 @@ class DeveloperProvider(Provider):
 # --- Placeholder Window for Lazy Loading ---
 class PlaceholderWindow(Container):
     """A lightweight placeholder that defers actual window creation until needed."""
-    
-    def __init__(self, app_instance: 'TldwCli', window_class: type, window_id: str, classes: str = "") -> None:
+
+    def __init__(
+        self,
+        app_instance: "TldwCli",
+        window_class: type,
+        window_id: str,
+        classes: str = "",
+    ) -> None:
         """Initialize placeholder with window creation parameters."""
         super().__init__(id=window_id, classes=f"placeholder-window {classes}")
         self.app_instance = app_instance
@@ -1110,28 +1461,40 @@ class PlaceholderWindow(Container):
         self._actual_window = None
         self._initialized = False
         # Log placeholder creation
-        logger.debug(f"PlaceholderWindow created for {window_id} (class: {window_class.__name__})")
-    
+        logger.debug(
+            f"PlaceholderWindow created for {window_id} (class: {window_class.__name__})"
+        )
+
     def initialize(self) -> None:
         """Create and mount the actual window widget."""
         if self._initialized:
             return
-            
+
         logger.info(f"Initializing actual window for {self.window_id}")
         start_time = time.perf_counter()
-        
+
         try:
             # Remove the loading placeholder first
             for child in list(self.children):
                 child.remove()
-            
+
             # Create the actual window
             # EvalsLab, EvalsWindow and EvalsWindowV3 are Containers that take app_instance as keyword argument
-            if self.window_class.__name__ in ['EvalsLab', 'EvalsWindow', 'EvalsWindowV3']:
-                self._actual_window = self.window_class(app_instance=self.app_instance, id=self.window_id, classes=self.actual_classes)
+            if self.window_class.__name__ in [
+                "EvalsLab",
+                "EvalsWindow",
+                "EvalsWindowV3",
+            ]:
+                self._actual_window = self.window_class(
+                    app_instance=self.app_instance,
+                    id=self.window_id,
+                    classes=self.actual_classes,
+                )
             else:
-                self._actual_window = self.window_class(self.app_instance, id=self.window_id, classes=self.actual_classes)
-            
+                self._actual_window = self.window_class(
+                    self.app_instance, id=self.window_id, classes=self.actual_classes
+                )
+
             # Clear placeholder styling and mount actual window
             self.remove_class("placeholder-window")
             # Set proper layout for the container AND make it visible
@@ -1139,55 +1502,73 @@ class PlaceholderWindow(Container):
             self.styles.height = "100%"
             self.styles.width = "100%"
             self.styles.display = "block"  # CRITICAL: Reset display to block after removing placeholder class
-            
+
             # Make sure the actual window fills the container
             self._actual_window.styles.height = "100%"
             self._actual_window.styles.width = "100%"
-            self._actual_window.styles.display = "block"  # Ensure the actual window is visible
-            
+            self._actual_window.styles.display = (
+                "block"  # Ensure the actual window is visible
+            )
+
             self.mount(self._actual_window)
             self._initialized = True
-            
+
             # Populate widgets for specific windows after initialization
             self._populate_window_widgets()
-            
+
             # Log timing
             duration = time.perf_counter() - start_time
-            log_histogram("lazy_window_initialization_seconds", duration,
-                         labels={"window": self.window_id.replace("-window", "")},
-                         documentation="Time to initialize lazy-loaded window")
-            logger.info(f"Window {self.window_id} initialized in {duration:.3f} seconds")
-            
+            log_histogram(
+                "lazy_window_initialization_seconds",
+                duration,
+                labels={"window": self.window_id.replace("-window", "")},
+                documentation="Time to initialize lazy-loaded window",
+            )
+            logger.info(
+                f"Window {self.window_id} initialized in {duration:.3f} seconds"
+            )
+
         except Exception as e:
-            logger.opt(exception=True).error(f"Failed to initialize window {self.window_id}: {str(e)}")
+            logger.opt(exception=True).error(
+                f"Failed to initialize window {self.window_id}: {str(e)}"
+            )
             # Clear any existing children before showing error
             for child in list(self.children):
                 child.remove()
-            self.mount(Static(f"Error loading {self.window_id}: {str(e)}", classes="error"))
-    
+            self.mount(
+                Static(f"Error loading {self.window_id}: {str(e)}", classes="error")
+            )
+
     def _populate_window_widgets(self) -> None:
         """Populate widgets for specific windows after they're initialized."""
         # Don't populate widgets here - let the watch_current_tab handle it
         # This prevents timing issues where widgets aren't ready yet
         pass
-    
+
     @property
     def is_initialized(self) -> bool:
         """Check if the actual window has been initialized."""
         return self._initialized
-    
+
     def compose(self) -> ComposeResult:
         """Show a loading message until initialized."""
         if not self._initialized:
             yield Static("Loading...", classes="loading-placeholder")
-    
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Proxy button presses to the actual window if initialized."""
         if self._initialized and self._actual_window:
-            if hasattr(self._actual_window, 'on_button_pressed'):
+            if hasattr(self._actual_window, "on_button_pressed"):
                 result = self._actual_window.on_button_pressed(event)
-                if hasattr(result, '__await__'):
+                if hasattr(result, "__await__"):
                     await result
+
+
+class TabDropdown(Widget):
+    """Placeholder for dropdown navigation (not yet implemented)."""
+
+    def update_active_tab(self, tab_id: str) -> None:
+        """No-op until the dropdown is implemented."""
 
 
 def _sanitize_library_ingest_error_text(message: str) -> str:
@@ -1364,6 +1745,7 @@ class LibraryIngestQueueMixin:
         from datetime import datetime, timezone
         from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
         from tldw_chatbook.Library.library_ingest_jobs import plan_restore
+
         try:
             store = LibraryIngestJobsDB(get_library_ingest_jobs_db_path())
             self._library_ingest_jobs_store = store
@@ -1588,9 +1970,7 @@ class LibraryIngestQueueMixin:
             self._ingest_parse_pool_stop_event = stop_event
             self._ingest_parse_pool = pool
             if sentinels:
-                self._start_ingest_parse_pool_monitor(
-                    generation, sentinels, stop_event
-                )
+                self._start_ingest_parse_pool_monitor(generation, sentinels, stop_event)
         return self._ingest_parse_pool
 
     @staticmethod
@@ -1602,7 +1982,9 @@ class LibraryIngestQueueMixin:
         try:
             sentinels = tuple(worker.sentinel for worker in workers)
         except Exception as exc:
-            raise RuntimeError("Could not inspect parse-pool worker sentinels.") from exc
+            raise RuntimeError(
+                "Could not inspect parse-pool worker sentinels."
+            ) from exc
         if not sentinels:
             raise RuntimeError("Parse pool started without worker sentinels.")
         return sentinels
@@ -2001,10 +2383,7 @@ class LibraryIngestQueueMixin:
 
         logger.opt(exception=exc).error(f"Library ingest parse pool failed: {exc}")
         for job in self.library_ingest_jobs.jobs():
-            if (
-                job.job_id not in affected_jobs
-                or job.state != IngestJobState.PARSING
-            ):
+            if job.job_id not in affected_jobs or job.state != IngestJobState.PARSING:
                 continue
             if job.job_id in self._ingest_parsed_payloads:
                 # Parse already finished -- the payload is waiting for the
@@ -2289,8 +2668,11 @@ class LibraryIngestQueueMixin:
 
 
 # --- Main App ---
-class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for run() if needed, None is common
+class TldwCli(
+    LibraryIngestQueueMixin, App[None]
+):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
+
     # Product name shown in the terminal title (legacy "tldw CLI" retired).
     TITLE = "tldw chatbook"
     # CSS file path
@@ -2334,17 +2716,27 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     # standalone Notes tab / Notes_Window.py it belonged to is gone, replaced
     # by the Library workbench's Notes canvas), confirmed via
     # `grep -rn 'id="notes-window"' tldw_chatbook/`.
-    ALL_MAIN_WINDOW_IDS = [ # Assuming these are your main content window IDs
-        "chat-window", "conversations_characters_prompts-window",
-        "ingest-window", "tools_settings-window", "llm_management-window",
-        "media-window", "search-window", "logs-window", "stats-window", "evals-window",
-        "coding-window", "stts-window", "study-window", "chatbooks-window", "customize-window"
+    ALL_MAIN_WINDOW_IDS = [  # Assuming these are your main content window IDs
+        "chat-window",
+        "conversations_characters_prompts-window",
+        "ingest-window",
+        "tools_settings-window",
+        "llm_management-window",
+        "media-window",
+        "search-window",
+        "logs-window",
+        "stats-window",
+        "evals-window",
+        "coding-window",
+        "stts-window",
+        "study-window",
+        "chatbooks-window",
     ]
 
     # Define reactive at class level with a placeholder default and type hint
     current_tab: reactive[str] = reactive("")
     ccp_active_view: reactive[str] = reactive("conversation_details_view")
-    
+
     # Splash screen state
     splash_screen_active: reactive[bool] = reactive(False)
     _splash_screen_widget: Optional[SplashScreen] = None
@@ -2360,8 +2752,12 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     # Initialize with a dummy value or fetch default from config here
     # Ensure the initial value matches what's set in compose/settings_sidebar
     # Fetching default provider from config:
-    _default_chat_provider = APP_CONFIG.get("chat_defaults", {}).get("provider", "OpenAI")
-    _default_ccp_provider = APP_CONFIG.get("character_defaults", {}).get("provider", "Anthropic") # Changed from character_defaults
+    _default_chat_provider = APP_CONFIG.get("chat_defaults", {}).get(
+        "provider", "OpenAI"
+    )
+    _default_ccp_provider = APP_CONFIG.get("character_defaults", {}).get(
+        "provider", "Anthropic"
+    )  # Changed from character_defaults
 
     chat_api_provider_value: reactive[Optional[str]] = reactive(_default_chat_provider)
     # Renamed character_api_provider_value to ccp_api_provider_value for clarity with TAB_CCP
@@ -2379,7 +2775,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             return active_screen.query_one(selector, expect_type)
 
     # RAG expansion provider reactive
-    rag_expansion_provider_value: reactive[Optional[str]] = reactive(_default_chat_provider)
+    rag_expansion_provider_value: reactive[Optional[str]] = reactive(
+        _default_chat_provider
+    )
 
     # --- Reactives for CCP Character EDITOR (Center Pane) ---
     current_editing_character_id: reactive[Optional[str]] = reactive(None)
@@ -2396,30 +2794,46 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
 
     # Reactives for sidebar
     chat_sidebar_collapsed: reactive[bool] = reactive(True)
-    chat_right_sidebar_collapsed: reactive[bool] = reactive(False)  # For character sidebar
+    chat_right_sidebar_collapsed: reactive[bool] = reactive(
+        False
+    )  # For character sidebar
     # Load saved width from config, default to 25% if not set
     _saved_width = settings.get("chat_defaults", {}).get("right_sidebar_width", 25)
-    chat_right_sidebar_width: reactive[int] = reactive(_saved_width)  # Width percentage for right sidebar
+    chat_right_sidebar_width: reactive[int] = reactive(
+        _saved_width
+    )  # Width percentage for right sidebar
     conv_char_sidebar_left_collapsed: reactive[bool] = reactive(False)
     conv_char_sidebar_right_collapsed: reactive[bool] = reactive(False)
-    evals_sidebar_collapsed: reactive[bool] = reactive(False) # Added for Evals tab
-    media_active_view: reactive[Optional[str]] = reactive(None)  # Added for Media tab navigation
+    evals_sidebar_collapsed: reactive[bool] = reactive(False)  # Added for Evals tab
+    media_active_view: reactive[Optional[str]] = reactive(
+        None
+    )  # Added for Media tab navigation
 
     # Reactive variables for selected note details
     current_selected_note_id: reactive[Optional[str]] = reactive(None)
     current_selected_note_version: reactive[Optional[int]] = reactive(None)
     current_selected_note_title: reactive[Optional[str]] = reactive(None)
     current_selected_note_content: reactive[Optional[str]] = reactive("")
-    
+
     # Notes tab UI state
-    notes_sort_by: reactive[str] = reactive("date_created")  # date_created, date_modified, title
+    notes_sort_by: reactive[str] = reactive(
+        "date_created"
+    )  # date_created, date_modified, title
     notes_sort_ascending: reactive[bool] = reactive(False)  # False = newest first
-    notes_preview_mode: reactive[bool] = reactive(False)  # False = edit mode, True = preview mode
+    notes_preview_mode: reactive[bool] = reactive(
+        False
+    )  # False = edit mode, True = preview mode
 
     # Auto-save related reactive variables
-    notes_auto_save_enabled: reactive[bool] = reactive(True)  # Auto-save enabled by default
-    notes_auto_save_timer: reactive[Optional[Timer]] = reactive(None)  # Timer reference for auto-save
-    notes_last_save_time: reactive[Optional[float]] = reactive(None)  # Timestamp of last save
+    notes_auto_save_enabled: reactive[bool] = reactive(
+        True
+    )  # Auto-save enabled by default
+    notes_auto_save_timer: reactive[Optional[Timer]] = reactive(
+        None
+    )  # Timer reference for auto-save
+    notes_last_save_time: reactive[Optional[float]] = reactive(
+        None
+    )  # Timestamp of last save
 
     # --- Reactives for chat sidebar prompt display ---
     chat_sidebar_selected_prompt_id: reactive[Optional[int]] = reactive(None)
@@ -2427,18 +2841,24 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     chat_sidebar_selected_prompt_user: reactive[Optional[str]] = reactive(None)
 
     # Chats
-    current_chat_is_ephemeral: reactive[bool] = reactive(True)  # Start new chats as ephemeral
+    current_chat_is_ephemeral: reactive[bool] = reactive(
+        True
+    )  # Start new chats as ephemeral
     # Reactive variable for current chat conversation ID
     current_chat_conversation_id: reactive[Optional[str]] = reactive(None)
     # Reactive variable for current conversation loaded in the Conversations, Characters & Prompts tab
     current_conv_char_tab_conversation_id: reactive[Optional[str]] = reactive(None)
-    current_chat_active_character_data: reactive[Optional[Dict[str, Any]]] = reactive(None)
+    current_chat_active_character_data: reactive[Optional[Dict[str, Any]]] = reactive(
+        None
+    )
     current_ccp_character_details: reactive[Optional[Dict[str, Any]]] = reactive(None)
     current_ccp_character_image: Optional[Image.Image] = None
-    
+
     # Chat Tabs Management (when enable_tabs is True)
     active_chat_tab_id: reactive[Optional[str]] = reactive(None)
-    chat_sessions: reactive[Dict[str, Dict[str, Any]]] = reactive({})  # tab_id -> session_data dict
+    chat_sessions: reactive[Dict[str, Dict[str, Any]]] = reactive(
+        {}
+    )  # tab_id -> session_data dict
 
     # For Chat Sidebar Prompts section
     chat_sidebar_loaded_prompt_id: reactive[Optional[Union[int, str]]] = reactive(None)
@@ -2456,22 +2876,34 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     current_prompt_details: reactive[Optional[str]] = reactive(None)
     current_prompt_system: reactive[Optional[str]] = reactive(None)
     current_prompt_user: reactive[Optional[str]] = reactive(None)
-    current_prompt_keywords_str: reactive[Optional[str]] = reactive("") # Store as comma-sep string for UI
-    current_prompt_version: reactive[Optional[int]] = reactive(None) # If DB provides it and you need it
+    current_prompt_keywords_str: reactive[Optional[str]] = reactive(
+        ""
+    )  # Store as comma-sep string for UI
+    current_prompt_version: reactive[Optional[int]] = reactive(
+        None
+    )  # If DB provides it and you need it
     # is_new_prompt can be inferred from current_prompt_id being None
 
     # Media Tab
     _media_types_for_ui: List[str] = []
-    _initial_media_view_slug: Optional[str] = reactive(slugify("All Media"))  # Default to "All Media" slug
+    _initial_media_view_slug: Optional[str] = reactive(
+        slugify("All Media")
+    )  # Default to "All Media" slug
 
-    current_media_type_filter_slug: reactive[Optional[str]] = reactive(slugify("All Media"))  # Slug for filtering
-    current_media_type_filter_display_name: reactive[Optional[str]] = reactive("All Media")  # Display name
-    media_current_page: reactive[int] = reactive(1) # Search results pagination
+    current_media_type_filter_slug: reactive[Optional[str]] = reactive(
+        slugify("All Media")
+    )  # Slug for filtering
+    current_media_type_filter_display_name: reactive[Optional[str]] = reactive(
+        "All Media"
+    )  # Display name
+    media_current_page: reactive[int] = reactive(1)  # Search results pagination
 
     # current_media_search_term: reactive[str] = reactive("") # Handled by inputs directly
     current_loaded_media_item: reactive[Optional[Dict[str, Any]]] = reactive(None)
     _media_search_timers: Dict[str, Timer] = {}  # For debouncing per media type
-    _media_sidebar_search_timer: Optional[Timer] = None # For chat sidebar media search debouncing
+    _media_sidebar_search_timer: Optional[Timer] = (
+        None  # For chat sidebar media search debouncing
+    )
     # task-283 (B4): per-type_slug staleness generation, incremented each time a
     # debounced media search starts; the DB call now runs via asyncio.to_thread,
     # which an exclusive worker/timer cannot cancel mid-flight, so this guards
@@ -2483,13 +2915,19 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
 
     # Add media_types_for_ui to store fetched types
     media_types_for_ui: List[str] = []
-    _initial_media_view: Optional[str] = "media-view-video-audio"  # Default to the first sub-tab
+    _initial_media_view: Optional[str] = (
+        "media-view-video-audio"  # Default to the first sub-tab
+    )
     media_db: Optional[MediaDatabase] = None
-    current_sidebar_media_item: Optional[Dict[str, Any]] = None # For chat sidebar media review
+    current_sidebar_media_item: Optional[Dict[str, Any]] = (
+        None  # For chat sidebar media review
+    )
 
     # Settings mode for chat sidebar
     chat_settings_mode: reactive[str] = reactive("basic")  # "basic" or "advanced"
-    chat_settings_search_query: reactive[str] = reactive("")  # Search query for settings
+    chat_settings_search_query: reactive[str] = reactive(
+        ""
+    )  # Search query for settings
 
     # Search Tab's active sub-view reactives
     search_active_sub_tab: reactive[Optional[str]] = reactive(None)
@@ -2509,7 +2947,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     note_import_failure_handler: Optional[Callable] = None
 
     # Tools Tab
-    tools_settings_active_view: reactive[Optional[str]] = reactive("ts-view-general-settings")  # Default to general settings
+    tools_settings_active_view: reactive[Optional[str]] = reactive(
+        "ts-view-general-settings"
+    )  # Default to general settings
     _initial_tools_settings_view: Optional[str] = "ts-view-general-settings"
 
     _prompt_search_timer: Optional[Timer] = None
@@ -2517,7 +2957,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     # LLM Inference Tab
     llm_active_view: reactive[Optional[str]] = reactive(None)
     _initial_llm_view: Optional[str] = "llm-view-llama-cpp"
-    
+
     llamacpp_server_process: Optional[subprocess.Popen] = None
     llamafile_server_process: Optional[subprocess.Popen] = None
     vllm_server_process: Optional[subprocess.Popen] = None
@@ -2533,8 +2973,8 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     _ccp_conversation_search_generation: int = 0
     _conversation_search_timer: Optional[Timer] = None
     _notes_search_timer: Optional[Timer] = None
-    _chat_sidebar_prompt_search_timer: Optional[Timer] = None # New timer
-    
+    _chat_sidebar_prompt_search_timer: Optional[Timer] = None  # New timer
+
     # Flag to track if character filter has been populated
     _chat_character_filter_populated: bool = False
 
@@ -2542,7 +2982,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     API_IMPORTS_SUCCESSFUL = API_IMPORTS_SUCCESSFUL
 
     # User ID for notes, will be initialized in __init__
-    current_user_id: str = "default_user" # Will be overridden by self.notes_user_id
+    current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
 
     # For Chat Tab's Notes section
     current_chat_note_id: Optional[str] = None
@@ -2555,40 +2995,50 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         # Track startup timing
         self._startup_start_time = time.perf_counter()
         self._startup_phases = {}
-        
+
         # Tab switching optimization
         self._initialized_tabs = set()  # Track which tabs have been initialized
 
         # task-283 (B4): per-instance -- see the class-level annotation.
         self._media_search_generation = {}
-        
+
         # Reduce logging in production
         if not os.environ.get("TLDW_DEBUG"):
-            logging.getLogger().setLevel(logging.INFO)  # Reduce to INFO level in production
+            logging.getLogger().setLevel(
+                logging.INFO
+            )  # Reduce to INFO level in production
             # Disable debug logging for performance
             logging.getLogger("tldw_chatbook").setLevel(logging.INFO)
-        
+
         # Log initial memory usage only in debug mode
         if os.environ.get("TLDW_DEBUG"):
             log_resource_usage()
-        log_counter("app_startup_initiated", 1, documentation="Application startup initiated")
-        
+        log_counter(
+            "app_startup_initiated", 1, documentation="Application startup initiated"
+        )
+
         super().__init__()
-        
+
         # Phase 1: Basic initialization
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
-        self.acp_runtime_process_manager = ACPRuntimeProcessManager.from_app_config(self.app_config)
-        self.acp_runtime_session_state = self.acp_runtime_process_manager.session_state()
+        self.acp_runtime_process_manager = ACPRuntimeProcessManager.from_app_config(
+            self.app_config
+        )
+        self.acp_runtime_session_state = (
+            self.acp_runtime_process_manager.session_state()
+        )
         self.app_state = AppState()
         self.runtime_policy = load_runtime_policy_for_app(self)
-        self.service_policy_enforcer = ServicePolicyEnforcer.from_runtime_policy_context(
-            self.runtime_policy
+        self.service_policy_enforcer = (
+            ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
         )
         self.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
         self.pending_chat_handoff: Optional[ChatHandoffPayload] = None
-        self.pending_console_launch: Optional[ConsoleLiveWorkLaunch | Dict[str, Any]] = None
+        self.pending_console_launch: Optional[
+            ConsoleLiveWorkLaunch | Dict[str, Any]
+        ] = None
         self.pending_console_prompt_insert: Optional[str] = None
         self.pending_study_scope_context: Optional[StudyScopeContext] = None
         self.pending_study_initial_section: Optional[str] = None
@@ -2597,36 +3047,47 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             runtime_policy=self.runtime_policy,
         )
         self.loguru_logger = loguru_logger
-        self.loguru_logger.info(f"Loaded app_config - strip_thinking_tags: {self.app_config.get('chat_defaults', {}).get('strip_thinking_tags', 'NOT SET')}") # Make loguru_logger an instance variable for handlers
+        self.loguru_logger.info(
+            f"Loaded app_config - strip_thinking_tags: {self.app_config.get('chat_defaults', {}).get('strip_thinking_tags', 'NOT SET')}"
+        )  # Make loguru_logger an instance variable for handlers
         self.client_id = CLI_APP_CLIENT_ID
-        self.prompts_client_id = "tldw_tui_client_v1" # Store client ID for prompts service
-        self.db_status_manager = DBStatusManager(self)  # Initialize database status manager
+        self.prompts_client_id = (
+            "tldw_tui_client_v1"  # Store client ID for prompts service
+        )
+        self.db_status_manager = DBStatusManager(
+            self
+        )  # Initialize database status manager
         self.ui_responsiveness_monitor = UIResponsivenessMonitor(
-            enabled=bool(get_cli_setting("diagnostics", "ui_responsiveness_enabled", True)),
+            enabled=bool(
+                get_cli_setting("diagnostics", "ui_responsiveness_enabled", True)
+            ),
             heartbeat_interval_seconds=1.0,
         )
         self._wire_server_context_provider()
         self._startup_phases["basic_init"] = time.perf_counter() - phase_start
-        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["basic_init"], 
-                     labels={"phase": "basic_init"}, 
-                     documentation="Duration of startup phase in seconds")
+        log_histogram(
+            "app_startup_phase_duration_seconds",
+            self._startup_phases["basic_init"],
+            labels={"phase": "basic_init"},
+            documentation="Duration of startup phase in seconds",
+        )
 
         # Phase 2: Attribute initialization
         phase_start = time.perf_counter()
         # Initialize screen navigation flag early to prevent AttributeError
         self._use_screen_navigation = True  # ALWAYS use screen-based navigation now
-        self.parsed_prompts_for_preview = [] # <<< INITIALIZATION for prompts
+        self.parsed_prompts_for_preview = []  # <<< INITIALIZATION for prompts
         self.last_prompt_import_dir = None
 
         self.selected_character_files_for_import = []
-        self.parsed_characters_for_preview = [] # <<< INITIALIZATION for characters
+        self.parsed_characters_for_preview = []  # <<< INITIALIZATION for characters
         self.last_character_import_dir = None
         # Initialize Ingest Tab related attributes
         self.selected_prompt_files_for_import = []
         self.parsed_prompts_for_preview = []
         self.last_prompt_import_dir = Path.home()  # Or Path(".")
         self.selected_notes_files_for_import = []
-        self.parsed_notes_for_preview = [] # <<< INITIALIZATION for notes
+        self.parsed_notes_for_preview = []  # <<< INITIALIZATION for notes
         self.last_notes_import_dir = None
         # Llama.cpp server process
         self.llamacpp_server_process = None
@@ -2641,58 +3102,76 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         self.media_search_current_page = 1
         self.media_search_total_pages = 1
         self._startup_phases["attribute_init"] = time.perf_counter() - phase_start
-        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["attribute_init"], 
-                     labels={"phase": "attribute_init"}, 
-                     documentation="Duration of startup phase in seconds")
+        log_histogram(
+            "app_startup_phase_duration_seconds",
+            self._startup_phases["attribute_init"],
+            labels={"phase": "attribute_init"},
+            documentation="Duration of startup phase in seconds",
+        )
 
         # Phase 3: Parallel initialization of independent services
         phase_start = time.perf_counter()
-        
+
         # Prepare shared data
         user_name_for_notes = settings.get("USERS_NAME", "default_tui_user")
         self.notes_user_id = user_name_for_notes
-        
+
         # Run independent initializations in parallel
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             # Submit all independent initialization tasks
             futures = {
-                executor.submit(self._init_notes_service, user_name_for_notes): "notes_service",
+                executor.submit(
+                    self._init_notes_service, user_name_for_notes
+                ): "notes_service",
                 executor.submit(self._init_providers_models): "providers_models",
                 executor.submit(self._init_prompts_service): "prompts_service",
-                executor.submit(self._init_media_db): "media_db"
+                executor.submit(self._init_media_db): "media_db",
             }
-            
+
             # Wait for all tasks to complete and log individual timings
             for future in concurrent.futures.as_completed(futures):
                 task_name = futures[future]
                 try:
                     task_start = time.perf_counter()
-                    result = future.result()
+                    future.result()
                     task_duration = time.perf_counter() - task_start
-                    logger.info(f"Parallel init task '{task_name}' completed in {task_duration:.3f}s")
+                    logger.info(
+                        f"Parallel init task '{task_name}' completed in {task_duration:.3f}s"
+                    )
                 except Exception as e:
-                    logger.opt(exception=True).error(f"Parallel init task '{task_name}' failed: {e}")
-        
+                    logger.opt(exception=True).error(
+                        f"Parallel init task '{task_name}' failed: {e}"
+                    )
+
         # Log total parallel phase time
         parallel_duration = time.perf_counter() - phase_start
         self._startup_phases["parallel_init"] = parallel_duration
-        log_histogram("app_startup_phase_duration_seconds", parallel_duration, 
-                     labels={"phase": "parallel_init"}, 
-                     documentation="Duration of parallel initialization phase")
+        log_histogram(
+            "app_startup_phase_duration_seconds",
+            parallel_duration,
+            labels={"phase": "parallel_init"},
+            documentation="Duration of parallel initialization phase",
+        )
         log_resource_usage()  # Check memory after parallel init
 
         # Providers, prompts, and media DB are initialized in parallel above
         # Just ensure we have defaults if parallel init failed
-        if not hasattr(self, 'providers_models'):
+        if not hasattr(self, "providers_models"):
             self.providers_models = {}
 
         # --- Initial Tab ---
         initial_tab_from_config = get_cli_setting("general", "default_tab", TAB_CHAT)
-        self._initial_tab_value = self._normalize_initial_tab_from_config(initial_tab_from_config)
-        logging.info(f"App __init__: Determined initial tab value: {self._initial_tab_value}")
+        self._initial_tab_value = self._normalize_initial_tab_from_config(
+            initial_tab_from_config
+        )
+        logging.info(
+            f"App __init__: Determined initial tab value: {self._initial_tab_value}"
+        )
         # current_tab reactive will be set in on_mount after UI is composed
 
-        self._rich_log_handler: Optional[RichLogHandler] = None # For the RichLog widget in Logs tab
+        self._rich_log_handler: Optional[RichLogHandler] = (
+            None  # For the RichLog widget in Logs tab
+        )
 
         # Prompts service is initialized in parallel above
         # Set up timer
@@ -2700,15 +3179,21 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
 
         # Media DB is initialized in parallel above
         # Ensure we have media types for UI
-        if not hasattr(self, '_media_types_for_ui'):
+        if not hasattr(self, "_media_types_for_ui"):
             self._media_types_for_ui = ["Error: Media DB not loaded"]
 
         initial_media_runtime_backend = self._resolve_initial_media_runtime_backend()
-        self.media_runtime_state = MediaRuntimeState(runtime_backend=initial_media_runtime_backend)
-        self.local_media_reading_service = LocalMediaReadingService(self.media_db, app_config=self.app_config)
-        self.server_media_reading_service = ServerMediaReadingService.from_server_context_provider(
-            self.server_context_provider,
-            policy_enforcer=self.service_policy_enforcer,
+        self.media_runtime_state = MediaRuntimeState(
+            runtime_backend=initial_media_runtime_backend
+        )
+        self.local_media_reading_service = LocalMediaReadingService(
+            self.media_db, app_config=self.app_config
+        )
+        self.server_media_reading_service = (
+            ServerMediaReadingService.from_server_context_provider(
+                self.server_context_provider,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         )
         self.media_reading_scope_service = MediaReadingScopeService(
             local_service=self.local_media_reading_service,
@@ -2721,8 +3206,12 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         self._wire_watchlists_and_notifications_services()
         self._wire_writing_services()
 
-        self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: {self._media_types_for_ui}")
-        self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: {type(self._media_types_for_ui)}")
+        self.loguru_logger.debug(
+            f"ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: {self._media_types_for_ui}"
+        )
+        self.loguru_logger.debug(
+            f"ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: {type(self._media_types_for_ui)}"
+        )
 
         self._tts_handler = None
         self._stts_handler = None
@@ -2736,7 +3225,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         # --- Setup Default view for CCP tab ---
         # Initialize self.ccp_active_view based on initial tab or default state if needed
         if self._initial_tab_value == TAB_CCP:
-            self.ccp_active_view = "conversation_details_view"  # Default view for CCP tab
+            self.ccp_active_view = (
+                "conversation_details_view"  # Default view for CCP tab
+            )
         # else: it will default to "conversation_details_view" anyway
 
         # --- Assign DB instances for event handlers ---
@@ -2744,13 +3235,17 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             # Get the database instance using the get_db_instance() function
             try:
                 self.prompts_db = prompts_interop.get_db_instance()
-                logging.info("Assigned prompts_interop.get_db_instance() to self.prompts_db")
+                logging.info(
+                    "Assigned prompts_interop.get_db_instance() to self.prompts_db"
+                )
             except RuntimeError as e:
                 logging.error(f"Error getting prompts_db instance: {e}")
-                self.prompts_db = None # Explicitly set to None
+                self.prompts_db = None  # Explicitly set to None
         else:
-            self.prompts_db = None # Ensure it's None if service failed
-            logging.warning("Prompts service not initialized, self.prompts_db set to None.")
+            self.prompts_db = None  # Ensure it's None if service failed
+            logging.warning(
+                "Prompts service not initialized, self.prompts_db set to None."
+            )
         self.prompt_scope_service = build_prompt_scope_service(
             prompt_db=self.prompts_db,
             app_config=self.app_config,
@@ -2758,23 +3253,35 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             client_provider=self.server_context_provider,
         )
 
-        if self.notes_service and hasattr(self.notes_service, 'db') and self.notes_service.db:
-            self.chachanotes_db = self.notes_service.db # ChaChaNotesDB is used by NotesInteropService
+        if (
+            self.notes_service
+            and hasattr(self.notes_service, "db")
+            and self.notes_service.db
+        ):
+            self.chachanotes_db = (
+                self.notes_service.db
+            )  # ChaChaNotesDB is used by NotesInteropService
             logging.info("Assigned self.notes_service.db to self.chachanotes_db")
-        else: # Fallback to global if notes_service didn't set it up as expected on itself
+        else:  # Fallback to global if notes_service didn't set it up as expected on itself
             lazy_db = get_chachanotes_db_lazy()
             if lazy_db:
                 self.chachanotes_db = lazy_db
-                logging.info("Assigned lazy-loaded chachanotes_db to self.chachanotes_db as fallback.")
+                logging.info(
+                    "Assigned lazy-loaded chachanotes_db to self.chachanotes_db as fallback."
+                )
             else:
-                logging.error("ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.")
-                self.chachanotes_db = None # Explicitly set to None
+                logging.error(
+                    "ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__."
+                )
+                self.chachanotes_db = None  # Explicitly set to None
 
         self._wire_chat_conversation_services()
 
-        self.server_notes_workspace_service = ServerNotesWorkspaceService.from_server_context_provider(
-            self.server_context_provider,
-            policy_enforcer=self.service_policy_enforcer,
+        self.server_notes_workspace_service = (
+            ServerNotesWorkspaceService.from_server_context_provider(
+                self.server_context_provider,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         )
         self.notes_scope_service = NotesScopeService(
             local_notes_service=self.notes_service,
@@ -2801,25 +3308,30 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         # --- Create the master handler map ---
         # This one-time setup makes the dispatcher clean and fast.
         self.button_handler_map = self._build_handler_map()
-        
+
         # --- Initialize worker handler registry ---
         self._init_worker_handlers()
-        
+
         # Log total initialization time
         total_init_time = time.perf_counter() - self._startup_start_time
         self._startup_phases["total_init"] = total_init_time
-        log_histogram("app_startup_total_duration_seconds", total_init_time, 
-                     documentation="Total application initialization time in seconds")
-        
+        log_histogram(
+            "app_startup_total_duration_seconds",
+            total_init_time,
+            documentation="Total application initialization time in seconds",
+        )
+
         # Log startup summary
-        logger.info(f"=== STARTUP TIMING SUMMARY ===")
+        logger.info("=== STARTUP TIMING SUMMARY ===")
         logger.info(f"Total initialization time: {total_init_time:.3f} seconds")
         for phase, duration in self._startup_phases.items():
             if phase != "total_init":
-                percentage = (duration / total_init_time) * 100 if total_init_time > 0 else 0
+                percentage = (
+                    (duration / total_init_time) * 100 if total_init_time > 0 else 0
+                )
                 logger.info(f"  {phase}: {duration:.3f}s ({percentage:.1f}%)")
-        logger.info(f"==============================")
-        
+        logger.info("==============================")
+
         # Final memory check
         log_resource_usage()
 
@@ -2940,7 +3452,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             subview: The retired Notes tab's workspace subview. Accepted for
                 backward compatibility; no longer applied.
         """
-        self.post_message(NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_MODE: "notes"}))
+        self.post_message(
+            NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_MODE: "notes"})
+        )
 
     def open_chat_with_handoff(
         self,
@@ -3026,17 +3540,23 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         """Follow through on a supported Console live-work status-card action."""
         normalized_launch = ConsoleLiveWorkLaunch.from_pending(launch)
         if normalized_launch is None:
-            self.notify("Console action is unavailable for this live-work item.", severity="warning")
+            self.notify(
+                "Console action is unavailable for this live-work item.",
+                severity="warning",
+            )
             return False
 
         action = resolve_console_live_work_primary_action(normalized_launch)
         if action is None:
-            self.notify("Console action is unavailable for this live-work item.", severity="warning")
+            self.notify(
+                "Console action is unavailable for this live-work item.",
+                severity="warning",
+            )
             return False
 
-        if action.target_route == TAB_SUBSCRIPTIONS:
+        if action.target_route == TAB_WATCHLISTS_COLLECTIONS:
             self._stage_subscription_watchlist_run_context(action.target_id)
-            self.post_message(NavigateToScreen(TAB_SUBSCRIPTIONS))
+            self.post_message(NavigateToScreen(TAB_WATCHLISTS_COLLECTIONS))
             return True
 
         if action.target_route == TAB_ARTIFACTS:
@@ -3059,7 +3579,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         target_id: str | None = None,
         target_route: str | None = None,
     ) -> HomeControlResult:
-        adapter = getattr(self, "home_active_work_adapter", UnavailableHomeActiveWorkAdapter())
+        adapter = getattr(
+            self, "home_active_work_adapter", UnavailableHomeActiveWorkAdapter()
+        )
         if target_id is None and target_route is None:
             result = adapter.handle_control(action)
         else:
@@ -3082,30 +3604,48 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     def prepare_home_primary_action(self, action: Any) -> None:
         """Stage route-specific context before Home primary-action navigation."""
         if getattr(action, "action_id", None) == "review_notifications":
-            self.pending_subscription_initial_tab = "notifications"
+            self.pending_watchlists_section = "rules"
         elif (
             getattr(action, "action_id", None) == "review_failed_work"
             and getattr(action, "target_route", None) == "subscriptions"
         ):
-            self.pending_subscription_initial_tab = "watchlist-runs"
+            self.pending_watchlists_section = "runs"
 
-    def approve_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
+    def approve_active_home_item(
+        self, *, target_id: str | None = None
+    ) -> HomeControlResult:
         """Approve the active Home item through the configured adapter."""
-        return self._handle_home_control_action(HomeControlAction.APPROVE, target_id=target_id)
+        return self._handle_home_control_action(
+            HomeControlAction.APPROVE, target_id=target_id
+        )
 
-    def reject_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
+    def reject_active_home_item(
+        self, *, target_id: str | None = None
+    ) -> HomeControlResult:
         """Reject the active Home item through the configured adapter."""
-        return self._handle_home_control_action(HomeControlAction.REJECT, target_id=target_id)
+        return self._handle_home_control_action(
+            HomeControlAction.REJECT, target_id=target_id
+        )
 
-    def pause_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
+    def pause_active_home_item(
+        self, *, target_id: str | None = None
+    ) -> HomeControlResult:
         """Pause the active Home item through the configured adapter."""
-        return self._handle_home_control_action(HomeControlAction.PAUSE, target_id=target_id)
+        return self._handle_home_control_action(
+            HomeControlAction.PAUSE, target_id=target_id
+        )
 
-    def resume_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
+    def resume_active_home_item(
+        self, *, target_id: str | None = None
+    ) -> HomeControlResult:
         """Resume the active Home item through the configured adapter."""
-        return self._handle_home_control_action(HomeControlAction.RESUME, target_id=target_id)
+        return self._handle_home_control_action(
+            HomeControlAction.RESUME, target_id=target_id
+        )
 
-    def retry_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
+    def retry_active_home_item(
+        self, *, target_id: str | None = None
+    ) -> HomeControlResult:
         """Retry the active Home item through the configured adapter.
 
         Library ingest job targets (``local:ingest:<job_id>``) are requeued
@@ -3119,7 +3659,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         the adapter exactly as before.
         """
         if target_id is not None and str(target_id).startswith("local:ingest:"):
-            job_id = str(target_id)[len("local:ingest:"):]
+            job_id = str(target_id)[len("local:ingest:") :]
             requeued = self.retry_library_ingest_job(job_id)
             if requeued is None:
                 # Unknown job id, or the job is no longer FAILED (e.g. it
@@ -3152,7 +3692,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 )
             self.notify(result.message, severity=result.severity)
             return result
-        return self._handle_home_control_action(HomeControlAction.RETRY, target_id=target_id)
+        return self._handle_home_control_action(
+            HomeControlAction.RETRY, target_id=target_id
+        )
 
     def open_home_flashcards_review(self) -> None:
         """Open the Study screen directly on the flashcards review surface."""
@@ -3185,7 +3727,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         if result.status is HomeControlResultStatus.HANDLED and result.target_route:
             if result.target_route == "subscriptions":
                 self._stage_subscription_watchlist_run_context(result.target_id or target_id)
-                self.post_message(NavigateToScreen(result.target_route))
+                self.post_message(NavigateToScreen(TAB_WATCHLISTS_COLLECTIONS))
             elif result.target_route == "library" and str(
                 result.target_id or target_id or ""
             ).startswith("local:ingest:"):
@@ -3204,8 +3746,8 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
 
     def _stage_subscription_watchlist_run_context(self, target_id: str | None) -> None:
         if target_id and ":watchlist_run:" in str(target_id):
-            self.pending_subscription_initial_tab = "watchlist-runs"
-            self.pending_subscription_watchlist_run_id = str(target_id)
+            self.pending_watchlists_section = "runs"
+            self.pending_watchlists_run_id = str(target_id)
 
     def open_active_home_item_in_console(
         self,
@@ -3219,7 +3761,10 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             target_id=target_id,
             target_route=target_route,
         )
-        if result.status is HomeControlResultStatus.HANDLED and result.console_launch is not None:
+        if (
+            result.status is HomeControlResultStatus.HANDLED
+            and result.console_launch is not None
+        ):
             launch_kwargs = {
                 "source": result.console_launch.source,
                 "title": result.console_launch.title,
@@ -3235,9 +3780,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         return result
 
     def _wire_character_persona_services(self) -> None:
-        self.server_character_persona_service = ServerCharacterPersonaService.from_server_context_provider(
-            self.server_context_provider,
-            policy_enforcer=self.service_policy_enforcer,
+        self.server_character_persona_service = (
+            ServerCharacterPersonaService.from_server_context_provider(
+                self.server_context_provider,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         )
         self.local_character_persona_service = LocalCharacterPersonaService(
             self.chachanotes_db,
@@ -3248,13 +3795,16 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             server_service=self.server_character_persona_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        self.server_chat_dictionary_service = ServerChatDictionaryService.from_server_context_provider(
-            self.server_context_provider,
-            policy_enforcer=self.service_policy_enforcer,
+        self.server_chat_dictionary_service = (
+            ServerChatDictionaryService.from_server_context_provider(
+                self.server_context_provider,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         )
         self.local_chat_dictionary_service = LocalChatDictionaryService(
             self.chachanotes_db,
-            history_store_path=get_user_data_dir() / "tldw_chatbook_chat_dictionary_history.json",
+            history_store_path=get_user_data_dir()
+            / "tldw_chatbook_chat_dictionary_history.json",
         )
         self.chat_dictionary_scope_service = ChatDictionaryScopeService(
             local_service=self.local_chat_dictionary_service,
@@ -3266,7 +3816,8 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         self.local_chat_conversation_service = (
             ChatConversationService(
                 self.chachanotes_db,
-                rag_context_store_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
+                rag_context_store_path=get_user_data_dir()
+                / "tldw_chatbook_chat_rag_context.json",
             )
             if getattr(self, "chachanotes_db", None) is not None
             else None
@@ -3276,9 +3827,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             if getattr(self, "chachanotes_db", None) is not None
             else None
         )
-        self.server_chat_conversation_service = ServerChatConversationService.from_server_context_provider(
-            self.server_context_provider,
-            policy_enforcer=self.service_policy_enforcer,
+        self.server_chat_conversation_service = (
+            ServerChatConversationService.from_server_context_provider(
+                self.server_context_provider,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         )
         self.chat_conversation_scope_service = ChatConversationScopeService(
             local_service=self.local_chat_conversation_service,
@@ -3290,7 +3843,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         try:
             self.local_writing_service = LocalWritingService(get_writing_db_path())
         except Exception:
-            logger.opt(exception=True).warning("Local writing service unavailable during app wiring")
+            logger.opt(exception=True).warning(
+                "Local writing service unavailable during app wiring"
+            )
             self.local_writing_service = None
         try:
             self.server_writing_service = ServerWritingService.from_config(
@@ -3357,10 +3912,14 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             policy_enforcer=self.service_policy_enforcer,
         )
 
-        self.local_chatbook_service = LocalChatbookService(self._build_chatbook_db_paths())
-        self.server_chatbook_service = ServerChatbookService.from_server_context_provider(
-            self.server_context_provider,
-            policy_enforcer=self.service_policy_enforcer,
+        self.local_chatbook_service = LocalChatbookService(
+            self._build_chatbook_db_paths()
+        )
+        self.server_chatbook_service = (
+            ServerChatbookService.from_server_context_provider(
+                self.server_context_provider,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         )
 
         self.prompt_chatbook_scope_service = PromptChatbookScopeService(
@@ -3374,10 +3933,16 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     def _wire_evaluation_services(self) -> None:
         self.local_evaluation_service = None
         try:
-            self.evaluation_orchestrator = EvaluationOrchestrator(client_id="tldw_cli_app")
-            self.local_evaluation_service = LocalEvaluationsService(self.evaluation_orchestrator.db)
+            self.evaluation_orchestrator = EvaluationOrchestrator(
+                client_id="tldw_cli_app"
+            )
+            self.local_evaluation_service = LocalEvaluationsService(
+                self.evaluation_orchestrator.db
+            )
         except Exception:
-            logger.opt(exception=True).warning("Local evaluation service unavailable during app wiring")
+            logger.opt(exception=True).warning(
+                "Local evaluation service unavailable during app wiring"
+            )
             self.evaluation_orchestrator = None
 
         try:
@@ -3394,7 +3959,8 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         has_local = self.local_evaluation_service is not None
         has_server = (
             getattr(self.server_evaluation_service, "client", None) is not None
-            or getattr(self.server_evaluation_service, "client_provider", None) is not None
+            or getattr(self.server_evaluation_service, "client_provider", None)
+            is not None
         )
         if not has_local and not has_server:
             self.evaluation_scope_service = None
@@ -3471,7 +4037,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
 
     def _wire_research_services(self) -> None:
         """Initialize source-aware research services if the broad parity wiring has not already done so."""
-        if hasattr(self, "research_scope_service") and hasattr(self, "research_search_scope_service"):
+        if hasattr(self, "research_scope_service") and hasattr(
+            self, "research_search_scope_service"
+        ):
             return
 
         try:
@@ -3481,7 +4049,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 notification_app=self,
             )
         except Exception:
-            logger.opt(exception=True).warning("Local research service unavailable during app wiring")
+            logger.opt(exception=True).warning(
+                "Local research service unavailable during app wiring"
+            )
             self.local_research_service = None
         try:
             self.server_research_service = ServerResearchService.from_config(
@@ -3503,9 +4073,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             policy_enforcer=self.service_policy_enforcer,
         )
         try:
-            self.server_research_search_service = ServerResearchSearchService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
+            self.server_research_search_service = (
+                ServerResearchSearchService.from_config(
+                    self.app_config,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
             )
         except ValueError:
             self.server_research_search_service = ServerResearchSearchService(
@@ -3521,7 +4093,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     def _wire_watchlists_and_notifications_services(self) -> None:
         """Initialize source-aware watchlists and local notification services."""
         self.local_watchlists_service = LocalWatchlistsService(
-            db_factory=lambda: SubscriptionsDB(get_subscriptions_db_path(), CLI_APP_CLIENT_ID)
+            db_factory=lambda: SubscriptionsDB(
+                get_subscriptions_db_path(), CLI_APP_CLIENT_ID
+            )
         )
         try:
             self.server_watchlists_service = ServerWatchlistsService.from_config(
@@ -3534,9 +4108,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 policy_enforcer=self.service_policy_enforcer,
             )
         try:
-            self.server_notifications_service = ServerNotificationsService.from_server_context_provider(
-                self.server_context_provider,
-                policy_enforcer=self.service_policy_enforcer,
+            self.server_notifications_service = (
+                ServerNotificationsService.from_server_context_provider(
+                    self.server_context_provider,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
             )
         except ValueError:
             self.server_notifications_service = ServerNotificationsService(
@@ -3565,6 +4141,52 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         self.notification_dispatch_service = NotificationDispatchService(
             store=self.client_notifications_db,
             policy_enforcer=self.service_policy_enforcer,
+        )
+        server_client = SchedulingServerClient(self.server_notifications_service)
+
+        subscriptions_db = SubscriptionsDB(
+            get_subscriptions_db_path(), CLI_APP_CLIENT_ID
+        )
+        watchlist_projection = WatchlistProjection(subscriptions_db)
+
+        self.scheduling_service = SchedulingService(
+            db=ScheduledTasksDB(get_scheduled_tasks_db_path()),
+            server_client=server_client,
+            runtime_source="local",
+            watchlist_projection=watchlist_projection,
+        )
+
+        watchlist_checks_enabled = get_cli_setting(
+            "scheduling", "watchlist_checks_enabled", False
+        )
+        watchlist_checks_shadow = get_cli_setting(
+            "scheduling", "watchlist_checks_shadow", True
+        )
+
+        watchlist_handler = None
+        if watchlist_checks_enabled:
+            watchlist_handler = WatchlistCheckHandler(
+                subscriptions_db=subscriptions_db,
+                shadow_mode=watchlist_checks_shadow,
+            )
+
+        handlers: dict[str, Handler] = {
+            "reminder": ReminderHandler(
+                dispatch_service=self.notification_dispatch_service
+            ),
+        }
+        if watchlist_handler is not None:
+            handlers["watchlist_job"] = watchlist_handler
+
+        self.scheduler_loop = SchedulerLoop(
+            self.scheduling_service.db,
+            handlers=handlers,
+            poll_interval=get_cli_setting(
+                "scheduling", "scheduler_poll_interval_seconds", 30
+            ),
+            watchlist_projection=(
+                watchlist_projection if watchlist_handler is not None else None
+            ),
         )
         self.notifications_scope_service = NotificationsScopeService(
             local_service=self.client_notifications_service,
@@ -3615,9 +4237,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             server_service=self.server_meetings_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        self.server_prompt_studio_service = ServerPromptStudioService.from_server_context_provider(
-            self.server_context_provider,
-            policy_enforcer=self.service_policy_enforcer,
+        self.server_prompt_studio_service = (
+            ServerPromptStudioService.from_server_context_provider(
+                self.server_context_provider,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         )
         self.prompt_studio_scope_service = PromptStudioScopeService(
             server_service=self.server_prompt_studio_service,
@@ -3657,9 +4281,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             policy_enforcer=self.service_policy_enforcer,
         )
         try:
-            self.server_voice_assistant_service = ServerVoiceAssistantService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
+            self.server_voice_assistant_service = (
+                ServerVoiceAssistantService.from_config(
+                    self.app_config,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
             )
         except ValueError:
             self.server_voice_assistant_service = ServerVoiceAssistantService(
@@ -3685,9 +4311,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             policy_enforcer=self.service_policy_enforcer,
         )
         try:
-            self.server_personalization_service = ServerPersonalizationService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
+            self.server_personalization_service = (
+                ServerPersonalizationService.from_config(
+                    self.app_config,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
             )
         except ValueError:
             self.server_personalization_service = ServerPersonalizationService(
@@ -3720,7 +4348,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 notification_app=self,
             )
         except Exception:
-            logger.opt(exception=True).warning("Local research service unavailable during app wiring")
+            logger.opt(exception=True).warning(
+                "Local research service unavailable during app wiring"
+            )
             self.local_research_service = None
         try:
             self.server_research_service = ServerResearchService.from_config(
@@ -3742,9 +4372,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             policy_enforcer=self.service_policy_enforcer,
         )
         try:
-            self.server_research_search_service = ServerResearchSearchService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
+            self.server_research_search_service = (
+                ServerResearchSearchService.from_config(
+                    self.app_config,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
             )
         except ValueError:
             self.server_research_search_service = ServerResearchSearchService(
@@ -3795,9 +4427,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             policy_enforcer=self.service_policy_enforcer,
         )
         try:
-            self.server_collections_feeds_service = ServerCollectionsFeedsService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
+            self.server_collections_feeds_service = (
+                ServerCollectionsFeedsService.from_config(
+                    self.app_config,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
             )
         except ValueError:
             self.server_collections_feeds_service = ServerCollectionsFeedsService(
@@ -3836,7 +4470,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         local_skills_store_dir = get_user_data_dir() / "skills"
         skill_trust_marker_store, reduced_rollback_protection = (
             build_skill_trust_marker_store_with_fallback(
-                fallback_marker_path=local_skills_store_dir / "trust" / "generation_marker.json"
+                fallback_marker_path=local_skills_store_dir
+                / "trust"
+                / "generation_marker.json"
             )
         )
         self.local_skill_trust_service = SkillTrustService(
@@ -3992,15 +4628,21 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             target_store=self.unified_mcp_target_store,
         )
         self.local_llm_provider_catalog_service = LocalLLMProviderCatalogService(
-            provider_catalog_loader=lambda: dict(getattr(self, "providers_models", {}) or {}),
+            provider_catalog_loader=lambda: dict(
+                getattr(self, "providers_models", {}) or {}
+            ),
             local_provider_names=set(LOCAL_PROVIDERS),
             default_provider=get_cli_setting("chat_defaults", "provider", None),
             policy_enforcer=self.service_policy_enforcer,
         )
+        # ADR-020: load the disk-backed model catalog cache before selectors build.
+        self.model_catalog_disk_store = self._init_model_catalog_disk_store()
         try:
-            self.server_llm_provider_catalog_service = ServerLLMProviderCatalogService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
+            self.server_llm_provider_catalog_service = (
+                ServerLLMProviderCatalogService.from_config(
+                    self.app_config,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
             )
         except ValueError:
             self.server_llm_provider_catalog_service = ServerLLMProviderCatalogService(
@@ -4013,8 +4655,12 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             policy_enforcer=self.service_policy_enforcer,
         )
         self.local_audio_services_service = LocalAudioServicesService(
-            tts_provider_loader=lambda: {"chatbook_tts": {"available": True, "source": "local"}},
-            stt_provider_loader=lambda: {"chatbook_stt": {"available": True, "source": "local"}},
+            tts_provider_loader=lambda: {
+                "chatbook_tts": {"available": True, "source": "local"}
+            },
+            stt_provider_loader=lambda: {
+                "chatbook_stt": {"available": True, "source": "local"}
+            },
             voice_catalog_loader=lambda: {},
             history_store_path=get_user_data_dir() / "tldw_chatbook_audio_history.json",
             policy_enforcer=self.service_policy_enforcer,
@@ -4034,9 +4680,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             server_service=self.server_audio_services_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        self.server_auth_account_service = ServerAuthAccountService.from_server_context_provider(
-            self.server_context_provider,
-            policy_enforcer=self.service_policy_enforcer,
+        self.server_auth_account_service = (
+            ServerAuthAccountService.from_server_context_provider(
+                self.server_context_provider,
+                policy_enforcer=self.service_policy_enforcer,
+            )
         )
         self.auth_account_scope_service = AuthAccountScopeService(
             server_service=self.server_auth_account_service,
@@ -4044,9 +4692,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             server_context_provider=self.server_context_provider,
         )
         try:
-            self.server_user_governance_service = ServerUserGovernanceService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
+            self.server_user_governance_service = (
+                ServerUserGovernanceService.from_config(
+                    self.app_config,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
             )
         except ValueError:
             self.server_user_governance_service = ServerUserGovernanceService(
@@ -4104,9 +4754,13 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             server_service=self.server_watchlists_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        self.local_media_reading_service.notification_dispatcher = self.notification_dispatch_service
+        self.local_media_reading_service.notification_dispatcher = (
+            self.notification_dispatch_service
+        )
         self.local_media_reading_service.notification_app = self
-        self.local_watchlists_service.notification_dispatcher = self.notification_dispatch_service
+        self.local_watchlists_service.notification_dispatcher = (
+            self.notification_dispatch_service
+        )
         self.local_watchlists_service.notification_app = self
 
     def _wire_server_parity_state_repositories(self) -> None:
@@ -4123,8 +4777,12 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             )
             self.server_parity_state = ServerParityStateRepositories(
                 local_notifications_db=self.client_notifications_db,
-                event_state_repository=EventStateRepository(":memory:", CLI_APP_CLIENT_ID),
-                sync_state_repository=SyncStateRepository(":memory:", CLI_APP_CLIENT_ID),
+                event_state_repository=EventStateRepository(
+                    ":memory:", CLI_APP_CLIENT_ID
+                ),
+                sync_state_repository=SyncStateRepository(
+                    ":memory:", CLI_APP_CLIENT_ID
+                ),
             )
         self.event_state_repository = self.server_parity_state.event_state_repository
         self.sync_state_repository = self.server_parity_state.sync_state_repository
@@ -4153,10 +4811,14 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         active_server_id = getattr(runtime_state, "active_server_id", None)
         authenticated_principal_id = None
         server_context_provider = getattr(self, "server_context_provider", None)
-        get_active_context = getattr(server_context_provider, "get_active_context", None)
+        get_active_context = getattr(
+            server_context_provider, "get_active_context", None
+        )
         if callable(get_active_context):
             try:
-                authenticated_principal_id = event_principal_id_from_active_context(get_active_context())
+                authenticated_principal_id = event_principal_id_from_active_context(
+                    get_active_context()
+                )
             except Exception:
                 authenticated_principal_id = None
         return {
@@ -4173,13 +4835,21 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         runtime_state_override: RuntimeSourceState | None = None,
     ) -> PolicyDecision:
         _ = scope_type
-        state = runtime_state_override if isinstance(runtime_state_override, RuntimeSourceState) else None
+        state = (
+            runtime_state_override
+            if isinstance(runtime_state_override, RuntimeSourceState)
+            else None
+        )
         if state is None:
             policy_enforcer = getattr(self, "service_policy_enforcer", None)
-            if policy_enforcer is not None and hasattr(policy_enforcer, "current_state"):
+            if policy_enforcer is not None and hasattr(
+                policy_enforcer, "current_state"
+            ):
                 state = policy_enforcer.current_state()
         if not isinstance(state, RuntimeSourceState):
-            runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
+            runtime_state = getattr(
+                getattr(self, "runtime_policy", None), "state", None
+            )
             if isinstance(runtime_state, RuntimeSourceState):
                 state = runtime_state
 
@@ -4215,8 +4885,12 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         normalized_backend = str(runtime_backend or "").strip().lower()
         if normalized_backend in {"local", "server"}:
             if getattr(self, "runtime_policy", None) is not None:
-                previous_server_id = getattr(self.runtime_policy.state, "active_server_id", None)
-                updated_state = set_authoritative_runtime_source(self, normalized_backend)
+                previous_server_id = getattr(
+                    self.runtime_policy.state, "active_server_id", None
+                )
+                updated_state = set_authoritative_runtime_source(
+                    self, normalized_backend
+                )
                 server_context_provider = getattr(self, "server_context_provider", None)
                 invalidate_for_server_switch = getattr(
                     server_context_provider,
@@ -4224,7 +4898,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     None,
                 )
                 if callable(invalidate_for_server_switch):
-                    invalidate_for_server_switch(previous_server_id, updated_state.active_server_id)
+                    invalidate_for_server_switch(
+                        previous_server_id, updated_state.active_server_id
+                    )
             else:
                 self.current_runtime_backend = normalized_backend
                 self.runtime_backend = normalized_backend
@@ -4232,14 +4908,19 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         resolved_backend = normalized_backend
         runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
         if runtime_state is not None:
-            resolved_backend = str(runtime_state.active_source or normalized_backend).strip().lower()
+            resolved_backend = (
+                str(runtime_state.active_source or normalized_backend).strip().lower()
+            )
         elif resolved_backend not in {"local", "server"}:
-            resolved_backend = str(getattr(self, "current_runtime_backend", "local") or "local").strip().lower()
+            resolved_backend = (
+                str(getattr(self, "current_runtime_backend", "local") or "local")
+                .strip()
+                .lower()
+            )
         active_screen = getattr(self, "screen", None)
         callback = getattr(active_screen, "handle_runtime_backend_changed", None)
         if callable(callback):
             await callback(resolved_backend)
-
 
     def _init_notes_service(self, user_name_for_notes: str) -> None:
         """Initialize notes service - for parallel execution."""
@@ -4247,70 +4928,95 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             # Get the full path to the unified ChaChaNotes DB FILE
             chachanotes_db_file_path = get_chachanotes_db_path()
             logger.info(f"Unified ChaChaNotes DB file path: {chachanotes_db_file_path}")
-            
+
             # Determine the PARENT DIRECTORY for NotesInteropService's 'base_db_directory'
             actual_base_directory_for_service = chachanotes_db_file_path.parent
-            logger.info(f"Notes for user '{user_name_for_notes}' will use the unified DB: {chachanotes_db_file_path}")
-            
+            logger.info(
+                f"Notes for user '{user_name_for_notes}' will use the unified DB: {chachanotes_db_file_path}"
+            )
+
             self.notes_service = NotesInteropService(
                 base_db_directory=actual_base_directory_for_service,
                 api_client_id="tldw_tui_client_v1",
-                global_db_to_use=get_chachanotes_db_lazy()
+                global_db_to_use=get_chachanotes_db_lazy(),
             )
-            logger.info(f"NotesInteropService successfully initialized for user '{user_name_for_notes}'.")
+            logger.info(
+                f"NotesInteropService successfully initialized for user '{user_name_for_notes}'."
+            )
         except Exception as e:
-            logger.opt(exception=True).error(f"Failed to initialize NotesInteropService: {e}")
+            logger.opt(exception=True).error(
+                f"Failed to initialize NotesInteropService: {e}"
+            )
             self.notes_service = None
-    
+
     def _init_providers_models(self) -> None:
         """Initialize providers and models - for parallel execution."""
         try:
             self.providers_models = get_cli_providers_and_models()
-            logger.info(f"Successfully retrieved providers_models. Count: {len(self.providers_models)}. Keys: {list(self.providers_models.keys())}")
+            logger.info(
+                f"Successfully retrieved providers_models. Count: {len(self.providers_models)}. Keys: {list(self.providers_models.keys())}"
+            )
         except Exception as e:
             logger.opt(exception=True).error(f"Failed to get providers and models: {e}")
             self.providers_models = {}
-    
+
     def _init_prompts_service(self) -> None:
         """Initialize prompts service - for parallel execution."""
         self.prompts_service_initialized = False
         try:
             prompts_db_path = get_prompts_db_path()
             prompts_db_path.parent.mkdir(parents=True, exist_ok=True)
-            prompts_interop.initialize_interop(db_path=prompts_db_path, client_id=self.prompts_client_id)
+            prompts_interop.initialize_interop(
+                db_path=prompts_db_path, client_id=self.prompts_client_id
+            )
             self.prompts_service_initialized = True
-            logger.info(f"Prompts Interop Service initialized with DB: {prompts_db_path}")
+            logger.info(
+                f"Prompts Interop Service initialized with DB: {prompts_db_path}"
+            )
         except Exception as e:
             self.prompts_service_initialized = False
-            logger.opt(exception=True).error(f"Failed to initialize Prompts Interop Service: {e}")
-    
+            logger.opt(exception=True).error(
+                f"Failed to initialize Prompts Interop Service: {e}"
+            )
+
     def _init_media_db(self) -> None:
         """Initialize media database - for parallel execution."""
         try:
             media_db_path = get_media_db_path()
             # Get integrity check configuration
-            check_integrity = self.app_config.get('database', {}).get('check_integrity_on_startup', False)
-            self.media_db = MediaDatabase(
-                db_path=media_db_path, 
-                client_id=CLI_APP_CLIENT_ID,
-                check_integrity_on_startup=check_integrity
+            check_integrity = self.app_config.get("database", {}).get(
+                "check_integrity_on_startup", False
             )
-            logger.info(f"Media_DB_v2 initialized successfully for client '{CLI_APP_CLIENT_ID}' at {media_db_path}")
+            self.media_db = MediaDatabase(
+                db_path=media_db_path,
+                client_id=CLI_APP_CLIENT_ID,
+                check_integrity_on_startup=check_integrity,
+            )
+            logger.info(
+                f"Media_DB_v2 initialized successfully for client '{CLI_APP_CLIENT_ID}' at {media_db_path}"
+            )
 
             # Wire ingestion-time RAG indexing (task-247). The hook no-ops
             # when the embeddings_rag extras are missing; indexing failures
             # are logged and surfaced without ever affecting ingestion.
             try:
                 from .RAG_Search.ingestion_indexing import install_media_ingest_hook
-                install_media_ingest_hook(failure_notifier=self._notify_rag_indexing_failure)
+
+                install_media_ingest_hook(
+                    failure_notifier=self._notify_rag_indexing_failure
+                )
             except Exception as e:
                 logger.warning(f"Could not install RAG ingestion-indexing hook: {e}")
 
             # Pre-fetch media types for UI
             if self.media_db:
-                db_types = self.media_db.get_distinct_media_types(include_deleted=False, include_trash=False)
+                db_types = self.media_db.get_distinct_media_types(
+                    include_deleted=False, include_trash=False
+                )
                 self._media_types_for_ui = ["All Media"] + sorted(list(set(db_types)))
-                logger.info(f"Pre-fetched {len(self._media_types_for_ui)} media types for UI.")
+                logger.info(
+                    f"Pre-fetched {len(self._media_types_for_ui)} media types for UI."
+                )
             else:
                 self._media_types_for_ui = ["Error: Media DB not loaded"]
         except Exception as e:
@@ -4333,29 +5039,39 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     def _init_worker_handlers(self) -> None:
         """Initialize the worker handler registry and register all handlers."""
         self.worker_handler_registry = WorkerHandlerRegistry(self)
-        
+
         # Register all worker handlers
         self.worker_handler_registry.register(ChatWorkerHandler(self))
         self.worker_handler_registry.register(ServerWorkerHandler(self))
         self.worker_handler_registry.register(AIGenerationHandler(self))
         self.worker_handler_registry.register(MiscWorkerHandler(self))
-        
+
         self.loguru_logger.info("Worker handler registry initialized with all handlers")
 
     def _build_handler_map(self) -> dict:
         """Constructs the master button handler map from all event modules."""
 
         # --- Generic, Awaitable Helper Handlers ---
-        async def _handle_nav(app: 'TldwCli', event: Button.Pressed, *, prefix: str, reactive_attr: str) -> None:
+        async def _handle_nav(
+            app: "TldwCli", event: Button.Pressed, *, prefix: str, reactive_attr: str
+        ) -> None:
             """Generic handler for switching views within a tab."""
-            view_to_activate = event.button.id.replace(f"{prefix}-nav-", f"{prefix}-view-")
-            app.loguru_logger.info(f"_handle_nav called: Nav button '{event.button.id}' pressed. Prefix: '{prefix}', Reactive attr: '{reactive_attr}', Activating view '{view_to_activate}'.")
+            view_to_activate = event.button.id.replace(
+                f"{prefix}-nav-", f"{prefix}-view-"
+            )
+            app.loguru_logger.info(
+                f"_handle_nav called: Nav button '{event.button.id}' pressed. Prefix: '{prefix}', Reactive attr: '{reactive_attr}', Activating view '{view_to_activate}'."
+            )
             old_value = getattr(app, reactive_attr, None)
             setattr(app, reactive_attr, view_to_activate)
             new_value = getattr(app, reactive_attr, None)
-            app.loguru_logger.info(f"_handle_nav: Set {reactive_attr} from '{old_value}' to '{new_value}'")
+            app.loguru_logger.info(
+                f"_handle_nav: Set {reactive_attr} from '{old_value}' to '{new_value}'"
+            )
 
-        async def _handle_sidebar_toggle(app: 'TldwCli', event: Button.Pressed, *, reactive_attr: str) -> None:
+        async def _handle_sidebar_toggle(
+            app: "TldwCli", event: Button.Pressed, *, reactive_attr: str
+        ) -> None:
             """Generic handler for toggling a sidebar's collapsed state."""
             setattr(app, reactive_attr, not getattr(app, reactive_attr))
 
@@ -4375,61 +5091,97 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         chat_handlers_map = {
             **chat_events.CHAT_BUTTON_HANDLERS,
             **chat_events_sidebar.CHAT_SIDEBAR_BUTTON_HANDLERS,
-            "toggle-chat-left-sidebar": functools.partial(_handle_sidebar_toggle, reactive_attr="chat_sidebar_collapsed"),
-            "toggle-chat-right-sidebar": functools.partial(_handle_sidebar_toggle, reactive_attr="chat_right_sidebar_collapsed"),
+            "toggle-chat-left-sidebar": functools.partial(
+                _handle_sidebar_toggle, reactive_attr="chat_sidebar_collapsed"
+            ),
+            "toggle-chat-right-sidebar": functools.partial(
+                _handle_sidebar_toggle, reactive_attr="chat_right_sidebar_collapsed"
+            ),
         }
 
         # --- Media Tab Handlers (NEW DYNAMIC WAY) ---
         media_handlers_map = {}
         for media_type_name in self._media_types_for_ui:
             slug = slugify(media_type_name)
-            media_handlers_map[f"media-nav-{slug}"] = media_events.handle_media_nav_button_pressed
-            media_handlers_map[f"media-load-selected-button-{slug}"] = media_events.handle_media_load_selected_button_pressed
-            media_handlers_map[f"media-prev-page-button-{slug}"] = media_events.handle_media_page_change_button_pressed
-            media_handlers_map[f"media-next-page-button-{slug}"] = media_events.handle_media_page_change_button_pressed
-        
+            media_handlers_map[f"media-nav-{slug}"] = (
+                media_events.handle_media_nav_button_pressed
+            )
+            media_handlers_map[f"media-load-selected-button-{slug}"] = (
+                media_events.handle_media_load_selected_button_pressed
+            )
+            media_handlers_map[f"media-prev-page-button-{slug}"] = (
+                media_events.handle_media_page_change_button_pressed
+            )
+            media_handlers_map[f"media-next-page-button-{slug}"] = (
+                media_events.handle_media_page_change_button_pressed
+            )
+
         # Add handlers for special media sub-tabs
-        media_handlers_map["media-nav-analysis-review"] = media_events.handle_media_nav_button_pressed
-        media_handlers_map["media-nav-collections-tags"] = media_events.handle_media_nav_button_pressed
-        media_handlers_map["media-nav-multi-item-review"] = media_events.handle_media_nav_button_pressed
+        media_handlers_map["media-nav-analysis-review"] = (
+            media_events.handle_media_nav_button_pressed
+        )
+        media_handlers_map["media-nav-collections-tags"] = (
+            media_events.handle_media_nav_button_pressed
+        )
+        media_handlers_map["media-nav-multi-item-review"] = (
+            media_events.handle_media_nav_button_pressed
+        )
 
         # --- Search Handlers ---
         search_handlers = {
-            SEARCH_NAV_RAG_QA: functools.partial(_handle_nav, prefix="search", reactive_attr="search_active_sub_tab"),
-            SEARCH_NAV_RAG_CHAT: functools.partial(_handle_nav, prefix="search", reactive_attr="search_active_sub_tab"),
-            SEARCH_NAV_RAG_MANAGEMENT: functools.partial(_handle_nav, prefix="search",
-                                                         reactive_attr="search_active_sub_tab"),
-            SEARCH_NAV_WEB_SEARCH: functools.partial(_handle_nav, prefix="search",
-                                                     reactive_attr="search_active_sub_tab"),
-            SEARCH_NAV_EMBEDDINGS_CREATE: functools.partial(_handle_nav, prefix="search", 
-                                                           reactive_attr="search_active_sub_tab"),
-            SEARCH_NAV_EMBEDDINGS_MANAGE: functools.partial(_handle_nav, prefix="search",
-                                                           reactive_attr="search_active_sub_tab"),
+            SEARCH_NAV_RAG_QA: functools.partial(
+                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
+            ),
+            SEARCH_NAV_RAG_CHAT: functools.partial(
+                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
+            ),
+            SEARCH_NAV_RAG_MANAGEMENT: functools.partial(
+                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
+            ),
+            SEARCH_NAV_WEB_SEARCH: functools.partial(
+                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
+            ),
+            SEARCH_NAV_EMBEDDINGS_CREATE: functools.partial(
+                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
+            ),
+            SEARCH_NAV_EMBEDDINGS_MANAGE: functools.partial(
+                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
+            ),
         }
 
         # --- Ingest Handlers ---
         ingest_handlers_map = {
             **ingest_events.INGEST_BUTTON_HANDLERS,
             # Add nav handlers using the helper
-            **{button_id: functools.partial(_handle_nav, prefix="ingest", reactive_attr="ingest_active_view")
-               for button_id in INGEST_NAV_BUTTON_IDS}
+            **{
+                button_id: functools.partial(
+                    _handle_nav, prefix="ingest", reactive_attr="ingest_active_view"
+                )
+                for button_id in INGEST_NAV_BUTTON_IDS
+            },
         }
 
         # --- Tools & Settings Handlers ---
         tools_settings_handlers = {
-            "ts-nav-general-settings": functools.partial(_handle_nav, prefix="ts",
-                                                         reactive_attr="tools_settings_active_view"),
-            "ts-nav-config-file-settings": functools.partial(_handle_nav, prefix="ts",
-                                                             reactive_attr="tools_settings_active_view"),
-            "ts-nav-db-tools": functools.partial(_handle_nav, prefix="ts",
-                                                 reactive_attr="tools_settings_active_view"),
-            "ts-nav-appearance": functools.partial(_handle_nav, prefix="ts",
-                                                   reactive_attr="tools_settings_active_view"),
+            "ts-nav-general-settings": functools.partial(
+                _handle_nav, prefix="ts", reactive_attr="tools_settings_active_view"
+            ),
+            "ts-nav-config-file-settings": functools.partial(
+                _handle_nav, prefix="ts", reactive_attr="tools_settings_active_view"
+            ),
+            "ts-nav-db-tools": functools.partial(
+                _handle_nav, prefix="ts", reactive_attr="tools_settings_active_view"
+            ),
+            "ts-nav-appearance": functools.partial(
+                _handle_nav, prefix="ts", reactive_attr="tools_settings_active_view"
+            ),
         }
 
         # --- Evals Handler ---
         evals_handlers = {
-            "toggle-evals-sidebar": functools.partial(_handle_sidebar_toggle, reactive_attr="evals_sidebar_collapsed"),
+            "toggle-evals-sidebar": functools.partial(
+                _handle_sidebar_toggle, reactive_attr="evals_sidebar_collapsed"
+            ),
         }
 
         # Master map organized by tab
@@ -4437,98 +5189,104 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             TAB_CHAT: chat_handlers_map,
             TAB_CCP: {
                 **ccp_handlers.CCP_BUTTON_HANDLERS,
-                "toggle-conv-char-left-sidebar": functools.partial(_handle_sidebar_toggle,
-                                                                   reactive_attr="conv_char_sidebar_left_collapsed"),
-                "toggle-conv-char-right-sidebar": functools.partial(_handle_sidebar_toggle,
-                                                                    reactive_attr="conv_char_sidebar_right_collapsed"),
+                "toggle-conv-char-left-sidebar": functools.partial(
+                    _handle_sidebar_toggle,
+                    reactive_attr="conv_char_sidebar_left_collapsed",
+                ),
+                "toggle-conv-char-right-sidebar": functools.partial(
+                    _handle_sidebar_toggle,
+                    reactive_attr="conv_char_sidebar_right_collapsed",
+                ),
             },
             TAB_MEDIA: {
                 **media_events.MEDIA_BUTTON_HANDLERS,
-                **{f"media-nav-{slugify(media_type)}": functools.partial(_handle_nav, prefix="media",
-                                                                               reactive_attr="media_active_view")
-                   for media_type in self._media_types_for_ui},
-                "media-nav-all-media": functools.partial(_handle_nav, prefix="media",
-                                                         reactive_attr="media_active_view"),
+                **{
+                    f"media-nav-{slugify(media_type)}": functools.partial(
+                        _handle_nav, prefix="media", reactive_attr="media_active_view"
+                    )
+                    for media_type in self._media_types_for_ui
+                },
+                "media-nav-all-media": functools.partial(
+                    _handle_nav, prefix="media", reactive_attr="media_active_view"
+                ),
             },
             TAB_INGEST: ingest_handlers_map,
             TAB_LLM: llm_handlers_map,
             TAB_LOGS: app_lifecycle.APP_LIFECYCLE_BUTTON_HANDLERS,
             TAB_TOOLS_SETTINGS: tools_settings_handlers,
-            TAB_CUSTOMIZE: {},  # Customize handles its own events
             TAB_SEARCH: search_handlers,
             TAB_EVALS: evals_handlers,
-            TAB_STTS: {}, # STTS handles its own events
-            TAB_STUDY: {}, # Study handles its own events
-            TAB_SUBSCRIPTIONS: {
-                "subscription-add-button": subscription_events.handle_add_subscription,
-                "subscription-check-all-button": subscription_events.handle_check_all_subscriptions,
-                "subscription-accept-button": subscription_events.handle_subscription_item_action,
-                "subscription-ignore-button": subscription_events.handle_subscription_item_action,
-                "subscription-mark-reviewed-button": subscription_events.handle_subscription_item_action,
-            },
+            TAB_STTS: {},  # STTS handles its own events
+            TAB_STUDY: {},  # Study handles its own events
+            TAB_WATCHLISTS_COLLECTIONS: {},  # Watchlists handles its own events
         }
 
     def _setup_buffered_logging(self):
         """Set up a persistent buffered logging handler for screen navigation mode."""
         from collections import deque
         import logging
-        
+
         # Create a buffer to store ALL log messages (no max length)
-        if not hasattr(self, '_log_buffer'):
+        if not hasattr(self, "_log_buffer"):
             self._log_buffer = deque()  # No maxlen - keep all logs
-        
+
         # Create a custom handler that stores logs in the buffer
         class PersistentLogHandler(logging.Handler):
             def __init__(self, buffer, app):
                 super().__init__()
                 self.buffer = buffer
                 self.app = app
-                
+
             def emit(self, record):
                 try:
                     msg = self.format(record)
                     self.buffer.append(msg)
-                    
+
                     # If we have a RichLog widget active, also write to it directly
-                    if hasattr(self.app, '_current_log_widget') and self.app._current_log_widget:
+                    if (
+                        hasattr(self.app, "_current_log_widget")
+                        and self.app._current_log_widget
+                    ):
                         try:
                             self.app._current_log_widget.write(msg)
-                        except:
+                        except Exception:
                             pass  # Widget might not be mounted
                 except Exception:
                     self.handleError(record)
-        
+
         # Add the persistent handler to the root logger
-        if not hasattr(self, '_persistent_log_handler'):
+        if not hasattr(self, "_persistent_log_handler"):
             self._persistent_log_handler = PersistentLogHandler(self._log_buffer, self)
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            formatter = logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            )
             self._persistent_log_handler.setFormatter(formatter)
             logging.getLogger().addHandler(self._persistent_log_handler)
             logger.info("Persistent logging handler set up for screen navigation")
-            
+
         # Initialize current log widget reference
         self._current_log_widget = None
-    
+
     def _display_buffered_logs(self, log_widget):
         """Display all buffered logs in the RichLog widget."""
-        if not hasattr(self, '_log_buffer'):
+        if not hasattr(self, "_log_buffer"):
             return
-            
+
         # Store reference to current log widget
         self._current_log_widget = log_widget
-        
+
         # Clear the widget first to avoid duplicates
         log_widget.clear()
-        
+
         # Write all buffered messages to the widget
         for msg in self._log_buffer:
             log_widget.write(msg)
-        
+
         # Scroll to the latest entry
         log_widget.scroll_end()
-        
+
         logger.debug(f"Displayed {len(self._log_buffer)} buffered log entries")
-    
+
     def _setup_logging(self):
         """Set up logging for the application.
 
@@ -4536,22 +5294,39 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         for the UI log display widget.
         """
         # Check if we're running as a module (via entry point) or as a script
-        if hasattr(self, '_early_logging_initialized') and self._early_logging_initialized:
+        if (
+            hasattr(self, "_early_logging_initialized")
+            and self._early_logging_initialized
+        ):
             # Early logging was already initialized, just set up the RichLogHandler
-            logging.info("Logging already initialized early, setting up UI log handlers only")
+            logging.info(
+                "Logging already initialized early, setting up UI log handlers only"
+            )
             try:
                 log_display_widget = self.query_one("#app-log-display", RichLog)
                 if not self._rich_log_handler:
                     self._rich_log_handler = RichLogHandler(log_display_widget)
-                    rich_log_handler_level_str = self.app_config.get("logging", {}).get("rich_log_level", "DEBUG").upper()
-                    rich_log_handler_level = getattr(logging, rich_log_handler_level_str, logging.DEBUG)
+                    rich_log_handler_level_str = (
+                        self.app_config.get("logging", {})
+                        .get("rich_log_level", "DEBUG")
+                        .upper()
+                    )
+                    rich_log_handler_level = getattr(
+                        logging, rich_log_handler_level_str, logging.DEBUG
+                    )
                     self._rich_log_handler.setLevel(rich_log_handler_level)
                     logging.getLogger().addHandler(self._rich_log_handler)
-                    logging.info(f"Added RichLogHandler to existing logging setup (Level: {logging.getLevelName(self._rich_log_handler.level)}).")
+                    logging.info(
+                        f"Added RichLogHandler to existing logging setup (Level: {logging.getLevelName(self._rich_log_handler.level)})."
+                    )
             except QueryError:
-                logging.error("!!! ERROR: Failed to find #app-log-display widget for RichLogHandler setup.")
+                logging.error(
+                    "!!! ERROR: Failed to find #app-log-display widget for RichLogHandler setup."
+                )
             except Exception as e:
-                logging.error(f"!!! ERROR setting up RichLogHandler: {e}", exc_info=True)
+                logging.error(
+                    f"!!! ERROR setting up RichLogHandler: {e}", exc_info=True
+                )
         else:
             # No early logging, do full initialization
             configure_application_logging(self)
@@ -4561,7 +5336,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         self._ui_compose_start_time = compose_start  # Store for later reference
         logging.debug("App composing UI...")
         log_counter("ui_compose_started", 1, documentation="UI composition started")
-        
+
         # Check if splash screen is enabled
         splash_enabled = get_cli_setting("splash_screen", "enabled", True)
         logging.info(f"Splash screen enabled: {splash_enabled}")
@@ -4571,33 +5346,35 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             splash_skip = get_cli_setting("splash_screen", "skip_on_keypress", True)
             splash_progress = get_cli_setting("splash_screen", "show_progress", True)
             splash_card = get_cli_setting("splash_screen", "card_selection", "random")
-            logging.info(f"Creating splash screen - duration: {splash_duration}, card: {splash_card}")
-            
+            logging.info(
+                f"Creating splash screen - duration: {splash_duration}, card: {splash_card}"
+            )
+
             # Create and yield splash screen
             self._splash_screen_widget = SplashScreen(
                 card_name=splash_card if splash_card != "random" else None,
                 duration=splash_duration,
                 skip_on_keypress=splash_skip,
                 show_progress=splash_progress,
-                id="app-splash-screen"
+                id="app-splash-screen",
             )
             self.splash_screen_active = True
             yield self._splash_screen_widget
             logging.info("Splash screen yielded, returning early from compose")
-            
+
             # Important: Return early to only show splash screen initially
             # The main UI will be mounted after splash screen is closed
             return
-        
+
         # If splash screen is disabled, compose the main UI immediately
         yield from self._compose_main_ui()
-    
+
     def _compose_main_ui(self) -> ComposeResult:
         """Compose the main UI by yielding created widgets."""
         widgets = self._create_main_ui_widgets()
         for widget in widgets:
             yield widget
-        
+
     def _create_main_ui_widgets(self) -> List[Widget]:
         """Create the main UI widgets (called after splash screen or immediately if disabled)."""
         widgets = []
@@ -4713,7 +5490,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         """Normalize navigation aliases to a routed screen id and canonical current_tab value."""
         return resolve_screen_target(target)
 
-    # Legacy alias routes that need a default Library nav-context applied
+    # Legacy alias routes that need a default navigation context applied
     # when navigated to directly (bare ``NavigateToScreen(route)``, no
     # explicit context supplied). Mirrors how ``open_notes_workspace`` builds
     # ``{LIBRARY_NAV_CONTEXT_MODE: "notes"}`` for the retired standalone
@@ -4721,9 +5498,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     # chip, Task 7) and "skills" (the retired standalone Skills tab, Skills
     # sub-project Task 5) have no dedicated re-entry action to carry that
     # context, so the bare alias route itself must supply it here.
+    # The retired Customize screen folds into Settings > Theme.
     _LEGACY_ROUTE_LIBRARY_NAV_CONTEXT: dict[str, dict[str, str]] = {
         "prompts": {LIBRARY_NAV_CONTEXT_MODE: "prompts"},
         "skills": {LIBRARY_NAV_CONTEXT_MODE: "skills"},
+        "customize": {"category": "theme"},
     }
 
     def _create_navigation_screen(self, screen_name: str, screen_class: type):
@@ -4755,13 +5534,17 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
         shell_routes = {
-            destination.primary_route
-            for destination in SHELL_DESTINATION_ORDER
-        } | {
-            destination.destination_id
-            for destination in SHELL_DESTINATION_ORDER
+            destination.primary_route for destination in SHELL_DESTINATION_ORDER
+        } | {destination.destination_id for destination in SHELL_DESTINATION_ORDER}
+        legacy_aliases = {
+            "conversation",
+            "llm",
+            "subscription",
+            "subscriptions",
+            "tools_settings",
+            "notes",
+            "prompts",
         }
-        legacy_aliases = {"conversation", "llm", "subscription", "subscriptions", "tools_settings", "notes", "prompts"}
         return set(ALL_TABS) | shell_routes | legacy_aliases
 
     def _normalize_initial_tab_from_config(self, configured_route: str | None) -> str:
@@ -4782,13 +5565,14 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         if self.app_config.get("_first_run", False):
             return TAB_HOME
         return getattr(self, "_initial_tab_value", TAB_CHAT)
-        
 
     @on(NavigateToScreen)
     async def handle_screen_navigation(self, message: NavigateToScreen) -> None:
         """Handle navigation to a different screen using switch_screen for better performance."""
         requested_screen = message.screen_name
-        screen_name, current_tab_value, screen_class = self._resolve_screen_navigation_target(requested_screen)
+        screen_name, current_tab_value, screen_class = (
+            self._resolve_screen_navigation_target(requested_screen)
+        )
         logger.info(f"Navigating to screen: {requested_screen}")
 
         current_screen = self.screen
@@ -4829,26 +5613,30 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 return
 
         # Save state of current screen before switching
-        if current_screen and hasattr(current_screen, 'save_state'):
+        if current_screen and hasattr(current_screen, "save_state"):
             try:
                 state = current_screen.save_state()
                 if isinstance(state, dict):
-                    state = add_runtime_policy_snapshot(state, self.runtime_policy.state)
+                    state = add_runtime_policy_snapshot(
+                        state, self.runtime_policy.state
+                    )
                 # Store state in a dictionary keyed by screen name
-                if not hasattr(self, '_screen_states'):
+                if not hasattr(self, "_screen_states"):
                     self._screen_states = {}
-                if hasattr(current_screen, 'screen_name'):
+                if hasattr(current_screen, "screen_name"):
                     self._screen_states[current_screen.screen_name] = state
-                    logger.debug(f"Saved state for screen: {current_screen.screen_name}")
+                    logger.debug(
+                        f"Saved state for screen: {current_screen.screen_name}"
+                    )
             except Exception as e:
                 logger.error(f"Error saving screen state: {e}")
-        
+
         if screen_class:
             new_screen = self._create_navigation_screen(screen_name, screen_class)
-            
+
             # Restore state if available
-            if hasattr(self, '_screen_states') and screen_name in self._screen_states:
-                if hasattr(new_screen, 'restore_state'):
+            if hasattr(self, "_screen_states") and screen_name in self._screen_states:
+                if hasattr(new_screen, "restore_state"):
                     try:
                         restored_state = reconcile_saved_screen_state(
                             self._screen_states[screen_name],
@@ -4856,7 +5644,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                         )
                         if restored_state is None:
                             self._screen_states.pop(screen_name, None)
-                            logger.info(f"Dropped saved state for screen due to runtime policy mismatch: {screen_name}")
+                            logger.info(
+                                f"Dropped saved state for screen due to runtime policy mismatch: {screen_name}"
+                            )
                         else:
                             new_screen.restore_state(restored_state)
                             logger.debug(f"Restored state for screen: {screen_name}")
@@ -4874,22 +5664,24 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     if inspect.isawaitable(result):
                         await result
                 except Exception as e:
-                    logger.error(f"Error applying navigation context for {screen_name}: {e}")
-            
+                    logger.error(
+                        f"Error applying navigation context for {screen_name}: {e}"
+                    )
+
             # Use switch_screen to replace the current screen
             await self.switch_screen(new_screen)
-            
+
             # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
             self.current_tab = current_tab_value
 
             logger.info(f"Successfully switched to {screen_name} screen")
         else:
             logger.error(f"Unknown screen requested: {requested_screen}")
-    
+
     @on(ChatMessage.Action)
     async def handle_chat_message_action(self, event: ChatMessage.Action) -> None:
         """Handles actions (edit, copy, etc.) from within a ChatMessage widget."""
-        button_classes = " ".join(event.button.classes) # Get class string for logging
+        button_classes = " ".join(event.button.classes)  # Get class string for logging
         self.loguru_logger.debug(
             f"ChatMessage.Action received for button "
             f"(Classes: {button_classes}, Label: '{event.button.label}') "
@@ -4902,9 +5694,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         )
 
     @on(ChatMessageEnhanced.Action)
-    async def handle_chat_message_enhanced_action(self, event: ChatMessageEnhanced.Action) -> None:
+    async def handle_chat_message_enhanced_action(
+        self, event: ChatMessageEnhanced.Action
+    ) -> None:
         """Handles actions (edit, copy, etc.) from within a ChatMessageEnhanced widget."""
-        button_classes = " ".join(event.button.classes) # Get class string for logging
+        button_classes = " ".join(event.button.classes)  # Get class string for logging
         self.loguru_logger.debug(
             f"ChatMessageEnhanced.Action received for button "
             f"(Classes: {button_classes}, Label: '{event.button.label}') "
@@ -4919,7 +5713,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     @on(TTSRequestEvent)
     async def handle_tts_request_event(self, event: TTSRequestEvent) -> None:
         """Handle TTS generation request."""
-        self.loguru_logger.info(f"TTS request received for text: '{event.text[:50]}...'")
+        self.loguru_logger.info(
+            f"TTS request received for text: '{event.text[:50]}...'"
+        )
         handler = await self._ensure_tts_handler()
         if handler:
             await handler.handle_tts_request(event)
@@ -4928,7 +5724,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             await self.post_message(
                 TTSCompleteEvent(
                     message_id=event.message_id or "unknown",
-                    error="TTS service not available"
+                    error="TTS service not available",
                 )
             )
 
@@ -4936,20 +5732,27 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     async def handle_tts_complete_event(self, event: TTSCompleteEvent) -> None:
         """Handle TTS generation completion."""
         self.loguru_logger.info(f"TTS complete for message {event.message_id}")
-        
+
         if event.error:
             self.notify(f"TTS failed: {event.error}", severity="error")
             # Update widget state back to idle on error
             try:
                 if event.message_id:
                     # Find the message widget and update state
-                    for message_widget in list(self.query(ChatMessage)) + list(self.query(ChatMessageEnhanced)):
-                        if getattr(message_widget, 'message_id_internal', None) == event.message_id:
+                    for message_widget in list(self.query(ChatMessage)) + list(
+                        self.query(ChatMessageEnhanced)
+                    ):
+                        if (
+                            getattr(message_widget, "message_id_internal", None)
+                            == event.message_id
+                        ):
                             # Update TTS state to idle on error
-                            if hasattr(message_widget, 'update_tts_state'):
+                            if hasattr(message_widget, "update_tts_state"):
                                 message_widget.update_tts_state("idle")
                             # Remove TTS generating class
-                            text_widget = message_widget.query_one(".message-text", Markdown)
+                            text_widget = message_widget.query_one(
+                                ".message-text", Markdown
+                            )
                             text_widget.remove_class("tts-generating")
                             break
             except Exception as e:
@@ -4960,48 +5763,75 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 try:
                     if event.message_id:
                         # Find the message widget and update state
-                        for message_widget in list(self.query(ChatMessage)) + list(self.query(ChatMessageEnhanced)):
-                            if getattr(message_widget, 'message_id_internal', None) == event.message_id:
+                        for message_widget in list(self.query(ChatMessage)) + list(
+                            self.query(ChatMessageEnhanced)
+                        ):
+                            if (
+                                getattr(message_widget, "message_id_internal", None)
+                                == event.message_id
+                            ):
                                 # Update TTS state to ready with audio file
-                                if hasattr(message_widget, 'update_tts_state'):
-                                    message_widget.update_tts_state("ready", event.audio_file)
+                                if hasattr(message_widget, "update_tts_state"):
+                                    message_widget.update_tts_state(
+                                        "ready", event.audio_file
+                                    )
                                 # Remove TTS generating class
                                 try:
-                                    text_widget = message_widget.query_one(".message-text", Markdown)
+                                    text_widget = message_widget.query_one(
+                                        ".message-text", Markdown
+                                    )
                                     text_widget.remove_class("tts-generating")
                                 except Exception:
                                     pass
                                 break
                     # Don't automatically play or delete - let user control playback
-                    self.notify("TTS audio ready - click play to listen", severity="information")
+                    self.notify(
+                        "TTS audio ready - click play to listen", severity="information"
+                    )
                 except Exception as e:
                     self.loguru_logger.error(f"Error playing audio: {e}")
                     self.notify("Failed to play audio", severity="error")
-            
+
             # Remove TTS generating class from message
             try:
                 if event.message_id:
-                    for message_widget in list(self.query(ChatMessage)) + list(self.query(ChatMessageEnhanced)):
-                        if getattr(message_widget, 'message_id_internal', None) == event.message_id:
-                            text_widget = message_widget.query_one(".message-text", Markdown)
+                    for message_widget in list(self.query(ChatMessage)) + list(
+                        self.query(ChatMessageEnhanced)
+                    ):
+                        if (
+                            getattr(message_widget, "message_id_internal", None)
+                            == event.message_id
+                        ):
+                            text_widget = message_widget.query_one(
+                                ".message-text", Markdown
+                            )
                             text_widget.remove_class("tts-generating")
                             break
             except Exception as e:
                 self.loguru_logger.error(f"Error updating message UI: {e}")
-    
+
     @on(TTSProgressEvent)
     async def handle_tts_progress_event(self, event: TTSProgressEvent) -> None:
         """Handle TTS generation progress updates."""
-        self.loguru_logger.debug(f"TTS progress for message {event.message_id}: {event.progress:.0%} - {event.status}")
-        
+        self.loguru_logger.debug(
+            f"TTS progress for message {event.message_id}: {event.progress:.0%} - {event.status}"
+        )
+
         try:
             if event.message_id:
                 # Find the message widget and update progress
-                for message_widget in self.query(ChatMessage).union(self.query(ChatMessageEnhanced)):
-                    if getattr(message_widget, 'message_id_internal', None) == event.message_id:
+                for message_widget in self.query(ChatMessage).union(
+                    self.query(ChatMessageEnhanced)
+                ):
+                    if (
+                        getattr(message_widget, "message_id_internal", None)
+                        == event.message_id
+                    ):
                         # Update TTS progress
-                        if hasattr(message_widget, 'update_tts_progress'):
-                            message_widget.update_tts_progress(event.progress, event.status)
+                        if hasattr(message_widget, "update_tts_progress"):
+                            message_widget.update_tts_progress(
+                                event.progress, event.status
+                            )
                         break
         except Exception as e:
             self.loguru_logger.error(f"Error updating TTS progress: {e}")
@@ -5029,27 +5859,35 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         handler = await self._ensure_tts_handler()
         if handler:
             await handler.handle_tts_playback(event)
-    
+
     @on(STTSPlaygroundGenerateEvent)
-    async def handle_stts_playground_generate_event(self, event: STTSPlaygroundGenerateEvent) -> None:
+    async def handle_stts_playground_generate_event(
+        self, event: STTSPlaygroundGenerateEvent
+    ) -> None:
         """Handle S/TT/S playground generation request."""
-        self.loguru_logger.info(f"S/TT/S generation request: provider={event.provider}, model={event.model}")
+        self.loguru_logger.info(
+            f"S/TT/S generation request: provider={event.provider}, model={event.model}"
+        )
         handler = await self._ensure_stts_handler()
         if handler:
             await handler.handle_playground_generate(event)
         else:
             self.loguru_logger.error("S/TT/S handler not initialized")
             self.notify("S/TT/S service not available", severity="error")
-    
+
     @on(STTSSettingsSaveEvent)
-    async def handle_stts_settings_save_event(self, event: STTSSettingsSaveEvent) -> None:
+    async def handle_stts_settings_save_event(
+        self, event: STTSSettingsSaveEvent
+    ) -> None:
         """Handle S/TT/S settings save."""
         handler = await self._ensure_stts_handler()
         if handler:
             await handler.handle_settings_save(event)
-    
+
     @on(STTSAudioBookGenerateEvent)
-    async def handle_stts_audiobook_generate_event(self, event: STTSAudioBookGenerateEvent) -> None:
+    async def handle_stts_audiobook_generate_event(
+        self, event: STTSAudioBookGenerateEvent
+    ) -> None:
         """Handle audiobook generation request."""
         handler = await self._ensure_stts_handler()
         if handler:
@@ -5059,32 +5897,36 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         """Switch the center pane view in the CCP tab."""
         valid_views = {
             "conversations": "conversation_messages_view",
-            "character": "character_card_view", 
+            "character": "character_card_view",
             "character_editor": "character_editor_view",
             "prompt_editor": "prompt_editor_view",
             "dictionary": "dictionary_view",
-            "dictionary_editor": "dictionary_editor_view"
+            "dictionary_editor": "dictionary_editor_view",
         }
-        
+
         if view_name not in valid_views:
             self.loguru_logger.warning(f"Invalid CCP view name: {view_name}")
             return
-            
+
         # Map to the actual view name used by the watcher
         actual_view = valid_views[view_name]
-        
+
         # Update the reactive which will trigger the watcher
         self.ccp_active_view = actual_view
         self.loguru_logger.info(f"Switched CCP center view to: {view_name}")
 
     # --- Watcher for CCP Active View ---
     def watch_ccp_active_view(self, old_view: Optional[str], new_view: str) -> None:
-        loguru_logger.debug(f"CCP active view changing from '{old_view}' to: '{new_view}'")
+        loguru_logger.debug(
+            f"CCP active view changing from '{old_view}' to: '{new_view}'"
+        )
         if not getattr(self, "_ui_ready", False):
             loguru_logger.debug("watch_ccp_active_view: UI not ready, returning.")
             return
         try:
-            conversation_messages_view = self.query_one("#ccp-conversation-messages-view")
+            conversation_messages_view = self.query_one(
+                "#ccp-conversation-messages-view"
+            )
             prompt_editor_view = self.query_one("#ccp-prompt-editor-view")
             character_card_view = self.query_one("#ccp-character-card-view")
             character_editor_view = self.query_one("#ccp-character-editor-view")
@@ -5110,145 +5952,247 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 # llm_settings_container_right.display = False
 
                 # Optionally, manage collapsed state of other sidebars
-                self.query_one("#ccp-conversation-details-collapsible", Collapsible).collapsed = True
-                self.query_one("#ccp-prompt-details-collapsible", Collapsible).collapsed = False
+                self.query_one(
+                    "#ccp-conversation-details-collapsible", Collapsible
+                ).collapsed = True
+                self.query_one(
+                    "#ccp-prompt-details-collapsible", Collapsible
+                ).collapsed = False
 
                 # Focus an element in prompt editor
                 try:
                     self.query_one("#ccp-editor-prompt-name-input", Input).focus()
                 except QueryError:
-                    loguru_logger.warning("Could not focus prompt name input in editor view.")
+                    loguru_logger.warning(
+                        "Could not focus prompt name input in editor view."
+                    )
 
             elif new_view == "character_editor_view":
                 # Center Pane: Show Character Editor
                 character_editor_view.display = True
                 # Optionally manage right-pane collapsibles
-                self.query_one("#ccp-conversation-details-collapsible", Collapsible).collapsed = True
-                self.query_one("#ccp-prompt-details-collapsible", Collapsible).collapsed = True
-                loguru_logger.info("Character editor view activated. Focus pending specific input fields.")
+                self.query_one(
+                    "#ccp-conversation-details-collapsible", Collapsible
+                ).collapsed = True
+                self.query_one(
+                    "#ccp-prompt-details-collapsible", Collapsible
+                ).collapsed = True
+                loguru_logger.info(
+                    "Character editor view activated. Focus pending specific input fields."
+                )
 
             elif new_view == "character_card_view":
                 # Center Pane: Show Character Card Display
                 character_card_view.display = True
                 character_editor_view.display = False
                 # Optionally manage right-pane collapsibles
-                self.query_one("#ccp-conversation-details-collapsible", Collapsible).collapsed = True
-                self.query_one("#ccp-prompt-details-collapsible", Collapsible).collapsed = True
+                self.query_one(
+                    "#ccp-conversation-details-collapsible", Collapsible
+                ).collapsed = True
+                self.query_one(
+                    "#ccp-prompt-details-collapsible", Collapsible
+                ).collapsed = True
                 loguru_logger.info("Character card display view activated.")
 
                 if self.current_ccp_character_details:
                     details = self.current_ccp_character_details
-                    loguru_logger.info(f"Populating character card with details for: {details.get('name', 'Unknown')}")
+                    loguru_logger.info(
+                        f"Populating character card with details for: {details.get('name', 'Unknown')}"
+                    )
                     try:
-                        self.query_one("#ccp-card-name-display", Static).update(details.get("name", "N/A"))
-                        self.query_one("#ccp-card-description-display", TextArea).text = details.get("description", "")
-                        self.query_one("#ccp-card-personality-display", TextArea).text = details.get("personality", "")
-                        self.query_one("#ccp-card-scenario-display", TextArea).text = details.get("scenario", "")
-                        self.query_one("#ccp-card-first-message-display", TextArea).text = details.get("first_message", "")
-                        
+                        self.query_one("#ccp-card-name-display", Static).update(
+                            details.get("name", "N/A")
+                        )
+                        self.query_one(
+                            "#ccp-card-description-display", TextArea
+                        ).text = details.get("description", "")
+                        self.query_one(
+                            "#ccp-card-personality-display", TextArea
+                        ).text = details.get("personality", "")
+                        self.query_one(
+                            "#ccp-card-scenario-display", TextArea
+                        ).text = details.get("scenario", "")
+                        self.query_one(
+                            "#ccp-card-first-message-display", TextArea
+                        ).text = details.get("first_message", "")
+
                         # Populate V2 Character Card fields
-                        self.query_one("#ccp-card-creator-notes-display", TextArea).text = details.get("creator_notes") or ""
-                        self.query_one("#ccp-card-system-prompt-display", TextArea).text = details.get("system_prompt") or ""
-                        self.query_one("#ccp-card-post-history-instructions-display", TextArea).text = details.get("post_history_instructions") or ""
-                        
+                        self.query_one(
+                            "#ccp-card-creator-notes-display", TextArea
+                        ).text = details.get("creator_notes") or ""
+                        self.query_one(
+                            "#ccp-card-system-prompt-display", TextArea
+                        ).text = details.get("system_prompt") or ""
+                        self.query_one(
+                            "#ccp-card-post-history-instructions-display", TextArea
+                        ).text = details.get("post_history_instructions") or ""
+
                         # Handle alternate greetings (array to text)
                         alternate_greetings = details.get("alternate_greetings", [])
-                        self.query_one("#ccp-card-alternate-greetings-display", TextArea).text = "\n".join(alternate_greetings) if alternate_greetings else ""
-                        
+                        self.query_one(
+                            "#ccp-card-alternate-greetings-display", TextArea
+                        ).text = (
+                            "\n".join(alternate_greetings)
+                            if alternate_greetings
+                            else ""
+                        )
+
                         # Handle tags (array to comma-separated)
                         tags = details.get("tags", [])
-                        self.query_one("#ccp-card-tags-display", Static).update(", ".join(tags) if tags else "None")
-                        
-                        self.query_one("#ccp-card-creator-display", Static).update(details.get("creator") or "N/A")
-                        self.query_one("#ccp-card-version-display", Static).update(details.get("character_version") or "N/A")
-                        
+                        self.query_one("#ccp-card-tags-display", Static).update(
+                            ", ".join(tags) if tags else "None"
+                        )
+
+                        self.query_one("#ccp-card-creator-display", Static).update(
+                            details.get("creator") or "N/A"
+                        )
+                        self.query_one("#ccp-card-version-display", Static).update(
+                            details.get("character_version") or "N/A"
+                        )
+
                         # Handle keywords (array to comma-separated)
                         keywords = details.get("keywords", [])
-                        self.query_one("#ccp-card-keywords-display", Static).update(", ".join(keywords) if keywords else "None")
+                        self.query_one("#ccp-card-keywords-display", Static).update(
+                            ", ".join(keywords) if keywords else "None"
+                        )
 
-                        image_placeholder = self.query_one("#ccp-card-image-placeholder", Static)
+                        image_placeholder = self.query_one(
+                            "#ccp-card-image-placeholder", Static
+                        )
                         # Check if the character has an image in the database
                         if details.get("image"):
                             try:
                                 # Convert image bytes to PIL Image for display
                                 from PIL import Image
                                 import io
-                                import base64
-                                
+
                                 image_bytes = details["image"]
                                 img = Image.open(io.BytesIO(image_bytes))
-                                
+
                                 # For now, just show image info until we implement proper image display
                                 # In a real implementation, you'd convert to a displayable format
-                                image_info = f"PNG Image: {img.width}x{img.height} pixels"
+                                image_info = (
+                                    f"PNG Image: {img.width}x{img.height} pixels"
+                                )
                                 image_placeholder.update(image_info)
-                                
+
                                 # Store the PIL image for potential future use
                                 self.current_ccp_character_image = img
                             except Exception as e:
-                                loguru_logger.error(f"Error processing character image: {e}")
+                                loguru_logger.error(
+                                    f"Error processing character image: {e}"
+                                )
                                 image_placeholder.update("Error loading image")
                         else:
                             image_placeholder.update("No image available")
                             self.current_ccp_character_image = None
                         loguru_logger.debug("Character card widgets populated.")
                     except QueryError as qe:
-                        loguru_logger.opt(exception=True).error(f"QueryError populating character card: {qe}")
+                        loguru_logger.opt(exception=True).error(
+                            f"QueryError populating character card: {qe}"
+                        )
                 else:
-                    loguru_logger.info("No character details available to populate card view.")
+                    loguru_logger.info(
+                        "No character details available to populate card view."
+                    )
                     try:
                         self.query_one("#ccp-card-name-display", Static).update("N/A")
-                        self.query_one("#ccp-card-description-display", TextArea).text = ""
-                        self.query_one("#ccp-card-personality-display", TextArea).text = ""
+                        self.query_one(
+                            "#ccp-card-description-display", TextArea
+                        ).text = ""
+                        self.query_one(
+                            "#ccp-card-personality-display", TextArea
+                        ).text = ""
                         self.query_one("#ccp-card-scenario-display", TextArea).text = ""
-                        self.query_one("#ccp-card-first-message-display", TextArea).text = ""
-                        
+                        self.query_one(
+                            "#ccp-card-first-message-display", TextArea
+                        ).text = ""
+
                         # Clear V2 Character Card fields
-                        self.query_one("#ccp-card-creator-notes-display", TextArea).text = ""
-                        self.query_one("#ccp-card-system-prompt-display", TextArea).text = ""
-                        self.query_one("#ccp-card-post-history-instructions-display", TextArea).text = ""
-                        self.query_one("#ccp-card-alternate-greetings-display", TextArea).text = ""
+                        self.query_one(
+                            "#ccp-card-creator-notes-display", TextArea
+                        ).text = ""
+                        self.query_one(
+                            "#ccp-card-system-prompt-display", TextArea
+                        ).text = ""
+                        self.query_one(
+                            "#ccp-card-post-history-instructions-display", TextArea
+                        ).text = ""
+                        self.query_one(
+                            "#ccp-card-alternate-greetings-display", TextArea
+                        ).text = ""
                         self.query_one("#ccp-card-tags-display", Static).update("None")
-                        self.query_one("#ccp-card-creator-display", Static).update("N/A")
-                        self.query_one("#ccp-card-version-display", Static).update("N/A")
-                        self.query_one("#ccp-card-keywords-display", Static).update("None")
-                        
-                        self.query_one("#ccp-card-image-placeholder", Static).update("No character loaded")
+                        self.query_one("#ccp-card-creator-display", Static).update(
+                            "N/A"
+                        )
+                        self.query_one("#ccp-card-version-display", Static).update(
+                            "N/A"
+                        )
+                        self.query_one("#ccp-card-keywords-display", Static).update(
+                            "None"
+                        )
+
+                        self.query_one("#ccp-card-image-placeholder", Static).update(
+                            "No character loaded"
+                        )
                         self.current_ccp_character_image = None
                         loguru_logger.debug("Character card widgets cleared.")
                     except QueryError as qe:
-                        loguru_logger.opt(exception=True).error(f"QueryError clearing character card: {qe}")
+                        loguru_logger.opt(exception=True).error(
+                            f"QueryError clearing character card: {qe}"
+                        )
 
             elif new_view == "dictionary_view":
                 # Center Pane: Show Dictionary Display
                 dictionary_view.display = True
                 # Optionally manage right-pane collapsibles
-                self.query_one("#ccp-conversation-details-collapsible", Collapsible).collapsed = True
-                self.query_one("#ccp-prompt-details-collapsible", Collapsible).collapsed = True
-                self.query_one("#ccp-dictionary-details-collapsible", Collapsible).collapsed = False
+                self.query_one(
+                    "#ccp-conversation-details-collapsible", Collapsible
+                ).collapsed = True
+                self.query_one(
+                    "#ccp-prompt-details-collapsible", Collapsible
+                ).collapsed = True
+                self.query_one(
+                    "#ccp-dictionary-details-collapsible", Collapsible
+                ).collapsed = False
                 loguru_logger.info("Dictionary display view activated.")
 
             elif new_view == "dictionary_editor_view":
                 # Center Pane: Show Dictionary Editor
                 dictionary_editor_view.display = True
                 # Optionally manage right-pane collapsibles
-                self.query_one("#ccp-conversation-details-collapsible", Collapsible).collapsed = True
-                self.query_one("#ccp-prompt-details-collapsible", Collapsible).collapsed = True
-                self.query_one("#ccp-dictionary-details-collapsible", Collapsible).collapsed = False
+                self.query_one(
+                    "#ccp-conversation-details-collapsible", Collapsible
+                ).collapsed = True
+                self.query_one(
+                    "#ccp-prompt-details-collapsible", Collapsible
+                ).collapsed = True
+                self.query_one(
+                    "#ccp-dictionary-details-collapsible", Collapsible
+                ).collapsed = False
                 loguru_logger.info("Dictionary editor view activated.")
                 # Focus on dictionary name input
                 try:
                     self.query_one("#ccp-editor-dict-name-input", Input).focus()
                 except QueryError:
-                    loguru_logger.warning("Could not focus dictionary name input in editor view.")
+                    loguru_logger.warning(
+                        "Could not focus dictionary name input in editor view."
+                    )
 
-            elif new_view == "conversation_details_view" or new_view == "conversation_messages_view":
+            elif (
+                new_view == "conversation_details_view"
+                or new_view == "conversation_messages_view"
+            ):
                 # Center Pane: Show Conversation Messages
                 conversation_messages_view.display = True
                 # LLM settings container is gone, no need to show it.
                 # llm_settings_container_right.display = True
-                self.query_one("#ccp-conversation-details-collapsible", Collapsible).collapsed = False
-                self.query_one("#ccp-prompt-details-collapsible", Collapsible).collapsed = True
+                self.query_one(
+                    "#ccp-conversation-details-collapsible", Collapsible
+                ).collapsed = False
+                self.query_one(
+                    "#ccp-prompt-details-collapsible", Collapsible
+                ).collapsed = True
 
                 try:
                     # If a conversation is loaded, maybe focus its title in right pane
@@ -5257,32 +6201,49 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     else:  # Otherwise, maybe focus the search in left pane
                         self.query_one("#conv-char-search-input", Input).focus()
                 except QueryError:
-                    loguru_logger.warning("Could not focus default element in conversation details view.")
+                    loguru_logger.warning(
+                        "Could not focus default element in conversation details view."
+                    )
             else:  # Default or unknown view (treat as conversation_details_view)
                 # Center Pane: Show Conversation Messages (default)
                 conversation_messages_view.display = True
                 loguru_logger.warning(
-                    f"Unknown ccp_active_view: {new_view}, defaulting to conversation_details_view.")
+                    f"Unknown ccp_active_view: {new_view}, defaulting to conversation_details_view."
+                )
 
         except QueryError as e:
-            loguru_logger.exception(f"UI component not found during CCP view switch: {e}")
+            loguru_logger.exception(
+                f"UI component not found during CCP view switch: {e}"
+            )
         except Exception as e_watch:
-            loguru_logger.exception(f"Unexpected error in watch_ccp_active_view: {e_watch}")
+            loguru_logger.exception(
+                f"Unexpected error in watch_ccp_active_view: {e_watch}"
+            )
 
     # --- Watcher for Right Sidebar in CCP Tab ---
     def watch_conv_char_sidebar_right_collapsed(self, collapsed: bool) -> None:
         """Hide or show the Conversations, Characters & Prompts right sidebar pane."""
         if not self._ui_ready:
-            loguru_logger.debug("watch_conv_char_sidebar_right_collapsed: UI not ready.")
+            loguru_logger.debug(
+                "watch_conv_char_sidebar_right_collapsed: UI not ready."
+            )
             return
         try:
             sidebar_pane = self.query_one("#conv-char-right-pane")
-            sidebar_pane.set_class(collapsed, "collapsed")  # Add if true, remove if false
-            loguru_logger.debug(f"CCP right pane collapsed state: {collapsed}, class set.")
+            sidebar_pane.set_class(
+                collapsed, "collapsed"
+            )  # Add if true, remove if false
+            loguru_logger.debug(
+                f"CCP right pane collapsed state: {collapsed}, class set."
+            )
         except QueryError:
-            loguru_logger.error("CCP right pane (#conv-char-right-pane) not found for collapse toggle.")
+            loguru_logger.error(
+                "CCP right pane (#conv-char-right-pane) not found for collapse toggle."
+            )
         except Exception as e:
-            loguru_logger.opt(exception=True).error(f"Error toggling CCP right pane: {e}")
+            loguru_logger.opt(exception=True).error(
+                f"Error toggling CCP right pane: {e}"
+            )
 
     # ###################################################################
     # --- Helper methods for Local LLM Inference logging ---
@@ -5302,6 +6263,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     def _update_vllm_log(self, message: str) -> None:
         """Helper to write messages to the vLLM log widget."""
         LogWidgetManager.update_vllm_log(self, message)
+
     # ###################################################################
     # --- End of Helper methods for Local LLM Inference logging ---
     # ###################################################################
@@ -5312,55 +6274,62 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         UIHelpers.clear_prompt_editor_fields(self)
 
     # --- Thread-safe chat state helpers ---
-    
-    def set_current_ai_message_widget(self, widget: Optional[Union[ChatMessage, ChatMessageEnhanced]]) -> None:
+
+    def set_current_ai_message_widget(
+        self, widget: Optional[Union[ChatMessage, ChatMessageEnhanced]]
+    ) -> None:
         """Thread-safely set the current AI message widget."""
         with self._chat_state_lock:
             self.current_ai_message_widget = widget
-    
-    def get_current_ai_message_widget(self) -> Optional[Union[ChatMessage, ChatMessageEnhanced]]:
+
+    def get_current_ai_message_widget(
+        self,
+    ) -> Optional[Union[ChatMessage, ChatMessageEnhanced]]:
         """Thread-safely get the current AI message widget."""
         with self._chat_state_lock:
             return self.current_ai_message_widget
-    
+
     def set_current_chat_worker(self, worker: Optional[Worker]) -> None:
         """Thread-safely set the current chat worker."""
         with self._chat_state_lock:
             self.current_chat_worker = worker
-    
+
     def get_current_chat_worker(self) -> Optional[Worker]:
         """Thread-safely get the current chat worker."""
         with self._chat_state_lock:
             return self.current_chat_worker
-    
+
     def set_current_chat_is_streaming(self, is_streaming: bool) -> None:
         """Thread-safely set the streaming state and update UI."""
         with self._chat_state_lock:
             self.current_chat_is_streaming = is_streaming
-        
+
         # Update the chat window button state when streaming changes
         # This replaces the polling approach with event-driven updates
         try:
             # For screen navigation, find the active chat screen
-                from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-                if self.screen and isinstance(self.screen, ChatScreen):
-                    if hasattr(self.screen, 'chat_window') and self.screen.chat_window:
-                        self.screen.chat_window._update_button_state()
+            from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+            if self.screen and isinstance(self.screen, ChatScreen):
+                if hasattr(self.screen, "chat_window") and self.screen.chat_window:
+                    self.screen.chat_window._update_button_state()
 
         except Exception:
             # Silently ignore if chat window isn't available
             pass
-    
+
     def get_current_chat_is_streaming(self) -> bool:
         """Thread-safely get the streaming state."""
         with self._chat_state_lock:
             return self.current_chat_is_streaming
-    
+
     # NOTE: Removed query_one and query overrides - screens should handle their own queries
     # This follows Textual best practices for screen-based navigation
     # Each screen is responsible for querying its own widgets
 
-    async def _load_prompt_for_editing(self, prompt_id: Optional[int], prompt_uuid: Optional[str] = None) -> None:
+    async def _load_prompt_for_editing(
+        self, prompt_id: Optional[int], prompt_uuid: Optional[str] = None
+    ) -> None:
         if not self.prompts_service_initialized:
             self.notify("Prompts service not available.", severity="error")
             return
@@ -5375,41 +6344,65 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.current_prompt_uuid = None
             self.current_prompt_name = None
             # ... etc. for other prompt reactives
-            loguru_logger.warning("_load_prompt_for_editing called with no ID/UUID after view switch.")
+            loguru_logger.warning(
+                "_load_prompt_for_editing called with no ID/UUID after view switch."
+            )
             return
 
         try:
             prompt_details = prompts_interop.fetch_prompt_details(identifier_to_fetch)
 
             if prompt_details:
-                self.current_prompt_id = prompt_details.get('id')
-                self.current_prompt_uuid = prompt_details.get('uuid')
-                self.current_prompt_name = prompt_details.get('name', '')
-                self.current_prompt_author = prompt_details.get('author', '')
-                self.current_prompt_details = prompt_details.get('details', '')
-                self.current_prompt_system = prompt_details.get('system_prompt', '')
-                self.current_prompt_user = prompt_details.get('user_prompt', '')
-                self.current_prompt_keywords_str = ", ".join(prompt_details.get('keywords', []))
-                self.current_prompt_version = prompt_details.get('version')
+                self.current_prompt_id = prompt_details.get("id")
+                self.current_prompt_uuid = prompt_details.get("uuid")
+                self.current_prompt_name = prompt_details.get("name", "")
+                self.current_prompt_author = prompt_details.get("author", "")
+                self.current_prompt_details = prompt_details.get("details", "")
+                self.current_prompt_system = prompt_details.get("system_prompt", "")
+                self.current_prompt_user = prompt_details.get("user_prompt", "")
+                self.current_prompt_keywords_str = ", ".join(
+                    prompt_details.get("keywords", [])
+                )
+                self.current_prompt_version = prompt_details.get("version")
 
                 # Populate UI in the CENTER PANE editor
-                self.query_one("#ccp-editor-prompt-name-input", Input).value = self.current_prompt_name
-                self.query_one("#ccp-editor-prompt-author-input", Input).value = self.current_prompt_author
-                self.query_one("#ccp-editor-prompt-description-textarea",
-                               TextArea).text = self.current_prompt_details
-                self.query_one("#ccp-editor-prompt-system-textarea", TextArea).text = self.current_prompt_system
-                self.query_one("#ccp-editor-prompt-user-textarea", TextArea).text = self.current_prompt_user
-                self.query_one("#ccp-editor-prompt-keywords-textarea",
-                               TextArea).text = self.current_prompt_keywords_str
+                self.query_one(
+                    "#ccp-editor-prompt-name-input", Input
+                ).value = self.current_prompt_name
+                self.query_one(
+                    "#ccp-editor-prompt-author-input", Input
+                ).value = self.current_prompt_author
+                self.query_one(
+                    "#ccp-editor-prompt-description-textarea", TextArea
+                ).text = self.current_prompt_details
+                self.query_one(
+                    "#ccp-editor-prompt-system-textarea", TextArea
+                ).text = self.current_prompt_system
+                self.query_one(
+                    "#ccp-editor-prompt-user-textarea", TextArea
+                ).text = self.current_prompt_user
+                self.query_one(
+                    "#ccp-editor-prompt-keywords-textarea", TextArea
+                ).text = self.current_prompt_keywords_str
 
-                self.query_one("#ccp-editor-prompt-name-input", Input).focus()  # Focus after loading
-                self.notify(f"Prompt '{self.current_prompt_name}' loaded for editing.", severity="information")
+                self.query_one(
+                    "#ccp-editor-prompt-name-input", Input
+                ).focus()  # Focus after loading
+                self.notify(
+                    f"Prompt '{self.current_prompt_name}' loaded for editing.",
+                    severity="information",
+                )
             else:
-                self.notify(f"Failed to load prompt (ID/UUID: {identifier_to_fetch}).", severity="error")
+                self.notify(
+                    f"Failed to load prompt (ID/UUID: {identifier_to_fetch}).",
+                    severity="error",
+                )
                 self._clear_prompt_fields()  # Clear editor if load fails
                 self.current_prompt_id = None  # Reset reactives
         except Exception as e:
-            loguru_logger.opt(exception=True).error(f"Error loading prompt for editing: {e}")
+            loguru_logger.opt(exception=True).error(
+                f"Error loading prompt for editing: {e}"
+            )
             self.notify(f"Error loading prompt: {type(e).__name__}", severity="error")
             self._clear_prompt_fields()
             self.current_prompt_id = None  # Reset reactives
@@ -5417,7 +6410,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     # ##################################################
     # --- Watcher for Search Tab Active Sub-View ---
     # ##################################################
-    def watch_search_active_sub_tab(self, old_sub_tab: Optional[str], new_sub_tab: Optional[str]) -> None:
+    def watch_search_active_sub_tab(
+        self, old_sub_tab: Optional[str], new_sub_tab: Optional[str]
+    ) -> None:
         """Shows the correct sub-tab view in the Search tab and hides others."""
         if not self._ui_ready or not new_sub_tab:
             return
@@ -5426,13 +6421,19 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         try:
             search_window = self.query_one("#search-window")
             if isinstance(search_window, PlaceholderWindow):
-                self.loguru_logger.debug("Search window is still a placeholder, deferring sub-tab switch")
+                self.loguru_logger.debug(
+                    "Search window is still a placeholder, deferring sub-tab switch"
+                )
                 return
         except QueryError:
-            self.loguru_logger.debug("Search window not found, deferring sub-tab switch")
+            self.loguru_logger.debug(
+                "Search window not found, deferring sub-tab switch"
+            )
             return
 
-        self.loguru_logger.debug(f"Search sub-tab watcher: Changing from '{old_sub_tab}' to '{new_sub_tab}'")
+        self.loguru_logger.debug(
+            f"Search sub-tab watcher: Changing from '{old_sub_tab}' to '{new_sub_tab}'"
+        )
         try:
             # First, find the parent content pane
             content_pane = self.query_one("#search-content-pane")
@@ -5446,75 +6447,104 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             nav_pane = self.query_one("#search-left-nav-pane")
             for button in nav_pane.query(".search-nav-button"):
                 button_id_as_view = button.id.replace("-nav-", "-view-")
-                button.set_class(button_id_as_view == new_sub_tab, "-active-search-sub-view")
+                button.set_class(
+                    button_id_as_view == new_sub_tab, "-active-search-sub-view"
+                )
 
             self.loguru_logger.info(f"Switched search sub-tab view to: {new_sub_tab}")
 
         except QueryError as e:
-            self.loguru_logger.opt(exception=True).error(f"UI component not found during Search sub-tab switch: {e}")
+            self.loguru_logger.opt(exception=True).error(
+                f"UI component not found during Search sub-tab switch: {e}"
+            )
         except Exception as e_watch:
-            self.loguru_logger.opt(exception=True).error(f"Unexpected error in watch_search_active_sub_tab: {e_watch}")
+            self.loguru_logger.opt(exception=True).error(
+                f"Unexpected error in watch_search_active_sub_tab: {e_watch}"
+            )
 
         # ############################################
         # --- Media Loaded Item Watcher ---
         # ############################################
-        async def watch_current_loaded_media_item(self, media_data: Optional[Dict[str, Any]]) -> None:
+        async def watch_current_loaded_media_item(
+            self, media_data: Optional[Dict[str, Any]]
+        ) -> None:
             """Watcher to display details when a media item is loaded."""
             if not self._ui_ready:
-                self.loguru_logger.debug("watch_current_loaded_media_item: UI not ready, returning.")
+                self.loguru_logger.debug(
+                    "watch_current_loaded_media_item: UI not ready, returning."
+                )
                 return
 
             type_slug = self.current_media_type_filter_slug
             if not type_slug:
                 self.loguru_logger.warning(
-                    "watch_current_loaded_media_item: type_slug is not set, cannot update details display.")
+                    "watch_current_loaded_media_item: type_slug is not set, cannot update details display."
+                )
                 return
 
             details_display_widget_id = f"media-details-display-{type_slug}"
             try:
                 # Target Markdown widget
-                details_display = self.query_one(f"#{details_display_widget_id}", Markdown)
+                details_display = self.query_one(
+                    f"#{details_display_widget_id}", Markdown
+                )
 
                 if media_data:
                     # Special formatting for "analysis-review"
                     if type_slug == "analysis-review":
-                        title = media_data.get('title', 'Untitled')
-                        url = media_data.get('url', 'No URL')
-                        analysis_content = media_data.get('analysis_content', '')
+                        title = media_data.get("title", "Untitled")
+                        url = media_data.get("url", "No URL")
+                        analysis_content = media_data.get("analysis_content", "")
                         if not analysis_content:
                             analysis_content = "No analysis available for this item."
                         markdown_details_string = f"## {title}\n\n**URL:** {url}\n\n### Analysis\n{analysis_content}"
                     else:
                         # Use the existing format_media_details_as_markdown function from media_events
-                        markdown_details_string = media_events.format_media_details_as_markdown(self, media_data)
+                        markdown_details_string = (
+                            media_events.format_media_details_as_markdown(
+                                self, media_data
+                            )
+                        )
 
-                    await details_display.update(markdown_details_string)  # Use await and update()
+                    await details_display.update(
+                        markdown_details_string
+                    )  # Use await and update()
                     # self.notify(f"Details for '{media_data.get('title', 'N/A')}' displayed via watcher.") # Optional notification
                 else:
-                    await details_display.update("### No media item loaded or item cleared.")  # Use await and update()
+                    await details_display.update(
+                        "### No media item loaded or item cleared."
+                    )  # Use await and update()
 
             except QueryError:
                 self.loguru_logger.warning(
                     f"watch_current_loaded_media_item: Could not find Markdown details display '#{details_display_widget_id}' for slug '{type_slug}' to update."
                 )
             except Exception as e:
-                self.loguru_logger.opt(exception=True).error(f"Error in watch_current_loaded_media_item: {e}")
+                self.loguru_logger.opt(exception=True).error(
+                    f"Error in watch_current_loaded_media_item: {e}"
+                )
 
     # ############################################
     # --- Ingest Tab Watcher ---
     # ############################################
-    def watch_ingest_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
+    def watch_ingest_active_view(
+        self, old_view: Optional[str], new_view: Optional[str]
+    ) -> None:
         # Rebuilt ingest UI manages its own tabs; skip legacy view toggling
-        if 'USE_REBUILT_INGEST' in globals() and USE_REBUILT_INGEST:
+        if "USE_REBUILT_INGEST" in globals() and USE_REBUILT_INGEST:
             return
-        self.loguru_logger.info(f"watch_ingest_active_view called. Old view: '{old_view}', New view: '{new_view}'")
+        self.loguru_logger.info(
+            f"watch_ingest_active_view called. Old view: '{old_view}', New view: '{new_view}'"
+        )
         if not hasattr(self, "app") or not self.app:
             self.loguru_logger.debug("watch_ingest_active_view: App not fully ready.")
             return
         if not self._ui_ready:
             self.loguru_logger.debug("watch_ingest_active_view: UI not ready.")
             return
-        self.loguru_logger.debug(f"Ingest active view changing from '{old_view}' to: '{new_view}'")
+        self.loguru_logger.debug(
+            f"Ingest active view changing from '{old_view}' to: '{new_view}'"
+        )
         try:
             content_pane = self.query_one("#ingest-content-pane")
         except QueryError:
@@ -5528,6 +6558,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 target_view_selector = f"#{new_view}"
                 view_to_show = content_pane.query_one(target_view_selector)
                 view_to_show.styles.display = "block"
+
                 def refresh_layout():
                     view_to_show.refresh(layout=True)
                     content_pane.refresh(layout=True)
@@ -5536,49 +6567,67 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                         ingest_window.refresh(layout=True)
                     except QueryError:
                         pass
+
                 self.call_later(refresh_layout)
             except QueryError:
                 # Target legacy view not found; ignore
                 return
 
-    def watch_tools_settings_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
-        self.loguru_logger.debug(f"Tools & Settings active view changing from '{old_view}' to: '{new_view}'")
+    def watch_tools_settings_active_view(
+        self, old_view: Optional[str], new_view: Optional[str]
+    ) -> None:
+        self.loguru_logger.debug(
+            f"Tools & Settings active view changing from '{old_view}' to: '{new_view}'"
+        )
         if not hasattr(self, "app") or not self.app:  # Check if app is ready
             return
         if not self._ui_ready:
             return
-            
+
         # Check if the Tools & Settings tab has been created yet
         try:
             # First check if the content pane exists
             self.query_one("#tools-settings-content-pane")
         except QueryError:
             # Tools & Settings tab hasn't been created yet, nothing to do
-            self.loguru_logger.debug("Tools & Settings content pane not found, tab not yet created")
+            self.loguru_logger.debug(
+                "Tools & Settings content pane not found, tab not yet created"
+            )
             return
-            
+
         if not new_view:  # If new_view is None, hide all
             try:
-                for view_area in self.query(".ts-view-area"):  # Query all potential view areas
+                for view_area in self.query(
+                    ".ts-view-area"
+                ):  # Query all potential view areas
                     view_area.styles.display = "none"
             except QueryError:
                 self.loguru_logger.warning(
-                    "No .ts-view-area found to hide on tools_settings_active_view change to None.")
+                    "No .ts-view-area found to hide on tools_settings_active_view change to None."
+                )
             return
 
         try:
             content_pane = self.query_one("#tools-settings-content-pane")
             # Hide all views first
             for child in content_pane.children:
-                if child.id and child.id.startswith("ts-view-"):  # Check if it's one of our view containers
+                if child.id and child.id.startswith(
+                    "ts-view-"
+                ):  # Check if it's one of our view containers
                     child.styles.display = "none"
 
             # Show the selected view
             if new_view:  # new_view here is the ID of the view container, e.g., "ts-view-general-settings"
-                target_view_id_selector = f"#{new_view}"  # Construct selector from the new_view string
-                view_to_show = content_pane.query_one(target_view_id_selector, Container)
+                target_view_id_selector = (
+                    f"#{new_view}"  # Construct selector from the new_view string
+                )
+                view_to_show = content_pane.query_one(
+                    target_view_id_selector, Container
+                )
                 view_to_show.styles.display = "block"
-                self.loguru_logger.info(f"Switched Tools & Settings view to: {new_view}")
+                self.loguru_logger.info(
+                    f"Switched Tools & Settings view to: {new_view}"
+                )
 
                 # Optional: Focus an element within the newly shown view
                 # try:
@@ -5586,26 +6635,37 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 # except IndexError:
                 #     pass # No focusable element
             else:  # Should be caught by the `if not new_view:` at the start
-                self.loguru_logger.debug("Tools & Settings active view is None, all views hidden.")
-
+                self.loguru_logger.debug(
+                    "Tools & Settings active view is None, all views hidden."
+                )
 
         except QueryError as e:
-            self.loguru_logger.opt(exception=True).error(f"UI component not found during Tools & Settings view switch: {e}")
+            self.loguru_logger.opt(exception=True).error(
+                f"UI component not found during Tools & Settings view switch: {e}"
+            )
         except Exception as e_watch:
-            self.loguru_logger.opt(exception=True).error(f"Unexpected error in watch_tools_settings_active_view: {e_watch}")
+            self.loguru_logger.opt(exception=True).error(
+                f"Unexpected error in watch_tools_settings_active_view: {e_watch}"
+            )
 
     # --- LLM Tab Watcher ---
-    def watch_llm_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
+    def watch_llm_active_view(
+        self, old_view: Optional[str], new_view: Optional[str]
+    ) -> None:
         if not hasattr(self, "app") or not self.app:  # Check if app is ready
             return
         if not self._ui_ready:
             return
-        self.loguru_logger.debug(f"LLM Management active view changing from '{old_view}' to: '{new_view}'")
+        self.loguru_logger.debug(
+            f"LLM Management active view changing from '{old_view}' to: '{new_view}'"
+        )
 
         try:
             content_pane = self.query_one("#llm-content-pane")
         except QueryError:
-            self.loguru_logger.error("#llm-content-pane not found. Cannot switch LLM views.")
+            self.loguru_logger.error(
+                "#llm-content-pane not found. Cannot switch LLM views."
+            )
             return
 
         for child in content_pane.query(".llm-view-area"):  # Query by common class
@@ -5614,37 +6674,56 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         if new_view:
             try:
                 target_view_id_selector = f"#{new_view}"
-                view_to_show = content_pane.query_one(target_view_id_selector, Container)
+                view_to_show = content_pane.query_one(
+                    target_view_id_selector, Container
+                )
                 view_to_show.styles.display = "block"
                 self.loguru_logger.info(f"Switched LLM Management view to: {new_view}")
                 # Populate help text when view becomes active
                 if new_view == "llm-view-llama-cpp":
                     try:
-                        help_widget = view_to_show.query_one("#llamacpp-args-help-display", RichLog)
+                        help_widget = view_to_show.query_one(
+                            "#llamacpp-args-help-display", RichLog
+                        )
                         # Check if help_widget has any lines. RichLog.lines is a list of segments.
                         # A simple check is if it has any children (lines are added as children internally).
                         # Or, more robustly, we can set a flag or check if the first line matches our help text.
                         # For simplicity, let's assume if it has children, it's been populated.
                         # A more direct way: RichLog stores its lines in a deque called 'lines'.
-                        if not help_widget.lines: # Check if the internal lines deque is empty
-                            self.loguru_logger.debug(f"Populating Llama.cpp help text in {new_view} as it's empty.")
-                            help_widget.clear() # Ensure it's clear before writing
+                        if (
+                            not help_widget.lines
+                        ):  # Check if the internal lines deque is empty
+                            self.loguru_logger.debug(
+                                f"Populating Llama.cpp help text in {new_view} as it's empty."
+                            )
+                            help_widget.clear()  # Ensure it's clear before writing
                             help_widget.write(LLAMA_CPP_SERVER_ARGS_HELP_TEXT)
                         else:
-                            self.loguru_logger.debug(f"Llama.cpp help text in {new_view} already populated or not empty.")
-                    except QueryError:
-                        self.loguru_logger.debug(f"Help display widget #llamacpp-args-help-display not found in {new_view} during view switch - may not be mounted yet.")
-                    except Exception as e_help_populate:
-                        self.loguru_logger.opt(exception=True).error(f"Error ensuring Llama.cpp help text in {new_view}: {e_help_populate}")
-                elif new_view == "llm-view-llamafile":
-                    try:
-                        help_widget = view_to_show.query_one("#llamafile-args-help-display", RichLog)
-                        help_widget.clear()  # Clear and rewrite when tab becomes active
-                        help_widget.write(LLAMAFILE_SERVER_ARGS_HELP_TEXT)
-                        self.loguru_logger.debug(f"Ensured Llamafile help text in {new_view}.")
+                            self.loguru_logger.debug(
+                                f"Llama.cpp help text in {new_view} already populated or not empty."
+                            )
                     except QueryError:
                         self.loguru_logger.debug(
-                            f"Help display widget for Llamafile not found in {new_view} during view switch - may not be mounted yet.")
+                            f"Help display widget #llamacpp-args-help-display not found in {new_view} during view switch - may not be mounted yet."
+                        )
+                    except Exception as e_help_populate:
+                        self.loguru_logger.opt(exception=True).error(
+                            f"Error ensuring Llama.cpp help text in {new_view}: {e_help_populate}"
+                        )
+                elif new_view == "llm-view-llamafile":
+                    try:
+                        help_widget = view_to_show.query_one(
+                            "#llamafile-args-help-display", RichLog
+                        )
+                        help_widget.clear()  # Clear and rewrite when tab becomes active
+                        help_widget.write(LLAMAFILE_SERVER_ARGS_HELP_TEXT)
+                        self.loguru_logger.debug(
+                            f"Ensured Llamafile help text in {new_view}."
+                        )
+                    except QueryError:
+                        self.loguru_logger.debug(
+                            f"Help display widget for Llamafile not found in {new_view} during view switch - may not be mounted yet."
+                        )
                 # Add similar for other views like llamafile, vllm if they have help sections
                 # elif new_view == "llm-view-llamafile":
                 #     try:
@@ -5653,8 +6732,10 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 #             help_widget.write(LLAMAFILE_ARGS_HELP_TEXT)
                 #     except QueryError: pass
             except QueryError as e:
-                self.loguru_logger.opt(exception=True).error(f"UI component '{new_view}' not found in #llm-content-pane: {e}")
-    
+                self.loguru_logger.opt(exception=True).error(
+                    f"UI component '{new_view}' not found in #llm-content-pane: {e}"
+                )
+
     def watch_current_chat_is_ephemeral(self, is_ephemeral: bool) -> None:
         self.loguru_logger.debug(f"Chat ephemeral state changed to: {is_ephemeral}")
         if not hasattr(self, "app") or not self.app:  # Check if app is ready
@@ -5663,13 +6744,19 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             return
         try:
             # --- Controls for EPHEMERAL chat actions ---
-            save_current_chat_button = self.query_one("#chat-save-current-chat-button", Button)
+            save_current_chat_button = self.query_one(
+                "#chat-save-current-chat-button", Button
+            )
             save_current_chat_button.disabled = not is_ephemeral  # Enable if ephemeral
 
             # --- Controls for PERSISTENT chat metadata ---
             title_input = self.query_one("#chat-conversation-title-input", Input)
-            keywords_input = self.query_one("#chat-conversation-keywords-input", TextArea)
-            save_details_button = self.query_one("#chat-save-conversation-details-button", Button)
+            keywords_input = self.query_one(
+                "#chat-conversation-keywords-input", TextArea
+            )
+            save_details_button = self.query_one(
+                "#chat-save-conversation-details-button", Button
+            )
             uuid_display = self.query_one("#chat-conversation-uuid-display", Input)
 
             title_input.disabled = is_ephemeral  # Disable if ephemeral
@@ -5682,27 +6769,38 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 keywords_input.text = ""
                 # Ensure UUID display is also handled
                 try:
-                    uuid_display = self.query_one("#chat-conversation-uuid-display", Input)
+                    uuid_display = self.query_one(
+                        "#chat-conversation-uuid-display", Input
+                    )
                     uuid_display.value = "Ephemeral Chat"
                 except QueryError:
                     loguru_logger.warning(
-                        "Could not find #chat-conversation-uuid-display to update for ephemeral state.")
+                        "Could not find #chat-conversation-uuid-display to update for ephemeral state."
+                    )
             # ELSE: If switching TO persistent (is_ephemeral is False),
             # the calling function (e.g., load chat, save ephemeral chat button handler)
             # is responsible for POPULATING the title/keywords fields.
             # This watcher correctly enables them here.
 
         except QueryError as e:
-            self.loguru_logger.warning(f"UI component not found while watching ephemeral state: {e}. Tab might not be fully composed or active.")
+            self.loguru_logger.warning(
+                f"UI component not found while watching ephemeral state: {e}. Tab might not be fully composed or active."
+            )
         except Exception as e_watch:
-            self.loguru_logger.opt(exception=True).error(f"Unexpected error in watch_current_chat_is_ephemeral: {e_watch}")
+            self.loguru_logger.opt(exception=True).error(
+                f"Unexpected error in watch_current_chat_is_ephemeral: {e_watch}"
+            )
 
     # --- Add explicit methods to update reactives from Select changes ---
     def update_chat_provider_reactive(self, new_value: Optional[str]) -> None:
-        self.chat_api_provider_value = new_value # Watcher will call _update_model_select
+        self.chat_api_provider_value = (
+            new_value  # Watcher will call _update_model_select
+        )
 
-    def update_ccp_provider_reactive(self, new_value: Optional[str]) -> None: # Renamed
-        self.ccp_api_provider_value = new_value # Watcher will call _update_model_select
+    def update_ccp_provider_reactive(self, new_value: Optional[str]) -> None:  # Renamed
+        self.ccp_api_provider_value = (
+            new_value  # Watcher will call _update_model_select
+        )
 
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
@@ -5718,11 +6816,13 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             try:
                 self._splash_screen_widget.update_progress(0.3, "Setting up logging...")
             except Exception as e:
-                self.loguru_logger.warning(f"Failed to update splash screen progress: {e}")
-        
+                self.loguru_logger.warning(
+                    f"Failed to update splash screen progress: {e}"
+                )
+
         # The Logs window is now created as a real window during compose,
         # so the RichLog widget should be available for logging setup
-        
+
         # If splash screen is NOT active, set up logging now
         # Otherwise, defer it until after main UI is mounted
         if not self.splash_screen_active:
@@ -5732,11 +6832,16 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             if self._rich_log_handler:
                 self.loguru_logger.debug("Starting RichLogHandler processor task...")
                 self._rich_log_handler.start_processor(self)
-            log_histogram("app_on_mount_phase_duration_seconds", time.perf_counter() - logging_start,
-                         labels={"phase": "logging_setup"}, 
-                         documentation="Duration of on_mount phase in seconds")
+            log_histogram(
+                "app_on_mount_phase_duration_seconds",
+                time.perf_counter() - logging_start,
+                labels={"phase": "logging_setup"},
+                documentation="Duration of on_mount phase in seconds",
+            )
         else:
-            self.loguru_logger.debug("Deferring logging setup until after splash screen closes")
+            self.loguru_logger.debug(
+                "Deferring logging setup until after splash screen closes"
+            )
 
             splashscreen_messages = [
                 "Hacking the Gibson real quick...",
@@ -5829,9 +6934,14 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             # Update splash screen progress only if splash screen is active
             if self.splash_screen_active and self._splash_screen_widget:
                 try:
-                    self._splash_screen_widget.update_progress(0.5, f"Loading user interface...{splashscreen_message_selection}")
+                    self._splash_screen_widget.update_progress(
+                        0.5,
+                        f"Loading user interface...{splashscreen_message_selection}",
+                    )
                 except Exception as e:
-                    self.loguru_logger.warning(f"Failed to update splash screen progress: {e}")
+                    self.loguru_logger.warning(
+                        f"Failed to update splash screen progress: {e}"
+                    )
 
         # Only schedule post-mount setup if splash screen is not active
         if not self.splash_screen_active:
@@ -5842,39 +6952,159 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         theme_start = time.perf_counter()
         for theme_name in ALL_THEMES:
             self.register_theme(theme_name)
-        
+
         # Apply default theme from config
         default_theme = get_cli_setting("general", "default_theme", "textual-dark")
         try:
             self.theme = default_theme
             self.loguru_logger.debug(f"Applied default theme: {default_theme}")
         except Exception as e:
-            self.loguru_logger.warning(f"Failed to apply default theme '{default_theme}', falling back to 'textual-dark': {e}")
+            self.loguru_logger.warning(
+                f"Failed to apply default theme '{default_theme}', falling back to 'textual-dark': {e}"
+            )
             self.theme = "textual-dark"
-        
-        log_histogram("app_on_mount_phase_duration_seconds", time.perf_counter() - theme_start,
-                     labels={"phase": "theme_registration"}, 
-                     documentation="Duration of on_mount phase in seconds")
-        
+
+        log_histogram(
+            "app_on_mount_phase_duration_seconds",
+            time.perf_counter() - theme_start,
+            labels={"phase": "theme_registration"},
+            documentation="Duration of on_mount phase in seconds",
+        )
+
         mount_duration = time.perf_counter() - mount_start
-        log_histogram("app_on_mount_duration_seconds", mount_duration,
-                     documentation="Total time for on_mount() method")
+        log_histogram(
+            "app_on_mount_duration_seconds",
+            mount_duration,
+            documentation="Total time for on_mount() method",
+        )
         self.loguru_logger.info(f"on_mount completed in {mount_duration:.3f} seconds")
-        
+
+        # Start the background scheduler loop for reminders and scheduled tasks.
+        self.scheduler_worker = self.run_worker(
+            self.scheduler_loop.run(),
+            exclusive=True,
+            group="scheduling",
+        )
+
         # Check if this is the first run (config was just created)
         config_data = self.app_config
         if config_data.get("_first_run", False):
             self.call_later(self._show_first_run_notification)
 
+        # ADR-020: non-blocking startup refresh of stale model catalogs.
+        self.run_worker(
+            self._refresh_model_catalogs(),
+            exclusive=True,
+            group="model-catalog-refresh",
+        )
+
+    def _init_model_catalog_disk_store(self) -> "ModelCatalogDiskStore | None":
+        """Build the disk-backed model catalog cache for startup (ADR-020).
+
+        Returns None (with a log line) when the cache path cannot be resolved,
+        fails validation against the user data dir, or the on-disk cache cannot
+        be loaded; startup continues without persistence in those cases.
+        """
+        from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
+            ModelCatalogDiskStore,
+        )
+        from tldw_chatbook.Utils.path_validation import get_safe_relative_path
+
+        try:
+            user_data_dir = get_user_data_dir()
+            cache_path = user_data_dir / "model_catalog_cache.json"
+        except Exception as exc:
+            logger.error(
+                f"Failed to resolve model catalog cache path: {type(exc).__name__}"
+            )
+            return None
+        # get_safe_relative_path (not is_safe_path): the default data dir lives
+        # under ~/.local, which validate_path's hidden-component rule rejects.
+        if get_safe_relative_path(cache_path, user_data_dir) is None:
+            logger.warning(
+                "Ignoring model catalog cache outside the user data dir: "
+                f"{cache_path}"
+            )
+            return None
+        try:
+            store = ModelCatalogDiskStore(cache_path)
+            store.load_into(self.local_llm_provider_catalog_service.discovery_cache)
+        except Exception as exc:
+            # No traceback: the log file sink runs with diagnose=True, which
+            # would dump frame locals (including the app's config) into the log.
+            logger.error(
+                f"Failed to load model catalog disk cache {cache_path}: "
+                f"{type(exc).__name__}"
+            )
+            return None
+        return store
+
+    async def _refresh_model_catalogs(self) -> None:
+        """ADR-020 startup auto-refresh; never blocks or crashes startup."""
+        try:
+            from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
+                format_refresh_notification,
+            )
+            from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+                AUTO_REFRESH_PROVIDER_LIST_KEYS,
+                load_model_catalog_settings,
+            )
+            if self.model_catalog_disk_store is None:
+                return
+            catalog_settings = load_model_catalog_settings(load_settings())
+            if not catalog_settings.auto_refresh_enabled:
+                return
+            report = await self.local_llm_provider_catalog_service.refresh_stale_configured_providers(
+                catalog_settings=catalog_settings,
+                disk_store=self.model_catalog_disk_store,
+                on_config_saved=self._init_providers_models,
+            )
+            refreshed = {
+                outcome.provider_list_key
+                for outcome in report.outcomes
+                if outcome.status in {"refreshed", "baseline"}
+            }
+            if refreshed:
+                self.post_message(ModelCatalogRefreshed(providers=refreshed))
+            message = format_refresh_notification(report)
+            if message:
+                has_failure = any(
+                    outcome.status == "failed" or outcome.write_failed
+                    for outcome in report.outcomes
+                )
+                self.notify(
+                    message,
+                    title="Model catalog",
+                    severity="warning" if has_failure else "information",
+                )
+        except Exception as exc:
+            # No traceback: the log file sink runs with diagnose=True, which
+            # would dump frame locals (potentially API keys) into the log file.
+            logger.error(
+                "Model catalog auto-refresh failed "
+                f"({', '.join(AUTO_REFRESH_PROVIDER_LIST_KEYS)}): "
+                f"{type(exc).__name__}"
+            )
+
+    @on(ModelCatalogRefreshed)
+    async def on_model_catalog_refreshed(self, event: ModelCatalogRefreshed) -> None:
+        # Textual delivers App-posted messages to App handlers only; forward
+        # down to a mounted screen that exposes a refresh handler.
+        from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
+            forward_model_catalog_refreshed,
+        )
+        await forward_model_catalog_refreshed(self, event)
+
     def _show_first_run_notification(self) -> None:
         """Show a notification to the user on first run."""
         try:
             from .config import DEFAULT_CONFIG_PATH
+
             self.notify(
                 f"Welcome to tldw chatbook! Configuration file created at:\n{DEFAULT_CONFIG_PATH}",
                 title="First Run",
                 severity="information",
-                timeout=10
+                timeout=10,
             )
             self.loguru_logger.info("First run notification shown to user")
         except Exception as e:
@@ -5883,7 +7113,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     def hide_inactive_windows(self) -> None:
         """Hides all windows that are not the current active tab."""
         initial_tab = self._initial_tab_value
-        self.loguru_logger.debug(f"Hiding inactive windows, keeping '{initial_tab}-window' visible.")
+        self.loguru_logger.debug(
+            f"Hiding inactive windows, keeping '{initial_tab}-window' visible."
+        )
         # Query both actual windows and placeholders
         for window in self.query(".window, .placeholder-window"):
             # Placeholders should always be hidden
@@ -5904,7 +7136,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             return
 
         initial_tab = self._resolve_initial_shell_route()
-        resolved_screen_name, resolved_tab, screen_class = self._resolve_screen_navigation_target(initial_tab)
+        resolved_screen_name, resolved_tab, screen_class = (
+            self._resolve_screen_navigation_target(initial_tab)
+        )
         if screen_class is None:
             resolved_screen_name = TAB_CHAT
             resolved_tab = TAB_CHAT
@@ -5932,35 +7166,49 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     async def _post_mount_setup(self) -> None:
         """Operations to perform after the main UI is expected to be fully mounted."""
         post_mount_start = time.perf_counter()
-        self.loguru_logger.info("App _post_mount_setup: Binding Select widgets and populating dynamic content...")
-        
+        self.loguru_logger.info(
+            "App _post_mount_setup: Binding Select widgets and populating dynamic content..."
+        )
+
         # Update splash screen progress (defensive check - shouldn't happen if splash was shown)
         if self.splash_screen_active and self._splash_screen_widget:
             try:
-                self._splash_screen_widget.update_progress(0.7, "Configuring providers...")
+                self._splash_screen_widget.update_progress(
+                    0.7, "Configuring providers..."
+                )
             except Exception as e:
-                self.loguru_logger.warning(f"Failed to update splash screen progress: {e}")
-        
+                self.loguru_logger.warning(
+                    f"Failed to update splash screen progress: {e}"
+                )
+
         # Removed populate_llm_help_texts from here - it's called when LLM tab is shown instead
         phase_start = time.perf_counter()
         # LLM help texts are populated when the LLM tab is shown
-        log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
-                     labels={"phase": "llm_help_texts_skipped"}, 
-                     documentation="Duration of post-mount phase in seconds")
+        log_histogram(
+            "app_post_mount_phase_duration_seconds",
+            time.perf_counter() - phase_start,
+            labels={"phase": "llm_help_texts_skipped"},
+            documentation="Duration of post-mount phase in seconds",
+        )
 
         # Widget binding
         phase_start = time.perf_counter()
         try:
             chat_select = self.query_one(f"#{TAB_CHAT}-api-provider", Select)
-            self.watch(chat_select, "value", self.update_chat_provider_reactive, init=False)
+            self.watch(
+                chat_select, "value", self.update_chat_provider_reactive, init=False
+            )
             self.loguru_logger.debug(f"Bound chat provider Select ({chat_select.id})")
         except QueryError:
             # Legacy selector is absent in the master-shell UI; this lookup is expected to
             # fail on every modern boot, so log at DEBUG rather than ERROR.
             self.loguru_logger.debug(
-                f"_post_mount_setup: Failed to find chat provider select: #{TAB_CHAT}-api-provider")
+                f"_post_mount_setup: Failed to find chat provider select: #{TAB_CHAT}-api-provider"
+            )
         except Exception as e:
-            self.loguru_logger.opt(exception=True).error(f"_post_mount_setup: Error binding chat provider select: {e}")
+            self.loguru_logger.opt(exception=True).error(
+                f"_post_mount_setup: Error binding chat provider select: {e}"
+            )
 
         # try:
         #     ccp_select = self.query_one(f"#{TAB_CCP}-api-provider", Select)
@@ -5970,14 +7218,20 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         #     self.loguru_logger.error(f"_post_mount_setup: Failed to find CCP provider select: #{TAB_CCP}-api-provider")
         # except Exception as e:
         #     self.loguru_logger.error(f"_post_mount_setup: Error binding CCP provider select: {e}", exc_info=True)
-        log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
-                     labels={"phase": "widget_binding"}, 
-                     documentation="Duration of post-mount phase in seconds")
+        log_histogram(
+            "app_post_mount_phase_duration_seconds",
+            time.perf_counter() - phase_start,
+            labels={"phase": "widget_binding"},
+            documentation="Duration of post-mount phase in seconds",
+        )
 
         # TTS/STTS services are initialized after readiness or on first use.
-        log_histogram("app_post_mount_phase_duration_seconds", 0.0,
-                     labels={"phase": "audio_services_deferred"},
-                     documentation="Duration of post-mount phase in seconds")
+        log_histogram(
+            "app_post_mount_phase_duration_seconds",
+            0.0,
+            labels={"phase": "audio_services_deferred"},
+            documentation="Duration of post-mount phase in seconds",
+        )
 
         # Set initial tab now that other bindings might be ready
         # self.current_tab = self._initial_tab_value # This triggers watchers
@@ -5995,28 +7249,38 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             pass
         # Don't populate CCP widgets here - let watch_current_tab handle it when the tab is actually shown
         # This prevents errors when the window isn't fully initialized yet
-        log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
-                     labels={"phase": "populate_lists"}, 
-                     documentation="Duration of post-mount phase in seconds")
+        log_histogram(
+            "app_post_mount_phase_duration_seconds",
+            time.perf_counter() - phase_start,
+            labels={"phase": "populate_lists"},
+            documentation="Duration of post-mount phase in seconds",
+        )
 
         # Crucially, set the initial tab *after* bindings and other setup that might depend on queries.
         # The _set_initial_tab will trigger watchers.
         self.call_later(self._set_initial_tab)
-        
+
         post_mount_duration = time.perf_counter() - post_mount_start
-        log_histogram("app_post_mount_duration_seconds", post_mount_duration,
-                     documentation="Total time for _post_mount_setup() method")
-        self.loguru_logger.info(f"_post_mount_setup completed in {post_mount_duration:.3f} seconds")
-        
+        log_histogram(
+            "app_post_mount_duration_seconds",
+            post_mount_duration,
+            documentation="Total time for _post_mount_setup() method",
+        )
+        self.loguru_logger.info(
+            f"_post_mount_setup completed in {post_mount_duration:.3f} seconds"
+        )
+
         # Log final resource usage
         log_resource_usage()
-        
+
         # Update splash screen progress to completion (defensive check)
         if self.splash_screen_active and self._splash_screen_widget:
             try:
                 self._splash_screen_widget.update_progress(1.0, "Ready!")
             except Exception as e:
-                self.loguru_logger.warning(f"Failed to update splash screen progress: {e}")
+                self.loguru_logger.warning(
+                    f"Failed to update splash screen progress: {e}"
+                )
 
         # If initial tab is CCP, trigger its initial search.
         # This should happen *after* current_tab is set.
@@ -6036,65 +7300,105 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             chat_sidebar.add_class("basic-mode")  # Start in basic mode
             self.loguru_logger.debug("Initialized chat sidebar in basic mode")
         except QueryError:
-            self.loguru_logger.warning("Could not find chat sidebar to set initial mode")
-            
+            self.loguru_logger.warning(
+                "Could not find chat sidebar to set initial mode"
+            )
+
         # CRITICAL: Set UI ready state after all bindings and initializations
         self._ui_ready = True
         ui_ready_time = time.perf_counter()
 
         self.loguru_logger.info("App _post_mount_setup: Post-mount setup completed.")
-        
+
         # Log UI loading metrics
-        if hasattr(self, '_ui_compose_start_time'):
+        if hasattr(self, "_ui_compose_start_time"):
             ui_loading_time = ui_ready_time - self._ui_compose_start_time
-            log_histogram("ui_loading_duration_seconds", ui_loading_time,
-                         documentation="Total time from compose start to UI ready")
-            log_counter("ui_loading_complete", 1, documentation="UI loading completed successfully")
-            self.loguru_logger.info(f"UI loading completed in {ui_loading_time:.3f} seconds")
-        
+            log_histogram(
+                "ui_loading_duration_seconds",
+                ui_loading_time,
+                documentation="Total time from compose start to UI ready",
+            )
+            log_counter(
+                "ui_loading_complete",
+                1,
+                documentation="UI loading completed successfully",
+            )
+            self.loguru_logger.info(
+                f"UI loading completed in {ui_loading_time:.3f} seconds"
+            )
+
         # Log post-mount setup duration
         post_mount_duration = ui_ready_time - post_mount_start
-        log_histogram("app_post_mount_total_duration_seconds", post_mount_duration,
-                     documentation="Total time for post-mount setup")
-        
+        log_histogram(
+            "app_post_mount_total_duration_seconds",
+            post_mount_duration,
+            documentation="Total time for post-mount setup",
+        )
+
         # Log total startup time (from __init__ start to fully ready)
-        if hasattr(self, '_startup_start_time'):
+        if hasattr(self, "_startup_start_time"):
             total_startup_time = ui_ready_time - self._startup_start_time
-            log_histogram("app_startup_complete_duration_seconds", total_startup_time,
-                         documentation="Total time from app initialization start to fully ready")
-            log_counter("app_startup_complete", 1, documentation="Application startup completed successfully")
-            
+            log_histogram(
+                "app_startup_complete_duration_seconds",
+                total_startup_time,
+                documentation="Total time from app initialization start to fully ready",
+            )
+            log_counter(
+                "app_startup_complete",
+                1,
+                documentation="Application startup completed successfully",
+            )
+
             # Log breakdown of startup phases
-            backend_init_time = self._ui_compose_start_time - self._startup_start_time if hasattr(self, '_ui_compose_start_time') else 0
-            ui_compose_time = getattr(self, '_ui_compose_end_time', ui_ready_time) - self._ui_compose_start_time if hasattr(self, '_ui_compose_start_time') else 0
-            
-            log_histogram("app_startup_breakdown_seconds", backend_init_time,
-                         labels={"phase": "backend_initialization"},
-                         documentation="Breakdown of application startup phases")
-            log_histogram("app_startup_breakdown_seconds", ui_compose_time,
-                         labels={"phase": "ui_composition"},
-                         documentation="Breakdown of application startup phases")
-            log_histogram("app_startup_breakdown_seconds", post_mount_duration,
-                         labels={"phase": "post_mount_setup"},
-                         documentation="Breakdown of application startup phases")
-            
-            self.loguru_logger.info(f"=== APPLICATION STARTUP COMPLETE ===")
-            self.loguru_logger.info(f"Total startup time: {total_startup_time:.3f} seconds")
+            backend_init_time = (
+                self._ui_compose_start_time - self._startup_start_time
+                if hasattr(self, "_ui_compose_start_time")
+                else 0
+            )
+            ui_compose_time = (
+                getattr(self, "_ui_compose_end_time", ui_ready_time)
+                - self._ui_compose_start_time
+                if hasattr(self, "_ui_compose_start_time")
+                else 0
+            )
+
+            log_histogram(
+                "app_startup_breakdown_seconds",
+                backend_init_time,
+                labels={"phase": "backend_initialization"},
+                documentation="Breakdown of application startup phases",
+            )
+            log_histogram(
+                "app_startup_breakdown_seconds",
+                ui_compose_time,
+                labels={"phase": "ui_composition"},
+                documentation="Breakdown of application startup phases",
+            )
+            log_histogram(
+                "app_startup_breakdown_seconds",
+                post_mount_duration,
+                labels={"phase": "post_mount_setup"},
+                documentation="Breakdown of application startup phases",
+            )
+
+            self.loguru_logger.info("=== APPLICATION STARTUP COMPLETE ===")
+            self.loguru_logger.info(
+                f"Total startup time: {total_startup_time:.3f} seconds"
+            )
             self.loguru_logger.info(f"  - Backend init: {backend_init_time:.3f}s")
             self.loguru_logger.info(f"  - UI composition: {ui_compose_time:.3f}s")
             self.loguru_logger.info(f"  - Post-mount setup: {post_mount_duration:.3f}s")
-            self.loguru_logger.info(f"===================================")
-            
+            self.loguru_logger.info("===================================")
+
             # Final memory usage
             log_resource_usage()
-            
-        self._schedule_deferred_startup_work()
 
+        self._schedule_deferred_startup_work()
 
     async def update_db_sizes(self) -> None:
         """Updates the database size information in the shell status line."""
         await self.db_status_manager.update_db_sizes()
-    
+
     async def update_token_count_display(self) -> None:
         """Updates the token count in the footer when on Chat tab."""
         await self.db_status_manager.update_token_count_display()
@@ -6186,7 +7490,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             )
             self.db_status_manager.start_periodic_updates(120)
             record_footer_timer("footer-db-size-periodic")
-            self.loguru_logger.info("DB size update timer started for the shell status line (interval: 2 minutes).")
+            self.loguru_logger.info(
+                "DB size update timer started for the shell status line (interval: 2 minutes)."
+            )
 
             self.set_timer(0.5, self.update_token_count_display)
             record_footer_timer("footer-token-periodic")
@@ -6241,9 +7547,12 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.loguru_logger.error(f"Failed to initialize TTS service: {e}")
             self._tts_handler = None
         finally:
-            log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
-                         labels={"phase": "tts_init_deferred"},
-                         documentation="Duration of post-mount phase in seconds")
+            log_histogram(
+                "app_post_mount_phase_duration_seconds",
+                time.perf_counter() - phase_start,
+                labels={"phase": "tts_init_deferred"},
+                documentation="Duration of post-mount phase in seconds",
+            )
         return self._tts_handler
 
     async def _initialize_stts_service(self):
@@ -6260,9 +7569,12 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.loguru_logger.error(f"Failed to initialize S/TT/S service: {e}")
             self._stts_handler = None
         finally:
-            log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
-                         labels={"phase": "stts_init_deferred"},
-                         documentation="Duration of post-mount phase in seconds")
+            log_histogram(
+                "app_post_mount_phase_duration_seconds",
+                time.perf_counter() - phase_start,
+                labels={"phase": "stts_init_deferred"},
+                documentation="Duration of post-mount phase in seconds",
+            )
         return self._stts_handler
 
     async def _ensure_tts_handler(self):
@@ -6303,25 +7615,26 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             return
         await handler.export_current_audio(target_path)
 
-
     async def on_shutdown_request(self) -> None:  # Use the imported ShutdownRequest
         logging.info("--- App Shutdown Requested ---")
-        
+
         # Set shutdown flag to prevent new operations
         self._shutting_down = True
-        
+
         # Cancel all active workers first
         try:
             active_workers = [w for w in self.workers if not w.is_finished]
             if active_workers:
-                self.loguru_logger.info(f"Cancelling {len(active_workers)} active workers")
+                self.loguru_logger.info(
+                    f"Cancelling {len(active_workers)} active workers"
+                )
                 for worker in active_workers:
                     worker.cancel()
                 # Give workers a moment to cancel
                 await asyncio.sleep(0.1)
         except Exception as e:
             self.loguru_logger.error(f"Error cancelling workers: {e}")
-        
+
         if self._rich_log_handler:
             await self._rich_log_handler.stop_processor()
             logging.info("RichLogHandler processor stopped.")
@@ -6334,7 +7647,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
 
     async def _close_server_context_provider_cached_client(self) -> None:
         server_context_provider = getattr(self, "server_context_provider", None)
-        close_cached_client = getattr(server_context_provider, "close_cached_client", None)
+        close_cached_client = getattr(
+            server_context_provider, "close_cached_client", None
+        )
         if callable(close_cached_client):
             await close_cached_client()
 
@@ -6356,6 +7671,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
         import asyncio
+
         logging.info("--- App Unmounting ---")
         self._ui_ready = False
         self._stop_ui_responsiveness_monitor()
@@ -6388,12 +7704,15 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         try:
             self._shutdown_ingest_parse_pool()
         except Exception as e:
-            self.loguru_logger.error(f"Error shutting down Library ingest parse pool: {e}")
+            self.loguru_logger.error(
+                f"Error shutting down Library ingest parse pool: {e}"
+            )
 
         # Stop all background services and threads
         try:
             deferred_tasks = [
-                task for task in getattr(self, "_deferred_startup_tasks", set())
+                task
+                for task in getattr(self, "_deferred_startup_tasks", set())
                 if not task.done()
             ]
             for task in deferred_tasks:
@@ -6402,78 +7721,110 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 await asyncio.gather(*deferred_tasks, return_exceptions=True)
 
             # Stop audio player if it exists
-            if hasattr(self, 'audio_player'):
+            if hasattr(self, "audio_player"):
                 try:
                     await self.audio_player.cleanup()
                     self.loguru_logger.info("Audio player cleaned up")
                 except Exception as e:
                     self.loguru_logger.error(f"Error cleaning up audio player: {e}")
-            
+
             # Stop TTS service if initialized
-            if hasattr(self, '_tts_handler') and self._tts_handler:
+            if hasattr(self, "_tts_handler") and self._tts_handler:
                 try:
                     # Clean up TTS event handler resources (tasks, files)
                     await self._tts_handler.cleanup_tts_resources()
-                    
+
                     # Import and call the global TTS cleanup function
                     from tldw_chatbook.TTS import close_tts_resources
+
                     await close_tts_resources()
-                    
+
                     self.loguru_logger.info("TTS service cleaned up properly")
                 except Exception as e:
                     self.loguru_logger.error(f"Error cleaning up TTS service: {e}")
-            
+
             # Stop STTS service if initialized
-            if hasattr(self, '_stts_handler') and self._stts_handler:
+            if hasattr(self, "_stts_handler") and self._stts_handler:
                 try:
                     # Clean up STTS event handler resources if it has the cleanup method
-                    if hasattr(self._stts_handler, 'cleanup_tts_resources'):
+                    if hasattr(self._stts_handler, "cleanup_tts_resources"):
                         await self._stts_handler.cleanup_tts_resources()
-                    
+
                     # Special handling for Higgs backend cleanup
                     if self._stts_handler._stts_service:
-                        backend_manager = getattr(self._stts_handler._stts_service, 'backend_manager', None)
+                        backend_manager = getattr(
+                            self._stts_handler._stts_service, "backend_manager", None
+                        )
                         if backend_manager:
                             # Check if Higgs backend is loaded
                             higgs_backends = [
-                                backend_id for backend_id in backend_manager._backends 
-                                if 'higgs' in backend_id.lower()
+                                backend_id
+                                for backend_id in backend_manager._backends
+                                if "higgs" in backend_id.lower()
                             ]
-                            
+
                             if higgs_backends:
-                                self.loguru_logger.info(f"Found {len(higgs_backends)} Higgs backend(s) to clean up")
-                                
+                                self.loguru_logger.info(
+                                    f"Found {len(higgs_backends)} Higgs backend(s) to clean up"
+                                )
+
                                 # Give Higgs backends extra time to clean up
                                 for backend_id in higgs_backends:
                                     backend = backend_manager._backends.get(backend_id)
-                                    if backend and hasattr(backend, 'close'):
+                                    if backend and hasattr(backend, "close"):
                                         try:
-                                            self.loguru_logger.info(f"Cleaning up Higgs backend: {backend_id}")
-                                            await asyncio.wait_for(backend.close(), timeout=10.0)
+                                            self.loguru_logger.info(
+                                                f"Cleaning up Higgs backend: {backend_id}"
+                                            )
+                                            await asyncio.wait_for(
+                                                backend.close(), timeout=10.0
+                                            )
                                         except asyncio.TimeoutError:
-                                            self.loguru_logger.warning(f"Higgs backend {backend_id} cleanup timed out")
+                                            self.loguru_logger.warning(
+                                                f"Higgs backend {backend_id} cleanup timed out"
+                                            )
                                         except Exception as e:
-                                            self.loguru_logger.error(f"Error cleaning up Higgs backend {backend_id}: {e}")
-                    
+                                            self.loguru_logger.error(
+                                                f"Error cleaning up Higgs backend {backend_id}: {e}"
+                                            )
+
                     self.loguru_logger.info("STTS service cleaned up")
                 except Exception as e:
                     self.loguru_logger.error(f"Error cleaning up STTS service: {e}")
-            
+
             # Stop subscription scheduler if it exists
-            if hasattr(self, '_subscription_scheduler') and self._subscription_scheduler:
+            if (
+                hasattr(self, "_subscription_scheduler")
+                and self._subscription_scheduler
+            ):
                 try:
                     await self._subscription_scheduler.stop()
                     self.loguru_logger.info("Subscription scheduler stopped")
                 except Exception as e:
-                    self.loguru_logger.error(f"Error stopping subscription scheduler: {e}")
-            
+                    self.loguru_logger.error(
+                        f"Error stopping subscription scheduler: {e}"
+                    )
+
             # Stop auto-sync manager if it exists
-            if hasattr(self, '_auto_sync_manager') and self._auto_sync_manager:
+            if hasattr(self, "_auto_sync_manager") and self._auto_sync_manager:
                 try:
                     self._auto_sync_manager.stop()
                     self.loguru_logger.info("Auto-sync manager stopped")
                 except Exception as e:
                     self.loguru_logger.error(f"Error stopping auto-sync manager: {e}")
+
+            # Stop the background scheduler loop cleanly.
+            scheduler_loop = getattr(self, "scheduler_loop", None)
+            scheduler_worker = getattr(self, "scheduler_worker", None)
+            if scheduler_loop is not None:
+                scheduler_loop.stop()
+            if scheduler_worker is not None:
+                try:
+                    await scheduler_worker.wait(timeout=5)
+                    if not scheduler_worker.is_finished:
+                        scheduler_worker.cancel()
+                except Exception as e:
+                    self.loguru_logger.error(f"Error stopping scheduler worker: {e}")
 
             # Disconnect local MCP client sessions (P5-T6), if any were ever
             # established this run.
@@ -6481,7 +7832,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 await self._disconnect_local_mcp_client()
                 self.loguru_logger.info("Local MCP client sessions disconnected")
             except Exception as e:
-                self.loguru_logger.error(f"Error disconnecting local MCP client sessions: {e}")
+                self.loguru_logger.error(
+                    f"Error disconnecting local MCP client sessions: {e}"
+                )
 
             # Cancel any pending workers
             for worker in self.workers:
@@ -6489,9 +7842,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     worker.cancel()
             # Wait briefly for workers to complete
             await asyncio.sleep(0.1)
-            
+
             # Stop media cleanup timer
-            if hasattr(self, '_media_cleanup_timer') and self._media_cleanup_timer:
+            if hasattr(self, "_media_cleanup_timer") and self._media_cleanup_timer:
                 self._media_cleanup_timer.stop()
                 self.loguru_logger.info("Media cleanup timer stopped")
 
@@ -6499,13 +7852,15 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 await self._close_server_context_provider_cached_client()
                 self.loguru_logger.info("Server context provider cached client closed")
             except Exception as e:
-                self.loguru_logger.error(f"Error closing server context provider cached client: {e}")
-                
+                self.loguru_logger.error(
+                    f"Error closing server context provider cached client: {e}"
+                )
+
         except Exception as e:
             self.loguru_logger.error(f"Error during service cleanup: {e}")
-        
+
         # Original cleanup code
-        if self._rich_log_handler: # Ensure it's removed if it exists
+        if self._rich_log_handler:  # Ensure it's removed if it exists
             logging.getLogger().removeHandler(self._rich_log_handler)
             logging.info("RichLogHandler removed.")
 
@@ -6524,61 +7879,73 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     logging.info("RotatingFileHandler removed and closed.")
                 except Exception as e_fh_close:
                     logging.error(f"Error removing/closing file handler: {e_fh_close}")
-        
+
         # Force cleanup of any remaining threads and processes
         try:
             import threading
             import subprocess
-            import signal
             import platform
-            
+
             # On macOS, force kill any afplay processes
             if platform.system() == "Darwin":
                 try:
                     # Find and kill any afplay processes spawned by this app
                     import psutil
+
                     current_pid = os.getpid()
-                    for proc in psutil.process_iter(['pid', 'name', 'ppid']):
+                    for proc in psutil.process_iter(["pid", "name", "ppid"]):
                         try:
-                            if proc.info['name'] == 'afplay' and proc.info['ppid'] == current_pid:
-                                self.loguru_logger.info(f"Killing orphaned afplay process: {proc.info['pid']}")
+                            if (
+                                proc.info["name"] == "afplay"
+                                and proc.info["ppid"] == current_pid
+                            ):
+                                self.loguru_logger.info(
+                                    f"Killing orphaned afplay process: {proc.info['pid']}"
+                                )
                                 proc.kill()
                         except (psutil.NoSuchProcess, psutil.AccessDenied):
                             pass
                 except ImportError:
                     # Fallback if psutil not available - run in background
                     from textual.worker import work
-                    
+
                     @work(thread=True)
                     def kill_afplay_processes():
                         try:
                             # Kill all afplay processes (less precise but works)
-                            subprocess.run(['killall', 'afplay'], capture_output=True, timeout=1)
+                            subprocess.run(
+                                ["killall", "afplay"], capture_output=True, timeout=1
+                            )
                             self.loguru_logger.info("Killed all afplay processes")
                         except Exception as e:
-                            self.loguru_logger.debug(f"Could not kill afplay processes: {e}")
-                    
+                            self.loguru_logger.debug(
+                                f"Could not kill afplay processes: {e}"
+                            )
+
                     # Run in background to avoid blocking
                     self.run_worker(kill_afplay_processes, name="kill_afplay")
-            import concurrent.futures
             import asyncio
-            
+
             # Shutdown thread pool executors
             try:
                 # Get the default executor if it exists
                 loop = asyncio.get_event_loop()
-                if hasattr(loop, '_default_executor') and loop._default_executor:
+                if hasattr(loop, "_default_executor") and loop._default_executor:
                     self.loguru_logger.info("Shutting down default executor")
                     loop._default_executor.shutdown(wait=False)
                     loop._default_executor = None
             except Exception as e:
                 self.loguru_logger.error(f"Error shutting down executor: {e}")
-            
+
             # Clean up any lingering subprocess
-            for proc in subprocess._active.copy():  # Make a copy to avoid modification during iteration
+            for proc in (
+                subprocess._active.copy()
+            ):  # Make a copy to avoid modification during iteration
                 try:
                     if proc.poll() is None:  # Process is still running
-                        self.loguru_logger.warning(f"Terminating lingering subprocess PID: {proc.pid}")
+                        self.loguru_logger.warning(
+                            f"Terminating lingering subprocess PID: {proc.pid}"
+                        )
                         proc.terminate()
                         try:
                             proc.wait(timeout=1.0)  # Give it 1 second to terminate
@@ -6587,28 +7954,38 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                             proc.wait()
                 except Exception as e:
                     self.loguru_logger.error(f"Error terminating subprocess: {e}")
-            
+
             # Force-set daemon flag on ThreadPoolExecutor and AudioPlayer threads
             for thread in threading.enumerate():
-                if thread.name.startswith(('ThreadPoolExecutor', 'AudioPlayer')):
+                if thread.name.startswith(("ThreadPoolExecutor", "AudioPlayer")):
                     try:
                         thread.daemon = True
                         self.loguru_logger.info(f"Set daemon flag on {thread.name}")
                     except Exception as e:
-                        self.loguru_logger.error(f"Could not set daemon flag on {thread.name}: {e}")
-            
+                        self.loguru_logger.error(
+                            f"Could not set daemon flag on {thread.name}: {e}"
+                        )
+
             # Log any remaining non-daemon threads
-            active_threads = [t for t in threading.enumerate() if t.is_alive() and not t.daemon and t != threading.main_thread()]
+            active_threads = [
+                t
+                for t in threading.enumerate()
+                if t.is_alive() and not t.daemon and t != threading.main_thread()
+            ]
             if active_threads:
-                self.loguru_logger.warning(f"Active non-daemon threads remaining: {[t.name for t in active_threads]}")
+                self.loguru_logger.warning(
+                    f"Active non-daemon threads remaining: {[t.name for t in active_threads]}"
+                )
                 # Attempt to stop them if they have stop methods
                 for thread in active_threads:
-                    if hasattr(thread, 'stop') and callable(thread.stop):
+                    if hasattr(thread, "stop") and callable(thread.stop):
                         try:
                             thread.stop()
                             self.loguru_logger.info(f"Stopped thread: {thread.name}")
                         except Exception as e:
-                            self.loguru_logger.error(f"Error stopping thread {thread.name}: {e}")
+                            self.loguru_logger.error(
+                                f"Error stopping thread {thread.name}: {e}"
+                            )
         except Exception as e:
             self.loguru_logger.error(f"Error checking active threads: {e}")
 
@@ -6629,7 +8006,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     def watch_current_tab(self, old_tab: Optional[str], new_tab: str) -> None:
         """Shows/hides the relevant content window when the tab changes."""
         # Skip entirely when using screen navigation
-        if hasattr(self, '_use_screen_navigation') and self._use_screen_navigation:
+        if hasattr(self, "_use_screen_navigation") and self._use_screen_navigation:
             return
         if not new_tab:  # Skip if empty
             return
@@ -6637,19 +8014,27 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             return
         if not hasattr(self, "app") or not self.app:  # Check if app is ready
             return
-        
+
         # Execute tab switch immediately - no debouncing needed
         self._execute_tab_switch(old_tab, new_tab)
-    
+
     def _execute_tab_switch(self, old_tab: Optional[str], new_tab: str) -> None:
         """Execute the actual tab switch immediately."""
-        loguru_logger.debug(f"\n>>> DEBUG: Executing tab switch! Old: '{old_tab}', New: '{new_tab}'")
+        loguru_logger.debug(
+            f"\n>>> DEBUG: Executing tab switch! Old: '{old_tab}', New: '{new_tab}'"
+        )
         if not isinstance(new_tab, str) or not new_tab:
-            print(f">>> DEBUG: watch_current_tab: Invalid new_tab '{new_tab!r}', aborting.")
-            logging.error(f"Watcher received invalid new_tab value: {new_tab!r}. Aborting tab switch.")
+            print(
+                f">>> DEBUG: watch_current_tab: Invalid new_tab '{new_tab!r}', aborting."
+            )
+            logging.error(
+                f"Watcher received invalid new_tab value: {new_tab!r}. Aborting tab switch."
+            )
             return
         if old_tab and not isinstance(old_tab, str):
-            print(f">>> DEBUG: watch_current_tab: Invalid old_tab '{old_tab!r}', setting to None.")
+            print(
+                f">>> DEBUG: watch_current_tab: Invalid old_tab '{old_tab!r}', setting to None."
+            )
             logging.warning(f"Watcher received invalid old_tab value: {old_tab!r}.")
             old_tab = None
 
@@ -6660,12 +8045,13 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             # Update navigation UI to remove active state from old tab
             use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
             use_links = get_cli_setting("general", "use_link_navigation", True)
-            
+
             if not use_dropdown:  # Only for non-dropdown navigation
                 if use_links:
                     # Update TabLinks active state
                     try:
                         from .UI.Tab_Links import TabLinks
+
                         tab_links = self.query_one(TabLinks)
                         tab_links.set_active_tab(new_tab)
                     except QueryError:
@@ -6673,21 +8059,27 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 else:
                     # Remove active class from old tab button
                     try:
-                        self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
+                        self.query_one(f"#tab-{old_tab}", Button).remove_class(
+                            "-active"
+                        )
                     except QueryError:
                         pass
             # Notes auto-save is owned by the Library notes editor; no tab-switch save here.
-            try: self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
-            except QueryError: logging.warning(f"Watcher: Could not find old button #tab-{old_tab}")
-            try: self.query_one(f"#{old_tab}-window").display = False
-            except QueryError: logging.warning(f"Watcher: Could not find old window #{old_tab}-window")
+            try:
+                self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
+            except QueryError:
+                logging.warning(f"Watcher: Could not find old button #tab-{old_tab}")
+            try:
+                self.query_one(f"#{old_tab}-window").display = False
+            except QueryError:
+                logging.warning(f"Watcher: Could not find old window #{old_tab}-window")
 
         # Show New Tab UI
         try:
             # Update navigation UI based on type
             use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
             use_links = get_cli_setting("general", "use_link_navigation", True)
-            
+
             if use_dropdown:
                 # Update dropdown selection if it exists and differs
                 try:
@@ -6702,24 +8094,33 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             else:
                 # Update traditional tab bar button
                 self.query_one(f"#tab-{new_tab}", Button).add_class("-active")
-            
+
             new_window = self.query_one(f"#{new_tab}-window")
-            
+
             # Initialize placeholder window if needed (with caching)
-            if isinstance(new_window, PlaceholderWindow) and not new_window.is_initialized:
+            if (
+                isinstance(new_window, PlaceholderWindow)
+                and not new_window.is_initialized
+            ):
                 # Check if we've already started initializing this tab
                 if new_tab not in self._initialized_tabs:
-                    loguru_logger.info(f"Initializing lazy-loaded window for tab: {new_tab}")
+                    loguru_logger.info(
+                        f"Initializing lazy-loaded window for tab: {new_tab}"
+                    )
                     self._initialized_tabs.add(new_tab)
                     new_window.initialize()
                 else:
                     # Tab is already being initialized, skip
-                    loguru_logger.debug(f"Tab {new_tab} already initialized or initializing")
-            
+                    loguru_logger.debug(
+                        f"Tab {new_tab} already initialized or initializing"
+                    )
+
             # Always set display to True for the new window
             new_window.display = True
-            loguru_logger.debug(f"Set display=True for window: {new_window.__class__.__name__} (id={new_tab}-window)")
-            
+            loguru_logger.debug(
+                f"Set display=True for window: {new_window.__class__.__name__} (id={new_tab}-window)"
+            )
+
             # Update word count and token count in footer based on tab
             # (resolve the active screen's own footer -- see
             # `_active_footer_status`, task-264).
@@ -6736,58 +8137,91 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     footer.update_token_count("")
 
             # Focus input logic (as in original, adjust if needed)
-            if new_tab not in [TAB_LOGS, TAB_STATS]: # Don't focus input on these tabs
+            if new_tab not in [TAB_LOGS, TAB_STATS]:  # Don't focus input on these tabs
                 input_to_focus: Optional[Union[TextArea, Input]] = None
-                try: input_to_focus = new_window.query_one(TextArea)
+                try:
+                    input_to_focus = new_window.query_one(TextArea)
                 except QueryError:
-                    try: input_to_focus = new_window.query_one(Input) # Check for Input if TextArea not found
-                    except QueryError: pass # No primary input found
+                    try:
+                        input_to_focus = new_window.query_one(
+                            Input
+                        )  # Check for Input if TextArea not found
+                    except QueryError:
+                        pass  # No primary input found
 
                 if input_to_focus:
                     input_to_focus.focus()  # Focus immediately, no delay needed
                     logging.debug(f"Watcher: Focused input in '{new_tab}'")
                 else:
-                    logging.debug(f"Watcher: No primary input (TextArea or Input) found to focus in '{new_tab}'")
+                    logging.debug(
+                        f"Watcher: No primary input (TextArea or Input) found to focus in '{new_tab}'"
+                    )
         except QueryError:
-            logging.error(f"Watcher: Could not find new button or window for #tab-{new_tab} / #{new_tab}-window")
+            logging.error(
+                f"Watcher: Could not find new button or window for #tab-{new_tab} / #{new_tab}-window"
+            )
         except Exception as e_show_new:
-            logging.error(f"Watcher: Error showing new tab '{new_tab}': {e_show_new}", exc_info=True)
+            logging.error(
+                f"Watcher: Error showing new tab '{new_tab}': {e_show_new}",
+                exc_info=True,
+            )
 
         loguru_logger.debug(">>> DEBUG: watch_current_tab finished.")
 
         # Tab-specific actions on switch
         if new_tab == TAB_CHAT:
             # If chat tab becomes active, maybe re-focus chat input
-            try: self.query_one("#chat-input", TextArea).focus()
-            except QueryError: pass
+            try:
+                self.query_one("#chat-input", TextArea).focus()
+            except QueryError:
+                pass
             # Add this line to populate prompts when chat tab is opened:
             # Use call_after_refresh for async functions to ensure proper execution
-            self.call_after_refresh(chat_handlers.handle_chat_sidebar_prompt_search_changed, self, "") # Call with empty search term
-            self.call_after_refresh(chat_handlers._populate_chat_character_search_list, self) # Populate character list
+            self.call_after_refresh(
+                chat_handlers.handle_chat_sidebar_prompt_search_changed, self, ""
+            )  # Call with empty search term
+            self.call_after_refresh(
+                chat_handlers._populate_chat_character_search_list, self
+            )  # Populate character list
         elif new_tab == TAB_CCP:
             # Initial population for CCP tab when switched to
             # Add a short delay to ensure the window is fully mounted and ready
             def populate_ccp_widgets():
                 try:
                     # Check if the window is actually initialized
-                    ccp_window = self.query_one("#conversations_characters_prompts-window")
+                    ccp_window = self.query_one(
+                        "#conversations_characters_prompts-window"
+                    )
                     if isinstance(ccp_window, PlaceholderWindow):
                         # Window isn't initialized yet, skip population
-                        loguru_logger.warning("CCP window is still a placeholder, skipping widget population")
+                        loguru_logger.warning(
+                            "CCP window is still a placeholder, skipping widget population"
+                        )
                         return
-                    
+
                     # Now it's safe to populate widgets
-                    self.call_after_refresh(ccp_handlers.populate_ccp_character_select, self)
-                    self.call_after_refresh(ccp_handlers.populate_ccp_prompts_list_view, self)
-                    self.call_after_refresh(ccp_handlers.populate_ccp_dictionary_select, self)
-                    self.call_after_refresh(ccp_handlers.populate_ccp_worldbook_list, self)
-                    self.call_after_refresh(ccp_handlers.perform_ccp_conversation_search, self)
+                    self.call_after_refresh(
+                        ccp_handlers.populate_ccp_character_select, self
+                    )
+                    self.call_after_refresh(
+                        ccp_handlers.populate_ccp_prompts_list_view, self
+                    )
+                    self.call_after_refresh(
+                        ccp_handlers.populate_ccp_dictionary_select, self
+                    )
+                    self.call_after_refresh(
+                        ccp_handlers.populate_ccp_worldbook_list, self
+                    )
+                    self.call_after_refresh(
+                        ccp_handlers.perform_ccp_conversation_search, self
+                    )
                 except QueryError:
                     loguru_logger.error("CCP window not found during widget population")
-            
+
             # Call immediately after refresh
             self.call_after_refresh(populate_ccp_widgets)
         elif new_tab == TAB_MEDIA:
+
             def activate_media_initial_view():
                 try:
                     from .UI.MediaWindow_v2 import MediaWindow as MediaWindow_v2
@@ -6795,8 +8229,10 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     media_window = self.query_one(MediaWindow_v2)
                     media_window.activate_initial_view()
                 except QueryError:
-                    loguru_logger.error("Could not find MediaWindow to activate its initial view.")
-            
+                    loguru_logger.error(
+                        "Could not find MediaWindow to activate its initial view."
+                    )
+
             # Call immediately after refresh
             self.call_after_refresh(activate_media_initial_view)
         elif new_tab == TAB_SEARCH:
@@ -6807,21 +8243,24 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     search_window = self.query_one("#search-window")
                     if isinstance(search_window, PlaceholderWindow):
                         # Window isn't initialized yet, skip setting sub-tab
-                        loguru_logger.warning("Search window is still a placeholder, skipping sub-tab initialization")
+                        loguru_logger.warning(
+                            "Search window is still a placeholder, skipping sub-tab initialization"
+                        )
                         return
-                    
+
                     # Now it's safe to set the active sub-tab
                     if not self.search_active_sub_tab:
                         self.search_active_sub_tab = self._initial_search_sub_tab_view
                 except QueryError:
                     loguru_logger.error("Search window not found during initialization")
-            
+
             # Call immediately after refresh
             self.call_after_refresh(initialize_search_tab)
         elif new_tab == TAB_INGEST:
             if not self.ingest_active_view:
                 self.loguru_logger.debug(
-                    f"Switched to Ingest tab, activating initial view: {self._initial_ingest_view}") # Reverted to original debug log
+                    f"Switched to Ingest tab, activating initial view: {self._initial_ingest_view}"
+                )  # Reverted to original debug log
                 # Use call_later to ensure the UI has settled after tab switch before changing sub-view
                 self.call_later(self._activate_initial_ingest_view)
         elif new_tab == TAB_TOOLS_SETTINGS:
@@ -6833,54 +8272,79 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     if isinstance(tools_window, PlaceholderWindow):
                         # Window isn't initialized yet, skip for now
                         return
-                    
+
                     # Now it's safe to activate the initial view
                     from .UI.Tools_Settings_Window import ToolsSettingsWindow
+
                     if isinstance(tools_window, ToolsSettingsWindow):
                         tools_window.activate_initial_view()
                         if not self.tools_settings_active_view:
-                            self.tools_settings_active_view = self._initial_tools_settings_view
-                            self.loguru_logger.debug(f"Tools & Settings tab initialized with view: {self._initial_tools_settings_view}")
+                            self.tools_settings_active_view = (
+                                self._initial_tools_settings_view
+                            )
+                            self.loguru_logger.debug(
+                                f"Tools & Settings tab initialized with view: {self._initial_tools_settings_view}"
+                            )
                 except QueryError:
-                    self.loguru_logger.error("Tools settings window not found during initialization")
-            
+                    self.loguru_logger.error(
+                        "Tools settings window not found during initialization"
+                    )
+
             # Call immediately after refresh
             self.call_after_refresh(initialize_tools_settings)
         elif new_tab == TAB_LLM:  # New elif block for LLM tab
             if not self.llm_active_view:  # If no view is active yet
                 self.loguru_logger.debug(
-                    f"Switched to LLM Management tab, activating initial view: {self._initial_llm_view}")
-                self.call_later(setattr, self, 'llm_active_view', self._initial_llm_view)
+                    f"Switched to LLM Management tab, activating initial view: {self._initial_llm_view}"
+                )
+                self.call_later(
+                    setattr, self, "llm_active_view", self._initial_llm_view
+                )
             # Populate LLM help texts when the tab is shown
             self.call_after_refresh(llm_management_events.populate_llm_help_texts, self)
-        elif new_tab == TAB_EVALS: # Added for Evals tab
+        elif new_tab == TAB_EVALS:  # Added for Evals tab
             # EvalsLab is a unified dashboard - no need for view activation
-            self.loguru_logger.debug(f"Switched to Evals tab")
+            self.loguru_logger.debug("Switched to Evals tab")
 
     def _log_view_dimensions(self, view, parent):
         """Helper to log view dimensions after refresh."""
-        self.loguru_logger.info(f"After refresh - View {view.id} dimensions: width={view.size.width}, height={view.size.height}")
-        self.loguru_logger.info(f"After refresh - Parent dimensions: width={parent.size.width}, height={parent.size.height}")
-    
+        self.loguru_logger.info(
+            f"After refresh - View {view.id} dimensions: width={view.size.width}, height={view.size.height}"
+        )
+        self.loguru_logger.info(
+            f"After refresh - Parent dimensions: width={parent.size.width}, height={parent.size.height}"
+        )
+
     async def _activate_initial_ingest_view(self) -> None:
-        self.loguru_logger.info("Attempting to activate initial ingest view via _activate_initial_ingest_view.")
-        
+        self.loguru_logger.info(
+            "Attempting to activate initial ingest view via _activate_initial_ingest_view."
+        )
+
         # First, ensure all views are hidden initially
         try:
             content_pane = self.query_one("#ingest-content-pane")
             for child in content_pane.children:
                 if child.id and child.id.startswith("ingest-view-"):
                     child.styles.display = "none"
-                    self.loguru_logger.debug(f"Initially hiding ingest view: {child.id}")
+                    self.loguru_logger.debug(
+                        f"Initially hiding ingest view: {child.id}"
+                    )
         except QueryError:
-            self.loguru_logger.error("Could not find #ingest-content-pane to hide views initially")
-        
-        if not self.ingest_active_view: # Check if it hasn't been set by some other means already
-            self.loguru_logger.debug(f"Setting ingest_active_view to initial: {self._initial_ingest_view}")
+            self.loguru_logger.error(
+                "Could not find #ingest-content-pane to hide views initially"
+            )
+
+        if (
+            not self.ingest_active_view
+        ):  # Check if it hasn't been set by some other means already
+            self.loguru_logger.debug(
+                f"Setting ingest_active_view to initial: {self._initial_ingest_view}"
+            )
             self.ingest_active_view = self._initial_ingest_view
         else:
-            self.loguru_logger.debug(f"Ingest active view already set to '{self.ingest_active_view}'. No change made by _activate_initial_ingest_view.")
-
+            self.loguru_logger.debug(
+                f"Ingest active view already set to '{self.ingest_active_view}'. No change made by _activate_initial_ingest_view."
+            )
 
     # Watchers for sidebar collapsed states (keep as is)
     def watch_chat_sidebar_collapsed(self, collapsed: bool) -> None:
@@ -6889,7 +8353,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.loguru_logger.debug("watch_chat_sidebar_collapsed: UI not ready.")
             return
         # Just log the state change - the actual UI update should happen in the screen/window
-        self.loguru_logger.debug(f"Chat sidebar collapsed state changed to: {collapsed}")
+        self.loguru_logger.debug(
+            f"Chat sidebar collapsed state changed to: {collapsed}"
+        )
 
     def watch_chat_right_sidebar_collapsed(self, collapsed: bool) -> None:
         """Hide or show the character settings sidebar."""
@@ -6898,11 +8364,13 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         if not self._ui_ready:
             return
         try:
-            sidebar = self.query_one("#chat-right-sidebar")  # ID from create_chat_right_sidebar
+            sidebar = self.query_one(
+                "#chat-right-sidebar"
+            )  # ID from create_chat_right_sidebar
             sidebar.display = not collapsed
         except QueryError:
             logging.error("Character sidebar widget (#chat-right-sidebar) not found.")
-    
+
     def watch_chat_right_sidebar_width(self, width: int) -> None:
         """Update the width of the chat right sidebar."""
         if not hasattr(self, "app") or not self.app:  # Check if app is ready
@@ -6923,28 +8391,41 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         if not self._ui_ready:
             return
         try:
-            sidebar_pane = self.query_one("#conv-char-left-pane") # The ID of the VerticalScroll
-            sidebar_pane.display = not collapsed # True means visible, False means hidden
-            logging.debug(f"Conversations, Characters & Prompts left pane display set to {not collapsed}")
+            sidebar_pane = self.query_one(
+                "#conv-char-left-pane"
+            )  # The ID of the VerticalScroll
+            sidebar_pane.display = (
+                not collapsed
+            )  # True means visible, False means hidden
+            logging.debug(
+                f"Conversations, Characters & Prompts left pane display set to {not collapsed}"
+            )
         except QueryError:
-            logging.error("Conversations, Characters & Prompts left sidebar pane (#conv-char-left-pane) not found.")
+            logging.error(
+                "Conversations, Characters & Prompts left sidebar pane (#conv-char-left-pane) not found."
+            )
         except Exception as e:
-            logging.error(f"Error toggling Conversations, Characters & Prompts left sidebar pane: {e}", exc_info=True)
+            logging.error(
+                f"Error toggling Conversations, Characters & Prompts left sidebar pane: {e}",
+                exc_info=True,
+            )
 
     def watch_evals_sidebar_collapsed(self, collapsed: bool) -> None:
         """EvalsLab uses unified dashboard - no sidebar to collapse."""
         # This method is kept for backwards compatibility but does nothing
         # The new EvalsLab UI doesn't have a collapsible sidebar
         pass
-    
-    def watch_media_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
+
+    def watch_media_active_view(
+        self, old_view: Optional[str], new_view: Optional[str]
+    ) -> None:
         """Notify MediaWindow when media_active_view changes."""
         # Temporarily disabled - MediaWindow handles its own navigation via MediaTypeSelectedEvent
         pass
         # if not self._ui_ready:
         #     self.loguru_logger.debug("watch_media_active_view: UI not ready.")
         #     return
-        # 
+        #
         # if self.current_tab == TAB_MEDIA:
         #     try:
         #         media_window = self.query_one(MediaWindow)
@@ -6965,7 +8446,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         If view_id_to_show is None, hides all ingest views.
         """
         # Rebuilt ingest UI manages its own tabs; skip legacy show/hide
-        if 'USE_REBUILT_INGEST' in globals() and USE_REBUILT_INGEST:
+        if "USE_REBUILT_INGEST" in globals() and USE_REBUILT_INGEST:
             return
         self.log.debug(f"Attempting to show ingest view: {view_id_to_show}")
         try:
@@ -6977,7 +8458,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         for view_id in self.ALL_INGEST_VIEW_IDS:
             try:
                 view_container = self.query_one(f"#{view_id}")
-                is_target = (view_id == view_id_to_show)
+                is_target = view_id == view_id_to_show
                 view_container.display = is_target
                 if is_target:
                     if view_id == "ingest-view-local-video":
@@ -6990,9 +8471,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     def _initialize_video_models(self) -> None:
         """Initialize models for the video ingestion window."""
         try:
-            from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
+            from .UI.MediaIngestWindowRebuilt import (
+                MediaIngestWindowRebuilt as MediaIngestWindow,
+            )
 
-            ingest_window = self.query_one("#ingest-window", MediaIngestWindow)
+            self.query_one("#ingest-window", MediaIngestWindow)
             # New ingest window doesn't need model initialization
             self.log.debug("New ingest window loaded")
         except Exception as e:
@@ -7001,9 +8484,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     def _initialize_audio_models(self) -> None:
         """Initialize models for the audio ingestion window."""
         try:
-            from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
+            from .UI.MediaIngestWindowRebuilt import (
+                MediaIngestWindowRebuilt as MediaIngestWindow,
+            )
 
-            ingest_window = self.query_one("#ingest-window", MediaIngestWindow)
+            self.query_one("#ingest-window", MediaIngestWindow)
             # New ingest window doesn't need model initialization
             self.log.debug("New ingest window loaded")
         except Exception as e:
@@ -7015,13 +8500,17 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     @on(Button.Pressed, "#chat-notes-create-new-button")
     async def handle_chat_notes_create_new(self, event: Button.Pressed) -> None:
         """Handles the 'Create New Note' button press in the chat sidebar's notes section."""
-        self.loguru_logger.info(f"Attempting to create new note for user: {self.notes_user_id}")
+        self.loguru_logger.info(
+            f"Attempting to create new note for user: {self.notes_user_id}"
+        )
         default_title = "New Note"
         default_content = ""
 
         if not self.notes_service:
             self.notify("Notes service is not available.", severity="error")
-            self.loguru_logger.error("Notes service not available in handle_chat_notes_create_new.")
+            self.loguru_logger.error(
+                "Notes service not available in handle_chat_notes_create_new."
+            )
             return
 
         try:
@@ -7037,18 +8526,22 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 # 2. Store Note ID and Version
                 self.current_chat_note_id = new_note_id
                 self.current_chat_note_version = 1  # Assuming version starts at 1
-                self.loguru_logger.info(f"New note created with ID: {new_note_id}, Version: {self.current_chat_note_version}")
+                self.loguru_logger.info(
+                    f"New note created with ID: {new_note_id}, Version: {self.current_chat_note_version}"
+                )
 
                 # 3. Update UI Input Fields
                 title_input = self.query_one("#chat-notes-title-input", Input)
-                content_textarea = self.query_one("#chat-notes-content-textarea", TextArea)
+                content_textarea = self.query_one(
+                    "#chat-notes-content-textarea", TextArea
+                )
                 title_input.value = default_title
                 content_textarea.text = default_content
 
                 # 4. Add to ListView
                 notes_list_view = self.query_one("#chat-notes-listview", ListView)
                 new_list_item = ListItem(Label(default_title))
-                new_list_item.id = f"note-item-{new_note_id}" # Ensure unique DOM ID for the ListItem itself
+                new_list_item.id = f"note-item-{new_note_id}"  # Ensure unique DOM ID for the ListItem itself
                 # We'll need a way to store the actual note_id on the ListItem for retrieval,
                 # Textual's ListItem doesn't have a direct `data` attribute.
                 # A common pattern is to use a custom ListItem subclass or manage a mapping.
@@ -7065,24 +8558,36 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
 
                 self.notify("New note created in sidebar.", severity="information")
             else:
-                self.notify("Failed to create new note (no ID returned).", severity="error")
-                self.loguru_logger.error("notes_service.add_note did not return a new_note_id.")
+                self.notify(
+                    "Failed to create new note (no ID returned).", severity="error"
+                )
+                self.loguru_logger.error(
+                    "notes_service.add_note did not return a new_note_id."
+                )
 
-        except CharactersRAGDBError as e: # Specific DB error
-            self.loguru_logger.opt(exception=True).error(f"Database error creating new note: {e}")
+        except CharactersRAGDBError as e:  # Specific DB error
+            self.loguru_logger.opt(exception=True).error(
+                f"Database error creating new note: {e}"
+            )
             self.notify(f"DB error creating note: {e}", severity="error")
-        except Exception as e: # Catch-all for other unexpected errors
-            self.loguru_logger.opt(exception=True).error(f"Unexpected error creating new note: {e}")
+        except Exception as e:  # Catch-all for other unexpected errors
+            self.loguru_logger.opt(exception=True).error(
+                f"Unexpected error creating new note: {e}"
+            )
             self.notify(f"Error creating note: {type(e).__name__}", severity="error")
 
     @on(Button.Pressed, "#chat-notes-search-button")
     async def handle_chat_notes_search(self, event: Button.Pressed) -> None:
         """Handles the 'Search' button press in the chat sidebar's notes section."""
-        self.loguru_logger.info(f"Search Notes button pressed. User ID: {self.notes_user_id}")
+        self.loguru_logger.info(
+            f"Search Notes button pressed. User ID: {self.notes_user_id}"
+        )
 
         if not self.notes_service:
             self.notify("Notes service is not available.", severity="error")
-            self.loguru_logger.error("Notes service not available in handle_chat_notes_search.")
+            self.loguru_logger.error(
+                "Notes service not available in handle_chat_notes_search."
+            )
             return
 
         try:
@@ -7097,17 +8602,23 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
 
             if not search_term:
                 self.loguru_logger.info("Empty search term, listing all notes.")
-                listed_notes = self.notes_service.list_notes(user_id=self.notes_user_id, limit=limit)
+                listed_notes = self.notes_service.list_notes(
+                    user_id=self.notes_user_id, limit=limit
+                )
             else:
                 self.loguru_logger.info(f"Searching notes with term: '{search_term}'")
-                listed_notes = self.notes_service.search_notes(user_id=self.notes_user_id, search_term=search_term, limit=limit)
+                listed_notes = self.notes_service.search_notes(
+                    user_id=self.notes_user_id, search_term=search_term, limit=limit
+                )
 
             if listed_notes:
                 for note in listed_notes:
-                    note_title = note.get('title', 'Untitled Note')
-                    note_id = note.get('id')
+                    note_title = note.get("title", "Untitled Note")
+                    note_id = note.get("id")
                     if not note_id:
-                        self.loguru_logger.warning(f"Note found without an ID during search: {note_title}. Skipping.")
+                        self.loguru_logger.warning(
+                            f"Note found without an ID during search: {note_title}. Skipping."
+                        )
                         continue
 
                     list_item_label = Label(note_title)
@@ -7117,31 +8628,47 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     await notes_list_view.append(new_list_item)
 
                 self.notify(f"{len(listed_notes)} notes found.", severity="information")
-                self.loguru_logger.info(f"Populated notes list with {len(listed_notes)} search results.")
-                self.loguru_logger.debug(f"ListView child count after search population: {len(notes_list_view.children)}") # Fixed: use len(children) instead of child_count
+                self.loguru_logger.info(
+                    f"Populated notes list with {len(listed_notes)} search results."
+                )
+                self.loguru_logger.debug(
+                    f"ListView child count after search population: {len(notes_list_view.children)}"
+                )  # Fixed: use len(children) instead of child_count
             else:
-                msg = "No notes match your search." if search_term else "No notes found."
+                msg = (
+                    "No notes match your search." if search_term else "No notes found."
+                )
                 self.notify(msg, severity="information")
                 self.loguru_logger.info(msg)
 
         except CharactersRAGDBError as e:
-            self.loguru_logger.opt(exception=True).error(f"Database error searching notes: {e}")
+            self.loguru_logger.opt(exception=True).error(
+                f"Database error searching notes: {e}"
+            )
             self.notify(f"DB error searching notes: {e}", severity="error")
         except QueryError as e_query:
-            self.loguru_logger.opt(exception=True).error(f"UI element not found during notes search: {e_query}")
+            self.loguru_logger.opt(exception=True).error(
+                f"UI element not found during notes search: {e_query}"
+            )
             self.notify("UI error during notes search.", severity="error")
         except Exception as e:
-            self.loguru_logger.opt(exception=True).error(f"Unexpected error searching notes: {e}")
+            self.loguru_logger.opt(exception=True).error(
+                f"Unexpected error searching notes: {e}"
+            )
             self.notify(f"Error searching notes: {type(e).__name__}", severity="error")
 
     @on(Button.Pressed, "#chat-notes-load-button")
     async def handle_chat_notes_load(self, event: Button.Pressed) -> None:
         """Handles the 'Load Note' button press in the chat sidebar's notes section."""
-        self.loguru_logger.info(f"Load Note button pressed. User ID: {self.notes_user_id}")
+        self.loguru_logger.info(
+            f"Load Note button pressed. User ID: {self.notes_user_id}"
+        )
 
         if not self.notes_service:
             self.notify("Notes service is not available.", severity="error")
-            self.loguru_logger.error("Notes service not available in handle_chat_notes_load.")
+            self.loguru_logger.error(
+                "Notes service not available in handle_chat_notes_load."
+            )
             return
 
         try:
@@ -7156,22 +8683,30 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             dom_id_parts = selected_list_item.id.split("note-item-")
             if len(dom_id_parts) < 2 or not dom_id_parts[1]:
                 self.notify("Selected item has an invalid ID format.", severity="error")
-                self.loguru_logger.error(f"Invalid ListItem ID format: {selected_list_item.id}")
+                self.loguru_logger.error(
+                    f"Invalid ListItem ID format: {selected_list_item.id}"
+                )
                 return
 
             actual_note_id = dom_id_parts[1]
-            self.loguru_logger.info(f"Attempting to load note with ID: {actual_note_id}")
+            self.loguru_logger.info(
+                f"Attempting to load note with ID: {actual_note_id}"
+            )
 
-            note_data = self.notes_service.get_note_by_id(user_id=self.notes_user_id, note_id=actual_note_id)
+            note_data = self.notes_service.get_note_by_id(
+                user_id=self.notes_user_id, note_id=actual_note_id
+            )
 
             if note_data:
                 title_input = self.query_one("#chat-notes-title-input", Input)
-                content_textarea = self.query_one("#chat-notes-content-textarea", TextArea)
+                content_textarea = self.query_one(
+                    "#chat-notes-content-textarea", TextArea
+                )
 
-                loaded_title = note_data.get('title', '')
-                loaded_content = note_data.get('content', '')
-                loaded_version = note_data.get('version')
-                loaded_id = note_data.get('id')
+                loaded_title = note_data.get("title", "")
+                loaded_content = note_data.get("content", "")
+                loaded_version = note_data.get("version")
+                loaded_id = note_data.get("id")
 
                 title_input.value = loaded_title
                 content_textarea.text = loaded_content
@@ -7180,10 +8715,17 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 self.current_chat_note_version = loaded_version
 
                 self.notify(f"Note '{loaded_title}' loaded.", severity="information")
-                self.loguru_logger.info(f"Note '{loaded_title}' (ID: {loaded_id}, Version: {loaded_version}) loaded into UI.")
+                self.loguru_logger.info(
+                    f"Note '{loaded_title}' (ID: {loaded_id}, Version: {loaded_version}) loaded into UI."
+                )
             else:
-                self.notify(f"Could not load note (ID: {actual_note_id}). It might have been deleted.", severity="warning")
-                self.loguru_logger.warning(f"Note with ID {actual_note_id} not found by service.")
+                self.notify(
+                    f"Could not load note (ID: {actual_note_id}). It might have been deleted.",
+                    severity="warning",
+                )
+                self.loguru_logger.warning(
+                    f"Note with ID {actual_note_id} not found by service."
+                )
                 # Clear fields if note not found
                 self.query_one("#chat-notes-title-input", Input).value = ""
                 self.query_one("#chat-notes-content-textarea", TextArea).text = ""
@@ -7191,28 +8733,43 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 self.current_chat_note_version = None
 
         except CharactersRAGDBError as e_db:
-            self.loguru_logger.opt(exception=True).error(f"Database error loading note: {e_db}")
+            self.loguru_logger.opt(exception=True).error(
+                f"Database error loading note: {e_db}"
+            )
             self.notify(f"DB error loading note: {e_db}", severity="error")
         except QueryError as e_query:
-            self.loguru_logger.opt(exception=True).error(f"UI element not found during note load: {e_query}")
+            self.loguru_logger.opt(exception=True).error(
+                f"UI element not found during note load: {e_query}"
+            )
             self.notify("UI error during note load.", severity="error")
         except Exception as e:
-            self.loguru_logger.opt(exception=True).error(f"Unexpected error loading note: {e}")
+            self.loguru_logger.opt(exception=True).error(
+                f"Unexpected error loading note: {e}"
+            )
             self.notify(f"Error loading note: {type(e).__name__}", severity="error")
 
     @on(Button.Pressed, "#chat-notes-save-button")
     async def handle_chat_notes_save(self, event: Button.Pressed) -> None:
         """Handles the 'Save Note' button press in the chat sidebar's notes section."""
-        self.loguru_logger.info(f"Save Note button pressed. User ID: {self.notes_user_id}")
+        self.loguru_logger.info(
+            f"Save Note button pressed. User ID: {self.notes_user_id}"
+        )
 
         if not self.notes_service:
             self.notify("Notes service is not available.", severity="error")
-            self.loguru_logger.error("Notes service not available in handle_chat_notes_save.")
+            self.loguru_logger.error(
+                "Notes service not available in handle_chat_notes_save."
+            )
             return
 
         if not self.current_chat_note_id or self.current_chat_note_version is None:
-            self.notify("No active note to save. Load or create a note first.", severity="warning")
-            self.loguru_logger.warning("handle_chat_notes_save called without an active note_id or version.")
+            self.notify(
+                "No active note to save. Load or create a note first.",
+                severity="warning",
+            )
+            self.loguru_logger.warning(
+                "handle_chat_notes_save called without an active note_id or version."
+            )
             return
 
         try:
@@ -7224,19 +8781,23 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
 
             update_data = {"title": title, "content": content}
 
-            self.loguru_logger.info(f"Attempting to save note ID: {self.current_chat_note_id}, Version: {self.current_chat_note_version}")
+            self.loguru_logger.info(
+                f"Attempting to save note ID: {self.current_chat_note_id}, Version: {self.current_chat_note_version}"
+            )
 
             success = self.notes_service.update_note(
                 user_id=self.notes_user_id,
                 note_id=self.current_chat_note_id,
                 update_data=update_data,
-                expected_version=self.current_chat_note_version
+                expected_version=self.current_chat_note_version,
             )
 
-            if success: # Should be true if no exception was raised by DB layer for non-Conflict errors
+            if success:  # Should be true if no exception was raised by DB layer for non-Conflict errors
                 self.current_chat_note_version += 1
                 self.notify("Note saved successfully.", severity="information")
-                self.loguru_logger.info(f"Note {self.current_chat_note_id} saved. New version: {self.current_chat_note_version}")
+                self.loguru_logger.info(
+                    f"Note {self.current_chat_note_id} saved. New version: {self.current_chat_note_version}"
+                )
 
                 # Update ListView item
                 try:
@@ -7248,51 +8809,75 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                         if isinstance(item, ListItem) and item.id == item_dom_id:
                             # Assuming the first child of ListItem is the Label we want to update
                             label_to_update = item.query_one(Label)
-                            label_to_update.update(title) # Update with the new title
-                            self.loguru_logger.debug(f"Updated title in ListView for note ID {self.current_chat_note_id} to '{title}'")
+                            label_to_update.update(title)  # Update with the new title
+                            self.loguru_logger.debug(
+                                f"Updated title in ListView for note ID {self.current_chat_note_id} to '{title}'"
+                            )
                             break
                         else:
-                            self.loguru_logger.debug(f"ListItem with ID {item_dom_id} not found for title update after save (iterated item ID: {item.id}).")
+                            self.loguru_logger.debug(
+                                f"ListItem with ID {item_dom_id} not found for title update after save (iterated item ID: {item.id})."
+                            )
                 except QueryError as e_lv_update:
-                    self.loguru_logger.error(f"Error querying Label within ListView item to update title: {e_lv_update}")
-                except Exception as e_item_update: # Catch other errors during list item update
-                    self.loguru_logger.opt(exception=True).error(f"Unexpected error updating list item title: {e_item_update}")
+                    self.loguru_logger.error(
+                        f"Error querying Label within ListView item to update title: {e_lv_update}"
+                    )
+                except (
+                    Exception
+                ) as e_item_update:  # Catch other errors during list item update
+                    self.loguru_logger.opt(exception=True).error(
+                        f"Unexpected error updating list item title: {e_item_update}"
+                    )
             else:
                 # This case might not be hit if service raises exceptions for all failures
                 self.notify("Failed to save note. Reason unknown.", severity="error")
-                self.loguru_logger.error(f"notes_service.update_note returned False for note {self.current_chat_note_id}")
+                self.loguru_logger.error(
+                    f"notes_service.update_note returned False for note {self.current_chat_note_id}"
+                )
 
         except ConflictError:
-            self.loguru_logger.warning(f"Save conflict for note {self.current_chat_note_id}. Expected version: {self.current_chat_note_version}")
-            self.notify("Save conflict: Note was modified elsewhere. Please reload and reapply changes.", severity="error", timeout=10)
+            self.loguru_logger.warning(
+                f"Save conflict for note {self.current_chat_note_id}. Expected version: {self.current_chat_note_version}"
+            )
+            self.notify(
+                "Save conflict: Note was modified elsewhere. Please reload and reapply changes.",
+                severity="error",
+                timeout=10,
+            )
         except CharactersRAGDBError as e_db:
-            self.loguru_logger.opt(exception=True).error(f"Database error saving note {self.current_chat_note_id}: {e_db}")
+            self.loguru_logger.opt(exception=True).error(
+                f"Database error saving note {self.current_chat_note_id}: {e_db}"
+            )
             self.notify(f"DB error saving note: {e_db}", severity="error")
         except QueryError as e_query:
-            self.loguru_logger.opt(exception=True).error(f"UI element not found during note save: {e_query}")
+            self.loguru_logger.opt(exception=True).error(
+                f"UI element not found during note save: {e_query}"
+            )
             self.notify("UI error during note save.", severity="error")
         except Exception as e:
-            self.loguru_logger.opt(exception=True).error(f"Unexpected error saving note {self.current_chat_note_id}: {e}")
+            self.loguru_logger.opt(exception=True).error(
+                f"Unexpected error saving note {self.current_chat_note_id}: {e}"
+            )
             self.notify(f"Error saving note: {type(e).__name__}", severity="error")
 
     @on(Button.Pressed, "#chat-notes-copy-button")
     async def handle_chat_notes_copy(self, event: Button.Pressed) -> None:
         """Handles the 'Copy Note' button press in the chat sidebar's notes section."""
         self.loguru_logger.info("Copy Note button pressed.")
-        
+
         try:
             # Get title and content from the input fields
             title_input = self.query_one("#chat-notes-title-input", Input)
             content_textarea = self.query_one("#chat-notes-content-textarea", TextArea)
-            
+
             title = title_input.value.strip()
             content = content_textarea.text.strip()
-            
+
             # Check if there's anything to copy
             if not title and not content:
                 self.notify("No note content to copy.", severity="warning")
                 return
-            
+
             # Format the note for clipboard
             if title and content:
                 # Both title and content present
@@ -7303,125 +8888,104 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             else:
                 # Only content
                 formatted_note = content
-            
+
             # Copy to clipboard
             self.copy_to_clipboard(formatted_note)
             self.notify("Note copied to clipboard!", severity="information")
-            self.loguru_logger.info(f"Note copied to clipboard. Title: '{title[:50]}...'" if title else "Note content copied to clipboard.")
-            
+            self.loguru_logger.info(
+                f"Note copied to clipboard. Title: '{title[:50]}...'"
+                if title
+                else "Note content copied to clipboard."
+            )
+
         except QueryError as e:
             self.loguru_logger.error(f"UI element not found during note copy: {e}")
             self.notify("UI error during note copy.", severity="error")
         except Exception as e:
-            self.loguru_logger.opt(exception=True).error(f"Unexpected error copying note: {e}")
+            self.loguru_logger.opt(exception=True).error(
+                f"Unexpected error copying note: {e}"
+            )
             self.notify(f"Error copying note: {type(e).__name__}", severity="error")
 
     @on(Collapsible.Toggled, "#chat-notes-collapsible")
-    async def on_chat_notes_collapsible_toggle(self, event: Collapsible.Toggled) -> None:
+    async def on_chat_notes_collapsible_toggle(
+        self, event: Collapsible.Toggled
+    ) -> None:
         """Handles the expansion/collapse of the Notes collapsible section in the chat sidebar."""
         if not event.collapsible.collapsed:  # If the collapsible was just expanded
-            self.loguru_logger.info(f"Notes collapsible opened in chat sidebar. User ID: {self.notes_user_id}. Refreshing list.")
+            self.loguru_logger.info(
+                f"Notes collapsible opened in chat sidebar. User ID: {self.notes_user_id}. Refreshing list."
+            )
 
             if not self.notes_service:
                 self.notify("Notes service is not available.", severity="error")
-                self.loguru_logger.error("Notes service not available in on_chat_notes_collapsible_toggle.")
+                self.loguru_logger.error(
+                    "Notes service not available in on_chat_notes_collapsible_toggle."
+                )
                 return
 
     @on(Collapsible.Toggled, "#chat-active-character-info-collapsible")
-    async def on_chat_active_character_info_collapsible_toggle(self, event: Collapsible.Toggled) -> None:
+    async def on_chat_active_character_info_collapsible_toggle(
+        self, event: Collapsible.Toggled
+    ) -> None:
         """Handles the expansion/collapse of the Active Character Info collapsible section in the chat sidebar."""
         if not event.collapsible.collapsed:  # If the collapsible was just expanded
-            self.loguru_logger.info("Active Character Info collapsible opened in chat sidebar. Refreshing character list.")
+            self.loguru_logger.info(
+                "Active Character Info collapsible opened in chat sidebar. Refreshing character list."
+            )
 
             # Call the function to populate the character list
             from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
-            await chat_events._populate_chat_character_search_list(self)
 
-            try:
-                # 1. Clear ListView
-                notes_list_view = self.query_one("#chat-notes-listview", ListView)
-                await notes_list_view.clear()
-
-                # 2. Call self.notes_service.list_notes
-                # Limit to a reasonable number, e.g., 50, most recent first if service supports sorting
-                listed_notes = self.notes_service.list_notes(user_id=self.notes_user_id, limit=50)
-
-                # 3. Populate ListView
-                if listed_notes:
-                    for note in listed_notes:
-                        note_title = note.get('title', 'Untitled Note')
-                        note_id = note.get('id')
-                        if not note_id:
-                            self.loguru_logger.warning(f"Note found without an ID: {note_title}. Skipping.")
-                            continue
-
-                        list_item_label = Label(note_title)
-                        new_list_item = ListItem(list_item_label)
-                        # Store the actual note_id on the ListItem for retrieval.
-                        # Using a unique DOM ID for the ListItem itself.
-                        new_list_item.id = f"note-item-{note_id}"
-                        # A custom attribute to store data:
-                        # setattr(new_list_item, "_note_data", note) # Store whole note or just id/version
-
-                        await notes_list_view.append(new_list_item)
-                    self.notify("Notes list refreshed.", severity="information")
-                    self.loguru_logger.info(f"Populated notes list with {len(listed_notes)} items.")
-                else:
-                    self.notify("No notes found.", severity="information")
-                    self.loguru_logger.info("No notes found for user after refresh.")
-
-            except CharactersRAGDBError as e: # Specific DB error
-                self.loguru_logger.opt(exception=True).error(f"Database error listing notes: {e}")
-                self.notify(f"DB error listing notes: {e}", severity="error")
-            except QueryError as e_query: # If UI elements are not found
-                 self.loguru_logger.opt(exception=True).error(f"UI element not found in notes toggle: {e_query}")
-                 self.notify("UI error while refreshing notes.", severity="error")
-            except Exception as e: # Catch-all for other unexpected errors
-                self.loguru_logger.opt(exception=True).error(f"Unexpected error listing notes: {e}")
-                self.notify(f"Error listing notes: {type(e).__name__}", severity="error")
-        else:
-            self.loguru_logger.info("Notes collapsible closed in chat sidebar.")
-
-    @on(Collapsible.Toggled, "#chat-active-character-info-collapsible")
-    async def on_chat_active_character_info_collapsible_toggle(self, event: Collapsible.Toggled) -> None:
-        """Handles the expansion/collapse of the Active Character Info collapsible section in the chat sidebar."""
-        if not event.collapsible.collapsed:  # If the collapsible was just expanded
-            self.loguru_logger.info("Active Character Info collapsible opened in chat sidebar. Refreshing character list.")
-
-            # Call the function to populate the character list
-            from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
             await chat_events._populate_chat_character_search_list(self)
         else:
-            self.loguru_logger.info("Active Character Info collapsible closed in chat sidebar.")
+            self.loguru_logger.info(
+                "Active Character Info collapsible closed in chat sidebar."
+            )
 
     @on(Collapsible.Toggled, "#chat-conversations")
-    async def on_chat_conversations_collapsible_toggle(self, event: Collapsible.Toggled) -> None:
+    async def on_chat_conversations_collapsible_toggle(
+        self, event: Collapsible.Toggled
+    ) -> None:
         """Handles the expansion/collapse of the Conversations collapsible section in the chat sidebar."""
         # Check if this is specifically the chat conversations collapsible
         if event.collapsible.id != "chat-conversations":
             return
-            
+
         if not event.collapsible.collapsed:  # If the collapsible was just expanded
             self.loguru_logger.info("Conversations collapsible opened in chat sidebar.")
-            
+
             # Populate the character filter dropdown only once when the collapsible is first opened
             # This avoids the database connection conflicts that occur during startup
             if not self._chat_character_filter_populated:
-                self.loguru_logger.info("Populating character filter for the first time.")
+                self.loguru_logger.info(
+                    "Populating character filter for the first time."
+                )
                 try:
                     from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
-                    await chat_events.populate_chat_conversation_character_filter_select(self)
+
+                    await (
+                        chat_events.populate_chat_conversation_character_filter_select(
+                            self
+                        )
+                    )
                     self._chat_character_filter_populated = True
                     self.loguru_logger.info("Character filter populated successfully.")
                 except Exception as e:
-                    self.loguru_logger.opt(exception=True).error(f"Failed to populate character filter: {e}")
+                    self.loguru_logger.opt(exception=True).error(
+                        f"Failed to populate character filter: {e}"
+                    )
             else:
-                self.loguru_logger.debug("Character filter already populated, skipping.")
+                self.loguru_logger.debug(
+                    "Character filter already populated, skipping."
+                )
         else:
             self.loguru_logger.info("Conversations collapsible closed in chat sidebar.")
-    
+
     @on(Collapsible.Toggled, "#conv-char-conversations-collapsible")
-    async def on_ccp_conversations_collapsible_toggle(self, event: Collapsible.Toggled) -> None:
+    async def on_ccp_conversations_collapsible_toggle(
+        self, event: Collapsible.Toggled
+    ) -> None:
         """Handles the expansion/collapse of the Conversations collapsible section in the CCP tab."""
         if not event.collapsible.collapsed:  # If the collapsible was just expanded
             self.loguru_logger.info("Conversations collapsible opened in CCP tab.")
@@ -7447,23 +9011,28 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         # The screen should handle its own button events
         # If it bubbles up here, it's a navigation button or unhandled
         # Navigation buttons are already handled by NavigateToScreen messages
-        self.loguru_logger.debug(f"Button event '{button_id}' reached app level in screen navigation mode")
+        self.loguru_logger.debug(
+            f"Button event '{button_id}' reached app level in screen navigation mode"
+        )
         return
-
 
     async def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Handles text area changes, e.g., for live updates to character data."""
         control_id = event.control.id
         current_active_tab = self.current_tab
 
-        if current_active_tab == TAB_CHAT and control_id and control_id.startswith("chat-character-"):
+        if (
+            current_active_tab == TAB_CHAT
+            and control_id
+            and control_id.startswith("chat-character-")
+        ):
             # Ensure it's one of the actual attribute TextAreas, not something else
             if control_id in [
                 "chat-character-description-edit",
                 "chat-character-personality-edit",
                 "chat-character-scenario-edit",
                 "chat-character-system-prompt-edit",
-                "chat-character-first-message-edit"
+                "chat-character-first-message-edit",
             ]:
                 await chat_handlers.handle_chat_character_attribute_changed(self, event)
         # Notes editor changes are handled inside the Library screen, not dispatched here.
@@ -7481,37 +9050,71 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         current_active_tab = self.current_tab
         # --- Notes input events are handled inside the Library screen, not here ---
         # --- Chat Sidebar Conversation Search ---
-        if input_id == "chat-conversation-search-bar" and current_active_tab == TAB_CHAT:
-            await chat_handlers.handle_chat_conversation_search_bar_changed(self, event.value)
-        elif input_id == "chat-conversation-keyword-search-bar" and current_active_tab == TAB_CHAT:
-            await chat_handlers.handle_chat_conversation_search_bar_changed(self, event.value)
-        elif input_id == "chat-conversation-tags-search-bar" and current_active_tab == TAB_CHAT:
-            await chat_handlers.handle_chat_conversation_search_bar_changed(self, event.value)
+        if (
+            input_id == "chat-conversation-search-bar"
+            and current_active_tab == TAB_CHAT
+        ):
+            await chat_handlers.handle_chat_conversation_search_bar_changed(
+                self, event.value
+            )
+        elif (
+            input_id == "chat-conversation-keyword-search-bar"
+            and current_active_tab == TAB_CHAT
+        ):
+            await chat_handlers.handle_chat_conversation_search_bar_changed(
+                self, event.value
+            )
+        elif (
+            input_id == "chat-conversation-tags-search-bar"
+            and current_active_tab == TAB_CHAT
+        ):
+            await chat_handlers.handle_chat_conversation_search_bar_changed(
+                self, event.value
+            )
         elif input_id == "conv-char-search-input" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_conversation_search_input_changed(self, event)
-        elif input_id == "conv-char-keyword-search-input" and current_active_tab == TAB_CCP:
-            await ccp_handlers.handle_ccp_conversation_keyword_search_input_changed(self, event)
-        elif input_id == "conv-char-tags-search-input" and current_active_tab == TAB_CCP:
-            await ccp_handlers.handle_ccp_conversation_tags_search_input_changed(self, event)
+        elif (
+            input_id == "conv-char-keyword-search-input"
+            and current_active_tab == TAB_CCP
+        ):
+            await ccp_handlers.handle_ccp_conversation_keyword_search_input_changed(
+                self, event
+            )
+        elif (
+            input_id == "conv-char-tags-search-input" and current_active_tab == TAB_CCP
+        ):
+            await ccp_handlers.handle_ccp_conversation_tags_search_input_changed(
+                self, event
+            )
         elif input_id == "ccp-prompt-search-input" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_prompt_search_input_changed(self, event)
         elif input_id == "ccp-worldbook-search-input" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_worldbook_search_input_changed(self, event)
-        elif input_id == "chat-prompt-search-input" and current_active_tab == TAB_CHAT: # New condition
-            if self._chat_sidebar_prompt_search_timer: # Use the new timer variable
+        elif (
+            input_id == "chat-prompt-search-input" and current_active_tab == TAB_CHAT
+        ):  # New condition
+            if self._chat_sidebar_prompt_search_timer:  # Use the new timer variable
                 self._chat_sidebar_prompt_search_timer.stop()
             self._chat_sidebar_prompt_search_timer = self.set_timer(
                 0.5,
-                lambda: chat_handlers.handle_chat_sidebar_prompt_search_changed(self, event.value.strip())
+                lambda: chat_handlers.handle_chat_sidebar_prompt_search_changed(
+                    self, event.value.strip()
+                ),
             )
-        elif input_id == "chat-character-search-input" and current_active_tab == TAB_CHAT:
+        elif (
+            input_id == "chat-character-search-input" and current_active_tab == TAB_CHAT
+        ):
             # No debouncer here, direct call as per existing handler
             await chat_handlers.handle_chat_character_search_input_changed(self, event)
         elif input_id == "chat-character-name-edit" and current_active_tab == TAB_CHAT:
             await chat_handlers.handle_chat_character_attribute_changed(self, event)
-        elif input_id == "chat-template-search-input" and current_active_tab == TAB_CHAT:
+        elif (
+            input_id == "chat-template-search-input" and current_active_tab == TAB_CHAT
+        ):
             # No debouncer here, direct call for template search
-            await chat_handlers.handle_chat_template_search_input_changed(self, event.value)
+            await chat_handlers.handle_chat_template_search_input_changed(
+                self, event.value
+            )
         elif input_id == "chat-llm-max-tokens" and current_active_tab == TAB_CHAT:
             # Update token counter when max tokens value changes
             self.call_after_refresh(self.update_token_count_display)
@@ -7521,17 +9124,35 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         elif input_id == "chat-settings-search" and current_active_tab == TAB_CHAT:
             await self.handle_settings_search(event.value)
         # --- Chat Tab World Book Search Input ---
-        elif input_id == "chat-worldbook-search-input" and current_active_tab == TAB_CHAT:
-            await chat_events_worldbooks.handle_worldbook_search_input(self, event.value)
+        elif (
+            input_id == "chat-worldbook-search-input" and current_active_tab == TAB_CHAT
+        ):
+            await chat_events_worldbooks.handle_worldbook_search_input(
+                self, event.value
+            )
         # --- Chat Tab Media Search Input ---
         # elif input_id == "chat-media-search-input" and current_active_tab == TAB_CHAT:
         #     await handle_chat_media_search_input_changed(self, event.input)
         # --- Media Tab Search Inputs ---
-        elif input_id and input_id.startswith("media-search-input-") and current_active_tab == TAB_MEDIA:
-            await media_events.handle_media_search_input_changed(self, input_id, event.value)
-        elif input_id and input_id.startswith("media-keyword-filter-") and current_active_tab == TAB_MEDIA:
+        elif (
+            input_id
+            and input_id.startswith("media-search-input-")
+            and current_active_tab == TAB_MEDIA
+        ):
+            await media_events.handle_media_search_input_changed(
+                self, input_id, event.value
+            )
+        elif (
+            input_id
+            and input_id.startswith("media-keyword-filter-")
+            and current_active_tab == TAB_MEDIA
+        ):
             # Handle keyword filter changes with debouncing
-            await media_events.handle_media_search_input_changed(self, input_id.replace("media-keyword-filter-", "media-search-input-"), event.value)
+            await media_events.handle_media_search_input_changed(
+                self,
+                input_id.replace("media-keyword-filter-", "media-search-input-"),
+                event.value,
+            )
         # Add more specific input handlers if needed, e.g., for title inputs if they need live validation/reaction
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -7542,76 +9163,141 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             f"ListView.Selected: list_view_id='{list_view_id}', current_tab='{current_active_tab}', {item_details}"
         )
 
-        if list_view_id and list_view_id.startswith("media-list-view-") and current_active_tab == TAB_MEDIA:
-            self.loguru_logger.debug("Dispatching to media_events.handle_media_list_item_selected")
+        if (
+            list_view_id
+            and list_view_id.startswith("media-list-view-")
+            and current_active_tab == TAB_MEDIA
+        ):
+            self.loguru_logger.debug(
+                "Dispatching to media_events.handle_media_list_item_selected"
+            )
             await media_events.handle_media_list_item_selected(self, event)
 
         # Notes list view selection is handled inside the Library screen, not here.
 
         elif list_view_id == "ccp-prompts-listview" and current_active_tab == TAB_CCP:
-            self.loguru_logger.debug("Dispatching to ccp_handlers.handle_ccp_prompts_list_view_selected")
-            await ccp_handlers.handle_ccp_prompts_list_view_selected(self, list_view_id, event.item)
+            self.loguru_logger.debug(
+                "Dispatching to ccp_handlers.handle_ccp_prompts_list_view_selected"
+            )
+            await ccp_handlers.handle_ccp_prompts_list_view_selected(
+                self, list_view_id, event.item
+            )
 
-        elif list_view_id == "chat-sidebar-prompts-listview" and current_active_tab == TAB_CHAT:
-            self.loguru_logger.debug("Dispatching to chat_handlers.handle_chat_sidebar_prompts_list_view_selected")
-            await ccp_handlers.handle_ccp_prompts_list_view_selected(self, list_view_id, event.item)
+        elif (
+            list_view_id == "chat-sidebar-prompts-listview"
+            and current_active_tab == TAB_CHAT
+        ):
+            self.loguru_logger.debug(
+                "Dispatching to chat_handlers.handle_chat_sidebar_prompts_list_view_selected"
+            )
+            await ccp_handlers.handle_ccp_prompts_list_view_selected(
+                self, list_view_id, event.item
+            )
 
-        elif list_view_id == "chat-media-search-results-listview" and current_active_tab == TAB_CHAT:
-            self.loguru_logger.debug("Dispatching to chat_events_sidebar.handle_media_item_selected")
+        elif (
+            list_view_id == "chat-media-search-results-listview"
+            and current_active_tab == TAB_CHAT
+        ):
+            self.loguru_logger.debug(
+                "Dispatching to chat_events_sidebar.handle_media_item_selected"
+            )
             await chat_events_sidebar.handle_media_item_selected(self, event.item)
 
-        elif list_view_id == "chat-conversation-search-results-list" and current_active_tab == TAB_CHAT:
+        elif (
+            list_view_id == "chat-conversation-search-results-list"
+            and current_active_tab == TAB_CHAT
+        ):
             self.loguru_logger.debug("Conversation selected in chat tab search results")
             # Store the selected item for the Load Selected button, but don't load immediately
             # This maintains the existing UX where users must click "Load Selected"
-            
-        elif list_view_id in ["chat-worldbook-available-listview", "chat-worldbook-active-listview"] and current_active_tab == TAB_CHAT:
+
+        elif (
+            list_view_id
+            in ["chat-worldbook-available-listview", "chat-worldbook-active-listview"]
+            and current_active_tab == TAB_CHAT
+        ):
             self.loguru_logger.debug(f"World book selected in {list_view_id}")
             await chat_events_worldbooks.handle_worldbook_selection(self, list_view_id)
 
         # Note: conv-char-search-results-list selections are handled by their respective "Load Selected" buttons.
         else:
             self.loguru_logger.warning(
-            f"No specific handler for ListView.Selected from list_view_id='{list_view_id}' on tab='{current_active_tab}'")
+                f"No specific handler for ListView.Selected from list_view_id='{list_view_id}' on tab='{current_active_tab}'"
+            )
 
     async def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         checkbox_id = event.checkbox.id
         current_active_tab = self.current_tab
 
-        if checkbox_id.startswith("chat-conversation-search-") and current_active_tab == TAB_CHAT:
-            await chat_handlers.handle_chat_search_checkbox_changed(self, checkbox_id, event.value)
-        elif checkbox_id.startswith("conv-char-search-") and current_active_tab == TAB_CCP:
-            await ccp_handlers.handle_ccp_search_checkbox_changed(self, checkbox_id, event.value)
-        elif checkbox_id == "chat-show-attach-button-checkbox" and current_active_tab == TAB_CHAT:
+        if (
+            checkbox_id.startswith("chat-conversation-search-")
+            and current_active_tab == TAB_CHAT
+        ):
+            await chat_handlers.handle_chat_search_checkbox_changed(
+                self, checkbox_id, event.value
+            )
+        elif (
+            checkbox_id.startswith("conv-char-search-")
+            and current_active_tab == TAB_CCP
+        ):
+            await ccp_handlers.handle_ccp_search_checkbox_changed(
+                self, checkbox_id, event.value
+            )
+        elif (
+            checkbox_id == "chat-show-attach-button-checkbox"
+            and current_active_tab == TAB_CHAT
+        ):
             # Handle attach button visibility toggle
             from .config import save_setting_to_cli_config
+
             save_setting_to_cli_config("chat.images", "show_attach_button", event.value)
-            
+
             # Update the UI if enhanced chat window is active
-            use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+            use_enhanced_chat = get_cli_setting(
+                "chat_defaults", "use_enhanced_window", False
+            )
             if use_enhanced_chat:
                 try:
                     from .UI.Chat_Window_Enhanced import ChatWindowEnhanced
+
                     chat_window = self.query_one("#chat-window", ChatWindowEnhanced)
                     await chat_window.toggle_attach_button_visibility(event.value)
                 except Exception as e:
                     loguru_logger.error(f"Error toggling attach button visibility: {e}")
-        elif checkbox_id == "chat-show-dictation-button-checkbox" and current_active_tab == TAB_CHAT:
+        elif (
+            checkbox_id == "chat-show-dictation-button-checkbox"
+            and current_active_tab == TAB_CHAT
+        ):
             # Handle dictation button visibility toggle
             from .config import save_setting_to_cli_config
+
             save_setting_to_cli_config("chat.voice", "show_mic_button", event.value)
-            
+
             # Update the UI dynamically
             try:
                 mic_button = self.query_one("#mic-button", Button)
                 mic_button.display = event.value
-                self.notify(f"Dictation button {'shown' if event.value else 'hidden'}", timeout=2)
+                self.notify(
+                    f"Dictation button {'shown' if event.value else 'hidden'}",
+                    timeout=2,
+                )
             except QueryError:
                 # If button doesn't exist, we'll need to refresh the chat window
-                self.notify("Dictation button setting saved. Restart chat to apply changes.", timeout=3)
-        elif checkbox_id == "chat-worldbook-enable-checkbox" and current_active_tab == TAB_CHAT:
-            await chat_events_worldbooks.handle_worldbook_enable_checkbox(self, event.value)
-        elif checkbox_id == "chat-settings-mode-toggle" and current_active_tab == TAB_CHAT:
+                self.notify(
+                    "Dictation button setting saved. Restart chat to apply changes.",
+                    timeout=3,
+                )
+        elif (
+            checkbox_id == "chat-worldbook-enable-checkbox"
+            and current_active_tab == TAB_CHAT
+        ):
+            await chat_events_worldbooks.handle_worldbook_enable_checkbox(
+                self, event.value
+            )
+        elif (
+            checkbox_id == "chat-settings-mode-toggle"
+            and current_active_tab == TAB_CHAT
+        ):
             # Handle settings mode toggle checkbox
             await self.handle_settings_mode_toggle_checkbox(event)
         # Add handlers for checkboxes in other tabs if any
@@ -7620,57 +9306,85 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         """Handles changes in Switch widgets."""
 
         switch_id = event.switch.id
-        current_active_tab = self.current_tab
-        
+
         if switch_id == "notes-auto-save-toggle":
             await self.handle_notes_auto_save_toggle(event)
-
 
     async def on_select_changed(self, event: Select.Changed) -> None:
         """Handles changes in Select widgets if specific actions are needed beyond watchers."""
         select_id = event.select.id
         current_active_tab = self.current_tab
-        self.loguru_logger.debug(f"Select changed: {select_id} = {event.value}, current tab = {current_active_tab}")
+        self.loguru_logger.debug(
+            f"Select changed: {select_id} = {event.value}, current tab = {current_active_tab}"
+        )
 
         if select_id == "conv-char-character-select" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_character_select_changed(self, event.value)
         elif select_id == "tldw-api-auth-method" and current_active_tab == TAB_INGEST:
-            await ingest_events.handle_tldw_api_auth_method_changed(self, str(event.value))
+            await ingest_events.handle_tldw_api_auth_method_changed(
+                self, str(event.value)
+            )
         elif select_id == "tldw-api-media-type" and current_active_tab == TAB_INGEST:
-            await ingest_events.handle_tldw_api_media_type_changed(self, str(event.value))
+            await ingest_events.handle_tldw_api_media_type_changed(
+                self, str(event.value)
+            )
         # Notes sort select is handled inside the Library screen, not here.
         elif select_id == "chat-rag-preset" and current_active_tab == TAB_CHAT:
             await self.handle_rag_preset_changed(event)
         elif select_id == "chat-rag-search-mode" and current_active_tab == TAB_CHAT:
             await self.handle_rag_pipeline_changed(event)
-        elif select_id == "chat-rag-expansion-method" and current_active_tab == TAB_CHAT:
+        elif (
+            select_id == "chat-rag-expansion-method" and current_active_tab == TAB_CHAT
+        ):
             await self.handle_query_expansion_method_changed(event)
-        elif select_id == "chat-rag-expansion-provider" and current_active_tab == TAB_CHAT:
+        elif (
+            select_id == "chat-rag-expansion-provider"
+            and current_active_tab == TAB_CHAT
+        ):
             # Update the reactive value to trigger the watcher
             self.rag_expansion_provider_value = event.value
         elif select_id == "chat-api-provider" and current_active_tab == TAB_CHAT:
             # This is now handled in ChatScreen via @on decorator
-            self.loguru_logger.debug(f"chat-api-provider change event (handled in ChatScreen): {event.value}")
-            
+            self.loguru_logger.debug(
+                f"chat-api-provider change event (handled in ChatScreen): {event.value}"
+            )
+
             # Update token counter when provider changes
             if self._ui_ready:
                 try:
-                    from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
+                    from .Event_Handlers.Chat_Events.chat_token_events import (
+                        update_chat_token_counter,
+                    )
+
                     await update_chat_token_counter(self)
                 except Exception as e:
-                    self.loguru_logger.debug(f"Could not update token counter on provider change: {e}")
+                    self.loguru_logger.debug(
+                        f"Could not update token counter on provider change: {e}"
+                    )
         elif select_id == "chat-api-model" and current_active_tab == TAB_CHAT:
             # Update token counter when model changes
             if self._ui_ready:
                 try:
-                    from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
+                    from .Event_Handlers.Chat_Events.chat_token_events import (
+                        update_chat_token_counter,
+                    )
+
                     await update_chat_token_counter(self)
                 except Exception as e:
-                    self.loguru_logger.debug(f"Could not update token counter on model change: {e}")
-        elif select_id == "chat-conversation-search-character-filter-select" and current_active_tab == TAB_CHAT:
-            self.loguru_logger.debug("Character filter changed in chat tab, triggering conversation search")
+                    self.loguru_logger.debug(
+                        f"Could not update token counter on model change: {e}"
+                    )
+        elif (
+            select_id == "chat-conversation-search-character-filter-select"
+            and current_active_tab == TAB_CHAT
+        ):
+            self.loguru_logger.debug(
+                "Character filter changed in chat tab, triggering conversation search"
+            )
             await chat_handlers.perform_chat_conversation_search(self)
-        elif select_id == "chat-rag-expansion-method" and current_active_tab == TAB_CHAT:
+        elif (
+            select_id == "chat-rag-expansion-method" and current_active_tab == TAB_CHAT
+        ):
             # Handle query expansion method change - show/hide appropriate fields
             await self.handle_query_expansion_method_changed(event)
 
@@ -7684,25 +9398,28 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     @on(StreamDone)
     async def on_stream_done(self, event: StreamDone) -> None:
         await handle_stream_done(self, event)
-    
+
     @on(media_events.MediaMetadataUpdateEvent)
-    async def on_media_metadata_update(self, event: media_events.MediaMetadataUpdateEvent) -> None:
+    async def on_media_metadata_update(
+        self, event: media_events.MediaMetadataUpdateEvent
+    ) -> None:
         await media_events.handle_media_metadata_update(self, event)
-    
+
     # Collections/Tags event handlers
     @on(Message)
     async def on_collections_tag_message(self, event: Message) -> None:
         """Handle Collections/Tag events."""
         from .Event_Handlers import collections_tag_events
-        
-        if event.__class__.__name__ == 'KeywordRenameEvent':
+
+        if event.__class__.__name__ == "KeywordRenameEvent":
             await collections_tag_events.handle_keyword_rename(self, event)
-        elif event.__class__.__name__ == 'KeywordMergeEvent':
+        elif event.__class__.__name__ == "KeywordMergeEvent":
             await collections_tag_events.handle_keyword_merge(self, event)
-        elif event.__class__.__name__ == 'KeywordDeleteEvent':
+        elif event.__class__.__name__ == "KeywordDeleteEvent":
             await collections_tag_events.handle_keyword_delete(self, event)
-        elif event.__class__.__name__ == 'BatchAnalysisStartEvent':
+        elif event.__class__.__name__ == "BatchAnalysisStartEvent":
             from .Event_Handlers import multi_item_review_events
+
             await multi_item_review_events.handle_batch_analysis_start(self, event)
 
     @on(SplashScreen.Closed)
@@ -7710,12 +9427,12 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         """Handle splash screen closing."""
         self.splash_screen_active = False
         logger.debug("Splash screen closed, mounting main UI")
-        
+
         # Remove the splash screen
         if self._splash_screen_widget:
             await self._splash_screen_widget.remove()
             self._splash_screen_widget = None
-        
+
         # Mount the shared app chrome before pushing the first screen so
         # persistent navigation is available after splash startup too.
         existing_ids = {widget.id for widget in self.screen._nodes if widget.id}
@@ -7738,13 +9455,16 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
 
         # Finish deferred startup work once the mounted screen has rendered.
         self.call_after_refresh(self._post_mount_setup)
-    
 
     @on(Checkbox.Changed, "#chat-strip-thinking-tags-checkbox")
-    async def handle_strip_thinking_tags_checkbox_changed(self, event: Checkbox.Changed) -> None:
+    async def handle_strip_thinking_tags_checkbox_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
         """Handles changes to the 'Strip Thinking Tags' checkbox."""
         new_value = event.value
-        self.loguru_logger.info(f"'Strip Thinking Tags' checkbox changed to: {new_value}")
+        self.loguru_logger.info(
+            f"'Strip Thinking Tags' checkbox changed to: {new_value}"
+        )
 
         if "chat_defaults" not in self.app_config:
             self.app_config["chat_defaults"] = {}
@@ -7753,21 +9473,34 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         # Persist the change
         try:
             from .config import save_setting_to_cli_config
-            save_setting_to_cli_config("chat_defaults", "strip_thinking_tags", new_value)
-            self.notify(f"Thinking tag stripping {'enabled' if new_value else 'disabled'}.", timeout=2)
+
+            save_setting_to_cli_config(
+                "chat_defaults", "strip_thinking_tags", new_value
+            )
+            self.notify(
+                f"Thinking tag stripping {'enabled' if new_value else 'disabled'}.",
+                timeout=2,
+            )
         except Exception as e:
-            self.loguru_logger.opt(exception=True).error(f"Failed to save 'strip_thinking_tags' setting: {e}")
-            self.notify("Error saving thinking tag setting.", severity="error", timeout=4)
+            self.loguru_logger.opt(exception=True).error(
+                f"Failed to save 'strip_thinking_tags' setting: {e}"
+            )
+            self.notify(
+                "Error saving thinking tag setting.", severity="error", timeout=4
+            )
+
     #####################################################################
     # --- End of Chat Event Handlers for Streaming & thinking tags ---
     #####################################################################
 
-    async def handle_settings_mode_toggle_checkbox(self, event: Checkbox.Changed) -> None:
+    async def handle_settings_mode_toggle_checkbox(
+        self, event: Checkbox.Changed
+    ) -> None:
         """Handles the settings mode toggle checkbox between Basic and Advanced."""
         try:
             # Update reactive variable
             self.chat_settings_mode = "advanced" if event.value else "basic"
-            
+
             # Update sidebar class for CSS styling
             sidebar = self.query_one("#chat-left-sidebar")
             if self.chat_settings_mode == "basic":
@@ -7776,37 +9509,42 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             else:
                 sidebar.add_class("advanced-mode")
                 sidebar.remove_class("basic-mode")
-            
+
             # Notify user
             mode_name = "Advanced" if event.value else "Basic"
             self.notify(f"Switched to {mode_name} mode", timeout=2)
-            
+
             # Save preference to config
             from .config import save_setting_to_cli_config
+
             save_setting_to_cli_config("chat_defaults", "advanced_mode", event.value)
-            
+
         except Exception as e:
-            loguru_logger.opt(exception=True).error(f"Error toggling settings mode: {e}")
+            loguru_logger.opt(exception=True).error(
+                f"Error toggling settings mode: {e}"
+            )
             self.notify("Error switching modes", severity="error", timeout=4)
-    
+
     async def handle_settings_mode_toggle(self, event: Switch.Changed) -> None:
         """Handles the settings mode toggle between Basic and Advanced."""
         try:
             # Update reactive variable
             self.chat_settings_mode = "advanced" if event.value else "basic"
-            
+
             # Update sidebar class for CSS styling
             sidebar = self.query_one("#chat-left-sidebar")
             if self.chat_settings_mode == "basic":
                 sidebar.add_class("basic-mode")
                 sidebar.remove_class("advanced-mode")
             else:
-                sidebar.add_class("advanced-mode") 
+                sidebar.add_class("advanced-mode")
                 sidebar.remove_class("basic-mode")
-            
+
             self.notify(f"Settings mode: {self.chat_settings_mode.title()}")
-            self.loguru_logger.info(f"Switched to {self.chat_settings_mode} settings mode")
-            
+            self.loguru_logger.info(
+                f"Switched to {self.chat_settings_mode} settings mode"
+            )
+
         except Exception as e:
             self.loguru_logger.error(f"Error toggling settings mode: {e}")
             self.notify("Error switching settings mode", severity="error")
@@ -7816,22 +9554,23 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         try:
             # Update the reactive variable
             self.notes_auto_save_enabled = event.value
-            
+
             # If auto-save is being disabled, cancel any pending timer
             if not event.value and self.notes_auto_save_timer is not None:
                 self.notes_auto_save_timer.stop()
                 self.notes_auto_save_timer = None
                 self.loguru_logger.info("Auto-save timer cancelled")
-            
+
             # Save the setting to config
             from .config import save_setting_to_cli_config
+
             save_setting_to_cli_config("notes", "auto_save_enabled", event.value)
-            
+
             # Notify the user
             status = "enabled" if event.value else "disabled"
             self.notify(f"Notes auto-save {status}", timeout=2)
             self.loguru_logger.info(f"Notes auto-save {status}")
-            
+
         except Exception as e:
             self.loguru_logger.error(f"Error toggling notes auto-save: {e}")
             self.notify("Error changing auto-save setting", severity="error")
@@ -7840,54 +9579,32 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         """Handles RAG preset selection."""
         try:
             preset = event.value
-            
+
             # In screen navigation mode, these widgets don't exist at app level
-            self.loguru_logger.debug(f"RAG preset change in screen mode - preset: {preset}")
+            self.loguru_logger.debug(
+                f"RAG preset change in screen mode - preset: {preset}"
+            )
             # Store the preset for the screen to handle
             self.rag_preset = preset
             return
-            
-            # Apply preset configurations
-            if preset == "none":
-                rag_enable.value = False
-                self.notify("RAG disabled")
-            elif preset == "light":
-                rag_enable.value = True
-                top_k.value = "3"
-                self.notify("Light RAG: BM25 only, top 3 results")
-            elif preset == "full":
-                rag_enable.value = True
-                top_k.value = "10"
-                # Try to enable reranking if in advanced mode
-                try:
-                    rerank = self.query_one("#chat-rag-rerank-enable-checkbox", Checkbox)
-                    rerank.value = True
-                except QueryError:
-                    pass  # Reranking is in advanced mode
-                self.notify("Full RAG: Embeddings + reranking, top 10 results")
-            elif preset == "custom":
-                rag_enable.value = True
-                self.notify("Custom RAG: Configure settings manually")
-                
-            self.loguru_logger.info(f"Applied RAG preset: {preset}")
-            
+
         except Exception as e:
             self.loguru_logger.error(f"Error applying RAG preset: {e}")
             self.notify("Error applying RAG preset", severity="error")
-    
+
     async def handle_rag_pipeline_changed(self, event: Select.Changed) -> None:
         """Handles RAG pipeline selection."""
         try:
-            from .Widgets.settings_sidebar import get_pipeline_description
-            
             pipeline_id = event.value
-            
+
             # In screen navigation mode, these widgets don't exist at app level
-            self.loguru_logger.debug(f"RAG pipeline change in screen mode - pipeline: {pipeline_id}")
+            self.loguru_logger.debug(
+                f"RAG pipeline change in screen mode - pipeline: {pipeline_id}"
+            )
             # Store the pipeline for the screen to handle
             self.rag_pipeline = pipeline_id
             return
-            
+
             # If "none" is selected, just show manual config message
             if pipeline_id == "none":
                 self.notify("Manual RAG configuration mode enabled")
@@ -7895,14 +9612,16 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 # Show what pipeline was selected
                 pipeline_name = event.select.value_to_label(pipeline_id)
                 self.notify(f"Selected pipeline: {pipeline_name}")
-                
+
             self.loguru_logger.info(f"RAG pipeline changed to: {pipeline_id}")
-            
+
         except Exception as e:
             self.loguru_logger.error(f"Error handling RAG pipeline change: {e}")
             self.notify("Error changing RAG pipeline", severity="error")
-    
-    async def handle_query_expansion_method_changed(self, event: Select.Changed) -> None:
+
+    async def handle_query_expansion_method_changed(
+        self, event: Select.Changed
+    ) -> None:
         """Stores the selected query expansion method string.
 
         NOTE (task-252): UI-only stub. The RAG_Search/query_expansion.py module was
@@ -7915,40 +9634,48 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         try:
             method = event.value
             # In screen navigation mode, these widgets don't exist at app level
-            self.loguru_logger.debug(f"Query expansion method change in screen mode - method: {method}")
+            self.loguru_logger.debug(
+                f"Query expansion method change in screen mode - method: {method}"
+            )
             # Store the method for the screen to handle
             self.query_expansion_method = method
         except Exception as e:
-            self.loguru_logger.error(f"Error handling query expansion method change: {e}")
+            self.loguru_logger.error(
+                f"Error handling query expansion method change: {e}"
+            )
             self.notify("Error updating query expansion settings", severity="error")
 
     async def handle_settings_search(self, query: str) -> None:
         """Handles search in settings sidebar."""
         try:
             query = query.lower().strip()
-            
+
             # Get all settings elements
             sidebar = self.query_one("#chat-left-sidebar")
-            
+
             if not query:
                 # Clear search - show all settings based on current mode
-                for widget in sidebar.query(".sidebar-label, .section-header, .subsection-header"):
+                for widget in sidebar.query(
+                    ".sidebar-label, .section-header, .subsection-header"
+                ):
                     widget.remove_class("search-highlight")
                 for collapsible in sidebar.query(Collapsible):
                     # Respect the original collapsed state
                     pass
                 return
-                
+
             # Search through all labels and highlight matches
             matches_found = 0
-            
-            for label in sidebar.query(".sidebar-label, .section-header, .subsection-header"):
+
+            for label in sidebar.query(
+                ".sidebar-label, .section-header, .subsection-header"
+            ):
                 if isinstance(label, (Static, Label)):
                     label_text = str(label.renderable).lower()
                     if query in label_text:
                         label.add_class("search-highlight")
                         matches_found += 1
-                        
+
                         # Expand parent collapsibles to show match
                         parent = label.parent
                         while parent and parent != sidebar:
@@ -7957,16 +9684,15 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                             parent = parent.parent
                     else:
                         label.remove_class("search-highlight")
-                        
+
             if matches_found == 0:
                 self.notify(f"No settings found for '{query}'", severity="warning")
             else:
                 self.notify(f"Found {matches_found} settings matching '{query}'")
-                
+
         except Exception as e:
             self.loguru_logger.error(f"Error in settings search: {e}")
             self.notify("Error searching settings", severity="error")
-
 
     #####################################################################
     # --- Event Handlers for Worker State Changes ---
@@ -7974,28 +9700,28 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """
         Handle worker state changes by delegating to the appropriate handler.
-        
+
         This method has been refactored to use a handler registry pattern,
         significantly reducing complexity and improving maintainability.
         """
         worker_name = event.worker.name
         worker_group = event.worker.group
-        
+
         # Log the state change
         self.loguru_logger.debug(
             f"on_worker_state_changed: Worker '{worker_name}' "
             f"(Group: {worker_group}, State: {event.state})"
         )
-        
+
         # Delegate to the handler registry
         handled = await self.worker_handler_registry.handle_event(event)
-        
+
         if not handled:
             # Log unhandled workers for debugging
             self.loguru_logger.warning(
                 f"No handler found for worker '{worker_name}' (Group: {worker_group})"
             )
-            
+
         # TODO: Fix this - new_user_prompt is not defined
         # try:
         #     self.query_one("#chat-prompt-user-display", TextArea).load_text(new_user_prompt or "")
@@ -8011,19 +9737,25 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             return
         if not self._ui_ready:
             return
-        self.loguru_logger.debug(f"Watcher: chat_api_provider_value changed to {new_value}")
+        self.loguru_logger.debug(
+            f"Watcher: chat_api_provider_value changed to {new_value}"
+        )
         if new_value is None or new_value == Select.BLANK:
             self._update_model_select(TAB_CHAT, [])
             return
         models = self.providers_models.get(new_value, [])
         self._update_model_select(TAB_CHAT, models)
 
-    def watch_ccp_api_provider_value(self, new_value: Optional[str]) -> None: # Renamed from watch_character_...
+    def watch_ccp_api_provider_value(
+        self, new_value: Optional[str]
+    ) -> None:  # Renamed from watch_character_...
         if not hasattr(self, "app") or not self.app:  # Check if app is ready
             return
         if not self._ui_ready:
             return
-        self.loguru_logger.debug(f"Watcher: ccp_api_provider_value changed to {new_value}")
+        self.loguru_logger.debug(
+            f"Watcher: ccp_api_provider_value changed to {new_value}"
+        )
         if new_value is None or new_value == Select.BLANK:
             self._update_model_select(TAB_CCP, [])
             return
@@ -8036,13 +9768,14 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             return
         if not self._ui_ready:
             return
-        self.loguru_logger.debug(f"Watcher: rag_expansion_provider_value changed to {new_value}")
+        self.loguru_logger.debug(
+            f"Watcher: rag_expansion_provider_value changed to {new_value}"
+        )
         if new_value is None or new_value == Select.BLANK:
             self._update_rag_expansion_model_select([])
             return
         models = self.providers_models.get(new_value, [])
         self._update_rag_expansion_model_select(models)
-
 
     def _update_model_select(self, id_prefix: str, models: list[str]) -> None:
         if not self._ui_ready:  # Add guard
@@ -8062,7 +9795,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         """
         # All necessary parameters (message, history, api_endpoint, model, etc.)
         # are passed via kwargs from the calling event handler (e.g., handle_chat_send_button_pressed).
-        return worker_events.chat_wrapper_function(self, strip_thinking_tags=strip_thinking_tags, **kwargs) # Pass self as 'app_instance'
+        return worker_events.chat_wrapper_function(
+            self, strip_thinking_tags=strip_thinking_tags, **kwargs
+        )  # Pass self as 'app_instance'
 
     def schedule_media_cleanup(self) -> None:
         """Schedule periodic media cleanup based on configuration."""
@@ -8072,10 +9807,14 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             if not cleanup_config:
                 self.loguru_logger.info("Media cleanup is disabled in configuration")
                 return
-                
-            cleanup_interval_hours = get_cli_setting("media_cleanup", "cleanup_interval_hours", 24)
-            cleanup_on_startup = get_cli_setting("media_cleanup", "cleanup_on_startup", True)
-            
+
+            cleanup_interval_hours = get_cli_setting(
+                "media_cleanup", "cleanup_interval_hours", 24
+            )
+            cleanup_on_startup = get_cli_setting(
+                "media_cleanup", "cleanup_on_startup", True
+            )
+
             # Run cleanup on startup if configured
             if cleanup_on_startup:
                 self.loguru_logger.info(
@@ -8085,37 +9824,47 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS,
                     self.perform_media_cleanup,
                 )
-            
+
             # Schedule periodic cleanup
             cleanup_interval_seconds = cleanup_interval_hours * 3600
-            self._media_cleanup_timer = self.set_interval(cleanup_interval_seconds, self.perform_media_cleanup)
-            self.loguru_logger.info(f"Scheduled media cleanup every {cleanup_interval_hours} hours")
-            
+            self._media_cleanup_timer = self.set_interval(
+                cleanup_interval_seconds, self.perform_media_cleanup
+            )
+            self.loguru_logger.info(
+                f"Scheduled media cleanup every {cleanup_interval_hours} hours"
+            )
+
         except Exception as e:
-            self.loguru_logger.opt(exception=True).error(f"Error scheduling media cleanup: {e}")
-    
+            self.loguru_logger.opt(exception=True).error(
+                f"Error scheduling media cleanup: {e}"
+            )
+
     async def perform_media_cleanup(self) -> None:
         """Perform media cleanup based on configuration settings."""
         try:
             if not self.media_db:
                 self.loguru_logger.warning("Media database not available for cleanup")
                 return
-                
+
             # Get cleanup configuration
             cleanup_days = get_cli_setting("media_cleanup", "cleanup_days", 30)
             max_items = get_cli_setting("media_cleanup", "max_items_per_cleanup", 100)
-            notify_before = get_cli_setting("media_cleanup", "notify_before_cleanup", True)
-            
+            notify_before = get_cli_setting(
+                "media_cleanup", "notify_before_cleanup", True
+            )
+
             # Check for candidates first
-            candidates = await asyncio.to_thread(self.media_db.get_deletion_candidates, cleanup_days)
-            
+            candidates = await asyncio.to_thread(
+                self.media_db.get_deletion_candidates, cleanup_days
+            )
+
             if not candidates:
                 self.loguru_logger.info("No media items eligible for cleanup")
                 return
-                
+
             candidate_count = len(candidates)
             items_to_delete = min(candidate_count, max_items)
-            
+
             # Notify user if configured
             if notify_before and candidate_count > 0:
                 self.notify(
@@ -8124,28 +9873,32 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     f"Will delete up to {items_to_delete} items.",
                     title="Media Cleanup",
                     severity="information",
-                    timeout=5
+                    timeout=5,
                 )
-            
+
             # Perform the cleanup
-            deleted_count = await asyncio.to_thread(self.media_db.hard_delete_old_media, cleanup_days)
-            
+            deleted_count = await asyncio.to_thread(
+                self.media_db.hard_delete_old_media, cleanup_days
+            )
+
             if deleted_count > 0:
-                self.loguru_logger.info(f"Media cleanup completed: {deleted_count} items permanently deleted")
+                self.loguru_logger.info(
+                    f"Media cleanup completed: {deleted_count} items permanently deleted"
+                )
                 self.notify(
                     f"Media cleanup completed: {deleted_count} items permanently deleted",
                     severity="information",
-                    timeout=3
+                    timeout=3,
                 )
-            
+
         except Exception as e:
-            self.loguru_logger.opt(exception=True).error(f"Error during media cleanup: {e}")
-            self.notify(
-                f"Error during media cleanup: {str(e)}",
-                severity="error",
-                timeout=5
+            self.loguru_logger.opt(exception=True).error(
+                f"Error during media cleanup: {e}"
             )
-    
+            self.notify(
+                f"Error during media cleanup: {str(e)}", severity="error", timeout=5
+            )
+
     async def action_show_workbench_help(self) -> None:
         """Delegate contextual help to the active Workbench screen.
 
@@ -8208,27 +9961,32 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     def action_quit(self) -> None:
         """Handle application quit - save persistent caches before exiting."""
         loguru_logger.info("Application quit initiated")
-        
+
         # Set flag to prevent new operations
         self._shutting_down = True
-        
+
         # Force stop any playing audio and cleanup
-        if hasattr(self, 'audio_player'):
+        if hasattr(self, "audio_player"):
             try:
                 import asyncio
+
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
                     # Create cleanup tasks
                     async def cleanup_audio():
                         try:
-                            await asyncio.wait_for(self.audio_player.stop(), timeout=0.5)
+                            await asyncio.wait_for(
+                                self.audio_player.stop(), timeout=0.5
+                            )
                         except asyncio.TimeoutError:
                             loguru_logger.warning("Audio stop timed out")
                         try:
-                            await asyncio.wait_for(self.audio_player.cleanup(), timeout=0.5)
+                            await asyncio.wait_for(
+                                self.audio_player.cleanup(), timeout=0.5
+                            )
                         except asyncio.TimeoutError:
                             loguru_logger.warning("Audio cleanup timed out")
-                    
+
                     # Schedule cleanup
                     asyncio.create_task(cleanup_audio())
                 else:
@@ -8239,92 +9997,111 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 loguru_logger.info("Audio player stopped and cleaned up")
             except Exception as e:
                 loguru_logger.error(f"Error stopping audio during quit: {e}")
-        
+
         # Force cleanup Higgs backends immediately
-        if hasattr(self, '_stts_handler') and self._stts_handler:
+        if hasattr(self, "_stts_handler") and self._stts_handler:
             try:
-                if hasattr(self._stts_handler, '_stts_service') and self._stts_handler._stts_service:
-                    backend_manager = getattr(self._stts_handler._stts_service, 'backend_manager', None)
-                    if backend_manager and hasattr(backend_manager, '_backends'):
-                        for backend_id, backend in list(backend_manager._backends.items()):
-                            if 'higgs' in backend_id.lower():
-                                loguru_logger.info(f"Signaling Higgs backend shutdown: {backend_id}")
+                if (
+                    hasattr(self._stts_handler, "_stts_service")
+                    and self._stts_handler._stts_service
+                ):
+                    backend_manager = getattr(
+                        self._stts_handler._stts_service, "backend_manager", None
+                    )
+                    if backend_manager and hasattr(backend_manager, "_backends"):
+                        for backend_id, backend in list(
+                            backend_manager._backends.items()
+                        ):
+                            if "higgs" in backend_id.lower():
+                                loguru_logger.info(
+                                    f"Signaling Higgs backend shutdown: {backend_id}"
+                                )
                                 # Set shutdown event if available
-                                if hasattr(backend, '_shutdown_event'):
+                                if hasattr(backend, "_shutdown_event"):
                                     backend._shutdown_event.set()
             except Exception as e:
                 loguru_logger.error(f"Error signaling Higgs shutdown: {e}")
-        
+
         # Cancel media cleanup timer if it exists
-        if hasattr(self, '_media_cleanup_timer') and self._media_cleanup_timer:
+        if hasattr(self, "_media_cleanup_timer") and self._media_cleanup_timer:
             self._media_cleanup_timer.stop()
-        
+
         # Handle Notes auto-save cleanup
-        if hasattr(self, 'notes_auto_save_timer') and self.notes_auto_save_timer is not None:
+        if (
+            hasattr(self, "notes_auto_save_timer")
+            and self.notes_auto_save_timer is not None
+        ):
             self.notes_auto_save_timer.stop()
             self.notes_auto_save_timer = None
             loguru_logger.debug("Cancelled auto-save timer during app quit")
-        
+
         # Note autosave is owned by the Library notes editor; no legacy quit-save path remains.
-        
+
         # Try to save caches but don't let it block quitting
         try:
             # Import with timeout protection
-            import signal
             import threading
-            
+
             def save_caches_with_timeout():
                 # Note: The old cache service is deprecated
                 # The simplified RAG service handles caching internally
                 # and doesn't require explicit save on shutdown
-                loguru_logger.debug("Cache saving skipped - handled by simplified RAG service")
-            
+                loguru_logger.debug(
+                    "Cache saving skipped - handled by simplified RAG service"
+                )
+
             # Run cache saving in a separate thread with timeout
             save_thread = threading.Thread(target=save_caches_with_timeout)
             save_thread.daemon = True  # Don't let this thread prevent app exit
             save_thread.start()
             save_thread.join(timeout=2.0)  # Wait max 2 seconds
-            
+
             if save_thread.is_alive():
                 loguru_logger.warning("Cache save timed out - proceeding with quit")
         except Exception as e:
             loguru_logger.error(f"Error in quit handler: {e}")
-        
+
         # Save encrypted config if encryption is enabled
         try:
             from tldw_chatbook.config import (
-                load_cli_config_and_ensure_existence, 
+                load_cli_config_and_ensure_existence,
                 get_encryption_password,
                 encrypt_api_keys_in_config,
-                DEFAULT_CONFIG_PATH
+                DEFAULT_CONFIG_PATH,
             )
             from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
             import toml
-            
+
             config_data = load_cli_config_and_ensure_existence()
             encryption_config = config_data.get("encryption", {})
-            
+
             if encryption_config.get("enabled", False):
                 password = get_encryption_password()
                 if password:
                     loguru_logger.info("Encrypting configuration before exit...")
                     try:
                         # Encrypt the config
-                        encrypted_config = encrypt_api_keys_in_config(config_data, password)
-                        
+                        encrypted_config = encrypt_api_keys_in_config(
+                            config_data, password
+                        )
+
                         # Save the encrypted config
                         config_text = toml.dumps(encrypted_config)
                         atomic_write_text(DEFAULT_CONFIG_PATH, config_text)
-                        
-                        loguru_logger.info("Configuration encrypted and saved successfully")
+
+                        loguru_logger.info(
+                            "Configuration encrypted and saved successfully"
+                        )
                     except Exception as e:
                         loguru_logger.error(f"Failed to encrypt config on exit: {e}")
                         # Continue with exit even if encryption fails
                 else:
-                    loguru_logger.warning("Encryption enabled but no password available - config not encrypted")
+                    loguru_logger.warning(
+                        "Encryption enabled but no password available - config not encrypted"
+                    )
         except Exception as e:
             loguru_logger.error(f"Error during config encryption on exit: {e}")
-        
+
         # Always call the parent quit method
         self.exit()
 
@@ -8332,10 +10109,12 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     # --- End of Watchers and Helper Methods ---
     # ######################################################
 
+
 # Initialize logging at the earliest possible point
 def initialize_early_logging():
     """Initialize logging as early as possible to capture all logs from startup."""
     from .Logging_Config import configure_application_logging
+
     # Create a temporary app-like object with just enough attributes for configure_application_logging
     class EarlyLoggingApp:
         def __init__(self):
@@ -8354,6 +10133,7 @@ def initialize_early_logging():
     loguru_logger.info("Early logging initialization complete (loguru)")
     return early_app
 
+
 # --- Main execution block ---
 if __name__ == "__main__":
     # Initialize logging first
@@ -8362,24 +10142,29 @@ if __name__ == "__main__":
     # Ensure config file exists (create default if missing)
     try:
         if not DEFAULT_CONFIG_PATH.exists():
-            logging.info(f"Config file not found at {DEFAULT_CONFIG_PATH}, creating default.")
+            logging.info(
+                f"Config file not found at {DEFAULT_CONFIG_PATH}, creating default."
+            )
             DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(DEFAULT_CONFIG_PATH, "w", encoding='utf-8') as f:
+            with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
                 f.write(CONFIG_TOML_CONTENT)
     except Exception as e_cfg_main:
-        logging.error(f"Could not ensure creation of default config file: {e_cfg_main}", exc_info=True)
+        logging.error(
+            f"Could not ensure creation of default config file: {e_cfg_main}",
+            exc_info=True,
+        )
 
     # --- Initialize Metrics Systems ---
     # Initialize Prometheus metrics server
     try:
         # Start Prometheus metrics server on port 8000 (or configure via env/config)
-        metrics_port = int(os.environ.get('METRICS_PORT', '8000'))
+        metrics_port = int(os.environ.get("METRICS_PORT", "8000"))
         init_metrics_server(port=metrics_port)
         loguru_logger.info(f"Prometheus metrics server started on port {metrics_port}")
     except Exception as e:
         loguru_logger.warning(f"Failed to start Prometheus metrics server: {e}")
         # Continue without metrics server - metrics are still collected
-    
+
     # Initialize OpenTelemetry metrics
     try:
         # Initialize OpenTelemetry for advanced metrics collection
@@ -8391,20 +10176,22 @@ if __name__ == "__main__":
         # Continue without OpenTelemetry - the app still has Prometheus metrics
 
     # --- Emoji Check ---
-    emoji_is_supported = supports_emoji() # Call it once
+    emoji_is_supported = supports_emoji()  # Call it once
     loguru_logger.info(f"Terminal emoji support detected: {emoji_is_supported}")
-    loguru_logger.info(f"Using brain: {get_char(EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN)}")
+    loguru_logger.info(
+        f"Using brain: {get_char(EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN)}"
+    )
     loguru_logger.info("-" * 30)
 
     # --- CSS File Handling ---
     try:
         css_dir = Path(__file__).parent / "css"
         css_dir.mkdir(exist_ok=True)
-        
+
         # Check if modular CSS needs to be built
         modular_css_path = css_dir / "tldw_cli_modular.tcss"
         build_script_path = css_dir / "build_css.py"
-        
+
         # Check if any module is newer than the built file
         should_rebuild = False
         if not modular_css_path.exists():
@@ -8413,30 +10200,35 @@ if __name__ == "__main__":
         elif build_script_path.exists():
             # Check if any module file is newer than the built file
             modular_mtime = modular_css_path.stat().st_mtime
-            for subdir in ['core', 'layout', 'components', 'features', 'utilities']:
+            for subdir in ["core", "layout", "components", "features", "utilities"]:
                 subdir_path = css_dir / subdir
                 if subdir_path.exists():
-                    for css_file in subdir_path.glob('*.tcss'):
+                    for css_file in subdir_path.glob("*.tcss"):
                         if css_file.stat().st_mtime > modular_mtime:
                             should_rebuild = True
-                            logging.info(f"Module {css_file.name} is newer than built CSS, rebuilding")
+                            logging.info(
+                                f"Module {css_file.name} is newer than built CSS, rebuilding"
+                            )
                             break
                 if should_rebuild:
                     break
-        
+
         if should_rebuild and build_script_path.exists():
             logging.info("Building modular CSS...")
             import subprocess
+
             # Build CSS synchronously before starting the app
-            result = subprocess.run([sys.executable, str(build_script_path)], 
-                                  cwd=str(css_dir), 
-                                  capture_output=True, 
-                                  text=True)
+            result = subprocess.run(
+                [sys.executable, str(build_script_path)],
+                cwd=str(css_dir),
+                capture_output=True,
+                text=True,
+            )
             if result.returncode == 0:
                 logging.info("Successfully built modular CSS")
             else:
                 logging.error(f"Failed to build modular CSS: {result.stderr}")
-        
+
     except Exception as e_css_main:
         logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
 
@@ -8444,21 +10236,22 @@ if __name__ == "__main__":
     try:
         config_data = load_cli_config_and_ensure_existence()
         encryption_config = config_data.get("encryption", {})
-        
+
         if encryption_config.get("enabled", False):
             loguru_logger.info("Config file encryption is enabled. Password required.")
-            
+
             # Import password dialog dependencies here to avoid circular imports
             import asyncio
             from textual.app import App
             from tldw_chatbook.Widgets.password_dialog import PasswordDialog
-            
+
             class PasswordPromptApp(App):
                 """Minimal app to prompt for password."""
+
                 def __init__(self):
                     super().__init__()
                     self.password = None
-                
+
                 async def on_mount(self) -> None:
                     """Show password dialog immediately on mount."""
                     password = await self.push_screen(
@@ -8467,31 +10260,42 @@ if __name__ == "__main__":
                             title="Unlock Configuration",
                             message="Enter your master password to decrypt the configuration file.",
                             on_submit=lambda p: None,
-                            on_cancel=lambda: None
+                            on_cancel=lambda: None,
                         ),
-                        wait_for_dismiss=True
+                        wait_for_dismiss=True,
                     )
-                    
+
                     if password:
                         # Verify password
-                        from tldw_chatbook.Utils.config_encryption import config_encryption
-                        password_verifier = encryption_config.get("password_verifier", "")
-                        if password_verifier and config_encryption.verify_password(password, password_verifier):
+                        from tldw_chatbook.Utils.config_encryption import (
+                            config_encryption,
+                        )
+
+                        password_verifier = encryption_config.get(
+                            "password_verifier", ""
+                        )
+                        if password_verifier and config_encryption.verify_password(
+                            password, password_verifier
+                        ):
                             self.password = password
                             self.exit()
                         else:
-                            self.notify("Invalid password. Please try again.", severity="error")
+                            self.notify(
+                                "Invalid password. Please try again.", severity="error"
+                            )
                             # Re-show the dialog
                             await self.on_mount()
                     else:
                         # User cancelled
-                        loguru_logger.error("Password required but not provided. Exiting.")
+                        loguru_logger.error(
+                            "Password required but not provided. Exiting."
+                        )
                         self.exit()
-            
+
             # Run the password prompt app
             password_app = PasswordPromptApp()
             password_app.run()
-            
+
             if password_app.password:
                 # Set the password for the session
                 set_encryption_password(password_app.password)
@@ -8500,7 +10304,7 @@ if __name__ == "__main__":
                 # Exit if no password provided
                 loguru_logger.error("Cannot proceed without decryption password.")
                 sys.exit(1)
-                
+
     except Exception as e:
         loguru_logger.error(f"Error checking config encryption: {e}")
         # Continue without encryption if there's an error
@@ -8516,6 +10320,7 @@ if __name__ == "__main__":
         # Force cleanup inline
         import threading
         import concurrent.futures
+
         for thread in threading.enumerate():
             if thread != threading.main_thread() and not thread.daemon:
                 try:
@@ -8526,7 +10331,7 @@ if __name__ == "__main__":
             concurrent.futures.thread._threads_queues.clear()
         except Exception:
             pass
-    except Exception as e:
+    except Exception:
         loguru_logger.exception("--- CRITICAL ERROR DURING app.run() ---")
         traceback.print_exc()  # Make sure traceback prints
     finally:
@@ -8535,17 +10340,16 @@ if __name__ == "__main__":
 
     loguru_logger.info("--- AFTER app.run() call (if not crashed hard) ---")
 
+
 # Entry point for the tldw-chatbook command
 def get_app():
     """Entry point for textual serve.
-    
+
     Returns the TldwCli app instance without running it.
     """
     # Configure logging to suppress verbose debug messages early
     import logging
-    import os
-    import warnings
-    
+
     # Suppress various verbose loggers
     logging.getLogger("torio._extension.utils").setLevel(logging.WARNING)
     logging.getLogger("torio").setLevel(logging.WARNING)
@@ -8557,24 +10361,26 @@ def get_app():
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
     logging.getLogger("fsevents").setLevel(logging.WARNING)
-    
+
     # Ensure CSS is built
     from pathlib import Path
     import sys
-    
+
     # Check if we need to build CSS
     # Get the directory where app.py is located
     app_dir = Path(__file__).parent
     css_dir = app_dir / "css"
     modular_css_path = css_dir / "tldw_cli_modular.tcss"
     build_script_path = css_dir / "build_css.py"
-    
+
     if not modular_css_path.exists() and build_script_path.exists():
         print("Building modular CSS...")
         import subprocess
+
         subprocess.run([sys.executable, str(build_script_path)], check=True)
-        
+
     return TldwCli()
+
 
 def main_cli_runner():
     """Entry point for the tldw-chatbook command.
@@ -8586,7 +10392,7 @@ def main_cli_runner():
     import logging
     import os
     import warnings
-    
+
     # Suppress various verbose loggers
     logging.getLogger("torio._extension.utils").setLevel(logging.WARNING)
     logging.getLogger("torio").setLevel(logging.WARNING)
@@ -8598,35 +10404,38 @@ def main_cli_runner():
     logging.getLogger("httpcore").setLevel(logging.INFO)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("filelock").setLevel(logging.WARNING)
-    
+
     # Suppress torchaudio and FFmpeg warnings
     warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio")
     warnings.filterwarnings("ignore", message=".*FFmpeg.*")
-    
+
     # Set environment variable to suppress FFmpeg output
     os.environ["TORCHAUDIO_LOG_LEVEL"] = "ERROR"
-    
+
     # Set up signal handlers for clean exit
     import signal
     import os
     import atexit
-    
+
     def force_cleanup():
         """Force cleanup on exit"""
         import threading
         import concurrent.futures
-        
+
         # Force kill any Higgs-related threads first
         for thread in threading.enumerate():
             thread_name = thread.name.lower()
-            if any(name in thread_name for name in ['higgs', 'boson', 'serve_engine', 'audio']):
+            if any(
+                name in thread_name
+                for name in ["higgs", "boson", "serve_engine", "audio"]
+            ):
                 loguru_logger.warning(f"Force killing thread: {thread.name}")
                 try:
                     # Mark as daemon to not block exit
                     thread.daemon = True
                 except Exception:
                     pass
-        
+
         # Force daemon all threads
         for thread in threading.enumerate():
             if thread != threading.main_thread() and not thread.daemon:
@@ -8634,61 +10443,69 @@ def main_cli_runner():
                     thread.daemon = True
                 except Exception:
                     pass
-        
+
         # Clear thread pool queues
         try:
             concurrent.futures.thread._threads_queues.clear()
         except Exception:
             pass
-        
+
         # Force clear any PyTorch CUDA resources
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
         except Exception:
             pass
-    
+
     # Register cleanup
     atexit.register(force_cleanup)
-    
+
     def signal_handler(signum, frame):
         loguru_logger.info(f"Received signal {signum}, forcing clean exit")
         force_cleanup()
         os._exit(0)
-    
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     # Initialize logging first
-    early_logging_app = initialize_early_logging()
+    initialize_early_logging()
 
     # Ensure config file exists (create default if missing)
     try:
         if not DEFAULT_CONFIG_PATH.exists():
-            logging.info(f"Config file not found at {DEFAULT_CONFIG_PATH}, creating default.")
+            logging.info(
+                f"Config file not found at {DEFAULT_CONFIG_PATH}, creating default."
+            )
             DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(DEFAULT_CONFIG_PATH, "w", encoding='utf-8') as f:
+            with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
                 f.write(CONFIG_TOML_CONTENT)
     except Exception as e_cfg_main:
-        logging.error(f"Could not ensure creation of default config file: {e_cfg_main}", exc_info=True)
+        logging.error(
+            f"Could not ensure creation of default config file: {e_cfg_main}",
+            exc_info=True,
+        )
 
     # --- Emoji Check ---
-    emoji_is_supported = supports_emoji() # Call it once
+    emoji_is_supported = supports_emoji()  # Call it once
     loguru_logger.info(f"Terminal emoji support detected: {emoji_is_supported}")
-    loguru_logger.info(f"Using brain: {get_char(EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN)}")
+    loguru_logger.info(
+        f"Using brain: {get_char(EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN)}"
+    )
     loguru_logger.info("-" * 30)
 
     # --- CSS File Handling ---
     try:
         css_dir = Path(__file__).parent / "css"
         css_dir.mkdir(exist_ok=True)
-        
+
         # Check if modular CSS needs to be built
         modular_css_path = css_dir / "tldw_cli_modular.tcss"
         build_script_path = css_dir / "build_css.py"
-        
+
         # Check if any module is newer than the built file
         should_rebuild = False
         if not modular_css_path.exists():
@@ -8697,92 +10514,84 @@ def main_cli_runner():
         elif build_script_path.exists():
             # Check if any module file is newer than the built file
             modular_mtime = modular_css_path.stat().st_mtime
-            for subdir in ['core', 'layout', 'components', 'features', 'utilities']:
+            for subdir in ["core", "layout", "components", "features", "utilities"]:
                 subdir_path = css_dir / subdir
                 if subdir_path.exists():
-                    for css_file in subdir_path.glob('*.tcss'):
+                    for css_file in subdir_path.glob("*.tcss"):
                         if css_file.stat().st_mtime > modular_mtime:
                             should_rebuild = True
-                            logging.info(f"Module {css_file.name} is newer than built CSS, rebuilding")
+                            logging.info(
+                                f"Module {css_file.name} is newer than built CSS, rebuilding"
+                            )
                             break
                 if should_rebuild:
                     break
-        
+
         if should_rebuild and build_script_path.exists():
             logging.info("Building modular CSS...")
             import subprocess
+
             # Build CSS synchronously before starting the app
-            result = subprocess.run([sys.executable, str(build_script_path)], 
-                                  cwd=str(css_dir), 
-                                  capture_output=True, 
-                                  text=True)
+            result = subprocess.run(
+                [sys.executable, str(build_script_path)],
+                cwd=str(css_dir),
+                capture_output=True,
+                text=True,
+            )
             if result.returncode == 0:
                 logging.info("Successfully built modular CSS")
             else:
                 logging.error(f"Failed to build modular CSS: {result.stderr}")
-        
+
     except Exception as e_css_main:
         logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
 
     # Parse command line arguments
     import argparse
+
     parser = argparse.ArgumentParser(
         description="tldw chatbook - A Textual TUI for chatting with LLMs",
-        prog="tldw-cli"
+        prog="tldw-cli",
     )
     parser.add_argument(
-        "--serve",
-        action="store_true",
-        help="Run the application as a web server"
+        "--serve", action="store_true", help="Run the application as a web server"
     )
     parser.add_argument(
-        "--host",
-        type=str,
-        help="Host address for web server (default: localhost)"
+        "--host", type=str, help="Host address for web server (default: localhost)"
     )
+    parser.add_argument("--port", type=int, help="Port for web server (default: 8000)")
+    parser.add_argument("--web-title", type=str, help="Title for the web page")
     parser.add_argument(
-        "--port",
-        type=int,
-        help="Port for web server (default: 8000)"
+        "--debug", action="store_true", help="Enable debug mode for web server"
     )
-    parser.add_argument(
-        "--web-title",
-        type=str,
-        help="Title for the web page"
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug mode for web server"
-    )
-    
+
     args = parser.parse_args()
-    
+
     # If --serve flag is provided, run as web server
     if args.serve:
         # Check if web server dependencies are available
         from .Web_Server.serve import check_web_server_available, run_web_server
+
         if not check_web_server_available():
-            loguru_logger.error("\n" + "="*60)
+            loguru_logger.error("\n" + "=" * 60)
             loguru_logger.error("Web server feature is not available!")
-            loguru_logger.error("="*60)
-            loguru_logger.error("\nThe required dependency 'textual-serve' is not installed.")
+            loguru_logger.error("=" * 60)
+            loguru_logger.error(
+                "\nThe required dependency 'textual-serve' is not installed."
+            )
             loguru_logger.error("\nTo install it, run:")
             loguru_logger.error("  pip install tldw_chatbook[web]")
             loguru_logger.error("\nFor development installations:")
-            loguru_logger.error("  pip install -e \".[web]\"")
-            loguru_logger.error("\n" + "="*60 + "\n")
+            loguru_logger.error('  pip install -e ".[web]"')
+            loguru_logger.error("\n" + "=" * 60 + "\n")
             return
 
         loguru_logger.info("Starting tldw_chatbook in web server mode")
         run_web_server(
-            host=args.host,
-            port=args.port,
-            title=args.web_title,
-            debug=args.debug
+            host=args.host, port=args.port, title=args.web_title, debug=args.debug
         )
         return  # Exit after web server stops
-    
+
     # Otherwise, run as normal TUI app
     # Create instance with early logging flag
     app_instance = TldwCli()
@@ -8795,6 +10604,7 @@ def main_cli_runner():
         # Force cleanup inline
         import threading
         import concurrent.futures
+
         for thread in threading.enumerate():
             if thread != threading.main_thread() and not thread.daemon:
                 try:
@@ -8805,7 +10615,7 @@ def main_cli_runner():
             concurrent.futures.thread._threads_queues.clear()
         except Exception:
             pass
-    except Exception as e:
+    except Exception:
         loguru_logger.exception("--- CRITICAL ERROR DURING app.run() ---")
         traceback.print_exc()  # Make sure traceback prints
     finally:
@@ -8813,6 +10623,7 @@ def main_cli_runner():
         loguru_logger.info("--- FINALLY block after app.run() ---")
 
     loguru_logger.info("--- AFTER app.run() call (if not crashed hard) ---")
+
 
 #
 # End of app.py

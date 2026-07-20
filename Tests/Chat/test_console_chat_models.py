@@ -105,7 +105,9 @@ def test_console_provider_selection_carries_sampling_settings() -> None:
     assert selection.streaming is False
 
 
-def test_console_provider_selection_system_prompt_defaults_to_none_and_can_be_set() -> None:
+def test_console_provider_selection_system_prompt_defaults_to_none_and_can_be_set() -> (
+    None
+):
     default_selection = ConsoleProviderSelection(provider="llama_cpp")
     assert default_selection.system_prompt is None
 
@@ -126,7 +128,7 @@ def test_chat_message_defaults_to_complete_status():
     assert message.id
 
 
-from tldw_chatbook.Chat.console_chat_models import (
+from tldw_chatbook.Chat.console_chat_models import (  # noqa: E402
     CONSOLE_AUTO_TITLE_MAX_LENGTH,
     derive_console_session_title,
     is_default_console_session_title,
@@ -143,7 +145,9 @@ def test_is_default_console_session_title_matches_chat_number_pattern():
 
 
 def test_derive_console_session_title_collapses_whitespace():
-    assert derive_console_session_title("  fix   the\nlogin  bug ") == "fix the login bug"
+    assert (
+        derive_console_session_title("  fix   the\nlogin  bug ") == "fix the login bug"
+    )
 
 
 def test_derive_console_session_title_truncates_long_drafts():

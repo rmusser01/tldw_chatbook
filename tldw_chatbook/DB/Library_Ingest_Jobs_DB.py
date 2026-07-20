@@ -4,6 +4,7 @@ Single-user, UI-thread-only: keeps ONE persistent WAL connection reused across
 all reads/writes (safe because every registry mutation runs on the UI thread),
 rather than opening/closing per operation.
 """
+
 from __future__ import annotations
 
 import json
@@ -128,10 +129,23 @@ class LibraryIngestJobsDB(BaseDB):
               progress=excluded.progress, content_hash=excluded.content_hash
             """,
             (
-                self._seq_of(job.job_id), job.job_id, job.source_path, job.title, job.author,
-                json.dumps(list(job.keywords)), int(job.perform_analysis), int(job.chunk_enabled),
-                job.chunk_size, job.state.value, job.retry_count, job.detected_type, job.error,
-                job.finished_at_wall, job.media_id, int(job.superseded), int(job.dismissed),
+                self._seq_of(job.job_id),
+                job.job_id,
+                job.source_path,
+                job.title,
+                job.author,
+                json.dumps(list(job.keywords)),
+                int(job.perform_analysis),
+                int(job.chunk_enabled),
+                job.chunk_size,
+                job.state.value,
+                job.retry_count,
+                job.detected_type,
+                job.error,
+                job.finished_at_wall,
+                job.media_id,
+                int(job.superseded),
+                int(job.dismissed),
                 int(job.permanent),
                 json.dumps(job.ingest_options or {}),
                 json.dumps(job.error_detail) if job.error_detail is not None else None,

@@ -19,7 +19,10 @@ class FakeServerKanbanService:
 
     async def search_cards(self, request_data):
         self.calls.append(("search_cards", request_data))
-        return {"query": request_data["query"], "results": [{"id": 100, "title": "Task"}]}
+        return {
+            "query": request_data["query"],
+            "results": [{"id": 100, "title": "Task"}],
+        }
 
     async def get_search_status(self):
         self.calls.append(("get_search_status",))
@@ -70,7 +73,9 @@ async def test_kanban_scope_service_routes_server_and_normalizes_records():
     scope = KanbanScopeService(server_service=server, policy_enforcer=policy)
 
     boards = await scope.list_boards(mode="server", include_archived=True)
-    card = await scope.create_card(10, {"title": "Task", "client_id": "card-1"}, mode="server")
+    card = await scope.create_card(
+        10, {"title": "Task", "client_id": "card-1"}, mode="server"
+    )
     search = await scope.search_cards({"query": "Task"}, mode="server")
     search_status = await scope.get_search_status(mode="server")
 
@@ -108,7 +113,9 @@ async def test_kanban_scope_service_dispatches_every_operation_locally():
     local = FakeLocalKanbanService()
     server = ExplodingServerKanbanService()
     policy = FakePolicyEnforcer()
-    scope = KanbanScopeService(local_service=local, server_service=server, policy_enforcer=policy)
+    scope = KanbanScopeService(
+        local_service=local, server_service=server, policy_enforcer=policy
+    )
 
     for operation_name, spec in KANBAN_OPERATION_SPECS.items():
         args = _minimal_args_for(spec)
@@ -121,7 +128,9 @@ async def test_kanban_scope_service_dispatches_every_operation_locally():
 @pytest.mark.asyncio
 async def test_kanban_scope_service_blocks_denied_action_before_dispatch():
     server = FakeServerKanbanService()
-    scope = KanbanScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer("authority_denied"))
+    scope = KanbanScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer("authority_denied")
+    )
 
     with pytest.raises(PolicyDeniedError):
         await scope.list_boards(mode="server")
@@ -131,7 +140,9 @@ async def test_kanban_scope_service_blocks_denied_action_before_dispatch():
 
 def test_kanban_scope_service_reports_local_and_server_contract_gaps():
     scope = KanbanScopeService(server_service=None)
-    local_scope = KanbanScopeService(local_service=FakeLocalKanbanService(), server_service=None)
+    local_scope = KanbanScopeService(
+        local_service=FakeLocalKanbanService(), server_service=None
+    )
 
     local_report = scope.list_unsupported_capabilities(mode="local")
     ready_local_report = local_scope.list_unsupported_capabilities(mode="local")

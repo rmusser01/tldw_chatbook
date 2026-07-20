@@ -39,14 +39,21 @@ def main(argv=None) -> int:
         default=",".join(_VALID_TYPES),
         help=f"Comma-separated item types to backfill (default: all of {','.join(_VALID_TYPES)})",
     )
-    parser.add_argument("--page-size", type=int, default=100, help="Source-DB pagination size")
-    parser.add_argument("--batch-size", type=int, default=16, help="Documents per indexing batch")
+    parser.add_argument(
+        "--page-size", type=int, default=100, help="Source-DB pagination size"
+    )
+    parser.add_argument(
+        "--batch-size", type=int, default=16, help="Documents per indexing batch"
+    )
     args = parser.parse_args(argv)
 
     item_types = tuple(t.strip() for t in args.types.split(",") if t.strip())
     invalid = [t for t in item_types if t not in _VALID_TYPES]
     if invalid:
-        print(f"Unknown item type(s): {', '.join(invalid)}. Valid: {', '.join(_VALID_TYPES)}", file=sys.stderr)
+        print(
+            f"Unknown item type(s): {', '.join(invalid)}. Valid: {', '.join(_VALID_TYPES)}",
+            file=sys.stderr,
+        )
         return 2
 
     if not semantic_indexing_available():

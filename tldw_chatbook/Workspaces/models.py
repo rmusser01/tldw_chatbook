@@ -112,7 +112,9 @@ class WorkspaceRecord:
     updated_at: str = field(default_factory=utc_now_iso)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "workspace_id", _required_text(self.workspace_id, "workspace_id"))
+        object.__setattr__(
+            self, "workspace_id", _required_text(self.workspace_id, "workspace_id")
+        )
         object.__setattr__(self, "name", _required_text(self.name, "name"))
         object.__setattr__(self, "description", _optional_text(self.description))
         object.__setattr__(
@@ -141,15 +143,21 @@ class WorkspaceMembership:
     membership_id: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "workspace_id", _required_text(self.workspace_id, "workspace_id"))
-        object.__setattr__(self, "item_type", _required_text(self.item_type, "item_type"))
+        object.__setattr__(
+            self, "workspace_id", _required_text(self.workspace_id, "workspace_id")
+        )
+        object.__setattr__(
+            self, "item_type", _required_text(self.item_type, "item_type")
+        )
         object.__setattr__(self, "item_id", _required_text(self.item_id, "item_id"))
         object.__setattr__(self, "role", _required_text(self.role, "role"))
         object.__setattr__(self, "title", _optional_text(self.title))
         object.__setattr__(
             self,
             "transfer_policy",
-            _coerce_enum(self.transfer_policy, WorkspaceTransferPolicy, "transfer_policy"),
+            _coerce_enum(
+                self.transfer_policy, WorkspaceTransferPolicy, "transfer_policy"
+            ),
         )
         if self.membership_id is not None:
             object.__setattr__(
@@ -174,8 +182,12 @@ class WorkspaceRuntimeBinding:
     updated_at: str = field(default_factory=utc_now_iso)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "workspace_id", _required_text(self.workspace_id, "workspace_id"))
-        object.__setattr__(self, "binding_id", _required_text(self.binding_id, "binding_id"))
+        object.__setattr__(
+            self, "workspace_id", _required_text(self.workspace_id, "workspace_id")
+        )
+        object.__setattr__(
+            self, "binding_id", _required_text(self.binding_id, "binding_id")
+        )
         object.__setattr__(self, "label", _required_text(self.label, "label"))
         object.__setattr__(self, "locator", _required_text(self.locator, "locator"))
         object.__setattr__(
@@ -201,7 +213,9 @@ class WorkspaceEligibility:
     recovery_copy: str = ""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "reason_code", _required_text(self.reason_code, "reason_code"))
+        object.__setattr__(
+            self, "reason_code", _required_text(self.reason_code, "reason_code")
+        )
         object.__setattr__(self, "recovery_copy", _optional_text(self.recovery_copy))
 
 

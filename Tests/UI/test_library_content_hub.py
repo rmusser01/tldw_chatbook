@@ -65,10 +65,9 @@ async def _wait_for_library_conversation_selection(
     attempts: int = 80,
 ) -> None:
     for _ in range(attempts):
-        if (
-            getattr(screen, "_selected_conversation_id", None) == conversation_id
-            and expected_title in _visible_text(screen)
-        ):
+        if getattr(
+            screen, "_selected_conversation_id", None
+        ) == conversation_id and expected_title in _visible_text(screen):
             await pilot.pause()
             return
         await pilot.pause(0.05)
@@ -129,10 +128,10 @@ class StaticLibraryRagSearchService:
         }
 
 
-
-
 @pytest.mark.asyncio
-async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regions() -> None:
+async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regions() -> (
+    None
+):
     """The Search/RAG mode canvas (``LibrarySearchRagPanel``) still promotes
     query, scope, and evidence regions. The dedicated Console-handoff/
     inspector digest ("Console Handoff", "Selected Evidence: none", "Future
@@ -190,7 +189,9 @@ async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regi
         # workspaces/collections/import-export rows are gone.
         assert not screen.query("#library-rag-scope-table-header")
         for source_type in ("notes", "media", "conversations"):
-            toggle = screen.query_one(f"#library-rag-scope-toggle-{source_type}", Button)
+            toggle = screen.query_one(
+                f"#library-rag-scope-toggle-{source_type}", Button
+            )
             assert str(toggle.label).startswith("✓")
             assert toggle.disabled is False
         assert not screen.query("#library-rag-scope-row-all")
@@ -206,7 +207,10 @@ async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regi
         assert not screen.query("#library-rag-query-status")
         assert "No evidence yet. Run Search/RAG to populate results." in visible
         assert screen.query_one("#library-rag-evidence-empty-guidance", Static)
-        assert "Add or import sources, run a query, then select evidence for Console." in visible
+        assert (
+            "Add or import sources, run a query, then select evidence for Console."
+            in visible
+        )
 
         # B3: the carry-through jargon line is retired outright.
         assert not screen.query("#library-rag-attribution-placeholder")
@@ -215,7 +219,9 @@ async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regi
 
 
 @pytest.mark.asyncio
-async def test_library_stage_c_search_rag_selected_evidence_updates_inspector_contract() -> None:
+async def test_library_stage_c_search_rag_selected_evidence_updates_inspector_contract() -> (
+    None
+):
     app = _build_test_app()
     _seed_library_content(app)
     app.library_rag_search_service = StaticLibraryRagSearchService(
@@ -246,7 +252,9 @@ async def test_library_stage_c_search_rag_selected_evidence_updates_inspector_co
         await _wait_for_selector(screen, pilot, "#library-rag-query-input")
         query_input = screen.query_one("#library-rag-query-input", Input)
         query_input.value = "What does the research note say?"
-        await screen.update_library_rag_query(Input.Changed(query_input, query_input.value))
+        await screen.update_library_rag_query(
+            Input.Changed(query_input, query_input.value)
+        )
         await _wait_for_selector(screen, pilot, "#library-rag-run-query")
         await screen._start_library_rag_query()
         await _wait_for_selector(screen, pilot, "#library-rag-select-result-0")
@@ -260,18 +268,26 @@ async def test_library_stage_c_search_rag_selected_evidence_updates_inspector_co
         # in the retired inspector column; the panel itself now surfaces
         # selection, evidence, and Console eligibility directly.
         assert screen.query_one("#library-rag-result-0").has_class("is-selected")
-        assert str(screen.query_one("#library-rag-select-result-0", Button).label) == "Selected evidence"
+        assert (
+            str(screen.query_one("#library-rag-select-result-0", Button).label)
+            == "Selected evidence"
+        )
         # B3: the carry-through jargon line is retired outright -- selecting
         # evidence needs no permanent caption.
         assert not screen.query("#library-rag-attribution-placeholder")
         assert "Citation/snippet carry-through" not in visible
         assert "Useful answer evidence from the selected note." in visible
         assert "Citations: Research Note #7" in visible
-        assert screen.query_one("#library-rag-use-selected-in-console", Button).disabled is False
+        assert (
+            screen.query_one("#library-rag-use-selected-in-console", Button).disabled
+            is False
+        )
 
 
 @pytest.mark.asyncio
-async def test_library_source_rail_marks_active_mode_without_mutating_action_labels() -> None:
+async def test_library_source_rail_marks_active_mode_without_mutating_action_labels() -> (
+    None
+):
     """Selecting a rail row marks it active (``library-rail-row-selected`` +
     a ``▸`` marker prefix) without mutating the row's underlying title."""
     app = _build_test_app()
@@ -348,7 +364,10 @@ async def test_library_navigation_context_opens_requested_valid_mode() -> None:
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
         assert getattr(screen, "_library_selected_row_id") == "browse-search"
-        assert str(screen.query_one("#library-header-line").renderable) == "Library | Local"
+        assert (
+            str(screen.query_one("#library-header-line").renderable)
+            == "Library | Local"
+        )
         assert screen.query_one("#library-row-browse-search", Button).has_class(
             "library-rail-row-selected"
         )
@@ -425,7 +444,9 @@ async def test_library_conversations_snapshot_requests_all_scopes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_library_collections_selection_explains_membership_workspace_and_actions() -> None:
+async def test_library_collections_selection_explains_membership_workspace_and_actions() -> (
+    None
+):
     """``LibraryCollectionsPanel`` (mounted verbatim in the canvas) still
     explains membership, workspace rule, and action status for a selected
     Collection. The retired 3-pane inspector column duplicated this same
@@ -467,7 +488,10 @@ async def test_library_collections_selection_explains_membership_workspace_and_a
         assert (
             "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync"
         ) in visible
-        assert "Next: collection item adapters are required before item-level actions unlock." in visible
+        assert (
+            "Next: collection item adapters are required before item-level actions unlock."
+            in visible
+        )
         assert screen.query_one("#library-row-browse-collections", Button).has_class(
             "library-rail-row-selected"
         )
@@ -475,7 +499,9 @@ async def test_library_collections_selection_explains_membership_workspace_and_a
 
 
 @pytest.mark.asyncio
-async def test_library_collections_empty_state_keeps_global_browse_rule_and_blocks_wip_actions() -> None:
+async def test_library_collections_empty_state_keeps_global_browse_rule_and_blocks_wip_actions() -> (
+    None
+):
     """``LibraryCollectionsPanel``'s empty branch still teaches content entry
     and keeps the create/rename/delete form inert until a name is entered.
     The dead-inspector-only lines dropped here mirror the sibling selection
@@ -494,17 +520,31 @@ async def test_library_collections_empty_state_keeps_global_browse_rule_and_bloc
         visible = _visible_text(screen)
 
         assert "No Collections yet." in visible
-        assert "Create a local Collection record to start reviewing saved content." in visible
+        assert (
+            "Create a local Collection record to start reviewing saved content."
+            in visible
+        )
         assert "Type a Collection name to enable Create." in visible
         assert "Form actions: enter a name to enable Create." in visible
-        assert "Create, Rename, and Delete stay inactive until their requirements are met." in visible
+        assert (
+            "Create, Rename, and Delete stay inactive until their requirements are met."
+            in visible
+        )
         assert "No stored collection items are available locally yet." in visible
-        assert "Collections are for reading, reviewing, and reusing saved content." in visible
+        assert (
+            "Collections are for reading, reviewing, and reusing saved content."
+            in visible
+        )
         assert "No Collection selected." in visible
         empty_reader = screen.query_one("#library-collection-empty-reader", Static)
         form_guidance = screen.query_one("#library-collection-form-guidance", Static)
-        form_action_state = screen.query_one("#library-collection-form-action-state", Static)
+        form_action_state = screen.query_one(
+            "#library-collection-form-action-state", Static
+        )
         assert empty_reader.region.y <= form_guidance.region.y + 8
-        assert form_action_state.region.y < screen.query_one("#library-create-collection", Button).region.y
+        assert (
+            form_action_state.region.y
+            < screen.query_one("#library-create-collection", Button).region.y
+        )
         assert not screen.query("#library-collections-workbench")
         assert screen.query_one("#library-use-in-console", Button).disabled is True

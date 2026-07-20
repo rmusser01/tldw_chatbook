@@ -108,7 +108,9 @@ def _profile_display_text(profile: Mapping[str, Any]) -> str:
     `hub_tool_catalog.server_tools_from_inventory()`'s own tolerant-of-
     missing-keys reads."""
     name = _profile_text(profile.get("name")) or _profile_text(profile.get("label"))
-    profile_id = _profile_text(profile.get("id")) or _profile_text(profile.get("profile_id"))
+    profile_id = _profile_text(profile.get("id")) or _profile_text(
+        profile.get("profile_id")
+    )
     if name and profile_id:
         return f"{name} ({profile_id})"
     if name:
@@ -299,7 +301,9 @@ class MCPPermissionsMode(Vertical):
         `"tool"` row.
         """
 
-        def __init__(self, row_kind: str, server_key: str, tool_name: str | None) -> None:
+        def __init__(
+            self, row_kind: str, server_key: str, tool_name: str | None
+        ) -> None:
             super().__init__()
             self.row_kind = row_kind
             self.server_key = server_key
@@ -384,7 +388,9 @@ class MCPPermissionsMode(Vertical):
         # `.label` posts no message at all) -- just track the state and
         # relabel.
         self._kill_switch = kill_switch
-        self.query_one("#mcp-perm-kill-switch", Button).label = _kill_switch_label(kill_switch)
+        self.query_one("#mcp-perm-kill-switch", Button).label = _kill_switch_label(
+            kill_switch
+        )
 
         table = self.query_one("#mcp-perm-table", DataTable)
 
@@ -436,7 +442,9 @@ class MCPPermissionsMode(Vertical):
 
         self.query_one("#mcp-perm-preview", Static).update(preview)
 
-    async def update_server_profiles(self, profiles: list[Mapping[str, Any]] | None) -> None:
+    async def update_server_profiles(
+        self, profiles: list[Mapping[str, Any]] | None
+    ) -> None:
         """Rebuild the read-only server-source governance listing.
 
         `profiles` is the raw `permission_profiles` list from the

@@ -24,7 +24,9 @@ from Tests.UI.test_console_native_chat_flow import (
     _wait_for_text,
 )
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_skill_resolver import (
     SKILL_UNTRUSTED_REFUSE,
@@ -132,7 +134,8 @@ async def test_bare_skills_command_lists_trusted_skills():
 
         system_rows = _console_message_contents(console, ConsoleMessageRole.SYSTEM)
         assert any(
-            "/code-review — Reviews a diff." in row and "/release-notes — Drafts release notes." in row
+            "/code-review — Reviews a diff." in row
+            and "/release-notes — Drafts release notes." in row
             for row in system_rows
         )
 
@@ -153,7 +156,9 @@ async def test_bare_skills_command_with_no_skills_shows_empty_row():
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
 
-        assert SKILLS_EMPTY_LIST_ROW in _console_message_contents(console, ConsoleMessageRole.SYSTEM)
+        assert SKILLS_EMPTY_LIST_ROW in _console_message_contents(
+            console, ConsoleMessageRole.SYSTEM
+        )
 
 
 @pytest.mark.asyncio
@@ -206,7 +211,9 @@ async def test_skills_command_named_blocked_skill_shows_untrusted_refuse_row():
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
 
-        expected = SKILL_UNTRUSTED_REFUSE.format(name="sketchy-skill", reason="skill_modified")
+        expected = SKILL_UNTRUSTED_REFUSE.format(
+            name="sketchy-skill", reason="skill_modified"
+        )
         assert expected in _console_message_contents(console, ConsoleMessageRole.SYSTEM)
         submit_spy.assert_not_called()
 
@@ -245,7 +252,9 @@ async def test_bare_fallback_trusted_skill_submits_raw_command_and_appends_marke
 
         submit_spy.assert_called_once_with("/code-review fix it")
         marker_expected = CONSOLE_SKILL_RUN_MARKER_TEMPLATE.format(name="code-review")
-        assert marker_expected in _console_message_contents(console, ConsoleMessageRole.TOOL)
+        assert marker_expected in _console_message_contents(
+            console, ConsoleMessageRole.TOOL
+        )
 
 
 @pytest.mark.asyncio
@@ -305,7 +314,8 @@ class _RaceConditionSkillsScopeService(FakeSkillsScopeService):
     async def execute_skill(self, name, *, mode=None, args=None):
         self.executions.append((name, args))
         raise SkillTrustBlockedError(
-            skill_name=name, reason_code="skill_modified",
+            skill_name=name,
+            reason_code="skill_modified",
             trust_status="quarantined_modified",
         )
 
@@ -348,7 +358,9 @@ async def test_skill_trust_revoked_between_resolve_and_submit_refuses_without_ma
         # The raw command still persists (honest record), followed by the
         # refuse row -- but NO TOOL marker: the skill never actually ran.
         assert not [m for m in messages if m.role is ConsoleMessageRole.TOOL]
-        expected = SKILL_UNTRUSTED_REFUSE.format(name="code-review", reason="skill_modified")
+        expected = SKILL_UNTRUSTED_REFUSE.format(
+            name="code-review", reason="skill_modified"
+        )
         assert expected in _console_message_contents(console, ConsoleMessageRole.SYSTEM)
         assert console._console_pending_skill_marker_name is None
 
@@ -381,7 +393,9 @@ class _ToggleReadinessGateway:
         return SimpleNamespace(
             provider=selection.provider,
             base_url=selection.base_url or "",
-            model=selection.explicit_model or selection.configured_model or "test-model",
+            model=selection.explicit_model
+            or selection.configured_model
+            or "test-model",
             ready=ready,
             visible_copy="" if ready else "Provider blocked: test setup incomplete.",
         )
@@ -523,9 +537,13 @@ async def test_skills_command_ambiguous_prefix_opens_picker_prefilled():
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
 
-        assert len(host.screen_stack) == baseline_depth + 1, "the picker must have opened"
+        assert len(host.screen_stack) == baseline_depth + 1, (
+            "the picker must have opened"
+        )
 
-        from tldw_chatbook.Widgets.Console.console_skill_picker_modal import FILTER_INPUT_ID
+        from tldw_chatbook.Widgets.Console.console_skill_picker_modal import (
+            FILTER_INPUT_ID,
+        )
         from textual.widgets import Input
 
         picker = host.screen_stack[-1]

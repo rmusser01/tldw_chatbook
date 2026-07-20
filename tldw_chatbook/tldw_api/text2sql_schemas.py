@@ -6,11 +6,17 @@ from pydantic import BaseModel, Field
 
 
 class Text2SQLRequest(BaseModel):
-    query: str = Field(..., min_length=1, description="Natural-language query or SQL text")
-    target_id: str = Field(..., min_length=1, description="Approved SQL target identifier")
+    query: str = Field(
+        ..., min_length=1, description="Natural-language query or SQL text"
+    )
+    target_id: str = Field(
+        ..., min_length=1, description="Approved SQL target identifier"
+    )
     max_rows: int = Field(default=100, ge=1, le=1000)
     timeout_ms: int = Field(default=5000, ge=100, le=30000)
-    include_sql: bool = Field(default=True, description="Whether to include executed SQL in response")
+    include_sql: bool = Field(
+        default=True, description="Whether to include executed SQL in response"
+    )
 
 
 class Text2SQLGuardrail(BaseModel):

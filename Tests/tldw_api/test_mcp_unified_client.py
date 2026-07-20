@@ -17,7 +17,9 @@ from tldw_chatbook.tldw_api.mcp_unified_schemas import (
 )
 
 
-def _assert_request_call(call_args, expected_method, expected_endpoint, expected_kwargs):
+def _assert_request_call(
+    call_args, expected_method, expected_endpoint, expected_kwargs
+):
     args, kwargs = call_args
     assert args[:2] == (expected_method, expected_endpoint)
     for key, value in expected_kwargs.items():
@@ -79,7 +81,13 @@ class _DummyRootClient:
             {"catalog": "demo", "module": ["media", "chat"], "catalog_strict": True},
             "GET",
             "/api/v1/mcp/tools",
-            {"params": {"catalog": "demo", "module": ["media", "chat"], "catalog_strict": "1"}},
+            {
+                "params": {
+                    "catalog": "demo",
+                    "module": ["media", "chat"],
+                    "catalog_strict": "1",
+                }
+            },
             {"tools": []},
         ),
         (
@@ -125,7 +133,9 @@ async def test_unified_client_routes_expected_endpoints(
     await method(**call_kwargs)
 
     mocked.assert_awaited_once()
-    _assert_request_call(mocked.await_args, expected_method, expected_endpoint, expected_kwargs)
+    _assert_request_call(
+        mocked.await_args, expected_method, expected_endpoint, expected_kwargs
+    )
 
 
 @pytest.mark.asyncio
@@ -188,7 +198,9 @@ async def test_unified_client_routes_remaining_mcp_runtime_contract_edges():
     await client.create_auth_token(username="admin", api_key="demo-secret")
     await client.refresh_auth_token(refresh_token="refresh-token", token_id="token-id")
     await client.list_catalog(archetype_key="research_assistant")
-    await client.send_request({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, client_id="chatbook")
+    await client.send_request(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, client_id="chatbook"
+    )
     await client.send_request_batch(
         [{"jsonrpc": "2.0", "id": 2, "method": "resources/list"}],
         client_id="chatbook",
@@ -212,8 +224,14 @@ async def test_unified_client_routes_remaining_mcp_runtime_contract_edges():
         ("GET", "/api/v1/mcp/catalog"),
         ("POST", "/api/v1/mcp/request"),
         ("POST", "/api/v1/mcp/request/batch"),
-        ("GET", "/api/v1/mcp/hub/permission-profiles/7/credential-bindings/docs/token_readonly/status"),
-        ("GET", "/api/v1/mcp/hub/policy-assignments/11/credential-bindings/docs/token_write/status"),
+        (
+            "GET",
+            "/api/v1/mcp/hub/permission-profiles/7/credential-bindings/docs/token_readonly/status",
+        ),
+        (
+            "GET",
+            "/api/v1/mcp/hub/policy-assignments/11/credential-bindings/docs/token_write/status",
+        ),
     ]
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "username": "admin",
@@ -223,10 +241,17 @@ async def test_unified_client_routes_remaining_mcp_runtime_contract_edges():
         "refresh_token": "refresh-token",
         "token_id": "token-id",
     }
-    assert mocked.await_args_list[2].kwargs["params"] == {"archetype_key": "research_assistant"}
+    assert mocked.await_args_list[2].kwargs["params"] == {
+        "archetype_key": "research_assistant"
+    }
     assert mocked.await_args_list[3].kwargs["params"] == {"client_id": "chatbook"}
-    assert mocked.await_args_list[4].kwargs["params"] == {"client_id": "chatbook", "config": "encoded-config"}
-    assert mocked.await_args_list[4].kwargs["headers"] == {"mcp-session-id": "session-1"}
+    assert mocked.await_args_list[4].kwargs["params"] == {
+        "client_id": "chatbook",
+        "config": "encoded-config",
+    }
+    assert mocked.await_args_list[4].kwargs["headers"] == {
+        "mcp-session-id": "session-1"
+    }
 
 
 @pytest.mark.asyncio
@@ -282,7 +307,9 @@ async def test_unified_client_fetches_prometheus_metrics_as_text():
     metrics = await client.get_prometheus_metrics()
 
     assert metrics == "mcp_requests_total 1\n"
-    root._request_bytes.assert_awaited_once_with("GET", "/api/v1/mcp/metrics/prometheus")
+    root._request_bytes.assert_awaited_once_with(
+        "GET", "/api/v1/mcp/metrics/prometheus"
+    )
 
 
 def test_access_context_bootstrap_helper_normalizes_scope_options():
@@ -301,7 +328,11 @@ def test_access_context_bootstrap_helper_normalizes_scope_options():
     assert org.scope_ref == "org-9"
     assert explicit.scope_kind == "system_admin"
     assert explicit.scope_ref is None
-    assert client.build_access_context_params(team) == {"scope_kind": "team", "scope_ref": "17", "team_id": "17"}
+    assert client.build_access_context_params(team) == {
+        "scope_kind": "team",
+        "scope_ref": "17",
+        "team_id": "17",
+    }
 
 
 def test_package_root_keeps_legacy_and_mcp_exports_lazy():
@@ -419,7 +450,9 @@ async def test_create_scoped_org_tool_catalog_routes_to_org_catalog_endpoint():
     await client.create_scoped_tool_catalog(
         scope_kind="org",
         scope_ref="44",
-        request=ScopedToolCatalogCreateRequest(name="Org Catalog", description="Scoped", is_active=True),
+        request=ScopedToolCatalogCreateRequest(
+            name="Org Catalog", description="Scoped", is_active=True
+        ),
     )
 
     mocked.assert_awaited_once()
@@ -685,7 +718,11 @@ async def test_governance_pack_source_and_upgrade_routes_cover_remaining_endpoin
     }
     source_payload = {
         "candidate_id": "cand-1",
-        "source": {"kind": "git", "url": "git@example.com:trusted/repo.git", "ref": "main"},
+        "source": {
+            "kind": "git",
+            "url": "git@example.com:trusted/repo.git",
+            "ref": "main",
+        },
         "owner_scope_type": "team",
         "owner_scope_id": 21,
     }
@@ -829,7 +866,9 @@ async def test_governance_pack_source_and_upgrade_routes_cover_remaining_endpoin
         {"json_data": upgrade_payload},
     )
 
-    root._request = AsyncMock(return_value=[{"from_version": "1.0.0", "to_version": "1.1.0"}])
+    root._request = AsyncMock(
+        return_value=[{"from_version": "1.0.0", "to_version": "1.1.0"}]
+    )
     await client.list_governance_pack_upgrade_history(governance_pack_id=81)
     _assert_request_call(
         root._request.await_args,
@@ -1002,7 +1041,9 @@ async def test_path_scope_workspace_set_and_shared_workspace_routes_cover_admin_
     )
 
     root._request = AsyncMock(return_value={"ok": True})
-    await client.delete_workspace_set_member(workspace_set_object_id=6, workspace_id="ws-1")
+    await client.delete_workspace_set_member(
+        workspace_set_object_id=6, workspace_id="ws-1"
+    )
     _assert_request_call(
         root._request.await_args,
         "DELETE",
@@ -1093,7 +1134,9 @@ async def test_remaining_governance_workspace_binding_and_secret_routes_cover_ad
     )
 
     root._request = AsyncMock(return_value={"ok": True})
-    await client.delete_policy_assignment_workspace(assignment_id=2, workspace_id="ws-1")
+    await client.delete_policy_assignment_workspace(
+        assignment_id=2, workspace_id="ws-1"
+    )
     _assert_request_call(
         root._request.await_args,
         "DELETE",
@@ -1123,7 +1166,9 @@ async def test_remaining_governance_workspace_binding_and_secret_routes_cover_ad
         {"json_data": {"managed_secret_ref_id": "secret-1"}},
     )
 
-    root._request = AsyncMock(return_value={"external_server_id": "docs", "slot_name": "token_readonly"})
+    root._request = AsyncMock(
+        return_value={"external_server_id": "docs", "slot_name": "token_readonly"}
+    )
     await client.upsert_profile_slot_credential_binding(
         profile_id=1,
         server_id="docs",
@@ -1194,7 +1239,9 @@ async def test_remaining_governance_workspace_binding_and_secret_routes_cover_ad
         {"json_data": {"binding_mode": "grant", "managed_secret_ref_id": "secret-1"}},
     )
 
-    root._request = AsyncMock(return_value={"external_server_id": "docs", "slot_name": "token_readonly"})
+    root._request = AsyncMock(
+        return_value={"external_server_id": "docs", "slot_name": "token_readonly"}
+    )
     await client.upsert_assignment_slot_credential_binding(
         assignment_id=2,
         server_id="docs",

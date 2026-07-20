@@ -29,20 +29,23 @@ class FormApp(App):
 @pytest.mark.asyncio
 async def test_build_payload_splits_env_into_placeholders_and_literals():
     app = FormApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         form = app.query_one(MCPProfileForm)
         app.query_one("#mcp-form-id", Input).value = "docs"
         app.query_one("#mcp-form-command", Input).value = "npx"
-        app.query_one("#mcp-form-args", TextArea).text = "-y\n@modelcontextprotocol/server-filesystem"
+        app.query_one(
+            "#mcp-form-args", TextArea
+        ).text = "-y\n@modelcontextprotocol/server-filesystem"
         # UNBAL_A/UNBAL_B: unbalanced-brace values ($VAR} / ${VAR) are NOT
         # placeholders -- they fall to the literals path, where the store's
         # own validation gives honest copy if they turn out secret-shaped.
-        app.query_one("#mcp-form-env", TextArea).text = (
-            "API_KEY=$MY_KEY\nDEBUG=true\nUNBAL_A=$MY_KEY}\nUNBAL_B=${MY_KEY"
-        )
+        app.query_one(
+            "#mcp-form-env", TextArea
+        ).text = "API_KEY=$MY_KEY\nDEBUG=true\nUNBAL_A=$MY_KEY}\nUNBAL_B=${MY_KEY"
         payload = form.build_payload()
         assert payload == {
-            "profile_id": "docs", "command": "npx",
+            "profile_id": "docs",
+            "command": "npx",
             "args": ["-y", "@modelcontextprotocol/server-filesystem"],
             "env_placeholders": {"API_KEY": "$MY_KEY"},
             "env_literals": {
@@ -56,7 +59,7 @@ async def test_build_payload_splits_env_into_placeholders_and_literals():
 @pytest.mark.asyncio
 async def test_malformed_env_line_raises_with_line_number():
     app = FormApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         form = app.query_one(MCPProfileForm)
         app.query_one("#mcp-form-id", Input).value = "docs"
         app.query_one("#mcp-form-command", Input).value = "npx"
@@ -67,8 +70,13 @@ async def test_malformed_env_line_raises_with_line_number():
 
 @pytest.mark.asyncio
 async def test_save_posts_submit_and_edit_mode_locks_id():
-    profile = {"profile_id": "docs", "command": "npx", "args": ["-y"],
-               "env_placeholders": {"K": "$V"}, "env_literals": {}}
+    profile = {
+        "profile_id": "docs",
+        "command": "npx",
+        "args": ["-y"],
+        "env_placeholders": {"K": "$V"},
+        "env_literals": {},
+    }
     app = FormApp(profile=profile)
     async with app.run_test() as pilot:
         assert app.query_one("#mcp-form-id", Input).disabled
@@ -83,9 +91,13 @@ async def test_show_error_renders_store_copy():
     app = FormApp()
     async with app.run_test() as pilot:
         form = app.query_one(MCPProfileForm)
-        form.show_error("Secret-bearing env key 'API_KEY' cannot be stored as a literal")
+        form.show_error(
+            "Secret-bearing env key 'API_KEY' cannot be stored as a literal"
+        )
         await pilot.pause()
-        assert "cannot be stored" in str(app.query_one("#mcp-form-error", Static).renderable)
+        assert "cannot be stored" in str(
+            app.query_one("#mcp-form-error", Static).renderable
+        )
 
 
 @pytest.mark.asyncio
@@ -96,7 +108,7 @@ async def test_form_error_static_carries_status_error_class():
     instead of plain body text.
     """
     app = FormApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         error = app.query_one("#mcp-form-error", Static)
         assert "mcp-status-error" in error.classes
 
@@ -106,7 +118,7 @@ async def test_form_args_warning_static_carries_status_warning_class():
     """A2: `#mcp-form-args-warning` must carry `mcp-status-warning` at
     compose time so the secret-lint warning renders in the warning color."""
     app = FormApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         warning = app.query_one("#mcp-form-args-warning", Static)
         assert "mcp-status-warning" in warning.classes
 
@@ -141,9 +153,9 @@ async def test_save_with_clean_args_shows_no_secret_warning():
     async with app.run_test() as pilot:
         app.query_one("#mcp-form-id", Input).value = "docs"
         app.query_one("#mcp-form-command", Input).value = "npx"
-        app.query_one("#mcp-form-args", TextArea).text = (
-            "-y\n@modelcontextprotocol/server-filesystem"
-        )
+        app.query_one(
+            "#mcp-form-args", TextArea
+        ).text = "-y\n@modelcontextprotocol/server-filesystem"
         await pilot.click("#mcp-form-save")
         await pilot.pause()
         warning = str(app.query_one("#mcp-form-args-warning", Static).renderable)
@@ -156,8 +168,13 @@ async def test_save_disables_button_and_show_error_reenables():
     """State-driven buttons: a valid submit disables Save (blocking a second
     real click at the press() gate) until the host reports an outcome --
     show_error() (validation/save failure) re-enables it for a retry."""
-    profile = {"profile_id": "docs", "command": "npx", "args": [],
-               "env_placeholders": {}, "env_literals": {}}
+    profile = {
+        "profile_id": "docs",
+        "command": "npx",
+        "args": [],
+        "env_placeholders": {},
+        "env_literals": {},
+    }
     app = FormApp(profile=profile)
     async with app.run_test() as pilot:
         form = app.query_one(MCPProfileForm)
@@ -167,7 +184,9 @@ async def test_save_disables_button_and_show_error_reenables():
         await pilot.pause()
         assert app.events, "valid submit must still post SubmitRequested"
         assert save_button.disabled, "Save must disable while a save is pending"
-        form.show_error("Secret-bearing env key 'API_KEY' cannot be stored as a literal")
+        form.show_error(
+            "Secret-bearing env key 'API_KEY' cannot be stored as a literal"
+        )
         await pilot.pause()
         assert not save_button.disabled, "show_error must re-enable Save for retry"
 
@@ -181,7 +200,7 @@ async def test_add_mode_save_starts_disabled_with_empty_fields():
     submit an incomplete profile -- Save starts disabled with a tooltip
     explaining why."""
     app = FormApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         save_button = app.query_one("#mcp-form-save", Button)
         assert save_button.disabled
         assert save_button.tooltip == "Enter a profile id and command first."
@@ -192,10 +211,15 @@ async def test_edit_mode_save_starts_enabled_with_prefilled_fields():
     """Edit mode pre-fills profile_id/command (the id Input is disabled but
     still carries a value) -- the same non-empty rule holds, so Save starts
     enabled rather than disabled-by-default."""
-    profile = {"profile_id": "docs", "command": "npx", "args": [],
-               "env_placeholders": {}, "env_literals": {}}
+    profile = {
+        "profile_id": "docs",
+        "command": "npx",
+        "args": [],
+        "env_placeholders": {},
+        "env_literals": {},
+    }
     app = FormApp(profile=profile)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         save_button = app.query_one("#mcp-form-save", Button)
         assert not save_button.disabled
 
@@ -239,7 +263,7 @@ async def test_in_flight_save_disabled_tooltip_does_not_claim_fields_are_empty()
 
 @pytest.mark.asyncio
 async def test_whitespace_only_fields_keep_save_disabled():
-    """"empty/whitespace" per the spec -- a field that is only spaces must
+    """ "empty/whitespace" per the spec -- a field that is only spaces must
     not count as filled in."""
     app = FormApp()
     async with app.run_test() as pilot:
@@ -275,7 +299,9 @@ async def test_error_path_reenables_only_when_fields_still_valid():
 
         form.show_error("Some store-side failure.")
         await pilot.pause()
-        assert save_button.disabled, "show_error must not re-enable Save with an empty field"
+        assert save_button.disabled, (
+            "show_error must not re-enable Save with an empty field"
+        )
         assert save_button.tooltip == "Enter a profile id and command first."
 
 
@@ -310,9 +336,16 @@ async def test_preview_renders_candidates_and_warnings_as_plain_text():
     """
     app = ImportApp()
     async with app.run_test() as pilot:
-        text = json.dumps({"mcpServers": {
-            "[/bold]evil": {"command": "npx", "env": {"API_KEY": "sk-live-123456"}},
-        }})
+        text = json.dumps(
+            {
+                "mcpServers": {
+                    "[/bold]evil": {
+                        "command": "npx",
+                        "env": {"API_KEY": "sk-live-123456"},
+                    },
+                }
+            }
+        )
         app.query_one("#mcp-import-text", TextArea).text = text
         await pilot.click("#mcp-import-preview")
         await pilot.pause()
@@ -357,7 +390,9 @@ async def test_import_list_container_does_not_expand_past_content():
 
         # The action row must sit directly under the preview list, not
         # dozens of rows further down the panel.
-        gap = apply_button.region.y - (preview_list.region.y + preview_list.region.height)
+        gap = apply_button.region.y - (
+            preview_list.region.y + preview_list.region.height
+        )
         assert 0 <= gap <= 2
 
 
@@ -392,7 +427,7 @@ async def test_import_error_static_carries_status_error_class():
     time, mirroring `#mcp-form-error`, so an invalid-JSON preview error
     renders in the error color instead of plain body text."""
     app = ImportApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         error = app.query_one("#mcp-import-error", Static)
         assert "mcp-status-error" in error.classes
 
@@ -401,7 +436,9 @@ async def test_import_error_static_carries_status_error_class():
 async def test_apply_posts_import_requested_with_previewed_candidates_and_disables():
     app = ImportApp()
     async with app.run_test() as pilot:
-        text = json.dumps({"mcpServers": {"docs": {"command": "npx", "args": ["-y", "pkg"]}}})
+        text = json.dumps(
+            {"mcpServers": {"docs": {"command": "npx", "args": ["-y", "pkg"]}}}
+        )
         app.query_one("#mcp-import-text", TextArea).text = text
         await pilot.click("#mcp-import-preview")
         await pilot.pause()
@@ -412,8 +449,11 @@ async def test_apply_posts_import_requested_with_previewed_candidates_and_disabl
         assert len(event.candidates) == 1
         assert event.candidates[0].profile_id == "docs"
         assert event.candidates[0].to_payload() == {
-            "profile_id": "docs", "command": "npx", "args": ["-y", "pkg"],
-            "env_placeholders": {}, "env_literals": {},
+            "profile_id": "docs",
+            "command": "npx",
+            "args": ["-y", "pkg"],
+            "env_placeholders": {},
+            "env_literals": {},
         }
         assert app.query_one("#mcp-import-apply", Button).disabled
 

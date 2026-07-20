@@ -191,7 +191,10 @@ async def test_duration_column_uses_shared_formatter():
         )
         await pilot.pause()
         table = app.query_one("#mcp-audit-table", DataTable)
-        durations = {_row_texts(table, i)[1].split("::")[-1]: _row_texts(table, i)[4] for i in range(3)}
+        durations = {
+            _row_texts(table, i)[1].split("::")[-1]: _row_texts(table, i)[4]
+            for i in range(3)
+        }
         assert durations["ms"] == "850ms"
         assert durations["secs"] == "2.5s"
         assert durations["mins"] == "1m 30s"
@@ -205,16 +208,31 @@ async def test_outcome_column_variants():
         await canvas.update_entries(
             [
                 _entry(tool_name="ok_call", decision="allowed", ok=True),
-                _entry(tool_name="failed_call", decision="approved", ok=False, error="boom"),
-                _entry(tool_name="blocked_call", decision="denied", ok=False, duration_ms=0),
-                _entry(tool_name="timeout_call", decision="denied-timeout", ok=False, duration_ms=0),
-                _entry(tool_name="downgraded_call", decision="downgraded", ok=False, duration_ms=0),
+                _entry(
+                    tool_name="failed_call", decision="approved", ok=False, error="boom"
+                ),
+                _entry(
+                    tool_name="blocked_call", decision="denied", ok=False, duration_ms=0
+                ),
+                _entry(
+                    tool_name="timeout_call",
+                    decision="denied-timeout",
+                    ok=False,
+                    duration_ms=0,
+                ),
+                _entry(
+                    tool_name="downgraded_call",
+                    decision="downgraded",
+                    ok=False,
+                    duration_ms=0,
+                ),
             ]
         )
         await pilot.pause()
         table = app.query_one("#mcp-audit-table", DataTable)
         outcomes = {
-            _row_texts(table, i)[1].split("::")[-1]: _row_texts(table, i)[5] for i in range(table.row_count)
+            _row_texts(table, i)[1].split("::")[-1]: _row_texts(table, i)[5]
+            for i in range(table.row_count)
         }
         assert outcomes["ok_call"] == "OK"
         assert outcomes["failed_call"] == "Failed"
@@ -409,12 +427,22 @@ async def test_filters_combine_with_and_semantics():
 @pytest.mark.asyncio
 async def test_select_options_cover_full_decision_and_initiator_vocabulary():
     app = AuditModeApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         decision_select = app.query_one("#mcp-audit-filter-decision", Select)
         initiator_select = app.query_one("#mcp-audit-filter-initiator", Select)
-        decision_values = {value for _, value in decision_select._options if value is not Select.NULL}
-        initiator_values = {value for _, value in initiator_select._options if value is not Select.NULL}
-        assert decision_values == {"allowed", "approved", "denied", "denied-timeout", "downgraded"}
+        decision_values = {
+            value for _, value in decision_select._options if value is not Select.NULL
+        }
+        initiator_values = {
+            value for _, value in initiator_select._options if value is not Select.NULL
+        }
+        assert decision_values == {
+            "allowed",
+            "approved",
+            "denied",
+            "denied-timeout",
+            "downgraded",
+        }
         assert initiator_values == {"test", "agent", "system"}
         assert decision_select.value is Select.NULL
         assert initiator_select.value is Select.NULL
@@ -521,8 +549,12 @@ async def test_table_and_filter_bar_have_nonzero_geometry_with_bundled_css():
         await pilot.pause()
 
         table = app.query_one("#mcp-audit-table", DataTable)
-        assert table.size.width > 0, "audit table collapsed to zero width under bundled CSS"
-        assert table.size.height > 0, "audit table collapsed to zero height under bundled CSS"
+        assert table.size.width > 0, (
+            "audit table collapsed to zero width under bundled CSS"
+        )
+        assert table.size.height > 0, (
+            "audit table collapsed to zero height under bundled CSS"
+        )
         # T9: `height: auto; max-height: 70%;` (bundle-pinned below) must
         # make the table hug its own row count instead of ballooning to
         # fill the whole canvas the way a bare `height: 1fr` DataTable does
@@ -535,8 +567,12 @@ async def test_table_and_filter_bar_have_nonzero_geometry_with_bundled_css():
         )
 
         text_input = app.query_one("#mcp-audit-filter-text", Input)
-        assert text_input.size.width > 0, "filter text Input collapsed to zero width under bundled CSS"
-        assert text_input.size.height > 0, "filter text Input collapsed to zero height under bundled CSS"
+        assert text_input.size.width > 0, (
+            "filter text Input collapsed to zero width under bundled CSS"
+        )
+        assert text_input.size.height > 0, (
+            "filter text Input collapsed to zero height under bundled CSS"
+        )
 
         decision_select = app.query_one("#mcp-audit-filter-decision", Select)
         assert decision_select.size.width > 0, (
@@ -611,7 +647,9 @@ def test_filter_decision_select_width_rule_pinned_in_bundle_source_and_bundle() 
     )
 
 
-def test_filter_initiator_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:
+def test_filter_initiator_select_width_rule_pinned_in_bundle_source_and_bundle() -> (
+    None
+):
     """T9: same fix, same rationale, as the decision Select above.
     Checks DEFAULT_CSS, bundle-source, and bundle to prevent silent drift."""
     _assert_rule_pinned_in_default_css_bundle_source_and_bundle(
@@ -701,8 +739,16 @@ async def test_findings_render_from_a_fake_payload():
         canvas = app.query_one(MCPAuditMode)
         await canvas.update_findings(
             [
-                _finding(severity="high", finding_type="orphaned_path_scope", message="Needs review"),
-                _finding(severity="low", finding_type="stale_binding", message="Check binding"),
+                _finding(
+                    severity="high",
+                    finding_type="orphaned_path_scope",
+                    message="Needs review",
+                ),
+                _finding(
+                    severity="low",
+                    finding_type="stale_binding",
+                    message="Check binding",
+                ),
             ],
             source="server",
         )
@@ -852,7 +898,9 @@ async def test_server_source_zero_findings_shows_distinct_empty_copy():
 
         await canvas.update_findings(None, source="server")
         await pilot.pause()
-        failure_message = str(app.query_one("#mcp-audit-findings-empty-message").renderable)
+        failure_message = str(
+            app.query_one("#mcp-audit-findings-empty-message").renderable
+        )
         assert failure_message != message
 
 
@@ -933,8 +981,12 @@ async def test_subview_strip_and_findings_table_have_nonzero_geometry_with_bundl
         )
 
         table = app.query_one("#mcp-audit-findings-table", DataTable)
-        assert table.size.width > 0, "findings table collapsed to zero width under bundled CSS"
-        assert table.size.height > 0, "findings table collapsed to zero height under bundled CSS"
+        assert table.size.width > 0, (
+            "findings table collapsed to zero width under bundled CSS"
+        )
+        assert table.size.height > 0, (
+            "findings table collapsed to zero height under bundled CSS"
+        )
         # T9: same `height: auto; max-height: 70%;` hugging discipline as
         # the Executions table above -- header + 3 rows, generous slack.
         assert table.size.height <= 6, (

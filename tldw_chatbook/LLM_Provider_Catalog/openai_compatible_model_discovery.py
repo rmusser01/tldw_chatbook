@@ -49,6 +49,8 @@ _EXPLICIT_OPENAI_COMPATIBLE_ENDPOINT_PATHS = frozenset(
         "/v1/models",
         "/completion",
         "/completions",
+        "/api/v1",
+        "/api/paas/v4",
     }
 )
 _EXACT_SENSITIVE_METADATA_KEYS = frozenset(
@@ -98,6 +100,32 @@ _COMPACT_SENSITIVE_METADATA_KEY_SUBSTRINGS = frozenset(
 )
 _COMPACT_SENSITIVE_METADATA_KEY_SUFFIXES = frozenset({"token"})
 
+_ANTHROPIC_PROVIDER_KEY = "anthropic"
+_ANTHROPIC_VERSION_HEADER = "2023-06-01"
+_ANTHROPIC_MODELS_PAGE_LIMIT = 1000
+_ANTHROPIC_MAX_MODEL_PAGES = 10
+
+
+def build_discovery_auth_headers(provider_identity: str, api_key: str | None) -> dict[str, str]:
+    """Return provider-appropriate auth headers for a models request.
+
+    Args:
+        provider_identity: Provider name/identity used to pick the auth scheme
+            (Anthropic gets x-api-key; everything else gets a Bearer token).
+        api_key: The provider API key, or None for unauthenticated access.
+
+    Returns:
+        dict[str, str]: Headers for the request; empty when no key is given.
+    """
+    if not api_key:
+        return {}
+    if _normalized_provider_identity(provider_identity) == _ANTHROPIC_PROVIDER_KEY:
+        return {
+            "x-api-key": api_key,
+            "anthropic-version": _ANTHROPIC_VERSION_HEADER,
+        }
+    return {"Authorization": f"Bearer {api_key}"}
+
 
 def _normalized_provider_identity(provider_identity: str | None) -> str:
     """Return a stable provider identity string for endpoint policy checks."""
@@ -114,7 +142,11 @@ def _parse_endpoint(endpoint: str | None) -> ParseResult | None:
         parsed = urlparse(candidate)
     except ValueError:
         return None
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or not parsed.hostname
+    ):
         return None
     try:
         parsed.port
@@ -163,6 +195,8 @@ def _models_path_for_endpoint_path(path: str) -> str | None:
         return normalized_path
     if normalized_path == "/v1":
         return "/v1/models"
+    if normalized_path in {"/api/v1", "/api/paas/v4"}:
+        return f"{normalized_path}/models"
     if normalized_path in {"/completion", "/completions"}:
         return "/v1/models"
     if normalized_path.endswith("/v1/chat/completions"):
@@ -227,7 +261,14 @@ def build_models_url(endpoint: str, provider_identity: str) -> str:
         base_parsed = _parse_endpoint(base_url)
         if base_parsed is not None:
             return urlunparse(
-                (base_parsed.scheme, _safe_netloc(base_parsed), "/v1/models", "", "", "")
+                (
+                    base_parsed.scheme,
+                    _safe_netloc(base_parsed),
+                    "/v1/models",
+                    "",
+                    "",
+                    "",
+                )
             )
 
     models_path = _models_path_for_endpoint_path(path) or path
@@ -248,7 +289,11 @@ def fingerprint_endpoint(endpoint: str) -> str:
         raw_fingerprint = str(endpoint or "").split("?", 1)[0].split("#", 1)[0].strip()
         if "@" in raw_fingerprint:
             scheme, separator, _rest = raw_fingerprint.partition("://")
-            return f"{scheme}{separator}[invalid-endpoint]" if separator else "[invalid-endpoint]"
+            return (
+                f"{scheme}{separator}[invalid-endpoint]"
+                if separator
+                else "[invalid-endpoint]"
+            )
         return raw_fingerprint
 
     path = (parsed.path or "").rstrip("/") or "/"
@@ -259,15 +304,21 @@ def _is_sensitive_metadata_key(key: object) -> bool:
     """Return whether a metadata key looks credential-bearing."""
     normalized_key = str(key).strip().lower().replace("-", "_")
     compact_key = normalized_key.replace("_", "")
-    return normalized_key in _EXACT_SENSITIVE_METADATA_KEYS or any(
-        sensitive_key in normalized_key
-        for sensitive_key in _SENSITIVE_METADATA_KEY_SUBSTRINGS
-    ) or compact_key in _COMPACT_SENSITIVE_METADATA_KEYS or any(
-        sensitive_key in compact_key
-        for sensitive_key in _COMPACT_SENSITIVE_METADATA_KEY_SUBSTRINGS
-    ) or any(
-        compact_key.endswith(sensitive_suffix)
-        for sensitive_suffix in _COMPACT_SENSITIVE_METADATA_KEY_SUFFIXES
+    return (
+        normalized_key in _EXACT_SENSITIVE_METADATA_KEYS
+        or any(
+            sensitive_key in normalized_key
+            for sensitive_key in _SENSITIVE_METADATA_KEY_SUBSTRINGS
+        )
+        or compact_key in _COMPACT_SENSITIVE_METADATA_KEYS
+        or any(
+            sensitive_key in compact_key
+            for sensitive_key in _COMPACT_SENSITIVE_METADATA_KEY_SUBSTRINGS
+        )
+        or any(
+            compact_key.endswith(sensitive_suffix)
+            for sensitive_suffix in _COMPACT_SENSITIVE_METADATA_KEY_SUFFIXES
+        )
     )
 
 
@@ -389,47 +440,98 @@ async def discover_openai_compatible_models(
             ),
         )
 
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+    headers = build_discovery_auth_headers(provider, api_key) or None
+    paginate = _normalized_provider_identity(provider) == _ANTHROPIC_PROVIDER_KEY
 
-    async def _request_payload(active_client: httpx.AsyncClient) -> tuple[Mapping[str, Any] | None, ModelDiscoveryResult | None]:
-        try:
-            response = await active_client.get(models_url, headers=headers)
-            response.raise_for_status()
-        except httpx.HTTPError:
-            return None, ModelDiscoveryResult(
-                provider=provider,
-                provider_list_key=provider_list_key,
-                endpoint_fingerprint=endpoint_fingerprint,
-                status="error",
-                error=_discovery_error(
-                    "request_failed",
-                    "Model discovery request failed.",
-                    "Check the endpoint URL, server availability, and credentials.",
-                ),
-            )
-
-        try:
-            payload = response.json()
-        except ValueError:
-            return None, ModelDiscoveryResult(
-                provider=provider,
-                provider_list_key=provider_list_key,
-                endpoint_fingerprint=endpoint_fingerprint,
-                status="error",
-                error=_discovery_error(
-                    "invalid_response",
-                    "The models endpoint did not return valid JSON.",
-                    "Use an endpoint that returns a JSON object with a data array of model IDs.",
-                ),
-            )
-        return payload, None
+    async def _request_payloads(
+        active_client: httpx.AsyncClient,
+    ) -> tuple[list[Mapping[str, Any]] | None, ModelDiscoveryResult | None]:
+        payloads: list[Mapping[str, Any]] = []
+        params: dict[str, Any] | None = (
+            {"limit": _ANTHROPIC_MODELS_PAGE_LIMIT} if paginate else None
+        )
+        for _page in range(_ANTHROPIC_MAX_MODEL_PAGES if paginate else 1):
+            try:
+                response = await active_client.get(models_url, headers=headers, params=params)
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in {401, 403}:
+                    return None, ModelDiscoveryResult(
+                        provider=provider,
+                        provider_list_key=provider_list_key,
+                        endpoint_fingerprint=endpoint_fingerprint,
+                        status="error",
+                        error=_discovery_error(
+                            "missing_credentials",
+                            "The models endpoint rejected the configured credentials.",
+                            "Check the API key configured for this provider.",
+                        ),
+                    )
+                return None, ModelDiscoveryResult(
+                    provider=provider,
+                    provider_list_key=provider_list_key,
+                    endpoint_fingerprint=endpoint_fingerprint,
+                    status="error",
+                    error=_discovery_error(
+                        "request_failed",
+                        "Model discovery request failed.",
+                        "Check the endpoint URL, server availability, and credentials.",
+                    ),
+                )
+            except httpx.HTTPError:
+                return None, ModelDiscoveryResult(
+                    provider=provider,
+                    provider_list_key=provider_list_key,
+                    endpoint_fingerprint=endpoint_fingerprint,
+                    status="error",
+                    error=_discovery_error(
+                        "request_failed",
+                        "Model discovery request failed.",
+                        "Check the endpoint URL, server availability, and credentials.",
+                    ),
+                )
+            try:
+                payload = response.json()
+            except ValueError:
+                return None, ModelDiscoveryResult(
+                    provider=provider,
+                    provider_list_key=provider_list_key,
+                    endpoint_fingerprint=endpoint_fingerprint,
+                    status="error",
+                    error=_discovery_error(
+                        "invalid_response",
+                        "The models endpoint did not return valid JSON.",
+                        "Use an endpoint that returns a JSON object with a data array of model IDs.",
+                    ),
+                )
+            if not isinstance(payload, Mapping) or not isinstance(payload.get("data"), list):
+                return None, ModelDiscoveryResult(
+                    provider=provider,
+                    provider_list_key=provider_list_key,
+                    endpoint_fingerprint=endpoint_fingerprint,
+                    status="error",
+                    error=_discovery_error(
+                        "invalid_response",
+                        "The models endpoint did not return a valid OpenAI-compatible response.",
+                        "Use an endpoint that returns a JSON object with a data array of model IDs.",
+                    ),
+                )
+            payloads.append(payload)
+            if not paginate:
+                break
+            last_id = payload.get("last_id")
+            if bool(payload.get("has_more")) and isinstance(last_id, str) and last_id:
+                params = {"limit": _ANTHROPIC_MODELS_PAGE_LIMIT, "after_id": last_id}
+                continue
+            break
+        return payloads, None
 
     try:
         if client is not None:
-            payload, request_error = await _request_payload(client)
+            payloads, request_error = await _request_payloads(client)
         else:
             async with httpx.AsyncClient(timeout=timeout_seconds) as active_client:
-                payload, request_error = await _request_payload(active_client)
+                payloads, request_error = await _request_payloads(active_client)
     except httpx.HTTPError:
         return ModelDiscoveryResult(
             provider=provider,
@@ -444,7 +546,7 @@ async def discover_openai_compatible_models(
         )
     if request_error is not None:
         return request_error
-    if payload is None:
+    if not payloads:
         return ModelDiscoveryResult(
             provider=provider,
             provider_list_key=provider_list_key,
@@ -457,10 +559,14 @@ async def discover_openai_compatible_models(
             ),
         )
 
+    combined_data: list[Any] = []
+    for payload in payloads:
+        combined_data.extend(payload["data"])
+
     now_iso = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     try:
         models = normalize_models_response(
-            payload,
+            {"data": combined_data},
             provider=provider,
             provider_list_key=provider_list_key,
             endpoint_fingerprint=endpoint_fingerprint or "",

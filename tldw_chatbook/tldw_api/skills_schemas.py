@@ -44,7 +44,9 @@ def _validate_supporting_files(
             raise ValueError(f"Supporting file {filename} cannot be null")
         non_null_count += 1
         if non_null_count > MAX_SUPPORTING_FILES_COUNT:
-            raise ValueError(f"Too many supporting files ({non_null_count}); maximum is {MAX_SUPPORTING_FILES_COUNT}")
+            raise ValueError(
+                f"Too many supporting files ({non_null_count}); maximum is {MAX_SUPPORTING_FILES_COUNT}"
+            )
         file_bytes = len(content.encode("utf-8"))
         if file_bytes > MAX_SUPPORTING_FILE_BYTES:
             raise ValueError(f"Supporting file {filename} exceeds 500KB limit")
@@ -82,7 +84,9 @@ class SkillCreate(BaseModel):
 
     @field_validator("supporting_files")
     @classmethod
-    def validate_supporting_files(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+    def validate_supporting_files(
+        cls, value: dict[str, str] | None
+    ) -> dict[str, str] | None:
         validated = _validate_supporting_files(value, allow_deletes=False)
         return validated  # type: ignore[return-value]
 
@@ -93,7 +97,9 @@ class SkillUpdate(BaseModel):
 
     @field_validator("supporting_files")
     @classmethod
-    def validate_supporting_files(cls, value: dict[str, str | None] | None) -> dict[str, str | None] | None:
+    def validate_supporting_files(
+        cls, value: dict[str, str | None] | None
+    ) -> dict[str, str | None] | None:
         return _validate_supporting_files(value, allow_deletes=True)
 
 
@@ -160,7 +166,9 @@ class SkillImportRequest(BaseModel):
 
     @field_validator("supporting_files")
     @classmethod
-    def validate_supporting_files(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+    def validate_supporting_files(
+        cls, value: dict[str, str] | None
+    ) -> dict[str, str] | None:
         validated = _validate_supporting_files(value, allow_deletes=False)
         return validated  # type: ignore[return-value]
 

@@ -19,7 +19,13 @@ _KNOWN_SERVER_CREDENTIAL_PURPOSES = (
     SERVER_CREDENTIAL_API_KEY,
     SERVER_CREDENTIAL_BEARER_TOKEN,
 )
-_SECURE_KEYRING_MODULE_PARTS = ("macos", "windows", "secretservice", "libsecret", "kwallet")
+_SECURE_KEYRING_MODULE_PARTS = (
+    "macos",
+    "windows",
+    "secretservice",
+    "libsecret",
+    "kwallet",
+)
 _INSECURE_KEYRING_MODULE_PARTS = ("fail", "null", "plaintext", "file")
 
 
@@ -128,8 +134,12 @@ def _normalize_scope(scope: ServerCredentialScope) -> ServerCredentialScope:
     if principal_id is not None:
         principal_id = _normalize_non_empty(principal_id, "principal_id")
     return ServerCredentialScope(
-        server_profile_id=_normalize_non_empty(scope.server_profile_id, "server_profile_id"),
-        normalized_origin=_normalize_non_empty(scope.normalized_origin, "normalized_origin"),
+        server_profile_id=_normalize_non_empty(
+            scope.server_profile_id, "server_profile_id"
+        ),
+        normalized_origin=_normalize_non_empty(
+            scope.normalized_origin, "normalized_origin"
+        ),
         credential_type=_normalize_purpose(scope.credential_type),
         principal_id=principal_id,
     )
@@ -154,15 +164,22 @@ def _scope_from_index_entry(entry: Any) -> ServerCredentialScope | None:
     normalized_origin = entry.get("normalized_origin")
     credential_type = entry.get("credential_type")
     principal_id = entry.get("principal_id")
-    if not all(isinstance(value, str) for value in [server_profile_id, normalized_origin, credential_type]):
+    if not all(
+        isinstance(value, str)
+        for value in [server_profile_id, normalized_origin, credential_type]
+    ):
         return None
     if principal_id is not None and not isinstance(principal_id, str):
         return None
 
     try:
         return ServerCredentialScope(
-            server_profile_id=_normalize_non_empty(server_profile_id, "server_profile_id"),
-            normalized_origin=_normalize_non_empty(normalized_origin, "normalized_origin"),
+            server_profile_id=_normalize_non_empty(
+                server_profile_id, "server_profile_id"
+            ),
+            normalized_origin=_normalize_non_empty(
+                normalized_origin, "normalized_origin"
+            ),
             credential_type=_normalize_purpose(credential_type),
             principal_id=principal_id,
         )
@@ -247,7 +264,9 @@ def is_secure_keyring_backend(keyring_backend: Any) -> bool:
     return _resolve_secure_keyring_backend(keyring_backend, seen=set()) is not None
 
 
-def _resolve_secure_keyring_backend(keyring_backend: Any, *, seen: set[int]) -> Any | None:
+def _resolve_secure_keyring_backend(
+    keyring_backend: Any, *, seen: set[int]
+) -> Any | None:
     backend_id = id(keyring_backend)
     if backend_id in seen:
         return None
@@ -270,7 +289,9 @@ def _resolve_secure_keyring_backend(keyring_backend: Any, *, seen: set[int]) -> 
     return keyring_backend
 
 
-def build_default_server_credential_store(keyring_backend: Any | None = None) -> ServerCredentialStore:
+def build_default_server_credential_store(
+    keyring_backend: Any | None = None,
+) -> ServerCredentialStore:
     if keyring_backend is None:
         import keyring
 
@@ -280,7 +301,9 @@ def build_default_server_credential_store(keyring_backend: Any | None = None) ->
         keyring_backend = get_keyring()
     secure_backend = _resolve_secure_keyring_backend(keyring_backend, seen=set())
     if secure_backend is None:
-        raise CredentialStoreUnavailable("No secure OS-backed credential store is available.")
+        raise CredentialStoreUnavailable(
+            "No secure OS-backed credential store is available."
+        )
     return KeyringServerCredentialStore(keyring_backend=secure_backend)
 
 
@@ -357,7 +380,10 @@ class KeyringServerCredentialStore:
         self._save_index(scopes)
 
     def _delete_index_record(self) -> None:
-        if self._keyring.get_password(self.service_name, _KEYRING_INDEX_USERNAME) is None:
+        if (
+            self._keyring.get_password(self.service_name, _KEYRING_INDEX_USERNAME)
+            is None
+        ):
             return
 
         values = getattr(self._keyring, "values", None)
@@ -397,17 +423,23 @@ class KeyringServerCredentialStore:
 
     def set_scoped_secret(self, scope: ServerCredentialScope, secret: str) -> None:
         scope = _normalize_scope(scope)
-        self._keyring.set_password(self.service_name, _username_for_scope(scope), secret)
+        self._keyring.set_password(
+            self.service_name, _username_for_scope(scope), secret
+        )
         self._add_scope_to_index(scope)
 
     def get_scoped_secret(self, scope: ServerCredentialScope) -> str | None:
         scope = _normalize_scope(scope)
-        secret = self._keyring.get_password(self.service_name, _username_for_scope(scope))
+        secret = self._keyring.get_password(
+            self.service_name, _username_for_scope(scope)
+        )
         if secret is not None:
             return secret
         if not _is_legacy_scope(scope):
             return None
-        return self._keyring.get_password(self.service_name, _legacy_username_for_scope(scope))
+        return self._keyring.get_password(
+            self.service_name, _legacy_username_for_scope(scope)
+        )
 
     def delete_scoped_secret(self, scope: ServerCredentialScope) -> None:
         scope = _normalize_scope(scope)
@@ -426,7 +458,9 @@ class KeyringServerCredentialStore:
             return
 
         self._keyring.delete_password(self.service_name, username)
-        legacy_secret_exists = self._keyring.get_password(self.service_name, legacy_username) is not None
+        legacy_secret_exists = (
+            self._keyring.get_password(self.service_name, legacy_username) is not None
+        )
         if _is_legacy_scope(scope) and legacy_secret_exists:
             self._keyring.delete_password(self.service_name, legacy_username)
         self._remove_scope_from_index(scope)
@@ -437,7 +471,9 @@ class KeyringServerCredentialStore:
             if scope.server_profile_id == normalized_server_id:
                 self.delete_scoped_secret(scope)
         for purpose in _KNOWN_SERVER_CREDENTIAL_PURPOSES:
-            self.delete_scoped_secret(ServerCredentialScope.legacy(normalized_server_id, purpose))
+            self.delete_scoped_secret(
+                ServerCredentialScope.legacy(normalized_server_id, purpose)
+            )
 
     def clear_all(self) -> None:
         for scope in list(self._load_index()):

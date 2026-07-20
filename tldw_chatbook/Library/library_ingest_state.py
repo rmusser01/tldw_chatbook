@@ -6,6 +6,7 @@ plus a small local form echo into the immutable state
 renders from. Textual-free (stdlib only) so it is unit-testable without
 booting the TUI, mirroring ``library_notes_sync_state.py``.
 """
+
 from __future__ import annotations
 
 import time

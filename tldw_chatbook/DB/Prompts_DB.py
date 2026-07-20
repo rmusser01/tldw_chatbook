@@ -35,14 +35,16 @@ import time
 import uuid
 import re
 from contextlib import contextmanager
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from math import ceil
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional, Union
+
 #
 # Third-Party Libraries
 from loguru import logger
 from loguru import logger as logging
+
 #
 # Local Imports
 from .sql_validation import validate_table_name, validate_column_name
@@ -53,26 +55,35 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 #
 # Functions:
 
+
 # --- Custom Exceptions (Mirrors Media_DB_v2) ---
 class DatabaseError(Exception):
     """Base exception for database related errors."""
+
     pass
 
 
 class SchemaError(DatabaseError):
     """Exception for schema version mismatches or migration failures."""
+
     pass
 
 
 class InputError(ValueError):
     """Custom exception for input validation errors."""
+
     pass
 
 
 class ConflictError(DatabaseError):
     """Indicates a conflict due to concurrent modification (version mismatch)."""
 
-    def __init__(self, message="Conflict detected: Record modified concurrently.", entity=None, identifier=None):
+    def __init__(
+        self,
+        message="Conflict detected: Record modified concurrently.",
+        entity=None,
+        identifier=None,
+    ):
         super().__init__(message)
         self.entity = entity
         self.identifier = identifier
@@ -214,8 +225,12 @@ class PromptsDatabase:
     );
     """
 
-    def __init__(self, db_path: Union[str, Path], client_id: str,
-                 check_integrity_on_startup: bool = False):
+    def __init__(
+        self,
+        db_path: Union[str, Path],
+        client_id: str,
+        check_integrity_on_startup: bool = False,
+    ):
         """
         Initializes the PromptsDatabase instance, sets up the connection pool (via threading.local),
         and ensures the database schema is correctly initialized or migrated.
@@ -234,7 +249,7 @@ class PromptsDatabase:
             self.is_memory_db = False
             self.db_path = db_path.resolve()
         else:  # Treat as string
-            self.is_memory_db = (db_path == ':memory:')
+            self.is_memory_db = db_path == ":memory:"
             if not self.is_memory_db:
                 self.db_path = Path(db_path).resolve()
             else:
@@ -242,7 +257,7 @@ class PromptsDatabase:
                 self.db_path = None
 
         # Store the path as a string for convenience/logging
-        self.db_path_str = str(self.db_path) if not self.is_memory_db else ':memory:'
+        self.db_path_str = str(self.db_path) if not self.is_memory_db else ":memory:"
 
         # Validate client_id
         if not client_id:
@@ -255,9 +270,13 @@ class PromptsDatabase:
                 self.db_path.parent.mkdir(parents=True, exist_ok=True)
             except OSError as e:
                 # Catch potential errors creating the directory (e.g., permissions)
-                raise DatabaseError(f"Failed to create database directory {self.db_path.parent}: {e}") from e
+                raise DatabaseError(
+                    f"Failed to create database directory {self.db_path.parent}: {e}"
+                ) from e
 
-        logging.info(f"Initializing PromptsDatabase object for path: {self.db_path_str} [Client ID: {self.client_id}]")
+        logging.info(
+            f"Initializing PromptsDatabase object for path: {self.db_path_str} [Client ID: {self.client_id}]"
+        )
 
         # Initialize thread-local storage for connections
         self._local = threading.local()
@@ -269,39 +288,53 @@ class PromptsDatabase:
             # This establishes the first connection for the current thread
             # and applies/verifies the schema.
             self._initialize_schema()
-            
+
             # Run integrity check if requested and not in-memory
             if check_integrity_on_startup and not self.is_memory_db:
-                logging.info(f"Running startup integrity check for PromptsDatabase")
+                logging.info("Running startup integrity check for PromptsDatabase")
                 if not self.check_integrity():
-                    logging.warning(f"Database integrity check failed for {self.db_path_str}. "
-                                  "Consider running repairs or restoring from backup.")
+                    logging.warning(
+                        f"Database integrity check failed for {self.db_path_str}. "
+                        "Consider running repairs or restoring from backup."
+                    )
                     # Note: We don't raise an exception here to allow the app to continue
                     # with potentially degraded functionality.
-            
-            initialization_successful = True  # Mark as successful if no exception occurred
+
+            initialization_successful = (
+                True  # Mark as successful if no exception occurred
+            )
         except (DatabaseError, SchemaError, sqlite3.Error) as e:
             # Catch specific DB/Schema errors and general SQLite errors during init
-            logging.opt(exception=True).critical(f"FATAL: Prompts DB Initialization failed for {self.db_path_str}: {e}")
+            logging.opt(exception=True).critical(
+                f"FATAL: Prompts DB Initialization failed for {self.db_path_str}: {e}"
+            )
             # Attempt to clean up the connection before raising
-            self.close_connection() # Important to call this if available
+            self.close_connection()  # Important to call this if available
             # Re-raise as a DatabaseError to signal catastrophic failure
             raise DatabaseError(f"Prompts Database initialization failed: {e}") from e
         except Exception as e:
             # Catch any other unexpected errors during initialization
-            logging.opt(exception=True).critical(f"FATAL: Unexpected error during Prompts DB Initialization for {self.db_path_str}: {e}")
+            logging.opt(exception=True).critical(
+                f"FATAL: Unexpected error during Prompts DB Initialization for {self.db_path_str}: {e}"
+            )
             # Attempt cleanup
-            self.close_connection() # Important to call this
+            self.close_connection()  # Important to call this
             # Re-raise as a DatabaseError
-            raise DatabaseError(f"Unexpected prompts database initialization error: {e}") from e
+            raise DatabaseError(
+                f"Unexpected prompts database initialization error: {e}"
+            ) from e
         finally:
             # Log completion status based on the flag
             if initialization_successful:
-                logging.debug(f"PromptsDatabase initialization completed successfully for {self.db_path_str}")
+                logging.debug(
+                    f"PromptsDatabase initialization completed successfully for {self.db_path_str}"
+                )
             else:
                 # This path indicates an exception was caught and raised above.
                 # Logging here provides context that the __init__ block finished, albeit with failure.
-                logging.error(f"PromptsDatabase initialization block finished for {self.db_path_str}, but failed.")
+                logging.error(
+                    f"PromptsDatabase initialization block finished for {self.db_path_str}, but failed."
+                )
 
     # --- Connection Management ---
     def _get_thread_connection(self) -> sqlite3.Connection:
@@ -321,15 +354,20 @@ class PromptsDatabase:
         Raises:
             DatabaseError: If connecting to the database fails.
         """
-        conn = getattr(self._local, 'conn', None)
+        conn = getattr(self._local, "conn", None)
         is_closed = conn is None
         if conn:
-            last_used = getattr(self._local, 'conn_last_used', None)
-            if last_used is None or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS:
+            last_used = getattr(self._local, "conn_last_used", None)
+            if (
+                last_used is None
+                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
+            ):
                 try:
                     conn.execute("SELECT 1")
                 except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    logging.warning(f"Thread-local connection to {self.db_path_str} was closed. Reopening.")
+                    logging.warning(
+                        f"Thread-local connection to {self.db_path_str} was closed. Reopening."
+                    )
                     is_closed = True
                     try:
                         conn.close()
@@ -343,7 +381,7 @@ class PromptsDatabase:
                     self.db_path_str,
                     detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
                     check_same_thread=False,  # Required for threading.local
-                    timeout=10  # seconds
+                    timeout=10,  # seconds
                 )
                 conn.row_factory = sqlite3.Row
                 if not self.is_memory_db:
@@ -351,11 +389,16 @@ class PromptsDatabase:
                 conn.execute("PRAGMA foreign_keys = ON;")
                 self._local.conn = conn
                 logging.debug(
-                    f"Opened/Reopened SQLite connection to {self.db_path_str} [Client: {self.client_id}, Thread: {threading.current_thread().name}]")
+                    f"Opened/Reopened SQLite connection to {self.db_path_str} [Client: {self.client_id}, Thread: {threading.current_thread().name}]"
+                )
             except sqlite3.Error as e:
-                logging.opt(exception=True).error(f"Failed to connect to database at {self.db_path_str}: {e}")
+                logging.opt(exception=True).error(
+                    f"Failed to connect to database at {self.db_path_str}: {e}"
+                )
                 self._local.conn = None
-                raise DatabaseError(f"Failed to connect to database '{self.db_path_str}': {e}") from e
+                raise DatabaseError(
+                    f"Failed to connect to database '{self.db_path_str}': {e}"
+                ) from e
         self._local.conn_last_used = time.monotonic()
         return self._local.conn
 
@@ -363,16 +406,19 @@ class PromptsDatabase:
         return self._get_thread_connection()
 
     def close_connection(self):
-        if hasattr(self._local, 'conn') and self._local.conn is not None:
+        if hasattr(self._local, "conn") and self._local.conn is not None:
             try:
                 conn = self._local.conn
                 self._local.conn = None
                 conn.close()
-                logging.debug(f"Closed connection for thread {threading.current_thread().name}.")
+                logging.debug(
+                    f"Closed connection for thread {threading.current_thread().name}."
+                )
             except sqlite3.Error as e:
                 logging.warning(f"Error closing connection: {e}")
             finally:
-                if hasattr(self._local, 'conn'): self._local.conn = None
+                if hasattr(self._local, "conn"):
+                    self._local.conn = None
 
     def backup_database(self, backup_file_path: str) -> bool:
         """
@@ -384,13 +430,22 @@ class PromptsDatabase:
         Returns:
             bool: True if the backup was successful, False otherwise.
         """
-        logger.info(f"Starting database backup from '{self.db_path_str}' to '{backup_file_path}'")
+        logger.info(
+            f"Starting database backup from '{self.db_path_str}' to '{backup_file_path}'"
+        )
         backup_conn: Optional[sqlite3.Connection] = None
         try:
             # Ensure the backup file path is not the same as the source for file-based DBs
-            if not self.is_memory_db and self.db_path.resolve() == Path(backup_file_path).resolve():
-                logger.error("Backup path cannot be the same as the source database path.")
-                raise ValueError("Backup path cannot be the same as the source database path.")
+            if (
+                not self.is_memory_db
+                and self.db_path.resolve() == Path(backup_file_path).resolve()
+            ):
+                logger.error(
+                    "Backup path cannot be the same as the source database path."
+                )
+                raise ValueError(
+                    "Backup path cannot be the same as the source database path."
+                )
 
             src_conn = self.get_connection()
 
@@ -400,20 +455,28 @@ class PromptsDatabase:
             backup_conn = sqlite3.connect(str(backup_db_path_obj))
 
             logger.debug(f"Source DB connection: {src_conn}")
-            logger.debug(f"Backup DB connection: {backup_conn} to file {str(backup_db_path_obj)}")
+            logger.debug(
+                f"Backup DB connection: {backup_conn} to file {str(backup_db_path_obj)}"
+            )
 
             src_conn.backup(backup_conn, pages=0, progress=None)
 
-            logger.info(f"Database backup successful from '{self.db_path_str}' to '{str(backup_db_path_obj)}'")
+            logger.info(
+                f"Database backup successful from '{self.db_path_str}' to '{str(backup_db_path_obj)}'"
+            )
             return True
         except ValueError as ve:
             logger.opt(exception=True).error(f"ValueError during database backup: {ve}")
             return False
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"SQLite error during database backup: {e}")
+            logger.opt(exception=True).error(
+                f"SQLite error during database backup: {e}"
+            )
             return False
         except Exception as e:
-            logger.opt(exception=True).error(f"Unexpected error during database backup: {e}")
+            logger.opt(exception=True).error(
+                f"Unexpected error during database backup: {e}"
+            )
             return False
         finally:
             if backup_conn:
@@ -423,11 +486,11 @@ class PromptsDatabase:
                 except sqlite3.Error as e:
                     logger.warning(f"Error closing backup database connection: {e}")
             # Source connection (src_conn) is managed by the thread-local mechanism.
-    
+
     def check_integrity(self) -> bool:
         """
         Check the integrity of the database.
-        
+
         Returns:
             bool: True if integrity check passes, False otherwise
         """
@@ -436,20 +499,22 @@ class PromptsDatabase:
             cursor = conn.cursor()
             cursor.execute("PRAGMA integrity_check")
             result = cursor.fetchone()
-            
+
             is_ok = result and result[0] == "ok"
             if is_ok:
                 logging.info(f"Database integrity check passed: {self.db_path_str}")
             else:
                 logging.error(f"Database integrity check failed: {self.db_path_str}")
-            
+
             return is_ok
         except Exception as e:
             logging.error(f"Failed to check database integrity: {e}")
             return False
 
     # --- Query Execution ---
-    def execute_query(self, query: str, params: tuple = None, *, commit: bool = False) -> sqlite3.Cursor:
+    def execute_query(
+        self, query: str, params: tuple = None, *, commit: bool = False
+    ) -> sqlite3.Cursor:
         conn = self.get_connection()
         try:
             cursor = conn.cursor()
@@ -471,13 +536,19 @@ class PromptsDatabase:
                 logging.error(f"Sync Validation Failed: {e}")
                 raise e
             else:
-                logging.opt(exception=True).error(f"Integrity error: {query[:200]}... Error: {e}")
+                logging.opt(exception=True).error(
+                    f"Integrity error: {query[:200]}... Error: {e}"
+                )
                 raise DatabaseError(f"Integrity constraint violation: {e}") from e
         except sqlite3.Error as e:
-            logging.opt(exception=True).error(f"Query failed: {query[:200]}... Error: {e}")
+            logging.opt(exception=True).error(
+                f"Query failed: {query[:200]}... Error: {e}"
+            )
             raise DatabaseError(f"Query execution failed: {e}") from e
 
-    def execute_many(self, query: str, params_list: List[tuple], *, commit: bool = False) -> Optional[sqlite3.Cursor]:
+    def execute_many(
+        self, query: str, params_list: List[tuple], *, commit: bool = False
+    ) -> Optional[sqlite3.Cursor]:
         conn = self.get_connection()
         if not isinstance(params_list, list):
             raise TypeError("params_list must be a list.")
@@ -485,20 +556,30 @@ class PromptsDatabase:
             return None
         try:
             cursor = conn.cursor()
-            logging.debug(f"Executing Many: {query[:150]}... with {len(params_list)} sets.")
+            logging.debug(
+                f"Executing Many: {query[:150]}... with {len(params_list)} sets."
+            )
             cursor.executemany(query, params_list)
             if commit:
                 conn.commit()
                 logging.debug("Committed Many.")
             return cursor
         except sqlite3.IntegrityError as e:
-            logging.opt(exception=True).error(f"Integrity error during Execute Many: {query[:150]}... Error: {e}")
-            raise DatabaseError(f"Integrity constraint violation during batch: {e}") from e
+            logging.opt(exception=True).error(
+                f"Integrity error during Execute Many: {query[:150]}... Error: {e}"
+            )
+            raise DatabaseError(
+                f"Integrity constraint violation during batch: {e}"
+            ) from e
         except sqlite3.Error as e:
-            logging.opt(exception=True).error(f"Execute Many failed: {query[:150]}... Error: {e}")
+            logging.opt(exception=True).error(
+                f"Execute Many failed: {query[:150]}... Error: {e}"
+            )
             raise DatabaseError(f"Execute Many failed: {e}") from e
         except TypeError as te:
-            logging.opt(exception=True).error(f"TypeError during Execute Many: {te}. Check params_list format.")
+            logging.opt(exception=True).error(
+                f"TypeError during Execute Many: {te}. Check params_list format."
+            )
             raise TypeError(f"Parameter list format error: {te}") from te
 
     # --- Transaction Context ---
@@ -516,7 +597,9 @@ class PromptsDatabase:
                 logging.debug("Committed transaction.")
         except Exception as e:
             if not in_outer:
-                logging.error(f"Transaction failed, rolling back: {type(e).__name__} - {e}")
+                logging.error(
+                    f"Transaction failed, rolling back: {type(e).__name__} - {e}"
+                )
                 try:
                     conn.rollback()
                     logging.debug("Rollback successful.")
@@ -529,14 +612,16 @@ class PromptsDatabase:
         try:
             cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
             result = cursor.fetchone()
-            return result['version'] if result else 0
+            return result["version"] if result else 0
         except sqlite3.Error as e:
             if "no such table: schema_version" in str(e).lower():
                 return 0
             else:
                 raise DatabaseError(f"Could not determine schema version: {e}") from e
 
-    _SCHEMA_UPDATE_VERSION_SQL_V1 = "UPDATE schema_version SET version = 1 WHERE version = 0;"
+    _SCHEMA_UPDATE_VERSION_SQL_V1 = (
+        "UPDATE schema_version SET version = 1 WHERE version = 0;"
+    )
 
     _MIGRATIONS = {
         0: {
@@ -552,7 +637,9 @@ class PromptsDatabase:
     }
 
     def _apply_schema_v1(self, conn: sqlite3.Connection):
-        logging.info(f"Applying initial schema (Version 1) to DB: {self.db_path_str}...")
+        logging.info(
+            f"Applying initial schema (Version 1) to DB: {self.db_path_str}..."
+        )
         try:
             core_schema_script_with_version_update = f"""
                 {self._TABLES_SQL_V1}
@@ -563,35 +650,60 @@ class PromptsDatabase:
             with self.transaction():
                 logging.debug("[Schema V1] Applying Core Schema + Version Update...")
                 conn.executescript(core_schema_script_with_version_update)
-                logging.debug("[Schema V1] Core Schema script (incl. version update) executed.")
+                logging.debug(
+                    "[Schema V1] Core Schema script (incl. version update) executed."
+                )
                 # Validation
                 cursor = conn.execute("PRAGMA table_info(Prompts)")
-                columns = {row['name'] for row in cursor.fetchall()}
-                expected_cols = {'id', 'name', 'author', 'details', 'system_prompt', 'user_prompt', 'uuid',
-                                 'last_modified', 'version', 'client_id', 'deleted'}
+                columns = {row["name"] for row in cursor.fetchall()}
+                expected_cols = {
+                    "id",
+                    "name",
+                    "author",
+                    "details",
+                    "system_prompt",
+                    "user_prompt",
+                    "uuid",
+                    "last_modified",
+                    "version",
+                    "client_id",
+                    "deleted",
+                }
                 if not expected_cols.issubset(columns):
                     missing_cols = expected_cols - columns
-                    raise SchemaError(f"Validation Error: Prompts table missing columns: {missing_cols}")
+                    raise SchemaError(
+                        f"Validation Error: Prompts table missing columns: {missing_cols}"
+                    )
                 logging.debug("[Schema V1] Prompts table structure validated.")
-                cursor_check = conn.execute("SELECT version FROM schema_version LIMIT 1")
+                cursor_check = conn.execute(
+                    "SELECT version FROM schema_version LIMIT 1"
+                )
                 version_in_tx = cursor_check.fetchone()
-                if not version_in_tx or version_in_tx['version'] != 1:
-                    raise SchemaError("Schema version update did not take effect within transaction.")
-            logging.info(f"[Schema V1] Core Schema V1 applied and committed for DB: {self.db_path_str}.")
+                if not version_in_tx or version_in_tx["version"] != 1:
+                    raise SchemaError(
+                        "Schema version update did not take effect within transaction."
+                    )
+            logging.info(
+                f"[Schema V1] Core Schema V1 applied and committed for DB: {self.db_path_str}."
+            )
             try:
                 logging.debug("[Schema V1] Applying FTS Tables...")
                 conn.executescript(self._FTS_TABLES_SQL)
                 conn.commit()  # Commit FTS creation separately
                 logging.info("[Schema V1] FTS Tables created successfully.")
             except sqlite3.Error as fts_err:
-                logging.opt(exception=True).error(f"[Schema V1] Failed to create FTS tables: {fts_err}")
+                logging.opt(exception=True).error(
+                    f"[Schema V1] Failed to create FTS tables: {fts_err}"
+                )
                 # This might not be fatal if FTS is optional or can be rebuilt.
         except sqlite3.Error as e:
             logging.opt(exception=True).error(f"[Schema V1] Application failed: {e}")
             raise DatabaseError(f"DB schema V1 setup failed: {e}") from e
 
     def _apply_migration_v1_to_v2(self, conn: sqlite3.Connection):
-        logging.info(f"Applying prompts migration from version 1 to 2 for DB: {self.db_path_str}...")
+        logging.info(
+            f"Applying prompts migration from version 1 to 2 for DB: {self.db_path_str}..."
+        )
         migration_sql = """
         ALTER TABLE Prompts ADD COLUMN prompt_format TEXT NOT NULL DEFAULT 'legacy';
         ALTER TABLE Prompts ADD COLUMN prompt_schema_version INTEGER;
@@ -604,24 +716,34 @@ class PromptsDatabase:
                 conn.executescript(migration_sql)
 
                 cursor = conn.execute("PRAGMA table_info(Prompts)")
-                columns = {row['name'] for row in cursor.fetchall()}
+                columns = {row["name"] for row in cursor.fetchall()}
                 expected_cols = {
-                    'prompt_format',
-                    'prompt_schema_version',
-                    'prompt_definition',
+                    "prompt_format",
+                    "prompt_schema_version",
+                    "prompt_definition",
                 }
                 if not expected_cols.issubset(columns):
                     missing_cols = expected_cols - columns
-                    raise SchemaError(f"Validation Error: Prompts table missing migrated columns: {missing_cols}")
+                    raise SchemaError(
+                        f"Validation Error: Prompts table missing migrated columns: {missing_cols}"
+                    )
 
-                cursor_check = conn.execute("SELECT version FROM schema_version LIMIT 1")
+                cursor_check = conn.execute(
+                    "SELECT version FROM schema_version LIMIT 1"
+                )
                 version_in_tx = cursor_check.fetchone()
-                if not version_in_tx or version_in_tx['version'] != 2:
-                    raise SchemaError("Schema version update to 2 did not take effect within transaction.")
+                if not version_in_tx or version_in_tx["version"] != 2:
+                    raise SchemaError(
+                        "Schema version update to 2 did not take effect within transaction."
+                    )
 
-            logging.info(f"Prompts migration to version 2 applied successfully for DB: {self.db_path_str}.")
+            logging.info(
+                f"Prompts migration to version 2 applied successfully for DB: {self.db_path_str}."
+            )
         except sqlite3.Error as e:
-            logging.opt(exception=True).error(f"[Migration v1->v2] Failed during migration: {e}")
+            logging.opt(exception=True).error(
+                f"[Migration v1->v2] Failed during migration: {e}"
+            )
             raise DatabaseError(f"Migration v1->v2 failed: {e}") from e
 
     def _initialize_schema(self):
@@ -629,7 +751,9 @@ class PromptsDatabase:
         try:
             current_db_version = self._get_db_version(conn)
             target_version = self._CURRENT_SCHEMA_VERSION
-            logging.info(f"Checking DB schema. Current: {current_db_version}, Code supports: {target_version}")
+            logging.info(
+                f"Checking DB schema. Current: {current_db_version}, Code supports: {target_version}"
+            )
 
             if current_db_version == target_version:
                 logging.debug("Database schema is up to date.")
@@ -638,22 +762,29 @@ class PromptsDatabase:
                     conn.commit()
                     logging.debug("Verified FTS tables exist.")
                 except sqlite3.Error as fts_err:
-                    logging.warning(f"Could not verify/create FTS tables on correct schema: {fts_err}")
+                    logging.warning(
+                        f"Could not verify/create FTS tables on correct schema: {fts_err}"
+                    )
                 return
 
             if current_db_version > target_version:
                 raise SchemaError(
-                    f"DB schema version ({current_db_version}) is newer than supported ({target_version}).")
+                    f"DB schema version ({current_db_version}) is newer than supported ({target_version})."
+                )
 
             while current_db_version < target_version:
                 migration = self._MIGRATIONS.get(current_db_version)
                 if not migration:
-                    raise SchemaError(f"No migration path defined from version {current_db_version}.")
+                    raise SchemaError(
+                        f"No migration path defined from version {current_db_version}."
+                    )
 
                 next_version = migration["to_version"]
                 migration_func = getattr(self, migration["function"], None)
                 if migration_func is None:
-                    raise SchemaError(f"Migration function {migration['function']} not found.")
+                    raise SchemaError(
+                        f"Migration function {migration['function']} not found."
+                    )
 
                 logging.info(
                     f"Applying migration: {migration['description']} (v{current_db_version} -> v{next_version})"
@@ -671,22 +802,28 @@ class PromptsDatabase:
                 conn.commit()
                 logging.debug("Verified FTS tables exist after migrations.")
             except sqlite3.Error as fts_err:
-                logging.warning(f"Could not verify/create FTS tables after migrations: {fts_err}")
+                logging.warning(
+                    f"Could not verify/create FTS tables after migrations: {fts_err}"
+                )
 
-            logging.info(f"Database schema initialized/migrated to version {target_version}.")
+            logging.info(
+                f"Database schema initialized/migrated to version {target_version}."
+            )
         except (DatabaseError, SchemaError, sqlite3.Error) as e:
-            logging.opt(exception=True).error(f"Schema initialization/migration failed: {e}")
+            logging.opt(exception=True).error(
+                f"Schema initialization/migration failed: {e}"
+            )
             raise DatabaseError(f"Schema initialization failed: {e}") from e
 
     # --- Internal Helpers ---
     def _get_current_utc_timestamp_str(self) -> str:
-        return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
     def _generate_uuid(self) -> str:
         return str(uuid.uuid4())
 
     def _normalize_keyword(self, keyword: str) -> str:
-        return re.sub(r'\s+', ' ', keyword.strip().lower())
+        return re.sub(r"\s+", " ", keyword.strip().lower())
 
     def _normalize_prompt_format(self, prompt_format: Optional[str]) -> str:
         if prompt_format is None:
@@ -702,33 +839,50 @@ class PromptsDatabase:
             return prompt_definition
         if isinstance(prompt_definition, (dict, list)):
             return json.dumps(prompt_definition)
-        raise InputError("Prompt definition must be a JSON string, dict, list, or None.")
+        raise InputError(
+            "Prompt definition must be a JSON string, dict, list, or None."
+        )
 
-    def _get_next_version(self, conn: sqlite3.Connection, table: str, id_col: str, id_val: Any) -> Optional[
-        Tuple[int, int]]:
+    def _get_next_version(
+        self, conn: sqlite3.Connection, table: str, id_col: str, id_val: Any
+    ) -> Optional[Tuple[int, int]]:
         # Validate SQL identifiers to prevent injection
-        if not validate_table_name(table, 'prompts'):
+        if not validate_table_name(table, "prompts"):
             raise InputError(f"Invalid table name: {table}")
         if not validate_column_name(id_col, table):
             raise InputError(f"Invalid column name: {id_col}")
-            
+
         try:
-            cursor = conn.execute(f"SELECT version FROM {table} WHERE {id_col} = ? AND deleted = 0", (id_val,))
+            cursor = conn.execute(
+                f"SELECT version FROM {table} WHERE {id_col} = ? AND deleted = 0",
+                (id_val,),
+            )
             result = cursor.fetchone()
             if result:
-                current_version = result['version']
+                current_version = result["version"]
                 if isinstance(current_version, int):
                     return current_version, current_version + 1
                 else:
-                    logging.error(f"Invalid non-integer version '{current_version}' for {table} {id_col}={id_val}")
+                    logging.error(
+                        f"Invalid non-integer version '{current_version}' for {table} {id_col}={id_val}"
+                    )
                     return None
         except sqlite3.Error as e:
-            logging.error(f"DB error fetching version for {table} {id_col}={id_val}: {e}")
+            logging.error(
+                f"DB error fetching version for {table} {id_col}={id_val}: {e}"
+            )
             raise DatabaseError(f"Failed to fetch current version: {e}") from e
         return None
 
-    def _log_sync_event(self, conn: sqlite3.Connection, entity: str, entity_uuid: str, operation: str, version: int,
-                        payload: Optional[Dict] = None):
+    def _log_sync_event(
+        self,
+        conn: sqlite3.Connection,
+        entity: str,
+        entity_uuid: str,
+        operation: str,
+        version: int,
+        payload: Optional[Dict] = None,
+    ):
         if not entity or not entity_uuid or not operation:
             logging.error("Sync log attempt with missing entity, uuid, or operation.")
             return
@@ -742,29 +896,64 @@ class PromptsDatabase:
                     serializable_payload[key] = value.isoformat()
                 else:
                     serializable_payload[key] = value
-            payload_json = json.dumps(serializable_payload, separators=(',', ':'))
+            payload_json = json.dumps(serializable_payload, separators=(",", ":"))
         else:
-            payload_json = json.dumps(payload, separators=(',', ':')) if payload else None
+            payload_json = (
+                json.dumps(payload, separators=(",", ":")) if payload else None
+            )
         try:
-            conn.execute("""
+            conn.execute(
+                """
                          INSERT INTO sync_log (entity, entity_uuid, operation, timestamp, client_id, version, payload)
                          VALUES (?, ?, ?, ?, ?, ?, ?)
-                         """, (entity, entity_uuid, operation, current_time, client_id, version, payload_json))
-            logging.debug(f"Logged sync: {entity} {entity_uuid} {operation} v{version} at {current_time}")
+                         """,
+                (
+                    entity,
+                    entity_uuid,
+                    operation,
+                    current_time,
+                    client_id,
+                    version,
+                    payload_json,
+                ),
+            )
+            logging.debug(
+                f"Logged sync: {entity} {entity_uuid} {operation} v{version} at {current_time}"
+            )
         except sqlite3.Error as e:
-            logging.opt(exception=True).error(f"Failed insert sync_log for {entity} {entity_uuid}: {e}")
+            logging.opt(exception=True).error(
+                f"Failed insert sync_log for {entity} {entity_uuid}: {e}"
+            )
             raise DatabaseError(f"Failed to log sync event: {e}") from e
 
     # --- FTS Helper Methods ---
-    def _update_fts_prompt(self, conn: sqlite3.Connection, prompt_id: int, name: str, author: Optional[str],
-                           details: Optional[str], system_prompt: Optional[str], user_prompt: Optional[str]):
+    def _update_fts_prompt(
+        self,
+        conn: sqlite3.Connection,
+        prompt_id: int,
+        name: str,
+        author: Optional[str],
+        details: Optional[str],
+        system_prompt: Optional[str],
+        user_prompt: Optional[str],
+    ):
         try:
             conn.execute(
                 "INSERT OR REPLACE INTO prompts_fts (rowid, name, author, details, system_prompt, user_prompt) VALUES (?, ?, ?, ?, ?, ?)",
-                (prompt_id, name, author or "", details or "", system_prompt or "", user_prompt or ""))
+                (
+                    prompt_id,
+                    name,
+                    author or "",
+                    details or "",
+                    system_prompt or "",
+                    user_prompt or "",
+                ),
+            )
             logging.debug(f"Updated FTS for Prompt ID {prompt_id}")
         except sqlite3.Error as e:
-            logging.opt(exception=True).error(f"Failed FTS update Prompt ID {prompt_id}: {e}")
+            logging.opt(exception=True).error(
+                f"Failed FTS update Prompt ID {prompt_id}: {e}"
+            )
             raise DatabaseError(f"Failed FTS update Prompt ID {prompt_id}: {e}") from e
 
     def _delete_fts_prompt(self, conn: sqlite3.Connection, prompt_id: int):
@@ -772,41 +961,59 @@ class PromptsDatabase:
             conn.execute("DELETE FROM prompts_fts WHERE rowid = ?", (prompt_id,))
             logging.debug(f"Deleted FTS for Prompt ID {prompt_id}")
         except sqlite3.Error as e:
-            logging.opt(exception=True).error(f"Failed FTS delete Prompt ID {prompt_id}: {e}")
+            logging.opt(exception=True).error(
+                f"Failed FTS delete Prompt ID {prompt_id}: {e}"
+            )
             raise DatabaseError(f"Failed FTS delete Prompt ID {prompt_id}: {e}") from e
 
-    def _update_fts_prompt_keyword(self, conn: sqlite3.Connection, keyword_id: int, keyword: str):
+    def _update_fts_prompt_keyword(
+        self, conn: sqlite3.Connection, keyword_id: int, keyword: str
+    ):
         try:
-            conn.execute("INSERT OR REPLACE INTO prompt_keywords_fts (rowid, keyword) VALUES (?, ?)",
-                         (keyword_id, keyword))
+            conn.execute(
+                "INSERT OR REPLACE INTO prompt_keywords_fts (rowid, keyword) VALUES (?, ?)",
+                (keyword_id, keyword),
+            )
             logging.debug(f"Updated FTS for PromptKeyword ID {keyword_id}")
         except sqlite3.Error as e:
-            logging.opt(exception=True).error(f"Failed FTS update PromptKeyword ID {keyword_id}: {e}")
-            raise DatabaseError(f"Failed FTS update PromptKeyword ID {keyword_id}: {e}") from e
+            logging.opt(exception=True).error(
+                f"Failed FTS update PromptKeyword ID {keyword_id}: {e}"
+            )
+            raise DatabaseError(
+                f"Failed FTS update PromptKeyword ID {keyword_id}: {e}"
+            ) from e
 
     def _delete_fts_prompt_keyword(self, conn: sqlite3.Connection, keyword_id: int):
         try:
-            conn.execute("DELETE FROM prompt_keywords_fts WHERE rowid = ?", (keyword_id,))
+            conn.execute(
+                "DELETE FROM prompt_keywords_fts WHERE rowid = ?", (keyword_id,)
+            )
             logging.debug(f"Deleted FTS for PromptKeyword ID {keyword_id}")
         except sqlite3.Error as e:
-            logging.opt(exception=True).error(f"Failed FTS delete PromptKeyword ID {keyword_id}: {e}")
-            raise DatabaseError(f"Failed FTS delete PromptKeyword ID {keyword_id}: {e}") from e
+            logging.opt(exception=True).error(
+                f"Failed FTS delete PromptKeyword ID {keyword_id}: {e}"
+            )
+            raise DatabaseError(
+                f"Failed FTS delete PromptKeyword ID {keyword_id}: {e}"
+            ) from e
 
     # --- Public Mutating Methods ---
     def add_keyword(self, keyword_text: str) -> Optional[int]:
         """
         Add a keyword to the database.
-        
+
         Args:
             keyword_text: The keyword text to add
-            
+
         Returns:
             The keyword ID if successful, None otherwise
         """
         keyword_id, _ = self._add_keyword_full(keyword_text)
         return keyword_id
-    
-    def _add_keyword_full(self, keyword_text: str) -> Tuple[Optional[int], Optional[str]]:
+
+    def _add_keyword_full(
+        self, keyword_text: str
+    ) -> Tuple[Optional[int], Optional[str]]:
         if not keyword_text or not keyword_text.strip():
             raise InputError("Keyword cannot be empty.")
         normalized_keyword = self._normalize_keyword(keyword_text)
@@ -816,45 +1023,90 @@ class PromptsDatabase:
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
-                cursor.execute('SELECT id, uuid, deleted, version FROM PromptKeywordsTable WHERE keyword = ?',
-                               (normalized_keyword,))
+                cursor.execute(
+                    "SELECT id, uuid, deleted, version FROM PromptKeywordsTable WHERE keyword = ?",
+                    (normalized_keyword,),
+                )
                 existing = cursor.fetchone()
 
                 if existing:
-                    kw_id, kw_uuid, is_deleted, current_version = existing['id'], existing['uuid'], existing['deleted'], \
-                        existing['version']
+                    kw_id, kw_uuid, is_deleted, current_version = (
+                        existing["id"],
+                        existing["uuid"],
+                        existing["deleted"],
+                        existing["version"],
+                    )
                     if is_deleted:  # Undelete
                         new_version = current_version + 1
                         cursor.execute(
                             "UPDATE PromptKeywordsTable SET deleted=0, last_modified=?, version=?, client_id=? WHERE id=? AND version=?",
-                            (current_time, new_version, client_id, kw_id, current_version))
-                        if cursor.rowcount == 0: raise ConflictError(
-                            "Failed to undelete keyword due to version mismatch or it was not found.",
-                            "PromptKeywordsTable", kw_id)
-                        cursor.execute("SELECT * FROM PromptKeywordsTable WHERE id=?", (kw_id,))
+                            (
+                                current_time,
+                                new_version,
+                                client_id,
+                                kw_id,
+                                current_version,
+                            ),
+                        )
+                        if cursor.rowcount == 0:
+                            raise ConflictError(
+                                "Failed to undelete keyword due to version mismatch or it was not found.",
+                                "PromptKeywordsTable",
+                                kw_id,
+                            )
+                        cursor.execute(
+                            "SELECT * FROM PromptKeywordsTable WHERE id=?", (kw_id,)
+                        )
                         payload = dict(cursor.fetchone())
-                        self._log_sync_event(conn, 'PromptKeywordsTable', kw_uuid, 'update', new_version, payload)
+                        self._log_sync_event(
+                            conn,
+                            "PromptKeywordsTable",
+                            kw_uuid,
+                            "update",
+                            new_version,
+                            payload,
+                        )
                         self._update_fts_prompt_keyword(conn, kw_id, normalized_keyword)
                         return kw_id, kw_uuid
                     else:  # Already active, just return its ID and UUID
                         logger.debug(
-                            f"Keyword '{normalized_keyword}' already exists and is active. Reusing ID: {kw_id}, UUID: {kw_uuid}")
+                            f"Keyword '{normalized_keyword}' already exists and is active. Reusing ID: {kw_id}, UUID: {kw_uuid}"
+                        )
                         return kw_id, kw_uuid
                 else:  # New keyword
                     new_uuid = self._generate_uuid()
                     new_version = 1
                     cursor.execute(
                         "INSERT INTO PromptKeywordsTable (keyword, uuid, last_modified, version, client_id, deleted) VALUES (?, ?, ?, ?, ?, 0)",
-                        (normalized_keyword, new_uuid, current_time, new_version, client_id))
+                        (
+                            normalized_keyword,
+                            new_uuid,
+                            current_time,
+                            new_version,
+                            client_id,
+                        ),
+                    )
                     kw_id = cursor.lastrowid
-                    if not kw_id: raise DatabaseError("Failed to get ID for new prompt keyword.")
-                    cursor.execute("SELECT * FROM PromptKeywordsTable WHERE id=?", (kw_id,))
+                    if not kw_id:
+                        raise DatabaseError("Failed to get ID for new prompt keyword.")
+                    cursor.execute(
+                        "SELECT * FROM PromptKeywordsTable WHERE id=?", (kw_id,)
+                    )
                     payload = dict(cursor.fetchone())
-                    self._log_sync_event(conn, 'PromptKeywordsTable', new_uuid, 'create', new_version, payload)
+                    self._log_sync_event(
+                        conn,
+                        "PromptKeywordsTable",
+                        new_uuid,
+                        "create",
+                        new_version,
+                        payload,
+                    )
                     self._update_fts_prompt_keyword(conn, kw_id, normalized_keyword)
                     return kw_id, new_uuid
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.opt(exception=True).error(f"Error in add_keyword (prompt) for '{keyword_text}': {e}")
+            logger.opt(exception=True).error(
+                f"Error in add_keyword (prompt) for '{keyword_text}': {e}"
+            )
             if isinstance(e, (InputError, ConflictError, DatabaseError)):
                 raise e
             else:
@@ -879,28 +1131,44 @@ class PromptsDatabase:
             result = cursor.fetchone()
             return dict(result) if result else None
         except (DatabaseError, sqlite3.Error) as e:
-            logger.error(f"Error fetching active keyword by text '{normalized_keyword}': {e}")
+            logger.error(
+                f"Error fetching active keyword by text '{normalized_keyword}': {e}"
+            )
             # Depending on desired strictness, could raise or return None
             # For a simple check, returning None on error is acceptable if the next step handles it.
             return None
 
-    def add_prompt(self, name: str, author: Optional[str], details: Optional[str],
-                   system_prompt: Optional[str] = None, user_prompt: Optional[str] = None,
-                   keywords: Optional[List[str]] = None, overwrite: bool = False,
-                   prompt_format: Optional[str] = None,
-                   prompt_schema_version: Optional[int] = None,
-                   prompt_definition: Optional[Any] = None) -> Tuple[
-        Optional[int], Optional[str], str]:
+    def add_prompt(
+        self,
+        name: str,
+        author: Optional[str],
+        details: Optional[str],
+        system_prompt: Optional[str] = None,
+        user_prompt: Optional[str] = None,
+        keywords: Optional[List[str]] = None,
+        overwrite: bool = False,
+        prompt_format: Optional[str] = None,
+        prompt_schema_version: Optional[int] = None,
+        prompt_definition: Optional[Any] = None,
+    ) -> Tuple[Optional[int], Optional[str], str]:
         start_time = time.time()
-        
+
         if not name or not name.strip():
             raise InputError("Prompt name cannot be empty.")
-        name = name.strip()  # Use original case for name, but ensure no leading/trailing spaces
+        name = (
+            name.strip()
+        )  # Use original case for name, but ensure no leading/trailing spaces
 
         current_time = self._get_current_utc_timestamp_str()
         client_id = self.client_id
-        normalized_prompt_definition = self._serialize_prompt_definition(prompt_definition)
-        normalized_prompt_format = self._normalize_prompt_format(prompt_format) if prompt_format is not None else None
+        normalized_prompt_definition = self._serialize_prompt_definition(
+            prompt_definition
+        )
+        normalized_prompt_format = (
+            self._normalize_prompt_format(prompt_format)
+            if prompt_format is not None
+            else None
+        )
 
         try:
             with self.transaction() as conn:
@@ -920,38 +1188,61 @@ class PromptsDatabase:
                 action_taken: str = "skipped"
 
                 if existing:
-                    prompt_id, prompt_uuid, current_version, is_deleted = existing['id'], existing['uuid'], existing[
-                        'version'], existing['deleted']
-                    if is_deleted and not overwrite:  # Soft-deleted, treat as "exists" if not overwriting
-                        return prompt_id, prompt_uuid, f"Prompt '{name}' exists but is soft-deleted. Use overwrite to restore/update."
+                    prompt_id, prompt_uuid, current_version, is_deleted = (
+                        existing["id"],
+                        existing["uuid"],
+                        existing["version"],
+                        existing["deleted"],
+                    )
+                    if (
+                        is_deleted and not overwrite
+                    ):  # Soft-deleted, treat as "exists" if not overwriting
+                        return (
+                            prompt_id,
+                            prompt_uuid,
+                            f"Prompt '{name}' exists but is soft-deleted. Use overwrite to restore/update.",
+                        )
                     if not overwrite and not is_deleted:
-                        raise ConflictError(f"Prompt '{name}' already exists.")  # RAISE ERROR
-                        #return prompt_id, prompt_uuid, f"Prompt '{name}' already exists. Skipped."
+                        raise ConflictError(
+                            f"Prompt '{name}' already exists."
+                        )  # RAISE ERROR
+                        # return prompt_id, prompt_uuid, f"Prompt '{name}' already exists. Skipped."
 
                     # Overwrite or undelete-and-update
                     action_taken = "updated"
                     new_version = current_version + 1
-                    resolved_prompt_format = normalized_prompt_format if normalized_prompt_format is not None else existing['prompt_format']
+                    resolved_prompt_format = (
+                        normalized_prompt_format
+                        if normalized_prompt_format is not None
+                        else existing["prompt_format"]
+                    )
                     resolved_prompt_schema_version = (
                         prompt_schema_version
                         if prompt_schema_version is not None
-                        else existing['prompt_schema_version']
+                        else existing["prompt_schema_version"]
                     )
                     resolved_prompt_definition = (
                         normalized_prompt_definition
                         if prompt_definition is not None
-                        else existing['prompt_definition']
+                        else existing["prompt_definition"]
                     )
                     update_data = {
-                        'name': name, 'author': author, 'details': details, 'system_prompt': system_prompt,
-                        'user_prompt': user_prompt,
-                        'prompt_format': resolved_prompt_format,
-                        'prompt_schema_version': resolved_prompt_schema_version,
-                        'prompt_definition': resolved_prompt_definition,
-                        'last_modified': current_time, 'version': new_version, 'client_id': client_id, 'deleted': 0,
-                        'uuid': prompt_uuid
+                        "name": name,
+                        "author": author,
+                        "details": details,
+                        "system_prompt": system_prompt,
+                        "user_prompt": user_prompt,
+                        "prompt_format": resolved_prompt_format,
+                        "prompt_schema_version": resolved_prompt_schema_version,
+                        "prompt_definition": resolved_prompt_definition,
+                        "last_modified": current_time,
+                        "version": new_version,
+                        "client_id": client_id,
+                        "deleted": 0,
+                        "uuid": prompt_uuid,
                     }
-                    cursor.execute("""UPDATE Prompts
+                    cursor.execute(
+                        """UPDATE Prompts
                                       SET author=?,
                                           details=?,
                                           system_prompt=?,
@@ -965,51 +1256,79 @@ class PromptsDatabase:
                                           deleted=0
                                       WHERE id = ?
                                         AND version = ?""",
-                                   (
-                                       author,
-                                       details,
-                                       system_prompt,
-                                       user_prompt,
-                                       resolved_prompt_format,
-                                       resolved_prompt_schema_version,
-                                       resolved_prompt_definition,
-                                       current_time,
-                                       new_version,
-                                       client_id,
-                                       prompt_id,
-                                       current_version,
-                                   ))
+                        (
+                            author,
+                            details,
+                            system_prompt,
+                            user_prompt,
+                            resolved_prompt_format,
+                            resolved_prompt_schema_version,
+                            resolved_prompt_definition,
+                            current_time,
+                            new_version,
+                            client_id,
+                            prompt_id,
+                            current_version,
+                        ),
+                    )
                     if cursor.rowcount == 0:
                         # If it was deleted and overwrite is true, version check might fail if version wasn't for active.
                         # Or, a concurrent update happened.
                         # Re-fetch to check if it was deleted to adjust error message
-                        cursor.execute("SELECT deleted, version FROM Prompts WHERE id=?", (prompt_id,))
+                        cursor.execute(
+                            "SELECT deleted, version FROM Prompts WHERE id=?",
+                            (prompt_id,),
+                        )
                         refetched = cursor.fetchone()
-                        if refetched and refetched['deleted'] and refetched['version'] == current_version:
+                        if (
+                            refetched
+                            and refetched["deleted"]
+                            and refetched["version"] == current_version
+                        ):
                             # This means it was soft-deleted, and we tried to update with old version.
                             # We need to increment from its current soft-deleted version.
                             # For simplicity, we'll just tell user to handle undelete separately or ensure version matches.
                             # A more complex undelete+update would fetch its true current version first.
                             raise ConflictError(
                                 f"Prompt '{name}' (ID: {prompt_id}) was soft-deleted. Undelete first or ensure overwrite logic handles versioning correctly.",
-                                "Prompts", prompt_id)
-                        raise ConflictError(f"Failed to update prompt '{name}'.", "Prompts", prompt_id)
+                                "Prompts",
+                                prompt_id,
+                            )
+                        raise ConflictError(
+                            f"Failed to update prompt '{name}'.", "Prompts", prompt_id
+                        )
 
-                    self._log_sync_event(conn, 'Prompts', prompt_uuid, 'update', new_version, update_data)
-                    self._update_fts_prompt(conn, prompt_id, name, author, details, system_prompt, user_prompt)
+                    self._log_sync_event(
+                        conn, "Prompts", prompt_uuid, "update", new_version, update_data
+                    )
+                    self._update_fts_prompt(
+                        conn,
+                        prompt_id,
+                        name,
+                        author,
+                        details,
+                        system_prompt,
+                        user_prompt,
+                    )
                 else:  # New prompt
                     action_taken = "added"
                     prompt_uuid = self._generate_uuid()
                     new_version = 1
                     resolved_prompt_format = normalized_prompt_format or "legacy"
                     insert_data = {
-                        'name': name, 'author': author, 'details': details, 'system_prompt': system_prompt,
-                        'user_prompt': user_prompt,
-                        'prompt_format': resolved_prompt_format,
-                        'prompt_schema_version': prompt_schema_version,
-                        'prompt_definition': normalized_prompt_definition,
-                        'uuid': prompt_uuid, 'last_modified': current_time, 'version': new_version,
-                        'client_id': client_id, 'deleted': 0
+                        "name": name,
+                        "author": author,
+                        "details": details,
+                        "system_prompt": system_prompt,
+                        "user_prompt": user_prompt,
+                        "prompt_format": resolved_prompt_format,
+                        "prompt_schema_version": prompt_schema_version,
+                        "prompt_definition": normalized_prompt_definition,
+                        "uuid": prompt_uuid,
+                        "last_modified": current_time,
+                        "version": new_version,
+                        "client_id": client_id,
+                        "deleted": 0,
                     }
                     cursor.execute(
                         """INSERT INTO Prompts (
@@ -1028,67 +1347,119 @@ class PromptsDatabase:
                                                 deleted
                                             )
                                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
-                                   (
-                                       name,
-                                       author,
-                                       details,
-                                       system_prompt,
-                                       user_prompt,
-                                       resolved_prompt_format,
-                                       prompt_schema_version,
-                                       normalized_prompt_definition,
-                                       prompt_uuid,
-                                       current_time,
-                                       new_version,
-                                       client_id,
-                                   ))
+                        (
+                            name,
+                            author,
+                            details,
+                            system_prompt,
+                            user_prompt,
+                            resolved_prompt_format,
+                            prompt_schema_version,
+                            normalized_prompt_definition,
+                            prompt_uuid,
+                            current_time,
+                            new_version,
+                            client_id,
+                        ),
+                    )
                     prompt_id = cursor.lastrowid
-                    if not prompt_id: raise DatabaseError("Failed to get ID for new prompt.")
-                    self._log_sync_event(conn, 'Prompts', prompt_uuid, 'create', new_version, insert_data)
-                    self._update_fts_prompt(conn, prompt_id, name, author, details, system_prompt, user_prompt)
+                    if not prompt_id:
+                        raise DatabaseError("Failed to get ID for new prompt.")
+                    self._log_sync_event(
+                        conn, "Prompts", prompt_uuid, "create", new_version, insert_data
+                    )
+                    self._update_fts_prompt(
+                        conn,
+                        prompt_id,
+                        name,
+                        author,
+                        details,
+                        system_prompt,
+                        user_prompt,
+                    )
 
-                if prompt_id and keywords is not None: # keywords can be empty list to remove all
-                    self.update_keywords_for_prompt(prompt_id, keywords_list=keywords) # This is an instance method
+                if (
+                    prompt_id and keywords is not None
+                ):  # keywords can be empty list to remove all
+                    self.update_keywords_for_prompt(
+                        prompt_id, keywords_list=keywords
+                    )  # This is an instance method
 
                 msg = f"Prompt '{name}' {action_taken} successfully."
-                
+
                 # Log success metrics
                 duration = time.time() - start_time
-                log_histogram("prompts_db_operation_duration", duration, labels={
-                    "operation": "add_prompt",
-                    "action": action_taken,
-                    "has_keywords": "true" if keywords else "false"
-                })
-                log_counter("prompts_db_operation_count", labels={
-                    "operation": "add_prompt",
-                    "action": action_taken,
-                    "status": "success",
-                    "overwrite": str(overwrite)
-                })
-                
+                log_histogram(
+                    "prompts_db_operation_duration",
+                    duration,
+                    labels={
+                        "operation": "add_prompt",
+                        "action": action_taken,
+                        "has_keywords": "true" if keywords else "false",
+                    },
+                )
+                log_counter(
+                    "prompts_db_operation_count",
+                    labels={
+                        "operation": "add_prompt",
+                        "action": action_taken,
+                        "status": "success",
+                        "overwrite": str(overwrite),
+                    },
+                )
+
                 return prompt_id, prompt_uuid, msg
 
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
             # Log error metrics
             duration = time.time() - start_time
-            error_type = "input_error" if isinstance(e, InputError) else "conflict" if isinstance(e, ConflictError) else "database_error" if isinstance(e, DatabaseError) else "sqlite_error"
-            log_histogram("prompts_db_operation_duration", duration, labels={
-                "operation": "add_prompt",
-                "action": "error",
-                "has_keywords": "false"
-            })
-            log_counter("prompts_db_operation_count", labels={
-                "operation": "add_prompt",
-                "status": "error",
-                "error_type": error_type
-            })
-            
-            logger.opt(exception=True).error(f"Error adding/updating prompt '{name}': {e}")
-            if isinstance(e, (InputError, ConflictError, DatabaseError)): raise e
-            else: raise DatabaseError(f"Failed to process prompt '{name}': {e}") from e
+            error_type = (
+                "input_error"
+                if isinstance(e, InputError)
+                else "conflict"
+                if isinstance(e, ConflictError)
+                else "database_error"
+                if isinstance(e, DatabaseError)
+                else "sqlite_error"
+            )
+            log_histogram(
+                "prompts_db_operation_duration",
+                duration,
+                labels={
+                    "operation": "add_prompt",
+                    "action": "error",
+                    "has_keywords": "false",
+                },
+            )
+            log_counter(
+                "prompts_db_operation_count",
+                labels={
+                    "operation": "add_prompt",
+                    "status": "error",
+                    "error_type": error_type,
+                },
+            )
+
+            logger.opt(exception=True).error(
+                f"Error adding/updating prompt '{name}': {e}"
+            )
+            if isinstance(e, (InputError, ConflictError, DatabaseError)):
+                raise e
+            else:
+                raise DatabaseError(f"Failed to process prompt '{name}': {e}") from e
 
     def update_keywords_for_prompt(self, prompt_id: int, keywords_list: List[str]):
-        normalized_new_keywords = sorted(list(set([self._normalize_keyword(k) for k in keywords_list if k and k.strip()])))
+        normalized_new_keywords = sorted(
+            list(
+                set(
+                    [
+                        self._normalize_keyword(k)
+                        for k in keywords_list
+                        if k and k.strip()
+                    ]
+                )
+            )
+        )
 
         try:
             # This method is called within an existing transaction (e.g. from add_prompt)
@@ -1097,65 +1468,111 @@ class PromptsDatabase:
             cursor = conn.cursor()
 
             # Get prompt_uuid for logging
-            cursor.execute("SELECT uuid FROM Prompts WHERE id = ? AND deleted = 0", (prompt_id,))
+            cursor.execute(
+                "SELECT uuid FROM Prompts WHERE id = ? AND deleted = 0", (prompt_id,)
+            )
             prompt_info = cursor.fetchone()
             if not prompt_info:
-                raise InputError(f"Cannot update keywords: Prompt ID {prompt_id} not found or deleted.")
-            prompt_uuid = prompt_info['uuid']
+                raise InputError(
+                    f"Cannot update keywords: Prompt ID {prompt_id} not found or deleted."
+                )
+            prompt_uuid = prompt_info["uuid"]
 
             # Get current keywords for the prompt
-            cursor.execute("""
+            cursor.execute(
+                """
                            SELECT pkl.keyword_id, pkw.keyword, pkw.uuid as keyword_uuid
                            FROM PromptKeywordLinks pkl
                                     JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id
                            WHERE pkl.prompt_id = ? AND pkw.deleted = 0
-                           """, (prompt_id,))
-            current_keyword_links = {row['keyword_id']: {'text': row['keyword'], 'uuid': row['keyword_uuid']} for row in cursor.fetchall()}
+                           """,
+                (prompt_id,),
+            )
+            current_keyword_links = {
+                row["keyword_id"]: {"text": row["keyword"], "uuid": row["keyword_uuid"]}
+                for row in cursor.fetchall()
+            }
             current_keyword_ids = set(current_keyword_links.keys())
 
-            target_keyword_data: Dict[int, Dict[str,str]] = {} # {keyword_id: {'text': text, 'uuid': uuid}}
+            target_keyword_data: Dict[
+                int, Dict[str, str]
+            ] = {}  # {keyword_id: {'text': text, 'uuid': uuid}}
             if normalized_new_keywords:
                 for kw_text in normalized_new_keywords:
                     # _add_keyword_full is an instance method, it will use the existing transaction
                     kw_id, kw_uuid = self._add_keyword_full(kw_text)
                     if kw_id and kw_uuid:
-                        target_keyword_data[kw_id] = {'text': kw_text, 'uuid': kw_uuid}
+                        target_keyword_data[kw_id] = {"text": kw_text, "uuid": kw_uuid}
                     else:
                         # This should not happen if add_keyword is robust
-                        raise DatabaseError(f"Failed to get/add keyword '{kw_text}' during prompt keyword update.")
+                        raise DatabaseError(
+                            f"Failed to get/add keyword '{kw_text}' during prompt keyword update."
+                        )
 
             target_keyword_ids = set(target_keyword_data.keys())
 
             ids_to_add = target_keyword_ids - current_keyword_ids
             ids_to_remove = current_keyword_ids - target_keyword_ids
-            link_sync_version = 1 # For link/unlink operations, version is on the junction table itself if it had one, or just 1 for the event
+            link_sync_version = 1  # For link/unlink operations, version is on the junction table itself if it had one, or just 1 for the event
 
             if ids_to_remove:
-                remove_placeholders = ','.join('?' * len(ids_to_remove))
-                cursor.execute(f"DELETE FROM PromptKeywordLinks WHERE prompt_id = ? AND keyword_id IN ({remove_placeholders})", (prompt_id, *list(ids_to_remove)))
+                remove_placeholders = ",".join("?" * len(ids_to_remove))
+                cursor.execute(
+                    f"DELETE FROM PromptKeywordLinks WHERE prompt_id = ? AND keyword_id IN ({remove_placeholders})",
+                    (prompt_id, *list(ids_to_remove)),
+                )
                 for removed_id in ids_to_remove:
-                    keyword_uuid = current_keyword_links[removed_id]['uuid']
-                    link_composite_uuid = f"{prompt_uuid}_{keyword_uuid}" # Composite UUID for the link
-                    payload = {'prompt_uuid': prompt_uuid, 'keyword_uuid': keyword_uuid}
-                    self._log_sync_event(conn, 'PromptKeywordLinks', link_composite_uuid, 'unlink', link_sync_version, payload)
+                    keyword_uuid = current_keyword_links[removed_id]["uuid"]
+                    link_composite_uuid = (
+                        f"{prompt_uuid}_{keyword_uuid}"  # Composite UUID for the link
+                    )
+                    payload = {"prompt_uuid": prompt_uuid, "keyword_uuid": keyword_uuid}
+                    self._log_sync_event(
+                        conn,
+                        "PromptKeywordLinks",
+                        link_composite_uuid,
+                        "unlink",
+                        link_sync_version,
+                        payload,
+                    )
 
             if ids_to_add:
                 insert_params = [(prompt_id, kid) for kid in ids_to_add]
-                cursor.executemany("INSERT OR IGNORE INTO PromptKeywordLinks (prompt_id, keyword_id) VALUES (?, ?)", insert_params)
+                cursor.executemany(
+                    "INSERT OR IGNORE INTO PromptKeywordLinks (prompt_id, keyword_id) VALUES (?, ?)",
+                    insert_params,
+                )
                 for added_id in ids_to_add:
-                    keyword_uuid = target_keyword_data[added_id]['uuid']
+                    keyword_uuid = target_keyword_data[added_id]["uuid"]
                     link_composite_uuid = f"{prompt_uuid}_{keyword_uuid}"
-                    payload = {'prompt_uuid': prompt_uuid, 'keyword_uuid': keyword_uuid}
-                    self._log_sync_event(conn, 'PromptKeywordLinks', link_composite_uuid, 'link', link_sync_version, payload)
+                    payload = {"prompt_uuid": prompt_uuid, "keyword_uuid": keyword_uuid}
+                    self._log_sync_event(
+                        conn,
+                        "PromptKeywordLinks",
+                        link_composite_uuid,
+                        "link",
+                        link_sync_version,
+                        payload,
+                    )
 
             if ids_to_add or ids_to_remove:
-                logging.debug(f"Keywords updated for prompt {prompt_id}. Added: {len(ids_to_add)}, Removed: {len(ids_to_remove)}.")
+                logging.debug(
+                    f"Keywords updated for prompt {prompt_id}. Added: {len(ids_to_add)}, Removed: {len(ids_to_remove)}."
+                )
         except (InputError, DatabaseError, sqlite3.Error) as e:
-            logger.opt(exception=True).error(f"Error updating keywords for prompt {prompt_id}: {e}")
-            if isinstance(e, (InputError, DatabaseError)): raise e
-            else: raise DatabaseError(f"Keyword update failed for prompt {prompt_id}: {e}") from e
+            logger.opt(exception=True).error(
+                f"Error updating keywords for prompt {prompt_id}: {e}"
+            )
+            if isinstance(e, (InputError, DatabaseError)):
+                raise e
+            else:
+                raise DatabaseError(
+                    f"Keyword update failed for prompt {prompt_id}: {e}"
+                ) from e
 
-    def update_prompt_by_id(self, prompt_id: int, update_data: Dict[str, Any]) -> Tuple[Optional[str], str]:
+    def update_prompt_by_id(
+        self, prompt_id: int, update_data: Dict[str, Any]
+    ) -> Tuple[Optional[str], str]:
         """
         Updates an existing prompt identified by its ID.
         Handles name changes and ensures the new name doesn't conflict with other existing prompts.
@@ -1174,46 +1591,59 @@ class PromptsDatabase:
             DatabaseError: For other database issues.
         """
         start_time = time.time()
-        
-        if 'name' in update_data and (not update_data['name'] or not update_data['name'].strip()):
+
+        if "name" in update_data and (
+            not update_data["name"] or not update_data["name"].strip()
+        ):
             raise InputError("Prompt name cannot be empty if provided for update.")
 
         current_time = self._get_current_utc_timestamp_str()
         client_id = self.client_id
         normalized_prompt_definition = None
-        if 'prompt_definition' in update_data:
-            normalized_prompt_definition = self._serialize_prompt_definition(update_data.get('prompt_definition'))
+        if "prompt_definition" in update_data:
+            normalized_prompt_definition = self._serialize_prompt_definition(
+                update_data.get("prompt_definition")
+            )
 
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
                 # Get current state of the prompt being updated
-                cursor.execute("SELECT uuid, name, version, deleted FROM Prompts WHERE id = ?", (prompt_id,))
+                cursor.execute(
+                    "SELECT uuid, name, version, deleted FROM Prompts WHERE id = ?",
+                    (prompt_id,),
+                )
                 existing_prompt_state = cursor.fetchone()
 
                 if not existing_prompt_state:
-                    return None, f"Prompt with ID {prompt_id} not found."  # Or raise InputError("Prompt not found")
+                    return (
+                        None,
+                        f"Prompt with ID {prompt_id} not found.",
+                    )  # Or raise InputError("Prompt not found")
 
-                original_uuid = existing_prompt_state['uuid']
-                original_name = existing_prompt_state['name']
-                current_version = existing_prompt_state['version']
-                is_deleted = existing_prompt_state['deleted']
+                original_uuid = existing_prompt_state["uuid"]
+                original_name = existing_prompt_state["name"]
+                current_version = existing_prompt_state["version"]
+                is_deleted = existing_prompt_state["deleted"]
 
                 if is_deleted:  # Optional: decide if updating a soft-deleted prompt should undelete it.
                     # For now, let's assume we are updating an active prompt or an explicitly fetched soft-deleted one.
                     # If this method should also undelete, set 'deleted = 0' in the update.
                     pass
 
-                new_name = update_data.get('name', original_name).strip()
+                new_name = update_data.get("name", original_name).strip()
 
                 # If name is changing, check for conflict with *other* prompts
                 if new_name != original_name:
-                    cursor.execute("SELECT id FROM Prompts WHERE name = ? AND id != ? AND deleted = 0",
-                                   (new_name, prompt_id))
+                    cursor.execute(
+                        "SELECT id FROM Prompts WHERE name = ? AND id != ? AND deleted = 0",
+                        (new_name, prompt_id),
+                    )
                     conflicting_prompt = cursor.fetchone()
                     if conflicting_prompt:
                         raise ConflictError(
-                            f"Another active prompt with name '{new_name}' already exists (ID: {conflicting_prompt['id']}).")
+                            f"Another active prompt with name '{new_name}' already exists (ID: {conflicting_prompt['id']})."
+                        )
 
                 new_version = current_version + 1
 
@@ -1221,96 +1651,154 @@ class PromptsDatabase:
                 params = []
 
                 # Build SET clause dynamically
-                if 'name' in update_data and update_data['name'].strip() != original_name:  # Only if actually changing
+                if (
+                    "name" in update_data
+                    and update_data["name"].strip() != original_name
+                ):  # Only if actually changing
                     set_clauses.append("name = ?")
                     params.append(new_name)
-                if 'author' in update_data:
+                if "author" in update_data:
                     set_clauses.append("author = ?")
-                    params.append(update_data.get('author'))
-                if 'details' in update_data:
+                    params.append(update_data.get("author"))
+                if "details" in update_data:
                     set_clauses.append("details = ?")
-                    params.append(update_data.get('details'))
-                if 'system_prompt' in update_data:
+                    params.append(update_data.get("details"))
+                if "system_prompt" in update_data:
                     set_clauses.append("system_prompt = ?")
-                    params.append(update_data.get('system_prompt'))
-                if 'user_prompt' in update_data:
+                    params.append(update_data.get("system_prompt"))
+                if "user_prompt" in update_data:
                     set_clauses.append("user_prompt = ?")
-                    params.append(update_data.get('user_prompt'))
-                if 'prompt_format' in update_data:
+                    params.append(update_data.get("user_prompt"))
+                if "prompt_format" in update_data:
                     set_clauses.append("prompt_format = ?")
-                    params.append(self._normalize_prompt_format(update_data.get('prompt_format')))
-                if 'prompt_schema_version' in update_data:
+                    params.append(
+                        self._normalize_prompt_format(update_data.get("prompt_format"))
+                    )
+                if "prompt_schema_version" in update_data:
                     set_clauses.append("prompt_schema_version = ?")
-                    params.append(update_data.get('prompt_schema_version'))
-                if 'prompt_definition' in update_data:
+                    params.append(update_data.get("prompt_schema_version"))
+                if "prompt_definition" in update_data:
                     set_clauses.append("prompt_definition = ?")
                     params.append(normalized_prompt_definition)
 
                 # Always update these
                 set_clauses.extend(
-                    ["last_modified = ?", "version = ?", "client_id = ?", "deleted = 0"])  # Ensure it's marked active
+                    ["last_modified = ?", "version = ?", "client_id = ?", "deleted = 0"]
+                )  # Ensure it's marked active
                 params.extend([current_time, new_version, client_id])
 
                 if not set_clauses:  # Nothing to update besides version/timestamp
                     return original_uuid, "No changes detected to update."
 
                 sql_set_clause = ", ".join(set_clauses)
-                update_sql = f"UPDATE Prompts SET {sql_set_clause} WHERE id = ? AND version = ?"
+                update_sql = (
+                    f"UPDATE Prompts SET {sql_set_clause} WHERE id = ? AND version = ?"
+                )
                 params.extend([prompt_id, current_version])
 
                 cursor.execute(update_sql, tuple(params))
 
                 if cursor.rowcount == 0:
-                    raise ConflictError(f"Failed to update prompt ID {prompt_id} (version mismatch or record gone).",
-                                        "Prompts", prompt_id)
+                    raise ConflictError(
+                        f"Failed to update prompt ID {prompt_id} (version mismatch or record gone).",
+                        "Prompts",
+                        prompt_id,
+                    )
 
                 # Log sync event
                 # Fetch the full updated row for payload
                 cursor.execute("SELECT * FROM Prompts WHERE id = ?", (prompt_id,))
                 updated_payload = dict(cursor.fetchone())
-                self._log_sync_event(conn, 'Prompts', original_uuid, 'update', new_version, updated_payload)
+                self._log_sync_event(
+                    conn,
+                    "Prompts",
+                    original_uuid,
+                    "update",
+                    new_version,
+                    updated_payload,
+                )
 
                 # Update FTS
-                self._update_fts_prompt(conn, prompt_id,
-                                        updated_payload['name'], updated_payload.get('author'),
-                                        updated_payload.get('details'), updated_payload.get('system_prompt'),
-                                        updated_payload.get('user_prompt'))
+                self._update_fts_prompt(
+                    conn,
+                    prompt_id,
+                    updated_payload["name"],
+                    updated_payload.get("author"),
+                    updated_payload.get("details"),
+                    updated_payload.get("system_prompt"),
+                    updated_payload.get("user_prompt"),
+                )
 
                 # Handle keywords if provided in update_data (assuming 'keywords' is a list of strings)
-                if 'keywords' in update_data and isinstance(update_data['keywords'], list):
-                    self.update_keywords_for_prompt(prompt_id, update_data['keywords'])  # Call existing method
+                if "keywords" in update_data and isinstance(
+                    update_data["keywords"], list
+                ):
+                    self.update_keywords_for_prompt(
+                        prompt_id, update_data["keywords"]
+                    )  # Call existing method
 
                 # Log success metrics
                 duration = time.time() - start_time
-                log_histogram("prompts_db_operation_duration", duration, labels={
-                    "operation": "update_prompt",
-                    "fields_updated": str(len(set_clauses)),
-                    "has_keywords": "true" if 'keywords' in update_data else "false"
-                })
-                log_counter("prompts_db_operation_count", labels={
-                    "operation": "update_prompt",
-                    "status": "success",
-                    "name_changed": "true" if new_name != original_name else "false"
-                })
+                log_histogram(
+                    "prompts_db_operation_duration",
+                    duration,
+                    labels={
+                        "operation": "update_prompt",
+                        "fields_updated": str(len(set_clauses)),
+                        "has_keywords": "true"
+                        if "keywords" in update_data
+                        else "false",
+                    },
+                )
+                log_counter(
+                    "prompts_db_operation_count",
+                    labels={
+                        "operation": "update_prompt",
+                        "status": "success",
+                        "name_changed": "true"
+                        if new_name != original_name
+                        else "false",
+                    },
+                )
 
-                return original_uuid, f"Prompt ID {prompt_id} updated successfully to version {new_version}."
+                return (
+                    original_uuid,
+                    f"Prompt ID {prompt_id} updated successfully to version {new_version}.",
+                )
 
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
             # Log error metrics
             duration = time.time() - start_time
-            error_type = "input_error" if isinstance(e, InputError) else "conflict" if isinstance(e, ConflictError) else "database_error" if isinstance(e, DatabaseError) else "sqlite_error"
-            log_histogram("prompts_db_operation_duration", duration, labels={
-                "operation": "update_prompt",
-                "fields_updated": "0",
-                "has_keywords": "false"
-            })
-            log_counter("prompts_db_operation_count", labels={
-                "operation": "update_prompt",
-                "status": "error",
-                "error_type": error_type
-            })
-            
-            logger.opt(exception=True).error(f"Error updating prompt ID {prompt_id}: {e}")
+            error_type = (
+                "input_error"
+                if isinstance(e, InputError)
+                else "conflict"
+                if isinstance(e, ConflictError)
+                else "database_error"
+                if isinstance(e, DatabaseError)
+                else "sqlite_error"
+            )
+            log_histogram(
+                "prompts_db_operation_duration",
+                duration,
+                labels={
+                    "operation": "update_prompt",
+                    "fields_updated": "0",
+                    "has_keywords": "false",
+                },
+            )
+            log_counter(
+                "prompts_db_operation_count",
+                labels={
+                    "operation": "update_prompt",
+                    "status": "error",
+                    "error_type": error_type,
+                },
+            )
+
+            logger.opt(exception=True).error(
+                f"Error updating prompt ID {prompt_id}: {e}"
+            )
             if isinstance(e, (InputError, ConflictError, DatabaseError)):
                 raise e
             raise DatabaseError(f"Failed to update prompt ID {prompt_id}: {e}") from e
@@ -1327,10 +1815,10 @@ class PromptsDatabase:
                 uuid.UUID(prompt_id_or_name_or_uuid, version=4)
                 col_name = "uuid"
             except ValueError:
-                col_name = "name" # Assume it's a name if not a UUID
+                col_name = "name"  # Assume it's a name if not a UUID
 
         # Validate column name to prevent SQL injection
-        if not validate_column_name(col_name, 'Prompts'):
+        if not validate_column_name(col_name, "Prompts"):
             raise InputError(f"Invalid column name: {col_name}")
 
         try:
@@ -1338,32 +1826,54 @@ class PromptsDatabase:
                 cursor = conn.cursor()
                 # Fetch prompt to get its ID (if name/uuid provided), current version, and uuid
                 # Also ensures it's not already deleted
-                cursor.execute(f"SELECT id, uuid, version FROM Prompts WHERE {col_name} = ? AND deleted = 0", (prompt_id_or_name_or_uuid,))
+                cursor.execute(
+                    f"SELECT id, uuid, version FROM Prompts WHERE {col_name} = ? AND deleted = 0",
+                    (prompt_id_or_name_or_uuid,),
+                )
                 prompt_info = cursor.fetchone()
                 if not prompt_info:
-                    logger.warning(f"Prompt '{prompt_id_or_name_or_uuid}' not found or already deleted.")
+                    logger.warning(
+                        f"Prompt '{prompt_id_or_name_or_uuid}' not found or already deleted."
+                    )
                     return False
 
-                prompt_id, prompt_uuid, current_version = prompt_info['id'], prompt_info['uuid'], prompt_info['version']
+                prompt_id, prompt_uuid, current_version = (
+                    prompt_info["id"],
+                    prompt_info["uuid"],
+                    prompt_info["version"],
+                )
                 new_version = current_version + 1
 
                 # Soft delete the prompt
-                cursor.execute("UPDATE Prompts SET deleted=1, last_modified=?, version=?, client_id=? WHERE id=? AND version=?",
-                               (current_time, new_version, client_id, prompt_id, current_version))
+                cursor.execute(
+                    "UPDATE Prompts SET deleted=1, last_modified=?, version=?, client_id=? WHERE id=? AND version=?",
+                    (current_time, new_version, client_id, prompt_id, current_version),
+                )
                 if cursor.rowcount == 0:
                     raise ConflictError("Prompts", prompt_id)
 
-                delete_payload = {'uuid': prompt_uuid, 'last_modified': current_time, 'version': new_version, 'client_id': client_id, 'deleted': 1}
-                self._log_sync_event(conn, 'Prompts', prompt_uuid, 'delete', new_version, delete_payload)
+                delete_payload = {
+                    "uuid": prompt_uuid,
+                    "last_modified": current_time,
+                    "version": new_version,
+                    "client_id": client_id,
+                    "deleted": 1,
+                }
+                self._log_sync_event(
+                    conn, "Prompts", prompt_uuid, "delete", new_version, delete_payload
+                )
                 self._delete_fts_prompt(conn, prompt_id)
 
                 # Explicitly unlink keywords and log those events
-                cursor.execute("""
+                cursor.execute(
+                    """
                                SELECT pkw.uuid AS keyword_uuid
                                FROM PromptKeywordLinks pkl
                                         JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id
                                WHERE pkl.prompt_id = ? AND pkw.deleted = 0
-                               """, (prompt_id,))
+                               """,
+                    (prompt_id,),
+                )
                 keywords_to_unlink = cursor.fetchall()
 
                 if keywords_to_unlink:
@@ -1371,49 +1881,90 @@ class PromptsDatabase:
                     # However, we want to log these 'unlink' events.
                     # So, we fetch them first, then rely on cascade or delete them explicitly.
                     # For clarity and explicit logging, let's delete them explicitly.
-                    cursor.execute("DELETE FROM PromptKeywordLinks WHERE prompt_id = ?", (prompt_id,))
+                    cursor.execute(
+                        "DELETE FROM PromptKeywordLinks WHERE prompt_id = ?",
+                        (prompt_id,),
+                    )
                     link_sync_version = 1
                     for kw_to_unlink in keywords_to_unlink:
-                        keyword_uuid_val = kw_to_unlink['keyword_uuid']
+                        keyword_uuid_val = kw_to_unlink["keyword_uuid"]
                         link_composite_uuid = f"{prompt_uuid}_{keyword_uuid_val}"
-                        unlink_payload = {'prompt_uuid': prompt_uuid, 'keyword_uuid': keyword_uuid_val}
-                        self._log_sync_event(conn, 'PromptKeywordLinks', link_composite_uuid, 'unlink', link_sync_version, unlink_payload)
-                    logging.debug(f"Unlinked {len(keywords_to_unlink)} keywords from soft-deleted prompt ID {prompt_id}.")
+                        unlink_payload = {
+                            "prompt_uuid": prompt_uuid,
+                            "keyword_uuid": keyword_uuid_val,
+                        }
+                        self._log_sync_event(
+                            conn,
+                            "PromptKeywordLinks",
+                            link_composite_uuid,
+                            "unlink",
+                            link_sync_version,
+                            unlink_payload,
+                        )
+                    logging.debug(
+                        f"Unlinked {len(keywords_to_unlink)} keywords from soft-deleted prompt ID {prompt_id}."
+                    )
 
-                logger.info(f"Soft deleted prompt '{prompt_id_or_name_or_uuid}' (ID: {prompt_id}, UUID: {prompt_uuid}).")
-                
+                logger.info(
+                    f"Soft deleted prompt '{prompt_id_or_name_or_uuid}' (ID: {prompt_id}, UUID: {prompt_uuid})."
+                )
+
                 # Log success metrics
                 duration = time.time() - start_time
-                log_histogram("prompts_db_operation_duration", duration, labels={
-                    "operation": "soft_delete_prompt",
-                    "lookup_by": col_name,
-                    "keywords_unlinked": str(len(keywords_to_unlink))
-                })
-                log_counter("prompts_db_operation_count", labels={
-                    "operation": "soft_delete_prompt",
-                    "status": "success",
-                    "had_keywords": "true" if keywords_to_unlink else "false"
-                })
-                
+                log_histogram(
+                    "prompts_db_operation_duration",
+                    duration,
+                    labels={
+                        "operation": "soft_delete_prompt",
+                        "lookup_by": col_name,
+                        "keywords_unlinked": str(len(keywords_to_unlink)),
+                    },
+                )
+                log_counter(
+                    "prompts_db_operation_count",
+                    labels={
+                        "operation": "soft_delete_prompt",
+                        "status": "success",
+                        "had_keywords": "true" if keywords_to_unlink else "false",
+                    },
+                )
+
                 return True
         except (ConflictError, DatabaseError, sqlite3.Error) as e:
             # Log error metrics
             duration = time.time() - start_time
-            error_type = "conflict" if isinstance(e, ConflictError) else "database_error" if isinstance(e, DatabaseError) else "sqlite_error"
-            log_histogram("prompts_db_operation_duration", duration, labels={
-                "operation": "soft_delete_prompt",
-                "lookup_by": col_name if 'col_name' in locals() else "unknown",
-                "keywords_unlinked": "0"
-            })
-            log_counter("prompts_db_operation_count", labels={
-                "operation": "soft_delete_prompt",
-                "status": "error",
-                "error_type": error_type
-            })
-            
-            logger.opt(exception=True).error(f"Error soft deleting prompt '{prompt_id_or_name_or_uuid}': {e}")
-            if isinstance(e, (ConflictError, DatabaseError)): raise e
-            else: raise DatabaseError(f"Failed to soft delete prompt: {e}") from e
+            error_type = (
+                "conflict"
+                if isinstance(e, ConflictError)
+                else "database_error"
+                if isinstance(e, DatabaseError)
+                else "sqlite_error"
+            )
+            log_histogram(
+                "prompts_db_operation_duration",
+                duration,
+                labels={
+                    "operation": "soft_delete_prompt",
+                    "lookup_by": col_name if "col_name" in locals() else "unknown",
+                    "keywords_unlinked": "0",
+                },
+            )
+            log_counter(
+                "prompts_db_operation_count",
+                labels={
+                    "operation": "soft_delete_prompt",
+                    "status": "error",
+                    "error_type": error_type,
+                },
+            )
+
+            logger.opt(exception=True).error(
+                f"Error soft deleting prompt '{prompt_id_or_name_or_uuid}': {e}"
+            )
+            if isinstance(e, (ConflictError, DatabaseError)):
+                raise e
+            else:
+                raise DatabaseError(f"Failed to soft delete prompt: {e}") from e
 
     def soft_delete_keyword(self, keyword_text: str) -> bool:
         if not keyword_text or not keyword_text.strip():
@@ -1425,56 +1976,105 @@ class PromptsDatabase:
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT id, uuid, version FROM PromptKeywordsTable WHERE keyword = ? AND deleted = 0", (normalized_keyword,))
+                cursor.execute(
+                    "SELECT id, uuid, version FROM PromptKeywordsTable WHERE keyword = ? AND deleted = 0",
+                    (normalized_keyword,),
+                )
                 kw_info = cursor.fetchone()
                 if not kw_info:
-                    logger.warning(f"Prompt keyword '{normalized_keyword}' not found or already deleted.")
+                    logger.warning(
+                        f"Prompt keyword '{normalized_keyword}' not found or already deleted."
+                    )
                     return False
 
-                kw_id, kw_uuid, current_version = kw_info['id'], kw_info['uuid'], kw_info['version']
+                kw_id, kw_uuid, current_version = (
+                    kw_info["id"],
+                    kw_info["uuid"],
+                    kw_info["version"],
+                )
                 new_version = current_version + 1
 
-                cursor.execute("UPDATE PromptKeywordsTable SET deleted=1, last_modified=?, version=?, client_id=? WHERE id=? AND version=?",
-                               (current_time, new_version, client_id, kw_id, current_version))
+                cursor.execute(
+                    "UPDATE PromptKeywordsTable SET deleted=1, last_modified=?, version=?, client_id=? WHERE id=? AND version=?",
+                    (current_time, new_version, client_id, kw_id, current_version),
+                )
                 if cursor.rowcount == 0:
                     raise ConflictError("PromptKeywordsTable", kw_id)
 
-                delete_payload = {'uuid': kw_uuid, 'last_modified': current_time, 'version': new_version, 'client_id': client_id, 'deleted': 1}
-                self._log_sync_event(conn, 'PromptKeywordsTable', kw_uuid, 'delete', new_version, delete_payload)
+                delete_payload = {
+                    "uuid": kw_uuid,
+                    "last_modified": current_time,
+                    "version": new_version,
+                    "client_id": client_id,
+                    "deleted": 1,
+                }
+                self._log_sync_event(
+                    conn,
+                    "PromptKeywordsTable",
+                    kw_uuid,
+                    "delete",
+                    new_version,
+                    delete_payload,
+                )
                 self._delete_fts_prompt_keyword(conn, kw_id)
 
                 # Explicitly unlink from prompts and log events
-                cursor.execute("""
+                cursor.execute(
+                    """
                                SELECT p.uuid AS prompt_uuid
                                FROM PromptKeywordLinks pkl
                                         JOIN Prompts p ON pkl.prompt_id = p.id
                                WHERE pkl.keyword_id = ? AND p.deleted = 0
-                               """, (kw_id,))
+                               """,
+                    (kw_id,),
+                )
                 prompts_to_unlink = cursor.fetchall()
 
                 if prompts_to_unlink:
                     # FK ON DELETE CASCADE will handle actual deletion from PromptKeywordLinks.
                     # Log these unlinks.
-                    cursor.execute("DELETE FROM PromptKeywordLinks WHERE keyword_id = ?", (kw_id,))
+                    cursor.execute(
+                        "DELETE FROM PromptKeywordLinks WHERE keyword_id = ?", (kw_id,)
+                    )
                     link_sync_version = 1
                     for p_to_unlink in prompts_to_unlink:
-                        prompt_uuid_val = p_to_unlink['prompt_uuid']
+                        prompt_uuid_val = p_to_unlink["prompt_uuid"]
                         link_composite_uuid = f"{prompt_uuid_val}_{kw_uuid}"
-                        unlink_payload = {'prompt_uuid': prompt_uuid_val, 'keyword_uuid': kw_uuid}
-                        self._log_sync_event(conn, 'PromptKeywordLinks', link_composite_uuid, 'unlink', link_sync_version, unlink_payload)
-                    logging.debug(f"Unlinked keyword ID {kw_id} from {len(prompts_to_unlink)} prompts during soft delete.")
+                        unlink_payload = {
+                            "prompt_uuid": prompt_uuid_val,
+                            "keyword_uuid": kw_uuid,
+                        }
+                        self._log_sync_event(
+                            conn,
+                            "PromptKeywordLinks",
+                            link_composite_uuid,
+                            "unlink",
+                            link_sync_version,
+                            unlink_payload,
+                        )
+                    logging.debug(
+                        f"Unlinked keyword ID {kw_id} from {len(prompts_to_unlink)} prompts during soft delete."
+                    )
 
-                logger.info(f"Soft deleted prompt keyword '{normalized_keyword}' (ID: {kw_id}, UUID: {kw_uuid}).")
+                logger.info(
+                    f"Soft deleted prompt keyword '{normalized_keyword}' (ID: {kw_id}, UUID: {kw_uuid})."
+                )
                 return True
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.opt(exception=True).error(f"Error soft deleting prompt keyword '{keyword_text}': {e}")
-            if isinstance(e, (InputError, ConflictError, DatabaseError)): raise e
-            else: raise DatabaseError(f"Failed to soft delete prompt keyword: {e}") from e
+            logger.opt(exception=True).error(
+                f"Error soft deleting prompt keyword '{keyword_text}': {e}"
+            )
+            if isinstance(e, (InputError, ConflictError, DatabaseError)):
+                raise e
+            else:
+                raise DatabaseError(f"Failed to soft delete prompt keyword: {e}") from e
 
     # --- Read Methods ---
-    def get_prompt_by_id(self, prompt_id: int, include_deleted: bool = False) -> Optional[Dict]:
+    def get_prompt_by_id(
+        self, prompt_id: int, include_deleted: bool = False
+    ) -> Optional[Dict]:
         start_time = time.time()
-        
+
         query = "SELECT * FROM Prompts WHERE id = ?"
         params = [prompt_id]
         if not include_deleted:
@@ -1483,37 +2083,50 @@ class PromptsDatabase:
             cursor = self.execute_query(query, tuple(params))
             result = cursor.fetchone()
             found_result = dict(result) if result else None
-            
+
             # Log success metrics
             duration = time.time() - start_time
-            log_histogram("prompts_db_operation_duration", duration, labels={
-                "operation": "get_by_id",
-                "found": "true" if found_result else "false"
-            })
-            log_counter("prompts_db_operation_count", labels={
-                "operation": "get_by_id",
-                "status": "success",
-                "found": "true" if found_result else "false"
-            })
-            
+            log_histogram(
+                "prompts_db_operation_duration",
+                duration,
+                labels={
+                    "operation": "get_by_id",
+                    "found": "true" if found_result else "false",
+                },
+            )
+            log_counter(
+                "prompts_db_operation_count",
+                labels={
+                    "operation": "get_by_id",
+                    "status": "success",
+                    "found": "true" if found_result else "false",
+                },
+            )
+
             return found_result
         except (DatabaseError, sqlite3.Error) as e:
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("prompts_db_operation_duration", duration, labels={
-                "operation": "get_by_id",
-                "found": "false"
-            })
-            log_counter("prompts_db_operation_count", labels={
-                "operation": "get_by_id",
-                "status": "error",
-                "error_type": type(e).__name__
-            })
-            
+            log_histogram(
+                "prompts_db_operation_duration",
+                duration,
+                labels={"operation": "get_by_id", "found": "false"},
+            )
+            log_counter(
+                "prompts_db_operation_count",
+                labels={
+                    "operation": "get_by_id",
+                    "status": "error",
+                    "error_type": type(e).__name__,
+                },
+            )
+
             logger.error(f"Error fetching prompt by ID {prompt_id}: {e}")
             raise DatabaseError(f"Failed fetch prompt by ID: {e}") from e
 
-    def get_prompt_by_uuid(self, prompt_uuid: str, include_deleted: bool = False) -> Optional[Dict]:
+    def get_prompt_by_uuid(
+        self, prompt_uuid: str, include_deleted: bool = False
+    ) -> Optional[Dict]:
         query = "SELECT * FROM Prompts WHERE uuid = ?"
         params = [prompt_uuid]
         if not include_deleted:
@@ -1526,9 +2139,11 @@ class PromptsDatabase:
             logger.error(f"Error fetching prompt by UUID {prompt_uuid}: {e}")
             raise DatabaseError(f"Failed fetch prompt by UUID: {e}") from e
 
-    def get_prompt_by_name(self, name: str, include_deleted: bool = False) -> Optional[Dict]:
+    def get_prompt_by_name(
+        self, name: str, include_deleted: bool = False
+    ) -> Optional[Dict]:
         start_time = time.time()
-        
+
         query = "SELECT * FROM Prompts WHERE name = ?"
         params = [name]
         if not include_deleted:
@@ -1537,41 +2152,56 @@ class PromptsDatabase:
             cursor = self.execute_query(query, tuple(params))
             result = cursor.fetchone()
             found_result = dict(result) if result else None
-            
+
             # Log success metrics
             duration = time.time() - start_time
-            log_histogram("prompts_db_operation_duration", duration, labels={
-                "operation": "get_by_name",
-                "found": "true" if found_result else "false"
-            })
-            log_counter("prompts_db_operation_count", labels={
-                "operation": "get_by_name",
-                "status": "success",
-                "found": "true" if found_result else "false"
-            })
-            
+            log_histogram(
+                "prompts_db_operation_duration",
+                duration,
+                labels={
+                    "operation": "get_by_name",
+                    "found": "true" if found_result else "false",
+                },
+            )
+            log_counter(
+                "prompts_db_operation_count",
+                labels={
+                    "operation": "get_by_name",
+                    "status": "success",
+                    "found": "true" if found_result else "false",
+                },
+            )
+
             return found_result
         except (DatabaseError, sqlite3.Error) as e:
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("prompts_db_operation_duration", duration, labels={
-                "operation": "get_by_name",
-                "found": "false"
-            })
-            log_counter("prompts_db_operation_count", labels={
-                "operation": "get_by_name",
-                "status": "error",
-                "error_type": type(e).__name__
-            })
-            
+            log_histogram(
+                "prompts_db_operation_duration",
+                duration,
+                labels={"operation": "get_by_name", "found": "false"},
+            )
+            log_counter(
+                "prompts_db_operation_count",
+                labels={
+                    "operation": "get_by_name",
+                    "status": "error",
+                    "error_type": type(e).__name__,
+                },
+            )
+
             logger.error(f"Error fetching prompt by name '{name}': {e}")
             raise DatabaseError(f"Failed fetch prompt by name: {e}") from e
 
-    def list_prompts(self, page: int = 1, per_page: int = 10, include_deleted: bool = False) -> Tuple[List[Dict], int, int, int]:
+    def list_prompts(
+        self, page: int = 1, per_page: int = 10, include_deleted: bool = False
+    ) -> Tuple[List[Dict], int, int, int]:
         start_time = time.time()
-        
-        if page < 1: raise ValueError("Page number must be >= 1")
-        if per_page < 1: raise ValueError("Per page must be >= 1")
+
+        if page < 1:
+            raise ValueError("Page number must be >= 1")
+        if per_page < 1:
+            raise ValueError("Per page must be >= 1")
         offset = (page - 1) * per_page
 
         where_clause = "WHERE deleted = 0" if not include_deleted else ""
@@ -1596,94 +2226,126 @@ class PromptsDatabase:
                     results_data = [dict(row) for row in cursor.fetchall()]
 
             total_pages = ceil(total_items / per_page) if total_items > 0 else 0
-            
+
             # Log success metrics
             duration = time.time() - start_time
-            log_histogram("prompts_db_operation_duration", duration, labels={
-                "operation": "list_prompts",
-                "page": str(page),
-                "per_page": str(per_page)
-            })
-            log_counter("prompts_db_operation_count", labels={
-                "operation": "list_prompts",
-                "status": "success",
-                "result_count": str(len(results_data)),
-                "total_items": str(total_items)
-            })
-            
+            log_histogram(
+                "prompts_db_operation_duration",
+                duration,
+                labels={
+                    "operation": "list_prompts",
+                    "page": str(page),
+                    "per_page": str(per_page),
+                },
+            )
+            log_counter(
+                "prompts_db_operation_count",
+                labels={
+                    "operation": "list_prompts",
+                    "status": "success",
+                    "result_count": str(len(results_data)),
+                    "total_items": str(total_items),
+                },
+            )
+
             return results_data, total_pages, page, total_items
         except (DatabaseError, sqlite3.Error) as e:
             # Log error metrics
             duration = time.time() - start_time
-            log_histogram("prompts_db_operation_duration", duration, labels={
-                "operation": "list_prompts",
-                "page": str(page),
-                "per_page": str(per_page)
-            })
-            log_counter("prompts_db_operation_count", labels={
-                "operation": "list_prompts",
-                "status": "error",
-                "error_type": type(e).__name__
-            })
-            
+            log_histogram(
+                "prompts_db_operation_duration",
+                duration,
+                labels={
+                    "operation": "list_prompts",
+                    "page": str(page),
+                    "per_page": str(per_page),
+                },
+            )
+            log_counter(
+                "prompts_db_operation_count",
+                labels={
+                    "operation": "list_prompts",
+                    "status": "error",
+                    "error_type": type(e).__name__,
+                },
+            )
+
             logger.error(f"Error listing prompts: {e}")
             raise DatabaseError(f"Failed to list prompts: {e}") from e
 
-    def fetch_prompt_details(self, prompt_id_or_name_or_uuid: Union[int, str], include_deleted: bool = False) -> Optional[Dict]:
+    def fetch_prompt_details(
+        self, prompt_id_or_name_or_uuid: Union[int, str], include_deleted: bool = False
+    ) -> Optional[Dict]:
         prompt_data = None
         if isinstance(prompt_id_or_name_or_uuid, int):
-            prompt_data = self.get_prompt_by_id(prompt_id_or_name_or_uuid, include_deleted)
+            prompt_data = self.get_prompt_by_id(
+                prompt_id_or_name_or_uuid, include_deleted
+            )
         elif isinstance(prompt_id_or_name_or_uuid, str):
-            try: # Check if UUID
+            try:  # Check if UUID
                 uuid.UUID(prompt_id_or_name_or_uuid, version=4)
-                prompt_data = self.get_prompt_by_uuid(prompt_id_or_name_or_uuid, include_deleted)
-            except ValueError: # Assume name
-                prompt_data = self.get_prompt_by_name(prompt_id_or_name_or_uuid, include_deleted)
+                prompt_data = self.get_prompt_by_uuid(
+                    prompt_id_or_name_or_uuid, include_deleted
+                )
+            except ValueError:  # Assume name
+                prompt_data = self.get_prompt_by_name(
+                    prompt_id_or_name_or_uuid, include_deleted
+                )
 
         if not prompt_data:
             return None
 
         # Fetch keywords
-        keywords = self.fetch_keywords_for_prompt(prompt_data['id'], include_deleted=include_deleted) # Pass prompt_id
+        keywords = self.fetch_keywords_for_prompt(
+            prompt_data["id"], include_deleted=include_deleted
+        )  # Pass prompt_id
         prompt_data_dict = dict(prompt_data)
-        prompt_data_dict['keywords'] = keywords
+        prompt_data_dict["keywords"] = keywords
         return prompt_data_dict
 
     def fetch_all_keywords(self, include_deleted: bool = False) -> List[str]:
         query = "SELECT keyword FROM PromptKeywordsTable"
-        if not include_deleted: query += " WHERE deleted = 0"
+        if not include_deleted:
+            query += " WHERE deleted = 0"
         query += " ORDER BY keyword COLLATE NOCASE"
         try:
             cursor = self.execute_query(query)
-            return [row['keyword'] for row in cursor.fetchall()]
+            return [row["keyword"] for row in cursor.fetchall()]
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error fetching all prompt keywords: {e}")
             raise DatabaseError("Failed to fetch all prompt keywords") from e
 
-    def fetch_keywords_for_prompt(self, prompt_id: int, include_deleted: bool = False) -> List[str]:
+    def fetch_keywords_for_prompt(
+        self, prompt_id: int, include_deleted: bool = False
+    ) -> List[str]:
         # Note: include_deleted here refers to the keyword itself, not the link or prompt
         query = """SELECT k.keyword FROM PromptKeywordsTable k
                                              JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
                    WHERE pkl.prompt_id = ?"""
         params = [prompt_id]
-        if not include_deleted: # Filter for active keywords
+        if not include_deleted:  # Filter for active keywords
             query += " AND k.deleted = 0"
         query += " ORDER BY k.keyword COLLATE NOCASE"
         try:
             cursor = self.execute_query(query, tuple(params))
-            return [row['keyword'] for row in cursor.fetchall()]
+            return [row["keyword"] for row in cursor.fetchall()]
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error fetching keywords for prompt ID {prompt_id}: {e}")
-            raise DatabaseError(f"Failed to fetch keywords for prompt {prompt_id}") from e
+            raise DatabaseError(
+                f"Failed to fetch keywords for prompt {prompt_id}"
+            ) from e
 
-    def search_prompts(self,
-                       search_query: Optional[str],
-                       search_fields: Optional[List[str]] = None,  # e.g. ['name', 'details', 'keywords']
-                       page: int = 1,
-                       results_per_page: int = 20,
-                       include_deleted: bool = False,
-                       fts_match_query: Optional[str] = None,
-                       ) -> Tuple[List[Dict[str, Any]], int]:
+    def search_prompts(
+        self,
+        search_query: Optional[str],
+        search_fields: Optional[
+            List[str]
+        ] = None,  # e.g. ['name', 'details', 'keywords']
+        page: int = 1,
+        results_per_page: int = 20,
+        include_deleted: bool = False,
+        fts_match_query: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         """Searches prompts using FTS.
 
         Args:
@@ -1703,12 +2365,20 @@ class PromptsDatabase:
                 unchanged.
         """
         start_time = time.time()
-        
-        if page < 1: raise ValueError("Page must be >= 1")
-        if results_per_page < 1: raise ValueError("Results per page must be >= 1")
+
+        if page < 1:
+            raise ValueError("Page must be >= 1")
+        if results_per_page < 1:
+            raise ValueError("Results per page must be >= 1")
 
         if search_query and not search_fields:
-            search_fields = ["name", "details", "system_prompt", "user_prompt", "author"]
+            search_fields = [
+                "name",
+                "details",
+                "system_prompt",
+                "user_prompt",
+                "author",
+            ]
         elif not search_fields:
             search_fields = []
 
@@ -1726,7 +2396,13 @@ class PromptsDatabase:
         # --- Robust FTS search using subqueries ---
         if search_query and search_fields:
             matching_prompt_ids = set()
-            text_search_fields = {"name", "author", "details", "system_prompt", "user_prompt"}
+            text_search_fields = {
+                "name",
+                "author",
+                "details",
+                "system_prompt",
+                "user_prompt",
+            }
             # Forward the caller-built MATCH expression only when provided
             # so existing callers/test fakes without the parameter keep the
             # legacy raw-`search_query` MATCH behavior unchanged.
@@ -1735,37 +2411,52 @@ class PromptsDatabase:
             # Search in prompt text fields
             if any(field in text_search_fields for field in search_fields):
                 try:
-                    cursor = self.execute_query("SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?", (effective_match_query,))
-                    matching_prompt_ids.update(row['rowid'] for row in cursor.fetchall())
+                    cursor = self.execute_query(
+                        "SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?",
+                        (effective_match_query,),
+                    )
+                    matching_prompt_ids.update(
+                        row["rowid"] for row in cursor.fetchall()
+                    )
                 except sqlite3.Error as e:
-                    logging.opt(exception=True).error(f"FTS search on prompts failed: {e}")
+                    logging.opt(exception=True).error(
+                        f"FTS search on prompts failed: {e}"
+                    )
                     raise DatabaseError(f"FTS search on prompts failed: {e}") from e
-
 
             # Search in keywords
             if "keywords" in search_fields:
                 try:
                     # 1. Find keyword IDs matching the query
-                    kw_cursor = self.execute_query("SELECT rowid FROM prompt_keywords_fts WHERE prompt_keywords_fts MATCH ?", (effective_match_query,))
-                    matching_keyword_ids = {row['rowid'] for row in kw_cursor.fetchall()}
+                    kw_cursor = self.execute_query(
+                        "SELECT rowid FROM prompt_keywords_fts WHERE prompt_keywords_fts MATCH ?",
+                        (effective_match_query,),
+                    )
+                    matching_keyword_ids = {
+                        row["rowid"] for row in kw_cursor.fetchall()
+                    }
 
                     # 2. Find prompt IDs linked to those keywords
                     if matching_keyword_ids:
-                        placeholders = ','.join('?' * len(matching_keyword_ids))
+                        placeholders = ",".join("?" * len(matching_keyword_ids))
                         link_cursor = self.execute_query(
                             f"SELECT DISTINCT prompt_id FROM PromptKeywordLinks WHERE keyword_id IN ({placeholders})",
-                            tuple(matching_keyword_ids)
+                            tuple(matching_keyword_ids),
                         )
-                        matching_prompt_ids.update(row['prompt_id'] for row in link_cursor.fetchall())
+                        matching_prompt_ids.update(
+                            row["prompt_id"] for row in link_cursor.fetchall()
+                        )
                 except sqlite3.Error as e:
-                    logging.opt(exception=True).error(f"FTS search on keywords failed: {e}")
+                    logging.opt(exception=True).error(
+                        f"FTS search on keywords failed: {e}"
+                    )
                     raise DatabaseError(f"FTS search on keywords failed: {e}") from e
 
             if not matching_prompt_ids:
                 return [], 0  # No matches found, short-circuit
 
             # Add the final ID list to the main query conditions
-            id_placeholders = ','.join('?' * len(matching_prompt_ids))
+            id_placeholders = ",".join("?" * len(matching_prompt_ids))
             conditions.append(f"p.id IN ({id_placeholders})")
             params.extend(list(matching_prompt_ids))
 
@@ -1787,47 +2478,69 @@ class PromptsDatabase:
                 results_list = [dict(row) for row in results_cursor.fetchall()]
                 # Attach keywords to each result
                 for res_dict in results_list:
-                    res_dict['keywords'] = self.fetch_keywords_for_prompt(res_dict['id'], include_deleted=False)
+                    res_dict["keywords"] = self.fetch_keywords_for_prompt(
+                        res_dict["id"], include_deleted=False
+                    )
 
             # Log success metrics
             duration = time.time() - start_time
             search_type = "full_text" if search_query else "list_all"
-            log_histogram("prompts_db_operation_duration", duration, labels={
-                "operation": "search_prompts",
-                "search_type": search_type,
-                "page": str(page),
-                "result_count": str(len(results_list))
-            })
-            log_counter("prompts_db_operation_count", labels={
-                "operation": "search_prompts",
-                "status": "success",
-                "search_type": search_type,
-                "total_matches": str(total_matches),
-                "searched_keywords": "true" if "keywords" in search_fields else "false"
-            })
-            
+            log_histogram(
+                "prompts_db_operation_duration",
+                duration,
+                labels={
+                    "operation": "search_prompts",
+                    "search_type": search_type,
+                    "page": str(page),
+                    "result_count": str(len(results_list)),
+                },
+            )
+            log_counter(
+                "prompts_db_operation_count",
+                labels={
+                    "operation": "search_prompts",
+                    "status": "success",
+                    "search_type": search_type,
+                    "total_matches": str(total_matches),
+                    "searched_keywords": "true"
+                    if "keywords" in search_fields
+                    else "false",
+                },
+            )
+
             return results_list, total_matches
         except (DatabaseError, sqlite3.Error) as e:
             # Log error metrics
             duration = time.time() - start_time
-            error_type = "database_error" if isinstance(e, DatabaseError) else "sqlite_error"
-            log_histogram("prompts_db_operation_duration", duration, labels={
-                "operation": "search_prompts",
-                "search_type": "error",
-                "page": str(page),
-                "result_count": "0"
-            })
-            log_counter("prompts_db_operation_count", labels={
-                "operation": "search_prompts",
-                "status": "error",
-                "error_type": error_type
-            })
-            
+            error_type = (
+                "database_error" if isinstance(e, DatabaseError) else "sqlite_error"
+            )
+            log_histogram(
+                "prompts_db_operation_duration",
+                duration,
+                labels={
+                    "operation": "search_prompts",
+                    "search_type": "error",
+                    "page": str(page),
+                    "result_count": "0",
+                },
+            )
+            log_counter(
+                "prompts_db_operation_count",
+                labels={
+                    "operation": "search_prompts",
+                    "status": "error",
+                    "error_type": error_type,
+                },
+            )
+
             logging.opt(exception=True).error(f"DB error during prompt search: {e}")
             raise DatabaseError(f"Failed to search prompts: {e}") from e
 
     # --- Sync Log Access Methods ---
-    def get_sync_log_entries(self, since_change_id: int = 0, limit: Optional[int] = None) -> List[Dict]:
+    def get_sync_log_entries(
+        self, since_change_id: int = 0, limit: Optional[int] = None
+    ) -> List[Dict]:
         query = "SELECT * FROM sync_log WHERE change_id > ? ORDER BY change_id ASC"
         params_list = [since_change_id]
         if limit is not None:
@@ -1838,27 +2551,32 @@ class PromptsDatabase:
             results = []
             for row in cursor.fetchall():
                 row_dict = dict(row)
-                if row_dict.get('payload'):
-                    try: row_dict['payload'] = json.loads(row_dict['payload'])
+                if row_dict.get("payload"):
+                    try:
+                        row_dict["payload"] = json.loads(row_dict["payload"])
                     except json.JSONDecodeError:
-                        logging.warning(f"Failed decode JSON payload for sync_log ID {row_dict.get('change_id')}")
-                        row_dict['payload'] = None
+                        logging.warning(
+                            f"Failed decode JSON payload for sync_log ID {row_dict.get('change_id')}"
+                        )
+                        row_dict["payload"] = None
                 results.append(row_dict)
             return results
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error fetching sync_log entries: {e}")
             raise DatabaseError("Failed to fetch sync_log entries") from e
 
-
     def delete_sync_log_entries(self, change_ids: List[int]) -> int:
-        if not change_ids: return 0
+        if not change_ids:
+            return 0
         if not all(isinstance(cid, int) for cid in change_ids):
             raise ValueError("change_ids must be a list of integers.")
-        placeholders = ','.join('?' * len(change_ids))
+        placeholders = ",".join("?" * len(change_ids))
         query = f"DELETE FROM sync_log WHERE change_id IN ({placeholders})"
         try:
-            with self.transaction(): # Ensure commit happens
-                cursor = self.execute_query(query, tuple(change_ids), commit=False) # commit handled by transaction
+            with self.transaction():  # Ensure commit happens
+                cursor = self.execute_query(
+                    query, tuple(change_ids), commit=False
+                )  # commit handled by transaction
                 deleted_count = cursor.rowcount
                 logger.info(f"Deleted {deleted_count} sync log entries.")
                 return deleted_count
@@ -1867,15 +2585,17 @@ class PromptsDatabase:
             raise DatabaseError("Failed to delete sync log entries") from e
 
     # --- Additional Query Methods ---
-    def get_all_prompts(self, include_deleted: bool = False, limit: int = 100, offset: int = 0) -> List[Dict]:
+    def get_all_prompts(
+        self, include_deleted: bool = False, limit: int = 100, offset: int = 0
+    ) -> List[Dict]:
         """
         Get all prompts from the database.
-        
+
         Args:
             include_deleted: Whether to include soft-deleted prompts
             limit: Maximum number of prompts to return
             offset: Number of prompts to skip
-            
+
         Returns:
             List of prompt dictionaries
         """
@@ -1883,7 +2603,7 @@ class PromptsDatabase:
         if not include_deleted:
             query += " WHERE deleted = 0"
         query += " ORDER BY name COLLATE NOCASE LIMIT ? OFFSET ?"
-        
+
         try:
             cursor = self.execute_query(query, (limit, offset))
             return [dict(row) for row in cursor.fetchall()]
@@ -1891,15 +2611,17 @@ class PromptsDatabase:
             logger.error(f"Error fetching all prompts: {e}")
             raise DatabaseError(f"Failed to fetch all prompts: {e}") from e
 
-    def get_all_keywords(self, include_deleted: bool = False, limit: int = 100, offset: int = 0) -> List[Dict]:
+    def get_all_keywords(
+        self, include_deleted: bool = False, limit: int = 100, offset: int = 0
+    ) -> List[Dict]:
         """
         Get all keywords from the database.
-        
+
         Args:
             include_deleted: Whether to include soft-deleted keywords
             limit: Maximum number of keywords to return
             offset: Number of keywords to skip
-            
+
         Returns:
             List of keyword dictionaries with 'name' key
         """
@@ -1910,7 +2632,7 @@ class PromptsDatabase:
         if not include_deleted:
             query += " WHERE deleted = 0"
         query += " ORDER BY keyword COLLATE NOCASE LIMIT ? OFFSET ?"
-        
+
         try:
             cursor = self.execute_query(query, (limit, offset))
             return [dict(row) for row in cursor.fetchall()]
@@ -1918,24 +2640,26 @@ class PromptsDatabase:
             logger.error(f"Error fetching all keywords: {e}")
             raise DatabaseError(f"Failed to fetch all keywords: {e}") from e
 
-    def search_prompts_by_keyword(self, keyword: str, include_deleted: bool = False) -> List[Dict]:
+    def search_prompts_by_keyword(
+        self, keyword: str, include_deleted: bool = False
+    ) -> List[Dict]:
         """
         Search for prompts that have a specific keyword.
-        
+
         Args:
             keyword: The keyword to search for
             include_deleted: Whether to include soft-deleted prompts
-            
+
         Returns:
             List of prompt dictionaries that have the keyword
         """
         start_time = time.time()
-        
+
         if not keyword or not keyword.strip():
             return []
-            
+
         normalized_keyword = self._normalize_keyword(keyword)
-        
+
         query = """
             SELECT DISTINCT p.* 
             FROM Prompts p
@@ -1944,146 +2668,174 @@ class PromptsDatabase:
             WHERE pkw.keyword = ?
         """
         params = [normalized_keyword]
-        
+
         if not include_deleted:
             query += " AND p.deleted = 0 AND pkw.deleted = 0"
-            
+
         query += " ORDER BY p.name COLLATE NOCASE"
-        
+
         try:
             cursor = self.execute_query(query, tuple(params))
             results = [dict(row) for row in cursor.fetchall()]
-            
+
             # Attach keywords to each result
             for res_dict in results:
-                res_dict['keywords'] = self.fetch_keywords_for_prompt(res_dict['id'], include_deleted=False)
-                
+                res_dict["keywords"] = self.fetch_keywords_for_prompt(
+                    res_dict["id"], include_deleted=False
+                )
+
             # Log success metrics
             duration = time.time() - start_time
-            log_histogram("prompts_db_operation_duration", duration, labels={
-                "operation": "search_by_keyword",
-                "result_count": str(len(results))
-            })
-            log_counter("prompts_db_operation_count", labels={
-                "operation": "search_by_keyword",
-                "status": "success",
-                "result_count": str(len(results))
-            })
-            
+            log_histogram(
+                "prompts_db_operation_duration",
+                duration,
+                labels={
+                    "operation": "search_by_keyword",
+                    "result_count": str(len(results)),
+                },
+            )
+            log_counter(
+                "prompts_db_operation_count",
+                labels={
+                    "operation": "search_by_keyword",
+                    "status": "success",
+                    "result_count": str(len(results)),
+                },
+            )
+
             return results
         except (DatabaseError, sqlite3.Error) as e:
             # Log error metrics
             duration = time.time() - start_time
-            error_type = "database_error" if isinstance(e, DatabaseError) else "sqlite_error"
-            log_histogram("prompts_db_operation_duration", duration, labels={
-                "operation": "search_by_keyword",
-                "result_count": "0"
-            })
-            log_counter("prompts_db_operation_count", labels={
-                "operation": "search_by_keyword",
-                "status": "error",
-                "error_type": error_type
-            })
-            
+            error_type = (
+                "database_error" if isinstance(e, DatabaseError) else "sqlite_error"
+            )
+            log_histogram(
+                "prompts_db_operation_duration",
+                duration,
+                labels={"operation": "search_by_keyword", "result_count": "0"},
+            )
+            log_counter(
+                "prompts_db_operation_count",
+                labels={
+                    "operation": "search_by_keyword",
+                    "status": "error",
+                    "error_type": error_type,
+                },
+            )
+
             logger.error(f"Error searching prompts by keyword '{keyword}': {e}")
             raise DatabaseError(f"Failed to search prompts by keyword: {e}") from e
 
-    def search_prompts_by_text(self, search_text: str, include_deleted: bool = False) -> List[Dict]:
+    def search_prompts_by_text(
+        self, search_text: str, include_deleted: bool = False
+    ) -> List[Dict]:
         """
         Full-text search across prompt content.
         Searches in: name, author, details, system_prompt, user_prompt
-        
+
         Args:
             search_text: The text to search for
             include_deleted: Whether to include soft-deleted prompts
-            
+
         Returns:
             List of prompt dictionaries matching the search
         """
         if not search_text or not search_text.strip():
             return []
-            
+
         try:
             # Use FTS to find matching prompt IDs
             cursor = self.execute_query(
-                "SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?", 
-                (search_text,)
+                "SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?",
+                (search_text,),
             )
-            matching_ids = [row['rowid'] for row in cursor.fetchall()]
-            
+            matching_ids = [row["rowid"] for row in cursor.fetchall()]
+
             if not matching_ids:
                 return []
-                
+
             # Build query for full prompt data
-            placeholders = ','.join('?' * len(matching_ids))
+            placeholders = ",".join("?" * len(matching_ids))
             query = f"SELECT * FROM Prompts WHERE id IN ({placeholders})"
             params = list(matching_ids)
-            
+
             if not include_deleted:
                 query += " AND deleted = 0"
-                
+
             query += " ORDER BY name COLLATE NOCASE"
-            
+
             cursor = self.execute_query(query, tuple(params))
             results = [dict(row) for row in cursor.fetchall()]
-            
+
             # Attach keywords to each result
             for res_dict in results:
-                res_dict['keywords'] = self.fetch_keywords_for_prompt(res_dict['id'], include_deleted=False)
-                
+                res_dict["keywords"] = self.fetch_keywords_for_prompt(
+                    res_dict["id"], include_deleted=False
+                )
+
             return results
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error in full-text search for '{search_text}': {e}")
             raise DatabaseError(f"Failed to search prompts by text: {e}") from e
 
-    def search_prompts_by_content(self, search_text: str, include_deleted: bool = False) -> List[Dict]:
+    def search_prompts_by_content(
+        self, search_text: str, include_deleted: bool = False
+    ) -> List[Dict]:
         """
         Alias for search_prompts_by_text for backward compatibility.
         Full-text search across prompt content.
-        
+
         Args:
             search_text: The text to search for
             include_deleted: Whether to include soft-deleted prompts
-            
+
         Returns:
             List of prompt dictionaries matching the search
         """
         return self.search_prompts_by_text(search_text, include_deleted)
 
-    def get_prompt_details(self, prompt_id_or_name_or_uuid: Union[int, str], include_deleted: bool = False) -> Optional[Dict]:
+    def get_prompt_details(
+        self, prompt_id_or_name_or_uuid: Union[int, str], include_deleted: bool = False
+    ) -> Optional[Dict]:
         """
         Get detailed information about a prompt including its keywords.
         This is an alias for fetch_prompt_details for backward compatibility.
-        
+
         Args:
             prompt_id_or_name_or_uuid: Prompt identifier (ID, name, or UUID)
             include_deleted: Whether to include soft-deleted prompts
-            
+
         Returns:
             Dictionary with prompt data and keywords, or None if not found
         """
         return self.fetch_prompt_details(prompt_id_or_name_or_uuid, include_deleted)
 
-    def _add_keyword_with_retry(self, keyword_text: str) -> Tuple[Optional[int], Optional[str]]:
+    def _add_keyword_with_retry(
+        self, keyword_text: str
+    ) -> Tuple[Optional[int], Optional[str]]:
         """
         Internal method to add a keyword with retry logic for concurrent access.
-        
+
         Args:
             keyword_text: The keyword text to add
-            
+
         Returns:
             Tuple of (keyword_id, keyword_uuid)
         """
         max_retries = 5
         retry_delay = 0.1  # Start with 100ms
-        
+
         for attempt in range(max_retries):
             try:
                 return self._add_keyword_full(keyword_text)
             except sqlite3.OperationalError as e:
                 if "database is locked" in str(e) and attempt < max_retries - 1:
-                    logger.warning(f"Database locked on add_keyword attempt {attempt + 1}, retrying in {retry_delay}s")
+                    logger.warning(
+                        f"Database locked on add_keyword attempt {attempt + 1}, retrying in {retry_delay}s"
+                    )
                     import time
+
                     time.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
                 else:
@@ -2091,28 +2843,33 @@ class PromptsDatabase:
             except Exception:
                 raise
 
-    def execute_query_with_retry(self, query: str, params: tuple = None, *, commit: bool = False) -> sqlite3.Cursor:
+    def execute_query_with_retry(
+        self, query: str, params: tuple = None, *, commit: bool = False
+    ) -> sqlite3.Cursor:
         """
         Execute a query with retry logic for database lock errors.
-        
+
         Args:
             query: SQL query to execute
             params: Query parameters
             commit: Whether to commit after execution
-            
+
         Returns:
             Cursor object
         """
         max_retries = 5
         retry_delay = 0.1  # Start with 100ms
-        
+
         for attempt in range(max_retries):
             try:
                 return self.execute_query(query, params, commit=commit)
             except sqlite3.OperationalError as e:
                 if "database is locked" in str(e) and attempt < max_retries - 1:
-                    logger.warning(f"Database locked on query attempt {attempt + 1}, retrying in {retry_delay}s")
+                    logger.warning(
+                        f"Database locked on query attempt {attempt + 1}, retrying in {retry_delay}s"
+                    )
                     import time
+
                     time.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
                 else:
@@ -2120,14 +2877,16 @@ class PromptsDatabase:
             except Exception:
                 raise
 
-    def export_keywords_to_csv(self, file_path: Optional[str] = None) -> Tuple[str, str]:
+    def export_keywords_to_csv(
+        self, file_path: Optional[str] = None
+    ) -> Tuple[str, str]:
         """
         Export keywords to CSV file.
         This is a convenience method that calls the standalone function.
-        
+
         Args:
             file_path: Optional path for the CSV file. If not provided, generates one.
-            
+
         Returns:
             Tuple of (status_message, file_path)
         """
@@ -2138,11 +2897,11 @@ class PromptsDatabase:
         """
         Update a prompt by ID.
         This is a convenience method for update_prompt_by_id.
-        
+
         Args:
             prompt_id: The ID of the prompt to update
             **kwargs: Fields to update (name, author, details, system_prompt, user_prompt)
-            
+
         Returns:
             True if update was successful, False otherwise
         """
@@ -2157,10 +2916,10 @@ class PromptsDatabase:
         """
         Delete a prompt (soft delete).
         This is an alias for soft_delete_prompt.
-        
+
         Args:
             prompt_id_or_name_or_uuid: Prompt identifier
-            
+
         Returns:
             True if deletion was successful, False otherwise
         """
@@ -2169,17 +2928,17 @@ class PromptsDatabase:
         except Exception as e:
             logger.warning(f"Failed to delete prompt {prompt_id_or_name_or_uuid}: {e}")
             return False
-    
+
     def close(self) -> None:
         """Alias for close_connection() to maintain consistency with BaseDB."""
         self.close_connection()
-    
+
     def vacuum(self) -> None:
         """Vacuum the database to reclaim unused space and optimize performance."""
         if self.is_memory_db:
             logger.debug("Skipping vacuum for in-memory database")
             return
-            
+
         try:
             conn = self._get_thread_connection()
             # Vacuum must be run outside of a transaction
@@ -2197,10 +2956,16 @@ class PromptsDatabase:
 # =========================================================================
 # These functions now operate on a PromptsDatabase instance.
 
-def add_or_update_prompt(db_instance: PromptsDatabase,
-                         name: str, author: Optional[str], details: Optional[str],
-                         system_prompt: Optional[str] = None, user_prompt: Optional[str] = None,
-                         keywords: Optional[List[str]] = None) -> Tuple[Optional[int], Optional[str], str]:
+
+def add_or_update_prompt(
+    db_instance: PromptsDatabase,
+    name: str,
+    author: Optional[str],
+    details: Optional[str],
+    system_prompt: Optional[str] = None,
+    user_prompt: Optional[str] = None,
+    keywords: Optional[List[str]] = None,
+) -> Tuple[Optional[int], Optional[str], str]:
     """
     Adds a new prompt or updates an existing one (identified by name).
     If the prompt exists (even if soft-deleted), it will be updated/undeleted.
@@ -2209,12 +2974,19 @@ def add_or_update_prompt(db_instance: PromptsDatabase,
         raise TypeError("db_instance must be a PromptsDatabase object.")
     # `add_prompt` with overwrite=True handles both add and update logic.
     return db_instance.add_prompt(
-        name=name, author=author, details=details,
-        system_prompt=system_prompt, user_prompt=user_prompt,
-        keywords=keywords, overwrite=True # Key change: always overwrite/update if exists
+        name=name,
+        author=author,
+        details=details,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        keywords=keywords,
+        overwrite=True,  # Key change: always overwrite/update if exists
     )
 
-def load_prompt_details_for_ui(db_instance: PromptsDatabase, prompt_name: str) -> Tuple[str, str, str, str, str, str]:
+
+def load_prompt_details_for_ui(
+    db_instance: PromptsDatabase, prompt_name: str
+) -> Tuple[str, str, str, str, str, str]:
     """
     Loads prompt details for UI display, fetching by name.
     Returns empty strings if not found.
@@ -2224,20 +2996,24 @@ def load_prompt_details_for_ui(db_instance: PromptsDatabase, prompt_name: str) -
     if not prompt_name:
         return "", "", "", "", "", ""
 
-    details_dict = db_instance.fetch_prompt_details(prompt_name, include_deleted=False) # Fetch active by name
+    details_dict = db_instance.fetch_prompt_details(
+        prompt_name, include_deleted=False
+    )  # Fetch active by name
     if details_dict:
         return (
-            details_dict.get('name', ""),
-            details_dict.get('author', "") or "", # Ensure empty string if None
-            details_dict.get('details', "") or "",
-            details_dict.get('system_prompt', "") or "",
-            details_dict.get('user_prompt', "") or "",
-            ', '.join(details_dict.get('keywords', [])) # keywords should be a list
+            details_dict.get("name", ""),
+            details_dict.get("author", "") or "",  # Ensure empty string if None
+            details_dict.get("details", "") or "",
+            details_dict.get("system_prompt", "") or "",
+            details_dict.get("user_prompt", "") or "",
+            ", ".join(details_dict.get("keywords", [])),  # keywords should be a list
         )
     return "", "", "", "", "", ""
 
 
-def export_prompt_keywords_to_csv(db_instance: PromptsDatabase, file_path: Optional[str] = None) -> Tuple[str, str]:
+def export_prompt_keywords_to_csv(
+    db_instance: PromptsDatabase, file_path: Optional[str] = None
+) -> Tuple[str, str]:
     import csv
     import tempfile
     import os
@@ -2252,7 +3028,9 @@ def export_prompt_keywords_to_csv(db_instance: PromptsDatabase, file_path: Optio
         if file_path is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             temp_dir = tempfile.gettempdir()
-            file_path = os.path.join(temp_dir, f'prompt_keywords_export_{timestamp}.csv')
+            file_path = os.path.join(
+                temp_dir, f"prompt_keywords_export_{timestamp}.csv"
+            )
 
         # Query to get keywords with associated prompt info (names, authors, counts)
         # This requires joining Prompts, PromptKeywordsTable, PromptKeywordLinks
@@ -2272,18 +3050,24 @@ def export_prompt_keywords_to_csv(db_instance: PromptsDatabase, file_path: Optio
         cursor = db_instance.execute_query(query)
         results = cursor.fetchall()
 
-        with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
+        with open(file_path, "w", newline="", encoding="utf-8") as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(['Keyword', 'Associated Prompts', 'Number of Prompts', 'Authors'])
+            writer.writerow(
+                ["Keyword", "Associated Prompts", "Number of Prompts", "Authors"]
+            )
             for row in results:
-                writer.writerow([
-                    row['keyword'],
-                    row['prompt_names'] or '',
-                    row['num_prompts'],
-                    row['authors'] or ''
-                ])
+                writer.writerow(
+                    [
+                        row["keyword"],
+                        row["prompt_names"] or "",
+                        row["num_prompts"],
+                        row["authors"] or "",
+                    ]
+                )
 
-        status_msg = f"Successfully exported {len(results)} active prompt keywords to CSV."
+        status_msg = (
+            f"Successfully exported {len(results)} active prompt keywords to CSV."
+        )
         logging.info(status_msg)
         return status_msg, file_path
 
@@ -2315,7 +3099,10 @@ def view_prompt_keywords_markdown(db_instance: PromptsDatabase) -> str:
         keywords_data = cursor.fetchall()
 
         if keywords_data:
-            keyword_list_md = [f"- {row['keyword']} ({row['prompt_count']} active prompts)" for row in keywords_data]
+            keyword_list_md = [
+                f"- {row['keyword']} ({row['prompt_count']} active prompts)"
+                for row in keywords_data
+            ]
             return "### Current Active Prompt Keywords:\n" + "\n".join(keyword_list_md)
         return "No active keywords found."
     except (DatabaseError, sqlite3.Error) as e:
@@ -2324,52 +3111,63 @@ def view_prompt_keywords_markdown(db_instance: PromptsDatabase) -> str:
         return error_msg
 
 
-def export_prompts_formatted(db_instance: PromptsDatabase,
-                             export_format: str = 'csv', # 'csv' or 'markdown'
-                             filter_keywords: Optional[List[str]] = None,
-                             include_system: bool = True,
-                             include_user: bool = True,
-                             include_details: bool = True,
-                             include_author: bool = True,
-                             include_associated_keywords: bool = True, # Renamed for clarity
-                             markdown_template_name: Optional[str] = "Basic Template" # Name of template
-                             ) -> Tuple[str, str]:
+def export_prompts_formatted(
+    db_instance: PromptsDatabase,
+    export_format: str = "csv",  # 'csv' or 'markdown'
+    filter_keywords: Optional[List[str]] = None,
+    include_system: bool = True,
+    include_user: bool = True,
+    include_details: bool = True,
+    include_author: bool = True,
+    include_associated_keywords: bool = True,  # Renamed for clarity
+    markdown_template_name: Optional[str] = "Basic Template",  # Name of template
+) -> Tuple[str, str]:
     import csv
     import tempfile
     import os
-    import zipfile # For markdown if multiple files
+    import zipfile  # For markdown if multiple files
     from datetime import datetime
 
     if not isinstance(db_instance, PromptsDatabase):
         raise TypeError("db_instance must be a PromptsDatabase object.")
 
-    logging.debug(f"export_prompts_formatted (format: {export_format}) from DB: {db_instance.db_path_str}")
+    logging.debug(
+        f"export_prompts_formatted (format: {export_format}) from DB: {db_instance.db_path_str}"
+    )
 
     # --- Fetch Prompts Data ---
     # Build base query parts
-    select_fields = ["p.id", "p.name", "p.uuid"] # Always include id, name, uuid
-    if include_author: select_fields.append("p.author")
-    if include_details: select_fields.append("p.details")
-    if include_system: select_fields.append("p.system_prompt")
-    if include_user: select_fields.append("p.user_prompt")
+    select_fields = ["p.id", "p.name", "p.uuid"]  # Always include id, name, uuid
+    if include_author:
+        select_fields.append("p.author")
+    if include_details:
+        select_fields.append("p.details")
+    if include_system:
+        select_fields.append("p.system_prompt")
+    if include_user:
+        select_fields.append("p.user_prompt")
 
     query_sql = f"SELECT DISTINCT {', '.join(select_fields)} FROM Prompts p"
     query_params = []
 
     # Keyword filtering
     if filter_keywords and len(filter_keywords) > 0:
-        normalized_filter_keywords = [db_instance._normalize_keyword(k) for k in filter_keywords if k and k.strip()]
+        normalized_filter_keywords = [
+            db_instance._normalize_keyword(k)
+            for k in filter_keywords
+            if k and k.strip()
+        ]
         if normalized_filter_keywords:
-            placeholders = ','.join(['?'] * len(normalized_filter_keywords))
+            placeholders = ",".join(["?"] * len(normalized_filter_keywords))
             query_sql += f"""
                 JOIN PromptKeywordLinks pkl ON p.id = pkl.prompt_id
                 JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id
                 WHERE p.deleted = 0 AND pkw.deleted = 0 AND pkw.keyword IN ({placeholders})
             """
             query_params.extend(normalized_filter_keywords)
-        else: # No valid filter keywords, so just filter active prompts
+        else:  # No valid filter keywords, so just filter active prompts
             query_sql += " WHERE p.deleted = 0"
-    else: # No keyword filter, just active prompts
+    else:  # No keyword filter, just active prompts
         query_sql += " WHERE p.deleted = 0"
 
     query_sql += " ORDER BY p.name COLLATE NOCASE"
@@ -2384,39 +3182,54 @@ def export_prompts_formatted(db_instance: PromptsDatabase,
         # Fetch associated keywords for each prompt if needed
         if include_associated_keywords:
             for prompt_dict in prompts_data:
-                prompt_dict['keywords_list'] = db_instance.fetch_keywords_for_prompt(prompt_dict['id'], include_deleted=False)
+                prompt_dict["keywords_list"] = db_instance.fetch_keywords_for_prompt(
+                    prompt_dict["id"], include_deleted=False
+                )
 
         # --- Perform Export ---
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file_path = "None"
 
-        if export_format == 'csv':
-            temp_csv_file = os.path.join(tempfile.gettempdir(), f'prompts_export_{timestamp}.csv')
-            header_row = ['Name', 'UUID'] # Start with common fields
-            if include_author: header_row.append('Author')
-            if include_details: header_row.append('Details')
-            if include_system: header_row.append('System Prompt')
-            if include_user: header_row.append('User Prompt')
-            if include_associated_keywords: header_row.append('Keywords')
+        if export_format == "csv":
+            temp_csv_file = os.path.join(
+                tempfile.gettempdir(), f"prompts_export_{timestamp}.csv"
+            )
+            header_row = ["Name", "UUID"]  # Start with common fields
+            if include_author:
+                header_row.append("Author")
+            if include_details:
+                header_row.append("Details")
+            if include_system:
+                header_row.append("System Prompt")
+            if include_user:
+                header_row.append("User Prompt")
+            if include_associated_keywords:
+                header_row.append("Keywords")
 
-            with open(temp_csv_file, 'w', newline='', encoding='utf-8') as csvfile:
+            with open(temp_csv_file, "w", newline="", encoding="utf-8") as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow(header_row)
                 for p_data in prompts_data:
-                    row_to_write = [p_data['name'], p_data['uuid']]
-                    if include_author: row_to_write.append(p_data.get('author', ''))
-                    if include_details: row_to_write.append(p_data.get('details', ''))
-                    if include_system: row_to_write.append(p_data.get('system_prompt', ''))
-                    if include_user: row_to_write.append(p_data.get('user_prompt', ''))
+                    row_to_write = [p_data["name"], p_data["uuid"]]
+                    if include_author:
+                        row_to_write.append(p_data.get("author", ""))
+                    if include_details:
+                        row_to_write.append(p_data.get("details", ""))
+                    if include_system:
+                        row_to_write.append(p_data.get("system_prompt", ""))
+                    if include_user:
+                        row_to_write.append(p_data.get("user_prompt", ""))
                     if include_associated_keywords:
-                        row_to_write.append(', '.join(p_data.get('keywords_list', [])))
+                        row_to_write.append(", ".join(p_data.get("keywords_list", [])))
                     writer.writerow(row_to_write)
             output_file_path = temp_csv_file
             status_msg = f"Successfully exported {len(prompts_data)} prompts to CSV."
 
-        elif export_format == 'markdown':
+        elif export_format == "markdown":
             temp_zip_dir = tempfile.mkdtemp()
-            zip_file_path = os.path.join(tempfile.gettempdir(), f'prompts_export_markdown_{timestamp}.zip')
+            zip_file_path = os.path.join(
+                tempfile.gettempdir(), f"prompts_export_markdown_{timestamp}.zip"
+            )
 
             templates = {
                 "Basic Template": """# {name} ({uuid})
@@ -2447,40 +3260,70 @@ def export_prompts_formatted(db_instance: PromptsDatabase,
 
 ## Keywords
 {keywords_section}
-"""
+""",
             }
-            chosen_template_str = templates.get(markdown_template_name, templates["Basic Template"])
+            chosen_template_str = templates.get(
+                markdown_template_name, templates["Basic Template"]
+            )
 
-            with zipfile.ZipFile(zip_file_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            with zipfile.ZipFile(zip_file_path, "w", zipfile.ZIP_DEFLATED) as zipf:
                 for p_data in prompts_data:
-                    author_sec = f"**Author**: {p_data['author']}" if include_author and p_data.get('author') else ""
-                    details_sec = f"**Details**: {p_data['details']}" if include_details and p_data.get('details') else ""
-                    system_sec = f"**System Prompt**:\n```\n{p_data['system_prompt']}\n```" if include_system and p_data.get('system_prompt') else ""
-                    user_sec = f"**User Prompt**:\n```\n{p_data['user_prompt']}\n```" if include_user and p_data.get('user_prompt') else ""
-                    keywords_sec = f"**Keywords**: {', '.join(p_data['keywords_list'])}" if include_associated_keywords and p_data.get('keywords_list') else ""
+                    author_sec = (
+                        f"**Author**: {p_data['author']}"
+                        if include_author and p_data.get("author")
+                        else ""
+                    )
+                    details_sec = (
+                        f"**Details**: {p_data['details']}"
+                        if include_details and p_data.get("details")
+                        else ""
+                    )
+                    system_sec = (
+                        f"**System Prompt**:\n```\n{p_data['system_prompt']}\n```"
+                        if include_system and p_data.get("system_prompt")
+                        else ""
+                    )
+                    user_sec = (
+                        f"**User Prompt**:\n```\n{p_data['user_prompt']}\n```"
+                        if include_user and p_data.get("user_prompt")
+                        else ""
+                    )
+                    keywords_sec = (
+                        f"**Keywords**: {', '.join(p_data['keywords_list'])}"
+                        if include_associated_keywords and p_data.get("keywords_list")
+                        else ""
+                    )
 
                     md_content = chosen_template_str.format(
-                        name=p_data['name'],
-                        uuid=p_data['uuid'],
+                        name=p_data["name"],
+                        uuid=p_data["uuid"],
                         author_section=author_sec,
                         details_section=details_sec,
-                        system_section=system_sec, # For Basic Template direct injection
-                        system_prompt_content=p_data.get('system_prompt', ''), # For Detailed Template
-                        user_section=user_sec, # For Basic Template direct injection
-                        user_prompt_content=p_data.get('user_prompt', ''), # For Detailed Template
-                        keywords_section=keywords_sec
-                    ).strip() # Clean up extra newlines if sections are empty
+                        system_section=system_sec,  # For Basic Template direct injection
+                        system_prompt_content=p_data.get(
+                            "system_prompt", ""
+                        ),  # For Detailed Template
+                        user_section=user_sec,  # For Basic Template direct injection
+                        user_prompt_content=p_data.get(
+                            "user_prompt", ""
+                        ),  # For Detailed Template
+                        keywords_section=keywords_sec,
+                    ).strip()  # Clean up extra newlines if sections are empty
 
-                    safe_filename = re.sub(r'[^\w\-_ \.]', '_', p_data['name']) + ".md"
+                    safe_filename = re.sub(r"[^\w\-_ \.]", "_", p_data["name"]) + ".md"
                     md_file_path_in_zip_dir = os.path.join(temp_zip_dir, safe_filename)
-                    with open(md_file_path_in_zip_dir, 'w', encoding='utf-8') as md_file:
+                    with open(
+                        md_file_path_in_zip_dir, "w", encoding="utf-8"
+                    ) as md_file:
                         md_file.write(md_content)
                     zipf.write(md_file_path_in_zip_dir, arcname=safe_filename)
 
             output_file_path = zip_file_path
             status_msg = f"Successfully exported {len(prompts_data)} prompts to Markdown in a ZIP file."
         else:
-            raise ValueError(f"Unsupported export_format: {export_format}. Must be 'csv' or 'markdown'.")
+            raise ValueError(
+                f"Unsupported export_format: {export_format}. Must be 'csv' or 'markdown'."
+            )
 
         logging.info(status_msg)
         return status_msg, output_file_path
@@ -2489,7 +3332,7 @@ def export_prompts_formatted(db_instance: PromptsDatabase,
         error_msg = f"Error exporting prompts: {e}"
         logging.opt(exception=True).error(error_msg)
         return error_msg, "None"
-    except Exception as e: # Catch any other unexpected error
+    except Exception as e:  # Catch any other unexpected error
         error_msg = f"Unexpected error exporting prompts: {e}"
         logging.opt(exception=True).error(error_msg)
         return error_msg, "None"

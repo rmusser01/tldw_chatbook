@@ -140,7 +140,11 @@ def test_delete_preserves_existing_file_permissions(tmp_path, monkeypatch):
     config_path = tmp_path / "config.toml"
     _write_config(
         config_path,
-        {"console": {"rail_state": {"console_rail_state:ws:orphan-1": {"left_open": True}}}},
+        {
+            "console": {
+                "rail_state": {"console_rail_state:ws:orphan-1": {"left_open": True}}
+            }
+        },
     )
     os.chmod(config_path, 0o600)
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))

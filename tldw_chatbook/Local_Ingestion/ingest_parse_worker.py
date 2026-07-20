@@ -103,6 +103,7 @@ def classify_parse_failure(exc: Exception) -> bool:
     """
     try:
         from .local_file_ingestion import PermanentIngestError
+
         if isinstance(exc, PermanentIngestError):
             return True
     except Exception:

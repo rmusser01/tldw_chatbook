@@ -15,9 +15,13 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
 from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE, GLYPH_IN_PROGRESS
 from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
-from tldw_chatbook.Utils.console_background_effects import ConsoleBackgroundEffectSettings
+from tldw_chatbook.Utils.console_background_effects import (
+    ConsoleBackgroundEffectSettings,
+)
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
-from tldw_chatbook.Widgets.Console.console_background_effect import ConsoleTranscriptSurface
+from tldw_chatbook.Widgets.Console.console_background_effect import (
+    ConsoleTranscriptSurface,
+)
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 
@@ -157,7 +161,9 @@ class ConsoleSessionSurface(Vertical):
             compact=True,
             session_id=session.id,
         )
-        button.tooltip = _session_tab_tooltip(session, active=active, streaming=streaming)
+        button.tooltip = _session_tab_tooltip(
+            session, active=active, streaming=streaming
+        )
         button.styles.width = CONSOLE_SESSION_TAB_WIDTH
         button.styles.min_width = CONSOLE_SESSION_TAB_WIDTH
         button.styles.max_width = CONSOLE_SESSION_TAB_WIDTH

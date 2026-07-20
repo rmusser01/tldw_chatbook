@@ -27,8 +27,13 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     provider_uses_endpoint,
     unsaved_endpoint_copy,
 )
-from tldw_chatbook.Chat.console_provider_support import resolve_console_provider_identity
-from tldw_chatbook.Chat.provider_readiness import get_provider_readiness, provider_config_key
+from tldw_chatbook.Chat.console_provider_support import (
+    resolve_console_provider_identity,
+)
+from tldw_chatbook.Chat.provider_readiness import (
+    get_provider_readiness,
+    provider_config_key,
+)
 from tldw_chatbook.Utils.input_validation import validate_url
 
 
@@ -246,13 +251,15 @@ class ProviderToolCalls:
     tool_calls: tuple[dict, ...]
 
 
-_PRESERVED_FRAGMENT_EXTRAS = frozenset({
-    # Gemini 3 thought signatures — must round-trip verbatim (task-266).
-    "google_thought_signature",
-    # Cohere v2 tool_plan text, echoed back on the request's assistant
-    # tool_calls turn (task-267).
-    "cohere_tool_plan",
-})
+_PRESERVED_FRAGMENT_EXTRAS = frozenset(
+    {
+        # Gemini 3 thought signatures — must round-trip verbatim (task-266).
+        "google_thought_signature",
+        # Cohere v2 tool_plan text, echoed back on the request's assistant
+        # tool_calls turn (task-267).
+        "cohere_tool_plan",
+    }
+)
 
 
 class _ToolCallAccumulator:
@@ -288,8 +295,11 @@ class _ToolCallAccumulator:
 
     def _merge(self, index: int, fragment: Mapping[str, Any]) -> None:
         if index not in self._by_index:
-            self._by_index[index] = {"id": "", "type": "function",
-                                     "function": {"name": "", "arguments": ""}}
+            self._by_index[index] = {
+                "id": "",
+                "type": "function",
+                "function": {"name": "", "arguments": ""},
+            }
         entry = self._by_index[index]
         if fragment.get("id"):
             entry["id"] = str(fragment["id"])
@@ -318,8 +328,11 @@ class _ToolCallAccumulator:
         # Numeric index order, not first-seen order: the provider's index
         # field defines the batch's array position, and fragments may arrive
         # interleaved/out of order (PR #648 review).
-        return tuple(self._by_index[i] for i in sorted(self._by_index)
-                     if self._by_index[i]["function"]["name"])
+        return tuple(
+            self._by_index[i]
+            for i in sorted(self._by_index)
+            if self._by_index[i]["function"]["name"]
+        )
 
 
 def _decode_stream_item(item: Any) -> Any:
@@ -360,6 +373,7 @@ def _tee_tool_calls(response: Any, accumulator: _ToolCallAccumulator) -> Any:
         for item in response:
             accumulator.feed_payload(_decode_stream_item(item))
             yield item
+
     return generator()
 
 
@@ -540,7 +554,9 @@ class ConsoleProviderGateway:
             return
         future.add_done_callback(lambda f: f.exception())
 
-    async def resolve_llamacpp(self, config: LlamaCppProviderConfig) -> ConsoleProviderResolution:
+    async def resolve_llamacpp(
+        self, config: LlamaCppProviderConfig
+    ) -> ConsoleProviderResolution:
         """Resolve llama.cpp readiness and the effective model.
 
         Args:
@@ -624,7 +640,9 @@ class ConsoleProviderGateway:
             **self._resolution_settings(config),
         )
 
-    async def resolve_for_send(self, selection: ConsoleProviderSelection) -> ConsoleProviderResolution:
+    async def resolve_for_send(
+        self, selection: ConsoleProviderSelection
+    ) -> ConsoleProviderResolution:
         """Resolve the provider selected by Console before sending.
 
         Args:
@@ -701,20 +719,23 @@ class ConsoleProviderGateway:
                 execution_key=identity.execution_key,
             )
 
-        if (
-            provider_uses_endpoint(identity.readiness_key, provider_settings)
-            and generic_endpoint_differs(selection.base_url, provider_settings)
-        ):
+        if provider_uses_endpoint(
+            identity.readiness_key, provider_settings
+        ) and generic_endpoint_differs(selection.base_url, provider_settings):
             return self._blocked_resolution(
                 selection,
                 provider=selection.provider,
                 model=model,
-                visible_copy=unsaved_endpoint_copy(selection.base_url, provider_settings),
+                visible_copy=unsaved_endpoint_copy(
+                    selection.base_url, provider_settings
+                ),
                 readiness_key=identity.readiness_key,
                 execution_key=identity.execution_key,
             )
 
-        readiness = get_provider_readiness(identity.readiness_key, app_config, environ=self._environ)
+        readiness = get_provider_readiness(
+            identity.readiness_key, app_config, environ=self._environ
+        )
         if not readiness.ready:
             return self._blocked_resolution(
                 selection,
@@ -929,7 +950,9 @@ class ConsoleProviderGateway:
                 yield chunk
             return
         if resolution.execution_key:
-            async for chunk in self._stream_generic_chat(resolution, messages, tools=tools):
+            async for chunk in self._stream_generic_chat(
+                resolution, messages, tools=tools
+            ):
                 yield chunk
             return
 
@@ -963,8 +986,8 @@ class ConsoleProviderGateway:
                 # by string equality — review minor m4: a real answer that
                 # happens to equal the copy text now flows through).
                 for text in self.normalize_provider_response(
-                        response,
-                        suppress_fallback_copy=accumulator is not None):
+                    response, suppress_fallback_copy=accumulator is not None
+                ):
                     if stop_event.is_set():
                         break
                     if text:
@@ -982,13 +1005,21 @@ class ConsoleProviderGateway:
                         # junk 200-body indistinguishable from a legitimate
                         # empty answer. Surface it as a provider error,
                         # feeding the run's existing honest RUN_ERROR path.
-                        enqueue(_QueueItem.error(self._safe_error_copy(
-                            resolution.provider,
-                            ChatProviderError(
-                                "Provider returned no content and no tool calls.",
-                                provider=resolution.provider))))
+                        enqueue(
+                            _QueueItem.error(
+                                self._safe_error_copy(
+                                    resolution.provider,
+                                    ChatProviderError(
+                                        "Provider returned no content and no tool calls.",
+                                        provider=resolution.provider,
+                                    ),
+                                )
+                            )
+                        )
             except BaseException as exc:
-                enqueue(_QueueItem.error(self._safe_error_copy(resolution.provider, exc)))
+                enqueue(
+                    _QueueItem.error(self._safe_error_copy(resolution.provider, exc))
+                )
             finally:
                 enqueue(_QueueItem.done())
 
@@ -1000,7 +1031,10 @@ class ConsoleProviderGateway:
                     break
                 if item.kind == "error":
                     raise ChatProviderError(
-                        item.text or safe_provider_error_copy(resolution.provider, ChatProviderError()),
+                        item.text
+                        or safe_provider_error_copy(
+                            resolution.provider, ChatProviderError()
+                        ),
                         provider=resolution.provider,
                     )
                 if item.kind == "tool_calls":
@@ -1017,7 +1051,8 @@ class ConsoleProviderGateway:
 
     @staticmethod
     def normalize_provider_response(
-        response: Any, suppress_fallback_copy: bool = False,
+        response: Any,
+        suppress_fallback_copy: bool = False,
     ) -> Iterator[str]:
         """Yield safe assistant-visible chunks from generic provider output.
 
@@ -1154,7 +1189,11 @@ class ConsoleProviderGateway:
         if not isinstance(data, list):
             return None
         for item in data:
-            if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"]:
+            if (
+                isinstance(item, dict)
+                and isinstance(item.get("id"), str)
+                and item["id"]
+            ):
                 return item["id"]
         return None
 
@@ -1224,7 +1263,9 @@ class ConsoleProviderGateway:
         return ConsoleProviderResolution(
             provider=provider,
             base_url=selection.base_url or "",
-            model=model if model is not None else selection.explicit_model or selection.configured_model,
+            model=model
+            if model is not None
+            else selection.explicit_model or selection.configured_model,
             ready=False,
             visible_copy=visible_copy,
             readiness_key=readiness_key,
@@ -1253,7 +1294,9 @@ def _mapping_value(source: Mapping[str, object], key: str) -> Mapping[str, objec
 
 
 def _is_iterable_response(response: Any) -> bool:
-    return isinstance(response, (Iterator, GeneratorType)) and not isinstance(response, (str, bytes, Mapping, list, tuple))
+    return isinstance(response, (Iterator, GeneratorType)) and not isinstance(
+        response, (str, bytes, Mapping, list, tuple)
+    )
 
 
 def _content_from_provider_item(item: Any) -> str | object:
@@ -1312,7 +1355,8 @@ def _content_from_provider_mapping(item: Mapping[str, Any]) -> str | object:
                     text_parts = [
                         part["text"]
                         for part in parts
-                        if isinstance(part, Mapping) and isinstance(part.get("text"), str)
+                        if isinstance(part, Mapping)
+                        and isinstance(part.get("text"), str)
                     ]
                     if text_parts:
                         return "".join(text_parts)
@@ -1332,7 +1376,9 @@ def _content_from_provider_mapping(item: Mapping[str, Any]) -> str | object:
     return _UNSUPPORTED_RESPONSE
 
 
-def _provider_settings(app_config: Mapping[str, object], provider_key: str) -> Mapping[str, object]:
+def _provider_settings(
+    app_config: Mapping[str, object], provider_key: str
+) -> Mapping[str, object]:
     api_settings = _mapping_value(app_config, "api_settings")
     for configured_provider, configured_value in api_settings.items():
         if provider_config_key(str(configured_provider)) == provider_key:

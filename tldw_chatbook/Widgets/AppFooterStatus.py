@@ -4,9 +4,9 @@
 #
 # 3rd-party Libraries
 from textual.app import ComposeResult
-from textual.containers import Horizontal
 from textual.widget import Widget
 from textual.widgets import Static
+
 #
 # Local Imports
 from ..UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
@@ -14,6 +14,7 @@ from ..UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
 ########################################################################################################################
 #
 # AppFooterStatus
+
 
 class AppFooterStatus(Widget):
     DEFAULT_SHORTCUT_TEXT = "Ctrl+Q quit | Ctrl+P palette"
@@ -80,15 +81,17 @@ class AppFooterStatus(Widget):
         self._shortcut_source: str | None = None
         self._shortcut_display = Static(self._shortcut_text, id="footer-key-quit")
         self._word_count_display: Static = Static("", id="footer-word-count")
-        self._token_count_display: Static = Static("Tokens: -- | ", id="footer-token-count")
+        self._token_count_display: Static = Static(
+            "Tokens: -- | ", id="footer-token-count"
+        )
         self._db_status_display: Static = Static("", id="internal-db-size-indicator")
 
     def compose(self) -> ComposeResult:
         yield self._shortcut_display
-        yield Static(id="footer-spacer") # This will push items to the right
-        yield self._word_count_display # Word count display
-        yield self._token_count_display # Token count display
-        yield self._db_status_display # This is the existing DB size display
+        yield Static(id="footer-spacer")  # This will push items to the right
+        yield self._word_count_display  # Word count display
+        yield self._token_count_display  # Token count display
+        yield self._db_status_display  # This is the existing DB size display
 
     @property
     def shortcut_text(self) -> str:
@@ -137,7 +140,7 @@ class AppFooterStatus(Widget):
             # If the app is shutting down, the widget might be gone
             # In a real scenario, you'd use self.log from the widget
             print(f"Error updating AppFooterStatus display: {e}")
-    
+
     def update_word_count(self, word_count: int) -> None:
         """Update the word count display in the footer."""
         try:
@@ -147,7 +150,7 @@ class AppFooterStatus(Widget):
                 self._word_count_display.update("")
         except Exception as e:
             print(f"Error updating word count display: {e}")
-    
+
     def update_token_count(self, display_text: str) -> None:
         """Update the token count display in the footer."""
         try:
@@ -157,6 +160,7 @@ class AppFooterStatus(Widget):
                 self._token_count_display.update("")
         except Exception as e:
             print(f"Error updating token count display: {e}")
+
 
 #
 # End of AppFooterStatus.py

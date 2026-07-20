@@ -29,39 +29,39 @@ lookup.
 from typing import Any
 
 __all__ = [
-    'ingest_local_file',
-    'batch_ingest_files',
-    'ingest_directory',
-    'quick_ingest',
-    'detect_file_type',
-    'get_supported_extensions',
-    'FileIngestionError',
+    "ingest_local_file",
+    "batch_ingest_files",
+    "ingest_directory",
+    "quick_ingest",
+    "detect_file_type",
+    "get_supported_extensions",
+    "FileIngestionError",
     # Audio/Video processing
-    'LocalAudioProcessor',
-    'LocalVideoProcessor',
-    'TranscriptionService',
-    'AudioProcessingError',
-    'VideoProcessingError',
-    'TranscriptionError'
+    "LocalAudioProcessor",
+    "LocalVideoProcessor",
+    "TranscriptionService",
+    "AudioProcessingError",
+    "VideoProcessingError",
+    "TranscriptionError",
 ]
 
 # Name -> submodule providing it. Kept as a flat mapping (rather than one
 # `from .x import *`-style block per submodule) so `__getattr__` only ever
 # imports the one submodule that actually owns the requested name.
 _SUBMODULE_BY_NAME = {
-    'ingest_local_file': 'local_file_ingestion',
-    'batch_ingest_files': 'local_file_ingestion',
-    'ingest_directory': 'local_file_ingestion',
-    'quick_ingest': 'local_file_ingestion',
-    'detect_file_type': 'local_file_ingestion',
-    'get_supported_extensions': 'local_file_ingestion',
-    'FileIngestionError': 'local_file_ingestion',
-    'LocalAudioProcessor': 'audio_processing',
-    'AudioProcessingError': 'audio_processing',
-    'LocalVideoProcessor': 'video_processing',
-    'VideoProcessingError': 'video_processing',
-    'TranscriptionService': 'transcription_service',
-    'TranscriptionError': 'transcription_service',
+    "ingest_local_file": "local_file_ingestion",
+    "batch_ingest_files": "local_file_ingestion",
+    "ingest_directory": "local_file_ingestion",
+    "quick_ingest": "local_file_ingestion",
+    "detect_file_type": "local_file_ingestion",
+    "get_supported_extensions": "local_file_ingestion",
+    "FileIngestionError": "local_file_ingestion",
+    "LocalAudioProcessor": "audio_processing",
+    "AudioProcessingError": "audio_processing",
+    "LocalVideoProcessor": "video_processing",
+    "VideoProcessingError": "video_processing",
+    "TranscriptionService": "transcription_service",
+    "TranscriptionError": "transcription_service",
 }
 
 
@@ -70,6 +70,7 @@ def __getattr__(name: str) -> Any:
     if submodule_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     import importlib
+
     submodule = importlib.import_module(f".{submodule_name}", __name__)
     value = getattr(submodule, name)
     globals()[name] = value  # cache so subsequent lookups skip __getattr__

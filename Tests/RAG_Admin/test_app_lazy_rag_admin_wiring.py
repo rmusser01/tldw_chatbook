@@ -53,24 +53,44 @@ def _cheap_app_init_patches():
                 return_value={"tldw_api": {"base_url": "http://localhost:8000"}},
             )
         )
-        stack.enter_context(patch("tldw_chatbook.app.get_cli_setting", side_effect=fake_cli_setting))
-        stack.enter_context(patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None))
         stack.enter_context(
-            patch("tldw_chatbook.app.ServerNotesWorkspaceService.from_config", return_value=MagicMock())
+            patch("tldw_chatbook.app.get_cli_setting", side_effect=fake_cli_setting)
         )
         stack.enter_context(
-            patch("tldw_chatbook.app.ServerCharacterPersonaService.from_config", return_value=MagicMock())
+            patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None)
         )
         stack.enter_context(
-            patch.object(TldwCli, "_init_notes_service", lambda self, _user: setattr(self, "notes_service", None))
-        )
-        stack.enter_context(
-            patch.object(
-                TldwCli, "_init_prompts_service", lambda self: setattr(self, "prompts_service_initialized", False)
+            patch(
+                "tldw_chatbook.app.ServerNotesWorkspaceService.from_config",
+                return_value=MagicMock(),
             )
         )
         stack.enter_context(
-            patch.object(TldwCli, "_init_providers_models", lambda self: setattr(self, "providers_models", {}))
+            patch(
+                "tldw_chatbook.app.ServerCharacterPersonaService.from_config",
+                return_value=MagicMock(),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                TldwCli,
+                "_init_notes_service",
+                lambda self, _user: setattr(self, "notes_service", None),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                TldwCli,
+                "_init_prompts_service",
+                lambda self: setattr(self, "prompts_service_initialized", False),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                TldwCli,
+                "_init_providers_models",
+                lambda self: setattr(self, "providers_models", {}),
+            )
         )
         stack.enter_context(
             patch.object(
@@ -83,13 +103,30 @@ def _cheap_app_init_patches():
             )
         )
         stack.enter_context(
-            patch("tldw_chatbook.app.load_runtime_policy_for_app", side_effect=fake_runtime_policy)
+            patch(
+                "tldw_chatbook.app.load_runtime_policy_for_app",
+                side_effect=fake_runtime_policy,
+            )
         )
-        stack.enter_context(patch("tldw_chatbook.app.get_notifications_db_path", return_value=":memory:"))
-        stack.enter_context(patch("tldw_chatbook.app.get_subscriptions_db_path", return_value=":memory:"))
-        stack.enter_context(patch("tldw_chatbook.app.get_research_db_path", return_value=":memory:"))
-        stack.enter_context(patch("tldw_chatbook.app.get_writing_db_path", return_value=":memory:"))
-        stack.enter_context(patch("tldw_chatbook.app.get_user_data_dir", return_value=user_data_dir))
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.get_notifications_db_path", return_value=":memory:"
+            )
+        )
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.get_subscriptions_db_path", return_value=":memory:"
+            )
+        )
+        stack.enter_context(
+            patch("tldw_chatbook.app.get_research_db_path", return_value=":memory:")
+        )
+        stack.enter_context(
+            patch("tldw_chatbook.app.get_writing_db_path", return_value=":memory:")
+        )
+        stack.enter_context(
+            patch("tldw_chatbook.app.get_user_data_dir", return_value=user_data_dir)
+        )
         stack.enter_context(
             patch(
                 "tldw_chatbook.app.get_workspaces_db_path",
@@ -102,15 +139,20 @@ def _cheap_app_init_patches():
 @contextlib.contextmanager
 def _patched_rag_admin_classes():
     """Replace the RAG admin service classes referenced by the lazy builder."""
-    with patch("tldw_chatbook.app.ServerRAGAdminService") as server_cls, patch(
-        "tldw_chatbook.app.LocalRAGAdminService"
-    ) as local_cls, patch("tldw_chatbook.app.RAGAdminScopeService") as scope_cls:
+    with (
+        patch("tldw_chatbook.app.ServerRAGAdminService") as server_cls,
+        patch("tldw_chatbook.app.LocalRAGAdminService") as local_cls,
+        patch("tldw_chatbook.app.RAGAdminScopeService") as scope_cls,
+    ):
         yield server_cls, local_cls, scope_cls
 
 
 def test_app_init_does_not_construct_rag_admin_services():
     """Startup must not build the RAG admin trio (task-254 AC #1)."""
-    with _cheap_app_init_patches(), _patched_rag_admin_classes() as (server_cls, local_cls, scope_cls):
+    with (
+        _cheap_app_init_patches(),
+        _patched_rag_admin_classes() as (server_cls, local_cls, scope_cls),
+    ):
         app = TldwCli()
 
         assert server_cls.from_config.call_count == 0
@@ -125,7 +167,10 @@ def test_app_init_does_not_construct_rag_admin_services():
 
 def test_first_access_builds_and_caches_rag_admin_trio_exactly_once():
     """First property access builds the identically-wired trio; later accesses reuse it."""
-    with _cheap_app_init_patches(), _patched_rag_admin_classes() as (server_cls, local_cls, scope_cls):
+    with (
+        _cheap_app_init_patches(),
+        _patched_rag_admin_classes() as (server_cls, local_cls, scope_cls),
+    ):
         app = TldwCli()
 
         scope = app.rag_admin_scope_service
@@ -158,7 +203,10 @@ def test_first_access_builds_and_caches_rag_admin_trio_exactly_once():
 
 def test_server_service_config_failure_falls_back_to_clientless_service():
     """A ValueError from ``from_config`` must fall back to ``client=None`` wiring."""
-    with _cheap_app_init_patches(), _patched_rag_admin_classes() as (server_cls, local_cls, scope_cls):
+    with (
+        _cheap_app_init_patches(),
+        _patched_rag_admin_classes() as (server_cls, local_cls, scope_cls),
+    ):
         server_cls.from_config.side_effect = ValueError("no server configured")
         app = TldwCli()
 

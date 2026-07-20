@@ -75,7 +75,9 @@ def test_bootstrap_trusts_current_files_and_detects_modification(tmp_path):
     assert service.overall_status() == "trusted"
     service.ensure_skill_trusted("demo")
 
-    (skills_dir / "demo" / "SKILL.md").write_text("# Demo\nBackdoor\n", encoding="utf-8")
+    (skills_dir / "demo" / "SKILL.md").write_text(
+        "# Demo\nBackdoor\n", encoding="utf-8"
+    )
     modified = service.status_for_skill("demo")
 
     assert modified.trust_status == "quarantined_modified"
@@ -97,7 +99,9 @@ def test_bootstrap_uses_canonical_skill_name_for_mixed_case_directory(tmp_path):
     service.ensure_skill_trusted("MySkill")
 
 
-def test_verify_skill_content_accepts_exact_trusted_content_and_supporting_files(tmp_path):
+def test_verify_skill_content_accepts_exact_trusted_content_and_supporting_files(
+    tmp_path,
+):
     service, skills_dir = _service(tmp_path)
     skill_dir = _write_skill(skills_dir, content="# Demo\nRender {{args}}\n")
     (skill_dir / "notes.md").write_text("trusted notes\n", encoding="utf-8")
@@ -110,7 +114,9 @@ def test_verify_skill_content_accepts_exact_trusted_content_and_supporting_files
     )
 
 
-def test_verify_skill_content_rejects_in_memory_content_not_matching_trusted_manifest(tmp_path):
+def test_verify_skill_content_rejects_in_memory_content_not_matching_trusted_manifest(
+    tmp_path,
+):
     service, skills_dir = _service(tmp_path)
     skill_dir = _write_skill(skills_dir, content="# Demo\nRender {{args}}\n")
     (skill_dir / "notes.md").write_text("trusted notes\n", encoding="utf-8")
@@ -150,7 +156,9 @@ def test_verify_skill_content_rejects_extra_and_missing_supporting_files(tmp_pat
     assert added.value.changed_files == ("extra.md",)
 
 
-def test_status_for_unsafe_skill_name_returns_blocked_without_scanning_outside(tmp_path):
+def test_status_for_unsafe_skill_name_returns_blocked_without_scanning_outside(
+    tmp_path,
+):
     service, skills_dir = _service(tmp_path)
     _write_skill(skills_dir)
     outside = tmp_path / "outside"
@@ -398,7 +406,9 @@ def test_review_approval_rejects_stale_manifest_generation(tmp_path):
     service.bootstrap_trust()
     (skills_dir / "demo" / "SKILL.md").write_text("# Demo\nChanged\n", encoding="utf-8")
     review = service.capture_review("demo")
-    (skills_dir / "other" / "SKILL.md").write_text("# Other\nChanged\n", encoding="utf-8")
+    (skills_dir / "other" / "SKILL.md").write_text(
+        "# Other\nChanged\n", encoding="utf-8"
+    )
     service.trust_current_skill("other")
 
     with pytest.raises(ValueError, match="snapshot_mismatch"):

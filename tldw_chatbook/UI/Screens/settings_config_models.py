@@ -13,6 +13,8 @@ class SettingsCategoryId(StrEnum):
     OVERVIEW = "overview"
     PROVIDERS_MODELS = "providers-models"
     APPEARANCE = "appearance"
+    THEME = "theme"
+    SPLASH_SCREEN = "splash_screen"
     STORAGE = "storage"
     PRIVACY_SECURITY = "privacy-security"
     CONSOLE_BEHAVIOR = "console-behavior"
@@ -50,7 +52,9 @@ class SettingsValidationResult:
             object.__setattr__(
                 self,
                 "state",
-                SettingsValidationState.VALID if self.valid else SettingsValidationState.INVALID,
+                SettingsValidationState.VALID
+                if self.valid
+                else SettingsValidationState.INVALID,
             )
 
 

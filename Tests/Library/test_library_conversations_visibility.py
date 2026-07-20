@@ -48,7 +48,9 @@ def _create_console_workspace_chat(
     message: str | None = "hello",
 ) -> str:
     """Persist a conversation exactly the way Console does for a workspace session."""
-    persistence = ChatPersistenceService(db, workspace_registry=_StaticWorkspaceRegistry())
+    persistence = ChatPersistenceService(
+        db, workspace_registry=_StaticWorkspaceRegistry()
+    )
     conversation_id = persistence.create_conversation(
         assistant_kind="generic",
         assistant_id="console",
@@ -83,7 +85,9 @@ def test_library_scope_all_lists_console_workspace_chats(db: CharactersRAGDB) ->
     assert by_id[seeded_id]["scope_type"] == "global"
 
 
-def test_default_global_scope_still_excludes_workspace_chats(db: CharactersRAGDB) -> None:
+def test_default_global_scope_still_excludes_workspace_chats(
+    db: CharactersRAGDB,
+) -> None:
     """Console's per-scope rail queries rely on the 'global' default staying strict."""
     console_id = _create_console_workspace_chat(db)
     seeded_id = db.add_conversation({"title": "Seeded conversation"})
@@ -155,7 +159,9 @@ def test_search_conversations_page_rejects_all_scope_with_workspace_id(
         db.search_conversations_page(None, scope_type="all", workspace_id="ws-chats")
 
 
-def test_get_all_conversation_ids_matches_library_scope_all(db: CharactersRAGDB) -> None:
+def test_get_all_conversation_ids_matches_library_scope_all(
+    db: CharactersRAGDB,
+) -> None:
     """Chatbook export resolves from the same all-scope population the Library lists."""
     console_id = _create_console_workspace_chat(db)
     seeded_id = db.add_conversation({"title": "Seeded conversation"})

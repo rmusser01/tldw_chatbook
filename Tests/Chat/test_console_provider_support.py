@@ -69,7 +69,9 @@ def test_direct_console_provider_keys_are_not_generic_adapter() -> None:
         assert identity.is_supported is True
 
 
-def test_direct_console_provider_identity_does_not_require_handler_keys(monkeypatch) -> None:
+def test_direct_console_provider_identity_does_not_require_handler_keys(
+    monkeypatch,
+) -> None:
     def fail_handler_lookup(*_args, **_kwargs):
         raise AssertionError("direct providers should not load chat_api_call handlers")
 

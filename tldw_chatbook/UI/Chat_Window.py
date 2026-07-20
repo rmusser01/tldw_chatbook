@@ -4,6 +4,7 @@
 # Imports
 from typing import TYPE_CHECKING
 import time
+
 #
 # 3rd-Party Imports
 from loguru import logger
@@ -11,23 +12,39 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, TextArea
 from textual.reactive import reactive
+
 #
 # Local Imports
 # Check if optimized versions are available, fall back to original if not
 try:
     from ..Widgets.settings_sidebar_optimized import create_settings_sidebar_optimized
-    from tldw_chatbook.Widgets.Chat_Widgets.chat_right_sidebar_optimized import create_chat_right_sidebar_optimized
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_right_sidebar_optimized import (
+        create_chat_right_sidebar_optimized,
+    )
+
     USE_OPTIMIZED_SIDEBARS = True
     logger.info("Using optimized sidebars for better performance")
 except ImportError:
     from ..Widgets.settings_sidebar import create_settings_sidebar
-    from tldw_chatbook.Widgets.Chat_Widgets.chat_right_sidebar import create_chat_right_sidebar
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_right_sidebar import (
+        create_chat_right_sidebar,
+    )
+
     USE_OPTIMIZED_SIDEBARS = False
     logger.info("Using standard sidebars")
 from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ..Constants import TAB_CHAT
-from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE, EMOJI_SEND, FALLBACK_SEND, \
-    EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON, EMOJI_STOP, FALLBACK_STOP
+from ..Utils.Emoji_Handling import (
+    get_char,
+    EMOJI_SIDEBAR_TOGGLE,
+    FALLBACK_SIDEBAR_TOGGLE,
+    EMOJI_SEND,
+    FALLBACK_SEND,
+    EMOJI_CHARACTER_ICON,
+    FALLBACK_CHARACTER_ICON,
+    EMOJI_STOP,
+    FALLBACK_STOP,
+)
 from ..config import get_cli_setting
 
 # Configure logger with context
@@ -42,25 +59,26 @@ if TYPE_CHECKING:
 #
 # Functions:
 
+
 class ChatWindow(Container):
     """
     Container for the Chat Tab's UI.
     """
-    
+
     BINDINGS = [
         ("ctrl+shift+left", "resize_sidebar_shrink", "Shrink sidebar"),
         ("ctrl+shift+right", "resize_sidebar_expand", "Expand sidebar"),
         ("ctrl+e", "edit_focused_message", "Edit focused message"),
     ]
-    
+
     # Track button state for Send/Stop functionality
     is_send_button = reactive(True)
-    
+
     # Debouncing for button clicks
     _last_send_stop_click = 0
     DEBOUNCE_MS = 300
-    
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+
+    def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.tab_container = None  # Will be set if tabs are enabled
@@ -118,23 +136,26 @@ class ChatWindow(Container):
         else:
             logger.warning(f"No handler found for button: {button_id}")
 
-
     def compose(self) -> ComposeResult:
         logger.debug("Composing ChatWindow UI")
         compose_start = time.perf_counter()
-        
+
         # Settings Sidebar (Left)
         sidebar_start = time.perf_counter()
         if USE_OPTIMIZED_SIDEBARS:
-            yield from create_settings_sidebar_optimized(TAB_CHAT, self.app_instance.app_config)
+            yield from create_settings_sidebar_optimized(
+                TAB_CHAT, self.app_instance.app_config
+            )
         else:
             yield from create_settings_sidebar(TAB_CHAT, self.app_instance.app_config)
         left_sidebar_time = time.perf_counter() - sidebar_start
-        logger.info(f"ChatWindow: Left sidebar created in {left_sidebar_time:.3f}s (optimized={USE_OPTIMIZED_SIDEBARS})")
+        logger.info(
+            f"ChatWindow: Left sidebar created in {left_sidebar_time:.3f}s (optimized={USE_OPTIMIZED_SIDEBARS})"
+        )
 
         # Check if tabs are enabled
         enable_tabs = get_cli_setting("chat_defaults", "enable_tabs", False)
-        
+
         if enable_tabs:
             # Use tabbed interface
             logger.info("Chat tabs are enabled - using ChatTabContainer")
@@ -149,31 +170,35 @@ class ChatWindow(Container):
                 yield VerticalScroll(id="chat-log")
                 with Horizontal(id="chat-input-area"):
                     yield Button(
-                        get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), 
+                        get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
                         id="toggle-chat-left-sidebar",
                         classes="sidebar-toggle",
-                        tooltip="Toggle left sidebar (Ctrl+[)"
+                        tooltip="Toggle left sidebar (Ctrl+[)",
                     )
                     yield TextArea(id="chat-input", classes="chat-input")
                     yield Button(
-                        get_char(EMOJI_SEND if self.is_send_button else EMOJI_STOP, 
-                                FALLBACK_SEND if self.is_send_button else FALLBACK_STOP), 
-                        id="send-stop-chat", 
+                        get_char(
+                            EMOJI_SEND if self.is_send_button else EMOJI_STOP,
+                            FALLBACK_SEND if self.is_send_button else FALLBACK_STOP,
+                        ),
+                        id="send-stop-chat",
                         classes="send-button",
-                        tooltip="Send message" if self.is_send_button else "Stop generation"
+                        tooltip="Send message"
+                        if self.is_send_button
+                        else "Stop generation",
                     )
                     yield Button(
-                        "💡", 
-                        id="respond-for-me-button", 
+                        "💡",
+                        id="respond-for-me-button",
                         classes="action-button suggest-button",
-                        tooltip="Suggest a response"
-                    ) # Suggest button
+                        tooltip="Suggest a response",
+                    )  # Suggest button
                     logger.debug("'respond-for-me-button' composed.")
                     yield Button(
-                        get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), 
+                        get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON),
                         id="toggle-chat-right-sidebar",
                         classes="sidebar-toggle",
-                        tooltip="Toggle right sidebar (Ctrl+])"
+                        tooltip="Toggle right sidebar (Ctrl+])",
                     )
 
         # Character Details Sidebar (Right)
@@ -181,25 +206,27 @@ class ChatWindow(Container):
         if USE_OPTIMIZED_SIDEBARS:
             yield from create_chat_right_sidebar_optimized(
                 "chat",
-                initial_ephemeral_state=self.app_instance.current_chat_is_ephemeral
+                initial_ephemeral_state=self.app_instance.current_chat_is_ephemeral,
             )
         else:
             yield from create_chat_right_sidebar(
                 "chat",
-                initial_ephemeral_state=self.app_instance.current_chat_is_ephemeral
+                initial_ephemeral_state=self.app_instance.current_chat_is_ephemeral,
             )
         right_sidebar_time = time.perf_counter() - right_sidebar_start
-        logger.info(f"ChatWindow: Right sidebar created in {right_sidebar_time:.3f}s (optimized={USE_OPTIMIZED_SIDEBARS})")
-        
+        logger.info(
+            f"ChatWindow: Right sidebar created in {right_sidebar_time:.3f}s (optimized={USE_OPTIMIZED_SIDEBARS})"
+        )
+
         total_compose_time = time.perf_counter() - compose_start
         logger.info(f"ChatWindow: Total compose time: {total_compose_time:.3f}s")
-    
+
     async def handle_notes_expand_button(self, app, event) -> None:
         """Handle the notes expand/collapse button."""
         try:
             button = app.query_one("#chat-notes-expand-button", Button)
             textarea = app.query_one("#chat-notes-content-textarea", TextArea)
-            
+
             # Toggle between expanded and normal states
             if "notes-textarea-expanded" in textarea.classes:
                 # Collapse
@@ -213,37 +240,39 @@ class ChatWindow(Container):
                 textarea.add_class("notes-textarea-expanded")
                 textarea.styles.height = 25
                 button.label = "Collapse Notes"
-                
+
             # Focus the textarea after expanding
             textarea.focus()
-            
+
         except Exception as e:
             logger.error(f"Error handling notes expand button: {e}")
-    
+
     async def action_resize_sidebar_shrink(self) -> None:
         """Action for keyboard shortcut to shrink sidebar."""
         from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
+
         await chat_events_sidebar_resize.handle_sidebar_shrink(self.app_instance, None)
-    
+
     async def action_resize_sidebar_expand(self) -> None:
         """Action for keyboard shortcut to expand sidebar."""
         from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
+
         await chat_events_sidebar_resize.handle_sidebar_expand(self.app_instance, None)
-    
+
     async def action_edit_focused_message(self) -> None:
         """Action for keyboard shortcut to edit the focused message."""
         from ..Event_Handlers.Chat_Events import chat_events
-        
+
         try:
             # Get the chat log container
             chat_log = self.app_instance.query_one("#chat-log", VerticalScroll)
-            
+
             # Find the focused ChatMessage widget
             focused_widget = self.app_instance.focused
-            
+
             # Check if the focused widget is a ChatMessage or if we need to find one
             from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
-            
+
             if isinstance(focused_widget, ChatMessage):
                 message_widget = focused_widget
             else:
@@ -255,47 +284,51 @@ class ChatWindow(Container):
                 else:
                     logger.debug("No messages found to edit")
                     return
-            
+
             # Find the edit button in the message widget
             try:
                 edit_button = message_widget.query_one(".edit-button", Button)
                 # Trigger the edit action by simulating button press
                 await chat_events.handle_chat_action_button_pressed(
-                    self.app_instance, 
-                    edit_button, 
-                    message_widget
+                    self.app_instance, edit_button, message_widget
                 )
             except Exception as e:
                 logger.debug(f"Could not find or click edit button: {e}")
-                
+
         except Exception as e:
             logger.error(f"Error in edit_focused_message action: {e}")
             self.app_instance.notify("Could not enter edit mode", severity="warning")
-    
+
     async def on_mount(self) -> None:
         """Called when the widget is mounted."""
         # Watch for streaming state changes
         self._update_button_state()
         # Set up periodic state checking (every 500ms)
         self.set_interval(0.5, self._check_streaming_state)
-    
+
     def _update_button_state(self) -> None:
         """Update the send/stop button based on streaming state."""
         is_streaming = self.app_instance.get_current_chat_is_streaming()
-        has_worker = (hasattr(self.app_instance, 'current_chat_worker') and 
-                     self.app_instance.current_chat_worker and 
-                     self.app_instance.current_chat_worker.is_running)
-        
+        has_worker = (
+            hasattr(self.app_instance, "current_chat_worker")
+            and self.app_instance.current_chat_worker
+            and self.app_instance.current_chat_worker.is_running
+        )
+
         # Update button state
         self.is_send_button = not (is_streaming or has_worker)
-        
+
         # Update button appearance
         try:
             button = self.query_one("#send-stop-chat", Button)
-            button.label = get_char(EMOJI_SEND if self.is_send_button else EMOJI_STOP,
-                                  FALLBACK_SEND if self.is_send_button else FALLBACK_STOP)
-            button.tooltip = "Send message" if self.is_send_button else "Stop generation"
-            
+            button.label = get_char(
+                EMOJI_SEND if self.is_send_button else EMOJI_STOP,
+                FALLBACK_SEND if self.is_send_button else FALLBACK_STOP,
+            )
+            button.tooltip = (
+                "Send message" if self.is_send_button else "Stop generation"
+            )
+
             # Update button styling
             if self.is_send_button:
                 button.remove_class("stop-state")
@@ -303,44 +336,46 @@ class ChatWindow(Container):
                 button.add_class("stop-state")
         except Exception as e:
             logger.debug(f"Could not update button: {e}")
-    
+
     def watch_is_send_button(self, is_send: bool) -> None:
         """Watch for changes to button state to update appearance."""
         self._update_button_state()
-    
+
     def _check_streaming_state(self) -> None:
         """Periodically check streaming state and update button."""
         self._update_button_state()
-    
+
     async def handle_send_stop_button(self, app_instance, event):
         """Unified handler for Send/Stop button with debouncing."""
         from ..Event_Handlers.Chat_Events import chat_events
-        
+
         current_time = time.time() * 1000
-        
+
         # Debounce rapid clicks
         if current_time - self._last_send_stop_click < self.DEBOUNCE_MS:
             logger.debug("Button click debounced")
             return
         self._last_send_stop_click = current_time
-        
+
         # Disable button during operation
         try:
             button = self.query_one("#send-stop-chat", Button)
             button.disabled = True
         except Exception:
             pass
-        
+
         try:
             # Check current state and route to appropriate handler
             if self.app_instance.get_current_chat_is_streaming() or (
-                hasattr(self.app_instance, 'current_chat_worker') and 
-                self.app_instance.current_chat_worker and 
-                self.app_instance.current_chat_worker.is_running
+                hasattr(self.app_instance, "current_chat_worker")
+                and self.app_instance.current_chat_worker
+                and self.app_instance.current_chat_worker.is_running
             ):
                 # Stop operation
                 logger.info("Send/Stop button pressed - stopping generation")
-                await chat_events.handle_stop_chat_generation_pressed(app_instance, event)
+                await chat_events.handle_stop_chat_generation_pressed(
+                    app_instance, event
+                )
             else:
                 # Send operation
                 logger.info("Send/Stop button pressed - sending message")
@@ -353,6 +388,7 @@ class ChatWindow(Container):
             except Exception:
                 pass
             self._update_button_state()
+
 
 #
 # End of Chat_Window.py

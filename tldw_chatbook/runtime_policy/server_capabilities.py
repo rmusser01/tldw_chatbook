@@ -60,17 +60,27 @@ class ActiveServerCapabilityService:
 
         try:
             health = await self._call_discovery_method("probe_health", "get_health")
-            readiness = await self._call_discovery_method("probe_readiness", "get_readiness")
-            docs_info = await self._call_discovery_method("probe_docs_info", "get_docs_info")
+            readiness = await self._call_discovery_method(
+                "probe_readiness", "get_readiness"
+            )
+            docs_info = await self._call_discovery_method(
+                "probe_docs_info", "get_docs_info"
+            )
         except Exception as exc:  # noqa: BLE001 - discovery must convert backend failures into state.
-            reason_code = classify_backend_exception(exc) or "capability_discovery_failed"
+            reason_code = (
+                classify_backend_exception(exc) or "capability_discovery_failed"
+            )
             errors.append({"reason_code": reason_code, "message": str(exc)})
             if reason_code == "server_unreachable":
                 reachability = "unreachable"
                 auth_state = "unknown"
             elif reason_code in {"server_auth_required", "server_session_invalid"}:
                 reachability = "reachable"
-                auth_state = "session_invalid" if reason_code == "server_session_invalid" else "auth_required"
+                auth_state = (
+                    "session_invalid"
+                    if reason_code == "server_session_invalid"
+                    else "auth_required"
+                )
             else:
                 reachability = "reachable"
                 auth_state = "unknown"
@@ -142,8 +152,12 @@ class ActiveServerCapabilityService:
             return state
         return RuntimeSourceState()
 
-    async def _call_discovery_method(self, probe_name: str, scope_method_name: str) -> dict[str, Any]:
-        server_service = getattr(self.server_runtime_scope_service, "server_service", None)
+    async def _call_discovery_method(
+        self, probe_name: str, scope_method_name: str
+    ) -> dict[str, Any]:
+        server_service = getattr(
+            self.server_runtime_scope_service, "server_service", None
+        )
         probe = getattr(server_service, probe_name, None)
         if callable(probe):
             result = await probe()

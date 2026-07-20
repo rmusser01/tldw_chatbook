@@ -9,7 +9,9 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.state.app_state import AppState
 
 
-def _make_app_like(*, base_url: str = "https://Example.COM:8443/api/") -> SimpleNamespace:
+def _make_app_like(
+    *, base_url: str = "https://Example.COM:8443/api/"
+) -> SimpleNamespace:
     return SimpleNamespace(
         app_config={
             "tldw_api": {
@@ -28,7 +30,9 @@ def test_app_state_round_trips_runtime_source_state():
             active_server_id="server-alpha",
             server_configured=True,
             server_reachability="reachable",
-            server_reachability_checked_at=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+            server_reachability_checked_at=datetime(
+                2026, 4, 21, 12, 0, tzinfo=timezone.utc
+            ),
             server_auth_state="authenticated",
             server_auth_checked_at=datetime(2026, 4, 21, 12, 5, tzinfo=timezone.utc),
             last_known_server_label="Primary Server",
@@ -112,7 +116,9 @@ def test_build_runtime_api_client_supports_explicit_custom_token_overrides():
 
 
 def test_config_client_provider_builds_legacy_client_lazily():
-    from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
+    from tldw_chatbook.runtime_policy.bootstrap import (
+        build_runtime_api_client_provider_from_config,
+    )
 
     provider = build_runtime_api_client_provider_from_config(
         {"tldw_api": {"base_url": "https://example.test", "api_key": "secret"}}
@@ -152,7 +158,9 @@ def test_config_client_provider_preserves_legacy_config_alias_and_bearer_auth():
 
 
 def test_config_client_provider_repr_redacts_config_secrets():
-    from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
+    from tldw_chatbook.runtime_policy.bootstrap import (
+        build_runtime_api_client_provider_from_config,
+    )
 
     provider = build_runtime_api_client_provider_from_config(
         {"tldw_api": {"base_url": "https://example.test", "api_key": "secret"}}
@@ -165,7 +173,9 @@ def test_config_client_provider_repr_redacts_config_secrets():
 
 @pytest.mark.asyncio
 async def test_config_client_provider_close_cached_client_clears_and_closes_previous_client():
-    from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
+    from tldw_chatbook.runtime_policy.bootstrap import (
+        build_runtime_api_client_provider_from_config,
+    )
 
     class FakeClient:
         def __init__(self) -> None:
@@ -243,7 +253,9 @@ def test_load_runtime_policy_for_app_supports_legacy_url_alias_and_provider_reso
 ):
     from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
     from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider
-    from tldw_chatbook.runtime_policy.server_credentials import InMemoryServerCredentialStore
+    from tldw_chatbook.runtime_policy.server_credentials import (
+        InMemoryServerCredentialStore,
+    )
     from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
     from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
 
@@ -294,7 +306,9 @@ def test_load_runtime_policy_for_app_supports_legacy_url_alias_and_provider_reso
     assert active_context.credential_source == "credential_store:bearer_token"
 
 
-def test_wire_server_context_provider_exposes_provider_and_credential_store(tmp_path, monkeypatch):
+def test_wire_server_context_provider_exposes_provider_and_credential_store(
+    tmp_path, monkeypatch
+):
     from tldw_chatbook.app import TldwCli
 
     class FakeServerCredentialStore:
@@ -316,11 +330,19 @@ def test_wire_server_context_provider_exposes_provider_and_credential_store(tmp_
     assert app_like.server_credential_store is fake_store
     assert app_like.server_context_provider is not None
     assert app_like.server_context_provider.runtime_context is app_like.runtime_policy
-    assert app_like.server_context_provider.target_store is app_like.unified_mcp_target_store
-    assert app_like.server_context_provider.credential_store is app_like.server_credential_store
+    assert (
+        app_like.server_context_provider.target_store
+        is app_like.unified_mcp_target_store
+    )
+    assert (
+        app_like.server_context_provider.credential_store
+        is app_like.server_credential_store
+    )
 
 
-def test_wire_server_context_provider_uses_unavailable_store_when_secure_store_missing(tmp_path, monkeypatch):
+def test_wire_server_context_provider_uses_unavailable_store_when_secure_store_missing(
+    tmp_path, monkeypatch
+):
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.runtime_policy.server_credentials import (
         CredentialStoreUnavailable,
@@ -330,9 +352,13 @@ def test_wire_server_context_provider_uses_unavailable_store_when_secure_store_m
     monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
 
     def raise_unavailable():
-        raise CredentialStoreUnavailable("No secure OS-backed credential store is available.")
+        raise CredentialStoreUnavailable(
+            "No secure OS-backed credential store is available."
+        )
 
-    monkeypatch.setattr("tldw_chatbook.app.build_default_server_credential_store", raise_unavailable)
+    monkeypatch.setattr(
+        "tldw_chatbook.app.build_default_server_credential_store", raise_unavailable
+    )
     app_like = SimpleNamespace(
         app_config={"tldw_api": {"base_url": "https://example.com/api/"}},
         runtime_policy=SimpleNamespace(state=RuntimeSourceState()),
@@ -340,12 +366,19 @@ def test_wire_server_context_provider_uses_unavailable_store_when_secure_store_m
 
     TldwCli._wire_server_context_provider(app_like)
 
-    assert isinstance(app_like.server_credential_store, UnavailableServerCredentialStore)
-    assert app_like.server_context_provider.credential_store is app_like.server_credential_store
+    assert isinstance(
+        app_like.server_credential_store, UnavailableServerCredentialStore
+    )
+    assert (
+        app_like.server_context_provider.credential_store
+        is app_like.server_credential_store
+    )
 
 
 def test_auth_scope_updates_and_clears_legacy_imported_effective_bearer_token(tmp_path):
-    from tldw_chatbook.Auth_Account_Interop.auth_account_scope_service import AuthAccountScopeService
+    from tldw_chatbook.Auth_Account_Interop.auth_account_scope_service import (
+        AuthAccountScopeService,
+    )
     from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
     from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
     from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider
@@ -385,25 +418,34 @@ def test_auth_scope_updates_and_clears_legacy_imported_effective_bearer_token(tm
     scope = AuthAccountScopeService(server_context_provider=provider)
 
     assert provider.get_active_context().auth_token == "legacy-bearer"
-    assert credential_store.get_secret(
-        context.state.active_server_id,
-        SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) == "legacy-bearer"
+    assert (
+        credential_store.get_secret(
+            context.state.active_server_id,
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+        == "legacy-bearer"
+    )
 
     scope.store_login_tokens(access_token="access-1", refresh_token="refresh-1")
 
     assert provider.get_active_context().auth_token == "access-1"
-    assert credential_store.get_secret(
-        context.state.active_server_id,
-        SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) == "access-1"
+    assert (
+        credential_store.get_secret(
+            context.state.active_server_id,
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+        == "access-1"
+    )
 
     scope.clear_login_tokens()
 
-    assert credential_store.get_secret(
-        context.state.active_server_id,
-        SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) is None
+    assert (
+        credential_store.get_secret(
+            context.state.active_server_id,
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+        is None
+    )
 
 
 def test_load_runtime_policy_for_app_rebinds_persisted_runtime_state_to_configured_server_identity(
@@ -445,7 +487,9 @@ def test_load_runtime_policy_for_app_clears_stale_capability_state_when_server_i
             active_server_id="https://old.example.com/api",
             server_configured=True,
             server_reachability="reachable",
-            server_reachability_checked_at=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+            server_reachability_checked_at=datetime(
+                2026, 4, 21, 12, 0, tzinfo=timezone.utc
+            ),
             server_auth_state="authenticated",
             server_auth_checked_at=datetime(2026, 4, 21, 12, 5, tzinfo=timezone.utc),
             last_known_server_label="old.example.com",
@@ -480,7 +524,9 @@ def test_set_authoritative_runtime_source_clears_probe_state_on_server_identity_
         active_server_id="https://old.example.com/api",
         server_configured=True,
         server_reachability="reachable",
-        server_reachability_checked_at=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+        server_reachability_checked_at=datetime(
+            2026, 4, 21, 12, 0, tzinfo=timezone.utc
+        ),
         server_auth_state="authenticated",
         server_auth_checked_at=datetime(2026, 4, 21, 12, 5, tzinfo=timezone.utc),
         last_known_server_label="old.example.com",
@@ -602,7 +648,10 @@ async def test_handle_runtime_backend_changed_routes_server_identity_change_thro
         ("https://server-a.example.com/api", "https://server-b.example.com/api")
     ]
     assert app_like.runtime_policy.state.active_source == "server"
-    assert app_like.runtime_policy.state.active_server_id == "https://server-b.example.com/api"
+    assert (
+        app_like.runtime_policy.state.active_server_id
+        == "https://server-b.example.com/api"
+    )
     assert forwarded == ["server"]
 
 

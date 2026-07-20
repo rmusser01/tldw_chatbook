@@ -61,7 +61,9 @@ class ExportScope:
                 f"Unknown export scope kind: {self.kind!r}. Expected one of {_VALID_KINDS}."
             )
         if self.ids and self.kind == "everything":
-            raise ValueError("ExportScope.ids may only scope a single source, not 'everything'.")
+            raise ValueError(
+                "ExportScope.ids may only scope a single source, not 'everything'."
+            )
 
 
 class MediaIdSource(Protocol):
@@ -110,7 +112,9 @@ def count_export_scope(
         counts[scope.kind] = len(scope.ids)
         return counts
     if scope.kind in ("everything", "media"):
-        counts["media"] = len(media_db.get_all_active_media_ids(_effective_media_type(scope)))
+        counts["media"] = len(
+            media_db.get_all_active_media_ids(_effective_media_type(scope))
+        )
     if scope.kind in ("everything", "conversations"):
         counts["conversations"] = len(chachanotes_db.get_all_conversation_ids())
     if scope.kind in ("everything", "notes"):
@@ -147,7 +151,9 @@ def resolve_export_selections(
     if scope.kind in ("everything", "media"):
         media_ids = [
             str(int(media_id))
-            for media_id in media_db.get_all_active_media_ids(_effective_media_type(scope))
+            for media_id in media_db.get_all_active_media_ids(
+                _effective_media_type(scope)
+            )
         ]
         if media_ids:
             selections[ContentType.MEDIA] = media_ids

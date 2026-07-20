@@ -60,7 +60,9 @@ async def test_server_web_scraping_service_routes_with_policy_actions():
     assert cookies["record_id"] == "server:web_scraping_cookies:example.com"
     assert set_cookies["record_id"] == "server:web_scraping_cookies:example.com"
     assert duplicate["record_id"] == "server:web_scraping_duplicate:https://example.com"
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "media.web_scraping.status.server",
         "media.web_scraping.detail.server",
         "media.web_scraping.cancel.server",

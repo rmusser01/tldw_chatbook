@@ -34,7 +34,9 @@ def mock_app_instance() -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_media_ingest_screen_mounts_rebuilt_window(mock_app_instance: MagicMock) -> None:
+async def test_media_ingest_screen_mounts_rebuilt_window(
+    mock_app_instance: MagicMock,
+) -> None:
     app = MediaIngestHost(mock_app_instance)
 
     async with app.run_test() as pilot:
@@ -49,7 +51,9 @@ async def test_media_ingest_screen_mounts_rebuilt_window(mock_app_instance: Magi
 
 
 @pytest.mark.asyncio
-async def test_media_ingest_screen_passes_runtime_state_to_rebuilt_window(mock_app_instance: MagicMock) -> None:
+async def test_media_ingest_screen_passes_runtime_state_to_rebuilt_window(
+    mock_app_instance: MagicMock,
+) -> None:
     mock_app_instance.media_runtime_state = SimpleNamespace(runtime_backend="server")
     app = MediaIngestHost(mock_app_instance)
 

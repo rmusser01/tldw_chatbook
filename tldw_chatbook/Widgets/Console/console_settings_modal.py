@@ -53,7 +53,9 @@ MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
 MODEL_DISCOVER_BUTTON_LABEL = "Discover models"
 MODEL_DISCOVER_BUTTON_WIDTH = 19
 MODEL_DISCOVER_MISSING_URL_COPY = "Enter a base URL to discover models."
-MODEL_DISCOVER_INVALID_URL_COPY = "Enter a valid http(s) endpoint URL to discover models."
+MODEL_DISCOVER_INVALID_URL_COPY = (
+    "Enter a valid http(s) endpoint URL to discover models."
+)
 ModelProber = Callable[[str, str], Awaitable[LocalModelProbeResult]]
 STREAMING_TOGGLE_WIDTH = 12
 PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
@@ -118,7 +120,9 @@ def _settings_screen_region(widget: Any) -> Any:
     return getattr(widget, "screen_region", None) or widget.region
 
 
-async def _default_model_prober(base_url: str, provider_key: str) -> LocalModelProbeResult:
+async def _default_model_prober(
+    base_url: str, provider_key: str
+) -> LocalModelProbeResult:
     """Probe a models endpoint with the shared discovery helper.
 
     Args:
@@ -157,7 +161,9 @@ class ConsoleSettingsInput(Input):
         self.release_mouse()
         if event is None:
             return
-        handler = getattr(self.screen, "_open_select_from_redirected_settings_click", None)
+        handler = getattr(
+            self.screen, "_open_select_from_redirected_settings_click", None
+        )
         if callable(handler):
             handler(event)
 
@@ -238,14 +244,18 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         selected_model = self._model_for_provider(self._settings.provider)
         base_url = self._base_url_for_provider(self._settings.provider)
         uses_base_url = self._provider_uses_base_url(self._settings.provider)
-        model_options = self._model_select_options(self._settings.provider, selected_model)
+        model_options = self._model_select_options(
+            self._settings.provider, selected_model
+        )
         has_model_options = bool(model_options)
         use_model_select = self._should_use_model_select(
             self._settings.provider,
             selected_model,
             model_options,
         )
-        readiness = build_console_settings_readiness(self._settings, app_config=self._app_config)
+        readiness = build_console_settings_readiness(
+            self._settings, app_config=self._app_config
+        )
 
         with Vertical(id="console-settings-modal"):
             yield Static("Console Settings", classes="console-modal-header")
@@ -429,7 +439,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                             self._streaming_toggle_label(),
                             id="console-settings-streaming",
                         )
-                        streaming_toggle.tooltip = "Toggle streaming on or off for this session"
+                        streaming_toggle.tooltip = (
+                            "Toggle streaming on or off for this session"
+                        )
                         streaming_toggle.styles.width = STREAMING_TOGGLE_WIDTH
                         streaming_toggle.styles.min_width = STREAMING_TOGGLE_WIDTH
                         streaming_toggle.styles.max_width = STREAMING_TOGGLE_WIDTH
@@ -441,7 +453,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield self._modal_label("Reasoning")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.reasoning_effort),
-                            placeholder=self._choice_placeholder("console-settings-reasoning-effort"),
+                            placeholder=self._choice_placeholder(
+                                "console-settings-reasoning-effort"
+                            ),
                             id="console-settings-reasoning-effort",
                             classes="console-settings-control",
                         )
@@ -449,7 +463,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield self._modal_label("Summary")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.reasoning_summary),
-                            placeholder=self._choice_placeholder("console-settings-reasoning-summary"),
+                            placeholder=self._choice_placeholder(
+                                "console-settings-reasoning-summary"
+                            ),
                             id="console-settings-reasoning-summary",
                             classes="console-settings-control",
                         )
@@ -457,7 +473,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield self._modal_label("Verbosity")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.verbosity),
-                            placeholder=self._choice_placeholder("console-settings-verbosity"),
+                            placeholder=self._choice_placeholder(
+                                "console-settings-verbosity"
+                            ),
                             id="console-settings-verbosity",
                             classes="console-settings-control",
                         )
@@ -465,14 +483,18 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield self._modal_label("Thinking")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.thinking_effort),
-                            placeholder=self._choice_placeholder("console-settings-thinking-effort"),
+                            placeholder=self._choice_placeholder(
+                                "console-settings-thinking-effort"
+                            ),
                             id="console-settings-thinking-effort",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Budget")
                         yield ConsoleSettingsInput(
-                            value=self._format_value(self._settings.thinking_budget_tokens),
+                            value=self._format_value(
+                                self._settings.thinking_budget_tokens
+                            ),
                             id="console-settings-thinking-budget-tokens",
                             classes="console-settings-control",
                         )
@@ -540,7 +562,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 save_default.styles.width = 17
                 save_default.styles.min_width = 17
                 yield save_default
-                yield Button("Save", id="console-settings-save", variant="primary", disabled=not self._can_save)
+                yield Button(
+                    "Save",
+                    id="console-settings-save",
+                    variant="primary",
+                    disabled=not self._can_save,
+                )
 
     def on_mount(self) -> None:
         if self._focus_model:
@@ -565,7 +592,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         captured_widget = self.app.mouse_captured
         click_origin = getattr(event, "widget", None)
         focused_widget = self.app.focused
-        screen_routed_click = click_origin is self and isinstance(focused_widget, ConsoleSettingsInput)
+        screen_routed_click = click_origin is self and isinstance(
+            focused_widget, ConsoleSettingsInput
+        )
         if (
             not isinstance(captured_widget, ConsoleSettingsInput)
             and not isinstance(click_origin, ConsoleSettingsInput)
@@ -831,13 +860,17 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             discover = self.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
         except (NoMatches, QueryError):
             return
-        discover.disabled = not self._provider_supports_model_discovery(self._active_provider)
+        discover.disabled = not self._provider_supports_model_discovery(
+            self._active_provider
+        )
         if provider != self._active_provider:
             self._set_model_discover_status("")
             return
         display = endpoint_display(result.base_url)
         if not result.ok:
-            self._set_model_discover_status(result.detail or f"No models endpoint at {display}.")
+            self._set_model_discover_status(
+                result.detail or f"No models endpoint at {display}."
+            )
             return
         if not result.model_ids:
             self._set_model_discover_status(f"No models reported at {display}.")
@@ -890,19 +923,35 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             provider=provider,
             model=self._current_model_value(),
             base_url=self._current_base_url_value(provider),
-            temperature=self._parse_float_input("console-settings-temperature", self._settings.temperature),
-            top_p=self._parse_float_input("console-settings-top-p", self._settings.top_p),
+            temperature=self._parse_float_input(
+                "console-settings-temperature", self._settings.temperature
+            ),
+            top_p=self._parse_float_input(
+                "console-settings-top-p", self._settings.top_p
+            ),
             min_p=self._parse_optional_float_input("console-settings-min-p"),
             top_k=self._parse_optional_int_input("console-settings-top-k"),
             max_tokens=self._parse_optional_int_input("console-settings-max-tokens"),
             seed=self._parse_optional_int_input("console-settings-seed"),
-            presence_penalty=self._parse_optional_float_input("console-settings-presence-penalty"),
-            frequency_penalty=self._parse_optional_float_input("console-settings-frequency-penalty"),
-            reasoning_effort=self._parse_optional_choice_input("console-settings-reasoning-effort"),
-            reasoning_summary=self._parse_optional_choice_input("console-settings-reasoning-summary"),
+            presence_penalty=self._parse_optional_float_input(
+                "console-settings-presence-penalty"
+            ),
+            frequency_penalty=self._parse_optional_float_input(
+                "console-settings-frequency-penalty"
+            ),
+            reasoning_effort=self._parse_optional_choice_input(
+                "console-settings-reasoning-effort"
+            ),
+            reasoning_summary=self._parse_optional_choice_input(
+                "console-settings-reasoning-summary"
+            ),
             verbosity=self._parse_optional_choice_input("console-settings-verbosity"),
-            thinking_effort=self._parse_optional_choice_input("console-settings-thinking-effort"),
-            thinking_budget_tokens=self._parse_optional_int_input("console-settings-thinking-budget-tokens"),
+            thinking_effort=self._parse_optional_choice_input(
+                "console-settings-thinking-effort"
+            ),
+            thinking_budget_tokens=self._parse_optional_int_input(
+                "console-settings-thinking-budget-tokens"
+            ),
             streaming=self._streaming_draft,
             persona_label=self._settings.persona_label,
             character_label=self._settings.character_label,
@@ -917,9 +966,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         if model_options:
             model_select.set_options(model_options)
             option_values = {str(value) for _, value in model_options}
-            selected = current_model if current_model in option_values else str(model_options[0][1])
+            selected = (
+                current_model
+                if current_model in option_values
+                else str(model_options[0][1])
+            )
             model_select.value = selected
-            use_model_select = self._should_use_model_select(provider, selected, model_options)
+            use_model_select = self._should_use_model_select(
+                provider, selected, model_options
+            )
             model_select.disabled = not use_model_select
             model_select.display = use_model_select
             model_input.disabled = True
@@ -954,7 +1009,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 model_input.focus()
                 self._sync_readiness_display()
                 return
-            provider = str(self.query_one("#console-settings-provider", Select).value or "")
+            provider = str(
+                self.query_one("#console-settings-provider", Select).value or ""
+            )
             current_model = normalize_console_model_value(model_input.value)
             self._sync_model_controls(provider, current_model)
             self._sync_readiness_display()
@@ -994,14 +1051,27 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             if option.label.endswith(" (WIP)"):
                 label = f"{label} (WIP)"
             options.append((label, option.value))
-        if self._settings.provider and self._settings.provider not in {value for _, value in options}:
-            options.append((provider_display_name(self._settings.provider), self._settings.provider))
-        return options or [(provider_display_name(self._settings.provider), self._settings.provider)]
+        if self._settings.provider and self._settings.provider not in {
+            value for _, value in options
+        }:
+            options.append(
+                (
+                    provider_display_name(self._settings.provider),
+                    self._settings.provider,
+                )
+            )
+        return options or [
+            (provider_display_name(self._settings.provider), self._settings.provider)
+        ]
 
-    def _model_select_options(self, provider: str, current_model: str | None) -> list[tuple[str, str]]:
+    def _model_select_options(
+        self, provider: str, current_model: str | None
+    ) -> list[tuple[str, str]]:
         options = [
             (option.label, option.value)
-            for option in build_console_model_options(provider, self._providers_models, current_model)
+            for option in build_console_model_options(
+                provider, self._providers_models, current_model
+            )
         ]
         option_values = {value for _, value in options}
         for model_id in self._discovered_model_ids.get(provider, ()):
@@ -1016,7 +1086,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _configured_model_select_options(self, provider: str) -> list[tuple[str, str]]:
         return [
             (option.label, option.value)
-            for option in build_console_model_options(provider, self._providers_models, None)
+            for option in build_console_model_options(
+                provider, self._providers_models, None
+            )
         ]
 
     def _should_use_model_select(
@@ -1041,7 +1113,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         provider_key = provider_config_key(provider)
         if provider_key == "custom":
             return True
-        configured_values = {str(value) for _, value in self._configured_model_select_options(provider)}
+        configured_values = {
+            str(value) for _, value in self._configured_model_select_options(provider)
+        }
         selected_model = normalize_console_model_value(selected_model)
 
         if self._focus_model:
@@ -1074,13 +1148,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
 
     def _store_current_base_url_for_provider(self, provider: str) -> None:
         if provider and self._provider_uses_base_url(provider):
-            self._provider_base_url_drafts[provider] = (
-                self.query_one("#console-settings-base-url", Input).value.strip()
-            )
+            self._provider_base_url_drafts[provider] = self.query_one(
+                "#console-settings-base-url", Input
+            ).value.strip()
 
     def _model_for_provider(self, provider: str) -> str | None:
         if provider in self._provider_model_drafts:
-            stored_model = normalize_console_model_value(self._provider_model_drafts[provider])
+            stored_model = normalize_console_model_value(
+                self._provider_model_drafts[provider]
+            )
             if stored_model:
                 return stored_model
         configured_model = self._default_model_for_provider(provider)
@@ -1122,14 +1198,17 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         if provider in self._provider_base_url_drafts:
             return self._provider_base_url_drafts[provider] or None
         if provider == self._settings.provider and self._settings.base_url:
-            return self._initial_base_url_for_provider(provider, self._settings.base_url)
+            return self._initial_base_url_for_provider(
+                provider, self._settings.base_url
+            )
         return self._default_base_url_for_provider(provider)
 
     def _provider_uses_base_url(self, provider: str) -> bool:
         provider_key = provider_config_key(provider)
         provider_settings = self._provider_settings(provider_key)
         return provider_key in URL_BASED_PROVIDER_KEYS or any(
-            key in provider_settings for key in ("api_base_url", "api_url", "base_url", "api_base")
+            key in provider_settings
+            for key in ("api_base_url", "api_url", "base_url", "api_base")
         )
 
     def _provider_settings(self, provider_key: str) -> Mapping[str, object]:
@@ -1137,10 +1216,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         if not isinstance(api_settings, Mapping):
             return {}
         for configured_provider, configured_settings in api_settings.items():
-            if (
-                provider_config_key(str(configured_provider)) == provider_key
-                and isinstance(configured_settings, Mapping)
-            ):
+            if provider_config_key(
+                str(configured_provider)
+            ) == provider_key and isinstance(configured_settings, Mapping):
                 return configured_settings
         return {}
 
@@ -1152,20 +1230,21 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             return normalize_llamacpp_base_url(base_url or DEFAULT_LLAMACPP_BASE_URL)
         return base_url
 
-    def _initial_base_url_for_provider(self, provider: str, session_base_url: str | None) -> str | None:
+    def _initial_base_url_for_provider(
+        self, provider: str, session_base_url: str | None
+    ) -> str | None:
         provider_key = provider_config_key(provider)
         provider_settings = self._provider_settings(provider_key)
         configured_base_url = self._default_base_url_for_provider(provider)
-        session_base_url = self._normalized_base_url_for_provider(provider_key, session_base_url)
+        session_base_url = self._normalized_base_url_for_provider(
+            provider_key, session_base_url
+        )
         if not session_base_url:
             return configured_base_url
-        if (
-            configured_base_url
-            and self._matches_lower_priority_configured_endpoint(
-                provider_key,
-                session_base_url,
-                provider_settings,
-            )
+        if configured_base_url and self._matches_lower_priority_configured_endpoint(
+            provider_key,
+            session_base_url,
+            provider_settings,
         ):
             return configured_base_url
         return session_base_url
@@ -1182,8 +1261,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         )
         if not configured_endpoint:
             return False
-        session_identity = self._endpoint_identity_for_provider(provider_key, session_base_url)
-        configured_identity = self._endpoint_identity_for_provider(provider_key, configured_endpoint)
+        session_identity = self._endpoint_identity_for_provider(
+            provider_key, session_base_url
+        )
+        configured_identity = self._endpoint_identity_for_provider(
+            provider_key, configured_endpoint
+        )
         if session_identity == configured_identity:
             return False
         for key in ("api_url", "base_url", "api_base", "api_endpoint", "endpoint"):
@@ -1194,13 +1277,17 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             if (
                 lower_priority_endpoint
                 and session_identity
-                == self._endpoint_identity_for_provider(provider_key, lower_priority_endpoint)
+                == self._endpoint_identity_for_provider(
+                    provider_key, lower_priority_endpoint
+                )
             ):
                 return True
         return False
 
     @staticmethod
-    def _normalized_base_url_for_provider(provider_key: str, base_url: object | None) -> str | None:
+    def _normalized_base_url_for_provider(
+        provider_key: str, base_url: object | None
+    ) -> str | None:
         value = str(base_url or "").strip()
         if not value:
             return None
