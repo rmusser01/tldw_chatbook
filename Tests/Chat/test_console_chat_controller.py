@@ -1822,6 +1822,24 @@ async def test_build_context_snapshot_redacts_secrets():
 
 
 @pytest.mark.asyncio
+async def test_build_context_snapshot_redacts_quoted_secrets_without_mangling_json():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content='run with {"api_key": "secret123"}',
+    )
+
+    snapshot = await controller.build_context_snapshot(draft="ok")
+    payload_text = str(snapshot.next_send_payload)
+    assert "secret123" not in payload_text
+    assert '"api_key": "[redacted]"' in payload_text
+
+
+@pytest.mark.asyncio
 async def test_build_context_snapshot_is_immutable():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
@@ -1921,7 +1939,7 @@ def test_replace_image_data_preserves_detail_and_handles_string_url():
     assert dict_url["url"] == "[image: data redacted for preview]"
     assert dict_url["detail"] == "auto"
     string_url = redacted[0]["content"][1]["image_url"]
-    assert string_url == {"url": "[image: data redacted for preview]"}
+    assert string_url == "http://example.com/img.png"
 
 
 @pytest.mark.asyncio
@@ -2003,6 +2021,15 @@ def test_annotate_skill_commands_multimodal_text_part():
     assert annotated[0]["content"][1] == messages[0]["content"][1]
 
 
+def test_annotate_skill_commands_ignores_leading_whitespace():
+    messages = [{"role": "user", "content": "  /search tools"}]
+
+    annotated = ConsoleChatController._annotate_skill_commands(messages)
+
+    assert annotated[0]["content"].startswith("  /search tools")
+    assert "Skill command not resolved in preview" in annotated[0]["content"]
+
+
 def test_build_tools_info_for_snapshot_no_bridge():
     controller = ConsoleChatController(
         store=ConsoleChatStore(), provider_gateway=StreamingGateway()
@@ -2012,8 +2039,7 @@ def test_build_tools_info_for_snapshot_no_bridge():
 
     assert info["native_schemas"] == []
     assert info["mcp_note"] is None
-    assert info["preview_note"] is not None
-    assert "builtin native tools" in info["preview_note"]
+    assert info["preview_note"] == "No native tools are configured for preview."
 
 
 def test_build_tools_info_for_snapshot_with_native_schemas():
@@ -2048,8 +2074,7 @@ def test_build_tools_info_for_snapshot_mcp_provider_present():
     assert info["native_schemas"] == []
     assert info["mcp_note"] is not None
     assert "MCP tools are configured" in info["mcp_note"]
-    assert info["preview_note"] is not None
-    assert "skills/MCP" in info["preview_note"]
+    assert info["preview_note"] == "No native tools are configured for preview."
 
 
 def test_build_tools_info_for_snapshot_mcp_provider_absent():
@@ -2063,5 +2088,4 @@ def test_build_tools_info_for_snapshot_mcp_provider_absent():
 
     assert info["native_schemas"] == []
     assert info["mcp_note"] is None
-    assert info["preview_note"] is not None
-    assert "preview" in info["preview_note"]
+    assert info["preview_note"] == "No native tools are configured for preview."

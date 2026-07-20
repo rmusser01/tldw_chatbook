@@ -1252,20 +1252,25 @@ class ConsoleChatController:
     @staticmethod
     def _replace_image_data_with_placeholders(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         result = copy.deepcopy(messages)
+
+        def _is_data_url(value: Any) -> bool:
+            return isinstance(value, str) and value.startswith("data:")
+
+        def _redact_image_url(value: Any) -> Any:
+            if isinstance(value, dict) and _is_data_url(value.get("url")):
+                return {**value, "url": "[image: data redacted for preview]"}
+            if isinstance(value, str) and _is_data_url(value):
+                return {"url": "[image: data redacted for preview]"}
+            return value
+
         for message in result:
             content = message.get("content")
             if isinstance(content, list):
                 for part in content:
                     if isinstance(part, dict) and part.get("type") == "image_url":
-                        image_url = part.get("image_url")
-                        if isinstance(image_url, dict):
-                            image_url["url"] = "[image: data redacted for preview]"
-                        elif isinstance(image_url, str):
-                            part["image_url"] = {
-                                "url": "[image: data redacted for preview]"
-                            }
+                        part["image_url"] = _redact_image_url(part.get("image_url"))
                     if isinstance(part, dict) and part.get("type") == "image":
-                        part["image"] = "[image: data redacted for preview]"
+                        part["image"] = _redact_image_url(part.get("image"))
         return result
 
     @staticmethod
@@ -1280,7 +1285,7 @@ class ConsoleChatController:
             "actual substitution happens at send time.]"
         )
 
-        if isinstance(content, str) and content.startswith("/"):
+        if isinstance(content, str) and content.lstrip().startswith("/"):
             result[-1]["content"] = f"{content}\n\n{annotation}"
             return result
 
@@ -1288,14 +1293,15 @@ class ConsoleChatController:
             new_parts: list[Any] = []
             annotated = False
             for part in content:
+                text = part.get("text") if isinstance(part, dict) else None
                 if (
                     not annotated
                     and isinstance(part, dict)
                     and part.get("type") == "text"
-                    and isinstance(part.get("text"), str)
-                    and part["text"].startswith("/")
+                    and isinstance(text, str)
+                    and text.lstrip().startswith("/")
                 ):
-                    new_parts.append({**part, "text": f"{part['text']}\n\n{annotation}"})
+                    new_parts.append({**part, "text": f"{text}\n\n{annotation}"})
                     annotated = True
                 else:
                     new_parts.append(part)
@@ -1308,12 +1314,15 @@ class ConsoleChatController:
         tools: list[dict[str, Any]] = []
         if self._agent_bridge is not None:
             # Native tools only; live MCP catalog composition is out of scope.
-            tools = getattr(self._agent_bridge, "native_tool_schemas", lambda: [])()
+            tools = self._agent_bridge.native_tool_schemas()
         mcp_note = "MCP tools are configured but live catalog composition is not shown in this preview."
-        preview_note = (
-            "This preview shows only builtin native tools. "
-            "The live run may add skills/MCP tools."
-        )
+        if tools:
+            preview_note = (
+                "This preview shows only builtin native tools. "
+                "The live run may add skills/MCP tools."
+            )
+        else:
+            preview_note = "No native tools are configured for preview."
         return {
             "native_schemas": tools,
             "mcp_note": mcp_note if self._mcp_provider else None,
@@ -1322,9 +1331,17 @@ class ConsoleChatController:
 
     _SECRET_REDACTION_KEYS = {"api_key", "apikey", "token", "password", "secret", "bearer"}
     _SECRET_REDACTION_PATTERN = re.compile(
+        r"(?P<open_quote>[\"']?)"
         r"(?P<key>"
         + "|".join(re.escape(k) for k in _SECRET_REDACTION_KEYS)
-        + r")\s*[:=]\s*\S+",
+        + r")"
+        r"(?P=open_quote)"
+        r"(?P<sep>\s*[:=]\s*)"
+        r"(?P<value>"
+        + r'"(?:\\.|[^"\\])*"'
+        + r"|'(?:\\.|[^'\\])*'"
+        + r"|[^\s,;}\]\)\"']+"
+        + r")",
         re.IGNORECASE,
     )
 
@@ -1339,9 +1356,20 @@ class ConsoleChatController:
         redacted = copy.deepcopy(payload)
 
         def _redact_string(value: str) -> str:
-            return ConsoleChatController._SECRET_REDACTION_PATTERN.sub(
-                lambda m: f"{m.group('key')}=[redacted]", value
-            )
+            def _replace_value(match: re.Match[str]) -> str:
+                matched_value = match.group("value")
+                if matched_value.startswith('"'):
+                    redacted_value = '"[redacted]"'
+                elif matched_value.startswith("'"):
+                    redacted_value = "'[redacted]'"
+                else:
+                    redacted_value = "[redacted]"
+                open_quote = match.group("open_quote")
+                key = match.group("key")
+                sep = match.group("sep")
+                return f"{open_quote}{key}{open_quote}{sep}{redacted_value}"
+
+            return ConsoleChatController._SECRET_REDACTION_PATTERN.sub(_replace_value, value)
 
         def _matches_secret_key(key: str) -> bool:
             """Return True when ``key`` is or ends with a secret word.
