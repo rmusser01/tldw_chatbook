@@ -884,3 +884,62 @@ def test_plan_restore_cap_one_prunes_to_newest():
     assert [j.job_id for j in plan.jobs] == ["ingest-job-2"]
     assert plan.delete_ids == ["ingest-job-1"]
     assert plan.next_id == 3
+
+
+# --- Library ingestion improvements: options / progress / error detail ---
+
+
+def test_submit_stores_ingest_options() -> None:
+    registry = LibraryIngestJobRegistry()
+    options = {"pdf_engine": "pymupdf4llm", "enable_ocr": True}
+    job = registry.submit(source_path="/tmp/a.pdf", ingest_options=options)
+    assert job.ingest_options == options
+    assert registry.jobs()[0].ingest_options == options
+
+
+def test_mark_done_stores_progress_and_content_hash() -> None:
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    progress = {"message": "done", "chunks": 3}
+    done = registry.mark_done(
+        job.job_id, media_id=42, progress=progress, content_hash="abc123"
+    )
+    assert done.progress == progress
+    assert done.content_hash == "abc123"
+    assert registry.jobs()[0].progress == progress
+
+
+def test_mark_failed_stores_error_detail_and_progress() -> None:
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    error_detail = {"category": "missing_dependency", "message": "No pdf backend"}
+    progress = {"message": "failed after parse"}
+    failed = registry.mark_failed(
+        job.job_id,
+        error="pdf backend missing",
+        error_detail=error_detail,
+        progress=progress,
+    )
+    assert failed.error_detail == error_detail
+    assert failed.progress == progress
+
+
+def test_requeue_preserves_ingest_options() -> None:
+    registry = LibraryIngestJobRegistry()
+    options = {"transcription_model": "base"}
+    job = registry.submit(source_path="/tmp/a.mp3", ingest_options=options)
+    registry.mark_failed(job.job_id, error="transient")
+    retried = registry.requeue(job.job_id)
+    assert retried is not None
+    assert retried.ingest_options == options
+
+
+def test_requeue_refuses_unsupported_file_type() -> None:
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.unknown")
+    registry.mark_failed(
+        job.job_id,
+        error="Unsupported file type",
+        error_detail={"category": "unsupported_file_type"},
+    )
+    assert registry.requeue(job.job_id) is None

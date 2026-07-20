@@ -63,10 +63,10 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
 from loguru import logger
 
@@ -166,6 +166,14 @@ class LibraryIngestJob:
             :class:`~tldw_chatbook.DB.Library_Ingest_Jobs_DB.
             LibraryIngestJobsDB` for job-history display. ``0`` for every
             job unless explicitly set.
+        ingest_options: Per-type ingestion options snapshot captured at
+            submit/requeue time (e.g. PDF engine, transcription model).
+        progress: Optional structured progress payload emitted by the
+            processor while the job is running.
+        error_detail: Optional structured error payload (category, message,
+            install hints) set on failure.
+        content_hash: Optional content hash recorded on success for
+            deduplication-aware "Open in Library" lookups.
     """
 
     job_id: str
@@ -188,6 +196,10 @@ class LibraryIngestJob:
     dismissed: bool = False
     permanent: bool = False
     retry_count: int = 0
+    ingest_options: dict[str, Any] = field(default_factory=dict)
+    progress: dict[str, Any] | None = None
+    error_detail: dict[str, Any] | None = None
+    content_hash: str | None = None
 
 
 class IngestJobStore(Protocol):
@@ -361,6 +373,7 @@ class LibraryIngestJobRegistry:
         chunk_enabled: bool = False,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         detected_type: str = "",
+        ingest_options: dict[str, Any] | None = None,
     ) -> LibraryIngestJob:
         """Append a new ``QUEUED`` job.
 
@@ -375,6 +388,7 @@ class LibraryIngestJobRegistry:
             detected_type: The file type detected by the ingest seam, when
                 already known at submission time. Optional; defaults to
                 ``""`` when not yet known.
+            ingest_options: Per-type ingestion options snapshot.
 
         Returns:
             The newly created ``QUEUED`` job (a registry-owned copy).
@@ -391,6 +405,7 @@ class LibraryIngestJobRegistry:
             state=IngestJobState.QUEUED,
             submitted_at=time.monotonic(),
             detected_type=detected_type,
+            ingest_options=ingest_options or {},
         )
         self._jobs.append(job)
         self._notify_listeners()
@@ -497,12 +512,21 @@ class LibraryIngestJobRegistry:
         self._persist(updated)
         return replace(updated)
 
-    def mark_done(self, job_id: str, *, media_id: int) -> LibraryIngestJob | None:
+    def mark_done(
+        self,
+        job_id: str,
+        *,
+        media_id: int,
+        progress: dict[str, Any] | None = None,
+        content_hash: str | None = None,
+    ) -> LibraryIngestJob | None:
         """Transition a job to ``DONE`` and stamp ``finished_at``/``finished_at_wall``.
 
         Args:
             job_id: The job to transition.
             media_id: The resulting media row id.
+            progress: Optional structured progress payload.
+            content_hash: Optional content hash for deduplication lookups.
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
@@ -527,6 +551,8 @@ class LibraryIngestJobRegistry:
             current,
             state=IngestJobState.DONE,
             media_id=media_id,
+            progress=progress,
+            content_hash=content_hash,
             finished_at=time.monotonic(),
             finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
@@ -536,7 +562,13 @@ class LibraryIngestJobRegistry:
         return replace(updated)
 
     def mark_failed(
-        self, job_id: str, *, error: str, permanent: bool = False
+        self,
+        job_id: str,
+        *,
+        error: str,
+        permanent: bool = False,
+        error_detail: dict[str, Any] | None = None,
+        progress: dict[str, Any] | None = None,
     ) -> LibraryIngestJob | None:
         """Transition a job to ``FAILED`` and stamp ``finished_at``/``finished_at_wall``.
 
@@ -548,6 +580,9 @@ class LibraryIngestJobRegistry:
                 ``LibraryIngestJob.permanent``'s docstring). ``False`` by
                 default so every pre-existing caller keeps today's
                 always-retryable behavior.
+            error_detail: Optional structured error payload.
+            progress: Optional structured progress payload captured at
+                failure time.
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
@@ -574,6 +609,8 @@ class LibraryIngestJobRegistry:
             state=IngestJobState.FAILED,
             error=error,
             permanent=permanent,
+            error_detail=error_detail,
+            progress=progress,
             finished_at=time.monotonic(),
             finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
@@ -622,11 +659,16 @@ class LibraryIngestJobRegistry:
         if index is None:
             return None
         source = self._jobs[index]
+        unsupported = (
+            source.error_detail is not None
+            and source.error_detail.get("category") == "unsupported_file_type"
+        )
         if (
             source.state != IngestJobState.FAILED
             or source.superseded
             or source.dismissed
             or source.permanent
+            or unsupported
         ):
             return None
         new_job = LibraryIngestJob(
@@ -639,6 +681,7 @@ class LibraryIngestJobRegistry:
             chunk_enabled=source.chunk_enabled,
             chunk_size=source.chunk_size,
             detected_type=source.detected_type,
+            ingest_options=source.ingest_options,
             state=IngestJobState.QUEUED,
             submitted_at=time.monotonic(),
             retry_count=source.retry_count + 1,
