@@ -10,6 +10,7 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
 from textual.css.query import NoMatches, QueryError
 from textual.timer import Timer
 from textual.widget import Widget
@@ -58,7 +60,8 @@ from ...Library.library_export_state import (
     normalize_export_destination,
 )
 from ...Library.ingest_capabilities import get_capabilities
-from ...Library.ingest_preflight import PreflightResult, analyze_path
+from ...Library.ingest_preflight import analyze_path
+from ...Library.ingest_types import PreflightResult
 from ...Library.library_ingest_jobs import LibraryIngestJob
 from ...Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
@@ -646,6 +649,104 @@ def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
             exc_info=True,
         )
         screen.refresh(recompose=True)
+
+
+class IngestGuardrailModal(ModalScreen[bool]):
+    """Confirmation modal for starting an ingest with tooling warnings."""
+
+    DEFAULT_CSS = """
+    IngestGuardrailModal {
+        align: center middle;
+    }
+
+    #ingest-guardrail-modal {
+        width: 60;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    #ingest-guardrail-actions {
+        height: 3;
+        min-height: 3;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+    #ingest-guardrail-cancel,
+    #ingest-guardrail-confirm {
+        width: 14;
+        min-width: 14;
+        height: 3;
+        min-height: 3;
+    }
+    """
+
+    BINDINGS = [("escape", "dismiss(false)", "Close")]
+
+    def __init__(self, warnings: list[dict], affected_counts: dict[str, int]) -> None:
+        self.warnings = warnings
+        self.affected_counts = affected_counts
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="ingest-guardrail-modal"):
+            yield Static("Some files may fail to ingest:")
+            for i, w in enumerate(self.warnings):
+                count = self.affected_counts.get(w["feature"], 0)
+                with Vertical():
+                    yield Static(f"- {w['label']} ({count} files): {w['hint']}")
+                    if w.get("command"):
+                        yield Button(
+                            "Copy install command",
+                            id=f"ingest-guardrail-copy-command-{i}",
+                            classes="copy-command",
+                        )
+            with Horizontal(id="ingest-guardrail-actions"):
+                yield Button(
+                    "Cancel", id="ingest-guardrail-cancel", variant="error"
+                )
+                yield Button(
+                    "Start ingest anyway",
+                    id="ingest-guardrail-confirm",
+                    variant="primary",
+                )
+
+    @on(Button.Pressed, "#ingest-guardrail-confirm")
+    def _confirm(self) -> None:
+        self.dismiss(True)
+
+    @on(Button.Pressed, "#ingest-guardrail-cancel")
+    def _cancel(self) -> None:
+        self.dismiss(False)
+
+    @on(Button.Pressed, ".copy-command")
+    def _copy_command(self, event: Button.Pressed) -> None:
+        button_id = event.button.id
+        if not button_id or not button_id.startswith("ingest-guardrail-copy-command-"):
+            return
+        index = int(button_id.split("-")[-1])
+        command = self.warnings[index].get("command", "")
+        copy_fn = getattr(self.app, "copy_to_clipboard", None)
+        if callable(copy_fn):
+            try:
+                copy_fn(command)
+                self.notify("Install command copied to clipboard")
+            except Exception:
+                self.notify("Failed to copy command", severity="error")
+        else:
+            self.notify("Clipboard not available", severity="warning")
+
+
+def _affected_counts(preflight: PreflightResult) -> dict[str, int]:
+    """Map each tooling feature to the number of files that depend on it."""
+    counts: dict[str, int] = {}
+    for group, files in preflight.type_groups.items():
+        cap = get_capabilities(group)
+        for feat in cap.required_features + cap.optional_features:
+            counts[feat] = counts.get(feat, 0) + len(files)
+    return counts
 
 
 class LibraryScreen(BaseAppScreen):
@@ -10161,24 +10262,17 @@ class LibraryScreen(BaseAppScreen):
             return
         self._submit_library_ingest_form()
 
-    def _submit_library_ingest_form(self) -> None:
-        """Validate the ingest form and submit a new Library ingest job.
+    def _resolve_ingest_source(self, raw_path: str) -> str | None:
+        """Validate and canonicalise a Library ingest source path or URL.
 
-        Shared by the Start ingest button and Enter in the path field. An
-        invalid/missing path is a quiet warning notice, matching every
-        other Library form failure path in this screen; a missing
-        ``submit_library_ingest_job`` seam (registry absent) gets the same
-        treatment. On success, the path AND title fields clear (L3b AB
-        wave, A1) -- title is per-file, so it must not silently reapply to
-        the next file in a batch -- while author/keywords/advanced options
-        persist, since those are batch metadata a user submitting several
-        files in a row shouldn't have to retype for every submission.
+        Returns ``None`` when validation fails and the caller should stop
+        (a warning notification has already been shown). URLs are returned
+        as-is; filesystem paths are expanded and normalised by
+        ``validate_path_simple``.
         """
-        form = self._library_ingest_form
-        raw_path = form.path.strip()
         if not raw_path:
             self._notify_library_ingest_warning("Please choose a file to ingest.")
-            return
+            return None
         from urllib.parse import urlparse
 
         if urlparse(raw_path).scheme in ("http", "https"):
@@ -10189,22 +10283,68 @@ class LibraryScreen(BaseAppScreen):
                 self._notify_library_ingest_warning(
                     "That doesn't look like a valid http(s) URL."
                 )
-                return
-            submitted_source = raw_path
-        else:
-            try:
-                validated_path = validate_path_simple(
-                    Path(raw_path).expanduser(), require_exists=True
-                )
-            except ValueError:
-                logger.opt(exception=True).warning(f"Rejected Library ingest path {raw_path!r}.")
-                self._notify_library_ingest_warning("Could not find that file.")
-                return
-            submitted_source = str(validated_path)
+                return None
+            return raw_path
+        try:
+            validated_path = validate_path_simple(
+                Path(raw_path).expanduser(), require_exists=True
+            )
+        except ValueError:
+            logger.opt(exception=True).warning(
+                f"Rejected Library ingest path {raw_path!r}."
+            )
+            self._notify_library_ingest_warning("Could not find that file.")
+            return None
+        return str(validated_path)
+
+    def _submit_library_ingest_form(self) -> None:
+        """Validate the ingest form and submit a new Library ingest job.
+
+        Shared by the Start ingest button and Enter in the path field. An
+        invalid/missing path is a quiet warning notice, matching every
+        other Library form failure path in this screen; a missing
+        ``submit_library_ingest_job`` seam (registry absent) gets the same
+        treatment. When pre-flight tooling warnings are present, a
+        confirmation modal quantifies the affected files before the user
+        proceeds. On success, the path AND title fields clear (L3b AB
+        wave, A1) -- title is per-file, so it must not silently reapply to
+        the next file in a batch -- while author/keywords/advanced options
+        persist, since those are batch metadata a user submitting several
+        files in a row shouldn't have to retype for every submission.
+        """
+        form = self._library_ingest_form
+        submitted_source = self._resolve_ingest_source(form.path.strip())
+        if submitted_source is None:
+            return
         submit = getattr(self.app_instance, "submit_library_ingest_job", None)
         if not callable(submit):
             self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
             return
+        if form.preflight is not None and form.preflight.warnings:
+            counts = _affected_counts(form.preflight)
+            self.push_screen(
+                IngestGuardrailModal(form.preflight.warnings, counts),
+                partial(self._do_submit_ingest, submitted_source),
+            )
+        else:
+            self._do_submit_ingest(submitted_source)
+
+    def _do_submit_ingest(
+        self, submitted_source: str, confirmed: bool = True
+    ) -> None:
+        """Perform the actual Library ingest job submission.
+
+        The ``confirmed`` parameter lets this method be used directly as the
+        guardrail modal callback: the modal dismisses with ``True``/``False``
+        and the partial binding already supplies ``submitted_source``.
+        """
+        if not confirmed:
+            return
+        submit = getattr(self.app_instance, "submit_library_ingest_job", None)
+        if not callable(submit):
+            self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
+            return
+        form = self._library_ingest_form
         submit(
             source_path=submitted_source,
             ingest_options=self._build_ingest_options_snapshot(),
