@@ -59,7 +59,7 @@ from ...Library.library_export_state import (
     next_media_quality,
     normalize_export_destination,
 )
-from ...Library.ingest_capabilities import get_capabilities
+from ...Library.ingest_capabilities import get_capabilities, list_type_groups
 from ...Library.ingest_preflight import analyze_path
 from ...Library.ingest_types import PreflightResult
 from ...Library.library_ingest_jobs import LibraryIngestJob
@@ -1162,6 +1162,7 @@ class LibraryScreen(BaseAppScreen):
         """
         self._register_footer_shortcuts()
         super().on_mount()
+        self._load_library_ingest_options_from_config()
         self.set_timer(
             LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
             self._apply_source_snapshot_timeout,
@@ -10345,9 +10346,10 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
             return
         form = self._library_ingest_form
+        snapshot = self._build_ingest_options_snapshot()
         submit(
             source_path=submitted_source,
-            ingest_options=self._build_ingest_options_snapshot(),
+            ingest_options=snapshot,
             title=self._safe_text(form.title, max_length=300),
             author=self._safe_text(form.author, max_length=200),
             keywords=parse_keywords(form.keywords),
@@ -10355,9 +10357,43 @@ class LibraryScreen(BaseAppScreen):
             chunk_enabled=form.chunk,
             chunk_size=clamp_chunk_size(form.chunk_size),
         )
+        for group, values in snapshot.items():
+            for key, val in values.items():
+                save_setting_to_cli_config(f"library.ingest_options.{group}", key, val)
         form.path = ""
         form.title = ""
         self.refresh(recompose=True)
+
+    def _load_library_ingest_options_from_config(self) -> None:
+        """Load persisted per-type ingest options into the form echo.
+
+        Called from ``on_mount`` so a fresh Library visit carries forward the
+        last-used options from previous sessions.
+        """
+        form = self._library_ingest_form
+        for group in list_type_groups():
+            cap = get_capabilities(group)
+            prefix = f"library.ingest_options.{group}"
+            stored: dict[str, Any] = {}
+            for name in cap.field_names:
+                value = get_cli_setting(prefix, name)
+                if value is not None:
+                    stored[name] = value
+            if group == "generic":
+                for name in ("analyze", "chunk", "chunk_size", "chunk_overlap"):
+                    value = get_cli_setting(prefix, name)
+                    if value is None:
+                        continue
+                    if name == "analyze":
+                        form.analyze = bool(value)
+                    elif name == "chunk":
+                        form.chunk = bool(value)
+                    elif name == "chunk_size":
+                        form.chunk_size = str(value)
+                    else:
+                        stored[name] = value
+            if stored:
+                form.type_options.setdefault(group, {}).update(stored)
 
     def _build_ingest_options_snapshot(self) -> dict[str, dict[str, Any]]:
         """Capture the current per-type ingestion options as a snapshot.

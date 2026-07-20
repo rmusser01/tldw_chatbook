@@ -313,6 +313,16 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
 }
 
 
+def list_type_groups() -> list[str]:
+    """Return all known ingestion type group identifiers.
+
+    Returns:
+        List of group ids such as ``pdf``, ``audio_video``, ``ebook``,
+        ``generic``.
+    """
+    return list(_TYPE_GROUPS.keys())
+
+
 def get_type_group(path_or_url: str) -> str:
     """Map a file path or URL to a capability group.
 

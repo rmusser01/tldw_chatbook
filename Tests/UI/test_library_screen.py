@@ -3,6 +3,7 @@
 import pytest
 import pytest_asyncio
 from textual.widgets import Button
+from unittest.mock import MagicMock
 
 from tldw_chatbook.Library.library_ingest_jobs import DEFAULT_CHUNK_SIZE
 from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
@@ -109,3 +110,72 @@ def test_build_ingest_options_snapshot_clamps_invalid_chunk_size() -> None:
 
     # clamp_chunk_size returns DEFAULT_CHUNK_SIZE for non-integer input.
     assert snapshot["generic"]["chunk_size"] == DEFAULT_CHUNK_SIZE
+
+
+# ----- Ingest options persistence/load (Task 17) ----------------------------
+
+
+def test_do_submit_ingest_persists_options(monkeypatch) -> None:
+    """Starting an ingest writes the current option snapshot to config."""
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.app_instance.submit_library_ingest_job = MagicMock()
+    screen.refresh = MagicMock()
+
+    form = screen._library_ingest_form
+    form.path = "/tmp/test.pdf"
+    form.title = "A title"
+    form.author = "An author"
+    form.keywords = "foo, bar"
+    form.analyze = True
+    form.chunk = False
+    form.chunk_size = "1500"
+    form.type_options = {
+        "pdf": {"pdf_engine": "docling", "ocr": True},
+        "audio_video": {"transcription_model": "small"},
+    }
+
+    saved: list[tuple[str, str, object]] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+
+    screen._do_submit_ingest("/tmp/test.pdf")
+
+    assert screen.app_instance.submit_library_ingest_job.called
+    assert ("library.ingest_options.pdf", "pdf_engine", "docling") in saved
+    assert ("library.ingest_options.pdf", "ocr", True) in saved
+    assert ("library.ingest_options.audio_video", "transcription_model", "small") in saved
+    assert ("library.ingest_options.generic", "analyze", True) in saved
+    assert ("library.ingest_options.generic", "chunk", False) in saved
+    assert ("library.ingest_options.generic", "chunk_size", 1500) in saved
+
+
+def test_load_ingest_options_from_config(monkeypatch) -> None:
+    """Mounting the screen restores previously persisted per-type options."""
+    screen = _minimal_ingest_screen()
+
+    stored = {
+        ("library.ingest_options.pdf", "pdf_engine"): "docling",
+        ("library.ingest_options.pdf", "ocr"): True,
+        ("library.ingest_options.audio_video", "transcription_model"): "small",
+    }
+
+    def fake_get_cli_setting(section: str, key: str = None, default: object = None):
+        return stored.get((section, key), default)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.get_cli_setting",
+        fake_get_cli_setting,
+    )
+
+    screen._load_library_ingest_options_from_config()
+
+    assert screen._library_ingest_form.type_options["pdf"] == {
+        "pdf_engine": "docling",
+        "ocr": True,
+    }
+    assert screen._library_ingest_form.type_options["audio_video"] == {
+        "transcription_model": "small"
+    }

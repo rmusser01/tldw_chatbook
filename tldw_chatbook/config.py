@@ -705,6 +705,7 @@ def load_settings(force_reload: bool = False) -> Dict:
     confluence_section = get_toml_section('Confluence')
     file_validation_section = get_toml_section('FileValidation')
     providers_section_from_toml = get_toml_section('providers')  # Get the [providers] table
+    library_section = get_toml_section('library')
 
     final_api_settings = get_toml_section('api_settings')
     final_logging_settings = get_toml_section('logging')
@@ -1296,6 +1297,17 @@ def load_settings(force_reload: bool = False) -> Dict:
         "APP_RAG_SEARCH_CONFIG": {**DEFAULT_RAG_SEARCH_CONFIG, **app_rag_search_config},
         "acp": get_toml_section("acp"),
 
+        "library": {
+            "ingest_directory_scan_limit": coerce_int_setting(
+                library_section.get("ingest_directory_scan_limit", 1000),
+                1000,
+                minimum=1,
+            ),
+            "ingest_options": library_section.get("ingest_options", {})
+            if isinstance(library_section.get("ingest_options"), dict)
+            else {},
+        },
+
         "COMPREHENSIVE_CONFIG_RAW": toml_config_data, # Store the raw TOML data if needed
         "OPENAI_API_KEY": openai_api_key, # Top-level convenience access
     }
@@ -1477,11 +1489,16 @@ base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint
 auth_token = "default-secret-key-for-single-user"
 
 [library]
+# Maximum files scanned when analysing a directory for Library ingestion.
+ingest_directory_scan_limit = 1000
 # Parallel ingest parse workers. Default: min(3, cpu-1). Uncomment to override.
 # ingest_parse_workers = 3
 # Max concurrent heavy (audio/video transcription) parses; document parses fan
 # out past this cap to fill the remaining pool workers. Default: 1.
 # ingest_heavy_lane_max_workers = 1
+
+# Per-type ingestion options are persisted here by the Library ingest canvas.
+[library.ingest_options]
 
 [splash_screen]
 # Splash screen configuration for startup animations
