@@ -276,8 +276,37 @@ async def test_advanced_reveal_button_renders_with_bundled_css(monkeypatch):
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
-        assert app.query_one("#mcp-adv-collapsible", Collapsible)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
         assert not app.query("#mcp-inspector-advanced-reveal")
+
+        # Task 6 dual-layer CSS audit: the reveal-time forced-open panel
+        # (the "resources/prompts" reachable content -- governance_rule.*/
+        # runtime.access.preview/resource.read/prompt.get action templates
+        # live in `#mcp-adv-action-select`, gated behind this same tree)
+        # must actually render under the real bundle, not just exist in the
+        # DOM. `#mcp-adv-collapsible`/`#mcp-adv-scroll`/`#mcp-adv-payload`
+        # have no bundle-layer mirror of their own DEFAULT_CSS geometry --
+        # a bare `Collapsible { height: auto; ... }` rule DOES exist in
+        # `_widgets.tcss`, the same bare-type-selector shape as the
+        # Select/Checkbox lessons this audit exists to catch -- but the id-
+        # scoped `#mcp-adv-collapsible`/`.-collapsed` rules already
+        # outrank it on specificity alone, verified here rather than
+        # assumed. No bundle-layer rule was added for any of these -- this
+        # test is the verification, not a fix.
+        assert not collapsible.collapsed, "reveal must land expanded under the real bundle too"
+        assert collapsible.size.width > 0 and collapsible.size.height > 0, (
+            "Advanced collapsible collapsed to zero geometry under bundled CSS"
+        )
+        scroll = app.query_one("#mcp-adv-scroll")
+        assert scroll.size.width > 0 and scroll.size.height > 0, (
+            "#mcp-adv-scroll collapsed to zero geometry under bundled CSS"
+        )
+        payload = app.query_one("#mcp-adv-payload", TextArea)
+        assert payload.size.width > 0 and payload.size.height > 0, (
+            "#mcp-adv-payload collapsed to zero geometry under bundled CSS"
+        )
 
 
 # -- A3: inspector action stack is left-aligned -------------------------------
@@ -2075,6 +2104,15 @@ async def test_show_permission_cascade_muted_rung_dimmed_under_real_bundled_css(
         assert "mcp-status-ready" in tool_rung.classes
         assert "mcp-status-muted" in server_rung.classes
         assert tool_rung.styles.color != server_rung.styles.color
+        # Task 6 dual-layer CSS audit: the rungs are plain `.ds-field-row`
+        # Statics (an established, already-bundle-covered class) with no
+        # new geometry properties of their own -- confirmed here rather
+        # than assumed, alongside the color check above. No bundle-layer
+        # rule was added for them.
+        for rung in (tool_rung, server_rung):
+            assert rung.size.width > 0 and rung.size.height > 0, (
+                f"{rung.id} collapsed to zero geometry under bundled CSS"
+            )
 
 
 @pytest.mark.asyncio
@@ -2554,6 +2592,32 @@ async def test_finding_detail_renders_mapped_action_buttons_with_tooltips():
         }
         for button in buttons.values():
             assert button.tooltip, f"{button.id} has no tooltip"
+
+
+@pytest.mark.asyncio
+async def test_finding_detail_action_buttons_have_nonzero_geometry_with_bundled_css():
+    """Task 6 dual-layer CSS audit: the finding-detail remediation buttons
+    (Task 2) carry `classes="console-action-secondary"` -- a class selector
+    that already outranks any bare `Button { ... }` type-selector rule in
+    the bundle on specificity alone, and `.console-action-secondary`
+    itself already ships an explicit `height: 1; min-height: 1;` in
+    `_agentic_terminal.tcss` (T5, MCP Hub Phase 4's audit-drill buttons).
+    Verified here empirically, under the real bundle, rather than assumed
+    from the class reuse -- same Phase 3 lesson as every other bundled-CSS
+    check in this suite. No bundle-layer rule was added for these buttons
+    -- this test is the verification, not a fix."""
+    app = InspectorAppWithBundledCSS()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_finding(
+            _finding(finding_type="catalog_expired", message="Tool catalog is stale.")
+        )
+        await pilot.pause()
+        buttons = list(app.query("#mcp-inspector-finding Button"))
+        assert len(buttons) == 2
+        for button in buttons:
+            assert button.size.width > 0, f"{button.id} collapsed to zero width under bundled CSS"
+            assert button.size.height > 0, f"{button.id} collapsed to zero height under bundled CSS"
 
 
 @pytest.mark.asyncio

@@ -960,6 +960,32 @@ async def test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css():
         )
 
 
+@pytest.mark.asyncio
+async def test_filter_text_input_has_nonzero_geometry_with_bundled_css():
+    """Task 6 (MCP Hub Phase 6) dual-layer CSS audit: `#mcp-perm-filter-
+    text`'s own DEFAULT_CSS comment (Task 4) explicitly deferred verifying
+    it against the REAL bundled stylesheet to this task ("T6 note") rather
+    than assuming Input's own sane defaults survive the bundle's global
+    widget rules -- same Phase 3 lesson as the matrix table/kill-switch
+    checks above. No bare `Input { width/height: ... }` rule exists
+    anywhere in the bundle (grepped) to contest it, and this test confirms
+    that empirically rather than by inspection: a non-zero, single-line-
+    bordered (height 3) box, not a 0x0 collapse. No bundle-layer rule was
+    added for it -- this test is the verification T4 asked for, not a fix."""
+    app = PermissionsModeAppWithBundledCSS()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        filter_input = app.query_one("#mcp-perm-filter-text", Input)
+        assert filter_input.size.width > 0, "filter Input collapsed to zero width under bundled CSS"
+        assert filter_input.size.height > 0, "filter Input collapsed to zero height under bundled CSS"
+        # The single-line bordered box Input's own DEFAULT_CSS/comment
+        # promises (region includes the border, hence 3 not 1).
+        assert filter_input.region.height == 3, (
+            f"expected the bordered single-line Input's 3-row region, got "
+            f"{filter_input.region.height}"
+        )
+
+
 # -- Task 1 (MCP Hub Phase 6): semantic state colors ------------------------
 
 
