@@ -24,6 +24,7 @@ from tldw_chatbook.Constants import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
@@ -8901,20 +8902,15 @@ async def test_library_shell_ingest_canvas_db_unavailable_disables_start(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_library_shell_ingest_advanced_expand_survives_toggle_and_listener_recompose(tmp_path):
-    """(F1, whole-branch review fix) The Advanced options collapsible must
-    stay expanded across BOTH kinds of recompose the ingest canvas can hit
-    while the panel is open: the analyze/chunk toggle handlers' own
-    ``refresh(recompose=True)``, and the registry listener's recompose on a
-    job transition (``_handle_library_ingest_registry_changed``). Before the
-    fix, the widget hardcoded ``collapsed=True`` on every compose, so
-    pressing "Analyze after ingest" INSIDE the panel closed it out from
-    under the user (mirrors
-    ``test_library_shell_history_manual_expand_survives_scope_toggle_recompose``).
+async def test_library_shell_ingest_type_group_panel_expand_survives_recompose(tmp_path):
+    """Per-type options panels stay expanded across recomposes.
+
+    The canvas posts ``OptionPanelToggled`` messages; the screen persists the
+    user's choice in ``expanded_type_groups`` and reads it back on recompose.
     """
-    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-advanced")
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-type-group")
     source = tmp_path / "note.txt"
-    source.write_text("Advanced options must survive a recompose.", encoding="utf-8")
+    source.write_text("Type-group options must survive a recompose.", encoding="utf-8")
     harness = _LibraryIngestCanvasHarness(db)
 
     async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -8922,27 +8918,37 @@ async def test_library_shell_ingest_advanced_expand_survives_toggle_and_listener
         await _wait_for_library_shell(screen, pilot)
         await _open_library_ingest_canvas(screen, pilot)
 
-        # Starts collapsed.
-        assert screen.query_one("#library-ingest-advanced", Collapsible).collapsed is True
+        # Prime a pre-flight result so the generic type-group panel renders.
+        screen._library_ingest_form.preflight = PreflightResult(
+            type_groups={"generic": [str(source)]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        )
+        screen.refresh(recompose=True)
+        await _wait_for_selector(screen, pilot, "#type-group-generic")
 
-        # Mirror a user click on the collapsible header (expand).
-        screen.query_one("#library-ingest-advanced", Collapsible).collapsed = False
+        # Starts collapsed.
+        panel = screen.query_one("#type-group-generic", Collapsible)
+        assert panel.collapsed is True
+
+        # Expand the panel.
+        panel.collapsed = False
         for _ in range(_INGEST_POLL_ATTEMPTS):
-            if screen._library_ingest_form.advanced_open is True:
+            if "generic" in screen._library_ingest_form.expanded_type_groups:
                 break
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
-            raise AssertionError("Manual expand never synced back to advanced_open.")
+            raise AssertionError("Manual expand never synced back to expanded_type_groups.")
 
-        # Pressing the analyze toggle (INSIDE the panel) recomposes the canvas.
-        screen.query_one("#library-ingest-analyze-toggle", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-ingest-advanced")
+        # A direct recompose must leave the panel expanded.
+        screen.refresh(recompose=True)
+        await _wait_for_selector(screen, pilot, "#type-group-generic")
+        assert screen.query_one("#type-group-generic", Collapsible).collapsed is False
 
-        assert screen.query_one("#library-ingest-advanced", Collapsible).collapsed is False
-
-        # A registry-listener-driven recompose (job transition) must also
-        # leave the panel expanded -- submit programmatically, exactly like
-        # the queue-runner's own call_from_thread-marshaled transitions.
+        # A registry-listener-driven recompose must also leave it expanded.
         harness.submit_library_ingest_job(source_path=str(source))
         for _ in range(_INGEST_POLL_ATTEMPTS):
             jobs = harness.library_ingest_jobs.jobs()
@@ -8953,7 +8959,7 @@ async def test_library_shell_ingest_advanced_expand_survives_toggle_and_listener
             raise AssertionError(f"Job never reached DONE: {harness.library_ingest_jobs.jobs()}")
         await pilot.pause()
 
-        assert screen.query_one("#library-ingest-advanced", Collapsible).collapsed is False
+        assert screen.query_one("#type-group-generic", Collapsible).collapsed is False
 
 
 class _IngestCanvasWidgetHost(App):
@@ -9027,27 +9033,27 @@ async def test_library_ingest_canvas_metadata_placeholders_are_optional_labeled(
 
 
 @pytest.mark.asyncio
-async def test_library_ingest_canvas_chunk_size_input_labeled_and_disable_follows_toggle():
-    """(A6) The chunk-size Input gets a "Chunk size (words)" placeholder and
-    is visually disabled whenever "Chunk content" is toggled off (submit
-    already ignores it when disabled; this only adds the visual affordance)."""
-    off_state = build_library_ingest_state(
-        (), form=LibraryIngestFormState(chunk=False)
+async def test_library_ingest_canvas_generic_chunk_size_input_renders_enabled():
+    """(A6) The generic/Plain text panel renders a chunk-size Input that is
+    enabled by default (it has no optional-dependency gate)."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/note.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
     )
-    host = _IngestCanvasWidgetHost(off_state)
+    host = _IngestCanvasWidgetHost(state)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await pilot.pause()
-        chunk_size_input = host.query_one("#library-ingest-chunk-size", Input)
-        assert chunk_size_input.placeholder == "Chunk size (words)"
-        assert chunk_size_input.disabled is True
-
-    on_state = build_library_ingest_state(
-        (), form=LibraryIngestFormState(chunk=True)
-    )
-    host2 = _IngestCanvasWidgetHost(on_state)
-    async with host2.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        await pilot.pause()
-        assert host2.query_one("#library-ingest-chunk-size", Input).disabled is False
+        chunk_size_input = host.query_one("#opt-generic-chunk_size", Input)
+        assert chunk_size_input.placeholder == "Chunk size"
+        assert chunk_size_input.disabled is False
 
 
 @pytest.mark.asyncio

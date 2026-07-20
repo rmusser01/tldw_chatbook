@@ -10002,16 +10002,6 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._library_ingest_form.keywords = event.value
 
-    @on(Input.Changed, "#library-ingest-chunk-size")
-    def handle_library_ingest_chunk_size_changed(self, event: Input.Changed) -> None:
-        """Track the chunk-size text as typed (display-echo only).
-
-        Parsed and clamped to ``[100, 5000]`` only at submit time (see
-        ``clamp_chunk_size``) -- never here.
-        """
-        event.stop()
-        self._library_ingest_form.chunk_size = event.value
-
     @on(Button.Pressed, "#library-ingest-browse")
     def handle_library_ingest_browse(self, event: Button.Pressed) -> None:
         """Push a ``FileOpen`` dialog to pick a local file to ingest.
@@ -10040,54 +10030,33 @@ class LibraryScreen(BaseAppScreen):
             browse_callback,
         )
 
-    @on(Collapsible.Toggled, "#library-ingest-advanced")
-    def sync_library_ingest_advanced_open(self, event: Collapsible.Toggled) -> None:
-        """Track manual expand/collapse so recomposes preserve the user's choice.
+    @on(LibraryIngestCanvas.OptionPanelToggled)
+    def sync_library_ingest_type_group_expanded(
+        self,
+        event: LibraryIngestCanvas.OptionPanelToggled,
+    ) -> None:
+        """Track per-type panel expand/collapse so recomposes preserve the user's choice."""
+        event.stop()
+        if event.expanded:
+            self._library_ingest_form.expanded_type_groups.add(event.group)
+        else:
+            self._library_ingest_form.expanded_type_groups.discard(event.group)
 
-        Mirrors ``sync_library_rag_history_collapsed`` exactly (see that
-        handler's docstring for the full reasoning): ``Collapsible``'s
-        ``collapsed`` reactive is defined with ``init=False``, so
-        ``_watch_collapsed`` -- and therefore this ``Toggled`` message --
-        fires only on an actual *change* of the reactive, never merely from
-        ``compose()`` constructing a fresh ``Collapsible(collapsed=...)``
-        with a value that happens to equal the reactive's own default.
-        Concretely: the widget always passes
-        ``collapsed=not state.form.advanced_open``, and the reactive's
-        default is ``True`` -- so a compose only posts a spurious ``Toggled``
-        when it constructs the panel already-expanded (``advanced_open`` is
-        ``True``, i.e. ``collapsed=False`` differs from the ``True``
-        default), which immediately reasserts the same ``True`` this
-        handler already holds. Every recompose this handler must survive
-        (the analyze/chunk toggles, a registry-listener-driven job
-        transition) is triggered by something OTHER than a manual header
-        click, so this handler is never invoked by them -- only a real
-        user click (or a future programmatic ``collapsible.collapsed =``
-        assignment) fires it, exactly like the history panel's precedent.
+    @on(LibraryIngestCanvas.OptionValueChanged)
+    def handle_library_ingest_option_value_changed(
+        self,
+        event: LibraryIngestCanvas.OptionValueChanged,
+    ) -> None:
+        """Persist per-type option changes in the form echo.
+
+        The canvas stays render-only and posts a message for every value
+        change; the screen owns the mutable form state.
         """
         event.stop()
-        self._library_ingest_form.advanced_open = not event.collapsible.collapsed
-
-    @on(Button.Pressed, "#library-ingest-analyze-toggle")
-    def handle_library_ingest_analyze_toggle(self, event: Button.Pressed) -> None:
-        """Flip the "Analyze after ingest" form toggle.
-
-        Args:
-            event: Button press event emitted by the analyze toggle.
-        """
-        event.stop()
-        self._library_ingest_form.analyze = not self._library_ingest_form.analyze
-        self.refresh(recompose=True)
-
-    @on(Button.Pressed, "#library-ingest-chunk-toggle")
-    def handle_library_ingest_chunk_toggle(self, event: Button.Pressed) -> None:
-        """Flip the "Chunk content" form toggle.
-
-        Args:
-            event: Button press event emitted by the chunk toggle.
-        """
-        event.stop()
-        self._library_ingest_form.chunk = not self._library_ingest_form.chunk
-        self.refresh(recompose=True)
+        group_options = self._library_ingest_form.type_options.setdefault(
+            event.group, {}
+        )
+        group_options[event.name] = event.value
 
     def _notify_library_ingest_warning(self, message: str) -> None:
         notify = getattr(self.app_instance, "notify", None)

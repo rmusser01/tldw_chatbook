@@ -1,15 +1,18 @@
-"""Tests for ``LibraryIngestCanvas`` pre-flight summary rendering.
+"""Tests for ``LibraryIngestCanvas`` rendering and message contracts.
 
 Widget-only tests mount the canvas directly in a bare ``App`` subclass and
-assert on widget existence and rendered text. The canvas is render-only: all
-pre-flight state is supplied by ``build_library_ingest_state``.
+assert on widget existence, rendered text, and posted messages. The canvas is
+render-only: all state is supplied by ``build_library_ingest_state``.
 """
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
+from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
 
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_state import (
@@ -29,6 +32,27 @@ class _CanvasHost(App):
 
     def compose(self) -> ComposeResult:
         yield LibraryIngestCanvas(self._state, id="library-ingest-canvas")
+
+
+class _MessageRecordingHost(App):
+    """Host that records ``OptionValueChanged`` and ``OptionPanelToggled``."""
+
+    def __init__(self, state: LibraryIngestCanvasState) -> None:
+        super().__init__()
+        self._state = state
+        self.option_changes: list[LibraryIngestCanvas.OptionValueChanged] = []
+        self.panel_toggles: list[LibraryIngestCanvas.OptionPanelToggled] = []
+
+    def compose(self) -> ComposeResult:
+        yield LibraryIngestCanvas(self._state, id="library-ingest-canvas")
+
+    @on(LibraryIngestCanvas.OptionValueChanged)
+    def _record_option_change(self, event: LibraryIngestCanvas.OptionValueChanged) -> None:
+        self.option_changes.append(event)
+
+    @on(LibraryIngestCanvas.OptionPanelToggled)
+    def _record_panel_toggle(self, event: LibraryIngestCanvas.OptionPanelToggled) -> None:
+        self.panel_toggles.append(event)
 
 
 def _default_form() -> LibraryIngestFormState:
@@ -164,7 +188,7 @@ async def test_existing_controls_are_still_present():
 
 @pytest.mark.asyncio
 async def test_no_preflight_renders_no_summary_widgets():
-    """Without a pre-flight result, no summary widgets are mounted."""
+    """Without a pre-flight result, no summary widgets or type panels are mounted."""
     state = build_library_ingest_state((), form=_default_form())
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
@@ -176,6 +200,10 @@ async def test_no_preflight_renders_no_summary_widgets():
             "#ingest-type-breakdown",
             "#ingest-estimate",
             "#ingest-unsupported-summary",
+            "#type-group-pdf",
+            "#type-group-generic",
+            "#ingest-expand-all",
+            "#ingest-collapse-all",
         ):
             assert len(pilot.app.query(widget_id)) == 0
 
@@ -204,6 +232,7 @@ async def test_preflight_checking_suppresses_summary():
             "#ingest-type-breakdown",
             "#ingest-estimate",
             "#ingest-unsupported-summary",
+            "#type-group-pdf",
         ):
             assert len(pilot.app.query(widget_id)) == 0
 
@@ -266,3 +295,260 @@ async def test_error_and_warning_markup_is_escaped():
 
         warning_static = pilot.app.query_one("#ingest-preflight-warning-0", Static)
         assert warning_static.visual.plain == "⚠ Hint: [/bracket]"
+
+
+# --- Per-type options panels ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_type_group_panels_render_for_detected_groups():
+    """One collapsible panel is rendered per detected supported type group."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={
+                "pdf": ["/tmp/a.pdf"],
+                "generic": ["/tmp/b.txt"],
+            },
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=2,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        pdf_panel = pilot.app.query_one("#type-group-pdf", Collapsible)
+        generic_panel = pilot.app.query_one("#type-group-generic", Collapsible)
+        assert "PDF documents" in str(pdf_panel.title)
+        assert "pdf_engine=" in str(pdf_panel.title)
+        assert "Plain text / documents / HTML" in str(generic_panel.title)
+        assert "chunk_size=" in str(generic_panel.title)
+
+        scope = pilot.app.query_one("#type-group-pdf .type-group-scope", Static)
+        assert "These options apply to all PDF documents files" in str(scope.renderable)
+
+        assert pilot.app.query_one("#opt-pdf-reset", Button)
+        assert pilot.app.query_one("#opt-generic-reset", Button)
+
+
+@pytest.mark.asyncio
+async def test_expand_collapse_all_buttons_render_when_type_groups_present():
+    """Bulk expand/collapse buttons render only when there are type groups."""
+    with_groups = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(with_groups)
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#ingest-expand-all", Button)
+        assert pilot.app.query_one("#ingest-collapse-all", Button)
+
+
+@pytest.mark.asyncio
+async def test_dependent_controls_disabled_when_dependency_missing():
+    """Fields whose ``depends_on`` feature is unavailable render disabled."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"pdf": ["/tmp/a.pdf"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=False,
+    ):
+        async with app.run_test() as pilot:
+            engine_select = pilot.app.query_one("#opt-pdf-pdf_engine", Select)
+            extract_checkbox = pilot.app.query_one("#opt-pdf-extract_images", Checkbox)
+            assert engine_select.disabled is True
+            assert extract_checkbox.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_non_dependent_controls_stay_enabled():
+    """Fields with no ``depends_on`` dependency render enabled."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        chunk_input = pilot.app.query_one("#opt-generic-chunk_size", Input)
+        encoding_input = pilot.app.query_one("#opt-generic-encoding", Input)
+        assert chunk_input.disabled is False
+        assert encoding_input.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_option_value_changed_posted_on_checkbox_change():
+    """Toggling a checkbox posts ``OptionValueChanged`` with the right group/name."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"pdf": ["/tmp/a.pdf"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _MessageRecordingHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            checkbox = pilot.app.query_one("#opt-pdf-extract_images", Checkbox)
+            checkbox.value = True
+            await pilot.pause()
+
+    matching = [
+        event
+        for event in app.option_changes
+        if event.group == "pdf"
+        and event.name == "extract_images"
+        and event.value is True
+    ]
+    assert len(matching) == 1
+
+
+@pytest.mark.asyncio
+async def test_option_value_changed_posted_on_select_change():
+    """Changing a select posts ``OptionValueChanged`` with the new value."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"pdf": ["/tmp/a.pdf"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _MessageRecordingHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            select = pilot.app.query_one("#opt-pdf-pdf_engine", Select)
+            select.value = "pymupdf"
+            await pilot.pause()
+
+    matching = [
+        event
+        for event in app.option_changes
+        if event.group == "pdf" and event.name == "pdf_engine" and event.value == "pymupdf"
+    ]
+    assert len(matching) == 1
+
+
+@pytest.mark.asyncio
+async def test_option_value_changed_posted_on_input_change():
+    """Typing in a number/text option input posts ``OptionValueChanged``."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _MessageRecordingHost(state)
+    async with app.run_test() as pilot:
+        option_input = pilot.app.query_one("#opt-generic-chunk_size", Input)
+        option_input.value = "1234"
+        await pilot.pause()
+
+    matching = [
+        event
+        for event in app.option_changes
+        if event.group == "generic" and event.name == "chunk_size" and event.value == "1234"
+    ]
+    assert len(matching) == 1
+
+
+@pytest.mark.asyncio
+async def test_option_panel_toggled_posted_on_expand_collapse():
+    """Expanding/collapsing a type-group panel posts ``OptionPanelToggled``."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _MessageRecordingHost(state)
+    async with app.run_test() as pilot:
+        panel = pilot.app.query_one("#type-group-generic", Collapsible)
+        panel.collapsed = False
+        await pilot.pause()
+        panel.collapsed = True
+        await pilot.pause()
+
+    assert len(app.panel_toggles) == 2
+    assert app.panel_toggles[0].group == "generic"
+    assert app.panel_toggles[0].expanded is True
+    assert app.panel_toggles[1].group == "generic"
+    assert app.panel_toggles[1].expanded is False
+
+
+@pytest.mark.asyncio
+async def test_type_group_number_input_renders_with_value_and_placeholder():
+    """Generic number options render as Inputs with their default value/placeholder."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(type_options={"generic": {"chunk_size": 750}}),
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        chunk_input = pilot.app.query_one("#opt-generic-chunk_size", Input)
+        assert chunk_input.value == "750"
+        assert chunk_input.placeholder == "Chunk size"
