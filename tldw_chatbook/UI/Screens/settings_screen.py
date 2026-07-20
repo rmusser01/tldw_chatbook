@@ -1805,9 +1805,9 @@ class SettingsScreen(BaseAppScreen):
                     return f"Guided edits: {validation.message}"
                 return "Guided edits: Save or Revert Library/RAG defaults."
             return "Guided edits: change a Library/RAG default first."
-        if category is SettingsCategoryId.THEME:
+        if category == SettingsCategoryId.THEME:
             return "Use the editor's Apply/Save/Reset buttons to manage themes."
-        if category is SettingsCategoryId.SPLASH_SCREEN:
+        if category == SettingsCategoryId.SPLASH_SCREEN:
             return "Splash defaults are saved automatically."
         if category is SettingsCategoryId.STORAGE:
             if self._category_has_unsaved_changes(category):
@@ -1874,7 +1874,7 @@ class SettingsScreen(BaseAppScreen):
         dirty_marker = ""
         if self._category_has_unsaved_changes(summary.category):
             dirty_marker = " *"
-        elif summary.category is SettingsCategoryId.THEME and self.theme_editor_modified:
+        elif summary.category == SettingsCategoryId.THEME and self.theme_editor_modified:
             dirty_marker = " *"
         return f"{'> ' if active else '  '}{summary.title}{dirty_marker}"
 

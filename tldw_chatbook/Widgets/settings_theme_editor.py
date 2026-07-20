@@ -11,13 +11,14 @@ from textual import on
 from textual.app import ComposeResult
 from textual.color import Color
 from textual.containers import Horizontal, Vertical
-from textual.events import Click
+from textual.events import Click, DescendantFocus
 from textual.message import Message
 from textual.reactive import reactive
 from textual.theme import Theme
 from textual.widgets import Button, Input, Static, Switch, Tree
 
 from ..css.Themes.themes import ALL_THEMES, create_theme_from_dict
+from ..Utils.path_validation import validate_filename
 
 
 class SettingsThemeEditor(Vertical):
@@ -68,6 +69,11 @@ class SettingsThemeEditor(Vertical):
         self.last_focused_color_input: str | None = None
 
     def compose(self) -> ComposeResult:
+        """Compose the theme editor widget.
+
+        Yields:
+            ComposeResult: The theme editor UI sections.
+        """
         # Title is rendered by SettingsScreen._render_detail_pane()
         with Vertical(id="settings-theme-card", classes="settings-focus-card"):
             yield from self._compose_library_section()
@@ -211,6 +217,12 @@ class SettingsThemeEditor(Vertical):
 
     def load_user_theme(self, theme_name: str) -> None:
         """Load a user-created theme from file."""
+        try:
+            validate_filename(theme_name)
+        except ValueError as exc:
+            self.app.notify(f"Invalid theme name: {exc}", severity="error")
+            return
+
         theme_path = self.custom_themes_path / f"{theme_name}.toml"
         if theme_path.exists():
             try:
@@ -364,18 +376,19 @@ class SettingsThemeEditor(Vertical):
         except Exception:
             return False
 
-    def watch_focused(self, focused) -> None:
-        """Watch for focus changes to track color input selection."""
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Track focus changes on color inputs to update selection."""
+        widget = event.control
         if (
-            focused
-            and isinstance(focused, Input)
-            and focused.id
-            and focused.id.startswith("settings-theme-color-")
+            widget
+            and isinstance(widget, Input)
+            and widget.id
+            and widget.id.startswith("settings-theme-color-")
         ):
             for input_widget in self.color_inputs.values():
                 input_widget.remove_class("selected")
-            focused.add_class("selected")
-            self.last_focused_color_input = focused.id[len("settings-theme-color-") :]
+            widget.add_class("selected")
+            self.last_focused_color_input = widget.id[len("settings-theme-color-") :]
 
     @on(Input.Changed)
     def on_color_input_changed(self, event: Input.Changed) -> None:
@@ -427,6 +440,12 @@ class SettingsThemeEditor(Vertical):
             self.app.notify("Please enter a theme name", severity="warning")
             return
 
+        try:
+            validate_filename(theme_name)
+        except ValueError as exc:
+            self.app.notify(f"Invalid theme name: {exc}", severity="warning")
+            return
+
         if theme_name in ["textual-dark", "textual-light"]:
             self.app.notify("Cannot overwrite built-in themes", severity="warning")
             return
@@ -465,7 +484,11 @@ class SettingsThemeEditor(Vertical):
     @on(Button.Pressed, "#settings-theme-reset")
     def on_reset_theme(self) -> None:
         """Reset theme to original values."""
-        self.load_theme(self.current_theme_name)
+        user_theme_path = self.custom_themes_path / f"{self.current_theme_name}.toml"
+        if user_theme_path.exists():
+            self.load_user_theme(self.current_theme_name)
+        else:
+            self.load_theme(self.current_theme_name)
         self.app.notify("Theme reset to original values", severity="information")
 
     @on(Button.Pressed, "#settings-theme-new")
@@ -518,9 +541,14 @@ class SettingsThemeEditor(Vertical):
         built_in_names = {"textual-dark", "textual-light"}
         custom_names = {t.name for t in ALL_THEMES if hasattr(t, "name")}
 
+        try:
+            validate_filename(self.current_theme_name)
+        except ValueError:
+            self.app.notify("Cannot delete theme: invalid theme name", severity="warning")
+            return
+
         if (
-            self.current_theme_name.startswith("user:")
-            or self.current_theme_name in built_in_names
+            self.current_theme_name in built_in_names
             or self.current_theme_name in custom_names
         ):
             self.app.notify("Cannot delete built-in or custom themes", severity="warning")
@@ -551,6 +579,12 @@ class SettingsThemeEditor(Vertical):
     @on(Button.Pressed, "#settings-theme-export")
     def on_export_theme(self) -> None:
         """Export the current theme."""
+        try:
+            validate_filename(self.current_theme_name)
+        except ValueError as exc:
+            self.app.notify(f"Invalid theme name: {exc}", severity="warning")
+            return
+
         export_path = Path.home() / "Downloads" / f"{self.current_theme_name}_theme.toml"
 
         theme_data = {
@@ -655,9 +689,9 @@ class SettingsThemeEditor(Vertical):
             else:
                 r, g, b = c, 0, x
 
-            r = int((r + m) * 255)
-            g = int((g + m) * 255)
-            b = int((b + m) * 255)
+            r = max(0, min(255, int((r + m) * 255)))
+            g = max(0, min(255, int((g + m) * 255)))
+            b = max(0, min(255, int((b + m) * 255)))
 
             return f"#{r:02x}{g:02x}{b:02x}"
         except Exception:

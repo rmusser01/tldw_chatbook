@@ -80,6 +80,11 @@ class SettingsSplashScreenViewer(Vertical):
         return options
 
     def compose(self) -> ComposeResult:
+        """Compose the splash screen settings widget.
+
+        Yields:
+            ComposeResult: The splash screen settings UI sections.
+        """
         self._config = self._load_config()
         try:
             self._cards = get_all_card_definitions()
@@ -205,16 +210,16 @@ class SettingsSplashScreenViewer(Vertical):
         if self._save_config_value("card_selection", value):
             self._update_status(f"Default splash card set to {value}.")
 
-    @on(Input.Changed, "#settings-splash-duration")
-    def handle_duration_changed(self, event: Input.Changed) -> None:
+    @on(Input.Submitted, "#settings-splash-duration")
+    def handle_duration_submitted(self, event: Input.Submitted) -> None:
         value = self._float_or_default(event.value, DEFAULT_SPLASH_CONFIG["duration"])
         if value < 0:
             value = 0
         if self._save_config_value("duration", value):
             self._update_status(f"Splash duration set to {value}s.")
 
-    @on(Input.Changed, "#settings-splash-animation-speed")
-    def handle_animation_speed_changed(self, event: Input.Changed) -> None:
+    @on(Input.Submitted, "#settings-splash-animation-speed")
+    def handle_animation_speed_submitted(self, event: Input.Submitted) -> None:
         value = self._float_or_default(
             event.value, DEFAULT_SPLASH_CONFIG["animation_speed"]
         )
@@ -246,6 +251,9 @@ class SettingsSplashScreenViewer(Vertical):
 
     def _mount_preview(self, card_name: str) -> None:
         container = self.query_one("#settings-splash-preview-scroll", VerticalScroll)
+        for child in list(container.children):
+            if isinstance(child, SplashScreen):
+                child.close()
         container.remove_children()
         if card_name not in self._cards:
             container.mount(
