@@ -1807,6 +1807,22 @@ async def test_build_context_snapshot_does_not_execute_skills():
 
 
 @pytest.mark.asyncio
+async def test_build_context_snapshot_empty_draft_does_not_annotate_historical_skill_command():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="/search tools")
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="Here are some tools.")
+
+    snapshot = await controller.build_context_snapshot(draft="")
+    historical_user_content = snapshot.next_send_payload["messages"][0]["content"]
+
+    assert historical_user_content == "/search tools"
+    assert "Skill command not resolved in preview" not in historical_user_content
+
+
+@pytest.mark.asyncio
 async def test_build_context_snapshot_redacts_secrets():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())

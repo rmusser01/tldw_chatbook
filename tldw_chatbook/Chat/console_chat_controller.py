@@ -1198,7 +1198,8 @@ class ConsoleChatController:
 
         # Append a synthetic user turn for the draft so the preview matches what would be sent.
         attachment_tuple = tuple(attachments or ())
-        if draft.strip() or attachment_tuple:
+        synthetic_turn_added = bool(draft.strip() or attachment_tuple)
+        if synthetic_turn_added:
             synthetic_user = self._provider_message_payloads(
                 [
                     ConsoleChatMessage(
@@ -1212,8 +1213,12 @@ class ConsoleChatController:
             provider_messages.extend(synthetic_user)
 
         # Do NOT call _apply_skill_substitution because it may execute skills with side effects.
-        # Instead, annotate the final user message if it starts with a skill command.
-        provider_messages = self._annotate_skill_commands(provider_messages)
+        # Instead, annotate the final user message if a synthetic turn was appended and it
+        # starts with a skill command. Historical turns have already been resolved at send time
+        # and must not be annotated.
+        provider_messages = self._annotate_skill_commands(
+            provider_messages, synthetic_turn_added=synthetic_turn_added
+        )
 
         # Chat dictionaries are safe to apply (string replacements only).
         provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
@@ -1274,9 +1279,13 @@ class ConsoleChatController:
         return result
 
     @staticmethod
-    def _annotate_skill_commands(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _annotate_skill_commands(
+        messages: list[dict[str, Any]],
+        *,
+        synthetic_turn_added: bool = True,
+    ) -> list[dict[str, Any]]:
         result = copy.deepcopy(messages)
-        if not result or result[-1].get("role") != "user":
+        if not synthetic_turn_added or not result or result[-1].get("role") != "user":
             return result
 
         content = result[-1].get("content", "")
