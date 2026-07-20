@@ -3,7 +3,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from tldw_chatbook.Agents.agent_models import ToolCall
+from tldw_chatbook.Agents.agent_models import (
+    RUN_CANCELLED,
+    RUN_DONE,
+    RUN_ERROR,
+    RunOutcome,
+    ToolCall,
+)
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
@@ -1654,3 +1660,177 @@ def test_build_mcp_review_hook_clears_stamp_at_entry_before_a_raising_round_trip
 
     # No stale stamp from turn 1 must survive the raise for invoke() to peek.
     assert provider.stamped_decision("mcp__srv__run") is None
+
+
+# -----------------------------------------------------------------------------
+# _finalize_agent_reply hardening (task-2)
+# -----------------------------------------------------------------------------
+
+
+def test_finalize_agent_reply_empty_final_text_uses_fallback():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    placeholder = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="")
+    result = controller._finalize_agent_reply(
+        placeholder.id, session.id, outcome, variant_mode=False
+    )
+
+    messages = store.messages_for_session(session.id)
+    assistant = messages[-1]
+    assert assistant.content == "No response was generated."
+    assert assistant.status == "complete"
+    assert result.accepted is True
+    assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+
+
+def test_finalize_agent_reply_missing_placeholder_appends_message():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    fake_id = "nonexistent-msg-id"
+
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="hello back")
+    result = controller._finalize_agent_reply(
+        fake_id, session.id, outcome, variant_mode=False
+    )
+
+    messages = store.messages_for_session(session.id)
+    assistant = messages[-1]
+    assert assistant.role is ConsoleMessageRole.ASSISTANT
+    assert assistant.content == "hello back"
+    assert assistant.status == "complete"
+    assert result.accepted is True
+    assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+
+
+def test_finalize_agent_reply_error_marks_failed():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    placeholder = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    store.append_stream_chunk(placeholder.id, "partial")
+
+    outcome = RunOutcome(status=RUN_ERROR, steps=[], final_text="")
+    result = controller._finalize_agent_reply(
+        placeholder.id, session.id, outcome, variant_mode=False
+    )
+
+    messages = store.messages_for_session(session.id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assert assistant.status == "failed"
+    assert assistant.content == "partial"
+    assert "Agent run failed" in controller.run_state.visible_copy
+    assert result.accepted is True
+
+
+def test_finalize_agent_reply_cancelled_marks_failed():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    placeholder = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+
+    outcome = RunOutcome(status=RUN_CANCELLED, steps=[], final_text="")
+    result = controller._finalize_agent_reply(
+        placeholder.id, session.id, outcome, variant_mode=False
+    )
+
+    messages = store.messages_for_session(session.id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assert assistant.status == "failed"
+    assert controller.run_state.status is ConsoleRunStatus.FAILED
+    assert result.accepted is True
+
+
+def test_finalize_agent_reply_unknown_status_marks_failed():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    placeholder = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+
+    outcome = RunOutcome(status="weird", steps=[], final_text="")
+    result = controller._finalize_agent_reply(
+        placeholder.id, session.id, outcome, variant_mode=False
+    )
+
+    messages = store.messages_for_session(session.id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assert assistant.status == "failed"
+    assert controller.run_state.status is ConsoleRunStatus.FAILED
+    assert result.accepted is True
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_returns_current_and_next_send():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="Hi there")
+
+    snapshot = await controller.build_context_snapshot(draft="Explain tools")
+
+    assert len(snapshot.current_messages) == 2
+    assert snapshot.current_messages[0].role == ConsoleMessageRole.USER
+    assert snapshot.next_send_payload["messages"][-1]["content"].startswith("Explain tools")
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_does_not_execute_skills():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
+
+    snapshot = await controller.build_context_snapshot(draft="/search tools")
+    final_content = snapshot.next_send_payload["messages"][-1]["content"]
+    assert "/search tools" in final_content
+    assert "Skill command not resolved in preview" in final_content
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_redacts_secrets():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="run")
+    controller.system_prompt = "Use api_key=secret123"
+
+    snapshot = await controller.build_context_snapshot(draft="ok")
+    payload_text = str(snapshot.next_send_payload)
+    assert "secret123" not in payload_text
+    assert "[redacted]" in payload_text
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_is_immutable():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    msg = store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
+
+    snapshot = await controller.build_context_snapshot(draft="Follow up")
+    original_content = snapshot.current_messages[0].content
+    snapshot.current_messages[0].content = "mutated"
+
+    reloaded = store.get_message(msg.id)
+    assert reloaded.content == original_content

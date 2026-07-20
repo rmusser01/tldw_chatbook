@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 
@@ -261,3 +261,11 @@ class ConsoleVariantSet:
     def can_go_next(self) -> bool:
         """Return whether a next variant exists."""
         return self.selected_index < len(self.variants) - 1
+
+
+@dataclass
+class ConsoleContextSnapshot:
+    """Read-only snapshot of current transcript and next-send provider payload."""
+
+    current_messages: list[ConsoleChatMessage]
+    next_send_payload: dict[str, Any]

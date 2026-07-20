@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
@@ -16,10 +17,12 @@ from tldw_chatbook.Chat.attachment_core import (
 )
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
+    ConsoleContextSnapshot,
     ConsoleMessageRole,
     ConsoleProviderSelection,
     ConsoleRunState,
     ConsoleRunStatus,
+    ConsoleStagedSource,
     MessageAttachment,
     derive_console_session_title,
     is_default_console_session_title,
@@ -1172,6 +1175,153 @@ class ConsoleChatController:
             assistant_message_id=message_id,
             variant_mode=True,
         )
+
+    async def build_context_snapshot(
+        self,
+        draft: str,
+        attachments: Iterable[MessageAttachment] | None = None,
+        staged_sources: Iterable[ConsoleStagedSource] | None = None,
+    ) -> ConsoleContextSnapshot:
+        """Return a read-only snapshot of the current transcript and the assembled next-send payload.
+
+        Skills with side effects are NOT executed; only chat dictionaries are applied.
+        """
+        session_id = self.store.active_session_id
+        if not session_id:
+            return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
+
+        current_messages = list(self.store.messages_for_session(session_id))
+
+        # Build the next-send payload as submit_draft would, but do not persist.
+        provider_messages = self._provider_messages_for_session(session_id)
+
+        # Append a synthetic user turn for the draft so the preview matches what would be sent.
+        if draft.strip():
+            synthetic_user = self._provider_message_payloads(
+                [
+                    ConsoleChatMessage(
+                        role=ConsoleMessageRole.USER,
+                        content=draft,
+                        attachments=tuple(attachments or ()),
+                    )
+                ],
+                skip_failed=True,
+            )
+            # Replace image data with placeholders for the preview.
+            synthetic_user = self._replace_image_data_with_placeholders(synthetic_user)
+            provider_messages.extend(synthetic_user)
+
+        # Do NOT call _apply_skill_substitution because it may execute skills with side effects.
+        # Instead, annotate the final user message if it starts with a skill command.
+        provider_messages = self._annotate_skill_commands(provider_messages)
+
+        # Chat dictionaries are safe to apply (string replacements only).
+        provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
+
+        # Gather native tool schemas and MCP note.
+        tools_info = self._build_tools_info_for_snapshot()
+
+        # Redact secrets before returning.
+        redacted_messages = self._redact_secrets(provider_messages)
+        redacted_system = self._redact_secrets(self._leading_system_message())
+
+        # Deep-copy messages so the snapshot is independent of the store.
+        from dataclasses import replace
+
+        copied_messages = [replace(msg) for msg in current_messages]
+
+        return ConsoleContextSnapshot(
+            current_messages=copied_messages,
+            next_send_payload={
+                "model": self.model or self.configured_model,
+                "messages": redacted_messages,
+                "system": redacted_system,
+                "staged_sources": [
+                    {"source_id": s.source_id, "label": s.label, "type": s.source_type}
+                    for s in (staged_sources or ())
+                ],
+                "tools": tools_info,
+            },
+        )
+
+    @staticmethod
+    def _replace_image_data_with_placeholders(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        import copy
+
+        result = copy.deepcopy(messages)
+        for message in result:
+            content = message.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "image_url":
+                        part["image_url"] = {"url": "[image: data redacted for preview]"}
+                    if isinstance(part, dict) and part.get("type") == "image":
+                        part["image"] = "[image: data redacted for preview]"
+        return result
+
+    @staticmethod
+    def _annotate_skill_commands(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        import copy
+
+        result = copy.deepcopy(messages)
+        if result and result[-1].get("role") == "user":
+            text = result[-1].get("content", "")
+            if isinstance(text, str) and text.startswith("/"):
+                result[-1]["content"] = (
+                    f"{text}\n\n[Skill command not resolved in preview; "
+                    "actual substitution happens at send time.]"
+                )
+        return result
+
+    def _build_tools_info_for_snapshot(self) -> dict[str, Any]:
+        """Return native tool schemas and an MCP note for the snapshot."""
+        tools: list[dict[str, Any]] = []
+        if self._agent_bridge is not None:
+            # Native tools only; live MCP catalog composition is out of scope.
+            tools = getattr(self._agent_bridge, "native_tool_schemas", lambda: [])()
+        mcp_note = "MCP tools are configured but live catalog composition is not shown in this preview."
+        return {
+            "native_schemas": tools,
+            "mcp_note": mcp_note if self._mcp_provider else None,
+        }
+
+    _SECRET_REDACTION_KEYS = {"api_key", "apikey", "token", "password", "secret", "bearer"}
+    _SECRET_REDACTION_PATTERN = re.compile(
+        r"(?P<key>"
+        + "|".join(re.escape(k) for k in _SECRET_REDACTION_KEYS)
+        + r")\s*[:=]\s*\S+",
+        re.IGNORECASE,
+    )
+
+    @staticmethod
+    def _redact_secrets(payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Return a deep-copied payload with likely secret values replaced."""
+        import copy
+
+        redacted = copy.deepcopy(payload)
+
+        def _redact_string(value: str) -> str:
+            return ConsoleChatController._SECRET_REDACTION_PATTERN.sub(
+                lambda m: f"{m.group('key')}=[redacted]", value
+            )
+
+        def _redact_obj(obj: Any) -> Any:
+            if isinstance(obj, dict):
+                result = {}
+                for key, value in obj.items():
+                    lowered = key.lower()
+                    if any(secret_key in lowered for secret_key in ConsoleChatController._SECRET_REDACTION_KEYS):
+                        result[key] = "[redacted]"
+                    else:
+                        result[key] = _redact_obj(value)
+                return result
+            if isinstance(obj, list):
+                return [_redact_obj(item) for item in obj]
+            if isinstance(obj, str):
+                return _redact_string(obj)
+            return obj
+
+        return _redact_obj(redacted)
 
     def _provider_selection(self) -> ConsoleProviderSelection:
         return ConsoleProviderSelection(
