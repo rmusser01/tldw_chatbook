@@ -161,7 +161,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         "tldw_chatbook.UI.Screens.chatbooks_screen",
         "ChatbooksScreen",
     ),
-    ),
 }
 
 _SCREEN_ALIASES = {
