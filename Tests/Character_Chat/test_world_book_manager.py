@@ -581,3 +581,21 @@ def test_export_import_preserves_regex(wb_manager):
     assert data["entries"][0]["regex"] is True
     new_id = wb_manager.import_world_book(data, name_override="B copy")
     assert wb_manager.get_world_book_entries(new_id)[0]["regex"] is True
+
+
+def test_get_conversations_for_world_book_round_trips(wb_manager):
+    db = wb_manager.db
+    db.add_conversation({"id": "conv-1", "title": "First case"})
+    db.add_conversation({"id": "conv-2", "title": None})  # NULL title
+    book_id = wb_manager.create_world_book("B")
+    wb_manager.associate_world_book_with_conversation("conv-1", book_id)
+    wb_manager.associate_world_book_with_conversation("conv-2", book_id)
+    rows = wb_manager.get_conversations_for_world_book(book_id)
+    by_id = {r["conversation_id"]: r["title"] for r in rows}
+    assert by_id == {"conv-1": "First case", "conv-2": "(untitled)"}
+    assert all(isinstance(r["conversation_id"], str) for r in rows)
+
+
+def test_get_conversations_for_world_book_empty_when_unattached(wb_manager):
+    book_id = wb_manager.create_world_book("B")
+    assert wb_manager.get_conversations_for_world_book(book_id) == []
