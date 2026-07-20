@@ -263,7 +263,7 @@ class ConsoleVariantSet:
         return self.selected_index < len(self.variants) - 1
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConsoleContextSnapshot:
     """Independent snapshot of current transcript and next-send provider payload."""
 

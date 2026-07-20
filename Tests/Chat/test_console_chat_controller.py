@@ -1938,3 +1938,59 @@ async def test_build_context_snapshot_includes_staged_sources():
     assert len(staged) == 2
     assert staged[0] == {"source_id": "note-1", "label": "Note one", "type": "note"}
     assert staged[1] == {"source_id": "file-2", "label": "File two", "type": "file"}
+
+
+def test_build_tools_info_for_snapshot_no_bridge():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=StreamingGateway()
+    )
+
+    info = controller._build_tools_info_for_snapshot()
+
+    assert info["native_schemas"] == []
+    assert info["mcp_note"] is None
+
+
+def test_build_tools_info_for_snapshot_with_native_schemas():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=StreamingGateway()
+    )
+    controller._agent_bridge = SimpleNamespace(
+        native_tool_schemas=lambda: [
+            {"name": "calculator", "description": "Compute arithmetic.", "parameters": {}},
+        ]
+    )
+
+    info = controller._build_tools_info_for_snapshot()
+
+    assert info["native_schemas"] == [
+        {"name": "calculator", "description": "Compute arithmetic.", "parameters": {}},
+    ]
+    assert info["mcp_note"] is None
+
+
+def test_build_tools_info_for_snapshot_mcp_provider_present():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=StreamingGateway()
+    )
+    controller._agent_bridge = SimpleNamespace(native_tool_schemas=lambda: [])
+    controller._mcp_provider = object()
+
+    info = controller._build_tools_info_for_snapshot()
+
+    assert info["native_schemas"] == []
+    assert info["mcp_note"] is not None
+    assert "MCP tools are configured" in info["mcp_note"]
+
+
+def test_build_tools_info_for_snapshot_mcp_provider_absent():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=StreamingGateway()
+    )
+    controller._agent_bridge = SimpleNamespace(native_tool_schemas=lambda: [])
+    controller._mcp_provider = None
+
+    info = controller._build_tools_info_for_snapshot()
+
+    assert info["native_schemas"] == []
+    assert info["mcp_note"] is None

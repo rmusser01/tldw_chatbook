@@ -1236,6 +1236,10 @@ class ConsoleChatController:
             next_send_payload={
                 "model": self.model or self.configured_model,
                 "messages": redacted_messages,
+                # `system` is intentionally duplicated from the leading system
+                # message in `messages` so the preview viewer can show the
+                # effective system prompt at a glance without scanning the
+                # message list.  It is the same redacted value.
                 "system": redacted_system,
                 "staged_sources": [
                     {"source_id": s.source_id, "label": s.label, "type": s.source_type}
@@ -1253,7 +1257,13 @@ class ConsoleChatController:
             if isinstance(content, list):
                 for part in content:
                     if isinstance(part, dict) and part.get("type") == "image_url":
-                        part["image_url"] = {"url": "[image: data redacted for preview]"}
+                        image_url = part.get("image_url")
+                        if isinstance(image_url, dict):
+                            image_url["url"] = "[image: data redacted for preview]"
+                        elif isinstance(image_url, str):
+                            part["image_url"] = {
+                                "url": "[image: data redacted for preview]"
+                            }
                     if isinstance(part, dict) and part.get("type") == "image":
                         part["image"] = "[image: data redacted for preview]"
         return result
@@ -1305,12 +1315,24 @@ class ConsoleChatController:
                 lambda m: f"{m.group('key')}=[redacted]", value
             )
 
+        def _matches_secret_key(key: str) -> bool:
+            """Return True when ``key`` is or ends with a secret word.
+
+            Matches exact keys such as ``api_key`` and suffixed keys such as
+            ``my_api_key``, while avoiding over-redaction of innocent keys like
+            ``token_count`` or ``secret_mode``.
+            """
+            lowered = key.lower()
+            for secret in ConsoleChatController._SECRET_REDACTION_KEYS:
+                if lowered == secret or lowered.endswith(f"_{secret}"):
+                    return True
+            return False
+
         def _redact_obj(obj: Any) -> Any:
             if isinstance(obj, dict):
                 result = {}
                 for key, value in obj.items():
-                    lowered = key.lower()
-                    if any(secret_key in lowered for secret_key in ConsoleChatController._SECRET_REDACTION_KEYS):
+                    if _matches_secret_key(key) and isinstance(value, str):
                         result[key] = "[redacted]"
                     else:
                         result[key] = _redact_obj(value)

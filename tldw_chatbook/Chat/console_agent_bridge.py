@@ -729,6 +729,31 @@ class ConsoleAgentBridge:
         self._live: dict[str, AgentLiveSnapshot] = {}
         self._historical_cache: dict[str, AgentLiveSnapshot] = {}
 
+    def native_tool_schemas(self) -> list[dict[str, Any]]:
+        """Return the native tool schemas available to this bridge.
+
+        Iterates the bridge's tool registry and returns one schema dict per
+        catalog entry.  Failures to load an individual schema are logged and
+        skipped so the preview remains useful even when a provider is slow or
+        misconfigured.
+        """
+        schemas: list[dict[str, Any]] = []
+        for entry in self._registry.list_catalog():
+            try:
+                schema = self._registry.load_schema(entry.id)
+            except Exception as exc:  # pragma: no cover - defensive only
+                logger.warning(
+                    "Failed to load schema for {tool_id}: {exc}",
+                    tool_id=entry.id, exc=exc,
+                )
+                continue
+            schemas.append({
+                "name": schema.name,
+                "description": schema.description,
+                "parameters": schema.parameters,
+            })
+        return schemas
+
     # -- run ------------------------------------------------------------
 
     def run_reply(
