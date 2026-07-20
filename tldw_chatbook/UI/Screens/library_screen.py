@@ -22,6 +22,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.timer import Timer
 from textual.widget import Widget
+from textual.worker import Worker
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -56,6 +57,8 @@ from ...Library.library_export_state import (
     next_media_quality,
     normalize_export_destination,
 )
+from ...Library.ingest_capabilities import get_capabilities
+from ...Library.ingest_preflight import PreflightResult, analyze_path
 from ...Library.library_ingest_jobs import LibraryIngestJob
 from ...Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
@@ -988,6 +991,9 @@ class LibraryScreen(BaseAppScreen):
         # (not here) so a re-mounted, cached screen instance never treats
         # jobs that finished in a previous mount as a fresh transition.
         self._library_ingest_last_done_count: int = 0
+        # Pre-flight analysis worker for the ingest path field. Cancelled
+        # and replaced on every new trigger so rapid edits never stack.
+        self._library_ingest_preflight_worker: Worker | None = None
         # Export canvas state (F4 Task 2). ``_library_export_counts`` is
         # ``None`` until the counts worker lands a result for the current
         # scope (drives ``LibraryExportFormState.counts_loading`` --
@@ -3923,8 +3929,16 @@ class LibraryScreen(BaseAppScreen):
         stale in-progress form from a previous Ingest visit never
         reappears when the user comes back to the canvas. The job queue
         itself is registry-owned and untouched by this reset -- only the
-        local form echo resets.
+        local form echo resets. Any in-flight pre-flight worker is
+        cancelled so its late result cannot repopulate the fresh form.
         """
+        if self._library_ingest_preflight_worker is not None:
+            try:
+                if not self._library_ingest_preflight_worker.is_finished:
+                    self._library_ingest_preflight_worker.cancel()
+            except Exception:
+                pass
+            self._library_ingest_preflight_worker = None
         self._library_ingest_form = LibraryIngestFormState()
 
     # ----- Export canvas -------------------------------------------------
@@ -9984,6 +9998,14 @@ class LibraryScreen(BaseAppScreen):
             return
         quiet_line.update(new_state.start_quiet_line)
 
+    @on(Input.Blurred, "#library-ingest-path")
+    def handle_library_ingest_path_blurred(self, event: Input.Blurred) -> None:
+        """Trigger pre-flight when the user leaves the path field."""
+        event.stop()
+        path = self._library_ingest_form.path.strip()
+        if path:
+            self._trigger_library_ingest_preflight(path)
+
     @on(Input.Changed, "#library-ingest-title")
     def handle_library_ingest_title_changed(self, event: Input.Changed) -> None:
         """Track the ingest title text as the user types it (state only)."""
@@ -10024,6 +10046,7 @@ class LibraryScreen(BaseAppScreen):
                 return
             self._library_ingest_form.path = str(selected_path)
             self.refresh(recompose=True)
+            self._trigger_library_ingest_preflight(str(selected_path))
 
         self.app.push_screen(
             FileOpen(title="Import Media"),
@@ -10050,13 +10073,59 @@ class LibraryScreen(BaseAppScreen):
         """Persist per-type option changes in the form echo.
 
         The canvas stays render-only and posts a message for every value
-        change; the screen owns the mutable form state.
+        change; the screen owns the mutable form state. Checkbox and select
+        changes trigger a recompose so panel titles and dependent-field
+        disabled states stay in sync, but text/number inputs do not (they
+        would remount the Input and lose cursor position mid-typing).
         """
         event.stop()
         group_options = self._library_ingest_form.type_options.setdefault(
             event.group, {}
         )
         group_options[event.name] = event.value
+        cap = get_capabilities(event.group)
+        field = next((f for f in cap.fields if f.name == event.name), None)
+        if field is not None and field.type not in ("text", "number"):
+            self.refresh(recompose=True)
+
+    def _trigger_library_ingest_preflight(self, path: str) -> None:
+        """Start (or restart) the pre-flight worker for ``path``.
+
+        No-op for empty paths so stray focus/blur/enter events never scan
+        the current working directory.
+        """
+        if not path.strip():
+            self._library_ingest_form.preflight_checking = False
+            return
+        if self._library_ingest_preflight_worker is not None:
+            try:
+                if not self._library_ingest_preflight_worker.is_finished:
+                    self._library_ingest_preflight_worker.cancel()
+            except Exception:
+                pass
+        self._library_ingest_form.preflight_checking = True
+        self.refresh(recompose=True)
+        self._library_ingest_preflight_worker = self._run_library_ingest_preflight(path)
+
+    @work(thread=True)
+    def _run_library_ingest_preflight(self, path: str) -> None:
+        """Analyze ``path`` on a worker thread and apply the result."""
+        raw_scan_limit = get_cli_setting("library.ingest_directory_scan_limit", 1000)
+        try:
+            scan_limit = int(raw_scan_limit)
+        except (TypeError, ValueError):
+            scan_limit = 1000
+        result = analyze_path(path, scan_limit=scan_limit)
+        self.app.call_from_thread(self._apply_library_ingest_preflight_result, result)
+
+    def _apply_library_ingest_preflight_result(
+        self,
+        result: PreflightResult,
+    ) -> None:
+        """Merge a pre-flight result into the form echo and refresh."""
+        self._library_ingest_form.preflight = result
+        self._library_ingest_form.preflight_checking = False
+        self.refresh(recompose=True)
 
     def _notify_library_ingest_warning(self, message: str) -> None:
         notify = getattr(self.app_instance, "notify", None)
@@ -10082,11 +10151,14 @@ class LibraryScreen(BaseAppScreen):
         the registry/DB unavailable) stays quiet instead of nagging, since
         the always-visible gate line already explains the blocker
         (2026-07 UAT: Enter in a valid path field previously did nothing).
+        Pre-flight is also triggered so a final Enter in a non-submitting
+        path still refreshes the summary.
 
         Args:
             event: Input submission event emitted by the path field.
         """
         event.stop()
+        self._trigger_library_ingest_preflight(self._library_ingest_form.path)
         if not self._build_library_ingest_state().start_enabled:
             return
         self._submit_library_ingest_form()
