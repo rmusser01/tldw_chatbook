@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Union
+from typing import Iterator, Union
 
 from loguru import logger
 
@@ -23,6 +24,19 @@ class LibraryIngestJobsDB(BaseDB):
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         self._conn: sqlite3.Connection | None = None
         super().__init__(db_path, client_id)  # calls _initialize_schema()
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Open a write transaction that rolls back on failure."""
+        conn = self._get_connection()
+        conn.execute("BEGIN")
+        try:
+            yield conn
+        except Exception:
+            conn.rollback()
+            raise
+        else:
+            conn.commit()
 
     def _get_connection(self) -> sqlite3.Connection:
         if self._conn is None:
@@ -44,23 +58,28 @@ class LibraryIngestJobsDB(BaseDB):
             finally:
                 self._conn = None
 
-    def _migrate_v1_to_v2(self, conn: sqlite3.Connection) -> None:
-        """Add JSON columns for ingest options, progress, error detail, and content hash."""
+    def _migrate_v1_to_v2(self) -> None:
+        """Add JSON columns for ingest options, progress, error detail, and content hash.
+
+        Inline migration following the repo's existing convention (e.g.
+        ``Client_Media_DB_v2.py``) rather than a separate ``migrations/``
+        script, since this DB class owns its own schema versioning.
+        """
         columns = [
             ("ingest_options", "TEXT DEFAULT '{}'"),
             ("error_detail", "TEXT DEFAULT NULL"),
             ("progress", "TEXT DEFAULT NULL"),
             ("content_hash", "TEXT DEFAULT NULL"),
         ]
-        for name, dtype in columns:
-            try:
-                conn.execute(f"ALTER TABLE ingest_jobs ADD COLUMN {name} {dtype}")
-            except sqlite3.OperationalError as e:
-                if "duplicate column name" not in str(e).lower():
-                    raise
-        conn.execute("DELETE FROM schema_version")
-        conn.execute("INSERT INTO schema_version (version) VALUES (2)")
-        conn.commit()
+        with self.transaction() as conn:
+            for name, dtype in columns:
+                try:
+                    conn.execute(f"ALTER TABLE ingest_jobs ADD COLUMN {name} {dtype}")
+                except sqlite3.OperationalError as e:
+                    if "duplicate column name" not in str(e).lower():
+                        raise
+            conn.execute("DELETE FROM schema_version")
+            conn.execute("INSERT INTO schema_version (version) VALUES (2)")
 
     def _initialize_schema(self) -> None:
         conn = self._get_connection()
@@ -100,7 +119,7 @@ class LibraryIngestJobsDB(BaseDB):
         row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
         current_version = row["version"] if row else 0
         if current_version < self._CURRENT_SCHEMA_VERSION:
-            self._migrate_v1_to_v2(conn)
+            self._migrate_v1_to_v2()
 
     @staticmethod
     def _seq_of(job_id: str) -> int:

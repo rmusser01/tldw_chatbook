@@ -10728,7 +10728,20 @@ class LibraryScreen(BaseAppScreen):
             scan_limit = int(raw_scan_limit)
         except (TypeError, ValueError):
             scan_limit = 1000
-        result = analyze_path(path, scan_limit=scan_limit)
+        try:
+            result = analyze_path(path, scan_limit=scan_limit)
+        except Exception as exc:
+            logger.opt(exception=True).debug(
+                f"Library ingest pre-flight failed for path: {path}"
+            )
+            result = PreflightResult(
+                type_groups={},
+                warnings=[],
+                errors=[f"Pre-flight analysis failed: {exc}"],
+                total_size=0,
+                truncated=False,
+                total_files=0,
+            )
         self.app.call_from_thread(self._apply_library_ingest_preflight_result, result)
 
     def _apply_library_ingest_preflight_result(
@@ -10941,7 +10954,10 @@ class LibraryScreen(BaseAppScreen):
         generic = snapshot.setdefault("generic", {})
         generic["analyze"] = form.analyze
         generic["chunk"] = form.chunk
-        generic["chunk_size"] = clamp_chunk_size(form.chunk_size)
+        # Prefer the generic panel's chunk_size when the user has set one;
+        # otherwise fall back to the legacy top-level form field.
+        if "chunk_size" not in generic:
+            generic["chunk_size"] = clamp_chunk_size(form.chunk_size)
         return snapshot
 
     @staticmethod

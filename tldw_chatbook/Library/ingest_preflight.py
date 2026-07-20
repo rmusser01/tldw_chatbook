@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 from tldw_chatbook.Library.ingest_capabilities import get_tooling_warnings, get_type_group
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import is_http_url
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 
 def _safe_size(path: Path) -> int:
@@ -45,7 +46,7 @@ def _collect_files(p: Path, scan_limit: int) -> tuple[list[Path], bool]:
 
     try:
         entries = list(p.iterdir())
-    except PermissionError:
+    except OSError:
         return files, truncated
 
     for entry in entries:
@@ -134,7 +135,18 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
             total_files = 1
             warnings.extend(get_tooling_warnings(group))
     else:
-        p = Path(path_or_url)
+        try:
+            p = validate_path_simple(path_or_url, require_exists=False)
+        except ValueError as e:
+            errors.append(f"Invalid path: {e}")
+            return PreflightResult(
+                type_groups=type_groups,
+                warnings=warnings,
+                errors=errors,
+                total_size=total_size,
+                truncated=truncated,
+                total_files=total_files,
+            )
         if not p.exists():
             errors.append(f"Path not found: {path_or_url}")
         elif p.is_file():
