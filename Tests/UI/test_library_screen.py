@@ -179,3 +179,31 @@ def test_load_ingest_options_from_config(monkeypatch) -> None:
     assert screen._library_ingest_form.type_options["audio_video"] == {
         "transcription_model": "small"
     }
+
+
+# ----- Pre-flight retry (Task 18) -------------------------------------------
+
+
+def test_trigger_preflight_delegates_to_library_preflight() -> None:
+    """``_trigger_preflight`` is a thin seam around the real worker trigger."""
+    screen = _minimal_ingest_screen()
+    screen._library_ingest_preflight_worker = None
+    screen._trigger_library_ingest_preflight = MagicMock()
+
+    screen._trigger_preflight("/tmp/some-file.pdf")
+
+    screen._trigger_library_ingest_preflight.assert_called_once_with(
+        "/tmp/some-file.pdf"
+    )
+
+
+def test_on_preflight_retry_triggers_preflight() -> None:
+    """Pressing the retry button re-runs pre-flight for the current path."""
+    screen = _minimal_ingest_screen()
+    screen._library_ingest_preflight_worker = None
+    screen._trigger_preflight = MagicMock()
+    screen._library_ingest_form.path = "/tmp/retry-target.pdf"
+
+    screen._on_preflight_retry()
+
+    screen._trigger_preflight.assert_called_once_with("/tmp/retry-target.pdf")

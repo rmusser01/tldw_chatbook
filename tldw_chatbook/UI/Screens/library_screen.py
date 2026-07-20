@@ -10227,6 +10227,15 @@ class LibraryScreen(BaseAppScreen):
         self._library_ingest_form.preflight_checking = False
         self.refresh(recompose=True)
 
+    def _trigger_preflight(self, path: str) -> None:
+        """Alias for ``_trigger_library_ingest_preflight``.
+
+        Kept as a short internal seam used by the pre-flight retry button
+        (``#ingest-preflight-retry``) and any future callers that just need
+        to re-run the analysis for the current form path.
+        """
+        self._trigger_library_ingest_preflight(path)
+
     def _notify_library_ingest_warning(self, message: str) -> None:
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
@@ -10262,6 +10271,11 @@ class LibraryScreen(BaseAppScreen):
         if not self._build_library_ingest_state().start_enabled:
             return
         self._submit_library_ingest_form()
+
+    @on(Button.Pressed, "#ingest-preflight-retry")
+    def _on_preflight_retry(self) -> None:
+        """Re-run pre-flight analysis for the current ingest path."""
+        self._trigger_preflight(self._library_ingest_form.path)
 
     def _resolve_ingest_source(self, raw_path: str) -> str | None:
         """Validate and canonicalise a Library ingest source path or URL.
