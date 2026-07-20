@@ -12,16 +12,21 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, DataTable, Static
+from textual.widgets import Button, DataTable, Static, TabbedContent, TabPane
 
 from ...Navigation.base_app_screen import BaseAppScreen
+from ....runtime_policy.bootstrap import set_authoritative_runtime_source
 from ....Scheduling.events import (
     DeleteTaskRequested,
     DisableTaskRequested,
     EditTaskRequested,
     EnableTaskRequested,
+    SyncCompleted,
+    SyncFailed,
 )
 from ....Scheduling.models import ReminderTask, ScheduledTask
+from ....UI.Screens.scheduling.conflicts_tab import ConflictsTab
+from ....UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from .forms.reminder_form import ReminderForm
 from .task_detail import (
     SCHEDULES_EMPTY_CONSOLE_RECOVERY,
@@ -66,21 +71,45 @@ class SchedulesWorkbench(BaseAppScreen):
         super().__init__(app_instance, screen_name, **kwargs)
         self._scheduling_service = getattr(app_instance, "scheduling_service", None)
         self._tasks: list[ReminderTask | ScheduledTask] = []
+        self._sync_running = False
         self._current_console_follow_item = None
         self._latest_console_follow_item_id: str | None = None
         self._latest_console_launch_kwargs: dict[str, Any] | None = None
         self._latest_console_context_loaded = False
 
+    def _active_server_id(self) -> str | None:
+        runtime_state = getattr(
+            getattr(self.app_instance, "runtime_policy", None), "state", None
+        )
+        return getattr(runtime_state, "active_server_id", None)
+
     def compose_content(self) -> ComposeResult:
         """Build the three-pane scheduling workbench layout."""
-        with Horizontal(id="scheduling-workbench"):
-            with Vertical(id="scheduling-list-pane"):
-                yield Static("Schedule Queue", id="scheduling-list-title")
-                yield DataTable(id="scheduling-task-table")
-            with Vertical(id="scheduling-detail-pane"):
-                yield TaskDetail(id="scheduling-task-detail")
-            with Vertical(id="scheduling-inspector-pane"):
-                yield TaskInspector(id="scheduling-task-inspector")
+        service = self._service()
+        owner_id = service.owner_id if service else "local"
+        active_server_id = self._active_server_id()
+        server_available = (
+            service is not None
+            and service.server_client.notifications_service is not None
+        )
+        yield SyncStatusWidget(
+            id="scheduling-sync-status",
+            current_owner=owner_id,
+            active_server_id=active_server_id,
+            server_available=server_available,
+        )
+        with TabbedContent():
+            with TabPane("Queue", id="scheduling-queue-tab"):
+                with Horizontal(id="scheduling-workbench"):
+                    with Vertical(id="scheduling-list-pane"):
+                        yield Static("Schedule Queue", id="scheduling-list-title")
+                        yield DataTable(id="scheduling-task-table")
+                    with Vertical(id="scheduling-detail-pane"):
+                        yield TaskDetail(id="scheduling-task-detail")
+                    with Vertical(id="scheduling-inspector-pane"):
+                        yield TaskInspector(id="scheduling-task-inspector")
+            with TabPane("Conflicts", id="scheduling-conflicts-tab"):
+                yield ConflictsTab(id="scheduling-conflicts", sync_engine=service.sync_engine if service else None)
 
     def _service(self) -> "SchedulingService | None":
         """Return the app's scheduling service, if available."""
@@ -95,6 +124,7 @@ class SchedulesWorkbench(BaseAppScreen):
     def on_mount(self) -> None:
         super().on_mount()
         self._register_footer_shortcuts()
+        self._refresh_owner_select()
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
         self.run_worker(self.load_tasks, exclusive=True)  # type: ignore[arg-type]
@@ -442,6 +472,88 @@ class SchedulesWorkbench(BaseAppScreen):
 
         self.run_worker(_update_and_refresh, exclusive=True)  # type: ignore[arg-type]
 
+    def _refresh_owner_select(self) -> None:
+        status = self.query_one("#scheduling-sync-status", SyncStatusWidget)
+        service = self._service()
+        if service is None:
+            status.set_owner_state("local", None, False)
+            status.update_status(None, None, [])
+            return
+        active_server_id = self._active_server_id()
+        server_available = service.server_client.notifications_service is not None
+        status.set_owner_state(
+            service.owner_id, active_server_id, server_available
+        )
+        state = service.db.get_sync_state(service.owner_id) or {}
+        status.update_status(
+            last_pull_at=state.get("last_pull_at"),
+            last_push_at=state.get("last_push_at"),
+            sync_errors=state.get("sync_errors") or [],
+        )
+
+    @on(Button.Pressed, "#scheduling-owner-local")
+    def _on_owner_local(self) -> None:
+        self._set_owner("local")
+
+    @on(Button.Pressed, "#scheduling-owner-server")
+    def _on_owner_server(self) -> None:
+        service = self._service()
+        if service is None:
+            return
+        active_server_id = self._active_server_id()
+        if active_server_id is None or service.server_client.notifications_service is None:
+            self.app_instance.notify("No server connection", severity="warning")
+            return
+        self._set_owner(f"server:{active_server_id}")
+
+    def _set_owner(self, new_owner: str) -> None:
+        service = self._service()
+        if service is None:
+            return
+        service.set_owner(new_owner)
+        runtime_source = "server" if new_owner.startswith("server:") else "local"
+        set_authoritative_runtime_source(self.app_instance, runtime_source)
+        self._refresh_owner_select()
+        self.run_worker(self.load_tasks, exclusive=True)
+        self._refresh_conflicts_tab()
+
+    @on(Button.Pressed, "#scheduling-clear-error")
+    def _on_clear_sync_errors(self) -> None:
+        service = self._service()
+        if service is None:
+            return
+        service.db.update_sync_state(service.owner_id, sync_errors=[])
+        self._refresh_owner_select()
+
+    @on(SyncCompleted)
+    def _on_sync_completed(self, event: SyncCompleted) -> None:
+        self._sync_running = False
+        self.app_instance.notify("Sync completed.", severity="information")
+        self._refresh_owner_select()
+        self.run_worker(self.load_tasks, exclusive=True)
+        self._refresh_conflicts_tab()
+
+    @on(SyncFailed)
+    def _on_sync_failed(self, event: SyncFailed) -> None:
+        self._sync_running = False
+        self.app_instance.notify(f"Sync failed: {event.error}", severity="error")
+        self._refresh_owner_select()
+        self.run_worker(self.load_tasks, exclusive=True)
+        self._refresh_conflicts_tab()
+
+    @on(ConflictsTab.ConflictResolved)
+    def _on_conflict_resolved(self, event: ConflictsTab.ConflictResolved) -> None:
+        self.run_worker(self.load_tasks, exclusive=True)
+        self._refresh_conflicts_tab()
+
+    def _refresh_conflicts_tab(self) -> None:
+        service = self._service()
+        if service is None:
+            return
+        conflicts_tab = self.query_one("#scheduling-conflicts", ConflictsTab)
+        conflicts = service.db.get_conflicts(service.owner_id, primitive="reminder_task")
+        conflicts_tab.populate(conflicts)
+
     def action_run_now(self) -> None:
         """Run the selected schedule immediately (stub for later tasks)."""
         self.app_instance.notify("Not yet available", severity="warning")
@@ -455,5 +567,37 @@ class SchedulesWorkbench(BaseAppScreen):
         self.query_one("#scheduling-task-detail", TaskDetail).request_delete()
 
     def action_sync_now(self) -> None:
-        """Sync schedule state now (stub for later tasks)."""
-        self.app_instance.notify("Not yet available", severity="warning")
+        """Sync schedule state now."""
+        if self._sync_running:
+            self.app_instance.notify("Sync already in progress", severity="warning")
+            return
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot sync.",
+                severity="warning",
+            )
+            return
+        self._sync_running = True
+        self.run_worker(self._run_sync, exclusive=True)
+
+    async def _run_sync(self) -> None:
+        service = self._service()
+        if service is None:
+            self._sync_running = False
+            return
+        for btn_id in ("#scheduling-owner-local", "#scheduling-owner-server"):
+            self.query_one(btn_id, Button).disabled = True
+        try:
+            owner_id = service.owner_id
+            await service.sync_now(owner_id)
+            conflicts = service.db.get_conflicts(owner_id, primitive="reminder_task")
+            self.post_message(SyncCompleted(owner_id, conflict_count=len(conflicts)))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Sync failed")
+            self.post_message(SyncFailed(service.owner_id, str(exc)))
+        finally:
+            for btn_id in ("#scheduling-owner-local", "#scheduling-owner-server"):
+                self.query_one(btn_id, Button).disabled = False
+            self._refresh_owner_select()
+            self._sync_running = False
