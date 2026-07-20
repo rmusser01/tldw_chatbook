@@ -14,7 +14,7 @@ priority: low
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-The task-253 SearchWindow deletion (PR 669) verified importers for everything it removed and explicitly left a set of pre-existing zero-importer orphans for a separate audit because they were not reachable through the SearchWindow stack: at minimum Widgets/toast.py-style notification widgets, a detailed-progress widget, and an embedding-template-selector (exact filenames in PR 669's report and worth re-verifying). Sweep Widgets/ (and UI/ leaf modules) for zero-importer files, verify each with git grep across production code and tests, and delete confirmed orphans following the repo precedent (commit 628b1b8b, tasks 252/253). Note the codebase moves fast: re-verify every candidate on the current tree at implementation time rather than trusting this list.
+The task-253 SearchWindow deletion (PR 669) verified importers for everything it removed and explicitly left a set of pre-existing zero-importer orphans for a separate audit because they were not reachable through the SearchWindow stack: Widgets/toast_notification.py, Widgets/detailed_progress.py, and Widgets/embedding_template_selector.py (all three re-verified at filing time: zero importers outside their own files). Sweep Widgets/ (and UI/ leaf modules) for zero-importer files, verify each with git grep across production code and tests, and delete confirmed orphans following the repo precedent (commit 628b1b8b, tasks 252/253). Note the codebase moves fast: re-verify every candidate on the current tree at implementation time rather than trusting this list.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
