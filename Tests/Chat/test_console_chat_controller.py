@@ -1944,6 +1944,7 @@ def test_replace_image_data_preserves_detail_and_handles_string_url():
                     "type": "image_url",
                     "image_url": {"url": "data:image/png;base64,abc", "detail": "auto"},
                 },
+                {"type": "image_url", "image_url": "data:image/png;base64,def"},
                 {"type": "image_url", "image_url": "http://example.com/img.png"},
             ],
         }
@@ -1954,8 +1955,40 @@ def test_replace_image_data_preserves_detail_and_handles_string_url():
     dict_url = redacted[0]["content"][0]["image_url"]
     assert dict_url["url"] == "[image: data redacted for preview]"
     assert dict_url["detail"] == "auto"
-    string_url = redacted[0]["content"][1]["image_url"]
-    assert string_url == "http://example.com/img.png"
+    data_string_url = redacted[0]["content"][1]["image_url"]
+    assert data_string_url == "[image: data redacted for preview]"
+    plain_string_url = redacted[0]["content"][2]["image_url"]
+    assert plain_string_url == "http://example.com/img.png"
+
+
+def test_replace_image_data_redacts_anthropic_and_string_image_parts():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+                    },
+                },
+                {"type": "image", "image": "data:image/png;base64,def"},
+            ],
+        }
+    ]
+
+    redacted = ConsoleChatController._replace_image_data_with_placeholders(messages)
+
+    anthropic_part = redacted[0]["content"][0]
+    assert anthropic_part["type"] == "image"
+    assert anthropic_part["source"]["type"] == "base64"
+    assert anthropic_part["source"]["media_type"] == "image/png"
+    assert anthropic_part["source"]["data"] == "[image: data redacted for preview]"
+    string_part = redacted[0]["content"][1]
+    assert string_part["type"] == "image"
+    assert string_part["image"] == "[image: data redacted for preview]"
 
 
 @pytest.mark.asyncio
@@ -2017,6 +2050,28 @@ async def test_build_context_snapshot_includes_staged_sources():
     assert staged[1] == {"source_id": "file-2", "label": "File two", "type": "file"}
 
 
+@pytest.mark.asyncio
+async def test_build_context_snapshot_isolates_assembly_errors():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
+
+    async def _failing_apply(messages, session_id):
+        raise RuntimeError("dictionary applier exploded")
+
+    controller._apply_chat_dictionaries = _failing_apply
+
+    snapshot = await controller.build_context_snapshot(draft="Follow up")
+
+    assert len(snapshot.current_messages) == 1
+    assert snapshot.current_messages[0].content == "Hello"
+    payload = snapshot.next_send_payload
+    assert "error" in payload
+    assert "Failed to build context snapshot" in payload["error"]
+    assert payload["messages"] == []
+
+
 def test_annotate_skill_commands_multimodal_text_part():
     messages = [
         {
@@ -2044,6 +2099,17 @@ def test_annotate_skill_commands_ignores_leading_whitespace():
 
     assert annotated[0]["content"].startswith("  /search tools")
     assert "Skill command not resolved in preview" in annotated[0]["content"]
+
+
+def test_annotate_skill_commands_synthetic_turn_added_false_returns_unchanged():
+    messages = [{"role": "user", "content": "/search tools"}]
+
+    annotated = ConsoleChatController._annotate_skill_commands(
+        messages, synthetic_turn_added=False
+    )
+
+    assert annotated == messages
+    assert "Skill command not resolved in preview" not in annotated[0]["content"]
 
 
 def test_build_tools_info_for_snapshot_no_bridge():

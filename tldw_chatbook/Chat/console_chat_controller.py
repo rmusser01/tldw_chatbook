@@ -1192,67 +1192,86 @@ class ConsoleChatController:
             return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
 
         current_messages = list(self.store.messages_for_session(session_id))
+        staged_sources_list = [
+            {"source_id": s.source_id, "label": s.label, "type": s.source_type}
+            for s in (staged_sources or ())
+        ]
 
-        # Build the next-send payload as submit_draft would, but do not persist.
-        provider_messages = self._provider_messages_for_session(session_id)
+        try:
+            # Build the next-send payload as submit_draft would, but do not persist.
+            provider_messages = self._provider_messages_for_session(session_id)
 
-        # Append a synthetic user turn for the draft so the preview matches what would be sent.
-        attachment_tuple = tuple(attachments or ())
-        synthetic_turn_added = bool(draft.strip() or attachment_tuple)
-        if synthetic_turn_added:
-            synthetic_user = self._provider_message_payloads(
-                [
-                    ConsoleChatMessage(
-                        role=ConsoleMessageRole.USER,
-                        content=draft,
-                        attachments=attachment_tuple,
-                    )
-                ],
-                skip_failed=True,
+            # Append a synthetic user turn for the draft so the preview matches what would be sent.
+            attachment_tuple = tuple(attachments or ())
+            synthetic_turn_added = bool(draft.strip() or attachment_tuple)
+            if synthetic_turn_added:
+                synthetic_user = self._provider_message_payloads(
+                    [
+                        ConsoleChatMessage(
+                            role=ConsoleMessageRole.USER,
+                            content=draft,
+                            attachments=attachment_tuple,
+                        )
+                    ],
+                    skip_failed=True,
+                )
+                provider_messages.extend(synthetic_user)
+
+            # Do NOT call _apply_skill_substitution because it may execute skills with side effects.
+            # Instead, annotate the final user message if a synthetic turn was appended and it
+            # starts with a skill command. Historical turns have already been resolved at send time
+            # and must not be annotated.
+            provider_messages = self._annotate_skill_commands(
+                provider_messages, synthetic_turn_added=synthetic_turn_added
             )
-            provider_messages.extend(synthetic_user)
 
-        # Do NOT call _apply_skill_substitution because it may execute skills with side effects.
-        # Instead, annotate the final user message if a synthetic turn was appended and it
-        # starts with a skill command. Historical turns have already been resolved at send time
-        # and must not be annotated.
-        provider_messages = self._annotate_skill_commands(
-            provider_messages, synthetic_turn_added=synthetic_turn_added
-        )
+            # Chat dictionaries are safe to apply (string replacements only).
+            provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
 
-        # Chat dictionaries are safe to apply (string replacements only).
-        provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
+            # Replace image data with placeholders for the preview, including historical images.
+            provider_messages = self._replace_image_data_with_placeholders(provider_messages)
 
-        # Replace image data with placeholders for the preview, including historical images.
-        provider_messages = self._replace_image_data_with_placeholders(provider_messages)
+            # Gather native tool schemas and MCP note.
+            tools_info = self._build_tools_info_for_snapshot()
 
-        # Gather native tool schemas and MCP note.
-        tools_info = self._build_tools_info_for_snapshot()
+            # Redact secrets before returning.
+            redacted_messages = self._redact_secrets(provider_messages)
+            redacted_system = self._redact_secrets(self._leading_system_message())
 
-        # Redact secrets before returning.
-        redacted_messages = self._redact_secrets(provider_messages)
-        redacted_system = self._redact_secrets(self._leading_system_message())
+            # Deep-copy messages so the snapshot is independent of the store.
+            copied_messages = copy.deepcopy(current_messages)
 
-        # Deep-copy messages so the snapshot is independent of the store.
-        copied_messages = copy.deepcopy(current_messages)
-
-        return ConsoleContextSnapshot(
-            current_messages=copied_messages,
-            next_send_payload={
-                "model": self.model or self.configured_model,
-                "messages": redacted_messages,
-                # `system` is intentionally duplicated from the leading system
-                # message in `messages` so the preview viewer can show the
-                # effective system prompt at a glance without scanning the
-                # message list.  It is the same redacted value.
-                "system": redacted_system,
-                "staged_sources": [
-                    {"source_id": s.source_id, "label": s.label, "type": s.source_type}
-                    for s in (staged_sources or ())
-                ],
-                "tools": tools_info,
-            },
-        )
+            return ConsoleContextSnapshot(
+                current_messages=copied_messages,
+                next_send_payload={
+                    "model": self.model or self.configured_model,
+                    "messages": redacted_messages,
+                    # `system` is intentionally duplicated from the leading system
+                    # message in `messages` so the preview viewer can show the
+                    # effective system prompt at a glance without scanning the
+                    # message list.  It is the same redacted value.
+                    "system": redacted_system,
+                    "staged_sources": staged_sources_list,
+                    "tools": tools_info,
+                },
+            )
+        except Exception as exc:
+            logger.exception("Failed to build context snapshot")
+            return ConsoleContextSnapshot(
+                current_messages=copy.deepcopy(current_messages),
+                next_send_payload={
+                    "model": self.model or self.configured_model,
+                    "messages": [],
+                    "system": [],
+                    "staged_sources": staged_sources_list,
+                    "tools": {
+                        "native_schemas": [],
+                        "mcp_note": None,
+                        "preview_note": "Preview unavailable due to an internal error.",
+                    },
+                    "error": f"Failed to build context snapshot: {exc}",
+                },
+            )
 
     @staticmethod
     def _replace_image_data_with_placeholders(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1261,21 +1280,40 @@ class ConsoleChatController:
         def _is_data_url(value: Any) -> bool:
             return isinstance(value, str) and value.startswith("data:")
 
-        def _redact_image_url(value: Any) -> Any:
+        def _redact_image_url_value(value: Any) -> Any:
+            """Redact an image URL value while preserving its original shape."""
             if isinstance(value, dict) and _is_data_url(value.get("url")):
                 return {**value, "url": "[image: data redacted for preview]"}
             if isinstance(value, str) and _is_data_url(value):
-                return {"url": "[image: data redacted for preview]"}
+                return "[image: data redacted for preview]"
             return value
+
+        def _redact_image_source(source: dict[str, Any]) -> dict[str, Any]:
+            """Redact base64 or data-URL content inside an image source dict."""
+            if not isinstance(source, dict):
+                return source
+            redacted = {**source}
+            if _is_data_url(redacted.get("data")) or redacted.get("type") == "base64":
+                redacted["data"] = "[image: data redacted for preview]"
+            if _is_data_url(redacted.get("url")):
+                redacted["url"] = "[image: data redacted for preview]"
+            return redacted
 
         for message in result:
             content = message.get("content")
             if isinstance(content, list):
                 for part in content:
-                    if isinstance(part, dict) and part.get("type") == "image_url":
-                        part["image_url"] = _redact_image_url(part.get("image_url"))
-                    if isinstance(part, dict) and part.get("type") == "image":
-                        part["image"] = _redact_image_url(part.get("image"))
+                    if not isinstance(part, dict):
+                        continue
+                    if part.get("type") == "image_url":
+                        part["image_url"] = _redact_image_url_value(part.get("image_url"))
+                    if part.get("type") == "image":
+                        # Anthropic-style image parts use a ``source`` dict with
+                        # base64 data; preserve the surrounding structure.
+                        if isinstance(part.get("source"), dict):
+                            part["source"] = _redact_image_source(part["source"])
+                        if "image" in part:
+                            part["image"] = _redact_image_url_value(part["image"])
         return result
 
     @staticmethod
@@ -1355,7 +1393,7 @@ class ConsoleChatController:
     )
 
     @staticmethod
-    def _redact_secrets(payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _redact_secrets(payload: Any) -> Any:
         """Return a deep-copied payload with likely secret values replaced.
 
         Redaction is best-effort and intended for preview/export convenience
