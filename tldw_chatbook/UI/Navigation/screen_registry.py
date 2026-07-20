@@ -7,7 +7,7 @@ from importlib import import_module
 
 from loguru import logger
 
-from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP, TAB_SUBSCRIPTIONS
+from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP
 from .shell_destinations import resolve_shell_route
 
 
@@ -116,31 +116,58 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         "tldw_chatbook.UI.Screens.library_conversations_screen",
         "LibraryConversationsScreen",
     ),
-    "ccp": ScreenRoute("ccp", "personas", "tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"),
-    "media": ScreenRoute("media", "media", "tldw_chatbook.UI.Screens.media_screen", "MediaScreen"),
-    "search": ScreenRoute("search", "search", "tldw_chatbook.UI.Screens.search_screen", "SearchScreen"),
-    "evals": ScreenRoute("evals", "evals", "tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"),
-    "tools_settings": ScreenRoute("tools_settings", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"),
-    "llm": ScreenRoute("llm", TAB_LLM, "tldw_chatbook.UI.Screens.llm_screen", "LLMScreen"),
-    "logs": ScreenRoute("logs", "logs", "tldw_chatbook.UI.Screens.logs_screen", "LogsScreen"),
-    "stats": ScreenRoute("stats", "stats", "tldw_chatbook.UI.Screens.stats_screen", "StatsScreen"),
-    "stts": ScreenRoute("stts", "stts", "tldw_chatbook.UI.Screens.stts_screen", "STTSScreen"),
-    "study": ScreenRoute("study", "study", "tldw_chatbook.UI.Screens.study_screen", "StudyScreen"),
-    "writing": ScreenRoute("writing", "writing", "tldw_chatbook.UI.Screens.writing_screen", "WritingScreen"),
-    "chatbooks": ScreenRoute("chatbooks", "chatbooks", "tldw_chatbook.UI.Screens.chatbooks_screen", "ChatbooksScreen"),
-    "subscriptions": ScreenRoute(
-        "subscriptions",
-        TAB_SUBSCRIPTIONS,
-        "tldw_chatbook.UI.Screens.subscription_screen",
-        "SubscriptionScreen",
-        dependency_check="check_subscriptions_deps",
+    "ccp": ScreenRoute(
+        "ccp", "personas", "tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"
+    ),
+    "media": ScreenRoute(
+        "media", "media", "tldw_chatbook.UI.Screens.media_screen", "MediaScreen"
+    ),
+    "search": ScreenRoute(
+        "search", "search", "tldw_chatbook.UI.Screens.search_screen", "SearchScreen"
+    ),
+    "evals": ScreenRoute(
+        "evals", "evals", "tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"
+    ),
+    "tools_settings": ScreenRoute(
+        "tools_settings", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"
+    ),
+    "llm": ScreenRoute(
+        "llm", TAB_LLM, "tldw_chatbook.UI.Screens.llm_screen", "LLMScreen"
+    ),
+    "customize": ScreenRoute(
+        "customize",
+        "customize",
+        "tldw_chatbook.UI.Screens.customize_screen",
+        "CustomizeScreen",
+    ),
+    "logs": ScreenRoute(
+        "logs", "logs", "tldw_chatbook.UI.Screens.logs_screen", "LogsScreen"
+    ),
+    "stats": ScreenRoute(
+        "stats", "stats", "tldw_chatbook.UI.Screens.stats_screen", "StatsScreen"
+    ),
+    "stts": ScreenRoute(
+        "stts", "stts", "tldw_chatbook.UI.Screens.stts_screen", "STTSScreen"
+    ),
+    "study": ScreenRoute(
+        "study", "study", "tldw_chatbook.UI.Screens.study_screen", "StudyScreen"
+    ),
+    "writing": ScreenRoute(
+        "writing", "writing", "tldw_chatbook.UI.Screens.writing_screen", "WritingScreen"
+    ),
+    "chatbooks": ScreenRoute(
+        "chatbooks",
+        "chatbooks",
+        "tldw_chatbook.UI.Screens.chatbooks_screen",
+        "ChatbooksScreen",
     ),
 }
 
 _SCREEN_ALIASES = {
     TAB_CCP: "ccp",
     TAB_LLM: "llm",
-    "subscription": "subscriptions",
+    "subscriptions": "watchlists_collections",
+    "subscription": "watchlists_collections",
     # The standalone Notes tab is retired: Notes now lives entirely inside
     # Library. Existing startup configs / callers using the legacy "notes"
     # route id still resolve to a real screen (Library) instead of erroring

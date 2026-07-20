@@ -10,9 +10,12 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from ..DB.Subscriptions_DB import SubscriptionsDB
+from .watchlist_content_alert_service import WatchlistContentAlertService
+from .watchlist_filter_service import WatchlistFilterService
 from .watchlist_normalizers import (
     normalize_local_subscription_row,
     normalize_watchlist_alert_rule,
+    normalize_watchlist_item,
     normalize_watchlist_run,
 )
 
@@ -38,11 +41,15 @@ class LocalWatchlistsService:
         notification_dispatcher: Any | None = None,
         notification_app: Any | None = None,
         run_executor: Callable[[Mapping[str, Any]], Any] | None = None,
+        filter_service: WatchlistFilterService | None = None,
+        content_alert_service: WatchlistContentAlertService | None = None,
     ):
         self.db_factory = db_factory
         self.notification_dispatcher = notification_dispatcher
         self.notification_app = notification_app
         self.run_executor = run_executor
+        self.filter_service = filter_service or WatchlistFilterService()
+        self.content_alert_service = content_alert_service or WatchlistContentAlertService()
 
     def _db(self) -> SubscriptionsDB:
         return self.db_factory()
@@ -80,6 +87,27 @@ class LocalWatchlistsService:
             raise KeyError(f"Subscription not found: {source_id}")
         return normalize_local_subscription_row(row)
 
+    async def list_items(
+        self,
+        *,
+        source_id: Any = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List watchlist items from the local subscriptions database."""
+        db = self._db()
+        subscription_id = int(source_id) if source_id is not None else None
+        status_filter = status if status else "new"
+        fetch_limit = int(limit) + int(offset)
+        rows = db.get_new_items(
+            subscription_id=subscription_id,
+            status=status_filter,
+            limit=fetch_limit,
+        )
+        normalized = [normalize_watchlist_item("local", row) for row in rows]
+        return normalized[int(offset) : int(offset) + int(limit)]
+
     async def create_source(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         db = self._db()
         local_type = self._local_type_for_source_type(payload.get("source_type"))
@@ -95,6 +123,7 @@ class LocalWatchlistsService:
             source=source,
             tags=list(payload.get("tags") or []),
             description=payload.get("description"),
+            is_active=bool(payload.get("active", True)),
             **self._subscription_config_fields(payload),
         )
         return normalize_local_subscription_row(db.get_subscription(source_id))
@@ -181,13 +210,21 @@ class LocalWatchlistsService:
         start_time = time.time()
         try:
             result = await self._execute_subscription(subscription, db)
-            items = list(result.get("items") or [])
+            raw_items = list(result.get("items") or [])
             stats = dict(result.get("stats") or {})
-            stats.setdefault("items_found", len(items))
-            stats.setdefault("items_ingested", len(items))
-            stats.setdefault("new_items_found", len(items))
+            stats.setdefault("items_found", len(raw_items))
             stats.setdefault("response_time_ms", int((time.time() - start_time) * 1000))
-            db.record_check_result(source_id, items=items or None, stats=stats)
+
+            filters = self._load_source_filters(db, source_id)
+            content_alert_rules = self._load_content_alert_rules(db, source_id)
+            kept_items = self._apply_filters_and_alerts(
+                raw_items, filters, content_alert_rules, int(run_id)
+            )
+            stats["items_ingested"] = len(kept_items)
+            stats["new_items_found"] = len(kept_items)
+
+            self._upsert_subscription_items(db, source_id, int(run_id), kept_items)
+            db.record_check_result(source_id, items=None, stats=stats)
             return await self.record_run_result(
                 run_id,
                 status=str(result.get("status") or "completed"),
@@ -1156,3 +1193,145 @@ class LocalWatchlistsService:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    def _load_source_filters(self, db: SubscriptionsDB, source_id: int) -> list[dict[str, Any]]:
+        """Load active include/exclude/flag filters for a source."""
+        cursor = db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, name, is_active, conditions, action, action_params, priority, is_include_required
+            FROM subscription_filters
+            WHERE (subscription_id = ? OR subscription_id IS NULL)
+            AND is_active = 1
+            AND action IN ('include', 'exclude', 'flag')
+            ORDER BY priority ASC, id ASC
+            """,
+            (source_id,),
+        )
+        filters: list[dict[str, Any]] = []
+        for row in cursor.fetchall():
+            filters.append({
+                "id": row["id"],
+                "name": row["name"],
+                "is_active": bool(row["is_active"]),
+                "conditions": self._parse_json_value(row["conditions"]),
+                "action": row["action"],
+                "action_params": self._parse_json_value(row["action_params"]),
+                "priority": int(row["priority"] or 0),
+                "is_include_required": bool(row["is_include_required"]),
+            })
+        return filters
+
+    def _load_content_alert_rules(self, db: SubscriptionsDB, source_id: int) -> list[dict[str, Any]]:
+        """Load active content-alert rules for a source."""
+        cursor = db.conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, name, is_active, conditions, action, action_params, priority
+            FROM subscription_filters
+            WHERE (subscription_id = ? OR subscription_id IS NULL)
+            AND is_active = 1
+            AND action = 'notify'
+            ORDER BY priority ASC, id ASC
+            """,
+            (source_id,),
+        )
+        rules: list[dict[str, Any]] = []
+        for row in cursor.fetchall():
+            rules.append({
+                "id": row["id"],
+                "name": row["name"],
+                "is_active": bool(row["is_active"]),
+                "conditions": self._parse_json_value(row["conditions"]),
+                "action": row["action"],
+                "action_params": self._parse_json_value(row["action_params"]),
+                "priority": int(row["priority"] or 0),
+                "severity": (self._parse_json_value(row["action_params"]) or {}).get("severity", "warning"),
+            })
+        return rules
+
+    def _apply_filters_and_alerts(
+        self,
+        items: list[dict[str, Any]],
+        filters: list[dict[str, Any]],
+        content_alert_rules: list[dict[str, Any]],
+        run_id: int,
+    ) -> list[dict[str, Any]]:
+        """Apply filters and content-alert rules to raw fetched items."""
+        evaluated = self.filter_service.evaluate(items, filters)
+        kept: list[dict[str, Any]] = []
+        for item, evaluation in zip(items, evaluated):
+            decision = evaluation.get("filter_decision")
+            if decision == "exclude":
+                continue
+            enriched = dict(item)
+            enriched["filter_decision"] = decision
+            enriched["matched_filter_id"] = evaluation.get("matched_filter_id")
+            enriched["run_id"] = run_id
+            alert_matches = self.content_alert_service.evaluate(enriched, content_alert_rules)
+            enriched["alert_matches"] = alert_matches if alert_matches else None
+            kept.append(enriched)
+        return kept
+
+    @staticmethod
+    def _upsert_subscription_items(
+        db: SubscriptionsDB,
+        source_id: int,
+        run_id: int,
+        items: list[dict[str, Any]],
+    ) -> None:
+        """Persist or update subscription items for a run."""
+        if not items:
+            return
+        now = LocalWatchlistsService._utc_now()
+        with db.transaction() as conn:
+            cursor = conn.cursor()
+            for item in items:
+                url = str(item.get("url") or "")
+                content_hash = str(item.get("content_hash") or "")
+                if not url or not content_hash:
+                    continue
+                title = item.get("title")
+                published_date = item.get("published_date")
+                author = item.get("author")
+                categories = item.get("categories")
+                enclosures = item.get("enclosures")
+                extracted_data = item.get("extracted_data")
+                alert_matches = item.get("alert_matches")
+                cursor.execute(
+                    """
+                    INSERT INTO subscription_items (
+                        subscription_id, url, title, content_hash, published_date,
+                        author, categories, enclosures, extracted_data, status,
+                        run_id, alert_matches, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(subscription_id, url, content_hash) DO UPDATE SET
+                        title = excluded.title,
+                        published_date = excluded.published_date,
+                        author = excluded.author,
+                        categories = excluded.categories,
+                        enclosures = excluded.enclosures,
+                        extracted_data = excluded.extracted_data,
+                        status = excluded.status,
+                        run_id = excluded.run_id,
+                        alert_matches = excluded.alert_matches,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        source_id,
+                        url,
+                        title,
+                        content_hash,
+                        published_date,
+                        author,
+                        json.dumps(categories) if categories is not None else None,
+                        json.dumps(enclosures) if enclosures is not None else None,
+                        json.dumps(extracted_data) if extracted_data is not None else None,
+                        "new",
+                        run_id,
+                        json.dumps(alert_matches) if alert_matches is not None else None,
+                        now,
+                        now,
+                    ),
+                )

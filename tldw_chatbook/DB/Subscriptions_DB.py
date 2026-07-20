@@ -22,6 +22,7 @@
 #########################################
 
 import json
+import sqlite3
 import threading
 import time
 from contextlib import closing, contextmanager
@@ -264,31 +265,102 @@ class SubscriptionsDB(BaseDB):
             CREATE INDEX IF NOT EXISTS idx_subscription_stats_date ON subscription_stats(date);
             
             -- Create triggers for updated_at
-            CREATE TRIGGER IF NOT EXISTS update_subscriptions_timestamp 
+            CREATE TRIGGER IF NOT EXISTS update_subscriptions_timestamp
             AFTER UPDATE ON subscriptions
             BEGIN
                 UPDATE subscriptions SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
             END;
-            
-            CREATE TRIGGER IF NOT EXISTS update_subscription_items_timestamp 
+
+            CREATE TRIGGER IF NOT EXISTS update_subscription_items_timestamp
             AFTER UPDATE ON subscription_items
             BEGIN
                 UPDATE subscription_items SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
             END;
-            
-            CREATE TRIGGER IF NOT EXISTS update_subscription_filters_timestamp 
+
+            CREATE TRIGGER IF NOT EXISTS update_subscription_filters_timestamp
             AFTER UPDATE ON subscription_filters
             BEGIN
                 UPDATE subscription_filters SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
             END;
-            
-            CREATE TRIGGER IF NOT EXISTS update_subscription_templates_timestamp 
+
+            CREATE TRIGGER IF NOT EXISTS update_subscription_templates_timestamp
             AFTER UPDATE ON subscription_templates
             BEGIN
                 UPDATE subscription_templates SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
             END;
             """)
             conn.commit()
+            self._ensure_watchlists_schema(conn)
+
+    def _ensure_watchlists_schema(self, conn=None):
+        """Idempotent migration for watchlists screen schema additions."""
+        if conn is None:
+            with closing(self._get_connection()) as conn:
+                self._ensure_watchlists_schema(conn)
+                return
+
+        cursor = conn.cursor()
+
+        # Add columns to subscription_items
+        items_cols = {row[1] for row in cursor.execute("PRAGMA table_info(subscription_items)")}
+        if "queued_for_briefing" not in items_cols:
+            cursor.execute("ALTER TABLE subscription_items ADD COLUMN queued_for_briefing BOOLEAN DEFAULT 0")
+        if "run_id" not in items_cols:
+            cursor.execute("ALTER TABLE subscription_items ADD COLUMN run_id INTEGER")
+        if "alert_matches" not in items_cols:
+            cursor.execute("ALTER TABLE subscription_items ADD COLUMN alert_matches TEXT")
+
+        # Add columns to subscription_filters
+        filters_cols = {row[1] for row in cursor.execute("PRAGMA table_info(subscription_filters)")}
+        if "priority" not in filters_cols:
+            cursor.execute("ALTER TABLE subscription_filters ADD COLUMN priority INTEGER DEFAULT 0")
+        if "is_include_required" not in filters_cols:
+            cursor.execute("ALTER TABLE subscription_filters ADD COLUMN is_include_required BOOLEAN DEFAULT 0")
+
+        # Widen CHECK constraint on subscription_filters.action.
+        # Must check for the literal action value 'include' rather than the
+        # bare substring, because the new column `is_include_required` would
+        # otherwise make the substring match and skip the migration.
+        existing_check = None
+        for row in cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"):
+            existing_check = row[0]
+        if existing_check and "'include'" not in existing_check:
+            cursor.execute("""
+                CREATE TABLE subscription_filters_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subscription_id INTEGER,
+                    name TEXT NOT NULL,
+                    is_active BOOLEAN DEFAULT 1,
+                    conditions TEXT NOT NULL,
+                    action TEXT NOT NULL CHECK(action IN ('auto_ingest','auto_ignore','tag','priority','notify','include','exclude','flag')),
+                    action_params TEXT,
+                    priority INTEGER DEFAULT 0,
+                    is_include_required BOOLEAN DEFAULT 0,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+                )
+            """)
+            cursor.execute("""
+                INSERT INTO subscription_filters_new
+                    (id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at)
+                SELECT id, subscription_id, name, is_active, conditions, action, action_params, priority, is_include_required, created_at, updated_at
+                FROM subscription_filters
+            """)
+            cursor.execute("DROP TABLE subscription_filters")
+            cursor.execute("ALTER TABLE subscription_filters_new RENAME TO subscription_filters")
+            cursor.execute("""
+                CREATE TRIGGER IF NOT EXISTS update_subscription_filters_timestamp
+                AFTER UPDATE ON subscription_filters
+                BEGIN
+                    UPDATE subscription_filters SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+                END
+            """)
+
+        # Indexes
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_queued ON subscription_items(queued_for_briefing, status)")
+        conn.commit()
 
     @property
     def conn(self):
@@ -369,6 +441,7 @@ class SubscriptionsDB(BaseDB):
                 "custom_headers",
                 "rate_limit_config",
                 "auto_pause_threshold",
+                "is_active",
             ]
 
             for field in allowed_fields:
