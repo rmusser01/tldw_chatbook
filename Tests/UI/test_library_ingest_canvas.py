@@ -189,7 +189,7 @@ async def test_existing_controls_are_still_present():
 
 @pytest.mark.asyncio
 async def test_no_preflight_renders_no_summary_widgets():
-    """Without a pre-flight result, no summary widgets or type panels are mounted."""
+    """Without a pre-flight result, only the generic panel is mounted."""
     state = build_library_ingest_state((), form=_default_form())
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
@@ -202,11 +202,10 @@ async def test_no_preflight_renders_no_summary_widgets():
             "#ingest-estimate",
             "#ingest-unsupported-summary",
             "#type-group-pdf",
-            "#type-group-generic",
-            "#ingest-expand-all",
-            "#ingest-collapse-all",
         ):
             assert len(pilot.app.query(widget_id)) == 0
+        # Generic panel is always rendered so global options stay accessible.
+        assert len(pilot.app.query("#type-group-generic")) == 1
 
 
 @pytest.mark.asyncio
@@ -400,10 +399,37 @@ async def test_non_dependent_controls_stay_enabled():
     )
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
-        chunk_input = pilot.app.query_one("#opt-generic-chunk_size", Input)
+        analyze_checkbox = pilot.app.query_one("#opt-generic-analyze", Checkbox)
+        chunk_checkbox = pilot.app.query_one("#opt-generic-chunk", Checkbox)
         encoding_input = pilot.app.query_one("#opt-generic-encoding", Input)
-        assert chunk_input.disabled is False
+        assert analyze_checkbox.disabled is False
+        assert chunk_checkbox.disabled is False
         assert encoding_input.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_chunk_size_disabled_when_chunk_unchecked():
+    """Chunk size and overlap inputs are disabled until Chunk is checked."""
+    form = _default_form()
+    form.chunk = False
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"generic": ["/tmp/a.txt"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        chunk_size_input = pilot.app.query_one("#opt-generic-chunk_size", Input)
+        chunk_overlap_input = pilot.app.query_one("#opt-generic-chunk_overlap", Input)
+        assert chunk_size_input.disabled is True
+        assert chunk_overlap_input.disabled is True
 
 
 @pytest.mark.asyncio

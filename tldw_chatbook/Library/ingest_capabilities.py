@@ -162,6 +162,19 @@ def _is_installed(feature_id: str) -> bool:
     if feature_id in DEPENDENCIES_AVAILABLE:
         return bool(DEPENDENCIES_AVAILABLE[feature_id])
 
+    # Check OPTIONAL_FEATURES: a feature is installed only when every package
+    # it depends on is importable.
+    info = OPTIONAL_FEATURES.get(feature_id)
+    if info is not None:
+        for package in info.package_dependencies:
+            import_name = _PYPI_TO_IMPORT.get(package, package.replace("-", "_"))
+            try:
+                if importlib.util.find_spec(import_name) is None:
+                    return False
+            except Exception:
+                return False
+        return True
+
     import_name = _PYPI_TO_IMPORT.get(feature_id)
     if import_name is None:
         return False
@@ -295,11 +308,32 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
         optional_features=(),
         fields=(
             OptionField(
+                name="analyze",
+                label="Analyze after ingest",
+                type="checkbox",
+                default=True,
+                depends_on=None,
+            ),
+            OptionField(
+                name="chunk",
+                label="Chunk content",
+                type="checkbox",
+                default=False,
+                depends_on=None,
+            ),
+            OptionField(
                 name="chunk_size",
                 label="Chunk size",
                 type="number",
                 default=1000,
-                depends_on=None,
+                depends_on="chunk",
+            ),
+            OptionField(
+                name="chunk_overlap",
+                label="Chunk overlap",
+                type="number",
+                default=100,
+                depends_on="chunk",
             ),
             OptionField(
                 name="encoding",
@@ -330,13 +364,14 @@ def get_type_group(path_or_url: str) -> str:
         path_or_url: Local path or URL-like string ending in a filename.
 
     Returns:
-        One of ``pdf``, ``audio_video``, ``ebook``, or ``generic``. Unsupported
-        file types are mapped to ``generic`` rather than raising.
+        One of ``pdf``, ``audio_video``, ``ebook``, ``generic``, or
+        ``unsupported``. Unsupported file types are mapped to ``unsupported``
+        so the pre-flight summary can surface them separately.
     """
     try:
         file_type = detect_file_type(path_or_url)
     except FileIngestionError:
-        return "generic"
+        return "unsupported"
 
     if file_type == "pdf":
         return "pdf"

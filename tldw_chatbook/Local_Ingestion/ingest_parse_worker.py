@@ -146,9 +146,22 @@ def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
         payload = parse_local_file_for_ingest(file_path, options)
     except Exception as exc:  # noqa: BLE001 - must never raise across the process boundary
         message = str(exc).strip() or exc.__class__.__name__
+        permanent = classify_parse_failure(exc)
+        category = (
+            "unsupported_file_type"
+            if str(exc).strip().startswith("Unsupported file type")
+            else "missing_source"
+            if isinstance(exc, FileNotFoundError)
+            else "parse_error"
+        )
         return {
             "ok": False,
             "error": message,
-            "permanent": classify_parse_failure(exc),
+            "permanent": permanent,
+            "error_detail": {
+                "category": category,
+                "message": message,
+                "exception_type": exc.__class__.__name__,
+            },
         }
     return {"ok": True, "payload": payload}

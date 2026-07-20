@@ -116,7 +116,7 @@ class LibraryIngestCanvas(VerticalScroll):
             Button(
                 "Reset to defaults",
                 id=f"opt-{group}-reset",
-                classes="library-canvas-action",
+                classes="library-canvas-action library-ingest-option-reset",
                 compact=True,
             )
         )

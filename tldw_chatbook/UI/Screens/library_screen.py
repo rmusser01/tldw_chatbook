@@ -743,6 +743,10 @@ def _affected_counts(preflight: PreflightResult) -> dict[str, int]:
     """Map each tooling feature to the number of files that depend on it."""
     counts: dict[str, int] = {}
     for group, files in preflight.type_groups.items():
+        if group == "unsupported":
+            # Unsupported files have no capability schema; they are surfaced
+            # separately in the pre-flight summary, not via tooling warnings.
+            continue
         cap = get_capabilities(group)
         for feat in cap.required_features + cap.optional_features:
             counts[feat] = counts.get(feat, 0) + len(files)
@@ -4974,9 +4978,17 @@ class LibraryScreen(BaseAppScreen):
             getattr(self.app_instance, "runtime_policy", None), "state", None
         )
         runtime_source = str(getattr(runtime_state, "active_source", "local") or "local")
+        # Sync generic top-level form fields into the generic options group so
+        # the canvas renders current values for analyze/chunk/chunk_size.
+        form = self._library_ingest_form
+        generic_options = dict(form.type_options.get("generic", {}))
+        generic_options["analyze"] = form.analyze
+        generic_options["chunk"] = form.chunk
+        generic_options["chunk_size"] = form.chunk_size
+        form.type_options["generic"] = generic_options
         return build_library_ingest_state(
             jobs,
-            form=self._library_ingest_form,
+            form=form,
             runtime_source=runtime_source,
             media_db_available=getattr(self.app_instance, "media_db", None) is not None,
             registry_available=registry is not None,
@@ -10183,6 +10195,16 @@ class LibraryScreen(BaseAppScreen):
             event.group, {}
         )
         group_options[event.name] = event.value
+        # Generic group toggles mirror the legacy top-level form fields so
+        # existing submit/config-persistence paths keep working.
+        if event.group == "generic":
+            form = self._library_ingest_form
+            if event.name == "analyze":
+                form.analyze = bool(event.value)
+            elif event.name == "chunk":
+                form.chunk = bool(event.value)
+            elif event.name == "chunk_size":
+                form.chunk_size = str(event.value)
         cap = get_capabilities(event.group)
         field = next((f for f in cap.fields if f.name == event.name), None)
         if field is not None and field.type not in ("text", "number"):
@@ -10494,20 +10516,24 @@ class LibraryScreen(BaseAppScreen):
             media_db = getattr(self.app_instance, "media_db", None)
             if media_db is not None:
                 # Fallback 1: match by source URL/path.
-                rows = media_db.execute_query(
-                    "SELECT id FROM Media WHERE url = ? ORDER BY created_at DESC LIMIT 1",
-                    (job.source_path,),
-                )
-                if rows:
-                    media_id = rows[0]["id"]
-                # Fallback 2: match by content hash if the job recorded one.
-                elif job.content_hash:
-                    rows = media_db.execute_query(
-                        "SELECT id FROM Media WHERE content_hash = ? ORDER BY created_at DESC LIMIT 1",
-                        (job.content_hash,),
+                try:
+                    media = media_db.get_media_by_url(job.source_path)
+                    if media:
+                        media_id = media.get("id")
+                except Exception:
+                    logger.opt(exception=True).debug(
+                        f"ingest open-in-library URL lookup failed: {job.source_path}"
                     )
-                    if rows:
-                        media_id = rows[0]["id"]
+                # Fallback 2: match by content hash if the job recorded one.
+                if media_id is None and job.content_hash:
+                    try:
+                        media = media_db.get_media_by_hash(job.content_hash)
+                        if media:
+                            media_id = media.get("id")
+                    except Exception:
+                        logger.opt(exception=True).debug(
+                            f"ingest open-in-library hash lookup failed: {job.content_hash}"
+                        )
         if media_id:
             self._navigate_to_media(media_id)
         else:
@@ -10617,6 +10643,36 @@ class LibraryScreen(BaseAppScreen):
         clear_finished = getattr(registry, "clear_finished", None)
         if callable(clear_finished):
             clear_finished()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#ingest-expand-all")
+    def handle_library_ingest_expand_all(self, event: Button.Pressed) -> None:
+        """Expand every per-type options panel."""
+        event.stop()
+        form = self._library_ingest_form
+        state = self._build_library_ingest_state()
+        form.expanded_type_groups.update(state.type_groups)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#ingest-collapse-all")
+    def handle_library_ingest_collapse_all(self, event: Button.Pressed) -> None:
+        """Collapse every per-type options panel."""
+        event.stop()
+        form = self._library_ingest_form
+        form.expanded_type_groups.clear()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-ingest-option-reset")
+    def handle_library_ingest_option_reset(self, event: Button.Pressed) -> None:
+        """Reset a per-type options panel to its defaults."""
+        event.stop()
+        button_id = event.button.id or ""
+        if not button_id.startswith("opt-") or not button_id.endswith("-reset"):
+            return
+        # opt-{group}-reset -> {group}
+        group = button_id[4:-6]
+        form = self._library_ingest_form
+        form.type_options[group] = {}
         self.refresh(recompose=True)
 
     # ----- Export canvas: section entry points --------------------------

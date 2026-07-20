@@ -688,7 +688,7 @@ def test_canvas_state_preflight_fields_populated_from_parameter():
     assert state.estimate_line == "2 files · 2.0 KB"
     assert state.warning_lines == ["PDF: missing"]
     assert state.errors == ["Path not found"]
-    assert state.type_groups == ["pdf"]
+    assert state.type_groups == ["pdf", "generic"]
     assert state.unsupported_files == []
     assert state.preflight_checking is False
 
@@ -754,7 +754,7 @@ def test_canvas_state_separates_unsupported_files():
         total_files=3,
     )
     state = build_library_ingest_state((), form=LibraryIngestFormState(), preflight=preflight)
-    assert state.type_groups == ["pdf"]
+    assert state.type_groups == ["pdf", "generic"]
     assert state.type_breakdown_line == "1 PDF document"
     assert state.unsupported_files == ["/tmp/b.xyz", "/tmp/c.abc"]
 
@@ -765,7 +765,7 @@ def test_canvas_state_preflight_none_gives_empty_summary():
     assert state.estimate_line == ""
     assert state.warning_lines == []
     assert state.errors == []
-    assert state.type_groups == []
+    assert state.type_groups == ["generic"]
     assert state.unsupported_files == []
 
 

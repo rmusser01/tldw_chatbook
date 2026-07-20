@@ -90,7 +90,7 @@ def test_get_capabilities_generic() -> None:
     assert caps.group == "generic"
     assert caps.required_features == ()
     assert caps.optional_features == ()
-    assert caps.field_names == ("chunk_size", "encoding")
+    assert caps.field_names == ("analyze", "chunk", "chunk_size", "chunk_overlap", "encoding")
 
 
 def test_get_tooling_warnings_returns_missing_features() -> None:
@@ -158,9 +158,9 @@ def test_get_tooling_warnings_includes_video_processing_for_audio_video() -> Non
     assert "audio_processing" in features
 
 
-def test_get_type_group_fallback_to_generic_for_unsupported_extension() -> None:
-    assert get_type_group("/tmp/unknown.xyz") == "generic"
-    assert get_type_group("/tmp/archive.tar.gz") == "generic"
+def test_get_type_group_unsupported_extension() -> None:
+    assert get_type_group("/tmp/unknown.xyz") == "unsupported"
+    assert get_type_group("/tmp/archive.tar.gz") == "unsupported"
 
 
 def test_diarization_field_depends_on_diarization_feature() -> None:

@@ -641,6 +641,11 @@ def build_library_ingest_state(
         warning_lines = []
         type_groups_list = []
 
+    # Always expose the generic panel so global options (analyze, chunk) are
+    # reachable even when no plain-text files are in the selection.
+    if "generic" not in type_groups_list:
+        type_groups_list.append("generic")
+
     recent_jobs = [
         job
         for job in jobs

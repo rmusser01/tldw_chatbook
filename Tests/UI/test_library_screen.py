@@ -246,17 +246,14 @@ def test_open_job_in_library_falls_back_to_source_url() -> None:
     """A deduplicated job with a matching source URL resolves to that media row."""
     screen = _minimal_ingest_screen()
     screen.app_instance = MagicMock()
-    screen.app_instance.media_db.execute_query.return_value = [{"id": 7}]
+    screen.app_instance.media_db.get_media_by_url.return_value = {"id": 7}
     screen._navigate_to_media = MagicMock()
     screen.notify = MagicMock()
 
     job = _minimal_ingest_job(media_id=None, source_path="/tmp/foo.txt")
     screen._open_job_in_library(job)
 
-    screen.app_instance.media_db.execute_query.assert_called_once_with(
-        "SELECT id FROM Media WHERE url = ? ORDER BY created_at DESC LIMIT 1",
-        ("/tmp/foo.txt",),
-    )
+    screen.app_instance.media_db.get_media_by_url.assert_called_once_with("/tmp/foo.txt")
     screen._navigate_to_media.assert_called_once_with(7)
     screen.notify.assert_not_called()
 
@@ -265,14 +262,16 @@ def test_open_job_in_library_falls_back_to_content_hash() -> None:
     """When the URL lookup misses, a recorded content hash is used."""
     screen = _minimal_ingest_screen()
     screen.app_instance = MagicMock()
-    screen.app_instance.media_db.execute_query.side_effect = [[], [{"id": 9}]]
+    screen.app_instance.media_db.get_media_by_url.return_value = None
+    screen.app_instance.media_db.get_media_by_hash.return_value = {"id": 9}
     screen._navigate_to_media = MagicMock()
     screen.notify = MagicMock()
 
     job = _minimal_ingest_job(media_id=None, content_hash="abc123")
     screen._open_job_in_library(job)
 
-    assert screen.app_instance.media_db.execute_query.call_count == 2
+    screen.app_instance.media_db.get_media_by_url.assert_called_once()
+    screen.app_instance.media_db.get_media_by_hash.assert_called_once_with("abc123")
     screen._navigate_to_media.assert_called_once_with(9)
     screen.notify.assert_not_called()
 
@@ -281,7 +280,8 @@ def test_open_job_in_library_notifies_when_no_match() -> None:
     """A deduplicated job with no resolvable match shows a transient status."""
     screen = _minimal_ingest_screen()
     screen.app_instance = MagicMock()
-    screen.app_instance.media_db.execute_query.return_value = []
+    screen.app_instance.media_db.get_media_by_url.return_value = None
+    screen.app_instance.media_db.get_media_by_hash.return_value = None
     screen._navigate_to_media = MagicMock()
     screen.notify = MagicMock()
 

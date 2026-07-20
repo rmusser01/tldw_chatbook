@@ -8,6 +8,7 @@ estimated size, tooling warnings, and any errors that would prevent ingestion.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 

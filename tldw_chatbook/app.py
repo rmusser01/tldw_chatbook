@@ -1707,7 +1707,8 @@ class LibraryIngestQueueMixin:
             options["diarization"] = flat_opts.get("diarization", False)
         elif group == "ebook":
             options["extraction_method"] = (
-                flat_opts.get("method")
+                flat_opts.get("extraction_method")
+                or flat_opts.get("method")
                 or flat_opts.get("html_converter")
             )
             options["split_chapters"] = flat_opts.get("split_chapters", True)
@@ -1941,6 +1942,7 @@ class LibraryIngestQueueMixin:
                 job_id,
                 error=error_text or "Library ingest parsing failed.",
                 permanent=bool(result.get("permanent", False)),
+                error_detail=result.get("error_detail"),
             )
         self._top_up_ingest_parse_pool()
 
@@ -2251,10 +2253,14 @@ class LibraryIngestQueueMixin:
                         existing = self.media_db.get_media_by_url(payload["url"])
                         if existing is not None:
                             media_id = existing.get("id")
+                    content_hash = payload.get("content_hash")
+                    progress = {"message": f"Ingested {job.source_path}"}
                     self.call_from_thread(
                         self.library_ingest_jobs.mark_done,
                         job.job_id,
                         media_id=media_id,
+                        progress=progress,
+                        content_hash=content_hash,
                     )
                 except Exception as exc:
                     # loguru's traceback capture is `.opt(exception=True)`,
@@ -2271,6 +2277,11 @@ class LibraryIngestQueueMixin:
                         job.job_id,
                         error=_sanitize_library_ingest_error(exc),
                         permanent=classify_parse_failure(exc),
+                        error_detail={
+                            "category": "write_error",
+                            "message": str(exc),
+                            "exception_type": exc.__class__.__name__,
+                        },
                     )
         finally:
             if not clean_exit:

@@ -166,6 +166,22 @@ class TestIngestJobOptions:
         assert options["include_toc"] is False
         assert options["split_chapters"] is True
 
+    def test_ebook_group_options_canonical_extraction_method(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.epub",
+            ingest_options={
+                "ebook": {
+                    "extraction_method": "markdown",
+                    "include_toc": True,
+                },
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["extraction_method"] == "markdown"
+        assert options["include_toc"] is True
+
     def test_type_specific_overrides_generic(self) -> None:
         app = _minimal_app()
         job = _make_job(
