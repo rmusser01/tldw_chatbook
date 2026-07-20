@@ -1344,3 +1344,66 @@ async def test_export_then_import_round_trip_preserves_entries(
         and e["secondary_keys"] == ["oath"]
         and e["case_sensitive"] is True
     )
+
+
+# ===================================================================
+# Task 4: Attachments tab wired to WorldBookManager (real DB)
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_attach_via_picker_then_detach_real_db(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book, monkeypatch
+):
+    from tldw_chatbook.Widgets.Persona_Widgets.conversation_attach_picker import (
+        ConversationAttachPicker,
+    )
+
+    lore_db.add_conversation({"id": "conv-x", "title": "Noir case"})
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        screen.query_one("#personas-lore-tabs", TabbedContent).active = (
+            "personas-lore-tab-attachments"
+        )
+        await pilot.pause()
+
+        async def _fake_push(screen_obj):
+            return "conv-x" if isinstance(screen_obj, ConversationAttachPicker) else None
+
+        monkeypatch.setattr(screen.app, "push_screen_wait", _fake_push, raising=False)
+        monkeypatch.setattr(
+            screen,
+            "_list_attachable_conversations",
+            lambda: [{"conversation_id": "conv-x", "title": "Noir case"}],
+        )
+        screen.post_message(LoreAttachRequested())
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        manager = WorldBookManager(lore_db)
+        attached = manager.get_conversations_for_world_book(seeded_lore_book["book_id"])
+        assert [r["conversation_id"] for r in attached] == ["conv-x"]
+        table = screen.query_one("#personas-lore-attachments-table", DataTable)
+        assert table.row_count == 1
+        # detach
+        screen.post_message(LoreDetachRequested("conv-x"))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert manager.get_conversations_for_world_book(seeded_lore_book["book_id"]) == []
+
+
+@pytest.mark.asyncio
+async def test_attached_book_reaches_send_path_query(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book
+):
+    # Proves the (already-live) send path would inject an attached book:
+    # get_world_books_for_conversation returns it after attach.
+    lore_db.add_conversation({"id": "conv-y", "title": "Case Y"})
+    manager = WorldBookManager(lore_db)
+    manager.associate_world_book_with_conversation("conv-y", seeded_lore_book["book_id"])
+    books = manager.get_world_books_for_conversation("conv-y", enabled_only=False)
+    assert any(b["id"] == seeded_lore_book["book_id"] for b in books)

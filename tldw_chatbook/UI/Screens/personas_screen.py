@@ -95,10 +95,15 @@ from ...Widgets.Persona_Widgets.personas_dictionary_tryit import (
     DictionaryTryItRunRequested,
     PersonasDictionaryTryItWidget,
 )
+from ...Widgets.Persona_Widgets.conversation_attach_picker import (
+    ConversationAttachPicker,
+)
 from ...Widgets.Persona_Widgets.personas_lore_detail import (
+    LoreAttachRequested,
     LoreBookEnableToggled,
     LoreBookExportRequested,
     LoreBookSettingsSaveRequested,
+    LoreDetachRequested,
     LoreEntriesReorderRequested,
     LoreEntryAddRequested,
     LoreEntryDeleteRequested,
@@ -1465,6 +1470,28 @@ class PersonasScreen(BaseAppScreen):
         self._sync_inspector_console_actions()
         self._update_title()
         self._update_status_row()
+        await self._refresh_lore_attachments()
+
+    async def _refresh_lore_attachments(self) -> None:
+        """Reload the Attachments tab for the selected lore book."""
+        entity_id = self.state.selected_entity_id
+        if self.state.selected_entity_kind != "lore" or not entity_id:
+            return
+        manager = self._lore_manager()
+        if manager is None:
+            return
+        try:
+            rows = await asyncio.to_thread(
+                manager.get_conversations_for_world_book, int(entity_id)
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not load lore attachments.")
+            self._notify(f"Could not load attachments: {exc}", "error")
+            return
+        try:
+            self.query_one(PersonasLoreDetailWidget).load_attachments(rows)
+        except QueryError:
+            pass
 
     async def _refresh_dictionary_statistics(self, record: dict) -> None:
         """Re-feed the Stats tab for the given loaded record (best-effort).
@@ -2572,6 +2599,76 @@ class PersonasScreen(BaseAppScreen):
             self._selected_lore_book["enabled"] = bool(message.enabled)
         await self._render_lore_rows(query=self.state.search_query)
         self.query_one(PersonasLibraryPane).mark_active_row("lore", entity_id)
+
+    @on(LoreAttachRequested)
+    async def _handle_lore_attach(self, message: LoreAttachRequested) -> None:
+        message.stop()
+        if (
+            self.state.selected_entity_kind != "lore"
+            or not self.state.selected_entity_id
+        ):
+            return
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._lore_attach_worker(), group="personas-io")
+
+    async def _lore_attach_worker(self) -> None:
+        try:
+            entity_id = self.state.selected_entity_id
+            manager = self._lore_manager()
+            if manager is None or not entity_id:
+                return
+            convs = await asyncio.to_thread(self._list_attachable_conversations)
+            try:
+                picked = await self.app.push_screen_wait(
+                    ConversationAttachPicker(convs)
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the attach picker."
+                )
+                return
+            if not picked:
+                return
+            try:
+                await asyncio.to_thread(
+                    manager.associate_world_book_with_conversation,
+                    str(picked),
+                    int(entity_id),
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    "Could not attach the world book."
+                )
+                self._notify(f"Attach failed: {exc}", "error")
+                return
+            await self._refresh_lore_attachments()
+            self._notify("Attached to conversation.", "information")
+        finally:
+            self._io_dialog_active = False
+
+    @on(LoreDetachRequested)
+    async def _handle_lore_detach(self, message: LoreDetachRequested) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        if self.state.selected_entity_kind != "lore" or not entity_id:
+            return
+        manager = self._lore_manager()
+        if manager is None:
+            return
+        try:
+            await asyncio.to_thread(
+                manager.disassociate_world_book_from_conversation,
+                str(message.conversation_id),
+                int(entity_id),
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not detach the world book.")
+            self._notify(f"Detach failed: {exc}", "error")
+            return
+        await self._refresh_lore_attachments()
+        self._notify("Detached from conversation.", "information")
 
     @on(LoreTryItRunRequested)
     async def _handle_lore_tryit_run(self, message: LoreTryItRunRequested) -> None:
