@@ -1186,6 +1186,16 @@ class ConsoleChatController:
         """Return a read-only snapshot of the current transcript and the assembled next-send payload.
 
         Skills with side effects are NOT executed; only chat dictionaries are applied.
+
+        Args:
+            draft: The current composer draft text to include as a synthetic user turn.
+            attachments: Pending attachments to include with the synthetic user turn.
+            staged_sources: Staged workspace sources to include in the payload.
+
+        Returns:
+            A ``ConsoleContextSnapshot`` containing a deep-copied transcript and the
+            redacted next-send provider payload. If assembly fails, the payload may
+            contain an ``"error"`` key with a human-readable message.
         """
         session_id = self.store.active_session_id
         if not session_id:
@@ -1258,7 +1268,15 @@ class ConsoleChatController:
                 },
             )
         except Exception as exc:
-            logger.exception("Failed to build context snapshot")
+            logger.exception(
+                "Failed to build context snapshot: session_id={session_id} "
+                "draft_length={draft_length} attachments={attachments_count} "
+                "staged_sources={staged_sources_count}",
+                session_id=session_id,
+                draft_length=len(draft),
+                attachments_count=len(tuple(attachments or ())),
+                staged_sources_count=len(tuple(staged_sources or ())),
+            )
             # Preserve whatever was assembled before the failure so the viewer
             # still sees the transcript-derived payload and effective system
             # prompt rather than an empty placeholder.
@@ -2131,22 +2149,19 @@ class ConsoleChatController:
         # prior status for a regenerate, "stopped" for a plain send) and
         # the variant base (already popped), so this is a benign no-op
         # read-back, never an error, in either case.
-        if current.status == "stopped" or (
-            cancel_event is not None and cancel_event.is_set()
-        ):
+        stopped_now = (
+            (current is not None and current.status == "stopped")
+            or (cancel_event is not None and cancel_event.is_set())
+        )
+        if stopped_now:
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
             )
             return ConsoleSubmitResult(True, True, current.content if current is not None else "")
 
         if outcome.status == RUN_CANCELLED:
-            try:
-                stopped = self._mark_stream_stopped(
-                    assistant_message_id, visible_copy="Response stopped."
-                )
-            except KeyError:
-                return self._session_closed_result()
-            return ConsoleSubmitResult(True, True, stopped.content)
+            return self._finalize_agent_cancelled(
+                assistant_message_id, session_id, variant_mode=variant_mode)
 
         if outcome.status != RUN_DONE:
             return self._finalize_agent_failure(
@@ -2234,16 +2249,42 @@ class ConsoleChatController:
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
             return ConsoleSubmitResult(True, True, failed.content)
 
-        try:
-            if variant_mode:
-                completed = self.store.finalize_variant_stream(assistant_message_id)
-            else:
-                completed = self.store.mark_message_complete(assistant_message_id)
-        except KeyError:
-            return self._session_closed_result()
-        self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete.")
-        )
+        runtime_written = self._find_runtime_written_assistant(session_id)
+        if runtime_written is not None and runtime_written.status in {"pending", "streaming"}:
+            self.store.append_stream_chunk(runtime_written.id, f"\n\n{visible_copy}")
+            failed = self.store.mark_message_failed(runtime_written.id)
+        else:
+            failed = self._append_failed_assistant(session_id, visible_copy)
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+        return ConsoleSubmitResult(True, True, failed.content)
+
+    def _finalize_agent_success(
+        self, assistant_message_id: str, session_id: str, outcome: Any,
+        *, variant_mode: bool,
+    ) -> ConsoleSubmitResult:
+        """Handle ``RUN_DONE``: complete the placeholder (or a runtime-written one).
+
+        An empty ``final_text`` is replaced with the fallback copy ``No
+        response was generated.``. If the placeholder is missing, the runtime
+        may have streamed content into an assistant row already; complete it
+        when possible, otherwise append a new assistant message.
+        """
+        placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
+        if placeholder is not None:
+            completed = self._complete_agent_message(assistant_message_id, variant_mode, outcome)
+            self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
+            return ConsoleSubmitResult(True, True, completed.content)
+
+        runtime_written = self._find_runtime_written_assistant(session_id)
+        if runtime_written is not None and runtime_written.status in {"pending", "streaming"}:
+            completed = self._complete_agent_message(runtime_written.id, variant_mode=False, outcome=outcome)
+            self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
+            return ConsoleSubmitResult(True, True, completed.content)
+
+        final_text = getattr(outcome, "final_text", "") or "No response was generated."
+        completed = self.store.append_message(
+            session_id, role=ConsoleMessageRole.ASSISTANT, content=final_text)
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
         return ConsoleSubmitResult(True, True, completed.content)
 
     def _append_failed_assistant(

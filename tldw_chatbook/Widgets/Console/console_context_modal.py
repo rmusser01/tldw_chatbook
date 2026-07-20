@@ -9,13 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
-from textual.widget import Widget
-
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.screen import ModalScreen
+from textual.widget import Widget
 from textual.widgets import (
     Button,
     Checkbox,

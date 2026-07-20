@@ -559,6 +559,19 @@ class _CollisionFilteredMCPProvider:
         return self._provider.invoke(tool_id, args)
 
 
+def _truncate_log_value(value: Any, *, max_len: int = 200) -> str:
+    """Return a safe, bounded string representation for logging.
+
+    Tool arguments and results may contain secrets or very large payloads;
+    this helper truncates the string form so log lines stay readable and do
+    not dump sensitive data into logs.
+    """
+    text = str(value)
+    if len(text) > max_len:
+        return f"{text[: max_len - 3]}..."
+    return text
+
+
 def _non_colliding_mcp_names(
     mcp_provider: Any,
     collision_names: frozenset[str] | set[str],
@@ -874,17 +887,19 @@ class ConsoleAgentBridge:
             # tool invocation lives inside AgentService, so we observe it
             # through the step stream it emits.
             if step.kind == STEP_TOOL_RESULT:
-                logger.info(
-                    "agent tool call",
+                logger.debug(
+                    "agent tool call: agent_kind={agent_kind} tool={tool_name} "
+                    "args={args} result={result} step={step_index}",
                     agent_kind=agent_kind,
                     tool_name=step.tool_name,
-                    args=step.args,
-                    result=step.result,
+                    args=_truncate_log_value(step.args),
+                    result=_truncate_log_value(step.result),
                     step_index=step.index,
                 )
             elif step.kind == STEP_ERROR:
                 logger.warning(
-                    "agent step error",
+                    "agent step error: agent_kind={agent_kind} tool={tool_name} "
+                    "summary={summary} step={step_index}",
                     agent_kind=agent_kind,
                     tool_name=step.tool_name,
                     summary=step.summary,
