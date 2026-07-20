@@ -42,6 +42,38 @@ class DeleteRequested(Message):
         super().__init__()
 
 
+class MarkReviewedRequested(Message):
+    """Posted when the user marks a watchlist item as reviewed."""
+
+    def __init__(self, entity: dict[str, Any] | None) -> None:
+        self.entity = entity
+        super().__init__()
+
+
+class IngestRequested(Message):
+    """Posted when the user ingests a watchlist item."""
+
+    def __init__(self, entity: dict[str, Any] | None) -> None:
+        self.entity = entity
+        super().__init__()
+
+
+class IgnoreRequested(Message):
+    """Posted when the user ignores a watchlist item."""
+
+    def __init__(self, entity: dict[str, Any] | None) -> None:
+        self.entity = entity
+        super().__init__()
+
+
+class EditRuleRequested(Message):
+    """Posted when the user requests editing an alert rule."""
+
+    def __init__(self, entity: dict[str, Any] | None) -> None:
+        self.entity = entity
+        super().__init__()
+
+
 class InspectorPane(Vertical):
     """Context-aware inspector showing actions for the selected entity."""
 
@@ -52,7 +84,7 @@ class InspectorPane(Vertical):
         entity = self.selected_entity
         if entity is None:
             yield Static(
-                "Select a source or run to see actions.",
+                "Select a source, run, item, or rule to see actions.",
                 id="inspector-empty-state",
             )
             return
@@ -66,9 +98,19 @@ class InspectorPane(Vertical):
             if entity_type == "source":
                 yield Button("Preview", id="inspector-preview-button", variant="primary")
                 yield Button("Check now", id="inspector-check-now-button", variant="primary")
-            if entity_type in ("source", "run"):
                 yield Button("Stage in Console", id="inspector-stage-console-button")
-            if entity_type in ("source", "run", "rule"):
+                yield Button("Delete", id="inspector-delete-button", variant="error")
+            elif entity_type == "run":
+                yield Button("Stage in Console", id="inspector-stage-console-button")
+                yield Button("Delete", id="inspector-delete-button", variant="error")
+            elif entity_type == "item":
+                yield Button("Mark reviewed", id="inspector-mark-reviewed-button", variant="primary")
+                yield Button("Ingest", id="inspector-ingest-button", variant="primary")
+                yield Button("Ignore", id="inspector-ignore-button", variant="error")
+            elif entity_type == "rule":
+                yield Button("Edit", id="inspector-edit-rule-button", variant="primary")
+                yield Button("Delete", id="inspector-delete-button", variant="error")
+            else:
                 yield Button("Delete", id="inspector-delete-button", variant="error")
 
     @staticmethod
@@ -77,7 +119,9 @@ class InspectorPane(Vertical):
             return "source"
         if "status" in entity and ("found_count" in entity or "processed_count" in entity):
             return "run"
-        if "item_id" in entity:
+        if "condition_type" in entity:
+            return "rule"
+        if "item_id" in entity or "source_name" in entity:
             return "item"
         return "unknown"
 
@@ -92,4 +136,12 @@ class InspectorPane(Vertical):
             self.post_message(StageInConsoleRequested(entity))
         elif button_id == "inspector-delete-button":
             self.post_message(DeleteRequested(entity))
+        elif button_id == "inspector-mark-reviewed-button":
+            self.post_message(MarkReviewedRequested(entity))
+        elif button_id == "inspector-ingest-button":
+            self.post_message(IngestRequested(entity))
+        elif button_id == "inspector-ignore-button":
+            self.post_message(IgnoreRequested(entity))
+        elif button_id == "inspector-edit-rule-button":
+            self.post_message(EditRuleRequested(entity))
         event.stop()

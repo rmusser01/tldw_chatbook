@@ -1151,7 +1151,7 @@ async def test_watchlists_collections_empty_state_disables_console_attach():
         await _wait_for_wc_snapshot(screen, pilot)
         button = screen.query_one("#wc-attach-to-console", Button)
 
-        assert "No local Watchlists are available yet." in _visible_text(screen)
+        assert "No sources yet." in _visible_text(screen)
         assert button.disabled is True
         assert "Stage local Watchlists context" in str(button.tooltip)
 

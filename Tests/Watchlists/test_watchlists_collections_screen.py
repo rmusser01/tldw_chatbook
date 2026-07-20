@@ -30,6 +30,18 @@ def fake_controller():
     controller.check_now = AsyncMock(return_value={"run_id": "1"})
     controller.import_opml = AsyncMock(return_value={"created": 2})
     controller.export_opml = AsyncMock(return_value="<opml></opml>")
+    controller.get_overview_data = AsyncMock(
+        return_value={
+            "total_sources": 0,
+            "active_sources": 0,
+            "sources_in_error": 0,
+            "total_items": 0,
+            "new_items": 0,
+            "latest_run_status": "unavailable",
+            "failed_runs": [],
+            "active_alert_rules": 0,
+        }
+    )
     return controller
 
 

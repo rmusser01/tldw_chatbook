@@ -85,22 +85,22 @@ class SourcesPane(Vertical):
                     id="sources-type-select",
                     allow_blank=False,
                 )
+                yield Select(
+                    self._STATUS_OPTIONS,
+                    value=self.status_filter,
+                    id="sources-status-filter",
+                    allow_blank=False,
+                )
+                yield Select(
+                    self._ACTIVE_OPTIONS,
+                    value=self.active_filter,
+                    id="sources-active-filter",
+                    allow_blank=False,
+                )
                 yield Button("New Source", id="sources-new-button", variant="primary")
                 yield Button("Filters", id="sources-filter-toggle", variant="default")
             if self.show_filter_editor:
                 with Horizontal(id="sources-filter-editor", classes="destination-filter-strip"):
-                    yield Select(
-                        self._STATUS_OPTIONS,
-                        value=self.status_filter,
-                        id="sources-status-filter",
-                        allow_blank=False,
-                    )
-                    yield Select(
-                        self._ACTIVE_OPTIONS,
-                        value=self.active_filter,
-                        id="sources-active-filter",
-                        allow_blank=False,
-                    )
                     yield Input(
                         placeholder="Tags (comma separated)...",
                         id="sources-tags-filter",
@@ -222,6 +222,12 @@ class SourcesPane(Vertical):
     def _submit_create_form(self) -> None:
         name = self.query_one("#sources-create-name", Input).value.strip()
         url = self.query_one("#sources-create-url", Input).value.strip()
+        if not name:
+            self.app.notify("Source name is required.", severity="error")
+            return
+        if not url:
+            self.app.notify("Source URL is required.", severity="error")
+            return
         source_type = str(self.query_one("#sources-create-type", Select).value or "rss")
         active = self.query_one("#sources-create-active", Switch).value
         tags_text = self.query_one("#sources-create-tags", Input).value.strip()

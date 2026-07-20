@@ -1,11 +1,11 @@
-"""Modal dialogs for watchlist OPML import/export."""
+"""Modal dialogs for watchlist OPML import/export and deletion confirmation."""
 
 from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Static, TextArea
+from textual.widgets import Button, Label, Static, TextArea
 
 
 class OpmlImportDialog(ModalScreen[str | None]):
@@ -50,4 +50,30 @@ class OpmlExportDialog(ModalScreen[None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if str(event.button.id) == "opml-export-close":
             self.dismiss(None)
+        event.stop()
+
+
+class ConfirmDeleteDialog(ModalScreen[bool]):
+    """Modal dialog that asks the user to confirm deletion of an entity."""
+
+    BINDINGS = []
+
+    def __init__(self, item_name: str) -> None:
+        super().__init__()
+        self.item_name = item_name
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="confirm-delete-dialog", classes="opml-dialog"):
+            yield Static("Confirm delete", classes="dialog-title")
+            yield Label(f"Delete {self.item_name}?")
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Delete", id="confirm-delete-confirm", variant="error")
+                yield Button("Cancel", id="confirm-delete-cancel", variant="default")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = str(event.button.id)
+        if button_id == "confirm-delete-confirm":
+            self.dismiss(True)
+        elif button_id == "confirm-delete-cancel":
+            self.dismiss(False)
         event.stop()

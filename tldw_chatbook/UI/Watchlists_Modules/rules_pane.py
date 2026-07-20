@@ -30,6 +30,14 @@ class SaveRuleRequested(Message):
         super().__init__()
 
 
+class EditRuleRequested(Message):
+    """Posted when the user requests editing an alert rule."""
+
+    def __init__(self, rule: dict[str, Any]) -> None:
+        self.rule = rule
+        super().__init__()
+
+
 class RulesPane(Vertical):
     """Alert rule list and editor for watchlists."""
 
@@ -52,30 +60,51 @@ class RulesPane(Vertical):
         ("Critical", "critical"),
     ]
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._editing_rule_id: str | None = None
+
     def compose(self):
         with Horizontal(id="rules-toolbar", classes="destination-filter-strip"):
             yield Button("Refresh", id="rules-refresh-button", variant="primary")
             yield Button("New Rule", id="rules-new-button", variant="primary")
 
         if self.show_rule_form:
+            rule = self.selected_rule if self._editing_rule_id else None
             with Grid(id="rules-create-form"):
-                yield Input(placeholder="Name", id="rules-create-name")
+                yield Input(
+                    placeholder="Name",
+                    id="rules-create-name",
+                    value=str(rule.get("name") or "") if rule else "",
+                )
                 yield Select(
                     self._CONDITION_OPTIONS,
-                    value="no_items",
+                    value=str(rule.get("condition_type") or "no_items") if rule else "no_items",
                     id="rules-create-condition",
                     allow_blank=False,
                 )
-                yield Input(placeholder="Threshold", id="rules-create-threshold")
+                threshold_value = ""
+                if rule:
+                    condition_value = rule.get("condition_value") or {}
+                    if isinstance(condition_value, dict):
+                        threshold_value = str(condition_value.get("threshold", ""))
+                yield Input(
+                    placeholder="Threshold",
+                    id="rules-create-threshold",
+                    value=threshold_value,
+                )
                 yield Select(
                     self._SEVERITY_OPTIONS,
-                    value="warning",
+                    value=str(rule.get("severity") or "warning") if rule else "warning",
                     id="rules-create-severity",
                     allow_blank=False,
                 )
                 yield Horizontal(
                     Static("Enabled"),
-                    Switch(value=True, id="rules-create-enabled"),
+                    Switch(
+                        value=bool(rule.get("enabled", True)) if rule else True,
+                        id="rules-create-enabled",
+                    ),
                     classes="rules-create-enabled-row",
                 )
                 yield Button("Save", id="rules-create-submit", variant="success")
@@ -117,9 +146,12 @@ class RulesPane(Vertical):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = str(event.button.id)
         if button_id == "rules-new-button":
+            self._editing_rule_id = None
+            self.selected_rule = None
             self.show_rule_form = True
         elif button_id == "rules-create-cancel":
             self.show_rule_form = False
+            self._editing_rule_id = None
         elif button_id == "rules-create-submit":
             self._submit_rule_form()
         elif button_id == "rules-refresh-button":
@@ -128,6 +160,9 @@ class RulesPane(Vertical):
 
     def _submit_rule_form(self) -> None:
         name = self.query_one("#rules-create-name", Input).value.strip()
+        if not name:
+            self.app.notify("Rule name is required.", severity="error")
+            return
         condition_type = str(self.query_one("#rules-create-condition", Select).value or "no_items")
         threshold_text = self.query_one("#rules-create-threshold", Input).value.strip()
         severity = str(self.query_one("#rules-create-severity", Select).value or "warning")
@@ -138,15 +173,21 @@ class RulesPane(Vertical):
                 condition_value["threshold"] = float(threshold_text)
             except ValueError:
                 condition_value["threshold"] = threshold_text
-        self.post_message(
-            SaveRuleRequested(
-                {
-                    "name": name,
-                    "condition_type": condition_type,
-                    "condition_value": condition_value,
-                    "severity": severity,
-                    "enabled": enabled,
-                }
-            )
-        )
+        payload: dict[str, Any] = {
+            "name": name,
+            "condition_type": condition_type,
+            "condition_value": condition_value,
+            "severity": severity,
+            "enabled": enabled,
+        }
+        if self._editing_rule_id:
+            payload["id"] = self._editing_rule_id
+        self.post_message(SaveRuleRequested(payload))
         self.show_rule_form = False
+        self._editing_rule_id = None
+
+    def edit_rule(self, rule: dict[str, Any]) -> None:
+        """Open the rule form pre-filled for editing."""
+        self._editing_rule_id = str(rule.get("id") or "")
+        self.selected_rule = rule
+        self.show_rule_form = True

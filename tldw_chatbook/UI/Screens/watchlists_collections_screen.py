@@ -28,12 +28,20 @@ from ..Navigation.main_navigation import NavigateToScreen
 from ..Watchlists_Modules.inspector_pane import (
     CheckNowRequested,
     DeleteRequested,
+    EditRuleRequested,
+    IgnoreRequested,
+    IngestRequested,
     InspectorPane,
+    MarkReviewedRequested,
     PreviewRequested,
     StageInConsoleRequested,
 )
 from ..Watchlists_Modules.items_pane import ItemSelected, ItemsPane, RefreshItemsRequested
-from ..Watchlists_Modules.opml_dialogs import OpmlExportDialog, OpmlImportDialog
+from ..Watchlists_Modules.opml_dialogs import (
+    ConfirmDeleteDialog,
+    OpmlExportDialog,
+    OpmlImportDialog,
+)
 from ..Watchlists_Modules.overview_pane import OverviewPane
 from ..Watchlists_Modules.rules_pane import (
     RefreshRulesRequested,
@@ -65,12 +73,34 @@ WC_SNAPSHOT_TIMEOUT_SECONDS = 1.5
 class WatchlistsCollectionsScreen(BaseAppScreen):
     """Monitored sources, runs, alerts, and recovery."""
 
+    BINDINGS = [
+        ("1", "switch_section('overview')", "Overview"),
+        ("2", "switch_section('sources')", "Sources"),
+        ("3", "switch_section('items')", "Items"),
+        ("4", "switch_section('runs')", "Runs"),
+        ("5", "switch_section('rules')", "Rules"),
+        ("question", "show_help", "Help"),
+        ("n", "new_source", "New source"),
+        ("d", "delete_selected", "Delete"),
+        ("c", "check_now_selected", "Check now"),
+        ("p", "preview_selected", "Preview"),
+    ]
+
     active_section = reactive("overview")
     runtime_backend = reactive("local")
     selected_source = reactive(None)
     selected_run = reactive(None)
     selected_entity = reactive(None)
     recovery_state = reactive(None)
+    overview_data = reactive({}, recompose=True)
+
+    _SECTION_DETAIL_TITLE = {
+        "overview": "Overview",
+        "sources": "Sources",
+        "items": "Items",
+        "runs": "Runs",
+        "rules": "Rules",
+    }
 
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(app_instance, "watchlists_collections", **kwargs)
@@ -84,6 +114,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._wc_lookup_error: str | None = None
         self._wc_lookup_recovery_state: DestinationRecoveryState | None = None
         self._wc_loaded = False
+        self._pending_open_create_form = False
+        self._pending_open_import_opml = False
+        self._pending_delete_entity: dict[str, Any] | None = None
         self._controller = WatchlistsBackendController(
             app_instance=app_instance,
             scope_service=getattr(app_instance, "watchlist_scope_service", None),
@@ -93,6 +126,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def on_mount(self) -> None:
         super().on_mount()
         self._refresh_local_wc_snapshot()
+        self._refresh_overview_data()
         self.set_timer(
             WC_SNAPSHOT_TIMEOUT_SECONDS, self._apply_snapshot_timeout_if_still_loading
         )
@@ -108,7 +142,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             None,
         )
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="wc_snapshot")
     async def _refresh_local_wc_snapshot(self) -> None:
         (
             watchlists,
@@ -124,6 +158,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             lookup_error,
             recovery_state,
         )
+
+    @work(exclusive=True, group="wc_overview")
+    async def _refresh_overview_data(self) -> None:
+        try:
+            data = await self._controller.get_overview_data(
+                runtime_backend=self.runtime_backend,
+            )
+            self.overview_data = data
+        except Exception:
+            logger.opt(exception=True).debug("Failed to refresh watchlists overview data.")
+            self.overview_data = {
+                "total_sources": 0,
+                "active_sources": 0,
+                "sources_in_error": 0,
+                "total_items": 0,
+                "new_items": 0,
+                "latest_run_status": "unavailable",
+                "failed_runs": [],
+                "active_alert_rules": 0,
+            }
 
     def _apply_local_wc_snapshot(
         self,
@@ -225,7 +279,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return (), 0, True, WC_SERVICE_ERROR_COPY, None
         except Exception:
             logger.opt(exception=True).debug(
-                "Failed to load local Watchlists snapshot.",
+                "Failed to load local Watchlists snapshot."
             )
             return (), 0, True, WC_SERVICE_ERROR_COPY, None
 
@@ -344,7 +398,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 yield WatchlistsNavigator(id="watchlists-navigator")
                 yield self._column_divider("watchlists-nav-list-divider")
                 with Vertical(id="watchlists-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Column 1: Watchlist List", classes="destination-section watchlists-column-title")
+                    yield Static("Sources", classes="destination-section watchlists-column-title")
                     if not self._wc_loaded:
                         yield Static(
                             "Loading local Watchlists snapshot...",
@@ -370,11 +424,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         )
                     elif not self._has_local_wc_context():
                         yield Static(
-                            WC_EMPTY_COPY,
+                            "No sources yet.",
                             id="wc-empty-state",
                         )
+                        with Horizontal(id="wc-empty-actions", classes="destination-filter-strip"):
+                            yield Button(
+                                "Create source",
+                                id="wc-empty-create-source",
+                                variant="primary",
+                                tooltip="Add a new Watchlists source.",
+                            )
+                            yield Button(
+                                "Import OPML",
+                                id="wc-empty-import-opml",
+                                tooltip="Import sources from an OPML file.",
+                            )
                         attach_disabled = True
-                        attach_tooltip = "Stage local Watchlists context once local watchlists exist."
+                        attach_tooltip = "Stage local Watchlists context once local sources exist."
                     else:
                         yield Static(
                             "Local Watchlists snapshot",
@@ -400,13 +466,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         attach_tooltip = "Stage local Watchlists context in Console."
                 yield self._column_divider("watchlists-list-detail-divider")
                 with Vertical(id="watchlists-detail-pane", classes="destination-workbench-pane"):
-                    yield Static("Column 2: Detail / Items / Runs", classes="destination-section watchlists-column-title")
+                    detail_title = self._SECTION_DETAIL_TITLE.get(
+                        self.active_section, "Detail"
+                    )
                     yield Static(
-                        f"Active section: {self.active_section}",
-                        id="watchlists-active-section-label",
+                        detail_title,
+                        classes="destination-section watchlists-column-title",
+                        id="watchlists-detail-title",
                     )
                     if self.active_section == "overview":
-                        yield OverviewPane(id="watchlists-overview-pane")
+                        overview = OverviewPane(id="watchlists-overview-pane")
+                        overview.data = self.overview_data
+                        yield overview
                     elif self.active_section == "sources":
                         yield SourcesPane(id="watchlists-sources-pane")
                     elif self.active_section == "runs":
@@ -421,7 +492,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     classes="destination-workbench-pane ds-inspector",
                 ):
                     yield Static(
-                        "Column 3: Status Inspector",
+                        "Inspector",
                         classes="destination-section watchlists-column-title",
                     )
                     yield Static(
@@ -430,10 +501,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         else "State: unavailable",
                         id="watchlists-state-summary",
                     )
-                    yield Static("Retry/backoff: none", id="watchlists-retry-summary")
                     yield Static(
-                        f"Alerts: {self._local_watchlist_count if self._has_local_wc_context() else 0}",
+                        f"Alert rules active: {self.overview_data.get('active_alert_rules', 0)}",
                         id="watchlists-alerts-summary",
+                    )
+                    yield Static(
+                        f"Latest run status: {self.overview_data.get('latest_run_status', 'unavailable')}",
+                        id="watchlists-latest-run-summary",
                     )
                     yield Static("Console actions", classes="destination-section")
                     yield Button(
@@ -482,15 +556,39 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     yield InspectorPane(id="watchlists-entity-inspector")
 
     def watch_active_section(self) -> None:
-        self.selected_source = None
-        self.selected_run = None
-        self.selected_entity = None
+        if self.active_section == "overview":
+            self.selected_entity = None
         if self.is_mounted:
             self.refresh(recompose=True)
         if self.active_section == "items":
             self.run_worker(self._load_items(), exclusive=True)
         elif self.active_section == "rules":
             self.run_worker(self._load_rules(), exclusive=True)
+        elif self.active_section == "runs":
+            self.run_worker(self._load_runs(), exclusive=True)
+        elif self.active_section == "sources":
+            self.run_worker(self._load_sources(), exclusive=True)
+
+        if self._pending_open_create_form:
+            self._pending_open_create_form = False
+            self.set_timer(0.05, self._open_sources_create_form)
+        if self._pending_open_import_opml:
+            self._pending_open_import_opml = False
+            self.set_timer(0.05, self._open_sources_import_opml)
+
+    def _open_sources_create_form(self) -> None:
+        if not self.is_mounted:
+            return
+        try:
+            pane = self.query_one("#watchlists-sources-pane", SourcesPane)
+            pane.show_create_form = True
+        except Exception:
+            pass
+
+    def _open_sources_import_opml(self) -> None:
+        if not self.is_mounted:
+            return
+        self.app.push_screen(OpmlImportDialog(), callback=self._on_opml_import_complete)
 
     def watch_runtime_backend(self) -> None:
         if not self.is_mounted:
@@ -500,6 +598,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             label.update(f"Backend: {self.runtime_backend}")
         except Exception:
             pass
+        self.selected_source = None
+        self.selected_run = None
+        self.selected_entity = None
+        self._refresh_local_wc_snapshot()
+        self._refresh_overview_data()
 
     def watch_selected_entity(self) -> None:
         if not self.is_mounted:
@@ -585,6 +688,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             target_route="chat",
         )
 
+    @on(Button.Pressed, "#wc-empty-create-source")
+    def handle_empty_create_source(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_new_source()
+
+    @on(Button.Pressed, "#wc-empty-import-opml")
+    def handle_empty_import_opml(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.active_section = "sources"
+        self._pending_open_import_opml = True
+
     @on(SourceSelected)
     def handle_source_selected(self, event: SourceSelected) -> None:
         event.stop()
@@ -617,6 +731,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Failed to create source.", severity="error")
         self._refresh_local_wc_snapshot()
+        self._refresh_overview_data()
 
     @on(CancelRunRequested)
     def handle_cancel_run_requested(self, event: CancelRunRequested) -> None:
@@ -637,6 +752,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to cancel run.", severity="error")
+        self._refresh_overview_data()
 
     @on(RerunRunRequested)
     def handle_rerun_run_requested(self, event: RerunRunRequested) -> None:
@@ -657,6 +773,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to launch run.", severity="error")
+        self._refresh_overview_data()
 
     @on(PreviewRequested)
     def handle_preview_requested(self, event: PreviewRequested) -> None:
@@ -708,6 +825,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Failed to check source.", severity="error")
         self._refresh_local_wc_snapshot()
+        self._refresh_overview_data()
 
     @on(ImportOpmlRequested)
     def handle_import_opml_requested(self, event: ImportOpmlRequested) -> None:
@@ -731,6 +849,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Failed to import OPML.", severity="error")
         self._refresh_local_wc_snapshot()
+        self._refresh_overview_data()
 
     @on(ExportOpmlRequested)
     def handle_export_opml_requested(self, event: ExportOpmlRequested) -> None:
@@ -755,6 +874,46 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify("Stage in Console is not implemented yet.", severity="information")
+
+    async def _load_sources(self) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            sources = await self._controller.list_sources(
+                runtime_backend=self.runtime_backend,
+                limit=100,
+            )
+            if self.is_mounted:
+                try:
+                    sources_pane = self.query_one("#watchlists-sources-pane", SourcesPane)
+                    sources_pane.sources = sources
+                    if self.selected_source is not None:
+                        source_id = self.selected_source.get("id")
+                        if source_id is not None:
+                            sources_pane.select_source_by_id(str(source_id))
+                except Exception:
+                    pass
+        except Exception:
+            logger.opt(exception=True).debug("Failed to load watchlist sources.")
+            if callable(notify):
+                notify("Failed to load watchlist sources.", severity="error")
+
+    async def _load_runs(self) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            runs = await self._controller.list_runs(
+                runtime_backend=self.runtime_backend,
+                limit=100,
+            )
+            if self.is_mounted:
+                try:
+                    runs_pane = self.query_one("#watchlists-runs-pane", RunsPane)
+                    runs_pane.runs = runs
+                except Exception:
+                    pass
+        except Exception:
+            logger.opt(exception=True).debug("Failed to load watchlist runs.")
+            if callable(notify):
+                notify("Failed to load watchlist runs.", severity="error")
 
     async def _load_items(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
@@ -818,6 +977,66 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         event.stop()
         self.run_worker(self._save_rule(event.payload), exclusive=True)
 
+    @on(EditRuleRequested)
+    def handle_edit_rule_requested(self, event: EditRuleRequested) -> None:
+        event.stop()
+        rule = event.entity
+        if rule is None:
+            return
+        self.active_section = "rules"
+
+        def open_edit_form() -> None:
+            if not self.is_mounted:
+                return
+            try:
+                rules_pane = self.query_one("#watchlists-rules-pane", RulesPane)
+                rules_pane.edit_rule(rule)
+            except Exception:
+                pass
+
+        self.set_timer(0.05, open_edit_form)
+
+    @on(MarkReviewedRequested)
+    def handle_mark_reviewed_requested(self, event: MarkReviewedRequested) -> None:
+        event.stop()
+        entity = event.entity
+        if entity is None:
+            return
+        self.run_worker(self._update_item_status(entity.get("id"), "reviewed"), exclusive=True)
+
+    @on(IngestRequested)
+    def handle_ingest_requested(self, event: IngestRequested) -> None:
+        event.stop()
+        entity = event.entity
+        if entity is None:
+            return
+        self.run_worker(self._update_item_status(entity.get("id"), "ingested"), exclusive=True)
+
+    @on(IgnoreRequested)
+    def handle_ignore_requested(self, event: IgnoreRequested) -> None:
+        event.stop()
+        entity = event.entity
+        if entity is None:
+            return
+        self.run_worker(self._update_item_status(entity.get("id"), "ignored"), exclusive=True)
+
+    async def _update_item_status(self, item_id: Any, status: str) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            await self._controller.update_item_status(
+                runtime_backend=self.runtime_backend,
+                item_id=item_id,
+                status=status,
+            )
+            if callable(notify):
+                notify(f"Item marked {status}.", severity="information")
+        except Exception:
+            logger.opt(exception=True).debug(f"Failed to mark item {status}.")
+            if callable(notify):
+                notify(f"Failed to mark item {status}.", severity="error")
+        self.run_worker(self._load_items(), exclusive=True)
+        self._refresh_overview_data()
+
     async def _save_rule(self, payload: dict[str, Any]) -> None:
         notify = getattr(self.app_instance, "notify", None)
         try:
@@ -832,12 +1051,25 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Failed to save alert rule.", severity="error")
         self.run_worker(self._load_rules(), exclusive=True)
+        self._refresh_overview_data()
 
     @on(DeleteRequested)
     def handle_delete_requested(self, event: DeleteRequested) -> None:
         event.stop()
         entity = event.entity
         if entity is None:
+            return
+        self._pending_delete_entity = dict(entity)
+        title = entity.get("name") or entity.get("source_title") or entity.get("title") or "this item"
+        self.app.push_screen(
+            ConfirmDeleteDialog(title),
+            callback=self._on_delete_confirmed,
+        )
+
+    async def _on_delete_confirmed(self, confirmed: bool) -> None:
+        entity = self._pending_delete_entity
+        self._pending_delete_entity = None
+        if not confirmed or entity is None:
             return
         entity_type = InspectorPane._entity_type(entity)
         if entity_type == "source":
@@ -846,6 +1078,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.run_worker(self._delete_run(entity.get("id")), exclusive=True)
         elif entity_type == "rule":
             self.run_worker(self._delete_rule(entity.get("id")), exclusive=True)
+        elif entity_type == "item":
+            self.run_worker(self._delete_item(entity.get("id")), exclusive=True)
 
     async def _delete_source(self, source_id: Any) -> None:
         try:
@@ -864,12 +1098,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Failed to delete source.", severity="error")
         self._refresh_local_wc_snapshot()
+        self._refresh_overview_data()
 
     async def _delete_run(self, run_id: Any) -> None:
         try:
-            await self._controller.delete_source(
+            await self._controller.delete_run(
                 runtime_backend=self.runtime_backend,
-                item_id=run_id,
+                run_id=run_id,
             )
             self.selected_entity = None
             self.selected_run = None
@@ -882,6 +1117,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Failed to delete run.", severity="error")
         self._refresh_local_wc_snapshot()
+        self._refresh_overview_data()
 
     async def _delete_rule(self, rule_id: Any) -> None:
         try:
@@ -899,3 +1135,85 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Failed to delete alert rule.", severity="error")
         self.run_worker(self._load_rules(), exclusive=True)
+        self._refresh_overview_data()
+
+    async def _delete_item(self, item_id: Any) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            await self._controller.update_item_status(
+                runtime_backend=self.runtime_backend,
+                item_id=item_id,
+                status="ignored",
+            )
+            if callable(notify):
+                notify("Item ignored.", severity="information")
+        except Exception:
+            logger.opt(exception=True).debug("Failed to ignore item.")
+            if callable(notify):
+                notify("Failed to ignore item.", severity="error")
+        self.run_worker(self._load_items(), exclusive=True)
+        self._refresh_overview_data()
+
+    def action_switch_section(self, section_id: str) -> None:
+        """Switch to the named section via keyboard shortcut."""
+        if section_id in self._SECTION_DETAIL_TITLE:
+            self.active_section = section_id
+        else:
+            self.app_instance.notify(
+                f"Unknown section: {section_id}",
+                severity="warning",
+            )
+
+    def action_show_help(self) -> None:
+        """Show a notification with available keyboard shortcuts."""
+        self.app_instance.notify(
+            "1=Overview 2=Sources 3=Items 4=Runs 5=Rules | n=new d=delete c=check p=preview ?=help",
+            severity="information",
+            timeout=8,
+        )
+
+    def action_new_source(self) -> None:
+        """Open the create-source form when in the Sources section."""
+        if self.active_section != "sources":
+            self.active_section = "sources"
+            self._pending_open_create_form = True
+            return
+        if self.is_mounted:
+            try:
+                pane = self.query_one("#watchlists-sources-pane", SourcesPane)
+                pane.show_create_form = True
+            except Exception:
+                pass
+
+    def action_delete_selected(self) -> None:
+        """Delete the currently selected entity after confirmation."""
+        entity = self.selected_entity
+        if entity is None:
+            self.app_instance.notify(
+                "Nothing selected to delete.",
+                severity="warning",
+            )
+            return
+        self.handle_delete_requested(DeleteRequested(entity))
+
+    def action_check_now_selected(self) -> None:
+        """Trigger a check now on the selected source."""
+        entity = self.selected_entity
+        if entity is None or InspectorPane._entity_type(entity) != "source":
+            self.app_instance.notify(
+                "Select a source to check.",
+                severity="warning",
+            )
+            return
+        self.handle_check_now_requested(CheckNowRequested(entity))
+
+    def action_preview_selected(self) -> None:
+        """Preview the selected source."""
+        entity = self.selected_entity
+        if entity is None or InspectorPane._entity_type(entity) != "source":
+            self.app_instance.notify(
+                "Select a source to preview.",
+                severity="warning",
+            )
+            return
+        self.handle_preview_requested(PreviewRequested(entity))

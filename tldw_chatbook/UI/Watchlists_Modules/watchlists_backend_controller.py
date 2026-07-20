@@ -3,6 +3,8 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+from loguru import logger
+
 
 class WatchlistsBackendController:
     """Route watchlist operations to the active local/server authority."""
@@ -202,6 +204,132 @@ class WatchlistsBackendController:
             self.scope_service.delete_alert_rule(runtime_backend=backend, rule_id=rule_id)
         )
         return dict(result)
+
+    async def delete_run(self, *, runtime_backend: str | None = None, run_id: Any) -> dict[str, Any]:
+        """Delete a watchlist run if the backend supports it."""
+        backend = self._normalize_backend(runtime_backend)
+        if self.scope_service is None:
+            raise ValueError("Watchlist scope service is unavailable.")
+        method = getattr(self.scope_service, "delete_run", None)
+        if not callable(method):
+            raise NotImplementedError("Run deletion is not supported by the current backend.")
+        result = await self._maybe_await(method(runtime_backend=backend, run_id=run_id))
+        return dict(result)
+
+    async def update_item_status(
+        self,
+        *,
+        runtime_backend: str | None = None,
+        item_id: Any,
+        status: str,
+    ) -> dict[str, Any]:
+        """Update the status of a watchlist content item."""
+        backend = self._normalize_backend(runtime_backend)
+        if self.scope_service is None:
+            raise ValueError("Watchlist scope service is unavailable.")
+        for method_name in ("update_item", "update_item_status", "mark_item_status"):
+            method = getattr(self.scope_service, method_name, None)
+            if callable(method):
+                if method_name == "mark_item_status":
+                    result = await self._maybe_await(method(item_id=item_id, status=status))
+                else:
+                    result = await self._maybe_await(
+                        method(runtime_backend=backend, item_id=item_id, status=status)
+                    )
+                return dict(result)
+        raise NotImplementedError("Item status updates are not supported by the current backend.")
+
+    async def _safe_list(self, method_name: str, **kwargs: Any) -> list[dict[str, Any]]:
+        """Call a scope-service list method if it exists, otherwise return []."""
+        if self.scope_service is None:
+            return []
+        method = getattr(self.scope_service, method_name, None)
+        if not callable(method):
+            return []
+        try:
+            result = await self._maybe_await(method(**kwargs))
+        except Exception:
+            logger.opt(exception=True).debug(
+                f"Watchlists overview could not call {method_name}."
+            )
+            return []
+        if isinstance(result, dict):
+            return [dict(item) for item in list(result.get("items") or [])]
+        return [dict(item) for item in list(result or [])]
+
+    async def get_overview_data(self, *, runtime_backend: str | None = None) -> dict[str, Any]:
+        """Return derived metrics for the Watchlists overview dashboard.
+
+        Aggregates counts from sources, items, runs, and alert rules. Keeps
+        the query cheap by limiting each list call to 100 records.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+
+        Returns:
+            Dict with total/active/error source counts, total/new item counts,
+            latest run status, recent failed runs, and active alert rule count.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        if self.scope_service is None:
+            return {
+                "total_sources": 0,
+                "active_sources": 0,
+                "sources_in_error": 0,
+                "total_items": 0,
+                "new_items": 0,
+                "latest_run_status": "unavailable",
+                "failed_runs": [],
+                "active_alert_rules": 0,
+            }
+
+        sources = await self.list_sources(runtime_backend=backend, limit=100)
+        items = await self._safe_list(
+            "list_items", runtime_backend=backend, limit=100
+        )
+        runs = await self._safe_list(
+            "list_runs", runtime_backend=backend, limit=100
+        )
+        rules = await self._safe_list(
+            "list_alert_rules", runtime_backend=backend
+        )
+
+        total_sources = len(sources)
+        active_sources = sum(1 for s in sources if s.get("active"))
+        sources_in_error = sum(
+            1 for s in sources if str(s.get("status") or "").lower() == "error"
+        )
+        total_items = len(items)
+        new_items = sum(1 for item in items if str(item.get("status") or "").lower() == "new")
+
+        latest_run_status = "unavailable"
+        if runs:
+            latest = runs[0]
+            latest_run_status = str(latest.get("status") or "unknown")
+
+        failed_runs = [
+            {
+                "id": run.get("id"),
+                "source_title": run.get("source_title") or run.get("source_name") or "Untitled",
+                "status": run.get("status") or "failed",
+                "error_msg": run.get("error_msg") or run.get("error") or "",
+            }
+            for run in runs
+            if str(run.get("status") or "").lower() in {"failed", "error"}
+        ][:10]
+
+        active_alert_rules = sum(1 for rule in rules if rule.get("enabled"))
+
+        return {
+            "total_sources": total_sources,
+            "active_sources": active_sources,
+            "sources_in_error": sources_in_error,
+            "total_items": total_items,
+            "new_items": new_items,
+            "latest_run_status": latest_run_status,
+            "failed_runs": failed_runs,
+            "active_alert_rules": active_alert_rules,
+        }
 
     def list_unsupported_capabilities(self, *, runtime_backend: str | None = None) -> list[dict[str, Any]]:
         backend = self._normalize_backend(runtime_backend)
