@@ -57,7 +57,6 @@ from ..DB.Prompts_DB import PromptsDatabase
 from .MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
 from .Outputs_Panel import OutputsPanel
 from .Sharing_Panel import SharingPanel
-from .Theme_Editor_Window import ThemeEditorView
 from .Widgets import ConfigSearchResult, UIElementSearchEngine
 from ..Chat.provider_readiness import (
     get_provider_readiness,
@@ -3079,7 +3078,7 @@ class ToolsSettingsWindow(Container):
         """Compose the Appearance Settings UI."""
         yield Static("Appearance Settings", classes="section-title")
         yield Static(
-            "Customize the look and feel of your application",
+            "Theme and visual defaults are managed in Settings",
             classes="section-description",
         )
 
@@ -3206,10 +3205,6 @@ class ToolsSettingsWindow(Container):
                     variant="primary",
                 )
                 yield Button("Reset to Defaults", id="reset-appearance-settings")
-
-    def _compose_theme_editor(self) -> ComposeResult:
-        """Compose the Theme Editor UI."""
-        yield ThemeEditorView()
 
     def _compose_encryption_config_form(self) -> ComposeResult:
         """Form for encryption configuration section."""
@@ -3399,21 +3394,6 @@ class ToolsSettingsWindow(Container):
                     "Tool execution history and statistics will be displayed here.",
                     classes="tool-stats",
                 )
-
-    def _compose_splash_gallery(self) -> ComposeResult:
-        """Compose the Splash Screen Gallery section."""
-        yield Static("🎨 Splash Screen Gallery", classes="section-title")
-        yield Static(
-            "Browse and preview all available splash screen animations",
-            classes="section-description",
-        )
-
-        # Create a placeholder container that will be populated when actually viewed
-        yield Container(
-            Static("Loading splash screen gallery...", classes="loading-placeholder"),
-            id="splash-viewer-container",
-            classes="embedded-splash-viewer",
-        )
 
     def _compose_about(self) -> ComposeResult:
         """Compose the About section."""
@@ -5911,38 +5891,6 @@ Thank you for using tldw-chatbook! 🎉
         except Exception as e:
             self.app_instance.notify(
                 f"Error resetting embedding config: {e}", severity="error"
-            )
-
-    async def _lazy_load_splash_gallery(self) -> None:
-        """Lazily load the SplashScreenViewer when the gallery tab is first accessed."""
-        try:
-            container = self.query_one("#splash-viewer-container", Container)
-
-            # Check if already loaded (container will have more than just the loading message)
-            if len(container.children) > 1 or (
-                len(container.children) == 1
-                and not isinstance(container.children[0], Static)
-            ):
-                return  # Already loaded
-
-            # Clear the loading message
-            container.remove_children()
-
-            # Now import and create the actual viewer
-            from ..Widgets.splash_screen_viewer import SplashScreenViewer
-
-            viewer = SplashScreenViewer(classes="embedded-splash-viewer")
-
-            # Mount the viewer into the container
-            await container.mount(viewer)
-            logger.debug("SplashScreenViewer loaded successfully")
-
-        except Exception as e:
-            logger.error(f"Failed to load SplashScreenViewer: {e}")
-            # Show error message instead
-            container.remove_children()
-            await container.mount(
-                Static(f"Failed to load splash gallery: {e}", classes="error-message")
             )
 
     async def _show_view(self, view_id: str) -> None:

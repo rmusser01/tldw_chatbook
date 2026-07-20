@@ -266,6 +266,16 @@ def test_home_route_resolves_to_home_screen():
     assert screen_class.__name__ == "HomeScreen"
 
 
+def test_customize_route_resolves_to_settings_screen():
+    app = _build_test_app()
+
+    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target("customize")
+
+    assert screen_name == "settings"
+    assert current_tab == "settings"
+    assert screen_class.__name__ == "SettingsScreen"
+
+
 def test_first_run_initial_route_defaults_to_home():
     app = _build_test_app()
     app.app_config["_first_run"] = True

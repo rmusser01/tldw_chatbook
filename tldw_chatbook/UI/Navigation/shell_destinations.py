@@ -138,7 +138,7 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "settings",
         "Global app preferences, appearance, accounts, and storage.",
         "Configure application preferences.",
-        ("customize", "logs", "stats"),
+        ("logs", "stats"),
     ),
 )
 
@@ -163,7 +163,6 @@ _ROUTABLE_LEGACY_ROUTES = {
     "evals",
     "logs",
     "stats",
-    "customize",
     # Personas "prompts" mode chip retirement (Task 7): keep the legacy
     # route id as its own canonical route under Library, mirroring "notes".
     "prompts",

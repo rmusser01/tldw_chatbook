@@ -13,6 +13,8 @@ class SettingsCategoryId(StrEnum):
     OVERVIEW = "overview"
     PROVIDERS_MODELS = "providers-models"
     APPEARANCE = "appearance"
+    THEME = "theme"
+    SPLASH_SCREEN = "splash_screen"
     STORAGE = "storage"
     PRIVACY_SECURITY = "privacy-security"
     CONSOLE_BEHAVIOR = "console-behavior"

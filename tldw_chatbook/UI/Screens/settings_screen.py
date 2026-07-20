@@ -107,6 +107,8 @@ from .settings_config_models import (
     SettingsDraft,
     SettingsOwnershipRecord,
 )
+from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
+from ...Widgets.settings_theme_editor import SettingsThemeEditor
 from .settings_appearance_defaults import (
     SettingsAppearanceDefaults,
     build_appearance_save_sections,
@@ -348,6 +350,8 @@ PROVIDER_ENDPOINT_PLACEHOLDERS = {
     "vllm": "http://127.0.0.1:8000/v1",
 }
 PROVIDER_CREDENTIAL_ENV_VAR_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+# THEME and SPLASH_SCREEN are intentionally excluded; they manage their own
+# persistence models (theme files and immediate splash config writes).
 GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
     {
         SettingsCategoryId.PROVIDERS_MODELS,
@@ -739,6 +743,7 @@ class SettingsScreen(BaseAppScreen):
     category_search_query = reactive("")
     server_sync_workspace_handoff_rows = reactive((), recompose=True)
     manual_sync_rows = reactive((), recompose=True)
+    theme_editor_modified = reactive(False, recompose=True)
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "settings", **kwargs)
@@ -939,6 +944,18 @@ class SettingsScreen(BaseAppScreen):
                 "Guided",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.THEME,
+                "Theme",
+                "Full theme editor, custom colors, presets, and live preview.",
+                "Custom",
+            ),
+            SettingsCategorySummary(
+                SettingsCategoryId.SPLASH_SCREEN,
+                "Splash Screen",
+                "Startup splash card selection, defaults, and preview gallery.",
+                "Custom",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.STORAGE,
                 "Storage",
                 "Config path, local databases, and file locations.",
@@ -1039,6 +1056,8 @@ class SettingsScreen(BaseAppScreen):
                 "Interface",
                 (
                     SettingsCategoryId.APPEARANCE,
+                    SettingsCategoryId.THEME,
+                    SettingsCategoryId.SPLASH_SCREEN,
                     SettingsCategoryId.CONSOLE_BEHAVIOR,
                 ),
             ),
@@ -1193,16 +1212,46 @@ class SettingsScreen(BaseAppScreen):
                     "appearance.animations_enabled",
                     "appearance.smooth_scrolling",
                 ),
-                reads_runtime_state_from=("app theme", "Customize destination"),
+                reads_runtime_state_from=("app theme",),
                 writes_allowed=True,
-                runtime_owner="Settings persisted defaults; Customize full theme editor",
+                runtime_owner="Settings persisted defaults",
                 boundary_copy=(
-                    "Settings owns launch/web visual defaults; Customize owns full "
+                    "Settings owns launch visual defaults; open the Theme category for full "
                     "theme editing and deeper visual preview."
                 ),
                 recovery_copy=(
                     "Preview applies runtime-safe values for this session only; Save persists "
                     "defaults, Revert restores loaded values."
+                ),
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.THEME,
+                owns_config_sections=("custom theme files",),
+                reads_runtime_state_from=("app theme", "custom theme files"),
+                writes_allowed=True,
+                runtime_owner="Theme editor",
+                boundary_copy=(
+                    "Settings Theme editor owns custom color palettes and theme files; "
+                    "use the editor's Apply/Save/Reset buttons."
+                ),
+                recovery_copy=(
+                    "Themes are saved to ~/.config/tldw_cli/themes/; reset or delete files there "
+                    "to recover."
+                ),
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.SPLASH_SCREEN,
+                owns_config_sections=("splash_screen",),
+                reads_runtime_state_from=("splash_screen config",),
+                writes_allowed=True,
+                runtime_owner="Splash Screen viewer",
+                boundary_copy=(
+                    "Settings Splash Screen viewer owns startup splash defaults and card "
+                    "selection; changes are saved immediately."
+                ),
+                recovery_copy=(
+                    "Edit splash_screen values in Advanced Config or reset defaults from the "
+                    "Splash Screen category."
                 ),
             ),
             SettingsOwnershipRecord(
@@ -1756,6 +1805,10 @@ class SettingsScreen(BaseAppScreen):
                     return f"Guided edits: {validation.message}"
                 return "Guided edits: Save or Revert Library/RAG defaults."
             return "Guided edits: change a Library/RAG default first."
+        if category == SettingsCategoryId.THEME:
+            return "Use the editor's Apply/Save/Reset buttons to manage themes."
+        if category == SettingsCategoryId.SPLASH_SCREEN:
+            return "Splash defaults are saved automatically."
         if category is SettingsCategoryId.STORAGE:
             if self._category_has_unsaved_changes(category):
                 validation = self._storage_validation_result()
@@ -1818,9 +1871,11 @@ class SettingsScreen(BaseAppScreen):
             if is_active is None
             else is_active
         )
-        dirty_marker = (
-            " *" if self._category_has_unsaved_changes(summary.category) else ""
-        )
+        dirty_marker = ""
+        if self._category_has_unsaved_changes(summary.category):
+            dirty_marker = " *"
+        elif summary.category == SettingsCategoryId.THEME and self.theme_editor_modified:
+            dirty_marker = " *"
         return f"{'> ' if active else '  '}{summary.title}{dirty_marker}"
 
     def _refresh_category_button_label(self, category: SettingsCategoryId) -> None:
@@ -5676,7 +5731,7 @@ class SettingsScreen(BaseAppScreen):
             ("Focused setting", "Appearance defaults"),
             (
                 "Purpose",
-                "Configure global visual defaults without replacing Customize.",
+                "Configure global visual defaults without replacing the Theme editor.",
             ),
             ("Saved as", "general, web_server, and appearance config sections"),
             ("Validation", "preview safely, then save or revert"),
@@ -5777,7 +5832,7 @@ class SettingsScreen(BaseAppScreen):
                 ("Affected config", "theme, density, font size, and motion defaults"),
                 (
                     "Recovery",
-                    "open Customize for full theme editing; use Settings for persisted defaults",
+                    "open Theme for full theme editing; use Settings for persisted defaults",
                 ),
                 ("Boundary", "visual preferences do not change runtime or data access"),
             ),
@@ -7040,8 +7095,8 @@ class SettingsScreen(BaseAppScreen):
                 yield self._render_category_state_banner(SettingsCategoryId.APPEARANCE)
                 yield Static("Global visual defaults", classes="destination-section")
                 yield Static(
-                    "Settings owns launch and web display defaults. "
-                    "Customize owns full theme editing and deeper visual preview.",
+                    "Settings owns launch visual defaults. "
+                    "Open the Theme category for full theme editing and deeper visual preview.",
                     classes="settings-detail-row",
                 )
                 with Horizontal(classes="settings-input-row settings-select-row"):
@@ -7109,7 +7164,7 @@ class SettingsScreen(BaseAppScreen):
                     "Runtime preview", "applies safe values for this session only"
                 )
                 yield self._detail_row(
-                    "Open Customize",
+                    "Open Theme",
                     "full theme editor, custom colors, and deeper visual preview",
                 )
                 yield self._detail_row(
@@ -7128,6 +7183,12 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-appearance-save-result",
                     classes="settings-status-row",
                 )
+        elif category is SettingsCategoryId.THEME:
+            yield Static("Theme", classes="destination-section settings-column-title")
+            yield SettingsThemeEditor(id="settings-theme-editor")
+        elif category is SettingsCategoryId.SPLASH_SCREEN:
+            yield Static("Splash Screen", classes="destination-section settings-column-title")
+            yield SettingsSplashScreenViewer(id="settings-splash-screen-viewer")
         elif category is SettingsCategoryId.STORAGE:
             values = self._storage_setting_values()
             try:
@@ -7438,20 +7499,21 @@ class SettingsScreen(BaseAppScreen):
             id="settings-guided-action-state",
             classes="settings-status-row",
         )
-        save_button = Button(
-            "Save",
-            id="settings-save-category",
-            tooltip="Save changes for the selected Settings category.",
-        )
-        save_button.disabled = not self._guided_actions_enabled(summary.category)
-        yield save_button
-        revert_button = Button(
-            "Revert",
-            id="settings-revert-category",
-            tooltip="Discard unsaved changes for the selected Settings category.",
-        )
-        revert_button.disabled = not self._guided_actions_enabled(summary.category)
-        yield revert_button
+        if summary.category not in (SettingsCategoryId.THEME, SettingsCategoryId.SPLASH_SCREEN):
+            save_button = Button(
+                "Save",
+                id="settings-save-category",
+                tooltip="Save changes for the selected Settings category.",
+            )
+            save_button.disabled = not self._guided_actions_enabled(summary.category)
+            yield save_button
+            revert_button = Button(
+                "Revert",
+                id="settings-revert-category",
+                tooltip="Discard unsaved changes for the selected Settings category.",
+            )
+            revert_button.disabled = not self._guided_actions_enabled(summary.category)
+            yield revert_button
         if summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static("Control guide", classes="destination-section")
             yield self._detail_row(
@@ -7568,14 +7630,26 @@ class SettingsScreen(BaseAppScreen):
                 "global defaults and validation before saving",
             )
             yield self._detail_row(
-                "Customize owns",
+                "Theme owns",
                 "full theme editing, custom colors, and deeper preview",
             )
             yield Button(
-                "Open Customize",
+                "Open Theme",
                 id="settings-open-appearance",
-                tooltip="Open the dedicated Customize theme editor.",
+                tooltip="Open the dedicated Theme editor.",
             )
+        elif summary.category is SettingsCategoryId.THEME:
+            yield Static("Affects app colors and saved custom themes.", classes="destination-section")
+            yield Static("Focused field guide", classes="destination-section")
+            yield self._detail_row("Save target", "~/.config/tldw_cli/themes/")
+            yield self._detail_row("Note", "Use the editor's own Apply/Save/Reset buttons.")
+            modified = "Yes" if self.theme_editor_modified else "No"
+            yield self._detail_row("Unsaved theme changes", modified)
+        elif summary.category is SettingsCategoryId.SPLASH_SCREEN:
+            yield Static("Affects startup splash screen behavior.", classes="destination-section")
+            yield Static("Focused field guide", classes="destination-section")
+            yield self._detail_row("Config section", "splash_screen")
+            yield self._detail_row("Note", "Splash defaults are saved automatically.")
         elif summary.category is SettingsCategoryId.STORAGE:
             yield Static(
                 "Affects local database path defaults after restart.",
@@ -7635,9 +7709,9 @@ class SettingsScreen(BaseAppScreen):
         )
         if summary.category is SettingsCategoryId.OVERVIEW:
             yield Button(
-                "Open Customize",
+                "Open Theme",
                 id="settings-open-appearance",
-                tooltip="Open the dedicated Customize theme editor.",
+                tooltip="Open the dedicated Theme editor.",
             )
 
     def compose_content(self) -> ComposeResult:
@@ -7683,7 +7757,11 @@ class SettingsScreen(BaseAppScreen):
                         classes="settings-category-search-status",
                         markup=False,
                     )
-                    yield from self._render_category_buttons()
+                    with VerticalScroll(
+                        id="settings-category-list",
+                        classes="settings-category-list",
+                    ):
+                        yield from self._render_category_buttons()
                 yield self._column_divider("settings-category-detail-divider")
                 detail_pane_container = (
                     Vertical
@@ -7958,7 +8036,15 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#settings-open-appearance")
     def open_appearance_settings(self) -> None:
-        self.post_message(NavigateToScreen("customize"))
+        self.post_message(
+            NavigateToScreen("settings", {"category": SettingsCategoryId.THEME})
+        )
+
+    @on(SettingsThemeEditor.ThemeModifiedStatus)
+    def handle_theme_modified_status(
+        self, event: SettingsThemeEditor.ThemeModifiedStatus
+    ) -> None:
+        self.theme_editor_modified = event.is_modified
 
     @on(Select.Changed, "#settings-appearance-theme")
     def handle_appearance_theme_changed(self, event: Select.Changed) -> None:
@@ -9540,6 +9626,11 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
+        if category in (SettingsCategoryId.THEME, SettingsCategoryId.SPLASH_SCREEN):
+            self.app.notify(
+                "Use the editor's own buttons for this category", severity="information"
+            )
+            return
         if not self._category_has_unsaved_changes(category):
             self.app.notify("No Settings changes to revert.", severity="information")
             return
