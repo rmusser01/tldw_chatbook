@@ -197,6 +197,7 @@ from ...Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.token_counter import count_tokens_tiktoken
 from ...UI.Workbench import (
     CommandStrip,
     DestinationHeader,
@@ -1211,27 +1212,38 @@ class ChatScreen(BaseAppScreen):
 
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
-            draft = composer.draft_text() if composer else ""
-        except Exception:
-            draft = ""
-
-        staged_sources = controller.store.workspace_context.allowed_sources
-        pending = controller.store.pending_attachments(session_id)
-        attachments = tuple(
-            MessageAttachment(
-                data=pending_attachment.data,
-                mime_type=pending_attachment.mime_type or "image/png",
-                display_name=pending_attachment.display_name,
-                position=index,
-            )
-            for index, pending_attachment in enumerate(pending)
-        )
+        except (NoMatches, QueryError):
+            composer = None
+        draft = composer.draft_text() if composer else ""
 
         async def _factory() -> ConsoleContextSnapshot:
+            try:
+                composer = self.query_one(
+                    "#console-native-composer", ConsoleComposerBar
+                )
+            except (NoMatches, QueryError):
+                composer = None
+            current_draft = composer.draft_text() if composer else ""
+
+            current_session_id = controller.store.active_session_id
+            pending = controller.store.pending_attachments(current_session_id)
+            current_attachments = tuple(
+                MessageAttachment(
+                    data=pending_attachment.data,
+                    mime_type=pending_attachment.mime_type or "image/png",
+                    display_name=pending_attachment.display_name,
+                    position=index,
+                )
+                for index, pending_attachment in enumerate(pending)
+            )
+            current_staged_sources = (
+                controller.store.workspace_context.allowed_sources
+            )
+
             return await controller.build_context_snapshot(
-                draft=draft,
-                attachments=attachments,
-                staged_sources=staged_sources,
+                draft=current_draft,
+                attachments=current_attachments,
+                staged_sources=current_staged_sources,
             )
 
         token_estimate = self._estimate_tokens({"draft": draft})
@@ -1245,9 +1257,14 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _estimate_tokens(self, payload: dict[str, Any]) -> int | None:
-        """Return a rough token estimate for a text payload."""
-        text = str(payload)
-        return int(len(text.split()) * 1.3)
+        """Return a token estimate for the current draft text."""
+        text = payload.get("draft", "")
+        if not text:
+            return None
+        try:
+            return count_tokens_tiktoken(text)
+        except Exception:
+            return int(len(text.split()) * 1.3)
 
     async def action_jump_console_tab(self, number: int) -> None:
         """Jump directly to the Nth native Console session tab (Alt+1..9).

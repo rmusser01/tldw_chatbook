@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
+from datetime import datetime
+from pathlib import Path
 from typing import Any
+
+from textual.widget import Widget
 
 from textual import on
 from textual.app import ComposeResult
@@ -134,7 +139,7 @@ class ConsoleContextModal(ModalScreen[None]):
         for widget in self._build_next_send_widgets():
             next_container.mount(widget)
 
-    def _build_current_context_widgets(self) -> list:
+    def _build_current_context_widgets(self) -> list[Widget]:
         if not self.snapshot.current_messages:
             return [Label("No conversation context.")]
         return [
@@ -146,8 +151,8 @@ class ConsoleContextModal(ModalScreen[None]):
             for msg in self.snapshot.current_messages
         ]
 
-    def _build_next_send_widgets(self) -> list:
-        widgets: list = []
+    def _build_next_send_widgets(self) -> list[Widget]:
+        widgets: list[Widget] = []
         payload = self.snapshot.next_send_payload
         text = self._format_next_send_text()
 
@@ -219,14 +224,10 @@ class ConsoleContextModal(ModalScreen[None]):
         return widgets
 
     def _format_next_send_text(self) -> str:
-        import json
-
-        return json.dumps(self.snapshot.next_send_payload, indent=2, default=str)
+        return self._json_block(self.snapshot.next_send_payload)
 
     @staticmethod
     def _json_block(obj: Any) -> str:
-        import json
-
         return json.dumps(obj, indent=2, default=str)
 
     @on(Button.Pressed, "#console-context-close")
@@ -259,9 +260,7 @@ class ConsoleContextModal(ModalScreen[None]):
     @on(Button.Pressed, "#console-context-copy")
     def _copy_json(self, event: Button.Pressed) -> None:
         event.stop()
-        import json
-
-        text = json.dumps(self.snapshot.next_send_payload, indent=2, default=str)
+        text = self._format_next_send_text()
         try:
             import pyperclip
 
@@ -273,15 +272,17 @@ class ConsoleContextModal(ModalScreen[None]):
     @on(Button.Pressed, "#console-context-save")
     def _save_json(self, event: Button.Pressed) -> None:
         event.stop()
-        import json
-        from datetime import datetime
-        from pathlib import Path
-
-        text = json.dumps(self.snapshot.next_send_payload, indent=2, default=str)
+        text = self._format_next_send_text()
         filename = f"chatbook_context_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         path = Path.home() / "Downloads" / filename
-        path.write_text(text, encoding="utf-8")
-        self.notify(f"Saved to {path}")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            self.notify(f"Saved to {path}")
+        except (OSError, PermissionError) as exc:
+            self.notify(f"Save failed: {exc}", severity="error")
+        except Exception as exc:
+            self.notify(f"Save failed: {exc}", severity="error")
 
     def action_refresh(self) -> None:
         self.run_worker(self._load_snapshot, exclusive=True)

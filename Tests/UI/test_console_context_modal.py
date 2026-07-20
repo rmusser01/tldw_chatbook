@@ -1,3 +1,9 @@
+import json
+import sys
+import types
+from pathlib import Path
+from unittest.mock import Mock
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
@@ -8,6 +14,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleContextSnapshot,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Widgets.Console import console_context_modal
 from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
 
 
@@ -101,3 +108,117 @@ async def test_context_modal_in_progress_warning():
         assert "in progress" in str(warning.renderable)
         refresh_button = modal.query_one("#console-context-refresh", Button)
         assert refresh_button.disabled
+
+
+class ActionHarness(App):
+    def compose(self) -> ComposeResult:
+        yield Static("background")
+
+
+@pytest.mark.asyncio
+async def test_context_modal_toggle_raw_json():
+    app = ActionHarness()
+    expected_raw = json.dumps(SNAPSHOT.next_send_payload, indent=2, default=str)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(ConsoleContextModal(_snapshot_factory))
+        await pilot.pause()
+
+        await pilot.click("#console-context-raw")
+        await pilot.pause()
+
+        modal = app.screen
+        next_container = modal.query_one(
+            "#console-context-next-send-body", Vertical
+        )
+        text_areas = list(next_container.query(TextArea))
+        assert any(ta.text == expected_raw for ta in text_areas)
+
+
+@pytest.mark.asyncio
+async def test_context_modal_refresh_invokes_factory():
+    calls = 0
+
+    async def counting_factory() -> ConsoleContextSnapshot:
+        nonlocal calls
+        calls += 1
+        return SNAPSHOT
+
+    app = ActionHarness()
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(ConsoleContextModal(counting_factory))
+        await pilot.pause()
+        assert calls == 1
+
+        await pilot.click("#console-context-refresh")
+        await pilot.pause()
+        assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_context_modal_close_dismisses():
+    app = ActionHarness()
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(ConsoleContextModal(_snapshot_factory))
+        await pilot.pause()
+        assert isinstance(app.screen, ConsoleContextModal)
+
+        await pilot.click("#console-context-close")
+        await pilot.pause()
+        assert not isinstance(app.screen, ConsoleContextModal)
+
+
+@pytest.mark.asyncio
+async def test_context_modal_copy_json(monkeypatch):
+    app = ActionHarness()
+    expected_text = json.dumps(SNAPSHOT.next_send_payload, indent=2, default=str)
+    fake_copy = types.SimpleNamespace(copy=Mock())
+    monkeypatch.setitem(sys.modules, "pyperclip", fake_copy)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(ConsoleContextModal(_snapshot_factory))
+        await pilot.pause()
+
+        await pilot.click("#console-context-copy")
+        await pilot.pause()
+
+        fake_copy.copy.assert_called_once_with(expected_text)
+
+
+@pytest.mark.asyncio
+async def test_context_modal_save_to_file(tmp_path, monkeypatch):
+    app = ActionHarness()
+    expected_text = json.dumps(SNAPSHOT.next_send_payload, indent=2, default=str)
+
+    class FakePath:
+        def __init__(self, *parts: str | Path) -> None:
+            self._path = tmp_path.joinpath(*parts)
+
+        @classmethod
+        def home(cls):
+            return cls(tmp_path)
+
+        def __truediv__(self, other: str) -> "FakePath":
+            return FakePath(self._path, other)
+
+        def __getattr__(self, name: str):
+            return getattr(self._path, name)
+
+    monkeypatch.setattr(
+        console_context_modal,
+        "Path",
+        FakePath,
+    )
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(ConsoleContextModal(_snapshot_factory))
+        await pilot.pause()
+
+        await pilot.click("#console-context-save")
+        await pilot.pause()
+
+        saved_files = list((tmp_path / "Downloads").glob("*.json"))
+        assert len(saved_files) == 1
+        assert saved_files[0].read_text(encoding="utf-8") == expected_text
