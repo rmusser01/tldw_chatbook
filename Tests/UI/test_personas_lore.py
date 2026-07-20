@@ -7,13 +7,24 @@ test_personas_dictionaries.py's PersonasTestApp harness)."""
 import pytest
 from textual.app import App, ComposeResult
 from textual.coordinate import Coordinate
-from textual.widgets import Button, DataTable, Input, ListView, Static, Switch, TextArea
+from textual.widgets import (
+    Button,
+    DataTable,
+    Input,
+    ListView,
+    Static,
+    Switch,
+    TabbedContent,
+    TextArea,
+)
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_lore_detail import (
     PersonasLoreDetailWidget,
+    LoreAttachRequested,
     LoreBookEnableToggled,
     LoreBookExportRequested,
     LoreBookSettingsSaveRequested,
+    LoreDetachRequested,
     LoreEntryAddRequested,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_lore_tryit import (
@@ -25,12 +36,20 @@ class _DetailHost(App):
     def __init__(self):
         super().__init__()
         self.posted = []
+        self.attach_posts = []
+        self.detach_posts = []
 
     def compose(self) -> ComposeResult:
         yield PersonasLoreDetailWidget(id="personas-lore-detail")
 
     def on_lore_entry_add_requested(self, message: LoreEntryAddRequested) -> None:
         self.posted.append(message.payload)
+
+    def on_lore_attach_requested(self, message) -> None:
+        self.attach_posts.append(message)
+
+    def on_lore_detach_requested(self, message) -> None:
+        self.detach_posts.append(message.conversation_id)
 
 
 @pytest.mark.asyncio
@@ -402,6 +421,54 @@ async def test_secondary_keys_disabled_hint_tracks_selective():
         await pilot.pause()
         assert sec.disabled is True  # selective off → disabled again
         assert sec.value == "kept"  # value survives the toggle (fidelity)
+
+
+@pytest.mark.asyncio
+async def test_attachments_empty_state_and_render():
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        widget.load_attachments([])
+        await pilot.pause()
+        empty = app.query_one("#personas-lore-attachments-empty", Static)
+        table = app.query_one("#personas-lore-attachments-table", DataTable)
+        assert empty.display is True and table.row_count == 0
+        widget.load_attachments([{"conversation_id": "c1", "title": "Noir case"}])
+        await pilot.pause()
+        assert empty.display is False and table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_attach_button_posts_request():
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        app.query_one("#personas-lore-tabs", TabbedContent).active = "personas-lore-tab-attachments"
+        await pilot.pause()
+        await pilot.click("#personas-lore-attach-add")
+        await pilot.pause()
+        assert len(app.attach_posts) == 1
+
+
+@pytest.mark.asyncio
+async def test_detach_button_posts_selected_conversation():
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        widget.load_attachments([{"conversation_id": "c1", "title": "Noir case"}])
+        app.query_one("#personas-lore-tabs", TabbedContent).active = "personas-lore-tab-attachments"
+        await pilot.pause()
+        app.query_one("#personas-lore-attachments-table", DataTable).move_cursor(row=0)
+        await pilot.pause()
+        await pilot.click("#personas-lore-attach-detach")
+        await pilot.pause()
+        assert app.detach_posts == ["c1"]
 
 
 class _TryItHost(App):
