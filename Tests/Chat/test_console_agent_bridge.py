@@ -34,6 +34,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolSchema,
 )
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 
 
