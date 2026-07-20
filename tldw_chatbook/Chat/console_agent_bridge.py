@@ -16,6 +16,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from loguru import logger
+
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
@@ -557,6 +559,19 @@ class _CollisionFilteredMCPProvider:
         return self._provider.invoke(tool_id, args)
 
 
+def _truncate_log_value(value: Any, *, max_len: int = 200) -> str:
+    """Return a safe, bounded string representation for logging.
+
+    Tool arguments and results may contain secrets or very large payloads;
+    this helper truncates the string form so log lines stay readable and do
+    not dump sensitive data into logs.
+    """
+    text = str(value)
+    if len(text) > max_len:
+        return f"{text[: max_len - 3]}..."
+    return text
+
+
 def _non_colliding_mcp_names(
     mcp_provider: Any,
     collision_names: frozenset[str] | set[str],
@@ -727,6 +742,31 @@ class ConsoleAgentBridge:
         self._live: dict[str, AgentLiveSnapshot] = {}
         self._historical_cache: dict[str, AgentLiveSnapshot] = {}
 
+    def native_tool_schemas(self) -> list[dict[str, Any]]:
+        """Return the native tool schemas available to this bridge.
+
+        Iterates the bridge's tool registry and returns one schema dict per
+        catalog entry.  Failures to load an individual schema are logged and
+        skipped so the preview remains useful even when a provider is slow or
+        misconfigured.
+        """
+        schemas: list[dict[str, Any]] = []
+        for entry in self._registry.list_catalog():
+            try:
+                schema = self._registry.load_schema(entry.id)
+            except Exception as exc:  # pragma: no cover - defensive only
+                logger.warning(
+                    "Failed to load schema for {tool_id}: {exc}",
+                    tool_id=entry.id, exc=exc,
+                )
+                continue
+            schemas.append({
+                "name": schema.name,
+                "description": schema.description,
+                "parameters": schema.parameters,
+            })
+        return schemas
+
     # -- run ------------------------------------------------------------
 
     def run_reply(
@@ -843,6 +883,28 @@ class ConsoleAgentBridge:
                 )
                 if marker_text is not None:
                     self._append_marker(session_id, marker_text)
+            # Diagnostic logging for every tool call and result. The actual
+            # tool invocation lives inside AgentService, so we observe it
+            # through the step stream it emits.
+            if step.kind == STEP_TOOL_RESULT:
+                logger.debug(
+                    "agent tool call: agent_kind={agent_kind} tool={tool_name} "
+                    "args={args} result={result} step={step_index}",
+                    agent_kind=agent_kind,
+                    tool_name=step.tool_name,
+                    args=_truncate_log_value(step.args),
+                    result=_truncate_log_value(step.result),
+                    step_index=step.index,
+                )
+            elif step.kind == STEP_ERROR:
+                logger.warning(
+                    "agent step error: agent_kind={agent_kind} tool={tool_name} "
+                    "summary={summary} step={step_index}",
+                    agent_kind=agent_kind,
+                    tool_name=step.tool_name,
+                    summary=step.summary,
+                    step_index=step.index,
+                )
             self._live[conversation_id] = AgentLiveSnapshot(
                 status="running",
                 step=len(live_steps),
@@ -906,6 +968,23 @@ class ConsoleAgentBridge:
             )
         finally:
             run_loop.close()
+        for step in outcome.steps:
+            logger.info(
+                "agent run step",
+                agent_kind=AGENT_KIND_PRIMARY,
+                step_kind=step.kind,
+                tool_name=step.tool_name,
+                summary=step.summary,
+                step_index=step.index,
+            )
+        logger.info(
+            "console agent bridge run_reply end",
+            conversation_id=conversation_id,
+            session_id=session_id,
+            outcome_status=outcome.status,
+            final_text_len=len(outcome.final_text),
+            step_count=len(outcome.steps),
+        )
         self._live[conversation_id] = AgentLiveSnapshot(
             status=outcome.status,
             step=len(live_steps),

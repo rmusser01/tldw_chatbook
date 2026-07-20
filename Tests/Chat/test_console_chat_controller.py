@@ -3,7 +3,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from tldw_chatbook.Agents.agent_models import ToolCall
+from tldw_chatbook.Agents.agent_models import (
+    RUN_CANCELLED,
+    RUN_DONE,
+    RUN_ERROR,
+    RunOutcome,
+    ToolCall,
+)
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
@@ -18,6 +24,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
     ConsoleStagedSource,
     ConsoleWorkspaceContext,
+    MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -1654,3 +1661,564 @@ def test_build_mcp_review_hook_clears_stamp_at_entry_before_a_raising_round_trip
 
     # No stale stamp from turn 1 must survive the raise for invoke() to peek.
     assert provider.stamped_decision("mcp__srv__run") is None
+
+
+# -----------------------------------------------------------------------------
+# _finalize_agent_reply hardening (task-2)
+# -----------------------------------------------------------------------------
+
+
+def test_finalize_agent_reply_empty_final_text_uses_fallback():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    placeholder = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="")
+    result = controller._finalize_agent_reply(
+        placeholder.id, session.id, outcome, variant_mode=False
+    )
+
+    messages = store.messages_for_session(session.id)
+    assistant = messages[-1]
+    assert assistant.content == "No response was generated."
+    assert assistant.status == "complete"
+    assert result.accepted is True
+    assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+
+
+def test_finalize_agent_reply_missing_placeholder_appends_message():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    fake_id = "nonexistent-msg-id"
+
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="hello back")
+    result = controller._finalize_agent_reply(
+        fake_id, session.id, outcome, variant_mode=False
+    )
+
+    messages = store.messages_for_session(session.id)
+    assistant = messages[-1]
+    assert assistant.role is ConsoleMessageRole.ASSISTANT
+    assert assistant.content == "hello back"
+    assert assistant.status == "complete"
+    assert result.accepted is True
+    assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+
+
+def test_finalize_agent_reply_error_marks_failed():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    placeholder = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    store.append_stream_chunk(placeholder.id, "partial")
+
+    outcome = RunOutcome(status=RUN_ERROR, steps=[], final_text="")
+    result = controller._finalize_agent_reply(
+        placeholder.id, session.id, outcome, variant_mode=False
+    )
+
+    messages = store.messages_for_session(session.id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assert assistant.status == "failed"
+    assert assistant.content == "partial"
+    assert "Agent run failed" in controller.run_state.visible_copy
+    assert result.accepted is True
+
+
+def test_finalize_agent_reply_cancelled_marks_failed():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    placeholder = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+
+    outcome = RunOutcome(status=RUN_CANCELLED, steps=[], final_text="")
+    result = controller._finalize_agent_reply(
+        placeholder.id, session.id, outcome, variant_mode=False
+    )
+
+    messages = store.messages_for_session(session.id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assert assistant.status == "failed"
+    assert controller.run_state.status is ConsoleRunStatus.FAILED
+    assert result.accepted is True
+
+
+def test_finalize_agent_reply_unknown_status_marks_failed():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    placeholder = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+
+    outcome = RunOutcome(status="weird", steps=[], final_text="")
+    result = controller._finalize_agent_reply(
+        placeholder.id, session.id, outcome, variant_mode=False
+    )
+
+    messages = store.messages_for_session(session.id)
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
+    assert assistant.status == "failed"
+    assert controller.run_state.status is ConsoleRunStatus.FAILED
+    assert result.accepted is True
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_returns_current_and_next_send():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="Hi there")
+
+    snapshot = await controller.build_context_snapshot(draft="Explain tools")
+
+    assert len(snapshot.current_messages) == 2
+    assert snapshot.current_messages[0].role == ConsoleMessageRole.USER
+    assert snapshot.next_send_payload["messages"][-1]["content"].startswith("Explain tools")
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_does_not_execute_skills():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
+
+    snapshot = await controller.build_context_snapshot(draft="/search tools")
+    final_content = snapshot.next_send_payload["messages"][-1]["content"]
+    assert "/search tools" in final_content
+    assert "Skill command not resolved in preview" in final_content
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_empty_draft_does_not_annotate_historical_skill_command():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="/search tools")
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="Here are some tools.")
+
+    snapshot = await controller.build_context_snapshot(draft="")
+    historical_user_content = snapshot.next_send_payload["messages"][0]["content"]
+
+    assert historical_user_content == "/search tools"
+    assert "Skill command not resolved in preview" not in historical_user_content
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_redacts_secrets():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="run")
+    controller.system_prompt = "Use api_key=secret123"
+
+    snapshot = await controller.build_context_snapshot(draft="ok")
+    payload_text = str(snapshot.next_send_payload)
+    assert "secret123" not in payload_text
+    assert "[redacted]" in payload_text
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_redacts_quoted_secrets_without_mangling_json():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content='run with {"api_key": "secret123"}',
+    )
+
+    snapshot = await controller.build_context_snapshot(draft="ok")
+    payload_text = str(snapshot.next_send_payload)
+    assert "secret123" not in payload_text
+    assert '"api_key": "[redacted]"' in payload_text
+
+
+def test_redact_secrets_matches_hyphenated_and_camelcase_keys():
+    payload = {
+        "headers": {
+            "x-api-key": "secret123",
+            "apiKey": "secret456",
+            "my_api_key": "secret789",
+        }
+    }
+
+    redacted = ConsoleChatController._redact_secrets(payload)
+
+    assert redacted["headers"]["x-api-key"] == "[redacted]"
+    assert redacted["headers"]["apiKey"] == "[redacted]"
+    assert redacted["headers"]["my_api_key"] == "[redacted]"
+
+
+def test_redact_secrets_recursively_redacts_non_string_secret_values():
+    payload = {"api_key": {"value": "secret"}}
+
+    redacted = ConsoleChatController._redact_secrets(payload)
+
+    assert "secret" not in str(redacted)
+    assert redacted["api_key"] == {"value": "[redacted]"}
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_messages_are_independent_of_store():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    msg = store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
+
+    snapshot = await controller.build_context_snapshot(draft="Follow up")
+    original_content = snapshot.current_messages[0].content
+    snapshot.current_messages[0].content = "mutated"
+
+    reloaded = store.get_message(msg.id)
+    assert reloaded.content == original_content
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_attachment_only_preview():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        provider="openai",
+        model="gpt-4o",
+    )
+    store.ensure_session(title="Chat 1")
+
+    attachment = MessageAttachment(
+        data=b"fake-image-data",
+        mime_type="image/png",
+        display_name="image.png",
+        position=0,
+    )
+
+    snapshot = await controller.build_context_snapshot(draft="", attachments=[attachment])
+
+    messages = snapshot.next_send_payload["messages"]
+    assert len(messages) == 1
+    assert messages[0]["role"] == "user"
+    content = messages[0]["content"]
+    assert isinstance(content, list)
+    assert any(
+        part.get("type") == "image_url"
+        and part.get("image_url", {}).get("url") == "[image: data redacted for preview]"
+        for part in content
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_redacts_historical_image_data():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        provider="openai",
+        model="gpt-4o",
+    )
+    session = store.ensure_session(title="Chat 1")
+
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Previous image",
+        attachments=(
+            MessageAttachment(
+                data=b"historical-image-data",
+                mime_type="image/png",
+                display_name="previous.png",
+                position=0,
+            ),
+        ),
+    )
+
+    snapshot = await controller.build_context_snapshot(draft="Describe it")
+
+    payload_text = str(snapshot.next_send_payload)
+    assert "data:image/png;base64," not in payload_text
+    assert "[image: data redacted for preview]" in payload_text
+
+
+def test_replace_image_data_preserves_detail_and_handles_string_url():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,abc", "detail": "auto"},
+                },
+                {"type": "image_url", "image_url": "data:image/png;base64,def"},
+                {"type": "image_url", "image_url": "http://example.com/img.png"},
+            ],
+        }
+    ]
+
+    redacted = ConsoleChatController._replace_image_data_with_placeholders(messages)
+
+    dict_url = redacted[0]["content"][0]["image_url"]
+    assert dict_url["url"] == "[image: data redacted for preview]"
+    assert dict_url["detail"] == "auto"
+    data_string_url = redacted[0]["content"][1]["image_url"]
+    assert data_string_url == "[image: data redacted for preview]"
+    plain_string_url = redacted[0]["content"][2]["image_url"]
+    assert plain_string_url == "http://example.com/img.png"
+
+
+def test_replace_image_data_redacts_anthropic_and_string_image_parts():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+                    },
+                },
+                {"type": "image", "image": "data:image/png;base64,def"},
+            ],
+        }
+    ]
+
+    redacted = ConsoleChatController._replace_image_data_with_placeholders(messages)
+
+    anthropic_part = redacted[0]["content"][0]
+    assert anthropic_part["type"] == "image"
+    assert anthropic_part["source"]["type"] == "base64"
+    assert anthropic_part["source"]["media_type"] == "image/png"
+    assert anthropic_part["source"]["data"] == "[image: data redacted for preview]"
+    string_part = redacted[0]["content"][1]
+    assert string_part["type"] == "image"
+    assert string_part["image"] == "[image: data redacted for preview]"
+
+
+def test_replace_image_data_redacts_string_content_with_data_urls():
+    messages = [
+        {
+            "role": "user",
+            "content": "Look at this image: data:image/png;base64,abc and this URL: http://example.com/img.png",
+        },
+        {
+            "role": "assistant",
+            "content": "data:image/jpeg;base64,xyz",
+        },
+    ]
+
+    redacted = ConsoleChatController._replace_image_data_with_placeholders(messages)
+
+    assert "data:image/png;base64,abc" not in redacted[0]["content"]
+    assert "data:image/jpeg;base64,xyz" not in redacted[1]["content"]
+    assert "http://example.com/img.png" in redacted[0]["content"]
+    assert redacted[0]["content"].count("[image: data redacted for preview]") == 1
+    assert redacted[1]["content"] == "[image: data redacted for preview]"
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_next_send_payload_independent_of_store():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
+
+    snapshot = await controller.build_context_snapshot(draft="Follow up")
+    original = str(snapshot.next_send_payload)
+
+    # Mutate the returned payload in place; frozen only prevents reassignment
+    # of the top-level field, not mutation of the nested dict/list structures.
+    snapshot.next_send_payload["messages"].append(
+        {"role": "user", "content": "injected"}
+    )
+
+    snapshot2 = await controller.build_context_snapshot(draft="Follow up")
+    assert str(snapshot2.next_send_payload) == original
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_no_active_session_returns_empty():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    snapshot = await controller.build_context_snapshot(draft="hello")
+
+    assert snapshot.current_messages == []
+    assert snapshot.next_send_payload == {}
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_includes_staged_sources():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    store.ensure_session(title="Chat 1")
+
+    sources = [
+        ConsoleStagedSource(
+            source_id="note-1",
+            label="Note one",
+            source_type="note",
+            workspace_id="workspace-a",
+        ),
+        ConsoleStagedSource(
+            source_id="file-2",
+            label="File two",
+            source_type="file",
+        ),
+    ]
+
+    snapshot = await controller.build_context_snapshot(draft="Summarize", staged_sources=sources)
+
+    staged = snapshot.next_send_payload["staged_sources"]
+    assert len(staged) == 2
+    assert staged[0] == {"source_id": "note-1", "label": "Note one", "type": "note"}
+    assert staged[1] == {"source_id": "file-2", "label": "File two", "type": "file"}
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_isolates_assembly_errors():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session(title="Chat 1")
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
+
+    async def _failing_apply(messages, session_id):
+        raise RuntimeError("dictionary applier exploded")
+
+    controller._apply_chat_dictionaries = _failing_apply
+
+    snapshot = await controller.build_context_snapshot(draft="Follow up")
+
+    assert len(snapshot.current_messages) == 1
+    assert snapshot.current_messages[0].content == "Hello"
+    payload = snapshot.next_send_payload
+    assert "error" in payload
+    assert "Failed to build context snapshot" in payload["error"]
+    # The degraded payload must still include the transcript-derived messages
+    # that were assembled before the failure, not an empty placeholder.
+    assert len(payload["messages"]) == 2
+    assert payload["messages"][0]["content"] == "Hello"
+    assert payload["messages"][1]["content"].startswith("Follow up")
+    assert payload["system"] == []
+
+
+def test_annotate_skill_commands_multimodal_text_part():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "/search tools"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+            ],
+        }
+    ]
+
+    annotated = ConsoleChatController._annotate_skill_commands(messages)
+
+    text_part = annotated[0]["content"][0]
+    assert text_part["type"] == "text"
+    assert text_part["text"].startswith("/search tools")
+    assert "Skill command not resolved in preview" in text_part["text"]
+    assert annotated[0]["content"][1] == messages[0]["content"][1]
+
+
+def test_annotate_skill_commands_ignores_leading_whitespace():
+    messages = [{"role": "user", "content": "  /search tools"}]
+
+    annotated = ConsoleChatController._annotate_skill_commands(messages)
+
+    assert annotated[0]["content"].startswith("  /search tools")
+    assert "Skill command not resolved in preview" in annotated[0]["content"]
+
+
+def test_annotate_skill_commands_synthetic_turn_added_false_returns_unchanged():
+    messages = [{"role": "user", "content": "/search tools"}]
+
+    annotated = ConsoleChatController._annotate_skill_commands(
+        messages, synthetic_turn_added=False
+    )
+
+    assert annotated == messages
+    assert "Skill command not resolved in preview" not in annotated[0]["content"]
+
+
+def test_build_tools_info_for_snapshot_no_bridge():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=StreamingGateway()
+    )
+
+    info = controller._build_tools_info_for_snapshot()
+
+    assert info["native_schemas"] == []
+    assert info["mcp_note"] is None
+    assert info["preview_note"] == "No native tools are configured for preview."
+
+
+def test_build_tools_info_for_snapshot_with_native_schemas():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=StreamingGateway()
+    )
+    controller._agent_bridge = SimpleNamespace(
+        native_tool_schemas=lambda: [
+            {"name": "calculator", "description": "Compute arithmetic.", "parameters": {}},
+        ]
+    )
+
+    info = controller._build_tools_info_for_snapshot()
+
+    assert info["native_schemas"] == [
+        {"name": "calculator", "description": "Compute arithmetic.", "parameters": {}},
+    ]
+    assert info["mcp_note"] is None
+    assert info["preview_note"] is not None
+    assert "live run" in info["preview_note"]
+
+
+def test_build_tools_info_for_snapshot_mcp_provider_present():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=StreamingGateway()
+    )
+    controller._agent_bridge = SimpleNamespace(native_tool_schemas=lambda: [])
+    controller._mcp_provider = object()
+
+    info = controller._build_tools_info_for_snapshot()
+
+    assert info["native_schemas"] == []
+    assert info["mcp_note"] is not None
+    assert "MCP tools are configured" in info["mcp_note"]
+    assert info["preview_note"] == "No native tools are configured for preview."
+
+
+def test_build_tools_info_for_snapshot_mcp_provider_absent():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=StreamingGateway()
+    )
+    controller._agent_bridge = SimpleNamespace(native_tool_schemas=lambda: [])
+    controller._mcp_provider = None
+
+    info = controller._build_tools_info_for_snapshot()
+
+    assert info["native_schemas"] == []
+    assert info["mcp_note"] is None
+    assert info["preview_note"] == "No native tools are configured for preview."

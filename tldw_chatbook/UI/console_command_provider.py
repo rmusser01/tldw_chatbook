@@ -64,6 +64,11 @@ class ConsoleCommandProvider(Provider):
                 screen.action_open_console_system_prompt_editor,
                 "Edit this session's system prompt (/system)",
             ),
+            (
+                "Console: View chat context",
+                screen.action_view_chat_context,
+                "Show current and next-send context (Ctrl+Shift+P)",
+            ),
         )
 
     async def discover(self) -> Hits:

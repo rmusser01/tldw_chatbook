@@ -72,6 +72,7 @@ from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleChatMessage,
+    ConsoleContextSnapshot,
     ConsoleMessageRole,
     ConsoleProviderSelection,
     ConsoleRunStatus,
@@ -196,6 +197,7 @@ from ...Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.token_counter import count_tokens_tiktoken
 from ...UI.Workbench import (
     CommandStrip,
     DestinationHeader,
@@ -227,6 +229,7 @@ from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
 )
+from ...Widgets.Console.console_context_modal import ConsoleContextModal
 from ...Widgets.Console.console_model_popover import (
     CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
     ConsoleModelPopover,
@@ -573,6 +576,7 @@ class ChatScreen(BaseAppScreen):
         Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=True),
         Binding("alt+m", "open_console_model_popover", "Model", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
+        Binding("ctrl+shift+p", "view_chat_context", "View context", show=True),
         # NOT priority: widget-level escapes (transcript clear-selection, modal
         # dismiss) must keep winning before this screen-level fallback runs.
         Binding("escape", "focus_console_composer_home", "Composer", show=False),
@@ -1195,6 +1199,77 @@ class ChatScreen(BaseAppScreen):
         if self._console_setup_modal_blocking():
             return
         self.run_worker(self._open_console_system_prompt_editor(), exclusive=False)
+
+    def action_view_chat_context(self) -> None:
+        """Open the Console context viewer modal (Ctrl+Shift+P)."""
+        if self._console_setup_modal_blocking():
+            return
+        controller = self._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        if not session_id:
+            self.notify("No active conversation.", severity="warning")
+            return
+
+        async def _factory() -> ConsoleContextSnapshot:
+            try:
+                composer = self.query_one(
+                    "#console-native-composer", ConsoleComposerBar
+                )
+            except (NoMatches, QueryError):
+                composer = None
+            current_draft = composer.draft_text() if composer else ""
+
+            current_session_id = controller.store.active_session_id
+            pending = controller.store.pending_attachments(current_session_id)
+            current_attachments = tuple(
+                MessageAttachment(
+                    data=pending_attachment.data,
+                    mime_type=pending_attachment.mime_type or "image/png",
+                    display_name=pending_attachment.display_name,
+                    position=index,
+                )
+                for index, pending_attachment in enumerate(pending)
+            )
+            current_staged_sources = (
+                controller.store.workspace_context.allowed_sources
+            )
+
+            return await controller.build_context_snapshot(
+                draft=current_draft,
+                attachments=current_attachments,
+                staged_sources=current_staged_sources,
+            )
+
+        def _estimate_factory() -> int | None:
+            try:
+                composer = self.query_one(
+                    "#console-native-composer", ConsoleComposerBar
+                )
+            except (NoMatches, QueryError):
+                composer = None
+            current_draft = composer.draft_text() if composer else ""
+            return self._estimate_tokens({"draft": current_draft})
+
+        token_estimate = _estimate_factory()
+        in_progress = controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
+        self.app.push_screen(
+            ConsoleContextModal(
+                _factory,
+                token_estimate=token_estimate,
+                estimate_factory=_estimate_factory,
+                in_progress=in_progress,
+            )
+        )
+
+    def _estimate_tokens(self, payload: dict[str, Any]) -> int | None:
+        """Return a token estimate for the current draft text."""
+        text = payload.get("draft", "")
+        if not text:
+            return None
+        try:
+            return count_tokens_tiktoken(text)
+        except Exception:
+            return int(len(text.split()) * 1.3)
 
     async def action_jump_console_tab(self, number: int) -> None:
         """Jump directly to the Nth native Console session tab (Alt+1..9).

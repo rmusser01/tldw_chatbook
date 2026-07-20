@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+from unittest.mock import MagicMock, patch
 
 
 from tldw_chatbook.Chat.console_agent_bridge import (
@@ -24,16 +25,20 @@ from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_models import (
     LOAD_TOOLS_NAME,
+    RUN_DONE,
+    RUN_ERROR,
     SPAWN_TOOL_NAME,
     STEP_ERROR,
     STEP_MODEL,
     STEP_SPAWN,
     STEP_TOOL_RESULT,
+    RunOutcome,
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
 )
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 
 
@@ -1384,3 +1389,66 @@ def test_console_run_budget_is_raised_above_the_bare_engine_default(tmp_path):
     assert run["budget"]["max_steps"] > 8
     assert run["budget"]["max_steps"] >= 16
     assert run["budget"]["max_wall_seconds"] > 240.0
+
+
+def _make_bridge() -> ConsoleAgentBridge:
+    store = MagicMock()
+    store.messages_for_session.return_value = []
+    return ConsoleAgentBridge(
+        agent_runs_db=MagicMock(),
+        store=store,
+        provider_gateway=MagicMock(),
+    )
+
+
+def test_run_reply_returns_runoutcome_done():
+    bridge = _make_bridge()
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
+
+    with patch.object(AgentService, "run_turn", return_value=("run-1", outcome)):
+        result = bridge.run_reply(
+            conversation_id="c1",
+            session_id="s1",
+            resolution=None,
+            assistant_message_id="a1",
+            model="gpt-4",
+            session_system_prompt="sys",
+            agent_messages=[{"role": "user", "content": "hi"}],
+            should_cancel=lambda: False,
+        )
+
+    assert result.status == RUN_DONE
+    assert result.final_text == "done"
+
+
+def test_run_reply_returns_runoutcome_error():
+    bridge = _make_bridge()
+    outcome = RunOutcome(status=RUN_ERROR, steps=[], final_text="")
+
+    with patch.object(AgentService, "run_turn", return_value=("run-1", outcome)):
+        result = bridge.run_reply(
+            conversation_id="c1",
+            session_id="s1",
+            resolution=None,
+            assistant_message_id="a1",
+            model="gpt-4",
+            session_system_prompt="sys",
+            agent_messages=[{"role": "user", "content": "hi"}],
+            should_cancel=lambda: False,
+        )
+
+    assert result.status == RUN_ERROR
+
+
+def test_native_tool_schemas_returns_builtin_tool_schemas():
+    bridge = _make_bridge()
+
+    schemas = bridge.native_tool_schemas()
+
+    names = {schema["name"] for schema in schemas}
+    assert "calculator" in names
+    assert "get_current_datetime" in names
+    for schema in schemas:
+        assert "name" in schema
+        assert "description" in schema
+        assert "parameters" in schema
