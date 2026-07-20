@@ -1487,6 +1487,13 @@ class PersonasScreen(BaseAppScreen):
         except Exception as exc:
             logger.opt(exception=True).warning("Could not load lore attachments.")
             self._notify(f"Could not load attachments: {exc}", "error")
+            rows = []  # clear stale rows on failure rather than leave a lying table
+        # Guard against a stale write: if the user switched books while the query
+        # was in flight, a newer refresh now owns the table — don't clobber it.
+        if (
+            self.state.selected_entity_id != entity_id
+            or self.state.selected_entity_kind != "lore"
+        ):
             return
         try:
             self.query_one(PersonasLoreDetailWidget).load_attachments(rows)

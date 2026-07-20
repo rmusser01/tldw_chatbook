@@ -1462,3 +1462,63 @@ async def test_attached_book_reaches_send_path_query(
     manager.associate_world_book_with_conversation("conv-y", seeded_lore_book["book_id"])
     books = manager.get_world_books_for_conversation("conv-y", enabled_only=False)
     assert any(b["id"] == seeded_lore_book["book_id"] for b in books)
+
+
+@pytest.mark.asyncio
+async def test_refresh_clears_stale_rows_on_query_failure(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book, monkeypatch
+):
+    # On a refresh DB failure, the Attachments tab must not keep showing the
+    # previously-rendered rows (which would misrepresent what is attached).
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        widget = screen.query_one(PersonasLoreDetailWidget)
+        widget.load_attachments([{"conversation_id": "conv-x", "title": "Noir case"}])
+        await pilot.pause()
+        table = screen.query_one("#personas-lore-attachments-table", DataTable)
+        assert table.row_count == 1
+
+        def _boom(self, _wb_id):
+            raise RuntimeError("db unavailable")
+
+        monkeypatch.setattr(
+            WorldBookManager, "get_conversations_for_world_book", _boom
+        )
+        await screen._refresh_lore_attachments()
+        await pilot.pause()
+        assert table.row_count == 0
+        empty = screen.query_one("#personas-lore-attachments-empty", Static)
+        assert empty.display is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_skips_write_when_selection_changed_mid_query(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book, monkeypatch
+):
+    # If the user switches books while the attachment query is in flight, the
+    # slower (stale) result must not overwrite the newly-selected book's table.
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        widget = screen.query_one(PersonasLoreDetailWidget)
+        widget.load_attachments([])
+        await pilot.pause()
+        table = screen.query_one("#personas-lore-attachments-table", DataTable)
+
+        def _switch_then_return(self, _wb_id):
+            # Simulate the user selecting a different book mid-query.
+            screen.state.selected_entity_id = "999999"
+            return [{"conversation_id": "conv-stale", "title": "Stale"}]
+
+        monkeypatch.setattr(
+            WorldBookManager, "get_conversations_for_world_book", _switch_then_return
+        )
+        await screen._refresh_lore_attachments()
+        await pilot.pause()
+        # The stale book's rows must not have landed on the current table.
+        assert table.row_count == 0
