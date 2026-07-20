@@ -1855,8 +1855,33 @@ async def test_build_context_snapshot_redacts_quoted_secrets_without_mangling_js
     assert '"api_key": "[redacted]"' in payload_text
 
 
+def test_redact_secrets_matches_hyphenated_and_camelcase_keys():
+    payload = {
+        "headers": {
+            "x-api-key": "secret123",
+            "apiKey": "secret456",
+            "my_api_key": "secret789",
+        }
+    }
+
+    redacted = ConsoleChatController._redact_secrets(payload)
+
+    assert redacted["headers"]["x-api-key"] == "[redacted]"
+    assert redacted["headers"]["apiKey"] == "[redacted]"
+    assert redacted["headers"]["my_api_key"] == "[redacted]"
+
+
+def test_redact_secrets_recursively_redacts_non_string_secret_values():
+    payload = {"api_key": {"value": "secret"}}
+
+    redacted = ConsoleChatController._redact_secrets(payload)
+
+    assert "secret" not in str(redacted)
+    assert redacted["api_key"] == {"value": "[redacted]"}
+
+
 @pytest.mark.asyncio
-async def test_build_context_snapshot_is_immutable():
+async def test_build_context_snapshot_messages_are_independent_of_store():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session(title="Chat 1")
@@ -1991,6 +2016,27 @@ def test_replace_image_data_redacts_anthropic_and_string_image_parts():
     assert string_part["image"] == "[image: data redacted for preview]"
 
 
+def test_replace_image_data_redacts_string_content_with_data_urls():
+    messages = [
+        {
+            "role": "user",
+            "content": "Look at this image: data:image/png;base64,abc and this URL: http://example.com/img.png",
+        },
+        {
+            "role": "assistant",
+            "content": "data:image/jpeg;base64,xyz",
+        },
+    ]
+
+    redacted = ConsoleChatController._replace_image_data_with_placeholders(messages)
+
+    assert "data:image/png;base64,abc" not in redacted[0]["content"]
+    assert "data:image/jpeg;base64,xyz" not in redacted[1]["content"]
+    assert "http://example.com/img.png" in redacted[0]["content"]
+    assert redacted[0]["content"].count("[image: data redacted for preview]") == 1
+    assert redacted[1]["content"] == "[image: data redacted for preview]"
+
+
 @pytest.mark.asyncio
 async def test_build_context_snapshot_next_send_payload_independent_of_store():
     store = ConsoleChatStore()
@@ -2069,7 +2115,12 @@ async def test_build_context_snapshot_isolates_assembly_errors():
     payload = snapshot.next_send_payload
     assert "error" in payload
     assert "Failed to build context snapshot" in payload["error"]
-    assert payload["messages"] == []
+    # The degraded payload must still include the transcript-derived messages
+    # that were assembled before the failure, not an empty placeholder.
+    assert len(payload["messages"]) == 2
+    assert payload["messages"][0]["content"] == "Hello"
+    assert payload["messages"][1]["content"].startswith("Follow up")
+    assert payload["system"] == []
 
 
 def test_annotate_skill_commands_multimodal_text_part():

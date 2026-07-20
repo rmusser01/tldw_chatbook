@@ -1197,6 +1197,8 @@ class ConsoleChatController:
             for s in (staged_sources or ())
         ]
 
+        provider_messages: list[dict[str, Any]] = []
+
         try:
             # Build the next-send payload as submit_draft would, but do not persist.
             provider_messages = self._provider_messages_for_session(session_id)
@@ -1257,12 +1259,19 @@ class ConsoleChatController:
             )
         except Exception as exc:
             logger.exception("Failed to build context snapshot")
+            # Preserve whatever was assembled before the failure so the viewer
+            # still sees the transcript-derived payload and effective system
+            # prompt rather than an empty placeholder.
+            degraded_messages = self._replace_image_data_with_placeholders(
+                self._redact_secrets(provider_messages)
+            )
+            degraded_system = self._redact_secrets(self._leading_system_message())
             return ConsoleContextSnapshot(
                 current_messages=copy.deepcopy(current_messages),
                 next_send_payload={
                     "model": self.model or self.configured_model,
-                    "messages": [],
-                    "system": [],
+                    "messages": degraded_messages,
+                    "system": degraded_system,
                     "staged_sources": staged_sources_list,
                     "tools": {
                         "native_schemas": [],
@@ -1314,6 +1323,14 @@ class ConsoleChatController:
                             part["source"] = _redact_image_source(part["source"])
                         if "image" in part:
                             part["image"] = _redact_image_url_value(part["image"])
+            elif isinstance(content, str):
+                # Some providers may inline image data URLs directly in a string
+                # content body; redact them so they never leak into the preview.
+                message["content"] = re.sub(
+                    r"data:[^\s\"'<>]+",
+                    "[image: data redacted for preview]",
+                    content,
+                )
         return result
 
     @staticmethod
@@ -1362,7 +1379,11 @@ class ConsoleChatController:
         if self._agent_bridge is not None:
             # Native tools only; live MCP catalog composition is out of scope.
             tools = self._agent_bridge.native_tool_schemas()
-        mcp_note = "MCP tools are configured but live catalog composition is not shown in this preview."
+        mcp_note: str | None = None
+        if self._mcp_provider:
+            mcp_note = (
+                "MCP tools are configured but live catalog composition is not shown in this preview."
+            )
         if tools:
             preview_note = (
                 "This preview shows only builtin native tools. "
@@ -1372,11 +1393,14 @@ class ConsoleChatController:
             preview_note = "No native tools are configured for preview."
         return {
             "native_schemas": tools,
-            "mcp_note": mcp_note if self._mcp_provider else None,
+            "mcp_note": mcp_note,
             "preview_note": preview_note,
         }
 
     _SECRET_REDACTION_KEYS = {"api_key", "apikey", "token", "password", "secret", "bearer"}
+    _SECRET_REDACTION_KEYS_NORMALIZED = {
+        k.replace("-", "").replace("_", "") for k in _SECRET_REDACTION_KEYS
+    }
     _SECRET_REDACTION_PATTERN = re.compile(
         r"(?P<open_quote>[\"']?)"
         r"(?P<key>"
@@ -1419,30 +1443,45 @@ class ConsoleChatController:
             return ConsoleChatController._SECRET_REDACTION_PATTERN.sub(_replace_value, value)
 
         def _matches_secret_key(key: str) -> bool:
-            """Return True when ``key`` is or ends with a secret word.
+            """Return True when ``key`` matches or ends with a secret word.
 
-            Matches exact keys such as ``api_key`` and suffixed keys such as
-            ``my_api_key``, while avoiding over-redaction of innocent keys like
-            ``token_count`` or ``secret_mode``.
+            Matches exact keys such as ``api_key``, suffixed keys such as
+            ``my_api_key``, and hyphenated/camelCase variants such as
+            ``x-api-key`` or ``apiKey``.
             """
             lowered = key.lower()
+            normalized = lowered.replace("-", "").replace("_", "")
+            if normalized in ConsoleChatController._SECRET_REDACTION_KEYS_NORMALIZED:
+                return True
             for secret in ConsoleChatController._SECRET_REDACTION_KEYS:
-                if lowered == secret or lowered.endswith(f"_{secret}"):
+                if lowered.endswith(f"_{secret}"):
+                    return True
+                normalized_secret = secret.replace("-", "").replace("_", "")
+                if normalized.endswith(normalized_secret):
                     return True
             return False
 
-        def _redact_obj(obj: Any) -> Any:
+        def _redact_obj(obj: Any, under_secret: bool = False) -> Any:
             if isinstance(obj, dict):
                 result = {}
                 for key, value in obj.items():
-                    if _matches_secret_key(key) and isinstance(value, str):
+                    key_is_secret = _matches_secret_key(key)
+                    if key_is_secret and isinstance(value, str):
+                        result[key] = "[redacted]"
+                    elif key_is_secret:
+                        # Structured values under a secret key are recursively
+                        # redacted so nested strings do not leak.
+                        result[key] = _redact_obj(value, under_secret=True)
+                    elif under_secret and isinstance(value, str):
                         result[key] = "[redacted]"
                     else:
-                        result[key] = _redact_obj(value)
+                        result[key] = _redact_obj(value, under_secret=under_secret)
                 return result
             if isinstance(obj, list):
-                return [_redact_obj(item) for item in obj]
+                return [_redact_obj(item, under_secret=under_secret) for item in obj]
             if isinstance(obj, str):
+                if under_secret:
+                    return "[redacted]"
                 return _redact_string(obj)
             return obj
 
