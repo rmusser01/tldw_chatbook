@@ -74,6 +74,8 @@ async def test_chat_screen_command_palette_opens_context_modal(app_instance):
         await pilot.pause()
 
         # Open command palette and select the context command.
+        # ctrl+p matches the project's default command-palette binding
+        # (see TldwCli.BINDINGS in app.py).
         await pilot.press("ctrl+p")
         await pilot.pause()
         for character in "view context":

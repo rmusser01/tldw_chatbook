@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from textual.widget import Widget
 
 from textual import on
@@ -66,10 +67,12 @@ class ConsoleContextModal(ModalScreen[None]):
         snapshot_factory: Callable[[], Awaitable[ConsoleContextSnapshot]],
         *,
         token_estimate: int | None = None,
+        estimate_factory: Callable[[], int | None] | None = None,
         in_progress: bool = False,
     ) -> None:
         super().__init__()
         self._snapshot_factory = snapshot_factory
+        self._estimate_factory = estimate_factory
         self.token_estimate = token_estimate
         self.in_progress = in_progress
 
@@ -244,6 +247,8 @@ class ConsoleContextModal(ModalScreen[None]):
         self.loading = True
         try:
             self.snapshot = await self._snapshot_factory()
+            if self._estimate_factory is not None:
+                self.token_estimate = self._estimate_factory()
         finally:
             self.loading = False
 
@@ -266,7 +271,8 @@ class ConsoleContextModal(ModalScreen[None]):
 
             pyperclip.copy(text)
             self.notify("JSON copied to clipboard.")
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to copy context JSON to clipboard: {}", exc)
             self.notify("Copy failed: pyperclip unavailable.", severity="warning")
 
     @on(Button.Pressed, "#console-context-save")
@@ -279,9 +285,11 @@ class ConsoleContextModal(ModalScreen[None]):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
             self.notify(f"Saved to {path}")
-        except (OSError, PermissionError) as exc:
+        except OSError as exc:
+            logger.warning("Failed to save context snapshot to {}: {}", path, exc)
             self.notify(f"Save failed: {exc}", severity="error")
         except Exception as exc:
+            logger.exception("Unexpected error saving context snapshot to {}", path)
             self.notify(f"Save failed: {exc}", severity="error")
 
     def action_refresh(self) -> None:

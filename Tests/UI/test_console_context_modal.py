@@ -193,6 +193,8 @@ async def test_context_modal_save_to_file(tmp_path, monkeypatch):
     expected_text = json.dumps(SNAPSHOT.next_send_payload, indent=2, default=str)
 
     class FakePath:
+        """Redirect filesystem operations under ``tmp_path`` for hermetic tests."""
+
         def __init__(self, *parts: str | Path) -> None:
             self._path = tmp_path.joinpath(*parts)
 
@@ -222,3 +224,38 @@ async def test_context_modal_save_to_file(tmp_path, monkeypatch):
         saved_files = list((tmp_path / "Downloads").glob("*.json"))
         assert len(saved_files) == 1
         assert saved_files[0].read_text(encoding="utf-8") == expected_text
+
+
+@pytest.mark.asyncio
+async def test_context_modal_save_to_file_failure(monkeypatch):
+    app = ActionHarness()
+
+    class FailingPath:
+        """Path stand-in whose ``write_text`` always raises ``OSError``."""
+
+        @classmethod
+        def home(cls):
+            return cls()
+
+        def __truediv__(self, other: str) -> "FailingPath":
+            return self
+
+        def mkdir(self, **kwargs: object) -> None:
+            return None
+
+        def write_text(self, *args: object, **kwargs: object) -> None:
+            raise OSError("disk full")
+
+    monkeypatch.setattr(
+        console_context_modal,
+        "Path",
+        FailingPath,
+    )
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(ConsoleContextModal(_snapshot_factory))
+        await pilot.pause()
+
+        # Should not crash; notification severity is checked best-effort.
+        await pilot.click("#console-context-save")
+        await pilot.pause()

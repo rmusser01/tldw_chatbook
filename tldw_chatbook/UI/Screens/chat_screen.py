@@ -1210,12 +1210,6 @@ class ChatScreen(BaseAppScreen):
             self.notify("No active conversation.", severity="warning")
             return
 
-        try:
-            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
-        except (NoMatches, QueryError):
-            composer = None
-        draft = composer.draft_text() if composer else ""
-
         async def _factory() -> ConsoleContextSnapshot:
             try:
                 composer = self.query_one(
@@ -1246,12 +1240,23 @@ class ChatScreen(BaseAppScreen):
                 staged_sources=current_staged_sources,
             )
 
-        token_estimate = self._estimate_tokens({"draft": draft})
+        def _estimate_factory() -> int | None:
+            try:
+                composer = self.query_one(
+                    "#console-native-composer", ConsoleComposerBar
+                )
+            except (NoMatches, QueryError):
+                composer = None
+            current_draft = composer.draft_text() if composer else ""
+            return self._estimate_tokens({"draft": current_draft})
+
+        token_estimate = _estimate_factory()
         in_progress = controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
         self.app.push_screen(
             ConsoleContextModal(
                 _factory,
                 token_estimate=token_estimate,
+                estimate_factory=_estimate_factory,
                 in_progress=in_progress,
             )
         )
