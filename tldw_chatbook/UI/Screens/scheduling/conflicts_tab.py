@@ -34,7 +34,7 @@ class ConflictsTab(Vertical):
     }
     """
 
-    def __init__(self, sync_engine: _SyncEngineProtocol, **kwargs) -> None:
+    def __init__(self, sync_engine: _SyncEngineProtocol | None, **kwargs) -> None:
         """Initialize the conflicts tab.
 
         Args:

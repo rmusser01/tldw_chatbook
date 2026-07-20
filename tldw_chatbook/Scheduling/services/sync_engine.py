@@ -373,7 +373,7 @@ class SyncEngine:
                     pending_mutation,
                 )
             elif not server_state:
-                row = self.db.get_reminder_task(local_id)
+                row = self.db.get_reminder_task(local_id) or {}
                 self.db.update_reminder_task(local_id, server_id=None)
                 self.db.delete_sync_mapping(local_id, _REMINDER_PRIMITIVE, owner_id)
                 fields = {
