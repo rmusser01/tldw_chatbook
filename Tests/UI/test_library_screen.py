@@ -5,7 +5,11 @@ import pytest_asyncio
 from textual.widgets import Button
 from unittest.mock import MagicMock
 
-from tldw_chatbook.Library.library_ingest_jobs import DEFAULT_CHUNK_SIZE
+from tldw_chatbook.Library.library_ingest_jobs import (
+    DEFAULT_CHUNK_SIZE,
+    IngestJobState,
+    LibraryIngestJob,
+)
 from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.test_library_shell import (
@@ -207,3 +211,116 @@ def test_on_preflight_retry_triggers_preflight() -> None:
     screen._on_preflight_retry()
 
     screen._trigger_preflight.assert_called_once_with("/tmp/retry-target.pdf")
+
+
+# ----- Open in Library fallback (Task 19) -----------------------------------
+
+
+def _minimal_ingest_job(**kwargs: object) -> LibraryIngestJob:
+    """Build a minimal ``LibraryIngestJob`` with safe defaults."""
+    defaults: dict[str, object] = {
+        "job_id": "ingest-job-1",
+        "source_path": "/tmp/test.txt",
+        "state": IngestJobState.DONE,
+    }
+    defaults.update(kwargs)
+    return LibraryIngestJob(**defaults)
+
+
+def test_open_job_in_library_uses_stamped_media_id() -> None:
+    """When the job already has a media_id, navigation is immediate."""
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen._navigate_to_media = MagicMock()
+    screen.notify = MagicMock()
+
+    job = _minimal_ingest_job(media_id=42)
+    screen._open_job_in_library(job)
+
+    screen._navigate_to_media.assert_called_once_with(42)
+    screen.app_instance.media_db.execute_query.assert_not_called()
+    screen.notify.assert_not_called()
+
+
+def test_open_job_in_library_falls_back_to_source_url() -> None:
+    """A deduplicated job with a matching source URL resolves to that media row."""
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.app_instance.media_db.execute_query.return_value = [{"id": 7}]
+    screen._navigate_to_media = MagicMock()
+    screen.notify = MagicMock()
+
+    job = _minimal_ingest_job(media_id=None, source_path="/tmp/foo.txt")
+    screen._open_job_in_library(job)
+
+    screen.app_instance.media_db.execute_query.assert_called_once_with(
+        "SELECT id FROM Media WHERE url = ? ORDER BY created_at DESC LIMIT 1",
+        ("/tmp/foo.txt",),
+    )
+    screen._navigate_to_media.assert_called_once_with(7)
+    screen.notify.assert_not_called()
+
+
+def test_open_job_in_library_falls_back_to_content_hash() -> None:
+    """When the URL lookup misses, a recorded content hash is used."""
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.app_instance.media_db.execute_query.side_effect = [[], [{"id": 9}]]
+    screen._navigate_to_media = MagicMock()
+    screen.notify = MagicMock()
+
+    job = _minimal_ingest_job(media_id=None, content_hash="abc123")
+    screen._open_job_in_library(job)
+
+    assert screen.app_instance.media_db.execute_query.call_count == 2
+    screen._navigate_to_media.assert_called_once_with(9)
+    screen.notify.assert_not_called()
+
+
+def test_open_job_in_library_notifies_when_no_match() -> None:
+    """A deduplicated job with no resolvable match shows a transient status."""
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.app_instance.media_db.execute_query.return_value = []
+    screen._navigate_to_media = MagicMock()
+    screen.notify = MagicMock()
+
+    job = _minimal_ingest_job(media_id=None, content_hash="abc")
+    screen._open_job_in_library(job)
+
+    screen._navigate_to_media.assert_not_called()
+    screen.notify.assert_called_once_with(
+        "Already in Library — no single match found"
+    )
+
+
+def test_open_job_in_library_handles_missing_media_db() -> None:
+    """The fallback is skipped entirely when the media database is unavailable."""
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock(media_db=None)
+    screen._navigate_to_media = MagicMock()
+    screen.notify = MagicMock()
+
+    job = _minimal_ingest_job(media_id=None, content_hash="abc")
+    screen._open_job_in_library(job)
+
+    screen._navigate_to_media.assert_not_called()
+    screen.notify.assert_called_once_with(
+        "Already in Library — no single match found"
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_library_ingest_open_wires_to_open_job_in_library() -> None:
+    """The ingest canvas Open button delegates through ``_open_job_in_library``."""
+    screen = _minimal_ingest_screen()
+    job = _minimal_ingest_job(media_id=123)
+    screen._library_ingest_job_by_id = MagicMock(return_value=job)
+    screen._open_job_in_library = MagicMock()
+
+    event = MagicMock()
+    event.button.id = "library-ingest-open-ingest-job-1"
+    await screen.handle_library_ingest_open(event)
+
+    screen._library_ingest_job_by_id.assert_called_once_with("ingest-job-1")
+    screen._open_job_in_library.assert_called_once_with(job)

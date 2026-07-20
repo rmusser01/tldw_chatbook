@@ -10473,6 +10473,47 @@ class LibraryScreen(BaseAppScreen):
         jobs = jobs_fn() if callable(jobs_fn) else ()
         return next((job for job in jobs if job.job_id == job_id), None)
 
+    def _navigate_to_media(self, media_id: str | int) -> None:
+        """Open the Library media viewer for ``media_id``.
+
+        Thin synchronous seam so the ingest "Open in Library" fallback can
+        reuse the same detail viewer path as Search/RAG result open actions
+        without duplicating viewer state setup.
+        """
+        self.run_worker(self._open_library_item_by_id("media", str(media_id)))
+
+    def _open_job_in_library(self, job: LibraryIngestJob) -> None:
+        """Resolve a done ingest job to a media item and open it.
+
+        Falls back to source-path and content-hash lookups when the job was
+        deduplicated and therefore has no stamped ``media_id``. Defensively
+        skips fallback when the media database is unavailable.
+        """
+        media_id = job.media_id
+        if media_id is None:
+            media_db = getattr(self.app_instance, "media_db", None)
+            if media_db is not None:
+                # Fallback 1: match by source URL/path.
+                rows = media_db.execute_query(
+                    "SELECT id FROM Media WHERE url = ? ORDER BY created_at DESC LIMIT 1",
+                    (job.source_path,),
+                )
+                if rows:
+                    media_id = rows[0]["id"]
+                # Fallback 2: match by content hash if the job recorded one.
+                elif job.content_hash:
+                    rows = media_db.execute_query(
+                        "SELECT id FROM Media WHERE content_hash = ? ORDER BY created_at DESC LIMIT 1",
+                        (job.content_hash,),
+                    )
+                    if rows:
+                        media_id = rows[0]["id"]
+        if media_id:
+            self._navigate_to_media(media_id)
+        else:
+            # Show a transient status when no single match can be resolved.
+            self.notify("Already in Library — no single match found")
+
     @on(Button.Pressed, ".library-ingest-open")
     async def handle_library_ingest_open(self, event: Button.Pressed) -> None:
         """Open a done ingest job's resulting media item in the Library viewer.
@@ -10485,9 +10526,9 @@ class LibraryScreen(BaseAppScreen):
         if job_id is None:
             return
         job = self._library_ingest_job_by_id(job_id)
-        if job is None or job.media_id is None:
+        if job is None:
             return
-        await self._open_library_item_by_id("media", str(job.media_id))
+        self._open_job_in_library(job)
 
     @on(Button.Pressed, ".library-ingest-retry")
     def handle_library_ingest_retry(self, event: Button.Pressed) -> None:
