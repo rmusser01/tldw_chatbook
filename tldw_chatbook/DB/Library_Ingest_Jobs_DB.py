@@ -17,7 +17,7 @@ from .base_db import BaseDB
 
 
 class LibraryIngestJobsDB(BaseDB):
-    _CURRENT_SCHEMA_VERSION = 1
+    _CURRENT_SCHEMA_VERSION = 2
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         self._conn: sqlite3.Connection | None = None
@@ -43,12 +43,30 @@ class LibraryIngestJobsDB(BaseDB):
             finally:
                 self._conn = None
 
+    def _migrate_v1_to_v2(self, conn: sqlite3.Connection) -> None:
+        """Add JSON columns for ingest options, progress, error detail, and content hash."""
+        columns = [
+            ("ingest_options", "TEXT DEFAULT '{}'"),
+            ("error_detail", "TEXT DEFAULT NULL"),
+            ("progress", "TEXT DEFAULT NULL"),
+            ("content_hash", "TEXT DEFAULT NULL"),
+        ]
+        for name, dtype in columns:
+            try:
+                conn.execute(f"ALTER TABLE ingest_jobs ADD COLUMN {name} {dtype}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" not in str(e).lower():
+                    raise
+        conn.execute("DELETE FROM schema_version")
+        conn.execute("INSERT INTO schema_version (version) VALUES (2)")
+        conn.commit()
+
     def _initialize_schema(self) -> None:
         conn = self._get_connection()
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY NOT NULL);
-            INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+            INSERT OR IGNORE INTO schema_version (version) SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM schema_version);
 
             CREATE TABLE IF NOT EXISTS ingest_jobs (
                 seq INTEGER PRIMARY KEY,
@@ -68,11 +86,20 @@ class LibraryIngestJobsDB(BaseDB):
                 media_id INTEGER,
                 superseded INTEGER NOT NULL DEFAULT 0,
                 dismissed INTEGER NOT NULL DEFAULT 0,
-                permanent INTEGER NOT NULL DEFAULT 0
+                permanent INTEGER NOT NULL DEFAULT 0,
+                ingest_options TEXT DEFAULT '{}',
+                error_detail TEXT DEFAULT NULL,
+                progress TEXT DEFAULT NULL,
+                content_hash TEXT DEFAULT NULL
             );
             """
         )
         conn.commit()
+
+        row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+        current_version = row["version"] if row else 0
+        if current_version < self._CURRENT_SCHEMA_VERSION:
+            self._migrate_v1_to_v2(conn)
 
     @staticmethod
     def _seq_of(job_id: str) -> int:
@@ -86,8 +113,9 @@ class LibraryIngestJobsDB(BaseDB):
             INSERT INTO ingest_jobs
               (seq, job_id, source_path, title, author, keywords, perform_analysis,
                chunk_enabled, chunk_size, state, retry_count, detected_type, error,
-               finished_at_wall, media_id, superseded, dismissed, permanent)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               finished_at_wall, media_id, superseded, dismissed, permanent,
+               ingest_options, error_detail, progress, content_hash)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(job_id) DO UPDATE SET
               source_path=excluded.source_path, title=excluded.title, author=excluded.author,
               keywords=excluded.keywords, perform_analysis=excluded.perform_analysis,
@@ -95,7 +123,9 @@ class LibraryIngestJobsDB(BaseDB):
               state=excluded.state, retry_count=excluded.retry_count,
               detected_type=excluded.detected_type, error=excluded.error,
               finished_at_wall=excluded.finished_at_wall, media_id=excluded.media_id,
-              superseded=excluded.superseded, dismissed=excluded.dismissed, permanent=excluded.permanent
+              superseded=excluded.superseded, dismissed=excluded.dismissed, permanent=excluded.permanent,
+              ingest_options=excluded.ingest_options, error_detail=excluded.error_detail,
+              progress=excluded.progress, content_hash=excluded.content_hash
             """,
             (
                 self._seq_of(job.job_id), job.job_id, job.source_path, job.title, job.author,
@@ -103,6 +133,10 @@ class LibraryIngestJobsDB(BaseDB):
                 job.chunk_size, job.state.value, job.retry_count, job.detected_type, job.error,
                 job.finished_at_wall, job.media_id, int(job.superseded), int(job.dismissed),
                 int(job.permanent),
+                json.dumps(job.ingest_options or {}),
+                json.dumps(job.error_detail) if job.error_detail is not None else None,
+                json.dumps(job.progress) if job.progress is not None else None,
+                job.content_hash,
             ),
         )
         conn.commit()

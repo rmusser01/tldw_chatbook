@@ -883,6 +883,10 @@ def _job_from_row(row: dict) -> "LibraryIngestJob":
         dismissed=bool(row["dismissed"]),
         permanent=bool(row["permanent"]),
         retry_count=int(row["retry_count"]),
+        ingest_options=json.loads(row.get("ingest_options") or "{}"),
+        error_detail=json.loads(row["error_detail"]) if row.get("error_detail") else None,
+        progress=json.loads(row["progress"]) if row.get("progress") else None,
+        content_hash=row.get("content_hash"),
         # monotonic fields are not round-trippable -- leave defaults.
         submitted_at=0.0, started_at=None, finished_at=None,
     )
