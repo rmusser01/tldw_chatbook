@@ -4032,9 +4032,7 @@ class TldwCli(
             store=self.client_notifications_db,
             policy_enforcer=self.service_policy_enforcer,
         )
-        server_client = None
-        if self.server_notifications_service is not None:
-            server_client = SchedulingServerClient(self.server_notifications_service)
+        server_client = SchedulingServerClient(self.server_notifications_service)
 
         subscriptions_db = SubscriptionsDB(
             get_subscriptions_db_path(), CLI_APP_CLIENT_ID
