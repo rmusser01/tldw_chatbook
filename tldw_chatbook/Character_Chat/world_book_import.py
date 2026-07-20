@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from tldw_chatbook.Character_Chat.world_info_regex import validate_regex_pattern
+
 _VALID_POSITIONS = {"before_char", "after_char", "at_start", "at_end"}
 _INT_POSITION_MAP = {0: "before_char", 1: "after_char"}
 
@@ -106,6 +108,13 @@ def _normalize_entry(entry: Any, index: int) -> Dict[str, Any]:
     else:
         enabled = not _coerce_bool(entry.get("disable"), False)
     extensions = entry.get("extensions")
+    regex_on = _coerce_bool(entry.get("regex"), False)
+    if regex_on:
+        for pat in list(keys) + _as_str_list(raw_secondary):
+            try:
+                validate_regex_pattern(pat)
+            except ValueError as exc:
+                raise ValueError(f"Entry {index + 1}: {exc}") from exc
     return {
         "keys": keys,
         "secondary_keys": _as_str_list(raw_secondary),
@@ -119,6 +128,7 @@ def _normalize_entry(entry: Any, index: int) -> Dict[str, Any]:
         "enabled": enabled,
         "priority": _coerce_int(entry.get("priority", 0), 0),
         "extensions": extensions if isinstance(extensions, dict) else {},
+        "regex": regex_on,
     }
 
 

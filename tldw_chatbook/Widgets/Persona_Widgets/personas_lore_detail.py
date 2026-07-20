@@ -21,6 +21,8 @@ from textual.widgets import (
     TextArea,
 )
 
+from tldw_chatbook.Character_Chat.world_info_regex import validate_regex_pattern
+
 POSITIONS = (
     ("before_char", "Before character"),
     ("after_char", "After character"),
@@ -145,6 +147,9 @@ class PersonasLoreDetailWidget(Vertical):
                         )
                         yield Static("Selective", markup=False)
                         yield Switch(value=False, id="personas-lore-entry-selective")
+                    with Horizontal(classes="personas-lore-form-row"):
+                        yield Static("Regex", markup=False)
+                        yield Switch(value=False, id="personas-lore-entry-regex")
                     yield Input(
                         placeholder="Secondary keys (comma-separated)",
                         id="personas-lore-entry-secondary-keys",
@@ -364,7 +369,7 @@ class PersonasLoreDetailWidget(Vertical):
             dict | None: The entry payload keyed by API field names
             (``keys``, ``content``, ``position``, ``enabled``,
             ``insertion_order``, ``priority``, ``case_sensitive``, ``selective``,
-            ``secondary_keys``), or ``None`` if keys or content are empty.
+            ``secondary_keys``, ``regex``), or ``None`` if keys or content are empty.
         """
         raw_keys = self.query_one("#personas-lore-entry-keys", Input).value
         keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
@@ -384,6 +389,7 @@ class PersonasLoreDetailWidget(Vertical):
             self.query_one("#personas-lore-entry-case-sensitive", Switch).value
         )
         selective = bool(self.query_one("#personas-lore-entry-selective", Switch).value)
+        regex = bool(self.query_one("#personas-lore-entry-regex", Switch).value)
         raw_secondary = self.query_one(
             "#personas-lore-entry-secondary-keys", Input
         ).value
@@ -409,6 +415,7 @@ class PersonasLoreDetailWidget(Vertical):
             "case_sensitive": case_sensitive,
             "selective": selective,
             "secondary_keys": secondary_keys,
+            "regex": regex,
         }
 
     def settings_payload(self) -> dict:
@@ -440,6 +447,18 @@ class PersonasLoreDetailWidget(Vertical):
     def set_status(self, message: str) -> None:
         self.query_one("#personas-lore-status", Static).update(message)
 
+    def _regex_payload_error(self, payload: dict) -> str | None:
+        """Return a user-facing error if the payload is a regex entry with an
+        invalid/too-complex key or secondary-key pattern, else None."""
+        if not payload.get("regex"):
+            return None
+        for pat in list(payload.get("keys", [])) + list(payload.get("secondary_keys", [])):
+            try:
+                validate_regex_pattern(pat)
+            except ValueError as exc:
+                return str(exc)
+        return None
+
     # ----- events -----
 
     def _fill_form_from_entry(self, entry_id: str) -> None:
@@ -468,6 +487,9 @@ class PersonasLoreDetailWidget(Vertical):
         self.query_one("#personas-lore-entry-selective", Switch).value = bool(
             entry.get("selective", False)
         )
+        self.query_one("#personas-lore-entry-regex", Switch).value = bool(
+            entry.get("regex", False)
+        )
         self.query_one("#personas-lore-entry-secondary-keys", Input).value = ", ".join(
             str(k) for k in (entry.get("secondary_keys") or [])
         )
@@ -494,6 +516,10 @@ class PersonasLoreDetailWidget(Vertical):
         event.stop()
         payload = self.entry_form_payload()
         if payload is not None:
+            err = self._regex_payload_error(payload)
+            if err:
+                self.set_status(err)
+                return
             # A NEW entry always appends after the current maximum
             # insertion_order, regardless of which row is selected in the form.
             payload["insertion_order"] = self._next_insertion_order()
@@ -508,6 +534,10 @@ class PersonasLoreDetailWidget(Vertical):
             return
         payload = self.entry_form_payload()
         if payload is not None:
+            err = self._regex_payload_error(payload)
+            if err:
+                self.set_status(err)
+                return
             self.post_message(LoreEntryUpdateRequested(entry_id, payload))
 
     @on(Button.Pressed, "#personas-lore-entry-delete")

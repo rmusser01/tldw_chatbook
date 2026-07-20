@@ -377,6 +377,7 @@ class WorldBookManager:
         case_sensitive: bool = False,
         extensions: Optional[Dict[str, Any]] = None,
         priority: int = 0,
+        regex: bool = False,
     ) -> int:
         """
         Create a new world book entry.
@@ -393,6 +394,7 @@ class WorldBookManager:
             case_sensitive: Whether keyword matching is case sensitive
             extensions: Additional data for future features
             priority: Priority for budget-aware inclusion (higher wins under token pressure)
+            regex: Whether keys/secondary_keys are regex patterns instead of literal keywords
 
         Returns:
             The ID of the created entry
@@ -414,8 +416,8 @@ class WorldBookManager:
         query = """
         INSERT INTO world_book_entries (world_book_id, keys, content, enabled, position,
                                        insertion_order, selective, secondary_keys,
-                                       case_sensitive, extensions, priority)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                       case_sensitive, extensions, priority, regex)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
 
         with self.db.transaction() as cursor:
@@ -433,6 +435,7 @@ class WorldBookManager:
                     case_sensitive,
                     json.dumps(extensions) if extensions else None,
                     _coerce_int(priority, 0),
+                    bool(regex),
                 ),
             )
             entry_id = cursor.lastrowid
@@ -455,7 +458,7 @@ class WorldBookManager:
         query = """
         SELECT id, world_book_id, keys, content, enabled, position, insertion_order,
                selective, secondary_keys, case_sensitive, extensions, created_at, last_modified,
-               priority
+               priority, regex
         FROM world_book_entries
         WHERE world_book_id = ?
         """
@@ -486,6 +489,7 @@ class WorldBookManager:
                         "created_at": row[11],
                         "last_modified": row[12],
                         "priority": row[13],
+                        "regex": bool(row[14]),
                     }
                 )
 
@@ -518,6 +522,7 @@ class WorldBookManager:
             "case_sensitive",
             "extensions",
             "priority",
+            "regex",
         ]:
             if field in kwargs:
                 value = kwargs[field]
@@ -525,6 +530,8 @@ class WorldBookManager:
                     value = json.dumps(value) if value else None
                 elif field in ("priority", "insertion_order"):
                     value = _coerce_int(value, 0)
+                elif field == 'regex':
+                    value = bool(value)  # symmetry with create's bool(regex) write
                 updates.append(f"{field} = ?")
                 params.append(value)
 
@@ -693,6 +700,7 @@ class WorldBookManager:
                     "case_sensitive": entry["case_sensitive"],
                     "extensions": entry["extensions"],
                     "priority": entry["priority"],
+                    "regex": entry["regex"],
                 }
             )
 
@@ -742,6 +750,7 @@ class WorldBookManager:
                 case_sensitive=entry.get("case_sensitive", False),
                 extensions=entry.get("extensions", {}),
                 priority=entry.get("priority", 0),
+                regex=entry.get("regex", False),
             )
 
         logger.info(f"Imported world book '{name}' with {len(entries)} entries")

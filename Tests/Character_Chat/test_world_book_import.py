@@ -232,3 +232,19 @@ def test_string_disable_false_means_enabled():
 
 def test_disable_true_flag_disables_when_no_enabled():
     assert _b(disable=True)["enabled"] is False
+
+
+def test_regex_flag_normalized():
+    e = normalize_world_book_import({"entries": [{"keys": ["w[ao]rden"], "content": "c", "regex": True}]})["entries"][0]
+    assert e["regex"] is True
+
+
+def test_bad_regex_pattern_rejects_file():
+    with pytest.raises(ValueError, match="Entry 1"):
+        normalize_world_book_import({"entries": [{"keys": ["(a+)+"], "content": "c", "regex": True}]})
+
+
+def test_bad_pattern_ignored_when_not_regex():
+    # A would-be-bad "pattern" in a non-regex entry is a literal keyword — never validated.
+    e = normalize_world_book_import({"entries": [{"keys": ["(a+)+"], "content": "c"}]})["entries"][0]
+    assert e["keys"] == ["(a+)+"] and e["regex"] is False
