@@ -298,6 +298,10 @@ def process_pdf(
     enable_ocr: bool = False,  # NEW: Enable OCR for scanned documents
     ocr_language: str = "en",  # NEW: OCR language code
     ocr_backend: str = "auto",  # NEW: OCR backend selection
+    engine: Optional[str] = None,  # Per-type option alias for ``parser``.
+    page_range: Optional[str] = None,  # Per-type option (not yet implemented).
+    ocr: Optional[bool] = None,  # Per-type option alias for ``enable_ocr``.
+    extract_images: bool = False,  # Per-type option (not yet implemented).
     # write_to_temp_file: bool = False # This param seems unused/obsolete now
 ) -> Optional[Dict[str, Any]]:
     """
@@ -322,6 +326,10 @@ def process_pdf(
       - enable_ocr (bool): Enable OCR for scanned documents (works with 'docling' and 'docext' parsers).
       - ocr_language (str): Language code for OCR (e.g., 'en', 'de', 'fr').
       - ocr_backend (str): OCR backend to use when parser is 'docext' (default: 'auto').
+      - engine (str, optional): Alias for ``parser``. ``engine`` takes precedence if provided.
+      - page_range (str, optional): Page range to process (e.g. '1-10'). Not yet implemented.
+      - ocr (bool, optional): Alias for ``enable_ocr``. ``ocr`` takes precedence if provided.
+      - extract_images (bool): Whether to extract embedded images. Not yet implemented.
       - write_to_temp_file (bool): If True and input is bytes, write to a temp file
                                   (needed for parsers that only accept paths).
 
@@ -342,6 +350,20 @@ def process_pdf(
                 "analysis_details": Optional[Dict] # Added
             }
     """
+    # Resolve per-type option aliases, preserving backward compatibility for
+    # the legacy ``parser`` and ``enable_ocr`` parameter names.
+    parser = engine if engine is not None else parser
+    if ocr is not None:
+        enable_ocr = ocr
+
+    # Track not-yet-implemented per-type options so callers see a clear warning
+    # rather than a silent no-op.
+    unsupported_options: List[str] = []
+    if page_range is not None:
+        unsupported_options.append(f"page_range={page_range}")
+    if extract_images:
+        unsupported_options.append("extract_images=True")
+
     start_time = datetime.now()
     # Initialize the result dictionary structure
 
@@ -370,6 +392,13 @@ def process_pdf(
             "ocr_supported": parser in ["docling", "docext"]  # Both docling and docext support OCR
         }
     }
+    if unsupported_options:
+        warning_msg = (
+            "Ignored unsupported PDF ingestion option(s): "
+            + ", ".join(unsupported_options)
+        )
+        result["warnings"].append(warning_msg)
+        logger.warning(warning_msg)
     log_counter("pdf_processing_attempt", labels={"file_name": filename, "parser": parser})
 
     temp_dir_for_pdf: Optional[str] = None

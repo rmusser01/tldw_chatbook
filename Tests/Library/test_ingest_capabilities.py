@@ -47,7 +47,7 @@ def test_get_capabilities_pdf() -> None:
     assert isinstance(caps, TypeGroupCapabilities)
     assert caps.group == "pdf"
     assert caps.required_features == ("pdf_processing",)
-    assert caps.field_names == ("pdf_engine", "extract_images", "enable_ocr")
+    assert caps.field_names == ("pdf_engine", "ocr")
 
     engine_field = caps.fields[0]
     assert isinstance(engine_field, OptionField)
@@ -64,10 +64,10 @@ def test_get_capabilities_audio_video() -> None:
     assert caps.required_features == ("audio_processing",)
     assert "faster_whisper" in caps.optional_features
     assert caps.field_names == (
-        "transcription_backend",
         "transcription_model",
-        "extract_audio",
         "language",
+        "timestamps",
+        "diarization",
     )
 
     model_field = next(f for f in caps.fields if f.name == "transcription_model")
@@ -79,10 +79,10 @@ def test_get_capabilities_ebook() -> None:
     caps = get_capabilities("ebook")
     assert caps.group == "ebook"
     assert caps.required_features == ("ebook_processing",)
-    assert caps.field_names == ("html_converter", "extract_toc")
+    assert caps.field_names == ("extraction_method", "include_toc")
 
-    converter_field = next(f for f in caps.fields if f.name == "html_converter")
-    assert converter_field.options == ("ebooklib", "html2text", "beautifulsoup4")
+    converter_field = next(f for f in caps.fields if f.name == "extraction_method")
+    assert converter_field.options == ("filtered", "markdown", "basic")
 
 
 def test_get_capabilities_generic() -> None:
@@ -163,15 +163,11 @@ def test_get_type_group_fallback_to_generic_for_unsupported_extension() -> None:
     assert get_type_group("/tmp/archive.tar.gz") == "generic"
 
 
-def test_transcription_backend_options_use_feature_ids() -> None:
+def test_diarization_field_depends_on_diarization_feature() -> None:
     caps = get_capabilities("audio_video")
-    backend_field = next(f for f in caps.fields if f.name == "transcription_backend")
-    assert backend_field.default == "faster_whisper"
-    assert backend_field.options == (
-        "faster_whisper",
-        "lightning_whisper_mlx",
-        "parakeet_mlx",
-    )
+    diarization_field = next(f for f in caps.fields if f.name == "diarization")
+    assert diarization_field.default is False
+    assert diarization_field.depends_on == "diarization"
 
 
 def test_feature_labels_are_distinct_within_each_group() -> None:
