@@ -109,6 +109,10 @@ class PersonasLoreDetailWidget(Vertical):
     PersonasLoreDetailWidget #personas-lore-status {
         height: 1;
     }
+    PersonasLoreDetailWidget #personas-lore-attachments-table {
+        height: auto;
+        max-height: 8;
+    }
     """
 
     def __init__(self, **kwargs: Any) -> None:

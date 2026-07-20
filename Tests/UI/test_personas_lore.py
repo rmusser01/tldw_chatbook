@@ -471,6 +471,26 @@ async def test_detach_button_posts_selected_conversation():
         assert app.detach_posts == ["c1"]
 
 
+@pytest.mark.asyncio
+async def test_detach_with_no_selection_does_not_post():
+    """Clicking Detach with no attachment row selected must not post
+    LoreDetachRequested (which would raise on a None conversation id downstream)
+    — it should short-circuit with a status message instead."""
+    app = _DetailHost()
+    async with app.run_test(size=(140, 40)) as pilot:
+        widget = app.query_one(PersonasLoreDetailWidget)
+        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
+                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        widget.load_attachments([])  # no rows → nothing selectable
+        app.query_one("#personas-lore-tabs", TabbedContent).active = "personas-lore-tab-attachments"
+        await pilot.pause()
+        await pilot.click("#personas-lore-attach-detach")
+        await pilot.pause()
+        assert app.detach_posts == []
+        status = str(app.query_one("#personas-lore-status", Static).renderable)
+        assert "Select an attached conversation first." in status
+
+
 class _TryItHost(App):
     def compose(self) -> ComposeResult:
         yield PersonasLoreTryItWidget(id="personas-lore-tryit")
@@ -1394,6 +1414,41 @@ async def test_attach_via_picker_then_detach_real_db(
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         assert manager.get_conversations_for_world_book(seeded_lore_book["book_id"]) == []
+
+
+@pytest.mark.asyncio
+async def test_attach_survives_list_conversations_failure(
+    mock_app_instance, stub_characters_lore, lore_db, seeded_lore_book, monkeypatch
+):
+    """A real DB error inside _list_attachable_conversations (e.g.
+    search_conversations_page raising) must be caught inside the attach
+    worker -- the app keeps running and no association is created. Regression
+    for the final-review Important finding: the worker runs via
+    run_worker(..., group="personas-io") with the default exit_on_error=True,
+    so an unguarded raise there would tear down the whole app."""
+    mock_app_instance.chachanotes_db = lore_db
+    app = LorePersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _enter_lore(pilot)
+        await _select_first_lore(pilot, screen)
+        screen.query_one("#personas-lore-tabs", TabbedContent).active = (
+            "personas-lore-tab-attachments"
+        )
+        await pilot.pause()
+
+        def _boom():
+            raise RuntimeError("db unavailable")
+
+        monkeypatch.setattr(screen, "_list_attachable_conversations", _boom)
+        screen.post_message(LoreAttachRequested())
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert pilot.app.is_running, "a conversation-list failure must not crash the app"
+        manager = WorldBookManager(lore_db)
+        assert (
+            manager.get_conversations_for_world_book(seeded_lore_book["book_id"]) == []
+        )
 
 
 @pytest.mark.asyncio

@@ -2619,7 +2619,14 @@ class PersonasScreen(BaseAppScreen):
             manager = self._lore_manager()
             if manager is None or not entity_id:
                 return
-            convs = await asyncio.to_thread(self._list_attachable_conversations)
+            try:
+                convs = await asyncio.to_thread(self._list_attachable_conversations)
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    "Could not list conversations for attach."
+                )
+                self._notify(f"Attach failed: {exc}", "error")
+                return
             try:
                 picked = await self.app.push_screen_wait(
                     ConversationAttachPicker(convs)
