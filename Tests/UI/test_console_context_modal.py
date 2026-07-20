@@ -59,15 +59,11 @@ async def test_context_modal_renders_tabs():
         assert "Chat Context" in header_text
         assert "42 tokens" in header_text
 
-        current_container = modal.query_one(
-            "#console-context-current-body", Vertical
-        )
+        current_container = modal.query_one("#console-context-current-body", Vertical)
         text_areas = current_container.query(TextArea)
         assert any("Hello" in ta.text for ta in text_areas)
 
-        next_container = modal.query_one(
-            "#console-context-next-send-body", Vertical
-        )
+        next_container = modal.query_one("#console-context-next-send-body", Vertical)
         labels = list(next_container.query(Label))
         assert any("gpt-4" in str(label.renderable) for label in labels)
 
@@ -75,21 +71,16 @@ async def test_context_modal_renders_tabs():
 @pytest.mark.asyncio
 async def test_context_modal_empty_state():
     app = ModalHarness()
-    app._push_empty = lambda: app.push_screen(
-        ConsoleContextModal(_empty_factory)
-    )
+    app._push_empty = lambda: app.push_screen(ConsoleContextModal(_empty_factory))
 
     async with app.run_test(size=(100, 40)) as pilot:
         app._push_empty()
         await pilot.pause()
         modal = app.screen
-        current_container = modal.query_one(
-            "#console-context-current-body", Vertical
-        )
+        current_container = modal.query_one("#console-context-current-body", Vertical)
         labels = list(current_container.query(Label))
         assert any(
-            "No conversation context" in str(label.renderable)
-            for label in labels
+            "No conversation context" in str(label.renderable) for label in labels
         )
 
 
@@ -128,9 +119,7 @@ async def test_context_modal_toggle_raw_json():
         await pilot.pause()
 
         modal = app.screen
-        next_container = modal.query_one(
-            "#console-context-next-send-body", Vertical
-        )
+        next_container = modal.query_one("#console-context-next-send-body", Vertical)
         text_areas = list(next_container.query(TextArea))
         assert any(ta.text == expected_raw for ta in text_areas)
 

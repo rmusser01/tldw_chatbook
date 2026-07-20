@@ -128,16 +128,12 @@ class ConsoleContextModal(ModalScreen[None]):
             header_text += f" (~{self.token_estimate} tokens)"
         header.update(header_text)
 
-        current_container = self.query_one(
-            "#console-context-current-body", Vertical
-        )
+        current_container = self.query_one("#console-context-current-body", Vertical)
         current_container.remove_children()
         for widget in self._build_current_context_widgets():
             current_container.mount(widget)
 
-        next_container = self.query_one(
-            "#console-context-next-send-body", Vertical
-        )
+        next_container = self.query_one("#console-context-next-send-body", Vertical)
         next_container.remove_children()
         for widget in self._build_next_send_widgets():
             next_container.mount(widget)
