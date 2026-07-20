@@ -9,6 +9,10 @@ from types import SimpleNamespace
 
 import pytest
 from loguru import logger
+from textual.app import App, ComposeResult
+
+from tldw_chatbook.Utils.Splash_Screens.card_definitions import get_all_card_definitions
+from tldw_chatbook.Widgets.splash_screen import SplashScreen
 
 
 def test_splash_effect_modules_import_without_annotation_name_errors() -> None:
@@ -183,6 +187,55 @@ def test_random_splash_selection_skips_missing_active_card_definitions(
 
     assert screen.card_name == "default"
     assert choices == [["default"]]
+
+
+class _SplashHost(App):
+    """Minimal app host that mounts a single SplashScreen for testing."""
+
+    def __init__(self, card_name: str) -> None:
+        super().__init__()
+        self.card_name = card_name
+        self.screen_under_test: SplashScreen | None = None
+
+    def compose(self) -> ComposeResult:
+        self.screen_under_test = SplashScreen(card_name=self.card_name, duration=10.0)
+        yield self.screen_under_test
+
+
+@pytest.fixture(autouse=True)
+def _isolate_splash_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep splash screen config loading away from the developer's config file."""
+    from tldw_chatbook.Widgets import splash_screen
+
+    monkeypatch.setattr(splash_screen, "get_cli_setting", lambda _setting, default=None, *_args, **_kwargs: default)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "card_name",
+    [
+        name
+        for name, data in get_all_card_definitions().items()
+        if data.get("type") == "animated"
+    ],
+)
+async def test_animated_splash_card_starts_animation(card_name: str) -> None:
+    """Every animated card must instantiate its effect and start its timer.
+
+    Regression: several card definitions passed art-name keys that did not
+    match the effect constructors (e.g. ``background_art_name`` instead of
+    ``background_content``), causing ``SplashScreen`` to fall back to a static
+    image and silently skip the animation.
+    """
+    app = _SplashHost(card_name)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        screen = app.screen_under_test
+        assert screen is not None
+        assert screen.effect_handler is not None, f"{card_name}: effect handler was not created"
+        assert screen.animation_timer is not None, f"{card_name}: animation timer was not started"
+        screen.close()
 
 
 def test_nltk_download_false_is_not_logged_as_success(

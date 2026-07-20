@@ -115,7 +115,7 @@ def get_all_card_definitions():
         "loading_bar": {
             "type": "animated",
             "effect": "loading_bar",
-            "content": get_ascii_art("loading_bar_frame"),
+            "bar_frame_content": get_ascii_art("loading_bar_frame"),
             "style": "white on black",
             "animation_speed": 0.1,
             "fill_char": "█",
@@ -213,8 +213,8 @@ def get_all_card_definitions():
             "style": "bold white on black",
             "animation_speed": 0.05,
             "duration": 3.0,
-            "start_art_name": "morph_art_start",
-            "end_art_name": "morph_art_end",
+            "start_content": get_ascii_art("morph_art_start"),
+            "end_content": get_ascii_art("morph_art_end"),
             "morph_style": "dissolve",
         },
         "game_of_life": {
@@ -260,7 +260,7 @@ def get_all_card_definitions():
         "spotlight_reveal": {
             "type": "animated",
             "effect": "spotlight",
-            "background_art_name": "spotlight_background",
+            "background_content": get_ascii_art("spotlight_background"),
             "style": "dim black on black",
             "animation_speed": 0.05,
             "spotlight_radius": 7,
@@ -307,7 +307,7 @@ def get_all_card_definitions():
         "pixel_zoom": {
             "type": "animated",
             "effect": "pixel_zoom",
-            "target_art_name": "pixel_art_target",
+            "target_content": get_ascii_art("pixel_art_target"),
             "style": "bold white on black",
             "animation_speed": 0.05,
             "duration": 3.0,
@@ -328,7 +328,7 @@ def get_all_card_definitions():
         "old_film": {
             "type": "animated",
             "effect": "old_film",
-            "frames_art_names": ["film_generic_frame"],
+            "frames_content": [get_ascii_art(name) for name in ["film_generic_frame"]],
             "style": "white on black",
             "animation_speed": 0.1,
             "frame_duration": 0.8,
