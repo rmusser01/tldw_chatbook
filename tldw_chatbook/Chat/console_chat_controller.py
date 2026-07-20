@@ -320,6 +320,10 @@ class ConsoleChatController:
         #: ``_stop_requested``, which the run's own ``finally`` block
         #: resets as soon as the coroutine side is done (task-227).
         self._active_cancel_event: threading.Event | None = None
+        #: The composed MCP provider for the current agent run, captured
+        #: on the main loop in ``_run_agent_reply`` so ``build_context_snapshot``
+        #: can read tool metadata later without recomposing.
+        self._mcp_provider: Any | None = None
 
         # -- MCP batch-approval bridge (task-5) ------------------------------
         #: Textual App-like object exposing ``call_from_thread`` -- assigned
@@ -1619,9 +1623,16 @@ class ConsoleChatController:
         variant_mode: bool,
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
+        logger.info(
+            "console agent reply start",
+            assistant_message_id=assistant_message_id,
+            variant_mode=variant_mode,
+            prepare_retry=prepare_retry,
+        )
         self._active_assistant_message_id = assistant_message_id
         self._active_stream_task = asyncio.current_task()
         self._stop_requested = False
+        self._mcp_provider = None
         # A fresh per-run Event, captured by `should_cancel` below by
         # closure (not read off `self` each time) -- see
         # `_active_cancel_event`'s docstring for why this, rather than
@@ -1676,6 +1687,7 @@ class ConsoleChatController:
         # on, or nothing composed) leaves the bridge's MCP-free path
         # byte-identical to before this task.
         mcp_provider, mcp_review_hook = await self._compose_mcp_provider()
+        self._mcp_provider = mcp_provider
 
         # Swap site: the agent loop runs synchronously on a worker thread via
         # asyncio.to_thread, so Stop is cooperative-only -- `should_cancel` is
@@ -1745,6 +1757,12 @@ class ConsoleChatController:
                 # to, forever, regardless of this attribute now pointing
                 # elsewhere (or nowhere) for the NEXT run (task-227).
                 self._active_cancel_event = None
+            logger.info(
+                "console agent reply end",
+                assistant_message_id=assistant_message_id,
+                run_status=self.run_state.status.value,
+                run_copy=self.run_state.visible_copy,
+            )
 
         # Captured here, before `_finalize_agent_reply` runs: this run's own
         # cancel_event is the authority on whether IT was stopped,
@@ -1776,10 +1794,7 @@ class ConsoleChatController:
     ) -> ConsoleSubmitResult:
         from tldw_chatbook.Agents.agent_models import RUN_CANCELLED, RUN_DONE
 
-        try:
-            current = self.store.get_message(assistant_message_id)
-        except KeyError:
-            return self._session_closed_result()
+        current = self._ensure_assistant_placeholder(assistant_message_id, session_id)
         # task-227 LOW-2 (+ AC3 follow-up): a Stop can land in the
         # ultra-narrow window after asyncio.to_thread returns an outcome
         # but before this method runs. `current.status == "stopped"` alone
@@ -1808,7 +1823,7 @@ class ConsoleChatController:
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
             )
-            return ConsoleSubmitResult(True, True, current.content)
+            return ConsoleSubmitResult(True, True, current.content if current is not None else "")
 
         if outcome.status == RUN_CANCELLED:
             try:
@@ -1820,21 +1835,87 @@ class ConsoleChatController:
             return ConsoleSubmitResult(True, True, stopped.content)
 
         if outcome.status != RUN_DONE:
-            # RUN_ERROR/RUN_STUCK (and any other non-done outcome) are
-            # failures, never a silent "complete" (Plan-B Task 6 Critical
-            # 2): a failing regenerate must not clobber a good prior
-            # answer with a fake "[agent error]" variant, and a failed
-            # message must stay retryable and excluded from model context
-            # (skip_failed=True). `mark_message_failed` carries the Task-1
-            # variant-restore semantics on its own -- for a regenerate it
-            # restores the pre-regenerate base content + status untouched;
-            # for a plain send/retry it keeps whatever partial prose had
-            # already streamed, matching legacy failure behavior.
-            visible_copy = self._agent_failure_visible_copy(outcome)
-            try:
-                failed = self.store.mark_message_failed(assistant_message_id)
-            except KeyError:
-                return self._session_closed_result()
+            return self._finalize_agent_failure(
+                assistant_message_id, session_id, outcome, variant_mode=variant_mode)
+
+        return self._finalize_agent_success(
+            assistant_message_id, session_id, outcome, variant_mode=variant_mode)
+
+    def _ensure_assistant_placeholder(
+        self, assistant_message_id: str, session_id: str,
+    ) -> ConsoleChatMessage | None:
+        """Return the assistant placeholder message if it still exists.
+
+        ``KeyError`` means the session/placeholder was closed/removed mid-run;
+        ``None`` is returned so callers can recover by appending a fresh
+        assistant message instead of aborting the whole turn.
+        """
+        try:
+            return self.store.get_message(assistant_message_id)
+        except KeyError:
+            return None
+
+    def _find_runtime_written_assistant(
+        self, session_id: str,
+    ) -> ConsoleChatMessage | None:
+        """Return the most recent assistant message in ``session_id``, if any."""
+        try:
+            messages = self.store.messages_for_session(session_id)
+        except KeyError:
+            return None
+        for message in reversed(messages):
+            if message.role is ConsoleMessageRole.ASSISTANT:
+                return message
+        return None
+
+    def _complete_agent_message(
+        self, assistant_message_id: str, variant_mode: bool, outcome: Any,
+    ) -> ConsoleChatMessage:
+        """Finalize a placeholder, applying the empty-final-text fallback.
+
+        The fallback text is streamed into the placeholder so the store's
+        existing persistence/validation paths stay unchanged.
+        """
+        if not getattr(outcome, "final_text", ""):
+            self.store.append_stream_chunk(assistant_message_id, "No response was generated.")
+        if variant_mode:
+            return self.store.finalize_variant_stream(assistant_message_id)
+        return self.store.mark_message_complete(assistant_message_id)
+
+    def _finalize_agent_cancelled(
+        self, assistant_message_id: str, session_id: str, *, variant_mode: bool,
+    ) -> ConsoleSubmitResult:
+        """Handle a ``RUN_CANCELLED`` outcome: the placeholder becomes ``failed``.
+
+        Per the agent turn-control spec, a runtime-reported cancellation is a
+        terminal failure, not a user-initiated stop. If the placeholder has
+        vanished, append a failed assistant message carrying the visible copy.
+        """
+        visible_copy = "Response stopped/cancelled."
+        placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
+        if placeholder is not None:
+            failed = self.store.mark_message_failed(assistant_message_id)
+        else:
+            failed = self._append_failed_assistant(session_id, visible_copy)
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+        return ConsoleSubmitResult(True, True, failed.content)
+
+    def _finalize_agent_failure(
+        self, assistant_message_id: str, session_id: str, outcome: Any,
+        *, variant_mode: bool,
+    ) -> ConsoleSubmitResult:
+        """Handle ``RUN_ERROR``, ``RUN_STUCK``, or any unknown non-done outcome.
+
+        A present placeholder is marked ``failed`` and a system row explains
+        the failure (preserving the existing failure UX). If the placeholder
+        is missing, the runtime may have already written an assistant message
+        (e.g. streamed partial content before the error); use it when
+        possible, otherwise append a new failed assistant message.
+        """
+        visible_copy = self._agent_failure_visible_copy(outcome)
+        placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
+        if placeholder is not None:
+            failed = self.store.mark_message_failed(assistant_message_id)
             self._append_failure_system_row(session_id, visible_copy)
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
             return ConsoleSubmitResult(True, True, failed.content)
@@ -1850,6 +1931,20 @@ class ConsoleChatController:
             ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete.")
         )
         return ConsoleSubmitResult(True, True, completed.content)
+
+    def _append_failed_assistant(
+        self, session_id: str, visible_copy: str,
+    ) -> ConsoleChatMessage:
+        """Append a failed assistant message carrying ``visible_copy``.
+
+        The store's terminal-status validation only accepts pending/streaming
+        assistant messages, so the message is created empty, the copy is
+        streamed in, and then it is marked failed.
+        """
+        message = self.store.append_message(
+            session_id, role=ConsoleMessageRole.ASSISTANT, content="")
+        self.store.append_stream_chunk(message.id, visible_copy)
+        return self.store.mark_message_failed(message.id)
 
     @staticmethod
     def _agent_failure_visible_copy(outcome: Any) -> str:

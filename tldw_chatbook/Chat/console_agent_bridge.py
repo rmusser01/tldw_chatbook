@@ -16,6 +16,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from loguru import logger
+
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
@@ -843,6 +845,26 @@ class ConsoleAgentBridge:
                 )
                 if marker_text is not None:
                     self._append_marker(session_id, marker_text)
+            # Diagnostic logging for every tool call and result. The actual
+            # tool invocation lives inside AgentService, so we observe it
+            # through the step stream it emits.
+            if step.kind == STEP_TOOL_RESULT:
+                logger.info(
+                    "agent tool call",
+                    agent_kind=agent_kind,
+                    tool_name=step.tool_name,
+                    args=step.args,
+                    result=step.result,
+                    step_index=step.index,
+                )
+            elif step.kind == STEP_ERROR:
+                logger.warning(
+                    "agent step error",
+                    agent_kind=agent_kind,
+                    tool_name=step.tool_name,
+                    summary=step.summary,
+                    step_index=step.index,
+                )
             self._live[conversation_id] = AgentLiveSnapshot(
                 status="running",
                 step=len(live_steps),
@@ -906,6 +928,23 @@ class ConsoleAgentBridge:
             )
         finally:
             run_loop.close()
+        for step in outcome.steps:
+            logger.info(
+                "agent run step",
+                agent_kind=AGENT_KIND_PRIMARY,
+                step_kind=step.kind,
+                tool_name=step.tool_name,
+                summary=step.summary,
+                step_index=step.index,
+            )
+        logger.info(
+            "console agent bridge run_reply end",
+            conversation_id=conversation_id,
+            session_id=session_id,
+            outcome_status=outcome.status,
+            final_text_len=len(outcome.final_text),
+            step_count=len(outcome.steps),
+        )
         self._live[conversation_id] = AgentLiveSnapshot(
             status=outcome.status,
             step=len(live_steps),
