@@ -111,7 +111,7 @@ _BUILTIN_CHECKBOX_KEYS: dict[str, str] = {
 
 
 class MCPServersMode(Vertical):
-    """Canvas for the Servers mode. Read-only in Phase 1."""
+    """Canvas for the Servers mode."""
 
     DEFAULT_CSS = """
     MCPServersMode {

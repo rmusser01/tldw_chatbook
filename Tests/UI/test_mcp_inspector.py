@@ -181,6 +181,63 @@ async def test_readiness_block_shows_state_message_and_action_buttons():
         assert "server" in (server_connect.tooltip or "").lower()
 
 
+def _auth_missing_local_snap() -> ReadinessSnapshot:
+    """A local profile with an unresolved env placeholder -- AUTH_MISSING's
+    allowed actions are (OPEN_CREDENTIALS, EDIT_CONFIG, VIEW_DETAILS);
+    EDIT_CONFIG/VIEW_DETAILS are wired for local source, but OPEN_CREDENTIALS
+    never is (no credentials editor exists for either source -- see
+    `_wired_actions()`), so it always renders disabled here."""
+    return ReadinessSnapshot(
+        server_key="local:docs", label="docs", source="local",
+        state=ReadinessState.NEEDS_SETUP, reasons=(ReasonCode.AUTH_MISSING,),
+        message="Missing environment variables: API_KEY.",
+    )
+
+
+def _not_configured_builtin_snap() -> ReadinessSnapshot:
+    """The built-in server disabled in config -- NOT_CONFIGURED's only
+    allowed action is ADD_SERVER, which is never wired for any source."""
+    return ReadinessSnapshot(
+        server_key="builtin:tldw_chatbook", label="tldw_chatbook (built-in)",
+        source="builtin", state=ReadinessState.NEEDS_SETUP,
+        reasons=(ReasonCode.NOT_CONFIGURED,),
+        message="Disabled in config ([mcp].enabled = false).",
+    )
+
+
+@pytest.mark.asyncio
+async def test_disabled_action_tooltips_make_no_phase_promise():
+    """I2 (MCP Hub Phase 6 finale, review): the program-close decision
+    retired "later phase" framing from every disabled-action tooltip --
+    Advanced is a standing escape hatch, not a promised-but-unbuilt future.
+    A local AUTH_MISSING snapshot's disabled OPEN_CREDENTIALS button gets an
+    action-appropriate substitute (Edit config edits the same env
+    placeholders); everything else still-unwired (e.g. ADD_SERVER on a
+    disabled built-in server) gets the honest generic fallback -- neither
+    makes a phase promise or points at a hidden pane."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        inspector = app.query_one(MCPInspector)
+
+        await inspector.update_readiness(_auth_missing_local_snap())
+        await pilot.pause()
+        open_credentials = app.query_one("#mcp-inspector-action-open_credentials", Button)
+        assert open_credentials.disabled
+        tooltip = (open_credentials.tooltip or "").lower()
+        assert "later phase" not in tooltip
+        assert open_credentials.tooltip == "Edit the profile's env placeholders via Edit config."
+        # The sibling EDIT_CONFIG button really is the honest substitute --
+        # confirm it's actually enabled, not just claimed to be.
+        assert not app.query_one("#mcp-inspector-action-edit_config", Button).disabled
+
+        await inspector.update_readiness(_not_configured_builtin_snap())
+        await pilot.pause()
+        add_server = app.query_one("#mcp-inspector-action-add_server", Button)
+        assert add_server.disabled
+        assert "later phase" not in (add_server.tooltip or "").lower()
+        assert add_server.tooltip == "Not available from this panel."
+
+
 # -- Task 11: status color class on the readiness badge ----------------------
 
 
@@ -1329,7 +1386,7 @@ async def test_show_tool_non_executable_shows_phase4_note_not_test_button():
         )
         await pilot.pause()
         note = app.query_one("#mcp-inspector-tool-phase-note", Static)
-        assert str(note.renderable) == "Testing server-source tools isn't available yet."
+        assert str(note.renderable) == "Server-source tools are display-only."
         assert not list(app.query("#mcp-inspector-test-tool"))
 
 
@@ -2575,12 +2632,15 @@ def _finding(
 async def test_finding_detail_renders_mapped_action_buttons_with_tooltips():
     """A finding whose text matches the discovery/stale/catalog bucket
     renders exactly the two mapped buttons (REFRESH_DISCOVERY, VIEW_DETAILS),
-    ids `#mcp-finding-action-<action>`, each with a tooltip."""
+    ids `#mcp-finding-action-<action>`, each with a tooltip. `server_key`
+    given -- the "no server context" note (New Minor 3) is a different,
+    separately-tested case."""
     app = InspectorApp()
     async with app.run_test() as pilot:
         inspector = app.query_one(MCPInspector)
         await inspector.show_finding(
-            _finding(finding_type="catalog_expired", message="Tool catalog is stale.")
+            _finding(finding_type="catalog_expired", message="Tool catalog is stale."),
+            server_key="server:main",
         )
         await pilot.pause()
         container = app.query_one("#mcp-inspector-finding")
@@ -2610,7 +2670,8 @@ async def test_finding_detail_action_buttons_have_nonzero_geometry_with_bundled_
     async with app.run_test(size=(100, 60)) as pilot:
         inspector = app.query_one(MCPInspector)
         await inspector.show_finding(
-            _finding(finding_type="catalog_expired", message="Tool catalog is stale.")
+            _finding(finding_type="catalog_expired", message="Tool catalog is stale."),
+            server_key="server:main",
         )
         await pilot.pause()
         buttons = list(app.query("#mcp-inspector-finding Button"))
@@ -2625,7 +2686,7 @@ async def test_finding_detail_default_mapping_renders_single_view_details_button
     app = InspectorApp()
     async with app.run_test() as pilot:
         inspector = app.query_one(MCPInspector)
-        await inspector.show_finding(_finding())
+        await inspector.show_finding(_finding(), server_key="server:main")
         await pilot.pause()
         container = app.query_one("#mcp-inspector-finding")
         buttons = list(container.query(Button))
@@ -2647,19 +2708,28 @@ async def test_finding_action_button_posts_hub_action_requested_with_given_serve
 
 
 @pytest.mark.asyncio
-async def test_finding_action_button_posts_none_server_key_when_not_given():
-    """`server_key` defaults to `None` -- the caller (`MCPWorkbench`) could
-    not resolve one (neither the finding nor the rail selection carried an
-    owning server)."""
+async def test_finding_with_no_server_key_shows_note_instead_of_dead_buttons():
+    """New Minor 3 (MCP Hub Phase 6 finale, review): `server_key` defaults
+    to `None` -- the caller (`MCPWorkbench._finding_owning_server_key()`)
+    could not resolve one (neither the finding nor the rail selection
+    carried an owning server). Every remediation button's `HubActionRequested`
+    would then post with no server to act on -- `on_mcp_inspector_hub_
+    action_requested()` drops all of them (each branch guards on a truthy
+    `event.server_key`) -- so rendering them would just be dead chrome.
+    `show_finding()` renders an explanatory note instead and mounts no
+    buttons at all (was previously the ONLY caller-observable difference:
+    the button existed and posted `server_key=None`, silently swallowed
+    downstream)."""
     app = InspectorApp()
     async with app.run_test() as pilot:
         inspector = app.query_one(MCPInspector)
         await inspector.show_finding(_finding())
         await pilot.pause()
-        await pilot.click("#mcp-finding-action-view_details")
-        await pilot.pause()
-        assert app.events
-        assert app.events[-1].server_key is None
+        container = app.query_one("#mcp-inspector-finding")
+        assert container.display is True
+        assert not list(container.query(Button))
+        note = app.query_one("#mcp-inspector-finding-no-context", Static)
+        assert str(note.renderable) == "No server context — select a server first."
 
 
 @pytest.mark.asyncio

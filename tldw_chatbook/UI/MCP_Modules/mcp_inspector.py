@@ -84,15 +84,27 @@ _WIRED_ACTION_TOOLTIPS: dict[HubAction, str] = {
     # OPEN_CREDENTIALS button in the readiness action list itself yet (see
     # `_wired_actions()`), so this entry exists purely for that reuse.
     HubAction.OPEN_CREDENTIALS: (
-        "Open this server in Servers mode -- credentials are managed in its config."
+        "Open this server in Servers mode — credentials are managed in its config."
     ),
 }
 
 # Disabled-button tooltip for a lifecycle action on a server-source snapshot
 # (managed server-side, not from this local-lifecycle pane).
 _SERVER_MANAGED_TOOLTIP = "Managed on the server — use Advanced."
-# Disabled-button tooltip for every other still-unwired action.
-_LATER_PHASE_TOOLTIP = "Available in a later phase — use Advanced below."
+# I2 (MCP Hub Phase 6 finale, review): OPEN_CREDENTIALS is never wired (see
+# `_wired_actions()` -- no credentials editor exists for either source), but
+# a LOCAL profile's disabled button has an honest, actionable substitute:
+# the Edit-config button right next to it edits the same env placeholders a
+# credentials editor would. Server-source OPEN_CREDENTIALS (and everything
+# else still unwired) falls through to the generic `_UNAVAILABLE_ACTION_
+# TOOLTIP` below instead.
+_OPEN_CREDENTIALS_LOCAL_TOOLTIP = "Edit the profile's env placeholders via Edit config."
+# Disabled-button tooltip for every other still-unwired action. Deliberately
+# makes no phase promise and points at no hidden pane -- the program-close
+# decision (MCP Hub Phase 6) retired the "later phase" framing this used to
+# carry; Advanced remains reachable on its own merits, not as this button's
+# consolation prize.
+_UNAVAILABLE_ACTION_TOOLTIP = "Not available from this panel."
 
 # Task 5: the Test Tool Run button's tooltip in its normal (unarmed) state,
 # and once `require_confirm()` has armed it into a one-shot "Confirm run"
@@ -1013,8 +1025,10 @@ class MCPInspector(Vertical):
                     button.disabled = True
                     if action in (_LIFECYCLE_ACTIONS | _CONFIG_ACTIONS) and snapshot.source != "local":
                         button.tooltip = _SERVER_MANAGED_TOOLTIP
+                    elif action is HubAction.OPEN_CREDENTIALS and snapshot.source == "local":
+                        button.tooltip = _OPEN_CREDENTIALS_LOCAL_TOOLTIP
                     else:
-                        button.tooltip = _LATER_PHASE_TOOLTIP
+                        button.tooltip = _UNAVAILABLE_ACTION_TOOLTIP
                 else:
                     button.tooltip = _WIRED_ACTION_TOOLTIPS.get(action, _ACTION_LABELS[action])
                 buttons.append(button)
@@ -1101,7 +1115,7 @@ class MCPInspector(Vertical):
             else:
                 widgets.append(
                     Static(
-                        "Testing server-source tools isn't available yet.",
+                        "Server-source tools are display-only.",
                         id="mcp-inspector-tool-phase-note",
                         classes="ds-field-row", markup=False,
                     )
@@ -1358,6 +1372,16 @@ class MCPInspector(Vertical):
         server_key`. `markup=False` throughout -- finding fields are
         server-derived free text that must never be interpreted as Rich
         markup.
+
+        New Minor 3 (MCP Hub Phase 6 finale, review): `server_key=None`
+        means the CALLER already tried both resolution paths (the finding's
+        own target-level id, then the selected rail server) and neither
+        worked -- every remediation button would post `HubActionRequested`
+        with no server to act on, and `on_mcp_inspector_hub_action_
+        requested()` silently drops every one of those (each branch guards
+        on a truthy `event.server_key`). Rendering the buttons anyway would
+        just be dead chrome, so this renders one explanatory note instead
+        and skips the button loop entirely.
         """
         # Task 2: local import -- `mcp_audit_mode.py` imports `format_
         # duration_ms` from THIS module at its own top level, so importing
@@ -1403,16 +1427,25 @@ class MCPInspector(Vertical):
                         classes="ds-field-row", markup=False,
                     )
                 )
-            for action in remediation_actions(finding):
+            if server_key is None:
                 widgets.append(
-                    Button(
-                        _ACTION_LABELS[action],
-                        id=f"mcp-finding-action-{action.value}",
-                        classes="console-action-secondary",
-                        compact=True,
-                        tooltip=_WIRED_ACTION_TOOLTIPS.get(action, _ACTION_LABELS[action]),
+                    Static(
+                        "No server context — select a server first.",
+                        id="mcp-inspector-finding-no-context",
+                        classes="ds-field-row", markup=False,
                     )
                 )
+            else:
+                for action in remediation_actions(finding):
+                    widgets.append(
+                        Button(
+                            _ACTION_LABELS[action],
+                            id=f"mcp-finding-action-{action.value}",
+                            classes="console-action-secondary",
+                            compact=True,
+                            tooltip=_WIRED_ACTION_TOOLTIPS.get(action, _ACTION_LABELS[action]),
+                        )
+                    )
             await container.mount_all(widgets)
 
     async def _mount_test_tool_panel(self) -> None:

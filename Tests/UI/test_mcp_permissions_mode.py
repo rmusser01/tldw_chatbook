@@ -1108,7 +1108,7 @@ async def test_filter_input_is_present_above_the_matrix_with_placeholder():
     app = PermissionsModeApp()
     async with app.run_test() as pilot:
         filter_input = app.query_one("#mcp-perm-filter-text", Input)
-        assert filter_input.placeholder == "filter tools"
+        assert filter_input.placeholder == "Filter tool or server…"
 
 
 @pytest.mark.asyncio

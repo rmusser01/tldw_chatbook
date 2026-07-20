@@ -471,7 +471,7 @@ class MCPPermissionsMode(Vertical):
         # spurious `Input.Changed` echo (see `on_input_changed()`'s own
         # docstring below for why no mount-echo guard is needed here,
         # unlike the filter Select in `mcp_tools_mode.py`).
-        yield Input(placeholder="filter tools", id="mcp-perm-filter-text")
+        yield Input(placeholder="Filter tool or server…", id="mcp-perm-filter-text")
         table = DataTable(id="mcp-perm-table")
         table.cursor_type = "row"
         yield table

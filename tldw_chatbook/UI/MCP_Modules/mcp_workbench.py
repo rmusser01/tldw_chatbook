@@ -57,6 +57,24 @@ from tldw_chatbook.Utils.path_validation import is_safe_path
 # with value None" -- see `_apply_view_state()`'s scope_ref handling.
 _UNSET: Any = object()
 
+
+def _target_id_from_server_key(key: str | None) -> str | None:
+    """Parse a server-target id out of a `"server:<id>"` or
+    `"server:<id>/<sub>"` key (a target row directly, or an external-record
+    row beneath it), or `None` for anything else (a `local:`/`builtin:` key,
+    an empty string, or `None` itself).
+
+    Shared by `MCPWorkbench._selected_target_id()` (parses the workbench's
+    OWN rail/table selection) and `_refresh_server_discovery()` (New Minor
+    2, MCP Hub Phase 6 finale -- parses an arbitrary triggering event's
+    `server_key`, which need not match whatever is currently selected).
+    """
+    if not key or not key.startswith("server:"):
+        return None
+    remainder = key.split(":", 1)[1]
+    return remainder.split("/", 1)[0] if remainder else None
+
+
 # A pasted/imported mcpServers config JSON. 1MB comfortably covers even a
 # large hand-authored config while catching anything clearly not one --
 # mirrors attachment_core.MAX_ATTACHMENT_BYTES's constant style (a fixed
@@ -342,7 +360,7 @@ class _AdvancedSectionShim:
 
 
 class MCPWorkbench(Container):
-    """Assembles the Phase 1 MCP Hub. Read-only over the control-plane service."""
+    """Assembles the MCP Hub. Read-only over the control-plane service."""
 
     class ModeChanged(Message, namespace="mcp_workbench"):
         """Posted by `set_mode()` whenever the active mode actually changes,
@@ -645,13 +663,11 @@ class MCPWorkbench(Container):
 
         Handles both a target row directly selected ("server:main") and an
         external-record row beneath it ("server:main/docs") -- both drill
-        into the same target's external-servers listing.
+        into the same target's external-servers listing. Thin wrapper over
+        the module-level `_target_id_from_server_key()` (shared with
+        `_refresh_server_discovery()`'s own, independent server_key).
         """
-        key = self._selected_server_key
-        if not key or not key.startswith("server:"):
-            return None
-        remainder = key.split(":", 1)[1]
-        return remainder.split("/", 1)[0] if remainder else None
+        return _target_id_from_server_key(self._selected_server_key)
 
     def _active_service_target_id(self) -> str | None:
         """The target id server-source operations would actually run against.
@@ -1863,12 +1879,25 @@ class MCPWorkbench(Container):
         selected target's external-server records off the service's *active*
         target, a table-driven selection had no way to make it active --
         both entry points now share this one path.
+
+        I1 (MCP Hub Phase 6 finale, review -- the program's 6th occurrence
+        of this same stale-panel class): selecting a different server also
+        invalidates any Findings-detail pane the inspector was showing --
+        the previous server's finding, complete with remediation buttons
+        wired to its (now stale) `_current_finding_server_key`, must not
+        survive into the new selection. Its own "Refresh" button pressed
+        after the switch would otherwise silently refresh the WRONG
+        target while still toasting a success message. Mirrors
+        `_switch_source()`'s identical T6 clear.
         """
         self._selected_server_key = server_key
         # T6: selecting a different server invalidates any Tools-mode
         # selection the inspector was showing -- "switching modes or
-        # servers clears the tool view".
-        await self.query_one(MCPInspector).show_tool(None)
+        # servers clears the tool view" -- and (I1 above) the Findings
+        # detail pane for the same reason.
+        inspector = self.query_one(MCPInspector)
+        await inspector.show_tool(None)
+        await inspector.show_finding(None)
         service = self._service()
         if (
             service is not None
@@ -1940,13 +1969,15 @@ class MCPWorkbench(Container):
         invalidates the (source, target)-cached governance/findings
         listings and runs a full resync (`_refresh_server_discovery()`,
         shared with the Tools-mode empty-state's own "refresh" action under
-        server source); `OPEN_CREDENTIALS` selects the server and switches
-        to Servers mode with an honest "managed on the server" notice (no
-        credentials editor exists for server source). Every other action
-        that reaches this handler with a `server:` key -- `CONNECT`/
-        `VALIDATE`/`EDIT_CONFIG` (lifecycle-only, local-source seams) or
-        anything else -- falls through to the final catch-all toast rather
-        than being silently dropped.
+        server source -- and, New Minor 2/MCP Hub Phase 6 finale, now passed
+        `event.server_key` so the resync lands on THAT target rather than
+        whatever was already active/rail-selected); `OPEN_CREDENTIALS`
+        selects the server and switches to Servers mode with an honest
+        "managed on the server" notice (no credentials editor exists for
+        server source). Every other action that reaches this handler with a
+        `server:` key -- `CONNECT`/`VALIDATE`/`EDIT_CONFIG` (lifecycle-only,
+        local-source seams) or anything else -- falls through to the final
+        catch-all toast rather than being silently dropped.
         """
         event.stop()
         if event.action is HubAction.VIEW_DETAILS and event.server_key:
@@ -1980,7 +2011,7 @@ class MCPWorkbench(Container):
             and event.server_key.startswith("server:")
             and self._source == "server"
         ):
-            await self._refresh_server_discovery()
+            await self._refresh_server_discovery(event.server_key)
         elif (
             event.action is HubAction.OPEN_CREDENTIALS
             and event.server_key
@@ -1997,7 +2028,7 @@ class MCPWorkbench(Container):
             # a server-source key land here instead of doing nothing.
             self.app.notify("Managed on the server.")
 
-    async def _refresh_server_discovery(self) -> None:
+    async def _refresh_server_discovery(self, server_key: str | None = None) -> None:
         """Cache-invalidating full resync for a server-source "refresh
         discovery" request (Task 2, MCP Hub Phase 6).
 
@@ -2008,7 +2039,8 @@ class MCPWorkbench(Container):
         REFRESH_DISCOVERY routing above (a `server:` key -- e.g. a Findings-
         detail remediation button), and the Tools-mode empty-state's
         "refresh" button under server source (`on_mcp_tools_mode_empty_
-        action_requested()`, UX item 10's fix).
+        action_requested()`, UX item 10's fix, which has no specific server
+        in mind and always passes `None`).
 
         The findings (T8) and governance-profiles (T11) listings are each
         cached by `(source, target)` identity and otherwise only refetched
@@ -2020,7 +2052,34 @@ class MCPWorkbench(Container):
         (mirrors `_select_server_key()`/`_switch_source()`) so the
         readiness/tool catalog reflects a fresh discovery pass too, not
         just the two Advanced-derived caches.
+
+        New Minor 2 (MCP Hub Phase 6 finale, review, linked to I1): a blanket
+        cache-key reset alone is not enough -- the identity the NEXT fetch
+        actually lands on is `(self._source, self._active_service_target_id())`,
+        which previously ignored `server_key` entirely and always resolved
+        to whatever was already active/rail-selected. A Findings-detail
+        remediation button for a server OTHER than that one (its own
+        `target_id` field, resolved by `_finding_owning_server_key()`) would
+        then refresh the WRONG target's cache while leaving the finding's
+        real owning target's data untouched. When `server_key` names a
+        DIFFERENT target than the one already active, this switches the
+        service's own active target (so the real fetch lands on it too, not
+        just the client-side cache key) and this workbench's own selection
+        (so `_active_service_target_id()` resolves to it for the rest of
+        this pass) before invalidating and resyncing. `None` (the Tools-mode
+        empty-state's call site) preserves the original "refresh whatever's
+        active" behavior untouched.
         """
+        service = self._service()
+        target_id = _target_id_from_server_key(server_key)
+        if target_id is not None and target_id != self._active_service_target_id():
+            if service is not None:
+                try:
+                    await service.select_server_target(target_id)
+                except Exception as exc:
+                    logger.warning(f"MCP server target selection failed: {exc}")
+            self._selected_server_key = server_key
+            self._rebind_inspector_advanced_context(service)
         self._findings_cache = None
         self._findings_cache_key = _UNSET
         self._governance_profiles_cache = None
@@ -2459,15 +2518,14 @@ class MCPWorkbench(Container):
         Mirrors `open_add_server_form()`'s T13 rationale for a keybinding
         that can reach a state a disabled/absent button would otherwise
         gate: with nothing selected, or a selected-but-non-executable
-        (Phase-4, server-source) tool -- neither has a `Test Tool` button
-        to press -- this notifies instead of silently no-opping. The two
-        cases get distinct copy (`MCPInspector.open_test_panel()`'s three-
-        way status tells them apart): "Select a tool first." for no
-        selection, and the same "Testing server-source tools isn't
-        available yet." copy the inline detail view already shows
-        (`mcp_inspector.py`'s `#mcp-inspector-tool-phase-note` `Static`)
-        when a tool IS selected but isn't executable yet -- "select a
-        tool" would be actively wrong there.
+        (server-source) tool -- neither has a `Test Tool` button to press --
+        this notifies instead of silently no-opping. The two cases get
+        distinct copy (`MCPInspector.open_test_panel()`'s three-way status
+        tells them apart): "Select a tool first." for no selection, and the
+        same "Server-source tools are display-only." copy the inline detail
+        view already shows (`mcp_inspector.py`'s `#mcp-inspector-tool-phase-
+        note` `Static`) when a tool IS selected but isn't executable --
+        "select a tool" would be actively wrong there.
 
         `set_mode("tools")` is a no-op once already there (no mode change
         means `_clear_tool_view()` never fires -- see its own docstring),
@@ -2481,7 +2539,7 @@ class MCPWorkbench(Container):
             self.app.notify("Select a tool first.", severity="warning")
         elif status == "not_executable":
             self.app.notify(
-                "Testing server-source tools isn't available yet.",
+                "Server-source tools are display-only.",
                 severity="information",
             )
 

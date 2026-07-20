@@ -3181,16 +3181,15 @@ async def test_open_test_for_selected_tool_does_not_duplicate_already_open_panel
 async def test_open_test_for_selected_tool_with_non_executable_selection_notifies_phase_note():
     """T8 regression: `MCPInspector.open_test_panel()` used to return the
     same `False` for BOTH "nothing selected" and "a tool IS selected but
-    isn't executable yet" (server-source, Phase 4), so
-    `open_test_for_selected_tool()` notified "Select a tool first." for
-    both -- misleading when a tool is in fact selected. With a
-    server-source tool selected (never executable -- see
-    `server_tools_from_inventory`), the `t` keybinding must notify with
-    the SAME copy the inline detail view already shows for that tool
-    (`mcp_inspector.py`'s "Testing server-source tools isn't available
-    yet." `Static`), not the generic no-selection message, and must not
-    mount a test panel (there is no schema-driven form to open for a
-    tool that can't be invoked).
+    isn't executable" (server-source), so `open_test_for_selected_tool()`
+    notified "Select a tool first." for both -- misleading when a tool is
+    in fact selected. With a server-source tool selected (never executable
+    -- see `server_tools_from_inventory`), the `t` keybinding must notify
+    with the SAME copy the inline detail view already shows for that tool
+    (`mcp_inspector.py`'s "Server-source tools are display-only." `Static`),
+    not the generic no-selection message, and must not mount a test panel
+    (there is no schema-driven form to open for a tool that can't be
+    invoked).
     """
     app = ServerToolsApp()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -3209,7 +3208,7 @@ async def test_open_test_for_selected_tool_with_non_executable_selection_notifie
         assert not list(app.query("#mcp-inspector-test-panel"))
         assert notifications
         message, severity = notifications[-1]
-        assert message == "Testing server-source tools isn't available yet."
+        assert message == "Server-source tools are display-only."
         assert severity == "information"
 
 
@@ -5720,15 +5719,44 @@ class AuditFindingsHubService(AuditHubService):
         return await super().load_section(section)
 
 
+class MultiTargetAuditFindingsHubService(AuditFindingsHubService):
+    """`AuditFindingsHubService` with a second target ("aux", via
+    `TwoTargetStore`) and a per-fetch record of which target was ACTIVE
+    (`self.context.selected_active_server_id`) at each advanced/governance
+    `load_section()` call -- New Minor 2 (MCP Hub Phase 6 finale, linked to
+    I1): `_refresh_server_discovery()` must route its refetch through the
+    triggering event's OWN server_key (here: a finding whose `target_id`
+    field names "aux"), not whatever target happened to already be
+    active/rail-selected ("main", the mount-time default) -- this fake makes
+    that distinction observable without needing the real target to actually
+    return different data.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.target_store = TwoTargetStore()
+        self.advanced_fetch_targets: list[str | None] = []
+        self.governance_fetch_targets: list[str | None] = []
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if effective_section == "advanced":
+            self.advanced_fetch_targets.append(self.context.selected_active_server_id)
+        elif effective_section == "governance":
+            self.governance_fetch_targets.append(self.context.selected_active_server_id)
+        return await super().load_section(section)
+
+
 class AuditFindingsApp(App):
     def __init__(
         self,
         records: list[dict] | None = None,
         *,
         findings_items: list[dict] | None = None,
+        service: AuditFindingsHubService | None = None,
     ) -> None:
         super().__init__()
-        self.unified_mcp_service = AuditFindingsHubService(
+        self.unified_mcp_service = service or AuditFindingsHubService(
             records, findings_items=findings_items
         )
 
@@ -6008,6 +6036,54 @@ async def test_finding_refresh_discovery_action_invalidates_caches_resyncs_and_t
             "Server discovery refreshed.",
             "information",
         )
+
+
+@pytest.mark.asyncio
+async def test_finding_refresh_routes_to_findings_own_target_not_active_one():
+    """New Minor 2 (MCP Hub Phase 6 finale, review, linked to I1):
+    REFRESH_DISCOVERY from a Findings-detail remediation button must refresh
+    the FINDING's own owning target -- resolved via `_finding_owning_server_
+    key()`'s `target_id` field alias -- not whatever target happens to
+    already be active/rail-selected. `AuditFindingsApp`'s mount-time default
+    active target is "main" (both the service's own `context.selected_
+    active_server_id` and, via `reload()`'s auto-select, this workbench's
+    own `_selected_server_key`); this finding names "aux" as its OWN target
+    via `target_id`, a genuine mismatch. Previously `_refresh_server_
+    discovery()` ignored the triggering event's `server_key` entirely and
+    always refreshed `_active_service_target_id()` (here: "main"), so the
+    finding's real owning target ("aux") was never refetched at all."""
+    service = MultiTargetAuditFindingsHubService(
+        findings_items=[
+            {
+                "severity": "high",
+                "finding_type": "catalog_expired",
+                "message": "Tool catalog is stale.",
+                "target_id": "aux",
+            }
+        ]
+    )
+    app = AuditFindingsApp(service=service)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._selected_server_key == "server:main"
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        service.advanced_fetch_targets.clear()
+        service.governance_fetch_targets.clear()
+        await pilot.click("#mcp-finding-action-refresh_discovery")
+        await pilot.pause()
+
+        assert service.advanced_fetch_targets == ["aux"]
+        assert service.governance_fetch_targets == ["aux"]
+        # The workbench's own selection follows the refreshed target too --
+        # the NEXT fetch (e.g. a plain resync) must keep landing on it
+        # rather than snapping back to "main".
+        assert workbench._selected_server_key == "server:aux"
 
 
 @pytest.mark.asyncio
@@ -6293,6 +6369,51 @@ async def test_switch_source_clears_finding_detail():
         # Finding pane must be cleared
         assert app.query_one("#mcp-inspector-finding").display is False
         # No action buttons should remain
+        assert not list(app.query_one("#mcp-inspector-finding").query(Button))
+
+
+@pytest.mark.asyncio
+async def test_switching_rail_server_clears_finding_detail():
+    """I1 (MCP Hub Phase 6 finale, review -- the program's 6th occurrence of
+    this same stale-panel class): switching the RAIL SERVER selection (not
+    the source -- `_select_server_key()`'s own path, exercised here via
+    `MCPRail.ServerSelected` rather than `SourceChanged`) while a
+    Findings-detail pane is open must also clear it. Mirrors
+    `test_switch_source_clears_finding_detail()` exactly, but for the other
+    stale-panel trigger: leaving the OLD server's finding (remediation
+    buttons and all -- whose own "Refresh" would silently refresh the WRONG
+    target with a success toast) on screen after switching to a different
+    server under the SAME source."""
+    app = AuditFindingsApp()
+    app.unified_mcp_service.target_store = TwoTargetStore()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._source == "server"
+        assert workbench._selected_server_key == "server:main"
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        # Finding detail is now visible with action buttons
+        finding_pane = app.query_one("#mcp-inspector-finding")
+        assert finding_pane.display is True
+        action_buttons = list(finding_pane.query(Button))
+        assert len(action_buttons) > 0, "Expected action buttons in finding detail"
+
+        # Switch the RAIL SERVER selection (same source, different target).
+        rail = app.query_one(MCPRail)
+        rail.post_message(MCPRail.ServerSelected("server:aux"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench._selected_server_key == "server:aux"
+        # Finding pane must be cleared -- not left showing "main"'s finding
+        # (and its now-mistargeted remediation buttons) under "aux".
+        assert app.query_one("#mcp-inspector-finding").display is False
         assert not list(app.query_one("#mcp-inspector-finding").query(Button))
 
 
