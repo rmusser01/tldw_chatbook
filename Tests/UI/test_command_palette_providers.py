@@ -318,7 +318,12 @@ class TestTabNavigationProvider:
         async for hit in tab_provider.search("tab"):
             hits.append(hit)
 
-        assert len(hits) == len(TabNavigationProvider.command_palette_tab_ids()) == 13
+        # task-423: 13 destination commands plus the labeled Library
+        # sub-route deep links (currently just Skills).
+        expected = len(TabNavigationProvider.command_palette_tab_ids()) + len(
+            TabNavigationProvider.LIBRARY_SUBROUTE_COMMANDS
+        )
+        assert len(hits) == expected == 14
         tab_texts = [hit.text for hit in hits]
         assert any("Console" in text for text in tab_texts)
         assert any("Library" in text for text in tab_texts)
@@ -328,8 +333,10 @@ class TestTabNavigationProvider:
         assert not any("Models" in text for text in tab_texts)
         assert not any("Speech" in text for text in tab_texts)
         assert not any("Coding" in text for text in tab_texts)
-        # Skills is folded into Library; no standalone Skills command.
-        assert not any("Skills" in text for text in tab_texts)
+        # task-423: Skills is folded into Library but gets a labeled
+        # DEEP-LINK command (lands on the Skills rail row) -- still no
+        # standalone Skills destination.
+        assert any("Library — Skills" in text for text in tab_texts)
 
     @pytest.mark.asyncio
     async def test_search_uses_destination_labels_without_duplicates(

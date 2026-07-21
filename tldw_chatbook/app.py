@@ -738,6 +738,19 @@ class TabNavigationProvider(Provider):
         TAB_SETTINGS,
     )
 
+    # task-423: labeled deep-link commands into Library-folded content
+    # types that would otherwise only fuzzy-match the generic Library
+    # command (which lands on generic Library, not the content row). Each
+    # entry is (legacy route, command text, help text); the route rides
+    # ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT`` to land on its rail row.
+    LIBRARY_SUBROUTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
+        (
+            "skills",
+            "Tab Navigation: Library — Skills",
+            "Open Library's Skills row for Agent Skills packs, validation, and trust",
+        ),
+    )
+
     def __init__(self, screen, *args, **kwargs):
         """Initialize the TabNavigationProvider with required screen parameter."""
         super().__init__(screen, *args, **kwargs)
@@ -836,6 +849,21 @@ class TabNavigationProvider(Provider):
                     score,
                     matcher.highlight(command_text),
                     partial(self.switch_tab, tab_id),
+                    help=help_text,
+                )
+
+        # task-423: Library sub-route deep links (e.g. "skills").
+        for route, command_text, help_text in self.LIBRARY_SUBROUTE_COMMANDS:
+            score = max(
+                matcher.match(command_text),
+                matcher.match(help_text),
+                matcher.match(route),
+            )
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(command_text),
+                    partial(self.switch_tab, route),
                     help=help_text,
                 )
 
