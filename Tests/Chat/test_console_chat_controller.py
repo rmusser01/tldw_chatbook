@@ -555,16 +555,20 @@ async def test_stop_active_run_marks_assistant_message_stopped():
 
     assert controller.stop_active_run() is True
     messages = store.messages_for_session(store.active_session_id)
-    assert messages[-1].content == "partial"
-    assert messages[-1].status == "stopped"
+    # TASK-337: the durable stopped-by-user record follows the partial.
+    assert messages[-1].content == "Response stopped by user."
+    assert messages[-2].content == "partial"
+    assert messages[-2].status == "stopped"
     assert controller.run_state.status is ConsoleRunStatus.STOPPED
 
     gateway.release.set()
     result = await task
     messages = store.messages_for_session(store.active_session_id)
     assert result.accepted is True
-    assert messages[-1].content == "partial"
-    assert messages[-1].status == "stopped"
+    # TASK-337: the durable stopped-by-user record follows the partial.
+    assert messages[-1].content == "Response stopped by user."
+    assert messages[-2].content == "partial"
+    assert messages[-2].status == "stopped"
     assert controller.run_state.status is ConsoleRunStatus.STOPPED
 
 
@@ -588,8 +592,10 @@ def test_stop_active_run_falls_back_to_visible_streaming_assistant_message():
     assert controller.stop_active_run() is True
 
     messages = store.messages_for_session(session.id)
-    assert messages[-1].content == "partial"
-    assert messages[-1].status == "stopped"
+    # TASK-337: the durable stopped-by-user record follows the partial.
+    assert messages[-1].content == "Response stopped by user."
+    assert messages[-2].content == "partial"
+    assert messages[-2].status == "stopped"
     assert controller.run_state.status is ConsoleRunStatus.STOPPED
 
 
@@ -687,8 +693,10 @@ async def test_stop_active_run_returns_without_waiting_for_next_provider_chunk()
 
     messages = store.messages_for_session(store.active_session_id)
     assert result.accepted is True
-    assert messages[-1].content == "partial"
-    assert messages[-1].status == "stopped"
+    # TASK-337: the durable stopped-by-user record follows the partial.
+    assert messages[-1].content == "Response stopped by user."
+    assert messages[-2].content == "partial"
+    assert messages[-2].status == "stopped"
     assert controller.run_state.status is ConsoleRunStatus.STOPPED
 
 
@@ -720,6 +728,7 @@ async def test_shutdown_stops_and_awaits_active_stream_task():
 
     messages = store.messages_for_session(store.active_session_id)
     assert result.accepted is True
+    # TASK-337: shutdown is not a user stop — no stopped-by-user row.
     assert messages[-1].content == "partial"
     assert messages[-1].status == "stopped"
     assert controller.run_state.status is ConsoleRunStatus.STOPPED

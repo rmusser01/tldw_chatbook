@@ -108,6 +108,10 @@ async def test_new_user_message_reanchors_from_scrolled_up_position():
         await pilot.pause()
 
         history = history + [_msg(13, ConsoleMessageRole.USER)]
+        # TASK-336: the screen stamps a follow intent at every send/resume/
+        # switch site; a user scroll AFTER the intent wins instead of being
+        # yanked. Mirror the production choreography here.
+        transcript.note_follow_intent()
         transcript.set_messages(history)
         await transcript.refresh_messages()
         await pilot.pause()
@@ -142,6 +146,7 @@ async def test_send_with_assistant_placeholder_still_reanchors():
             _msg(13, ConsoleMessageRole.USER),
             _msg(14, ConsoleMessageRole.ASSISTANT),
         ]
+        transcript.note_follow_intent()
         transcript.set_messages(history)
         await transcript.refresh_messages()
         await pilot.pause()

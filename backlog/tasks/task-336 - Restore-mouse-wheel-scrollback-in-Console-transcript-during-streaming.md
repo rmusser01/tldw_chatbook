@@ -1,10 +1,15 @@
 ---
 id: TASK-336
 title: Restore mouse-wheel scrollback in Console transcript during streaming
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
-labels: [console, ux, regression]
+updated_date: '2026-07-21 07:29'
+labels:
+  - console
+  - ux
+  - regression
 dependencies: []
 priority: high
 ---
@@ -23,6 +28,43 @@ With the same overflowing conversation loaded: wheel-up over the transcript scro
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Wheel-up during streaming should detach auto-follow and scroll back (standard terminal behavior), with auto-follow re-engaging only when the user returns to the bottom
-- [ ] #2 A regression test pins the restored behavior
+- [x] #1 Wheel-up during streaming should detach auto-follow and scroll back (standard terminal behavior), with auto-follow re-engaging only when the user returns to the bottom
+- [x] #2 A regression test pins the restored behavior
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce: understand Textual 8.2.7 anchor mechanics vs the transcript's 0.2s reconcile churn (row mounts/moves may re-engage or never release the anchor on wheel-up)
+2. Fix so wheel-up during an active stream detaches follow and scrolls; returning to bottom re-engages (task-298 contract)
+3. TDD at the widget level; live-verify against the real llama-server stream
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+TWO real mechanisms, both fixed:
+
+1. Late-arriving follow intent: the send-time ``anchor()`` travels through
+   the coalesced sync pass and can land AFTER the user has already
+   wheel-scrolled — yanking them back. The transcript now stamps
+   ``note_follow_intent()`` at every programmatic jump-to-tail site
+   (send dispatch, session activation, resume) and ``release_anchor()``
+   stamps user scrolls; ``set_messages`` only honors a new-user-send anchor
+   when the intent is newer than the last user scroll. The task-298
+   contract boundary is pinned: a send AFTER scrollback still jumps.
+
+2. The live byte-identical symptom (diagnosed with an instrumented served
+   app against the real llama-server): during heavy row churn (sub-agent
+   runs) the arrangement transiently collapses — ``max_scroll_y`` reads 0,
+   ``scroll_y`` can go negative via the compositor anchor path — so the
+   base ``allow_vertical_scroll`` gate is False at the moment the wheel
+   event arrives and the gesture is silently dropped (no scroll, no
+   ``release_anchor``). ``ConsoleTranscript.allow_vertical_scroll`` now
+   accepts gestures whenever messages exist; a clamped scroll is a no-op
+   but the reader's intent registers.
+
+Verified: 3 UI tests (yank reproduced RED first; contract boundary;
+collapsed-layout gate) and live against llama.cpp under an active
+sub-agent run: wheel moves the view and it stays (previously: no movement
+at all, matching j4-06/07 byte-identical evidence). Files:
+`Widgets/Console/console_transcript.py`, `UI/Screens/chat_screen.py`.

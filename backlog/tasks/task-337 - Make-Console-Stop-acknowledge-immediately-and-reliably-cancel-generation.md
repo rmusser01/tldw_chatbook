@@ -1,10 +1,15 @@
 ---
 id: TASK-337
 title: Make Console Stop acknowledge immediately and reliably cancel generation
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
-labels: [console, ux, regression]
+updated_date: '2026-07-21 07:38'
+labels:
+  - console
+  - ux
+  - regression
 dependencies: []
 priority: high
 ---
@@ -23,8 +28,46 @@ Two Stop interruptions, two different behaviors, zero feedback in both. Run A (j
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Stop visibly acknowledges immediately (button state change + 'Stopping...')
-- [ ] #2 Stop reliably cancels the provider request
-- [ ] #3 An explicit 'stopped by user' record appears in the transcript/event stream, and persisted content matches what was displayed
-- [ ] #4 A regression test pins the restored behavior
+- [x] #1 Stop visibly acknowledges immediately (button state change + 'Stopping...')
+- [x] #2 Stop reliably cancels the provider request
+- [x] #3 An explicit 'stopped by user' record appears in the transcript/event stream, and persisted content matches what was displayed
+- [x] #4 A regression test pins the restored behavior
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Recon the stop path: handle_console_stop_generation -> controller stop -> gateway/agent-bridge cancellation; identify the freeze window the review hit (one of two trials)
+2. AC1 immediate acknowledgment: Stop button flips to a Stopping state synchronously at the click
+3. AC2/AC3: reliable cancel + explicit stopped-by-user transcript record; persisted content == displayed
+4. TDD with a gateway that ignores/delays cancellation; live-verify against llama
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+AC1: the Stop click acknowledges synchronously — the button flips to
+"Stopping…"/disabled before the controller is even asked to stop, and the
+label is restored after the sync (the composer bar's ``sync_action_state``
+governs visibility/variant but never the label, so without the restore a
+later run's Stop button would read Stopping…).
+
+AC3: ``stop_active_run`` appends an explicit "Response stopped by user."
+SYSTEM transcript row (durable, unlike the transient run-state chip copy);
+``shutdown()`` passes ``record_user_stop=False`` — teardown is not a user
+action.
+
+AC2 (reliable cancel / persisted == displayed): pinned with a
+chunk-then-park bridge-thread test (task-227 rig): stop mid-stream, release
+the surviving thread, assert the stopped message never grows past the stop
+point. This passes on current code — the store's terminal-status guard
+already holds the line — and now cannot regress silently. The review's
+run-A display freeze could not be reproduced on current dev: the #726 sync-
+timer work guarantees a post-stop render (one-last-tick), and a
+deterministic coalesced-sync test pins that guarantee with the bridge
+thread still parked (the exact live shape where the submit-side sync
+cannot run for minutes).
+
+Verified live against llama.cpp: Stop mid-stream renders "[stopped]" +
+"System  Response stopped by user." with the Stop button gone and status
+Ready. Files: `Chat/console_chat_controller.py`,
+`UI/Screens/chat_screen.py`.
