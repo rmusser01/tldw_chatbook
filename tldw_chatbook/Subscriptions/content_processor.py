@@ -23,6 +23,7 @@ from loguru import logger
 #
 # Local Imports
 from ..Chat.Chat_Functions import chat_api_call
+from ..Internal_Prompts import get_internal_prompt, render_internal_prompt
 from ..Metrics.metrics_logger import log_histogram, log_counter
 #
 ########################################################################################################################
@@ -269,7 +270,7 @@ class ContentProcessor:
         messages = [
             {
                 "role": "system",
-                "content": "You are a helpful assistant that analyzes and summarizes content from subscriptions.",
+                "content": get_internal_prompt("subscriptions.analysis_system"),
             },
             {"role": "user", "content": prompt},
         ]
@@ -341,70 +342,56 @@ class ContentProcessor:
 
         # Build default prompt based on type
         if subscription["type"] in ["rss", "atom", "json_feed"]:
-            prompt = f"""Analyze this article from {subscription["name"]}:
-
-Title: {item.get("title", "Untitled")}
-URL: {item.get("url", "N/A")}
-Published: {item.get("published_date", "Unknown")}
-
-Content:
-{content[:5000]}
-
-Please provide:
-1. A concise summary (2-3 sentences)
-2. Key points or insights (bullet points)
-3. Why this might be important or relevant
-4. Any action items or implications
-
-Keep the analysis focused and practical."""
+            name = subscription["name"]
+            title = item.get("title", "Untitled")
+            url = item.get("url", "N/A")
+            published = item.get("published_date", "Unknown")
+            content = content[:5000]
+            return render_internal_prompt(
+                "subscriptions.feed_analysis",
+                name=name,
+                title=title,
+                url=url,
+                published=published,
+                content=content,
+            )
 
         elif subscription["type"] == "url_change":
-            prompt = f"""A monitored webpage has changed:
-
-URL: {item.get("url", subscription["source"])}
-Change: {item.get("change_percentage", 0) * 100:.1f}% of content changed
-
-New content:
-{content[:5000]}
-
-Please:
-1. Summarize what has changed
-2. Highlight the most important updates
-3. Assess the significance of these changes
-4. Suggest any follow-up actions if needed"""
+            url = item.get("url", subscription["source"])
+            change_percentage = f"{item.get('change_percentage', 0) * 100:.1f}"
+            content = content[:5000]
+            return render_internal_prompt(
+                "subscriptions.url_change_analysis",
+                url=url,
+                change_percentage=change_percentage,
+                content=content,
+            )
 
         elif subscription["type"] == "podcast":
-            prompt = f"""Analyze this podcast episode from {subscription["name"]}:
-
-Title: {item.get("title", "Untitled")}
-Published: {item.get("published_date", "Unknown")}
-
-Description:
-{content[:3000]}
-
-Please provide:
-1. Episode summary
-2. Main topics discussed
-3. Key takeaways
-4. Whether this episode is worth listening to and why"""
+            name = subscription["name"]
+            title = item.get("title", "Untitled")
+            published = item.get("published_date", "Unknown")
+            content = content[:3000]
+            return render_internal_prompt(
+                "subscriptions.podcast_analysis",
+                name=name,
+                title=title,
+                published=published,
+                content=content,
+            )
 
         else:
             # Generic prompt
-            prompt = f"""Analyze this content from {subscription["name"]}:
-
-Title: {item.get("title", "Untitled")}
-Type: {subscription["type"]}
-
-Content:
-{content[:5000]}
-
-Please provide a helpful analysis including:
-1. Summary
-2. Key information
-3. Relevance or importance
-4. Any recommended actions"""
-
-        return prompt
+            name = subscription["name"]
+            title = item.get("title", "Untitled")
+            content = content[:5000]
+            return render_internal_prompt(
+                "subscriptions.generic_analysis",
+                name=name,
+                title=title,
+                type=subscription["type"],
+                content=content,
+            )
 
 
 class KeywordExtractor:
