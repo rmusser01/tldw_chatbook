@@ -42,7 +42,11 @@ from tldw_chatbook.Library.library_skills_state import (
 )
 
 _SORT_LABELS = {"name": "Name", "status": "Status"}
-_EMPTY_SKILLS_COPY = "No skills yet — create them in Library ▸ Skills."
+# task-418: the old copy ("create them in Library ▸ Skills") pointed at
+# the exact list the user was already looking at; name the real paths.
+_EMPTY_SKILLS_COPY = (
+    "No skills yet — use Create ▸ New skill in the rail, or Import… above."
+)
 _EMPTY_SKILLS_FILTER_COPY = "No skills match your filter."
 
 # Trust panel copy/gating (Task 4). Mirrors ``skills_screen.py``'s own
@@ -227,18 +231,29 @@ def skill_editor_warning_lines(
 
 
 def skill_user_invocable_label(value: bool) -> str:
-    """Render the user-invocable toggle Button's label."""
-    return f"user invocable: {'yes' if value else 'no'} ▸"
+    """Render the user-invocable toggle Button's label (task-418 copy)."""
+    return f"User can invoke: {'yes' if value else 'no'} ▸"
 
 
 def skill_disable_model_label(value: bool) -> str:
-    """Render the disable-model-invocation toggle Button's label."""
-    return f"disable model invocation: {'yes' if value else 'no'} ▸"
+    """Render the disable-model-invocation toggle Button's label.
+
+    task-418: display polarity is inverted -- the stored field stays
+    ``disable_model_invocation``, but the label answers the question the
+    user actually has ("can the agent invoke this?") instead of the
+    double-negative "disable model invocation: no".
+    """
+    return f"Agent can invoke: {'no' if value else 'yes'} ▸"
 
 
 def skill_context_toggle_label(context: str) -> str:
-    """Render the context-cycling Button's label."""
-    return f"context: {context} ▸"
+    """Render the context-cycling Button's label.
+
+    task-418: keeps the SKILL.md spec value (``inline``/``fork``) visible
+    for round-tripping, framed in plain language.
+    """
+    hint = "this conversation" if context == "inline" else "sub-agent"
+    return f"Runs in: {context} ({hint}) ▸"
 
 
 def next_skill_context(context: str) -> str:

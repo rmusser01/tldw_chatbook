@@ -327,7 +327,7 @@ LIBRARY_SKILL_SAVE_STATUS_COPY = {
     "ok": "Saved.",
     "exists": "A skill with this name already exists.",
     "invalid-name": "Skill name must use lowercase letters, numbers, and hyphens.",
-    "trust-blocked": "This skill is trust-blocked; resolve trust before saving.",
+    "trust-blocked": "This skill is blocked by trust review — approve it in the trust panel before saving.",
     "error": "Couldn't save this skill. Try again.",
 }
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
@@ -8261,12 +8261,19 @@ class LibraryScreen(BaseAppScreen):
         if self.is_mounted:
             self.refresh(recompose=True)
 
-    async def _request_library_skill_trust_passphrase(self) -> str | None:
+    async def _request_library_skill_trust_passphrase(
+        self,
+        *,
+        title: str | None = None,
+        message: str | None = None,
+    ) -> str | None:
         """Push the shared ``SkillTrustPassphraseModal`` and await a passphrase.
 
         Mirrors ``skills_screen.SkillsScreen._request_skill_trust_passphrase``
         (reused, not forked): never bootstraps from this editor, so
-        ``confirm_bootstrap`` is always ``False``.
+        ``confirm_bootstrap`` is always ``False``. task-418: ``title``/
+        ``message`` let a caller present its real purpose (the approve
+        flow) instead of "Unlock Local Skill Trust".
         """
         push_screen_wait = getattr(self.app, "push_screen_wait", None)
         if not callable(push_screen_wait):
@@ -8278,7 +8285,9 @@ class LibraryScreen(BaseAppScreen):
                 )
             return None
         result = await push_screen_wait(
-            SkillTrustPassphraseModal(confirm_bootstrap=False)
+            SkillTrustPassphraseModal(
+                confirm_bootstrap=False, title=title, message=message
+            )
         )
         if isinstance(result, str) and result:
             return result
@@ -8555,7 +8564,15 @@ class LibraryScreen(BaseAppScreen):
         review_id = self._library_skill_active_review.get("review_id")
         if not review_id:
             return
-        passphrase = await self._request_library_skill_trust_passphrase()
+        passphrase = await self._request_library_skill_trust_passphrase(
+            # task-418: the user pressed Approve -- say so, instead of the
+            # modal's default "Unlock Local Skill Trust" purpose.
+            title="Approve Reviewed Skill Version",
+            message=(
+                "Enter the local skill trust passphrase to make the "
+                "reviewed files the new trusted baseline."
+            ),
+        )
         if passphrase is None:
             return
         _, unlock_ok = await self._call_library_skill_trust_service(

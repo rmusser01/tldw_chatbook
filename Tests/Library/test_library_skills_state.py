@@ -74,9 +74,11 @@ def test_query_matches_name_and_description():
 
 
 def test_flags_line_variants():
-    assert skill_flags_line(True, False) == "user · agent"
-    assert skill_flags_line(True, True) == "user"
-    assert skill_flags_line(False, False) == "agent"
+    # task-418 copy pass: spell the invocability out instead of the bare
+    # "user · agent" tokens (no legend existed anywhere in the UI).
+    assert skill_flags_line(True, False) == "invocable: user & agent"
+    assert skill_flags_line(True, True) == "invocable: user only"
+    assert skill_flags_line(False, False) == "invocable: agent only"
     assert skill_flags_line(False, True) == "not invocable"
 
 

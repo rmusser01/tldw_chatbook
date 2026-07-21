@@ -207,7 +207,8 @@ async def test_skills_canvas_empty_state_renders_exact_copy_not_list():
     async with app.run_test() as pilot:
         empty = pilot.app.query_one("#library-skills-empty")
         assert (
-            str(empty.renderable) == "No skills yet — create them in Library ▸ Skills."
+            str(empty.renderable)
+            == "No skills yet — use Create ▸ New skill in the rail, or Import… above."
         )
         assert len(pilot.app.query(".library-skill-row")) == 0
 
@@ -1635,3 +1636,57 @@ async def test_trust_review_press_clears_stale_saved_status():
     event = SimpleNamespace(stop=lambda: None)
     LibraryScreen.handle_library_skill_trust_review(fake, event)
     assert cleared == [""]
+
+
+# ---------------------------------------------------------------------------
+# task-418: copy pass -- self-referential empty state, jargon toggle
+# labels, approve-purpose passphrase modal.
+# ---------------------------------------------------------------------------
+
+
+def test_skills_empty_state_copy_names_real_paths():
+    from tldw_chatbook.Widgets.Library.library_skills_canvas import (
+        _EMPTY_SKILLS_COPY,
+    )
+
+    assert "New skill" in _EMPTY_SKILLS_COPY
+    assert "Import" in _EMPTY_SKILLS_COPY
+    # The old copy pointed at "Library ▸ Skills" -- the list the user is
+    # already looking at.
+    assert "Library ▸ Skills" not in _EMPTY_SKILLS_COPY
+
+
+def test_skill_toggle_labels_read_as_plain_statements():
+    assert skill_user_invocable_label(True) == "User can invoke: yes ▸"
+    assert skill_user_invocable_label(False) == "User can invoke: no ▸"
+    # Polarity inverted for display: the stored field stays
+    # disable_model_invocation, the label answers the user's question.
+    assert skill_disable_model_label(False) == "Agent can invoke: yes ▸"
+    assert skill_disable_model_label(True) == "Agent can invoke: no ▸"
+    assert (
+        skill_context_toggle_label("inline") == "Runs in: inline (this conversation) ▸"
+    )
+    assert skill_context_toggle_label("fork") == "Runs in: fork (sub-agent) ▸"
+
+
+@pytest.mark.asyncio
+async def test_trust_passphrase_modal_accepts_purpose_copy():
+    """task-418: Approve re-uses the passphrase modal, which always said
+    'Unlock Local Skill Trust' -- a task/dialog mismatch. The modal now
+    takes purpose copy overrides."""
+    from tldw_chatbook.UI.Screens.skills_screen import SkillTrustPassphraseModal
+
+    class _Host(App):
+        pass
+
+    app = _Host()
+    async with app.run_test() as pilot:
+        modal = SkillTrustPassphraseModal(
+            confirm_bootstrap=False,
+            title="Approve Reviewed Skill Version",
+            message="Enter the trust passphrase to approve.",
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        title = modal.query_one("#skill-trust-passphrase-title", Static)
+        assert str(title.renderable) == "Approve Reviewed Skill Version"

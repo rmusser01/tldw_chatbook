@@ -97,24 +97,39 @@ class SkillTrustPassphraseModal(ModalScreen[str | None]):
 
     BINDINGS = [("escape", "dismiss", "Cancel")]
 
-    def __init__(self, *, confirm_bootstrap: bool) -> None:
+    def __init__(
+        self,
+        *,
+        confirm_bootstrap: bool,
+        title: str | None = None,
+        message: str | None = None,
+    ) -> None:
+        """task-418: ``title``/``message`` let a caller state its actual
+        purpose (e.g. the Library approve flow) instead of every purpose
+        presenting as "Unlock Local Skill Trust"."""
         super().__init__()
         self._confirm_bootstrap = confirm_bootstrap
+        self._title_override = title
+        self._message_override = message
 
     def compose(self) -> ComposeResult:
-        title = (
+        title = self._title_override or (
             "Bootstrap Local Skill Trust"
             if self._confirm_bootstrap
             else "Unlock Local Skill Trust"
         )
-        message = (
+        message = self._message_override or (
             "Current local skill files will become the trusted baseline. "
             "Enter the local skill trust passphrase to continue."
             if self._confirm_bootstrap
             else "Enter the local skill trust passphrase to unlock trust checks for this session."
         )
         with Vertical(id="skill-trust-passphrase-modal"):
-            yield Static(title, classes="destination-section")
+            yield Static(
+                title,
+                id="skill-trust-passphrase-title",
+                classes="destination-section",
+            )
             yield Static(message, id="skill-trust-passphrase-message")
             yield Input(
                 password=True,

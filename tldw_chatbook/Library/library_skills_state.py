@@ -44,6 +44,8 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         "find_tools",
         "load_tools",
         "prompt",
+        # PR #729's /prefill command (sync test flagged the gap).
+        "prefill",
         "system",
         "skills",
     )
@@ -172,17 +174,19 @@ def skill_flags_line(user_invocable: bool, disable_model_invocation: bool) -> st
             CAN invoke it when this is ``False``).
 
     Returns:
-        ``"user · agent"`` when both a user and the agent can invoke it,
-        ``"user"``/``"agent"`` when only one can, or ``"not invocable"``
-        when neither can.
+        A spelled-out invocability summary (task-418: the bare
+        ``"user · agent"`` tokens had no legend anywhere in the UI):
+        ``"invocable: user & agent"`` when both can invoke it,
+        ``"invocable: user only"``/``"invocable: agent only"`` when one
+        can, or ``"not invocable"`` when neither can.
     """
     agent_invocable = not disable_model_invocation
     if user_invocable and agent_invocable:
-        return "user · agent"
+        return "invocable: user & agent"
     if user_invocable:
-        return "user"
+        return "invocable: user only"
     if agent_invocable:
-        return "agent"
+        return "invocable: agent only"
     return "not invocable"
 
 

@@ -48,7 +48,7 @@ CORE_FIRST_USE_ROUTES = (
     # row selected, so this smoke entry lands on LibraryScreen (canonical
     # tab "library") and checks the skills canvas's own empty-state copy
     # rather than the retired SkillsScreen's.
-    (TAB_SKILLS, TAB_LIBRARY, "LibraryScreen", ("No skills yet", "Library ▸ Skills")),
+    (TAB_SKILLS, TAB_LIBRARY, "LibraryScreen", ("No skills yet", "New skill")),
     (TAB_MCP, TAB_MCP, "MCPScreen", ("MCP", "Unified MCP")),
     (TAB_SETTINGS, TAB_SETTINGS, "SettingsScreen", ("Settings", "Providers & Models")),
 )
