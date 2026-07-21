@@ -632,16 +632,20 @@ async def test_handle_library_skill_row_vetoed_while_dirty():
     """Mirrors ``handle_library_prompt_row``'s dirty veto: switching rows
     while the currently-open skill is dirty must NOT reset state or open a
     new fetch."""
+    veto_notices: list[bool] = []
     fake = SimpleNamespace(
         _selected_skill_name="already-open",
         _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
         _library_skills_view="editor",
         _flush_library_skill_save=AsyncMock(return_value=False),
+        # task-413: the veto is no longer silent -- the handler reports it.
+        _notify_skill_dirty_veto=lambda: veto_notices.append(True),
     )
     button = SimpleNamespace(skill_name="code-review")
     event = SimpleNamespace(stop=lambda: None, button=button)
     await LibraryScreen.handle_library_skill_row(fake, event)
     assert fake._selected_skill_name == "already-open"
+    assert veto_notices == [True]
 
 
 # ---------------------------------------------------------------------------
@@ -1112,3 +1116,131 @@ async def test_library_shell_rail_switch_vetoed_while_skill_editor_dirty():
         assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_SKILL
         assert screen._library_skills_view == "editor"
         assert screen.query_one("#library-skill-name", Input).value == "dirty-demo"
+
+
+@pytest.mark.asyncio
+async def test_library_skill_back_veto_notifies_unsaved_changes():
+    """task-413: the Back-to-list dirty veto must produce visible feedback
+    (a notification) instead of silently doing nothing -- before the fix
+    the vetoed click gave zero indication why navigation was blocked."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(available=[], blocked=[])
+    notifications: list[tuple[str, dict]] = []
+    app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-skill").press()
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one("#library-skill-name", Input).value = "dirty-demo"
+        await pilot.pause()
+        assert screen._library_skill_dirty is True
+
+        screen.query_one("#library-skill-back").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_skills_view == "editor"
+        assert notifications, "Vetoed Back gave no visible feedback."
+        assert "Unsaved skill changes" in notifications[-1][0]
+
+
+@pytest.mark.asyncio
+async def test_library_shell_rail_switch_veto_notifies_unsaved_changes():
+    """task-413 companion to the task-412 guard: when the rail switch is
+    vetoed by a dirty skill edit the user must be told why."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(available=[], blocked=[])
+    notifications: list[tuple[str, dict]] = []
+    app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-skill").press()
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one("#library-skill-name", Input).value = "dirty-demo"
+        await pilot.pause()
+
+        screen.query_one("#library-row-browse-media").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_SKILL
+        assert notifications, "Vetoed rail switch gave no visible feedback."
+        assert "Unsaved skill changes" in notifications[-1][0]
+
+
+@pytest.mark.asyncio
+async def test_library_skill_discard_button_leaves_without_saving():
+    """task-413: an explicit Discard affordance -- disabled until dirty,
+    live-enabled on the first edit, and pressing it leaves the editor
+    without saving (list view, dirty cleared). Before the fix the only
+    exit from a dirty editor was Save."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(available=[], blocked=[])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-skill").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        discard = screen.query_one("#library-skill-discard", Button)
+        assert discard.disabled is True
+
+        screen.query_one("#library-skill-name", Input).value = "dirty-demo"
+        await pilot.pause()
+        assert screen._library_skill_dirty is True
+        assert discard.disabled is False
+
+        discard.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_skills_view == "list"
+        assert screen._library_skill_dirty is False
+
+
+@pytest.mark.asyncio
+async def test_library_flush_pending_work_skill_veto_notifies():
+    """task-413: a dirty skill edit vetoing screen-level navigation
+    (``flush_pending_work``) must surface the same unsaved-changes toast
+    as the in-screen exits -- the app-level caller only logs the veto."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(available=[], blocked=[])
+    notifications: list[tuple[str, dict]] = []
+    app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-skill").press()
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one("#library-skill-name", Input).value = "dirty-demo"
+        await pilot.pause()
+
+        assert await screen.flush_pending_work() is False
+        assert notifications, "Screen-leave veto gave no visible feedback."
+        assert "Unsaved skill changes" in notifications[-1][0]

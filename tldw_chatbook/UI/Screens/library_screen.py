@@ -309,6 +309,12 @@ LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
 # keyed by ``classify_skill_save_error``'s return value. "version-conflict"
 # is deliberately absent -- it routes into the conflict banner instead (see
 # ``_save_library_skill``), never this status line.
+# task-413: toast shown whenever a dirty skill edit vetoes an exit (Back,
+# skill-row switch, rail-row switch) -- the veto itself is silent widget
+# state, so without this the blocked click looks like a dead button.
+LIBRARY_SKILL_DIRTY_VETO_COPY = (
+    "Unsaved skill changes — Save or Discard changes first."
+)
 LIBRARY_SKILL_SAVE_STATUS_COPY = {
     "ok": "Saved.",
     "exists": "A skill with this name already exists.",
@@ -1524,6 +1530,13 @@ class LibraryScreen(BaseAppScreen):
         await self._flush_library_note_save()
         prompt_flush_allowed = await self._flush_library_prompt_save()
         skill_flush_allowed = await self._flush_library_skill_save()
+        if not skill_flush_allowed:
+            # task-413: the app-level navigation veto only logs, so tell
+            # the user why the tab switch was refused -- same toast as the
+            # in-screen Back / row-switch / rail-switch vetoes. Notes show
+            # their own conflict banner and prompts predate this pattern,
+            # so only the skill veto reports here.
+            self._notify_skill_dirty_veto()
         return (
             not self._library_note_dirty
             and prompt_flush_allowed
@@ -3657,6 +3670,7 @@ class LibraryScreen(BaseAppScreen):
                             # (``_enter_library_skill_create_editor`` leaves
                             # ``_selected_skill_name`` empty).
                             is_create=not self._selected_skill_name,
+                            dirty=self._library_skill_dirty,
                             id="library-skills-canvas",
                         )
                 elif shell.canvas_kind == "skills":
@@ -6397,6 +6411,7 @@ class LibraryScreen(BaseAppScreen):
         if not await self._flush_library_prompt_save():
             return
         if not await self._flush_library_skill_save():
+            self._notify_skill_dirty_veto()
             return
         self._library_selected_row_id = row_id
         # A rail-row press is always a fresh entry into a content type, so
@@ -7298,6 +7313,7 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         if not await self._flush_library_skill_save():
+            self._notify_skill_dirty_veto()
             return
         skill_name = getattr(event.button, "skill_name", None)
         self._reset_library_skill_editor_state()
@@ -7462,6 +7478,9 @@ class LibraryScreen(BaseAppScreen):
         if not self._library_skill_editor_armed:
             return
         self._library_skill_dirty = True
+        # task-413: dirty-marking never recomposes, so the Discard button's
+        # initial disabled render is patched live here.
+        self._set_library_skill_discard_enabled(True)
 
     def _read_library_skill_live_name(self) -> str:
         """Read the Name Input's current (possibly unsaved) value.
@@ -7884,6 +7903,9 @@ class LibraryScreen(BaseAppScreen):
         )
         self._library_skill_original_name = self._library_skill_editor_state.name
         self._library_skill_dirty = False
+        # task-413: this success tail deliberately never recomposes, so the
+        # Discard button is re-disabled in place alongside the dirty clear.
+        self._set_library_skill_discard_enabled(False)
         if is_create:
             self._selected_skill_name = self._library_skill_editor_state.name
             # A brand-new skill changes the list's membership/count, so the
@@ -7943,6 +7965,29 @@ class LibraryScreen(BaseAppScreen):
         """
         return not self._library_skill_dirty
 
+    def _notify_skill_dirty_veto(self) -> None:
+        """Tell the user WHY a skill-editor exit was just vetoed (task-413).
+
+        Every ``_flush_library_skill_save`` veto site calls this so a
+        blocked Back / skill-row / rail-row click never reads as a dead
+        button. Warning severity matches the trust-action toasts.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(LIBRARY_SKILL_DIRTY_VETO_COPY, severity="warning")
+
+    def _set_library_skill_discard_enabled(self, enabled: bool) -> None:
+        """Patch the Discard button's disabled state in place (task-413).
+
+        Dirty-marking and the save-success tail both deliberately avoid a
+        recompose (see ``_apply_library_skill_save_success``), so the
+        Discard button's initial ``disabled=not dirty`` render must be
+        kept current by hand at those two transitions.
+        """
+        for button in self.query("#library-skill-discard"):
+            if isinstance(button, Button):
+                button.disabled = not enabled
+
     @on(Button.Pressed, "#library-skill-back")
     async def handle_library_skill_back(self, event: Button.Pressed) -> None:
         """Return the Library skills canvas from the editor to its list view.
@@ -7955,6 +8000,29 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         if not await self._flush_library_skill_save():
+            self._notify_skill_dirty_veto()
+            return
+        self._reset_library_skill_editor_state()
+        self._refresh_local_source_snapshot()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skill-discard")
+    def handle_library_skill_discard(self, event: Button.Pressed) -> None:
+        """Leave the skill editor WITHOUT saving the dirty edit (task-413).
+
+        The explicit counterpart to the dirty vetoes: Back and every row
+        switch refuse to move while ``_library_skill_dirty`` is set, so
+        this button is the one deliberate way out that drops the edit.
+        Same exit tail as a clean Back (reset + snapshot + recompose); the
+        button renders disabled until the editor is actually dirty, so a
+        stray click on a clean editor can't discard anything.
+
+        Args:
+            event: Button press event emitted by the "Discard changes"
+                action.
+        """
+        event.stop()
+        if not self._library_skill_dirty:
             return
         self._reset_library_skill_editor_state()
         self._refresh_local_source_snapshot()

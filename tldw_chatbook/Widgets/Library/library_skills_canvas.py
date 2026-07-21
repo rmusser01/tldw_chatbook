@@ -255,6 +255,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
         conflict: bool = False,
         active_review: Mapping[str, Any] | None = None,
         is_create: bool = False,
+        dirty: bool = False,
         import_open: bool = False,
         import_path: str = "",
         import_status: str = "",
@@ -271,6 +272,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
         self.conflict = conflict
         self.active_review = active_review
         self.is_create = is_create
+        self.dirty = dirty
         self.import_open = import_open
         self.import_path = import_path
         self.import_status = import_status
@@ -525,6 +527,19 @@ class LibrarySkillsListCanvas(VerticalScroll):
                     id="library-skill-save",
                     classes="library-canvas-action",
                     compact=True,
+                )
+                # task-413: explicit leave-without-saving path. Disabled
+                # until the editor is actually dirty (live-enabled by
+                # ``_mark_library_skill_dirty`` without a recompose, and
+                # re-disabled by the save-success patcher) so a clean
+                # editor can't lose an edit to a stray click.
+                yield Button(
+                    "Discard changes",
+                    id="library-skill-discard",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=not self.dirty,
+                    tooltip="Leave the editor without saving the current changes.",
                 )
                 yield Button(
                     "Delete",
