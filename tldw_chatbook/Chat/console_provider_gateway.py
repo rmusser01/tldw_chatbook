@@ -402,6 +402,17 @@ def build_llamacpp_chat_payload(
 
     Returns:
         Request payload for the llama.cpp chat completions endpoint.
+
+    A trailing ``assistant`` message in ``messages`` is a response prefill:
+    the Console's "continue from here" send path appends the model's
+    in-progress reply as the last message so llama.cpp continues generating
+    from it. llama.cpp rejects prefilled requests when the chat template's
+    thinking mode is enabled (``Assistant response prefill is incompatible
+    with enable_thinking``), and forcing the response's opening text is
+    incoherent with a thinking-first template regardless. Prefilled
+    requests therefore disable thinking mode via ``chat_template_kwargs``,
+    which templates that lack the kwarg -- and older servers that drop
+    unknown fields -- simply ignore.
     """
     payload: dict[str, Any] = {
         "model": model,
@@ -418,6 +429,8 @@ def build_llamacpp_chat_payload(
         payload["top_k"] = top_k
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
+    if messages and messages[-1].get("role") == "assistant":
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
     return payload
 
 

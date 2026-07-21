@@ -82,6 +82,45 @@ def test_llamacpp_payload_includes_explicit_top_k_zero() -> None:
     assert payload == {"model": "m", "messages": [], "stream": False, "top_k": 0}
 
 
+def test_llamacpp_payload_disables_thinking_for_trailing_assistant_message() -> None:
+    """A trailing assistant message is a response prefill; llama.cpp rejects
+    prefills when the chat template's thinking mode is enabled, so the
+    payload must ask the server to disable it."""
+    payload = build_llamacpp_chat_payload(
+        model="m",
+        messages=[
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "Sure, here is"},
+        ],
+        stream=True,
+    )
+
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_llamacpp_payload_omits_thinking_kwarg_for_trailing_user_message() -> None:
+    payload = build_llamacpp_chat_payload(
+        model="m",
+        messages=[
+            {"role": "assistant", "content": "Hi there"},
+            {"role": "user", "content": "hello"},
+        ],
+        stream=True,
+    )
+
+    assert "chat_template_kwargs" not in payload
+
+
+def test_llamacpp_payload_omits_thinking_kwarg_for_empty_messages() -> None:
+    payload = build_llamacpp_chat_payload(
+        model="m",
+        messages=[],
+        stream=False,
+    )
+
+    assert "chat_template_kwargs" not in payload
+
+
 @pytest.mark.asyncio
 async def test_llamacpp_prefers_explicit_model_but_still_probes_reachability():
     seen_paths = []
