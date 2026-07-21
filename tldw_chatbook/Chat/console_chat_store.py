@@ -1019,7 +1019,9 @@ class ConsoleChatStore:
             A ``(session, persisted)`` pair: the updated Console session,
             and whether the durable write (when one was attempted) actually
             succeeded. ``persisted`` is ``True`` when no durable write was
-            needed (session not yet saved, or no persistence configured).
+            needed (session not yet saved, or no persistence configured),
+            and ``False`` when the session has no settings snapshot — the
+            update was skipped entirely (task-402 honest-contract guard).
         """
         session = self._session_or_raise(session_id)
         normalized = (
@@ -1027,8 +1029,16 @@ class ConsoleChatStore:
             if isinstance(system_prompt, str) and system_prompt.strip()
             else None
         )
-        if session.settings is not None:
-            session.settings = replace(session.settings, system_prompt=normalized)
+        if session.settings is None:
+            # task-402: without a settings snapshot the update cannot take
+            # effect in memory; writing it durably anyway would split-brain
+            # the live session against the saved conversation. Report
+            # honestly instead of silently claiming success.
+            logger.bind(session_id=session_id).warning(
+                "set_session_system_prompt skipped: session has no settings."
+            )
+            return session, False
+        session.settings = replace(session.settings, system_prompt=normalized)
         persisted = True
         if (
             session.persisted_conversation_id is not None
@@ -1065,12 +1075,21 @@ class ConsoleChatStore:
         settings snapshot and, when the session already owns a persisted
         conversation, writes through to conversation metadata. A durable
         write failure is caught and logged; the in-memory value is kept and
-        the honest ``persisted`` flag is returned.
+        the honest ``persisted`` flag is returned. A session with no
+        settings snapshot skips the update entirely and returns ``False``
+        (task-402 honest-contract guard).
         """
         session = self._session_or_raise(session_id)
         normalized = prefill if isinstance(prefill, str) and prefill.strip() else None
-        if session.settings is not None:
-            session.settings = replace(session.settings, pinned_prefill=normalized)
+        if session.settings is None:
+            # task-402: mirror set_session_system_prompt -- no settings
+            # snapshot means the update cannot apply in memory; skip the
+            # durable write and report honestly.
+            logger.bind(session_id=session_id).warning(
+                "set_session_pinned_prefill skipped: session has no settings."
+            )
+            return session, False
+        session.settings = replace(session.settings, pinned_prefill=normalized)
         persisted = True
         if (
             session.persisted_conversation_id is not None
