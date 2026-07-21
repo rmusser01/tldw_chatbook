@@ -131,6 +131,62 @@ def test_theme_and_splash_not_in_guided_mutation_categories():
     assert SettingsCategoryId.SPLASH_SCREEN not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
 
 
+def test_inspector_guidance_covers_every_settings_category():
+    """Every non-domain sidebar category must have an explicit guidance entry.
+
+    Regression: THEME and SPLASH_SCREEN were added to the sidebar without
+    guidance entries, so selecting them raised KeyError inside compose and
+    crashed the whole app. The runtime now returns a generic fallback so a
+    missing entry can never crash, which means asserting a truthy return would
+    always pass. This test guards the stronger property instead -- that every
+    category outside DOMAIN_SETTINGS_CATEGORY_IDS is an explicit key in
+    _INSPECTOR_GUIDANCE -- so a new category without real guidance fails CI
+    rather than silently shipping the generic fallback to users.
+    """
+    screen = SettingsScreen(_build_test_app())
+    for category in SettingsCategoryId:
+        guidance = screen._inspector_guidance(category)
+        assert guidance, f"no inspector guidance for {category!r}"
+        if category in settings_screen_module.DOMAIN_SETTINGS_CATEGORY_IDS:
+            continue
+        assert category in settings_screen_module._INSPECTOR_GUIDANCE, (
+            f"{category!r} has no explicit guidance entry and would fall back "
+            f"to generic text; add it to _INSPECTOR_GUIDANCE"
+        )
+
+
+@pytest.mark.asyncio
+async def test_theme_category_opens_without_crashing():
+    """Selecting the Theme category mounts its editor without crashing compose.
+
+    The editor widget mounting is the regression signal: the original bug
+    raised KeyError inside compose, so a crash would leave the editor unmounted
+    and time this wait out. Editor content is verified in
+    test_settings_theme_editor.py.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        # Poll rather than a fixed settle: selecting a category triggers a
+        # recompose whose mount lands at a load-dependent moment.
+        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+
+
+@pytest.mark.asyncio
+async def test_splash_screen_category_opens_without_crashing():
+    """Selecting the Splash Screen category mounts its viewer without crashing compose."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-splash_screen")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(
+            screen, pilot, "#settings-splash-screen-viewer", timeout=8.0
+        )
+
+
 class FakeSettingsModelDiscoveryScope:
     def __init__(
         self,
