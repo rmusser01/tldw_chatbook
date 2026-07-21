@@ -896,6 +896,22 @@ async def handle_chat_send_button_pressed(
             if isinstance(extensions, dict) and extensions.get("character_book"):
                 has_character_book = True
 
+            # P2f: union character-attached world books (snapshots in
+            # extensions['character_world_books']), deduped against enabled
+            # conversation books by name (conversation wins). MUST be before the
+            # init guard below so an attached-only character still builds a
+            # processor.
+            from tldw_chatbook.Character_Chat.world_book_manager import (
+                resolve_character_world_books,
+            )
+
+            character_world_books = resolve_character_world_books(
+                active_char_data,
+                {str(b.get("name")) for b in world_books},
+            )
+            if character_world_books:
+                world_books = world_books + character_world_books
+
             # Initialize processor if we have any world info sources
             if has_character_book or world_books:
                 try:

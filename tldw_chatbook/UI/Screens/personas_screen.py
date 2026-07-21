@@ -24,6 +24,7 @@ from ...Character_Chat.Character_Chat_Lib import (
     validate_character_book,
 )
 from ...Character_Chat.world_book_import import normalize_world_book_import
+from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
@@ -50,6 +51,12 @@ from ...Widgets.Persona_Widgets.personas_character_dictionaries import (
     CharacterDictionaryDetachRequested,
 )
 from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
+from ...Widgets.Persona_Widgets.personas_character_world_books import (
+    PersonasCharacterWorldBooksWidget,
+    CharacterWorldBookAttachRequested,
+    CharacterWorldBookDetachRequested,
+)
+from ...Widgets.Persona_Widgets.world_book_picker import WorldBookPicker
 from ...Widgets.Persona_Widgets.personas_conversation_transcript_widget import (
     PersonasConversationTranscriptWidget,
 )
@@ -402,16 +409,50 @@ class PersonasScreen(BaseAppScreen):
         margin-right: 1;
     }
 
-    /* The character dictionaries panel sits alongside the character card
-       view (both visible when a character is selected), not swapped by
-       _show_center like the other detail-stack children. Dock it to the
-       bottom so PersonasCharacterCardWidget's `height: 100%` resolves
-       against the remaining space instead of the panel being squeezed to
-       nothing / clipped by the stack's hidden overflow. */
-    #personas-detail-stack PersonasCharacterDictionariesWidget {
+    /* The character dictionaries + world-books panels sit alongside the
+       character card view (both visible when a character is selected), not
+       swapped by _show_center like the other detail-stack children. Dock
+       ONE wrapper to the bottom so PersonasCharacterCardWidget's
+       `height: 100%` resolves against the remaining space instead of the
+       panels being squeezed to nothing / clipped by the stack's hidden
+       overflow. The two panels flow top-to-bottom *inside* that wrapper -
+       Textual does not auto-stack multiple same-edge `dock` siblings (two
+       independently-docked-bottom widgets land on the SAME region and
+       overlap, silently stealing each other's clicks), so only the wrapper
+       itself is docked. */
+    #personas-detail-stack #personas-character-attachments {
         dock: bottom;
         height: auto;
+        /* Explicit cap (== the sum of the two children's max-heights below)
+           is load-bearing, not decorative: each panel's button row is a
+           Horizontal, whose Textual default is `height: 1fr`. Nested inside
+           a plain `height: auto` Vertical with no cap of its own, that `1fr`
+           descendant makes auto-height measurement resolve to "fill all
+           available space" instead of "sum of children" (verified via a
+           minimal repro), which silently squeezed PersonasCharacterCardWidget
+           to zero height and made the dictionaries panel's buttons
+           unclickable (they were being covered/never actually laid out).
+           Giving the wrapper a concrete max-height breaks that circular
+           fr-resolution and restores normal auto-sizing. */
+        max-height: 16;
+        width: 100%;
+    }
+
+    #personas-character-attachments PersonasCharacterDictionariesWidget {
+        height: auto;
         max-height: 12;
+        width: 100%;
+    }
+
+    /* Kept low (well below the dictionaries panel's 12) so the two stacked
+       panels combined still leave PersonasCharacterCardWidget some room at
+       the smallest supported terminal size (100x30 - see the geometry
+       check): #personas-detail-stack's own budget there is only ~17 lines
+       total, so 12 (dictionaries) + 4 (world books) is close to the ceiling
+       already. */
+    #personas-character-attachments PersonasCharacterWorldBooksWidget {
+        height: auto;
+        max-height: 4;
         width: 100%;
     }
     """
@@ -532,7 +573,15 @@ class PersonasScreen(BaseAppScreen):
                     with Container(id="personas-detail-stack"):
                         yield PersonasCharacterCardWidget()
                         yield PersonasCharacterEditorWidget()
-                        yield PersonasCharacterDictionariesWidget()
+                        # A single docked-bottom wrapper: Textual does not
+                        # auto-stack multiple same-edge `dock` siblings (they
+                        # overlap at the same region instead), so the two
+                        # character-attachment panels flow top-to-bottom
+                        # *inside* one dock rather than each docking bottom
+                        # independently.
+                        with Vertical(id="personas-character-attachments"):
+                            yield PersonasCharacterDictionariesWidget()
+                            yield PersonasCharacterWorldBooksWidget()
                         yield PersonaProfileCardWidget()
                         yield PersonaProfileEditorWidget()
                         with Horizontal(id="personas-conversation-actions"):
@@ -1196,6 +1245,15 @@ class PersonasScreen(BaseAppScreen):
         lore_tryit.display = is_lore
         if is_lore:
             lore_tryit.set_ready(False, "Select a lore book to preview injections.")
+        # The character dictionaries/world-books panels are only meaningful
+        # in Characters mode; they are not one of the exclusive
+        # _CENTER_VIEW_IDS pages (they sit alongside the character card
+        # rather than replacing it). They used to need a coarse
+        # mode-level toggle here, but every branch below already calls
+        # _show_center(...), which now gates
+        # #personas-character-attachments itself (single source of truth -
+        # see _show_center) - leaving Characters mode always lands on a
+        # non-character visible_id, so the wrapper is hidden there too.
         # clear_selection empties the conversations panel; drop the caches too.
         self.conversations.reset()
         await self.preview.reset("")
@@ -1342,6 +1400,7 @@ class PersonasScreen(BaseAppScreen):
             record=record,
         )
         await self._refresh_character_dictionaries()
+        await self._refresh_character_worldbooks()
 
     async def _select_profile(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(
@@ -1907,6 +1966,30 @@ class PersonasScreen(BaseAppScreen):
             return
         panel.load_character_dictionaries(list(response.get("dictionaries") or []))
 
+    async def _refresh_character_worldbooks(self) -> None:
+        """Re-feed the character world-books panel (best-effort)."""
+        entity_id = self.state.selected_entity_id
+        if self.state.selected_entity_kind != "character" or not entity_id:
+            return
+        manager = self._lore_manager()
+        if manager is None:
+            return
+        try:
+            rows = await asyncio.to_thread(
+                manager.get_world_books_for_character, int(entity_id)
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not list world books for character {entity_id}."
+            )
+            rows = []
+        if self.state.selected_entity_id != entity_id or self.state.selected_entity_kind != "character":
+            return
+        try:
+            self.query_one(PersonasCharacterWorldBooksWidget).load_world_books(rows)
+        except QueryError:
+            pass
+
     @on(CharacterDictionaryAttachRequested)
     async def _handle_character_dictionary_attach(
         self, message: CharacterDictionaryAttachRequested
@@ -2045,6 +2128,147 @@ class PersonasScreen(BaseAppScreen):
             return
         await self._refresh_character_dictionaries()
         await self._sync_character_editor_dictionaries(char_id)
+
+    @on(CharacterWorldBookAttachRequested)
+    async def _handle_character_worldbook_attach(
+        self, message: CharacterWorldBookAttachRequested
+    ) -> None:
+        message.stop()
+        if (
+            self.state.selected_entity_kind != "character"
+            or not self.state.selected_entity_id
+        ):
+            return
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._character_worldbook_attach_worker(), group="personas-io")
+
+    async def _character_worldbook_attach_worker(self) -> None:
+        try:
+            entity_id = self.state.selected_entity_id
+            manager = self._lore_manager()
+            if manager is None or not entity_id:
+                return
+            char_id = int(entity_id)
+            try:
+                books = await asyncio.to_thread(
+                    self._list_attachable_world_books, char_id
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not load world books for the attach picker."
+                )
+                self._notify("Attach failed: could not list world books.", "error")
+                return
+            try:
+                picked = await self.app.push_screen_wait(WorldBookPicker(books))
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the world-book picker."
+                )
+                return
+            if picked is None:
+                return
+            try:
+                await asyncio.to_thread(
+                    manager.attach_world_book_to_character, int(picked), char_id
+                )
+            except ConflictError:
+                self._notify(
+                    "Attach failed: the character changed since it was loaded. Try again.",
+                    "warning",
+                )
+                return
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    f"Could not attach world book to character {char_id}."
+                )
+                self._notify(f"Attach failed: {exc}", "error")
+                return
+            await self._refresh_character_worldbooks()
+            await self._sync_character_editor_worldbooks(char_id)
+            self._notify("Attached to character.", "information")
+        finally:
+            self._io_dialog_active = False
+
+    def _list_attachable_world_books(self, character_id: int) -> list[dict]:
+        """Standalone world books NOT already attached to this character (sync DB read)."""
+        manager = self._lore_manager()
+        if manager is None:
+            return []
+        attached = {
+            str(r.get("name"))
+            for r in manager.get_world_books_for_character(int(character_id))
+        }
+        rows = []
+        for b in manager.list_world_books(include_disabled=False) or []:
+            name = b.get("name")
+            if str(name) in attached:
+                continue
+            rows.append({"world_book_id": int(b.get("id")), "name": str(name)})
+        return rows
+
+    async def _sync_character_editor_worldbooks(self, character_id: int) -> None:
+        """Keep the editor's base coherent after an out-of-band attach/detach."""
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return
+        try:
+            record = await asyncio.to_thread(
+                db.get_character_card_by_id, int(character_id)
+            )
+        except Exception:
+            return
+        if not record:
+            return
+        ext = (
+            record.get("extensions")
+            if isinstance(record.get("extensions"), dict)
+            else {}
+        )
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except Exception:
+            return
+        if int(editor._character_data.get("id") or 0) == int(character_id):
+            editor.sync_attached_world_books(
+                ext.get(CHARACTER_WORLD_BOOKS_KEY) or [], record.get("version")
+            )
+
+    @on(CharacterWorldBookDetachRequested)
+    async def _handle_character_worldbook_detach(
+        self, message: CharacterWorldBookDetachRequested
+    ) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        if (
+            self.state.selected_entity_kind != "character"
+            or not entity_id
+        ):
+            return
+        manager = self._lore_manager()
+        if manager is None:
+            return
+        char_id = int(entity_id)
+        try:
+            await asyncio.to_thread(
+                manager.detach_world_book_from_character, char_id, str(message.name)
+            )
+        except ConflictError:
+            self._notify(
+                "Detach failed: the character changed since it was loaded. Try again.",
+                "warning",
+            )
+            return
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not detach world book from character {char_id}."
+            )
+            return
+        await self._refresh_character_worldbooks()
+        await self._sync_character_editor_worldbooks(char_id)
+        self._notify("Detached from character.", "information")
 
     @on(DictionaryVersionViewRequested)
     async def _handle_dictionary_version_view(
@@ -4545,6 +4769,27 @@ class PersonasScreen(BaseAppScreen):
             dict_panel = None
         if dict_panel is not None:
             dict_panel.display = visible_id in (
+                "#ccp-character-card-view",
+                "#ccp-character-editor-view",
+            )
+        # The docked wrapper that holds BOTH character-attachment panels
+        # (Roleplay P2f Task 6 added the world-books panel alongside the
+        # P1f dictionaries panel inside #personas-character-attachments)
+        # is the single source of truth for the same characters-only
+        # condition as dict_panel above - gating the wrapper hides both
+        # children in one step. This has to be re-derived here (not left to
+        # a mode-level toggle alone) because _show_center also runs *within*
+        # Characters mode when swapping to the conversation transcript view
+        # (see personas_conversations_controller.open_conversation), which
+        # must hide the wrapper too so it doesn't stay docked/visible with
+        # stale data over the transcript, or empty at initial mount before
+        # any character is selected.
+        try:
+            attachments_wrapper = self.query_one("#personas-character-attachments")
+        except QueryError:
+            attachments_wrapper = None
+        if attachments_wrapper is not None:
+            attachments_wrapper.display = visible_id in (
                 "#ccp-character-card-view",
                 "#ccp-character-editor-view",
             )
