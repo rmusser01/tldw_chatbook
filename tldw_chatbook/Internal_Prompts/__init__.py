@@ -8,6 +8,7 @@ from .catalog import CATALOG, PromptSpec, register
 from . import websearch_prompts  # noqa: F401  (registers specs on import)
 from . import rag_reranker_prompts  # noqa: F401  (registers specs on import)
 from . import agents_prompts  # noqa: F401  (registers specs on import)
+from . import summarization_prompts  # noqa: F401  (registers specs on import)
 from .resolver import get_internal_prompt, render_internal_prompt, safe_substitute
 
 __all__ = [
