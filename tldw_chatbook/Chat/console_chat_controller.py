@@ -67,6 +67,34 @@ MAX_CONSOLE_DRAFT_LENGTH = 100_000
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
 
 
+def _normalize_world_info_history(
+    messages: "list[dict[str, Any]]",
+) -> "list[dict[str, Any]]":
+    """Flatten messages to ``{"role","content": str}`` for world-info scanning.
+
+    ``WorldInfoProcessor.process_messages`` types content as ``str``; native
+    provider messages may carry multimodal list content, so extract the text
+    parts (joined) and drop images before scanning.
+    """
+    out: list[dict[str, Any]] = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text = "\n".join(
+                part["text"]
+                for part in content
+                if isinstance(part, dict)
+                and part.get("type") == "text"
+                and isinstance(part.get("text"), str)
+            )
+        else:
+            text = ""
+        out.append({"role": message.get("role", ""), "content": text})
+    return out
+
+
 def build_mcp_review_hook(
     provider: MCPToolProvider,
     request_mcp_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
@@ -279,6 +307,7 @@ class ConsoleChatController:
         skills_service: Any | None = None,
         skill_substitution_enabled: bool = True,
         chat_dictionary_applier: "Callable[[str | None, str], str] | None" = None,
+        world_info_applier: "Callable[[str | None, str, list], str] | None" = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -306,6 +335,7 @@ class ConsoleChatController:
         self._skills_service = skills_service
         self._skill_substitution_enabled = skill_substitution_enabled
         self._chat_dictionary_applier = chat_dictionary_applier
+        self._world_info_applier = world_info_applier
         self.run_state = ConsoleRunState()
         self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
         #: Optional owner hook invoked once a submit is accepted (user message
@@ -429,6 +459,9 @@ class ConsoleChatController:
         if refuse is not None:
             return self._block(session.id, refuse)
         provider_messages = await self._apply_chat_dictionaries(
+            provider_messages, session.id
+        )
+        provider_messages = await self._apply_world_info(
             provider_messages, session.id
         )
         prefill, prefill_from_one_shot = self._resolve_submit_prefill(session.id)
@@ -1069,6 +1102,9 @@ class ConsoleChatController:
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id
         )
+        provider_messages = await self._apply_world_info(
+            provider_messages, session_id
+        )
         prefill = self._pinned_prefill_for_session(session_id)
         return await self._stream_assistant_response(
             resolution=resolution,
@@ -1117,6 +1153,9 @@ class ConsoleChatController:
         if refuse is not None:
             return self._block(session_id, refuse)
         provider_messages = await self._apply_chat_dictionaries(
+            provider_messages, session_id
+        )
+        provider_messages = await self._apply_world_info(
             provider_messages, session_id
         )
         assistant = self.store.append_message(
@@ -1173,6 +1212,9 @@ class ConsoleChatController:
         if refuse is not None:
             return self._block(session_id, refuse)
         provider_messages = await self._apply_chat_dictionaries(
+            provider_messages, session_id
+        )
+        provider_messages = await self._apply_world_info(
             provider_messages, session_id
         )
         prefill = self._pinned_prefill_for_session(session_id)
@@ -1690,6 +1732,92 @@ class ConsoleChatController:
         new_messages = list(provider_messages)
         new_messages[final_index] = rendered_message
         return new_messages, None
+
+    async def _apply_world_info(
+        self, provider_messages: list[dict[str, Any]], session_id: str
+    ) -> list[dict[str, Any]]:
+        """Inject conversation world-info into the final user message of the
+        ephemeral provider payload (never the stored transcript).
+
+        Runs AFTER `_apply_chat_dictionaries` so world-info matches the
+        dict-substituted text the model will see. Conversation-only (the bound
+        applier passes `char_data=None`). Offloaded via `asyncio.to_thread`;
+        any failure returns the payload unchanged; `CancelledError` re-raised.
+        """
+        applier = self._world_info_applier
+        if applier is None:
+            return provider_messages
+
+        session = next((s for s in self.store.sessions() if s.id == session_id), None)
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
+        if not conversation_id:
+            return provider_messages
+
+        final_index: int | None = None
+        for index in range(len(provider_messages) - 1, -1, -1):
+            if provider_messages[index].get("role") == ConsoleMessageRole.USER.value:
+                final_index = index
+                break
+        if final_index is None:
+            return provider_messages
+
+        message = provider_messages[final_index]
+        content = message.get("content")
+        if isinstance(content, str) and content.startswith(COMMAND_PREFIX):
+            return provider_messages
+
+        history = _normalize_world_info_history(provider_messages[:final_index])
+
+        try:
+            if isinstance(content, str):
+                injected: Any = await asyncio.to_thread(
+                    applier, conversation_id, content, history
+                )
+                if injected == content:
+                    return provider_messages
+                new_content = injected
+            elif isinstance(content, list):
+                combined = "\n".join(
+                    part["text"]
+                    for part in content
+                    if isinstance(part, dict)
+                    and part.get("type") == "text"
+                    and isinstance(part.get("text"), str)
+                )
+                if not combined:
+                    return provider_messages
+                injected = await asyncio.to_thread(
+                    applier, conversation_id, combined, history
+                )
+                if injected == combined:
+                    return provider_messages
+                new_parts: list[Any] = []
+                first_text_done = False
+                for part in content:
+                    if (
+                        isinstance(part, dict)
+                        and part.get("type") == "text"
+                        and isinstance(part.get("text"), str)
+                    ):
+                        if not first_text_done:
+                            new_parts.append({**part, "text": injected})
+                            first_text_done = True
+                        # subsequent text parts are folded into the injected block
+                        continue
+                    new_parts.append(part)
+                new_content = new_parts
+            else:
+                return provider_messages
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return provider_messages
+
+        new_messages = list(provider_messages)
+        new_messages[final_index] = {**message, "content": new_content}
+        return new_messages
 
     async def _apply_chat_dictionaries(
         self, provider_messages: list[dict[str, Any]], session_id: str
