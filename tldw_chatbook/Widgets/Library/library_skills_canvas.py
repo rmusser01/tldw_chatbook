@@ -131,6 +131,38 @@ def skill_trust_unlock_enabled(trust_status: str) -> bool:
     return trust_status == "trust_locked"
 
 
+def skill_trust_remediation_copy(trust_status: str, skill_path: str) -> str:
+    """Guidance for the two blocked-but-non-reviewable trust states (task-421).
+
+    ``quarantined_manifest_error``/``quarantined_unsupported_path`` are
+    ``trust_blocked`` yet excluded from review eligibility and not
+    unlockable -- without this, the panel offered no way forward at all.
+
+    Args:
+        trust_status: The skill's current trust status.
+        skill_path: The skill's on-disk directory, for external repair.
+
+    Returns:
+        State-specific next-step guidance naming the on-disk location, or
+        ``""`` for every state that has in-panel remediation already.
+    """
+    where = skill_path or "the local skills directory"
+    if trust_status == "quarantined_manifest_error":
+        return (
+            "The local skill trust manifest can't be verified, so this "
+            f"skill stays blocked. Inspect the files under {where} and the "
+            "trust store next to it; if the manifest is beyond repair, "
+            "remove the trust store to start over with Set up skill trust."
+        )
+    if trust_status == "quarantined_unsupported_path":
+        return (
+            "This skill contains files at unsupported paths (for example "
+            f"nested folders or links). Open {where} and remove or flatten "
+            "them, then reopen this skill to re-check."
+        )
+    return ""
+
+
 # task-414: per-file preview cap. Generous enough for any realistic
 # SKILL.md, small enough that a pathological file can't wedge the panel.
 _TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP = 4000
@@ -340,6 +372,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
         dirty: bool = False,
         confirming_delete: bool = False,
         scroll_to_actions: bool = False,
+        skill_path: str = "",
         import_open: bool = False,
         import_path: str = "",
         import_status: str = "",
@@ -359,6 +392,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
         self.dirty = dirty
         self.confirming_delete = confirming_delete
         self.scroll_to_actions = scroll_to_actions
+        self.skill_path = skill_path
         self.import_open = import_open
         self.import_path = import_path
         self.import_status = import_status
@@ -742,6 +776,16 @@ class LibrarySkillsListCanvas(VerticalScroll):
                 ),
                 id="library-skill-trust-state",
                 classes=state_classes,
+                markup=False,
+            )
+            # task-421: always present (empty for states with in-panel
+            # remediation) so the screen's no-recompose panel patch can
+            # keep it current, same contract as the review-files line.
+            yield Static(
+                skill_trust_remediation_copy(
+                    editor_state.trust_status, self.skill_path
+                ),
+                id="library-skill-trust-remediation",
                 markup=False,
             )
             if skill_trust_needs_setup(editor_state.trust_status):

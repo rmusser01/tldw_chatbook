@@ -1760,3 +1760,45 @@ async def test_footer_u_hint_only_registered_on_search_row():
         await pilot.pause()
         source, shortcuts = screen._footer_shortcut_registration
         assert shortcuts and shortcuts[0][0] == "u"
+
+
+# ---------------------------------------------------------------------------
+# task-421: the two non-reviewable quarantine states (manifest error /
+# unsupported path) left the trust panel with every button disabled and no
+# way forward -- they must render remediation guidance naming the on-disk
+# location.
+# ---------------------------------------------------------------------------
+
+
+def test_skill_trust_remediation_copy_covers_no_exit_states():
+    from tldw_chatbook.Widgets.Library.library_skills_canvas import (
+        skill_trust_remediation_copy,
+    )
+
+    manifest = skill_trust_remediation_copy(
+        "quarantined_manifest_error", "/tmp/store/skills/demo"
+    )
+    assert "/tmp/store/skills/demo" in manifest
+    assert "manifest" in manifest.lower()
+    paths = skill_trust_remediation_copy(
+        "quarantined_unsupported_path", "/tmp/store/skills/demo"
+    )
+    assert "/tmp/store/skills/demo" in paths
+    assert "unsupported" in paths.lower()
+    # Reviewable / healthy states render no remediation block.
+    assert skill_trust_remediation_copy("trusted", "/tmp/x") == ""
+    assert skill_trust_remediation_copy("quarantined_modified", "/tmp/x") == ""
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_trust_panel_renders_remediation_for_manifest_error():
+    state = _editor_state(
+        trust_status="quarantined_manifest_error", trust_blocked=True
+    )
+    app = _EditorHost(
+        mode="editor", editor_state=state, skill_path="/tmp/store/skills/demo"
+    )
+    async with app.run_test() as pilot:
+        remediation = pilot.app.query_one("#library-skill-trust-remediation", Static)
+        text = str(remediation.renderable)
+        assert "/tmp/store/skills/demo" in text

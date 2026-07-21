@@ -206,6 +206,7 @@ from ...Widgets.Library import (
     skill_context_toggle_label,
     skill_disable_model_label,
     skill_editor_warning_lines,
+    skill_trust_remediation_copy,
     skill_trust_review_enabled,
     skill_trust_review_preview,
     skill_trust_state_line,
@@ -3697,6 +3698,7 @@ class LibraryScreen(BaseAppScreen):
                             dirty=self._library_skill_dirty,
                             confirming_delete=self._library_skill_confirming_delete,
                             scroll_to_actions=self._consume_library_skill_scroll_pending(),
+                            skill_path=self._library_skill_on_disk_path(),
                             id="library-skills-canvas",
                         )
                 elif shell.canvas_kind == "skills":
@@ -7544,6 +7546,22 @@ class LibraryScreen(BaseAppScreen):
             and raw_body == (state.body or "")
         )
 
+    def _library_skill_on_disk_path(self) -> str:
+        """The selected skill's on-disk directory, for remediation copy.
+
+        Empty when the service or selection is unavailable (the copy
+        helper falls back to generic wording).
+        """
+        service = getattr(self.app_instance, "local_skills_service", None)
+        skills_dir = getattr(service, "skills_dir", None)
+        name = self._selected_skill_name
+        if skills_dir is None or not name:
+            return ""
+        try:
+            return str(Path(skills_dir) / name)
+        except Exception:
+            return ""
+
     def _mark_library_skill_dirty(self, *, force: bool = False) -> None:
         """Record an in-progress skill edit.
 
@@ -7631,6 +7649,14 @@ class LibraryScreen(BaseAppScreen):
         try:
             self.query_one("#library-skill-trust-state", Static).update(
                 skill_trust_state_line(state.trust_status, state.trust_changed_files)
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
+            self.query_one("#library-skill-trust-remediation", Static).update(
+                skill_trust_remediation_copy(
+                    state.trust_status, self._library_skill_on_disk_path()
+                )
             )
         except (NoMatches, QueryError):
             pass
