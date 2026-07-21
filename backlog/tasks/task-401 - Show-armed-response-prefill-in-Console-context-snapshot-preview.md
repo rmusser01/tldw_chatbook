@@ -16,5 +16,7 @@ The Console context snapshot modal claims to show the assembled next-send payloa
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Context snapshot preview includes the trailing assistant prefill turn when one is armed,Preview indicates the agent loop is bypassed for that send,No change when no prefill is armed
+- [ ] #1 Context snapshot preview includes the trailing assistant prefill turn when one is armed
+- [ ] #2 Preview indicates the agent loop is bypassed for that send
+- [ ] #3 No change when no prefill is armed
 <!-- AC:END -->

@@ -18,5 +18,6 @@ Both store methods silently skip the in-memory settings update when session.sett
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Both methods either seed default settings or report the skipped update honestly,Unit tests cover the settings-None path for both methods
+- [ ] #1 Both methods either seed default settings or report the skipped update honestly
+- [ ] #2 Unit tests cover the settings-None path for both methods
 <!-- AC:END -->

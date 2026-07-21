@@ -16,5 +16,7 @@ Spec section 5/8 verification items left open (no key/config available at implem
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Gemini prefilled send verified accepted or guarded,Responses-API branch verified accepted or guarded,Spec section 8 updated with outcomes
+- [ ] #1 Gemini prefilled send verified accepted or guarded
+- [ ] #2 Responses-API branch verified accepted or guarded
+- [ ] #3 Spec section 8 updated with outcomes
 <!-- AC:END -->
