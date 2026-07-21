@@ -26,7 +26,10 @@ from textual.app import App
 from textual.pilot import _get_mouse_message_arguments
 from textual.widgets import Button, Input, Static, TextArea
 
-from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SKILLS
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_SKILLS,
+    LIBRARY_ROW_CREATE_SKILL,
+)
 from tldw_chatbook.Library.library_skills_state import (
     SkillEditorState,
     SkillListRow,
@@ -1069,3 +1072,43 @@ def test_library_skill_trust_setup_explanation_css_block_matches_review_files_pa
         ):
             assert pinned in setup_block
             assert pinned in review_files_block
+
+
+@pytest.mark.asyncio
+async def test_library_shell_rail_switch_vetoed_while_skill_editor_dirty():
+    """task-412 P0 regression: switching Library rail rows while the skill
+    editor holds an unsaved edit must veto the switch -- the same contract
+    ``_select_library_rail_row`` already enforces for dirty note and prompt
+    edits. Before the fix the skill flush was omitted from that guard, so a
+    rail-row press silently discarded the edit (verified live in the
+    2026-07-21 Skills UX review)."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(available=[], blocked=[])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-skill").press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_skills_view == "editor"
+        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_SKILL
+
+        # Real user edit: the armed Name Input marks the editor dirty.
+        screen.query_one("#library-skill-name", Input).value = "dirty-demo"
+        await pilot.pause()
+        assert screen._library_skill_dirty is True
+
+        screen.query_one("#library-row-browse-media").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        # Vetoed: still in the skill editor with the unsaved edit intact.
+        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_SKILL
+        assert screen._library_skills_view == "editor"
+        assert screen.query_one("#library-skill-name", Input).value == "dirty-demo"

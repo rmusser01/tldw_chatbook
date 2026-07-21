@@ -6384,14 +6384,19 @@ class LibraryScreen(BaseAppScreen):
 
         A dirty note edit is flushed first (awaited) so leaving via the rail
         never silently discards unsaved text; any unsaved edit surviving the
-        flush aborts the row switch entirely. A dirty prompt edit is vetoed
-        the same way (see ``_flush_library_prompt_save`` -- explicit-Save-
-        only, so there is nothing to flush, only to veto on).
+        flush aborts the row switch entirely. Dirty prompt and skill edits
+        are vetoed the same way (see ``_flush_library_prompt_save`` /
+        ``_flush_library_skill_save`` -- both explicit-Save-only, so there
+        is nothing to flush, only to veto on). task-412: the skill guard was
+        originally omitted here, so a rail switch silently discarded dirty
+        skill edits while Back/row-switch exits vetoed them.
         """
         await self._flush_library_note_save()
         if self._library_note_dirty:
             return
         if not await self._flush_library_prompt_save():
+            return
+        if not await self._flush_library_skill_save():
             return
         self._library_selected_row_id = row_id
         # A rail-row press is always a fresh entry into a content type, so
