@@ -1,6 +1,6 @@
 # RAG Scope Narrowing — Design
 
-**Date:** 2026-07-21 · **Status:** Approved in brainstorm; pending spec review
+**Date:** 2026-07-21 · **Status:** Approved (owner, 2026-07-21)
 **Owner ask:** a button + modal to narrow RAG search to selected media/notes for the current conversation (sortable, keyword/tag filterable), and the same mechanism at workspace level ("sales reports" / "hunt X" workspaces whose in-scope set bounds all retrieval inside them).
 
 ## 1. Decisions (owner-confirmed)
