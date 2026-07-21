@@ -12,7 +12,6 @@ from textual.widgets import (
     Static,
     Collapsible,
     Placeholder,
-    Select,
     Input,
     Label,
     TextArea,
