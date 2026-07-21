@@ -199,6 +199,20 @@ class ConsoleContextModal(ModalScreen[None]):
             )
         )
 
+        response_prefill = payload.get("response_prefill")
+        if response_prefill:
+            widgets.append(
+                Collapsible(
+                    Label(
+                        "The reply will continue from this prefill; the agent "
+                        "loop (tools/MCP) is skipped for this send."
+                    ),
+                    TextArea(self._json_block(response_prefill), read_only=True),
+                    title="Response Prefill",
+                    collapsed=False,
+                )
+            )
+
         tools = payload.get("tools")
         if tools:
             widgets.append(

@@ -1783,3 +1783,32 @@ def test_rename_session_reports_unpersisted_when_seam_is_missing():
 
     assert renamed.title == "New title"
     assert persisted is False
+
+
+def test_set_session_system_prompt_settings_none_reports_not_applied():
+    """task-402: a settings-less session cannot hold the update in memory --
+    the method must skip the durable write too and report False, not lie."""
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Chat 1")
+    session.settings = None
+    session.persisted_conversation_id = "conv-1"
+
+    updated, persisted = store.set_session_system_prompt(session.id, "New prompt")
+    assert persisted is False
+    assert updated.settings is None
+    assert persistence.updated_system_prompts == []
+
+
+def test_set_session_pinned_prefill_settings_none_reports_not_applied():
+    """task-402: twin contract for the pinned prefill."""
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Chat 1")
+    session.settings = None
+    session.persisted_conversation_id = "conv-1"
+
+    updated, persisted = store.set_session_pinned_prefill(session.id, "Voice:")
+    assert persisted is False
+    assert updated.settings is None
+    assert persistence.updated_pinned_prefills == []

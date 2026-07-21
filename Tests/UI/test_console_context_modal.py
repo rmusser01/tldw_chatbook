@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Button, Label, Static, TextArea
+from textual.widgets import Button, Collapsible, Label, Static, TextArea
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -248,3 +248,63 @@ async def test_context_modal_save_to_file_failure(monkeypatch):
         # Should not crash; notification severity is checked best-effort.
         await pilot.click("#console-context-save")
         await pilot.pause()
+
+
+PREFILL_SNAPSHOT = ConsoleContextSnapshot(
+    current_messages=[
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="Hello"),
+    ],
+    next_send_payload={
+        "model": "gpt-4",
+        "messages": [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Sure thing:"},
+        ],
+        "response_prefill": {
+            "source": "one-shot",
+            "text": "Sure thing:",
+            "agent_loop_bypassed": True,
+        },
+    },
+)
+
+
+async def _prefill_factory() -> ConsoleContextSnapshot:
+    return PREFILL_SNAPSHOT
+
+
+class PrefillModalHarness(App):
+    def compose(self) -> ComposeResult:
+        yield Static("background")
+
+    def on_mount(self) -> None:
+        self.push_screen(ConsoleContextModal(_prefill_factory, token_estimate=7))
+
+
+@pytest.mark.asyncio
+async def test_context_modal_renders_response_prefill_section():
+    """task-401: an armed prefill renders as its own Next Send section with
+    the agent-loop-bypass note; absent entirely when the key is missing."""
+    app = PrefillModalHarness()
+
+    async with app.run_test(size=(100, 40)) as _pilot:
+        modal = app.screen
+        next_container = modal.query_one("#console-context-next-send-body", Vertical)
+        collapsibles = list(next_container.query(Collapsible))
+        titles = [c.title for c in collapsibles]
+        assert "Response Prefill" in titles
+        labels = [str(label.renderable) for label in next_container.query(Label)]
+        assert any("agent" in text and "skipped" in text for text in labels)
+        text_areas = [ta.text for ta in next_container.query(TextArea)]
+        assert any("one-shot" in text for text in text_areas)
+
+
+@pytest.mark.asyncio
+async def test_context_modal_no_prefill_section_without_key():
+    app = ModalHarness()
+
+    async with app.run_test(size=(100, 40)) as _pilot:
+        modal = app.screen
+        next_container = modal.query_one("#console-context-next-send-body", Vertical)
+        titles = [c.title for c in next_container.query(Collapsible)]
+        assert "Response Prefill" not in titles
