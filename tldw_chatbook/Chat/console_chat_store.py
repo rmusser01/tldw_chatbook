@@ -1024,11 +1024,6 @@ class ConsoleChatStore:
             update was skipped entirely (task-402 honest-contract guard).
         """
         session = self._session_or_raise(session_id)
-        normalized = (
-            system_prompt
-            if isinstance(system_prompt, str) and system_prompt.strip()
-            else None
-        )
         if session.settings is None:
             # task-402: without a settings snapshot the update cannot take
             # effect in memory; writing it durably anyway would split-brain
@@ -1038,6 +1033,11 @@ class ConsoleChatStore:
                 "set_session_system_prompt skipped: session has no settings."
             )
             return session, False
+        normalized = (
+            system_prompt
+            if isinstance(system_prompt, str) and system_prompt.strip()
+            else None
+        )
         session.settings = replace(session.settings, system_prompt=normalized)
         persisted = True
         if (
@@ -1078,9 +1078,19 @@ class ConsoleChatStore:
         the honest ``persisted`` flag is returned. A session with no
         settings snapshot skips the update entirely and returns ``False``
         (task-402 honest-contract guard).
+
+        Args:
+            session_id: Native Console session ID to update.
+            prefill: New pinned prefill text, or ``None``/blank to clear it.
+
+        Returns:
+            A ``(session, persisted)`` pair: the updated Console session,
+            and whether the requested state fully took effect — ``False``
+            when the durable write failed or the session has no settings
+            snapshot; ``True`` otherwise (including when no durable write
+            was needed).
         """
         session = self._session_or_raise(session_id)
-        normalized = prefill if isinstance(prefill, str) and prefill.strip() else None
         if session.settings is None:
             # task-402: mirror set_session_system_prompt -- no settings
             # snapshot means the update cannot apply in memory; skip the
@@ -1089,6 +1099,7 @@ class ConsoleChatStore:
                 "set_session_pinned_prefill skipped: session has no settings."
             )
             return session, False
+        normalized = prefill if isinstance(prefill, str) and prefill.strip() else None
         session.settings = replace(session.settings, pinned_prefill=normalized)
         persisted = True
         if (
