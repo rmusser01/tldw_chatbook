@@ -9467,9 +9467,7 @@ class ChatScreen(BaseAppScreen):
             settings=self._default_console_session_settings(),
         )
         if action.kind == ACTION_ERROR:
-            await self._append_native_console_system_message(
-                escape_markup(action.error)
-            )
+            await self._append_native_console_system_message(action.error)
             return
         if action.kind == ACTION_STATUS:
             one_shot = store.session_one_shot_prefill(session.id)
@@ -9479,11 +9477,11 @@ class ChatScreen(BaseAppScreen):
             if one_shot:
                 lines.append(
                     "Prefill (next send only): "
-                    f"'{escape_markup(describe_prefill_preview(one_shot))}'"
+                    f"'{describe_prefill_preview(one_shot)}'"
                 )
             if pinned:
                 lines.append(
-                    f"Prefill (pinned): '{escape_markup(describe_prefill_preview(pinned))}'"
+                    f"Prefill (pinned): '{describe_prefill_preview(pinned)}'"
                 )
             if not lines:
                 lines.append("No prefill armed.")
@@ -9506,7 +9504,11 @@ class ChatScreen(BaseAppScreen):
             self._clear_console_composer_draft()
             await self._append_native_console_system_message(copy)
             return
-        preview = escape_markup(describe_prefill_preview(action.text))
+        # Deliberately NOT markup-escaped: native Console transcript rows
+        # render as literal Content (never parsed as Rich markup), so an
+        # escape here would surface as a visible backslash in previews
+        # containing '[' — matching every neighboring system-row handler.
+        preview = describe_prefill_preview(action.text)
         if action.kind == ACTION_PIN:
             _session, persisted = store.set_session_pinned_prefill(
                 session.id, action.text
