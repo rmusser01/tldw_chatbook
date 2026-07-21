@@ -22,7 +22,9 @@
   - Workspace: scope record keyed by `workspace_id`, stored **in the DB** alongside/adjacent to the workspace registry — never in config.toml (rail_state growth precedent). Workspace deletion drops the record; resolver tolerates orphans.
 - `resolve_effective_scope(conversation_id, workspace_id) -> UNSCOPED | SCOPED(allowlist) | EMPTY(cause)`:
   - Intersection when both levels set. Dangling ids (deleted content) drop lazily at resolution; if that empties the result → `EMPTY` with a named cause (deletions vs no-overlap-with-workspace — the fork-into-workspace path makes no-overlap reachable and it must read as diagnosis).
-  - Cached per session, keyed on both levels' `updated_at` stamps — stamp comparison per query, no invalidation fan-out. Concurrent edits: last-write-wins; stamp key makes the loser visible on next query.
+  - Cached per session, keyed `(conversation_id, workspace_id, conv_updated_at, ws_updated_at)` — the ids themselves are part of the key (re-linking a conversation to another workspace changes resolution with no stamp change). Stamp comparison per query, no invalidation fan-out. Concurrent edits: last-write-wins; the key makes the loser visible on next query.
+- **Unpersisted sessions**: a not-yet-persisted Console chat has no `conversations.metadata` row; its scope lives on session state (session-only) and flushes with the conversation on first persistence — same lifecycle as other session settings.
+- Forward compat: stored `version` greater than known → treated as unscoped with a logged warning, never a crash.
 - Scope is inert while RAG is off (config-state chip semantics, like other header chips).
 - Export/import: scope travels as inert conversation metadata; unknown ids in the target instance degrade via dangling-drop → `EMPTY(cause)`.
 
@@ -36,7 +38,9 @@ Shared `build_scope_filter()` helpers translate one allowlist into each backend'
 - conversations leg → returns `[]` and records `excluded by scope` in `PipelineContext['diagnostics']` (task-250 machinery).
 - `EMPTY` → short-circuit before any leg runs; diagnostics carry the cause; hybrid fuses only pre-filtered legs so RRF cannot leak.
 
-**Backend B — `LibraryLocalRagSearchService` (Console "Run Library RAG"):** semantic delegate gets the same `filter_metadata` (free); its keyword seams (`notes_scope_service.search_notes`, `media_reading_scope_service.search_media`) gain id-allowlist parameters. Same resolver, same helpers.
+**Backend B — `LibraryLocalRagSearchService` (Console "Run Library RAG"):** the service serves BOTH the Console action and the Library screen's Search canvas, and D2 excludes the latter — so **scope is an explicit caller-passed parameter**, never resolved inside the service: the Console action resolves and passes the conversation's effective scope; Library-screen callers pass none (unscoped). Semantic delegate gets the same `filter_metadata` (free); the keyword seams (`notes_scope_service.search_notes`, `media_reading_scope_service.search_media`) gain id-allowlist parameters. Same resolver, same helpers.
+
+Conversation identity for resolution comes from the active session's `persisted_conversation_id` seam — never `app.current_chat_*` reactives (documented native-Console bug class).
 
 Scoped runs surface in the Inspector run-recipe line (`… / scope 8 items`). Scoped-but-zero-results renders "No results within scope (N items searched)" — distinct from `EMPTY` (task-250 count-marker pattern).
 
@@ -44,10 +48,10 @@ Scoped runs surface in the Inspector run-recipe line (`… / scope 8 items`). Sc
 
 **`ConsoleScopePickerModal`** (new; `console_prompt_picker_modal` conventions — focus trap, Esc):
 - Title names the target: "Narrow RAG scope — this conversation" / "— workspace 'hunt X'".
-- Filter row: type tabs (All/Media/Notes) · text filter · **searchable tag selector** (top-N most-used chips + autocomplete; multi-tag OR, AND with text filter) fed by both Keywords tables.
+- Filter row: type tabs (All/Media/Notes) · text filter · **searchable tag selector** (top-N most-used chips + autocomplete; multi-tag OR, AND with text filter) fed by both Keywords tables. Tag matching is per-item, union across types: All view + tag `sales` shows every item tagged `sales` in its own DB's vocabulary, both media and notes.
 - Sort: Recent / Title / Type. List: paginated checkbox rows with type glyphs, loaded off the UI loop via read-only Library seams. (Plan-time: seams must return the full universe regardless of Library-side workspace visibility filtering — the `scope_type="all"` hide-bug class.)
 - **All / Selected view toggle** — selection survives filter changes; opens in *Selected* view when a scope exists, *All* when unscoped.
-- **"Select all matching"** operates on the full filtered set via id-only query, with count confirmation. "Clear shown" complements.
+- **"Select all matching"** operates on the full filtered set via id-only query, with count confirmation; the id-only query applies the SAME universe restriction (workspace scope at conversation level) as the visible list — no bypass. "Clear shown" complements.
 - Footer: live "N selected of M" · Save · Clear scope · Cancel. **Save with zero selected = clear scope** (intentionally-empty scopes cannot be created; `EMPTY` only arises from intersection/deletions and is always diagnosed).
 - Conversation target inside a scoped workspace: item universe = the workspace's scope list (D3 enforced at pick time).
 
