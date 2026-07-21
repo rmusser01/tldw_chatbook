@@ -63,6 +63,71 @@ def _collect_active_world_books(
     return world_books, has_character_book
 
 
+def resolve_world_info_injection(
+    db: Any,
+    conversation_id: Optional[str],
+    char_data: Optional[Dict[str, Any]],
+    message_text: str,
+    history: List[Dict[str, Any]],
+) -> Tuple[str, int]:
+    """Return ``(injected_message_text, matched_entry_count)``.
+
+    Same collect→build→process→format→join as ``apply_world_info_to_message``,
+    but also reports how many world-info entries matched (for the legacy
+    ``[World Info: N entries]`` indicator).
+
+    Args:
+        db: A ``CharactersRAGDB`` (or None).
+        conversation_id: The active conversation (string UUID) or None.
+        char_data: The active character record, or None (conversation-only).
+        message_text: The current user message text (already plain string).
+        history: Prior messages as ``{"role","content": str}`` (string content;
+            the caller normalizes multimodal content to text before calling).
+
+    Returns:
+        ``(text, count)`` — the message text wrapped with world-info injections
+        in the order ``at_start → before_char → message → after_char → at_end``
+        (``"\\n\\n"`` separated) plus the number of matched entries, or
+        ``(message_text, 0)`` when nothing matches / no books / no conversation /
+        any error. Never raises.
+    """
+    if not isinstance(message_text, str):
+        return message_text, 0
+    try:
+        world_books, has_character_book = _collect_active_world_books(
+            db, conversation_id, char_data
+        )
+        if not (has_character_book or world_books):
+            return message_text, 0
+        from .world_info_processor import WorldInfoProcessor
+
+        processor = WorldInfoProcessor(
+            character_data=char_data if has_character_book else None,
+            world_books=world_books or None,
+        )
+        result = processor.process_messages(message_text, history or [])
+        matched = result.get("matched_entries") or []
+        if not matched:
+            return message_text, 0
+        formatted = processor.format_injections(result.get("injections", {}))
+        parts: List[str] = []
+        if formatted.get("at_start"):
+            parts.append(formatted["at_start"])
+        if formatted.get("before_char"):
+            parts.append(formatted["before_char"])
+        parts.append(message_text)
+        if formatted.get("after_char"):
+            parts.append(formatted["after_char"])
+        if formatted.get("at_end"):
+            parts.append(formatted["at_end"])
+        return "\n\n".join(parts), len(matched)
+    except Exception:
+        logger.opt(exception=True).debug(
+            "world-info: apply failed; returning message text unchanged"
+        )
+        return message_text, 0
+
+
 def apply_world_info_to_message(
     db: Any,
     conversation_id: Optional[str],
@@ -86,40 +151,9 @@ def apply_world_info_to_message(
         separated), or the original ``message_text`` when nothing matches / no
         books / no conversation / any error. Never raises.
     """
-    if not isinstance(message_text, str):
-        return message_text
-    try:
-        world_books, has_character_book = _collect_active_world_books(
-            db, conversation_id, char_data
-        )
-        if not (has_character_book or world_books):
-            return message_text
-        from .world_info_processor import WorldInfoProcessor
-
-        processor = WorldInfoProcessor(
-            character_data=char_data if has_character_book else None,
-            world_books=world_books or None,
-        )
-        result = processor.process_messages(message_text, history or [])
-        if not result.get("matched_entries"):
-            return message_text
-        formatted = processor.format_injections(result.get("injections", {}))
-        parts: List[str] = []
-        if formatted.get("at_start"):
-            parts.append(formatted["at_start"])
-        if formatted.get("before_char"):
-            parts.append(formatted["before_char"])
-        parts.append(message_text)
-        if formatted.get("after_char"):
-            parts.append(formatted["after_char"])
-        if formatted.get("at_end"):
-            parts.append(formatted["at_end"])
-        return "\n\n".join(parts)
-    except Exception:
-        logger.opt(exception=True).debug(
-            "world-info: apply failed; returning message text unchanged"
-        )
-        return message_text
+    return resolve_world_info_injection(
+        db, conversation_id, char_data, message_text, history
+    )[0]
 
 
 def summarize_active_world_books(
@@ -173,4 +207,8 @@ def summarize_active_world_books(
     return {"world_books": world_books, "source": "local"}
 
 
-__all__ = ["apply_world_info_to_message", "summarize_active_world_books"]
+__all__ = [
+    "apply_world_info_to_message",
+    "resolve_world_info_injection",
+    "summarize_active_world_books",
+]

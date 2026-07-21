@@ -12,7 +12,6 @@ from textual.widgets import (
     Static,
     Collapsible,
     Placeholder,
-    Select,
     Input,
     Label,
     TextArea,
@@ -546,85 +545,6 @@ def create_chat_right_sidebar(
                 )
                 dictionary_details.styles.height = 8
                 yield dictionary_details
-
-        # ===================================================================
-        # World Books (only for chat tab)
-        # ===================================================================
-        if id_prefix == "chat":
-            with Collapsible(
-                title="World Books",
-                collapsed=True,
-                id=f"{id_prefix}-worldbooks-collapsible",
-            ):
-                # Search for available world books
-                yield Label("Search World Books:", classes="sidebar-label")
-                yield Input(
-                    id=f"{id_prefix}-worldbook-search-input",
-                    placeholder="Search world books...",
-                    classes="sidebar-input",
-                )
-
-                # List of available world books
-                yield Label("Available World Books:", classes="sidebar-label")
-                worldbook_available_list = ListView(
-                    id=f"{id_prefix}-worldbook-available-listview",
-                    classes="sidebar-listview",
-                )
-                worldbook_available_list.styles.height = 5
-                yield worldbook_available_list
-
-                # Association controls
-                with Horizontal(classes="worldbook-association-controls"):
-                    yield Button(
-                        "Add to Chat",
-                        id=f"{id_prefix}-worldbook-add-button",
-                        classes="sidebar-button",
-                        variant="primary",
-                        disabled=True,
-                    )
-                    yield Select(
-                        [(f"Priority {i}", str(i)) for i in range(11)],
-                        value="5",
-                        id=f"{id_prefix}-worldbook-priority-select",
-                        classes="worldbook-priority-select",
-                    )
-
-                # Currently associated world books
-                yield Label("Active World Books:", classes="sidebar-label")
-                worldbook_active_list = ListView(
-                    id=f"{id_prefix}-worldbook-active-listview",
-                    classes="sidebar-listview",
-                )
-                worldbook_active_list.styles.height = 5
-                yield worldbook_active_list
-
-                # Remove button for active world books
-                yield Button(
-                    "Remove from Chat",
-                    id=f"{id_prefix}-worldbook-remove-button",
-                    classes="sidebar-button",
-                    variant="warning",
-                    disabled=True,
-                )
-
-                # Quick enable/disable for all world books
-                yield Checkbox(
-                    "Enable World Info Processing",
-                    value=True,
-                    id=f"{id_prefix}-worldbook-enable-checkbox",
-                    classes="sidebar-checkbox",
-                )
-
-                # Selected world book details
-                yield Label("Selected World Book Details:", classes="sidebar-label")
-                worldbook_details = TextArea(
-                    "",
-                    id=f"{id_prefix}-worldbook-details-display",
-                    classes="sidebar-textarea",
-                    read_only=True,
-                )
-                worldbook_details.styles.height = 8
-                yield worldbook_details
 
         with Collapsible(title="Other Character Tools", collapsed=True):
             yield Placeholder("Tool 1")
