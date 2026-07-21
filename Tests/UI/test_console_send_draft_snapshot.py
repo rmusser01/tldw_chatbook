@@ -166,3 +166,61 @@ async def test_console_blocked_send_restore_preserves_paste_segments():
 
         assert composer.draft_text() == expected
         assert composer.has_paste_segments()
+
+
+@pytest.mark.asyncio
+async def test_console_double_enter_sends_once_and_loses_nothing(monkeypatch):
+    """A second Enter before the first Pressed handler runs must not
+    overwrite the pending stash with None (that ate the message)."""
+    app = _ready_openai_app(monkeypatch, "double reply")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+        composer.load_draft("line one")
+
+        _press_enter_synchronously(console)
+        _press_enter_synchronously(console)
+
+        await _wait_for_text(console, pilot, "double reply")
+
+        store = console._ensure_console_chat_store()
+        messages = store.messages_for_session(store.active_session_id)
+        user_messages = [m for m in messages if m.role is ConsoleMessageRole.USER]
+        assert [m.content for m in user_messages] == ["line one"]
+        assert composer.draft_text() == ""
+
+
+@pytest.mark.asyncio
+async def test_console_submit_exception_restores_draft_and_keeps_app_alive(
+    monkeypatch,
+):
+    """If submit_draft raises, the keypress-cleared draft must come back."""
+    app = _ready_openai_app(monkeypatch, "never used")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+        controller = console._ensure_console_chat_controller()
+
+        async def exploding_submit(draft):
+            raise RuntimeError("provider imploded")
+
+        monkeypatch.setattr(controller, "submit_draft", exploding_submit)
+        composer.load_draft("precious draft")
+
+        _press_enter_synchronously(console)
+        for _ in range(10):
+            await pilot.pause(0.05)
+
+        assert composer.draft_text() == "precious draft"
+        # App survived the worker exception (queries still work).
+        assert console.query_one("#console-native-composer", ConsoleComposerBar)

@@ -867,6 +867,14 @@ class ConsoleTranscript(VerticalScroll):
                     self._row_widgets[row.key] = widget
                     self._row_signatures[row.key] = row.signature
 
+            if row_was_mounted and widget.parent is not self:
+                # Version-proof backstop for the pruning check above:
+                # mount() completed without attaching (it no-ops while the
+                # container is being removed). Drop the phantom map entries
+                # and abandon the pass instead of poisoning later moves.
+                self._row_widgets.pop(row.key, None)
+                self._row_signatures.pop(row.key, None)
+                return
             if not row_was_mounted:
                 if previous_widget is None:
                     self.move_child(widget, before=0)

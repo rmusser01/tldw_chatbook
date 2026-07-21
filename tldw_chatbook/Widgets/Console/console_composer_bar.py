@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import textwrap
 from typing import Any, Literal
 
@@ -952,7 +952,10 @@ class ConsoleComposerBar(Horizontal):
             self._segments = [_DraftSegment(text)]
             self._segments_initialized = True
         stash = ConsoleDraftStash(
-            segments=self._segments,
+            # Copies, not the live objects: segments are mutable, and a
+            # restored draft keeps being edited — the stash must stay a
+            # faithful snapshot of the keypress moment.
+            segments=[replace(segment) for segment in self._segments],
             text=text,
             has_paste=self.has_paste_segments(),
         )
@@ -965,6 +968,10 @@ class ConsoleComposerBar(Horizontal):
         The stashed segments are prepended so a rejected send reads exactly
         as before the keypress, with later keystrokes appended after it;
         paste provenance and collapse state come back untouched.
+
+        Args:
+            stash: The capture returned by ``stash_draft_for_send``, or
+                ``None`` (image-only send — nothing to restore).
         """
         if stash is None or not stash.segments:
             return

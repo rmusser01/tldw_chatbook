@@ -8739,7 +8739,22 @@ class ChatScreen(BaseAppScreen):
         # restores it instead. Snapshot before submit_draft so the hook's
         # consumption is observable here.
         inflight_stash = self._console_inflight_send_stash
-        result = await controller.submit_draft(draft)
+        try:
+            result = await controller.submit_draft(draft)
+        except Exception:
+            # An unexpected submit crash must not eat the keypress-cleared
+            # draft — and must not escape the worker (exit_on_error would
+            # take the whole app down with it).
+            leaked_stash = self._console_inflight_send_stash
+            self._console_inflight_send_stash = None
+            if leaked_stash is not None:
+                self._restore_console_send_stash(leaked_stash)
+            logger.exception("Console submit failed unexpectedly")
+            self.app_instance.notify(
+                "Console send failed unexpectedly — your draft was restored.",
+                severity="error",
+            )
+            return
         # TASK-251: a submit may have created/updated a persisted
         # conversation (title, updated_at) -- invalidate so the browser
         # reflects it on the very next sync instead of the TTL window.
@@ -11277,6 +11292,12 @@ class ChatScreen(BaseAppScreen):
                 return
             event.stop()
             event.prevent_default()
+            if self._console_pending_send_stash is not None:
+                # A send keypress is already on its way to the Pressed
+                # handler; a second Enter in that window would stash the
+                # now-empty composer (None) over the pending payload and
+                # eat the message. Swallow the duplicate.
+                return
             # TASK-340: capture the payload NOW — Button.press() only posts a
             # message, and printable keys handled before that message runs
             # used to fold into the sent text.
