@@ -56,10 +56,19 @@ resolver, the Settings page, and future tooling.
 
 - `get_internal_prompt(prompt_id) -> str` — resolved raw template text.
 - `render_internal_prompt(prompt_id, **values) -> str` — resolution + safe
-  substitution. **Call sites must render through the resolver**, never
-  fetch-then-`str.format()` themselves (raw `.format()` on user-edited text is
-  a crash vector — rerankers do this today at `reranker.py:325/540/616` and
-  must be migrated off it).
+  substitution. **Call sites must never run `.format()`-family calls on
+  resolved text** (raw `.format()` on user-edited text is a crash vector —
+  rerankers do this today at `reranker.py:325/540/616` and must be migrated
+  off it). Prompts that take values render via `render_internal_prompt`;
+  zero-placeholder prompts are fetched with `get_internal_prompt` and may be
+  plainly concatenated (e.g. `f"{prompt}\n\n{text}"` — concatenation cannot
+  crash).
+
+**Precedence vs. existing programmatic channels:** where a call site already
+accepts an explicit runtime prompt (subscriptions' per-item `custom_prompt`,
+caller-supplied `RerankingConfig.system_prompt`/`scoring_prompt_template`),
+that explicit value continues to win. The registry replaces only the
+hardcoded-default branch (the "if unset, use literal" fallbacks).
 
 **Resolution precedence:**
 
@@ -113,8 +122,8 @@ baseline = "ab12cd34"   # short sha256 of the shipped default at save time
 |---|---|---|---|
 | `websearch` (4) | `sub_question_generation`, `result_relevance_eval`, `result_summarization`, `answer_synthesis` | `Web_Scraping/WebSearch_APIs.py` inline literals (~645, ~789, ~809, ~1001) | Fixes the dead `[Prompts]` keys; those become `legacy_config_path` with the differs-from-default rule. Contract notes: relevance eval must output TRUE/FALSE; synthesis has citation-format rules. |
 | `rag_reranker` (6) | `pointwise_system`, `pointwise_template`, `pairwise_system`, `pairwise_template`, `listwise_system`, `listwise_template` | `RAG_Search/reranker.py` `__init__` fallbacks | Snapshot-at-init → `applies="next search"`. Contract notes: numeric score / comparator / ranking output parsed by code. Migrate rendering off raw `.format()`. |
-| `agents` (3) | `subagent_system`, `console_agent_operating`, `tool_protocol` | `Agents/agent_service.py:49`, `Chat/console_agent_bridge.py:57`, `Agents/agent_runtime.py:157` | Tool-protocol fence markers and the dynamic tool listing are injected as required placeholders (e.g. `{fence_open}`, `{fence_close}`, `{tool_catalog}`) so edits cannot break the parser contract. |
-| `summarization` (3) | `analyze_default_system`, `local_summarizer_template`, `rolling_summarize_system` | `LLM_Calls/Summarization_General_Lib.py:528`, `LLM_Calls/Local_Summarization_Lib.py:39`, `Chunking/Chunk_Lib.py:268` | Rolling-summarize already config-backed → `legacy_config_path = chunking_config.summarize_system_prompt`. |
+| `agents` (3) | `subagent_system`, `console_agent_operating`, `tool_protocol` | `Agents/agent_service.py:49`, `Chat/console_agent_bridge.py:57`, `Agents/agent_runtime.py:157` | Tool-protocol fence markers and the dynamic tool listing are injected as required placeholders (`{fence_open}`, `{fence_close}`, `{tool_list}`) so edits cannot break the parser contract. Verified templatable: the scaffold is static text; its literal JSON example braces are safe under declared-token substitution; the empty-schemas → `""` early return stays code-side. |
+| `summarization` (3) | `analyze_default_system`, `local_summarizer_template`, `rolling_summarize_system` | `LLM_Calls/Summarization_General_Lib.py:528`, `LLM_Calls/Local_Summarization_Lib.py:39`, `Chunking/Chunk_Lib.py:268` | Rolling-summarize already config-backed → `legacy_config_path = chunking_config.summarize_system_prompt`. `local_summarizer_template` has zero placeholders — call sites concatenate (verified); its trailing `</s> {{ .Prompt }}` cruft is part of today's default and ships unchanged (cleanup = behavior change → future work). |
 | `document_generation` (6) | `timeline_system`, `timeline_user`, `study_guide_system`, `study_guide_user`, `briefing_system`, `briefing_user` | `Chat/document_generator.py` (system prompts ~219/317/415 hardcoded; user prompts config-backed) | User prompts get `legacy_config_path = prompts.document_generation.<type>.prompt`. |
 | `subscriptions` (7) | `analysis_system`, `feed_analysis`, `url_change_analysis`, `podcast_analysis`, `generic_analysis`, `recursive_summarizer_system`, `briefing` | `Subscriptions/content_processor.py:272,344-405`, `recursive_summarizer.py:453`, `briefing_generator.py:312` | Per-type prompts keep their runtime `custom_prompt` override paths; registry supplies the defaults. |
 
@@ -147,8 +156,10 @@ informational no-ops.
 yields it).
 
 - Search `Input` on top; below it a `ListView` grouped under subsystem headers.
-- Each row: prompt title + badges — **customized** (override present) and
-  **default changed** (`baseline` ≠ hash of current shipped default).
+- Each row: prompt title + badges — **customized** (active resolved text ≠
+  shipped default — this covers both a tier-1 override and a customized legacy
+  key, which has no override table) and **default changed** (`baseline` ≠ hash
+  of current shipped default; only meaningful when an override table exists).
 - **Perf constraint:** filtering performs targeted updates (toggle row
   visibility; config read once per refresh) — no recompose or list rebuild in
   the keystroke path (the task-284 bug class). Note: Textual `mount()` silently
@@ -175,7 +186,11 @@ Console edit-modal stale-key hazard does not apply.
   `save_settings_to_cli_config`. Worker body catches exceptions and marshals
   errors back to the modal via `call_from_thread` — never lets `exit_on_error`
   crash the app. Modal dismisses only on confirmed success.
-- Reset: `delete_settings_from_cli_config` in the same worker pattern.
+- Reset: `delete_settings_from_cli_config` in the same worker pattern. Reset
+  removes the override table **and** any customized legacy key
+  (`legacy_config_path`) — otherwise resetting a prompt whose legacy key was
+  customized would silently leave the legacy value active. Reset always lands
+  on the shipped default.
 - Live-apply: the save path reloads the config cache; the resolver reads
   through it, so overrides apply on next use — except snapshot-at-init
   consumers, which the UI labels via `applies`.
@@ -232,3 +247,6 @@ generated bundle.
 - Diff view (override vs. current default) in the modal.
 - Hygiene task: remove dead `CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT` and the
   unconsumed `prompts_strings` loader once the web-search trio migrates.
+- Hygiene task (behavior change, needs its own review): drop the stray
+  `</s> {{ .Prompt }}` suffix from the local summarizer default — it is
+  Ollama-modelfile cruft sent verbatim to models today.
