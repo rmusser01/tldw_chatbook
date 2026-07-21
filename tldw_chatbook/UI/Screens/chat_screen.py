@@ -2759,6 +2759,7 @@ class ChatScreen(BaseAppScreen):
                 agent_runtime_enabled=self._console_agent_runtime_enabled(),
                 skills_service=getattr(self.app_instance, "skills_scope_service", None),
                 chat_dictionary_applier=self._console_chat_dictionary_applier,
+                world_info_applier=self._console_world_info_applier,
             )
         self._console_chat_controller.on_submission_accepted = (
             self._on_console_submission_accepted
@@ -5789,6 +5790,31 @@ class ChatScreen(BaseAppScreen):
             text,
             max_tokens=_CHATDICT_MAX_TOKENS,
             strategy=_CHATDICT_STRATEGY,
+        )
+
+    def _console_world_info_applier(
+        self, conversation_id: str | None, message_text: str, history: list
+    ) -> str:
+        """Bound applier handed to the native Console controller: inject the
+        active CONVERSATION world-info into a send's text (never raises).
+
+        Resolves the db lazily. Conversation-only: ``char_data`` is ``None``
+        (native sessions carry no character card). Honors the same
+        ``[character_chat] enable_world_info`` gate as the legacy send path
+        (`Event_Handlers/Chat_Events/chat_events.py`).
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if (
+            db is None
+            or not conversation_id
+            or not isinstance(message_text, str)
+            or not get_cli_setting("character_chat", "enable_world_info", True)
+        ):
+            return message_text
+        from ...Character_Chat.world_info_resolver import apply_world_info_to_message
+
+        return apply_world_info_to_message(
+            db, conversation_id, None, message_text, history or []
         )
 
     def _active_console_dictionary_scope_ids(self) -> tuple[str | None, int | None]:
