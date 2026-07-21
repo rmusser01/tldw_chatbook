@@ -8804,6 +8804,8 @@ UPDATE db_schema_version
         search_term: str,
         limit: int = 10,
         fts_match_query: Optional[str] = None,
+        *,
+        id_allowlist: Optional[Sequence[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Searches notes_fts (title and content). Corrected JOIN condition.
 
@@ -8814,22 +8816,37 @@ UPDATE db_schema_version
                 already be injection-safe, e.g. Library keyword search's
                 quoted plural/singular-widened query). When provided it
                 replaces the default whole-phrase quoting of `search_term`.
+            id_allowlist: Optional collection of note ids to restrict results
+                to (rag-scope narrowing, task-4). ``None`` (the default) is
+                unrestricted -- today's behavior, byte-identical query shape.
+                When provided, the ids are bound as a single JSON-encoded
+                array via ``json_each`` (no SQLite bound-parameter-count
+                limit regardless of allowlist size); an empty collection
+                matches zero rows rather than being treated as "no filter".
         """
         # FTS5 requires wrapping terms with special characters in double quotes
         # to be treated as a literal phrase.
         safe_search_term = fts_match_query if fts_match_query else f'"{search_term}"'
 
-        query = """
+        params: List[Any] = [safe_search_term]
+        id_filter_sql = ""
+        if id_allowlist is not None:
+            id_filter_sql = "AND main.id IN (SELECT value FROM json_each(?))"
+            params.append(json.dumps(sorted(str(i) for i in id_allowlist)))
+        params.append(limit)
+
+        query = f"""
                 SELECT main.*
                 FROM notes_fts fts
                          JOIN notes main ON fts.rowid = main.rowid
                 WHERE fts.notes_fts MATCH ?
                   AND main.deleted = 0
+                  {id_filter_sql}
                 ORDER BY rank LIMIT ?
                 """
         try:
             # Pass the quoted string as the parameter
-            cursor = self.execute_query(query, (safe_search_term, limit))
+            cursor = self.execute_query(query, tuple(params))
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
             logger.error(f"Error searching notes for '{search_term}': {e}")

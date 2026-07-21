@@ -10,6 +10,20 @@ SOURCE_TYPE_MEDIA = "media"
 SOURCE_TYPE_NOTE = "note"
 _KNOWN_SOURCE_TYPES = (SOURCE_TYPE_MEDIA, SOURCE_TYPE_NOTE)
 
+#: Diagnostic reason recorded when an active scope excludes the
+#: conversations FTS leg entirely. Conversations are not part of the scope
+#: vocabulary (rag-scope-narrowing spec decision D5): a scoped conversation
+#: or workspace never includes conversation ids in its allowlist, so this
+#: leg is excluded outright rather than silently searching unrestricted or
+#: guessing at an allowlist.
+SCOPE_REASON_CONVERSATIONS_EXCLUDED = "scope_conversations_excluded"
+#: Diagnostic reason recorded when an ``EffectiveScope`` resolves to
+#: ``"empty"`` -- the configured scope(s) leave nothing to retrieve from.
+#: Not produced by this module's pipeline-leg helpers (which only
+#: distinguish ``"scoped"`` from everything else); reserved for the
+#: caller-side ``EMPTY`` short-circuit that seeds ``PipelineContext``.
+SCOPE_REASON_EMPTY = "scope_empty"
+
 def _warn_malformed(reason: str) -> None:
     """Log a warning about malformed rag_scope payload.
 
@@ -236,3 +250,76 @@ class ScopeCache:
     def clear(self) -> None:
         """Remove all cached entries."""
         self._entries.clear()
+
+
+def media_id_params(eff: EffectiveScope) -> Optional[list[str]]:
+    """Sorted media ids to allowlist a media-leg query, under scope.
+
+    Args:
+        eff: The resolved effective scope.
+
+    Returns:
+        ``None`` when ``eff.state != "scoped"`` (no restriction should be
+        applied -- the caller should search unrestricted), OR when scoped
+        but the media source type has no surviving ids. Callers distinguish
+        these two ``None``-producing cases via ``eff.state`` itself (already
+        known before calling this helper): not-scoped means "search
+        everything", scoped-with-``None`` means "this leg returns nothing".
+        Otherwise a sorted list of ids -- never empty, since
+        ``EffectiveScope.allowlist`` only carries non-empty entries.
+    """
+    if eff.state != "scoped":
+        return None
+    ids = eff.allowlist.get(SOURCE_TYPE_MEDIA)
+    return sorted(ids) if ids else None
+
+
+def note_id_params(eff: EffectiveScope) -> Optional[list[str]]:
+    """Sorted note ids to allowlist a notes-leg query, under scope.
+
+    See ``media_id_params`` for the full ``None``-meaning contract
+    (identical, scoped to ``SOURCE_TYPE_NOTE``).
+
+    Args:
+        eff: The resolved effective scope.
+
+    Returns:
+        ``None`` when not scoped, or scoped with no surviving note ids.
+        Otherwise a sorted, non-empty list of note ids.
+    """
+    if eff.state != "scoped":
+        return None
+    ids = eff.allowlist.get(SOURCE_TYPE_NOTE)
+    return sorted(ids) if ids else None
+
+
+def build_semantic_allowlists(eff: EffectiveScope) -> Optional[list[dict[str, set]]]:
+    """Per-source-type metadata allowlists for a scoped semantic search.
+
+    A single flat ``{"source_id": ..., "source_type": ...}`` dict cannot
+    express "(media AND id in A) OR (note AND id in B)": every key inside
+    one ``metadata_allowlist`` dict is AND-ed together
+    (``RAGService.search``'s contract, task-3), and a media id and a note
+    id are not guaranteed distinct. This returns one dict per surviving
+    source_type instead -- each independently AND-scoped by source_type +
+    source_id -- meant to be run as separate store queries (one per entry)
+    and the results merged by score.
+
+    Args:
+        eff: The resolved effective scope.
+
+    Returns:
+        ``None`` when ``eff.state != "scoped"`` (the caller should perform
+        its normal unrestricted semantic search -- no ``metadata_allowlist``
+        at all). Otherwise a list with one dict per source_type present in
+        ``eff.allowlist``, each shaped
+        ``{"source_type": {source_type}, "source_id": ids}``. Never an
+        empty list while ``eff.state == "scoped"`` (mirrors
+        ``EffectiveScope.allowlist``'s non-empty-entries invariant).
+    """
+    if eff.state != "scoped":
+        return None
+    return [
+        {"source_type": {source_type}, "source_id": set(ids)}
+        for source_type, ids in sorted(eff.allowlist.items())
+    ]
