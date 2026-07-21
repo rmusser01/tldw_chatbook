@@ -357,3 +357,33 @@ def test_parse_schema_type_array_multitype_union_stays_raw():
         "properties": {"val": {"type": ["string", "integer"]}},
     }
     assert parse_schema(schema) is None
+
+
+def test_parse_schema_enum_with_null_is_nullable_and_filters_null_choice():
+    """An enum listing null among its values is nullable, and the null is
+    dropped from the rendered choices (never a literal "null" option)."""
+    schema = {
+        "type": "object",
+        "properties": {"mode": {"enum": ["fast", "slow", None]}},
+    }
+    fields = parse_schema(schema)
+    assert fields is not None
+    assert fields[0].kind == "enum" and fields[0].nullable is True
+    assert fields[0].choices == ("fast", "slow")
+
+
+@pytest.mark.asyncio
+async def test_collect_arguments_sends_null_for_blank_required_nullable_field():
+    """A required-but-nullable field (Pydantic T|None, no default, in the
+    schema's required list) left blank sends explicit JSON null instead of
+    raising 'required.' — the honest way to satisfy a nullable requirement."""
+    schema = {
+        "type": "object",
+        "properties": {"note": {"anyOf": [{"type": "string"}, {"type": "null"}]}},
+        "required": ["note"],
+    }
+    app = SchemaFormApp(schema=schema)
+    async with app.run_test():
+        form = app.query_one(MCPSchemaForm)
+        args = form.collect_arguments()
+    assert args == {"note": None}

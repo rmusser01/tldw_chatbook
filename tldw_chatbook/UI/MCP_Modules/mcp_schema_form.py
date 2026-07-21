@@ -39,6 +39,7 @@ class SchemaField:
     description: str
     default: object | None
     choices: tuple[str, ...] = field(default_factory=tuple)
+    nullable: bool = False  # accepts null (Pydantic Optional[T]) — blank sends null
 
 
 def _resolve_property(spec: dict) -> tuple[str, tuple[str, ...], bool] | None:
@@ -58,7 +59,15 @@ def _resolve_property(spec: dict) -> tuple[str, tuple[str, ...], bool] | None:
     """
     enum_values = spec.get("enum")
     if isinstance(enum_values, list) and enum_values:
-        return ("enum", tuple(str(value) for value in enum_values), False)
+        # An enum listing null/None among its values is nullable; drop those
+        # so they don't render as literal "null"/"None" choices.
+        nullable = None in enum_values or "null" in enum_values
+        choices = tuple(
+            str(value)
+            for value in enum_values
+            if value is not None and value != "null"
+        )
+        return ("enum", choices, nullable)
 
     prop_type = spec.get("type")
     if prop_type in _SIMPLE_KINDS:
@@ -94,6 +103,10 @@ def parse_schema(schema: dict | None) -> list[SchemaField] | None:
     Renders simple/enum properties and the Optional[T] idiom (Pydantic v2's
     `anyOf: [T, null]` / `type: [T, "null"]`) via `_resolve_property`.
 
+    Args:
+        schema: A JSON-Schema dict for one tool's parameters (a top-level
+            `"object"` schema with a `properties` mapping), or `None`.
+
     Returns:
         `None` when `schema` is falsy/not a dict, its `type` isn't
         `"object"`, `properties` isn't a mapping, or ANY property is
@@ -128,12 +141,12 @@ def parse_schema(schema: dict | None) -> list[SchemaField] | None:
             # Nested object/array, real multi-type union, oneOf, missing
             # type, etc. -- one unrenderable property fails the WHOLE schema.
             return None
-        kind, choices, _nullable = resolved
+        kind, choices, nullable = resolved
         # The schema's `required` list is authoritative: a nullable field
         # WITH a default isn't in it (renders optional), but `T | None` with
-        # NO default IS in it and the tool wants it -- forcing it optional
-        # would let the user silently omit a required parameter (the exact
-        # "partial form lies" failure this module's raw fallback prevents).
+        # NO default IS in it and the tool wants it. Rather than silently
+        # dropping such a param OR forcing a non-null value, `collect_arguments`
+        # sends explicit JSON null when a nullable field is left blank.
         required = field_name in required_names
         fields.append(
             SchemaField(
@@ -143,6 +156,7 @@ def parse_schema(schema: dict | None) -> list[SchemaField] | None:
                 description=description,
                 default=default,
                 choices=choices,
+                nullable=nullable,
             )
         )
 
@@ -237,9 +251,10 @@ class MCPSchemaForm(Vertical):
         Returns:
             Raw mode: the parsed JSON object from `#mcp-schema-raw`.
             Form mode: one entry per field, coerced per kind (number ->
-            float, integer -> int, boolean -> the Checkbox's value); empty
-            optional strings/numbers and unselected optional enums are
-            omitted entirely.
+            float, integer -> int, boolean -> the Checkbox's value); a blank
+            nullable field (Pydantic Optional[T]) sends explicit JSON null;
+            empty non-nullable optional strings/numbers and unselected
+            optional enums are omitted entirely.
 
         Raises:
             ValueError: Raw mode -- invalid JSON, or valid JSON that isn't
@@ -262,7 +277,9 @@ class MCPSchemaForm(Vertical):
             if schema_field.kind == "enum":
                 value = self.query_one(widget_id, Select).value
                 if value is Select.NULL:
-                    if schema_field.required:
+                    if schema_field.nullable:
+                        result[schema_field.name] = None
+                    elif schema_field.required:
                         raise ValueError(f"{schema_field.name}: required.")
                     continue
                 result[schema_field.name] = value
@@ -271,7 +288,9 @@ class MCPSchemaForm(Vertical):
             raw_value = self.query_one(widget_id, Input).value
             text_value = raw_value.strip()
             if not text_value:
-                if schema_field.required:
+                if schema_field.nullable:
+                    result[schema_field.name] = None
+                elif schema_field.required:
                     raise ValueError(f"{schema_field.name}: required.")
                 continue
             if schema_field.kind == "number":

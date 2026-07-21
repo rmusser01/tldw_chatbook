@@ -54,6 +54,9 @@ _SAFE_URL_LITERAL_PATTERN = re.compile(
 # secret guards (_is_secret_bearing_env_key / _looks_like_raw_secret_value)
 # still run first, so a token that happens to be path-shaped is rejected.
 _SAFE_PATH_LITERAL_PATTERN = re.compile(r"^(?:~|/)[A-Za-z0-9._/@:+-]{1,255}$")
+# Token separators in paths / URLs / query strings — used to extract candidate
+# secret segments from an otherwise-safe-looking literal.
+_SECRET_SEGMENT_SPLIT = re.compile(r"[/?&=:@~]+")
 _LEGACY_SAFE_URL_LITERAL_PATTERN = re.compile(
     r"^[A-Za-z][A-Za-z0-9+.-]*://[^\s]{1,255}$"
 )
@@ -158,15 +161,12 @@ def _is_secret_bearing_env_key(key: str) -> bool:
 
 
 def _looks_like_raw_secret_value(value: str) -> bool:
-    # Test the whole value AND — so a leading path anchor can't smuggle a
-    # secret past the full-match patterns now that filesystem paths are
-    # accepted literals (e.g. "~/sk-live-…", "/foo/ghp_…") — the
-    # anchor-stripped value and each path segment.
-    candidates = [value]
-    stripped = value.lstrip("~/")
-    if stripped != value:
-        candidates.append(stripped)
-        candidates.extend(segment for segment in stripped.split("/") if segment)
+    # Full-match the whole value AND every token segment, so a secret can't be
+    # smuggled past the anchored patterns inside a path, URL, or query string
+    # (e.g. "~/sk-live-…", "/foo/ghp_…", "https://h/p?key=sk-live-…") now that
+    # paths and URLs are accepted literals. Split on the delimiters that
+    # separate tokens in those forms.
+    candidates = [value, *(seg for seg in _SECRET_SEGMENT_SPLIT.split(value) if seg)]
     return any(
         pattern.fullmatch(candidate)
         for candidate in candidates

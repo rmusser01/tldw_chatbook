@@ -490,9 +490,9 @@ def test_local_store_rejects_path_shaped_secret_under_neutral_key(tmp_path):
     (the leading '/'/'~' used to break the ^sk-…$ full-match)."""
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
     for key, value in [
-        ("HOME_WS", "~/sk-live-abcdef012345ghij"),
-        ("GENERIC", "/ghp_1234567890abcdefghijklmno"),
-        ("NESTED", "/opt/creds/xoxb-1234567890-abcdefghij"),
+        ("HOME_WS", "~/sk-NOTAREALSECRET0000"),
+        ("GENERIC", "/ghp_NOTAREALSECRET00000"),
+        ("NESTED", "/opt/creds/xoxb-NOTAREAL-SECRET0000"),
     ]:
         with pytest.raises(ValueError, match="[Ss]ecret"):
             store.save_profile(
@@ -509,3 +509,31 @@ def test_local_store_rejects_path_shaped_secret_under_neutral_key(tmp_path):
         )
     )
     assert saved.env_literals["ATHF_WORKSPACE"] == "/home/analyst/hunts/prod"
+
+
+def test_local_store_rejects_secret_smuggled_in_url_or_query_param(tmp_path):
+    """Accepting URL literals must not let a secret hide in a URL path segment
+    or query parameter — the segment split covers /?&=:@ delimiters."""
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    for value in [
+        "https://host.example/api?token=sk-NOTAREALSECRET0000",
+        "https://host.example/ghp_NOTAREALSECRET00000/callback",
+        "https://user:xoxb-NOTAREAL-SECRET0000@host.example/",
+    ]:
+        with pytest.raises(ValueError, match="[Ss]ecret"):
+            store.save_profile(
+                LocalExternalMCPProfile(
+                    profile_id="p",
+                    command="python",
+                    env_literals={"ENDPOINT": value},
+                )
+            )
+    # A clean URL with no secret-shaped segment is still accepted.
+    saved = store.save_profile(
+        LocalExternalMCPProfile(
+            profile_id="p",
+            command="python",
+            env_literals={"ENDPOINT": "https://host.example/v1/hunts?limit=50"},
+        )
+    )
+    assert saved.env_literals["ENDPOINT"] == "https://host.example/v1/hunts?limit=50"
