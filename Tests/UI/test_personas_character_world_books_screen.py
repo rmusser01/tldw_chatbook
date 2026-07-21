@@ -39,8 +39,11 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget impo
     PersonasCharacterEditorWidget,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_world_books import (
+    CharacterWorldBookAttachRequested,
+    CharacterWorldBookDetachRequested,
     PersonasCharacterWorldBooksWidget,
 )
+from tldw_chatbook.Widgets.Persona_Widgets.world_book_picker import WorldBookPicker
 
 from Tests.UI.test_personas_dictionaries import PersonasTestApp
 
@@ -172,6 +175,114 @@ class TestCharacterWorldBooksScreenWiring:
             screen = await _select_seeded_character(pilot, char_id)
             panel = screen.query_one(PersonasCharacterWorldBooksWidget)
             table = panel.query_one("#personas-char-worldbooks-table", DataTable)
+            assert table.row_count == 0
+
+
+# ===================================================================
+# Task 7: attach/detach handlers wired to WorldBookManager (real DB
+# round-trip). Mirrors test_personas_lore.py's Task 4
+# test_attach_via_picker_then_detach_real_db, but for the character
+# attach/detach surface instead of the conversation one.
+# ===================================================================
+
+
+@pytest.fixture
+def character_and_standalone_worldbook(worldbooks_db):
+    """A real character with no attachments yet, plus a standalone world
+    book (with one entry) that is NOT attached to any character."""
+    char_id = worldbooks_db.add_character_card({"name": "Wanderer"})
+    manager = WorldBookManager(worldbooks_db)
+    book_id = manager.create_world_book("Lore", description="Standalone lore book.")
+    manager.create_world_book_entry(
+        book_id, keys=["ruins"], content="Ancient ruins dot the coast."
+    )
+    return {"char_id": char_id, "book_id": book_id}
+
+
+@pytest.fixture
+def stub_character_for_standalone_worldbook(
+    monkeypatch, character_and_standalone_worldbook
+):
+    """Feed the screen's character list/loader the SAME id as the real-db
+    record (mirrors stub_characters_for_worldbooks above)."""
+    char_id = character_and_standalone_worldbook["char_id"]
+    record = {
+        "id": char_id,
+        "name": "Wanderer",
+        "description": "",
+        "first_message": "Hi.",
+        "version": 1,
+    }
+    monkeypatch.setattr(
+        character_handler_module, "fetch_all_characters", lambda: [dict(record)]
+    )
+    monkeypatch.setattr(
+        character_handler_module,
+        "fetch_character_by_id",
+        lambda character_id: (
+            dict(record) if str(character_id) == str(char_id) else None
+        ),
+    )
+
+
+class TestCharacterWorldBookAttachDetach:
+    async def test_attach_via_picker_then_detach_real_db(
+        self,
+        mock_app_instance,
+        worldbooks_db,
+        character_and_standalone_worldbook,
+        stub_character_for_standalone_worldbook,
+        monkeypatch,
+    ):
+        mock_app_instance.chachanotes_db = worldbooks_db
+        mock_app_instance.chat_dictionary_scope_service = None
+        char_id = character_and_standalone_worldbook["char_id"]
+        book_id = character_and_standalone_worldbook["book_id"]
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _select_seeded_character(pilot, char_id)
+            assert screen.state.selected_entity_kind == "character"
+            assert screen.state.selected_entity_id == str(char_id)
+
+            # No pre-existing attachment: the panel starts empty.
+            table = screen.query_one("#personas-char-worldbooks-table", DataTable)
+            assert table.row_count == 0
+
+            async def _fake_push(screen_obj):
+                return book_id if isinstance(screen_obj, WorldBookPicker) else None
+
+            monkeypatch.setattr(
+                screen.app, "push_screen_wait", _fake_push, raising=False
+            )
+            monkeypatch.setattr(
+                screen,
+                "_list_attachable_world_books",
+                lambda cid: [{"world_book_id": book_id, "name": "Lore"}],
+            )
+
+            screen.post_message(CharacterWorldBookAttachRequested())
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            manager = WorldBookManager(worldbooks_db)
+            attached = manager.get_world_books_for_character(char_id)
+            assert any(b["name"] == "Lore" for b in attached), (
+                "attach must persist a real snapshot in the real db, "
+                f"got {attached!r}"
+            )
+
+            table = screen.query_one("#personas-char-worldbooks-table", DataTable)
+            assert table.row_count == 1
+
+            screen.post_message(CharacterWorldBookDetachRequested("Lore"))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert manager.get_world_books_for_character(char_id) == []
+            table = screen.query_one("#personas-char-worldbooks-table", DataTable)
             assert table.row_count == 0
 
 

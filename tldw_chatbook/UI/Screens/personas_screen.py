@@ -2128,6 +2128,147 @@ class PersonasScreen(BaseAppScreen):
         await self._refresh_character_dictionaries()
         await self._sync_character_editor_dictionaries(char_id)
 
+    @on(CharacterWorldBookAttachRequested)
+    async def _handle_character_worldbook_attach(
+        self, message: CharacterWorldBookAttachRequested
+    ) -> None:
+        message.stop()
+        if (
+            self.state.selected_entity_kind != "character"
+            or not self.state.selected_entity_id
+        ):
+            return
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._character_worldbook_attach_worker(), group="personas-io")
+
+    async def _character_worldbook_attach_worker(self) -> None:
+        try:
+            entity_id = self.state.selected_entity_id
+            manager = self._lore_manager()
+            if manager is None or not entity_id:
+                return
+            char_id = int(entity_id)
+            try:
+                books = await asyncio.to_thread(
+                    self._list_attachable_world_books, char_id
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not load world books for the attach picker."
+                )
+                self._notify("Attach failed: could not list world books.", "error")
+                return
+            try:
+                picked = await self.app.push_screen_wait(WorldBookPicker(books))
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the world-book picker."
+                )
+                return
+            if not picked:
+                return
+            try:
+                await asyncio.to_thread(
+                    manager.attach_world_book_to_character, int(picked), char_id
+                )
+            except ConflictError:
+                self._notify(
+                    "Attach failed: the character changed since it was loaded. Try again.",
+                    "warning",
+                )
+                return
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    f"Could not attach world book to character {char_id}."
+                )
+                self._notify(f"Attach failed: {exc}", "error")
+                return
+            await self._refresh_character_worldbooks()
+            await self._sync_character_editor_worldbooks(char_id)
+            self._notify("Attached to character.", "information")
+        finally:
+            self._io_dialog_active = False
+
+    def _list_attachable_world_books(self, character_id: int) -> list[dict]:
+        """Standalone world books NOT already attached to this character (sync DB read)."""
+        manager = self._lore_manager()
+        if manager is None:
+            return []
+        attached = {
+            str(r.get("name"))
+            for r in manager.get_world_books_for_character(int(character_id))
+        }
+        rows = []
+        for b in manager.list_world_books(include_disabled=False) or []:
+            name = b.get("name")
+            if str(name) in attached:
+                continue
+            rows.append({"world_book_id": int(b.get("id")), "name": str(name)})
+        return rows
+
+    async def _sync_character_editor_worldbooks(self, character_id: int) -> None:
+        """Keep the editor's base coherent after an out-of-band attach/detach."""
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return
+        try:
+            record = await asyncio.to_thread(
+                db.get_character_card_by_id, int(character_id)
+            )
+        except Exception:
+            return
+        if not record:
+            return
+        ext = (
+            record.get("extensions")
+            if isinstance(record.get("extensions"), dict)
+            else {}
+        )
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except Exception:
+            return
+        if int(editor._character_data.get("id") or 0) == int(character_id):
+            editor.sync_attached_world_books(
+                ext.get("character_world_books") or [], record.get("version")
+            )
+
+    @on(CharacterWorldBookDetachRequested)
+    async def _handle_character_worldbook_detach(
+        self, message: CharacterWorldBookDetachRequested
+    ) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        if (
+            self.state.selected_entity_kind != "character"
+            or not entity_id
+        ):
+            return
+        manager = self._lore_manager()
+        if manager is None:
+            return
+        char_id = int(entity_id)
+        try:
+            await asyncio.to_thread(
+                manager.detach_world_book_from_character, char_id, str(message.name)
+            )
+        except ConflictError:
+            self._notify(
+                "Detach failed: the character changed since it was loaded. Try again.",
+                "warning",
+            )
+            return
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not detach world book from character {char_id}."
+            )
+            return
+        await self._refresh_character_worldbooks()
+        await self._sync_character_editor_worldbooks(char_id)
+        self._notify("Detached from character.", "information")
+
     @on(DictionaryVersionViewRequested)
     async def _handle_dictionary_version_view(
         self, message: DictionaryVersionViewRequested
