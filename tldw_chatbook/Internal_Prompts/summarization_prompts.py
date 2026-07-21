@@ -4,7 +4,10 @@ LLM_Calls/Summarization_General_Lib.py (analyze()'s default system_message),
 LLM_Calls/Local_Summarization_Lib.py (module constant summarizer_prompt), and
 Chunking/Chunk_Lib.py (the "summarize" chunk method's system_prompt_content
 fallback). Parity tests compare the registry defaults against literals copied
-from source pre-migration."""
+from source pre-migration. Note: rolling_summarize_system's legacy key
+[chunking_config].summarize_system_prompt has no entry in the shipped default
+TOML, so _shipped_default_for returns None and any user-set value is treated
+as a customization (the intended behavior)."""
 
 from .catalog import PromptSpec, register
 
