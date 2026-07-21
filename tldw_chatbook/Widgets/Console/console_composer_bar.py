@@ -114,6 +114,10 @@ class ConsoleComposerBar(Horizontal):
         # every mutation. Collapsed/confirm paste tokens are single units for
         # caret movement and deletion.
         self._cursor_index = 0
+        # TASK-339: bumped by every user-edit entry point (typing/deletes);
+        # programmatic load/clear/restore leave it untouched so callers can
+        # detect "the user typed since X".
+        self._user_edit_serial = 0
         self._run_active = False
         self._send_blocked = False
         self._setup_blocked_reason = ""
@@ -987,6 +991,11 @@ class ConsoleComposerBar(Horizontal):
         self._sync_interaction_classes()
         self._sync_current_action_state()
 
+    @property
+    def edit_serial(self) -> int:
+        """Monotonic count of user-originated draft edits (TASK-339)."""
+        return self._user_edit_serial
+
     def clear_draft(self) -> None:
         """Clear the native Console draft without falling back to stale input."""
         self._draft_selection_all = False
@@ -1031,6 +1040,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Typed text to insert without paste-collapse transformation.
         """
+        self._user_edit_serial += 1
         if not text:
             self._sync_interaction_classes()
             self._sync_current_action_state()
@@ -1101,6 +1111,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Text to insert as if it had just been pasted.
         """
+        self._user_edit_serial += 1
         self.insert_pasted_text(text)
 
     def insert_file_segment(self, text: str, label: str) -> None:
@@ -1144,6 +1155,7 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_left(self) -> None:
         """Delete the character (or paste token) immediately left of the caret."""
+        self._user_edit_serial += 1
         if self._draft_selection_all:
             self.clear_draft()
             return
@@ -1175,6 +1187,7 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_right(self) -> None:
         """Delete the character (or paste token) immediately right of the caret."""
+        self._user_edit_serial += 1
         if self._draft_selection_all:
             self.clear_draft()
             return
@@ -1219,6 +1232,7 @@ class ConsoleComposerBar(Horizontal):
         Returns:
             True when text (or a full-draft selection) was deleted.
         """
+        self._user_edit_serial += 1
         if self._draft_selection_all:
             self.clear_draft()
             return True

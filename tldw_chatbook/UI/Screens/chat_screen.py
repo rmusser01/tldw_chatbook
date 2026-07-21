@@ -1299,6 +1299,7 @@ class ChatScreen(BaseAppScreen):
         """
         controller = self._ensure_console_chat_controller()
         if controller.store.active_session_id != session_id:
+            self._capture_console_draft_switch_snapshot()
             self._set_active_workspace_for_console_session(session_id)
             controller.switch_session(session_id)
             # Finding C: a sub-agent drill-in is scoped to the conversation
@@ -1343,6 +1344,10 @@ class ChatScreen(BaseAppScreen):
 
     async def _create_native_console_session_from_active_context(self) -> None:
         """Create and focus a native Console session in the active workspace context."""
+        # TASK-339: new_session activates the fresh session inline; snapshot
+        # first so the deferred draft swap attributes settle-window typing
+        # to the new tab instead of clobbering it.
+        self._capture_console_draft_switch_snapshot()
         self._ensure_console_chat_controller().new_session(
             settings=(
                 self._active_console_session_settings()
@@ -1489,6 +1494,9 @@ class ChatScreen(BaseAppScreen):
         # then the queued submit's accept/refuse consumption slot.
         self._console_pending_send_stash: ConsoleDraftStash | None = None
         self._console_inflight_send_stash: ConsoleDraftStash | None = None
+        # TASK-339: (visible session id, draft text, edit serial) captured at
+        # switch initiation; consumed by the deferred draft swap.
+        self._console_draft_switch_snapshot: tuple[str | None, str, int] | None = None
         self._console_agent_bridge: Any | None = None
         self._console_agent_drilldown_run_id: str | None = None
         # Finding C: the conversation the drill-in was set for -- used to
@@ -2851,8 +2859,10 @@ class ChatScreen(BaseAppScreen):
                     return
         for session in store.sessions():
             if session.workspace_id == target_workspace_id:
+                self._capture_console_draft_switch_snapshot()
                 store.switch_session(session.id)
                 return
+        self._capture_console_draft_switch_snapshot()
         store.create_session(
             title=self._console_workspace_session_title(target_workspace_id),
             workspace_id=target_workspace_id,
@@ -2927,12 +2937,34 @@ class ChatScreen(BaseAppScreen):
             return composers[0]
         return None
 
+    def _capture_console_draft_switch_snapshot(self) -> None:
+        """Record the composer state at the moment a session switch begins.
+
+        TASK-339: the draft swap in ``_sync_console_session_draft`` can run
+        a settle-window later (coalesced syncs, slow resume loads). Anything
+        the user types in that window is intended for the NEW session; this
+        snapshot lets the swap attribute it correctly instead of saving it
+        to the old session and wiping it from the composer.
+        """
+        composer = self._console_composer_or_none()
+        if composer is None:
+            self._console_draft_switch_snapshot = None
+            return
+        self._console_draft_switch_snapshot = (
+            self._console_visible_draft_session_id,
+            composer.draft_text(),
+            composer.edit_serial,
+        )
+
     def _sync_console_session_draft(self) -> None:
         """Reconcile the composer draft with the active runtime Console session.
 
-        Saves the visible draft back to the session that owns it, then loads the
-        active session's draft when the active session changed. Runs inside the
-        native Console sync pass so session transitions cannot lose drafts.
+        Saves the visible draft back to the session that owns it, then loads
+        the active session's draft when the active session changed. Runs
+        inside the native Console sync pass so session transitions cannot
+        lose drafts. Keystrokes typed between switch initiation (see
+        ``_capture_console_draft_switch_snapshot``) and this swap carry
+        forward into the new session, in order (TASK-339).
         """
         store = self._ensure_console_chat_store()
         session = store.ensure_session(
@@ -2947,17 +2979,41 @@ class ChatScreen(BaseAppScreen):
         if composer is None:
             return
         visible_session_id = self._console_visible_draft_session_id
+        if visible_session_id == active_session_id:
+            if visible_session_id is not None:
+                try:
+                    store.set_session_draft(visible_session_id, composer.draft_text())
+                except KeyError:
+                    pass
+            return
+        snapshot = self._console_draft_switch_snapshot
+        self._console_draft_switch_snapshot = None
+        live_text = composer.draft_text()
+        save_text = live_text
+        typed_suffix = ""
+        if snapshot is not None and snapshot[0] == visible_session_id:
+            snap_text, snap_serial = snapshot[1], snapshot[2]
+            if composer.edit_serial != snap_serial and live_text.startswith(
+                snap_text
+            ):
+                # User typed during the settle window: the old session keeps
+                # what it actually had at the keypress; the new typing rides
+                # into the new session below. (Non-append edits — e.g.
+                # backspacing into the old draft — fall back to today's
+                # save-the-live-text semantics.)
+                save_text = snap_text
+                typed_suffix = live_text[len(snap_text) :]
         if visible_session_id is not None:
             try:
-                store.set_session_draft(visible_session_id, composer.draft_text())
+                store.set_session_draft(visible_session_id, save_text)
             except KeyError:
                 pass
-        if visible_session_id == active_session_id:
-            return
         try:
             composer.load_draft(store.session_draft(active_session_id))
         except KeyError:
             composer.clear_draft()
+        if typed_suffix:
+            composer.insert_text(typed_suffix)
         self._console_visible_draft_session_id = active_session_id
 
     def _build_console_control_state(
@@ -3266,6 +3322,9 @@ class ChatScreen(BaseAppScreen):
         target = str(conversation_id or "").strip()
         if not target:
             return False
+        # TASK-339: keystrokes typed while the conversation tree loads
+        # belong to the resumed session — snapshot the composer now.
+        self._capture_console_draft_switch_snapshot()
         conversation_service = getattr(
             self.app_instance,
             "chat_conversation_scope_service",

@@ -1,10 +1,15 @@
 ---
 id: TASK-360
 title: Prevent keystrokes leaking into the message draft while the edit modal opens
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
-labels: [console, ux, keyboard]
+updated_date: '2026-07-21 02:40'
+labels:
+  - console
+  - ux
+  - keyboard
 dependencies: []
 priority: medium
 ---
@@ -23,5 +28,27 @@ Pressing e on the selected user message gave no visible response — a full buff
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The edit modal opens within one tick of the keypress (or shows immediate busy feedback), and late-arriving modals must not swallow keystrokes typed before they appeared
+- [x] #1 The edit modal opens within one tick of the keypress (or shows immediate busy feedback), and late-arriving modals must not swallow keystrokes typed before they appeared
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. ConsoleEditMessageModal: record open-time on mount; ignore Key events whose event.time predates it (typed before the modal appeared — intent was not text entry)
+2. TDD: deliver a Key with a pre-open timestamp to the mounted modal and assert the textarea is unchanged; normal typing after open still lands
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+The edit modal's TextArea now ignores Key events whose event time predates
+the modal's mount (`_EditMessageTextArea` in
+`console_edit_message_modal.py`; open time taken from the Mount event so
+the clock domain matches `Key.time`). A key pressed before the modal
+appeared was aimed at whatever the user was looking at then — swallowing
+it prevents the silent draft corruption; typing after open is unaffected.
+Guarding at the TextArea (not the screen) is required because printable
+keys are consumed at the focused leaf before they bubble.
+
+Verified: 2 new UI tests in
+`Tests/UI/test_console_edit_modal_keystroke_guard.py` (stale-timed key
+reproduced the corruption RED first; post-open typing still lands).
