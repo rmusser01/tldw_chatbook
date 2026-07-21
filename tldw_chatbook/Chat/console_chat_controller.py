@@ -999,8 +999,17 @@ class ConsoleChatController:
         if approval_event is not None:
             approval_event.set()
 
-    def stop_active_run(self) -> bool:
-        """Request the active stream to stop at the next safe boundary."""
+    def stop_active_run(self, *, record_user_stop: bool = True) -> bool:
+        """Request the active stream to stop at the next safe boundary.
+
+        Args:
+            record_user_stop: Append the explicit "stopped by user"
+                transcript record (TASK-337 AC3). ``shutdown`` passes
+                ``False`` — a teardown stop is not a user action.
+
+        Returns:
+            True when an active run was found and stopped.
+        """
         if self.run_state.status is not ConsoleRunStatus.STREAMING:
             assistant_message_id = self._active_streaming_assistant_message_id()
             if assistant_message_id is None:
@@ -1017,6 +1026,19 @@ class ConsoleChatController:
             assistant_message_id,
             visible_copy="Response stopped.",
         )
+        if record_user_stop:
+            # TASK-337 AC3: a durable, explicit record — the run-state chip
+            # copy is transient and the review found nothing else marked
+            # the interruption.
+            try:
+                session_id = self.store.session_id_for_message(assistant_message_id)
+                self.store.append_message(
+                    session_id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content="Response stopped by user.",
+                )
+            except KeyError:
+                pass
         if (
             self._active_stream_task is not None
             and self._active_stream_task is not asyncio.current_task()
@@ -1029,7 +1051,7 @@ class ConsoleChatController:
         task = self._active_stream_task
         if task is None:
             return
-        if not self.stop_active_run():
+        if not self.stop_active_run(record_user_stop=False):
             self._signal_stop()
             if task is not asyncio.current_task():
                 task.cancel()

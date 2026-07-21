@@ -1406,8 +1406,10 @@ async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible(
 
         store = console._ensure_console_chat_store()
         messages = store.messages_for_session(store.active_session_id)
-        assert messages[-1].content == "partial"
-        assert messages[-1].status == "stopped"
+        # TASK-337: an explicit stopped-by-user record follows the partial.
+        assert messages[-1].content == "Response stopped by user."
+        assert messages[-2].content == "partial"
+        assert messages[-2].status == "stopped"
 
 
 @pytest.mark.asyncio

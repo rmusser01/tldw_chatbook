@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from time import monotonic
+
 from typing import Iterable, Literal, Mapping
 
 from loguru import logger
@@ -400,6 +402,8 @@ class ConsoleTranscript(VerticalScroll):
         super().__init__(**kwargs)
         self._messages: list[ConsoleChatMessage] = []
         self.selected_message_id: str | None = None
+        self._follow_intent_time = 0.0
+        self._user_scroll_time = 0.0
         self._refresh_lock = asyncio.Lock()
         self._empty_card_state = ConsoleSetupCardState(
             mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY
@@ -444,6 +448,44 @@ class ConsoleTranscript(VerticalScroll):
             self._row_signatures[row.key] = row.signature
             yield widget
 
+    @property
+    def allow_vertical_scroll(self) -> bool:
+        """Accept scroll gestures whenever the transcript holds messages.
+
+        TASK-336 (live mechanism): during heavy row churn (sub-agent runs)
+        the arrangement transiently collapses — ``max_scroll_y`` reads 0
+        (scroll_y can even go negative via the compositor's anchor path) —
+        and the base gate (``is_scrollable and show_vertical_scrollbar``)
+        is False at exactly the moment the wheel event arrives. The gesture
+        is then silently dropped: no scroll, and crucially no
+        ``release_anchor``, so follow never detaches (the review's
+        byte-identical wheel evidence). A clamped scroll on a collapsed
+        layout is a harmless no-op, but accepting it registers the
+        reader's intent; the layout recovers within a tick and subsequent
+        gestures scroll normally.
+        """
+        if self._messages:
+            return True
+        return super().allow_vertical_scroll
+
+    def note_follow_intent(self) -> None:
+        """Record a programmatic jump-to-tail intent (send/resume/switch).
+
+        TASK-336: the send-time ``anchor()`` arrives via the coalesced sync
+        pass and can land AFTER the user has already wheel-scrolled up —
+        yanking them back to the tail mid-stream. ``set_messages`` only
+        honors a new-user-send anchor when the most recent of (follow
+        intent, user scroll) is the intent; a later user scroll wins.
+        """
+        self._follow_intent_time = monotonic()
+
+    def release_anchor(self) -> None:
+        # Every user-driven scroll path (wheel, keyboard scroll actions)
+        # funnels through release_anchor — stamp it so a scroll that
+        # happens after a send outranks that send's late-arriving anchor.
+        self._user_scroll_time = monotonic()
+        super().release_anchor()
+
     def set_messages(self, messages: Iterable[ConsoleChatMessage]) -> None:
         """Replace transcript messages and refresh mounted rows when possible.
 
@@ -459,14 +501,21 @@ class ConsoleTranscript(VerticalScroll):
             and message.role == ConsoleMessageRole.USER
             for message in self._messages
         )
-        if self.is_mounted and new_user_send:
+        if (
+            self.is_mounted
+            and new_user_send
+            and self._follow_intent_time >= self._user_scroll_time
+        ):
             # A send: jump to the tail even if the user had scrolled up
             # (anchor() also re-engages follow for the reply that streams
             # in next). Checked against ALL newly-seen ids, not just the
             # tail -- the send path appends USER + ASSISTANT placeholder
             # together and the first polled update can already have the
             # placeholder at the tail. Appended assistant/tool rows alone
-            # never yank a reader.
+            # never yank a reader. TASK-336: a user scroll AFTER the
+            # send/resume intent wins — the coalesced sync can deliver this
+            # anchor late, and it must not yank a reader who has already
+            # scrolled back.
             self.anchor()
         self._seen_message_ids = message_ids
         if self.selected_message_id not in message_ids:

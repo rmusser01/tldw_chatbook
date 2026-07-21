@@ -1318,6 +1318,7 @@ class ChatScreen(BaseAppScreen):
         controller = self._ensure_console_chat_controller()
         if controller.store.active_session_id != session_id:
             self._capture_console_draft_switch_snapshot()
+            self._note_console_follow_intent()
             self._set_active_workspace_for_console_session(session_id)
             controller.switch_session(session_id)
             # Finding C: a sub-agent drill-in is scoped to the conversation
@@ -3427,6 +3428,7 @@ class ChatScreen(BaseAppScreen):
         # sub-agent drill-in immediately rather than rely solely on the
         # rail render path's defensive re-check on the next sync.
         self._console_agent_drilldown_run_id = None
+        self._note_console_follow_intent()
         self._sync_console_chat_core_state()
         await self._sync_native_console_chat_ui()
         self._focus_console_composer_if_needed(force=True)
@@ -9158,6 +9160,7 @@ class ChatScreen(BaseAppScreen):
             )
             return False
         self._console_inflight_send_stash = stash
+        self._note_console_follow_intent()
         # group="console-run": a dedicated group so UI-sync kicks can never
         # cancel an in-flight run (TASK-228 — ungrouped exclusive workers all
         # share Textual's default group and cancel each other).
@@ -9167,6 +9170,16 @@ class ChatScreen(BaseAppScreen):
             group="console-run",
         )
         return True
+
+    def _note_console_follow_intent(self) -> None:
+        """Stamp a programmatic jump-to-tail intent on the transcript (TASK-336)."""
+        try:
+            transcript = self.query_one(
+                "#console-native-transcript", ConsoleTranscript
+            )
+        except QueryError:
+            return
+        transcript.note_follow_intent()
 
     def _restore_console_send_stash(self, stash: "ConsoleDraftStash | None") -> None:
         """Hand a keypress-captured draft back to the composer (TASK-340)."""
@@ -10088,12 +10101,27 @@ class ChatScreen(BaseAppScreen):
 
     async def _stop_console_generation_from_visible_action(self) -> None:
         """Route the visible Console stop action through native run control."""
+        # TASK-337 AC1: acknowledge at the click, synchronously — the
+        # stopped state itself renders via the (possibly coalesced) sync.
+        stop_button: Button | None = None
+        try:
+            stop_button = self.query_one("#console-stop-generation", Button)
+        except QueryError:
+            stop_button = None
+        if stop_button is not None:
+            stop_button.label = "Stopping…"
+            stop_button.disabled = True
         controller = self._ensure_console_chat_controller()
         if not controller.stop_active_run():
             self.app_instance.notify(
                 "No active Console run to stop.", severity="warning"
             )
         await self._sync_native_console_chat_ui()
+        if stop_button is not None:
+            # The bar's sync governs visibility/variant but not the label —
+            # restore it so a later run's Stop button never reads Stopping….
+            stop_button.label = "Stop"
+            stop_button.disabled = False
 
     @on(Button.Pressed, "#console-attach-context")
     async def handle_console_attach_context(self, event: Button.Pressed) -> None:
