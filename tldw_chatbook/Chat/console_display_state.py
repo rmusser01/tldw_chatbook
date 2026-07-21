@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.rag_scope import RagScope
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
@@ -393,6 +394,35 @@ class ConsoleStagedContextState:
 
 
 @dataclass(frozen=True)
+class ConsoleRetrievalScopeState:
+    """Display state for the Inspector's "Retrieval scope" row (task-9).
+
+    Pure snapshot -- built from session-held state only (a persisted
+    conversation's cached last-read scope, or an unpersisted session's
+    ``SessionScopeHolder``), never a DB read at render/recompose time. A
+    scope with zero items is never represented here as "scoped": both
+    storage-layer entry points (``read_conversation_scope``,
+    ``SessionScopeHolder.set``) already normalize a zero-item scope to
+    ``None`` (unscoped) before this state is ever built from it.
+    """
+
+    is_scoped: bool
+    item_count: int = 0
+
+    @classmethod
+    def unscoped(cls) -> "ConsoleRetrievalScopeState":
+        """Return the "everything" (no active scope) display state."""
+        return cls(is_scoped=False, item_count=0)
+
+    @classmethod
+    def from_scope(cls, scope: "RagScope | None") -> "ConsoleRetrievalScopeState":
+        """Build the row's display state from a resolved scope, or ``None``."""
+        if scope is None or not scope.items:
+            return cls.unscoped()
+        return cls(is_scoped=True, item_count=len(scope.items))
+
+
+@dataclass(frozen=True)
 class ConsoleInspectorState:
     """Display state for Console run/readiness inspection."""
 
@@ -425,6 +455,7 @@ class ConsoleInspectorState:
         mcp_tool_count: int | None = None,
         mcp_not_connected_count: int = 0,
         can_save_chatbook: bool = False,
+        scope_item_count: int | None = None,
     ) -> "ConsoleInspectorState":
         provider_status = "ready" if provider_ready else "blocked"
         normalized_tool_count = coerce_non_negative_int(tool_count)
@@ -437,6 +468,12 @@ class ConsoleInspectorState:
             f"{provider_value} / {model_value} / sources {source_summary} / "
             f"tools {normalized_tool_count} / approvals {normalized_approval_count}"
         )
+        # task-9: an active conversation RAG retrieval scope surfaces on the
+        # run recipe line ("... / scope N items"). ``None`` (unscoped, the
+        # overwhelming common case) leaves the line unchanged; a scope with
+        # zero items never reaches here (see ``ConsoleRetrievalScopeState``).
+        if scope_item_count is not None and scope_item_count > 0:
+            run_recipe = f"{run_recipe} / scope {scope_item_count} items"
         rows = [
             ConsoleDisplayRow("Run recipe", run_recipe),
             ConsoleDisplayRow("Live work", _clean(live_work_title, "No active work")),

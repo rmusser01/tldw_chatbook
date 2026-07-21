@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.rag_scope import SessionScopeHolder
 
 #: Maximum number of attachments a Console session may stage before send.
 MAX_PENDING_ATTACHMENTS = 5
@@ -158,6 +159,10 @@ class ConsoleChatSession:
     updated_at: str = field(default_factory=_utc_now_iso)
     pending_attachments: list[PendingAttachment] = field(default_factory=list)
     one_shot_prefill: str | None = None
+    #: RAG retrieval scope (task-9) for a not-yet-persisted session -- see
+    #: ``SessionScopeHolder``. ``persist_session_if_needed`` flushes it
+    #: through to durable storage exactly once, at first persistence.
+    rag_scope_holder: SessionScopeHolder = field(default_factory=SessionScopeHolder)
 
 
 class ConsoleChatStore:
@@ -981,6 +986,28 @@ class ConsoleChatStore:
                         session_id=session_id,
                         conversation_id=session.persisted_conversation_id,
                     ).exception("Failed to flush pinned prefill on first persist.")
+        # task-9: flush a session-held RAG retrieval scope (unpersisted-
+        # session lifecycle, ``SessionScopeHolder``) through to durable
+        # storage now that the conversation row exists. ``flush_to`` itself
+        # no-ops when nothing was held, so this is safe to call
+        # unconditionally. Requires the underlying ``CharactersRAGDB`` --
+        # ``self.persistence`` is the ``ChatPersistenceService`` wrapper, so
+        # the raw DB is reached via its ``db`` attribute (mirrors other
+        # optional-seam probes in this method); persistence adapters
+        # without one (e.g. test fakes) simply skip the flush, matching
+        # every other durable write in this method degrading gracefully
+        # when the seam it needs is absent.
+        persistence_db = getattr(self.persistence, "db", None)
+        if persistence_db is not None:
+            try:
+                session.rag_scope_holder.flush_to(
+                    persistence_db, session.persisted_conversation_id
+                )
+            except Exception:
+                logger.bind(
+                    session_id=session_id,
+                    conversation_id=session.persisted_conversation_id,
+                ).exception("Failed to flush RAG retrieval scope on first persist.")
         return session.persisted_conversation_id
 
     def set_session_system_prompt(

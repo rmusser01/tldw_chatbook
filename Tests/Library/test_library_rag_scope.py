@@ -262,10 +262,16 @@ async def test_scoped_keyword_search_real_seams_returns_only_allowlisted_ids(
     assert rows_by_type.get("media") == [str(media_in)]
     assert rows_by_type.get("note") == [note_in]
     assert "conversation" not in rows_by_type
-    assert result["diagnostics"][SCOPE_DIAGNOSTICS_KEY] == {
-        "status": SCOPE_STATUS_EXCLUDED,
-        "reason": SCOPE_REASON_CONVERSATIONS_EXCLUDED,
-    }
+    # task-9 rider (a): the scope-diagnostics slot is a LIST of entries (so
+    # a conversations-AND-prompts exclusion under the same scoped call can
+    # coexist without one overwriting the other) -- one entry here, since
+    # only "conversations" is in this call's source_types.
+    assert result["diagnostics"][SCOPE_DIAGNOSTICS_KEY] == [
+        {
+            "status": SCOPE_STATUS_EXCLUDED,
+            "reason": SCOPE_REASON_CONVERSATIONS_EXCLUDED,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -393,10 +399,12 @@ async def test_scoped_keyword_search_excludes_conversations_and_diagnoses():
     )
 
     assert conv_db.call_count == 0
-    assert result["diagnostics"][SCOPE_DIAGNOSTICS_KEY] == {
-        "status": SCOPE_STATUS_EXCLUDED,
-        "reason": SCOPE_REASON_CONVERSATIONS_EXCLUDED,
-    }
+    assert result["diagnostics"][SCOPE_DIAGNOSTICS_KEY] == [
+        {
+            "status": SCOPE_STATUS_EXCLUDED,
+            "reason": SCOPE_REASON_CONVERSATIONS_EXCLUDED,
+        }
+    ]
     assert {row["source_id"] for row in result["results"]} == {"n1"}
 
 
@@ -438,11 +446,77 @@ async def test_scoped_keyword_search_excludes_prompts_and_diagnoses():
     )
 
     assert prompts_service.call_count == 0
-    assert result["diagnostics"][SCOPE_DIAGNOSTICS_KEY] == {
-        "status": SCOPE_STATUS_EXCLUDED,
-        "reason": SCOPE_REASON_PROMPTS_EXCLUDED,
-    }
+    assert result["diagnostics"][SCOPE_DIAGNOSTICS_KEY] == [
+        {
+            "status": SCOPE_STATUS_EXCLUDED,
+            "reason": SCOPE_REASON_PROMPTS_EXCLUDED,
+        }
+    ]
     assert {row["source_id"] for row in result["results"]} == {"n1"}
+
+
+@pytest.mark.asyncio
+async def test_scoped_keyword_search_excludes_conversations_and_prompts_together():
+    """task-9 rider (a): a single scoped call whose source_types include
+    BOTH conversations and prompts must record BOTH exclusion diagnostics --
+    the previous single-dict-slot implementation let the second assignment
+    silently clobber the first."""
+    conv_db = _SpyConversationsDB(rows=[{"id": "c1", "title": "Conv", "message_count": 2}])
+    prompts_service = _SpyPromptScopeService(
+        rows=[{"local_id": "p1", "name": "P1", "user_prompt": "c"}]
+    )
+    notes_service = _SpyNotesScopeService(rows=[{"id": "n1", "title": "N1", "content": "c"}])
+    app = SimpleNamespace(
+        chachanotes_db=conv_db,
+        prompt_scope_service=prompts_service,
+        notes_scope_service=notes_service,
+        media_reading_scope_service=None,
+    )
+    service = LibraryLocalRagSearchService(app)
+    scope = _scoped(**{SOURCE_TYPE_NOTE: {"n1"}})
+
+    result = await service.search(
+        "q", ("notes", "conversations", "prompts"), "search", top_k=5, scope=scope
+    )
+
+    assert conv_db.call_count == 0
+    assert prompts_service.call_count == 0
+    assert result["diagnostics"][SCOPE_DIAGNOSTICS_KEY] == [
+        {
+            "status": SCOPE_STATUS_EXCLUDED,
+            "reason": SCOPE_REASON_CONVERSATIONS_EXCLUDED,
+        },
+        {
+            "status": SCOPE_STATUS_EXCLUDED,
+            "reason": SCOPE_REASON_PROMPTS_EXCLUDED,
+        },
+    ]
+    assert {row["source_id"] for row in result["results"]} == {"n1"}
+
+
+@pytest.mark.asyncio
+async def test_scoped_zero_results_count_covers_only_searched_source_types():
+    """task-9 rider (b): the "No results within scope (N items searched)"
+    count must reflect only the source types actually searched under this
+    call -- not the whole scoped allowlist including types the caller never
+    asked to search."""
+    notes_service = _SpyNotesScopeService(rows=[])
+    app = SimpleNamespace(
+        notes_scope_service=notes_service,
+        media_reading_scope_service=None,
+        chachanotes_db=None,
+    )
+    service = LibraryLocalRagSearchService(app)
+    # Scope carries BOTH media and note allowlists, but this call only
+    # searches "notes" -- the count must be 1 (notes), not 4 (media+notes).
+    scope = _scoped(
+        **{SOURCE_TYPE_MEDIA: {"m1", "m2", "m3"}, SOURCE_TYPE_NOTE: {"n1"}}
+    )
+
+    result = await service.search("q", ("notes",), "search", top_k=5, scope=scope)
+
+    assert result.status == "empty"
+    assert "1 items searched" in result.recovery_state.why
 
 
 @pytest.mark.asyncio

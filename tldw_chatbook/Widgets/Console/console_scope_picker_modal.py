@@ -40,10 +40,12 @@ pages this is exact; for very large mixed libraries with universe restrictions,
 items dropped during per-type offset application become UNREACHABLE via the All
 tab's pagination (attempting to view later offsets re-applies the per-type
 offset, skipping past already-dropped items permanently). This is a deliberate
-v1 scope-narrowing decision. Workarounds: (1) browse by single-type tab (where
-pagination is exact) or (2) use "Select all matching" to bypass pagination
-entirely. No caller-visible API depends on guaranteed All-tab pagination
-coverage, so this is not a bug.
+v1 scope-narrowing decision. Workarounds: (1) browse a single-type tab
+(exact when no universe restriction applies -- the same per-page offset/
+universe-intersection issue affects a single-type tab's own pagination too,
+once a universe restricts it) or (2) use "Select all matching" to bypass
+pagination entirely. No caller-visible API depends on guaranteed All-tab
+pagination coverage, so this is not a bug.
 
 Follows ``console_prompt_picker_modal.py``'s conventions: ``ModalScreen``,
 Esc-to-cancel via ``BINDINGS``, worker-loaded data with ``group=`` (never
@@ -297,7 +299,6 @@ class ConsoleScopePickerModal(ModalScreen[None]):
         self._details_cache: dict[_Key, ScopeListItem] = {}
         self._matching_keys: set[_Key] = set()
         self._page_items: list[tuple[str, ScopeListItem]] = []
-        self._raw_total = 0
         self._rendered_keys: list[_Key] = []
 
         self._top_tags: tuple[TagCount, ...] = ()
@@ -487,7 +488,6 @@ class ConsoleScopePickerModal(ModalScreen[None]):
                     combined.append((source_type, scope_item))
         combined = self._sort_combined(combined)
         self._page_items = combined[: self._page_size]
-        self._raw_total = sum(page.total_matching for page in pages.values())
 
         await self._render_current_view()
         self._render_footer()
@@ -786,7 +786,14 @@ class ConsoleScopePickerModal(ModalScreen[None]):
     @on(Button.Pressed, f"#{PAGE_NEXT_ID}")
     def _next_page(self, event: Button.Pressed) -> None:
         event.stop()
-        if self._offset + self._page_size >= self._raw_total:
+        # Aligned with `_render_page_nav`'s own guard (task-9 review
+        # finding): this used to independently re-check against a stale
+        # `self._raw_total` -- the SUM of raw, non-universe-intersected
+        # per-type lister totals -- which could let a universe-restricted
+        # picker page past the button's own `disabled` state into a phantom
+        # page. `len(self._matching_keys)` is the same universe-intersected
+        # count `_render_page_nav` already uses to disable the button.
+        if self._offset + self._page_size >= len(self._matching_keys):
             return
         self._offset += self._page_size
         self._trigger_refresh(debounce=False)

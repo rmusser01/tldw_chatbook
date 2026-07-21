@@ -53,6 +53,16 @@ from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
 from ...Event_Handlers.Chat_Events.chat_rag_events import (
     resolve_effective_scope_for_chat,
 )
+from ...Chat.rag_scope import (
+    RagScope,
+    read_conversation_scope,
+    write_conversation_scope,
+)
+from ...Chat.scope_picker_listers import (
+    build_keyword_tag_lister,
+    build_media_source_lister,
+    build_notes_source_lister,
+)
 from ...Chat.console_command_grammar import (
     KIND_COMMAND,
     KIND_FALLBACK,
@@ -135,6 +145,7 @@ from ...Chat.console_display_state import (
     ConsoleDisplayRow,
     ConsoleInspectorAction,
     ConsoleInspectorState,
+    ConsoleRetrievalScopeState,
     ConsoleStagedContextState,
     build_console_evidence_display_state,
     coerce_non_negative_int,
@@ -241,6 +252,7 @@ from ...Widgets.Console import (
     ConsoleEditMessageModal,
     ConsoleRailHandle,
     ConsoleRenameSessionModal,
+    ConsoleRetrievalScopeRow,
     ConsoleRunInspector,
     ConsoleSaveAsModal,
     ConsoleSessionSurface,
@@ -253,6 +265,10 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
+from ...Widgets.Console.console_retrieval_scope_row import (
+    ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
+)
+from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 from ...Widgets.Console.console_model_popover import (
     CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
     ConsoleModelPopover,
@@ -1552,6 +1568,12 @@ class ChatScreen(BaseAppScreen):
         self._console_control_model: Optional[Any] = None
         self._console_library_rag_query = ""
         self._console_chat_store: ConsoleChatStore | None = None
+        # task-9: cache of persisted-conversation RAG retrieval scopes,
+        # keyed by conversation id -- populated off-loop at resume time and
+        # by the scope picker's modal-open/after-save reads (never during
+        # compose/recompose), so the Inspector's retrieval-scope row and
+        # run-recipe line render from pure session state.
+        self._console_retrieval_scope_cache: Dict[str, Optional[RagScope]] = {}
         # TASK-340: keyboard-send draft stashes — keypress->handler handoff,
         # then the queued submit's accept/refuse consumption slot.
         self._console_pending_send_stash: ConsoleDraftStash | None = None
@@ -3116,6 +3138,214 @@ class ChatScreen(BaseAppScreen):
             return ConsoleStagedContextState.empty()
         return ConsoleStagedContextState.from_live_work(pending_launch)
 
+    def _build_console_retrieval_scope_state(self) -> ConsoleRetrievalScopeState:
+        """Pure display state for the Inspector's "Retrieval scope" row.
+
+        Reads only in-memory session state -- the active session's
+        unpersisted-scope holder (``ConsoleChatSession.rag_scope_holder``),
+        or the persisted-scope cache populated at resume time and by the
+        scope picker's modal-open/after-save reads
+        (``self._console_retrieval_scope_cache``) -- never the DB directly.
+        Safe to call on every compose/recompose (task-9's
+        zero-DB-on-recompose contract).
+
+        Returns:
+            "Everything" (unscoped) when there is no active session, an
+            unpersisted session with no held scope, or a persisted session
+            whose conversation id has not yet been read into the cache.
+        """
+        session = self._active_native_console_session()
+        if session is None:
+            return ConsoleRetrievalScopeState.unscoped()
+        if session.persisted_conversation_id is None:
+            return ConsoleRetrievalScopeState.from_scope(session.rag_scope_holder.scope)
+        scope = self._console_retrieval_scope_cache.get(
+            session.persisted_conversation_id
+        )
+        return ConsoleRetrievalScopeState.from_scope(scope)
+
+    def _console_retrieval_scope_run_recipe_count(self) -> Optional[int]:
+        """Item count for the Inspector run-recipe's "/ scope N items" suffix.
+
+        ``None`` when unscoped (the run-recipe line stays unchanged); the
+        same pure, zero-DB session-state read
+        ``_build_console_retrieval_scope_state`` uses.
+        """
+        state = self._build_console_retrieval_scope_state()
+        return state.item_count if state.is_scoped else None
+
+    def _sync_console_retrieval_scope_row(self) -> None:
+        """Refresh the mounted retrieval-scope row from current session state."""
+        try:
+            row = self.query_one(
+                f"#{CONSOLE_RETRIEVAL_SCOPE_ROW_ID}", ConsoleRetrievalScopeRow
+            )
+        except QueryError:
+            return
+        row.sync_state(self._build_console_retrieval_scope_state())
+
+    @staticmethod
+    async def _read_console_retrieval_scope(db: Any, conversation_id: str) -> Optional[RagScope]:
+        """Read a conversation's stored scope, off-loop for file-backed DBs.
+
+        In-memory SQLite connections are thread-local -- the same trap
+        ``library_local_rag_search_service._search_conversations`` already
+        documents and guards: offloading to a worker thread via
+        ``asyncio.to_thread`` would open a FRESH, blank in-memory
+        connection with no migrated schema, since only the thread that
+        created the DB has one. Real app usage is always file-backed
+        (``asyncio.to_thread`` applies normally); the guard only matters
+        for the in-memory DBs the test suite uses per repo convention.
+        """
+        if getattr(db, "is_memory_db", False):
+            return read_conversation_scope(db, conversation_id)
+        return await asyncio.to_thread(read_conversation_scope, db, conversation_id)
+
+    @staticmethod
+    async def _write_console_retrieval_scope(
+        db: Any, conversation_id: str, scope: Optional[RagScope]
+    ) -> None:
+        """Write (or clear) a conversation's stored scope; see the read twin's
+        in-memory-DB guard docstring for why this isn't unconditionally
+        ``asyncio.to_thread``."""
+        if getattr(db, "is_memory_db", False):
+            write_conversation_scope(db, conversation_id, scope)
+        else:
+            await asyncio.to_thread(write_conversation_scope, db, conversation_id, scope)
+
+    def _console_scope_picker_listers(
+        self,
+    ) -> tuple[Any, Any, Any]:
+        """Build the real (media, notes, tag) listers for the scope picker."""
+        user_id = getattr(self.app_instance, "notes_user_id", None) or "default_user"
+        return (
+            build_media_source_lister(self.app_instance),
+            build_notes_source_lister(self.app_instance, user_id=user_id),
+            build_keyword_tag_lister(self.app_instance),
+        )
+
+    async def _open_console_retrieval_scope_picker(self) -> None:
+        """Open the RAG retrieval-scope picker for the active Console session.
+
+        Reads the session's current scope off-loop before constructing the
+        modal (so the modal's ``initial`` selection is accurate) -- a
+        persisted session's stored scope via ``read_conversation_scope``,
+        an unpersisted session's held ``SessionScopeHolder`` value (already
+        in memory, no I/O). No ``universe`` restriction yet (workspace-level
+        scoping is Phase 3).
+        """
+        session = self._active_native_console_session()
+        if session is None:
+            return
+        conversation_id = session.persisted_conversation_id
+        if conversation_id is not None:
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            initial = (
+                await self._read_console_retrieval_scope(db, conversation_id)
+                if db is not None
+                else None
+            )
+            self._console_retrieval_scope_cache[conversation_id] = initial
+        else:
+            initial = session.rag_scope_holder.scope
+        title = session.title.strip() if session.title else ""
+        target_label = title or "this conversation"
+        media_lister, notes_lister, tag_lister = self._console_scope_picker_listers()
+
+        def _on_save(scope: Optional[RagScope]) -> None:
+            self.run_worker(
+                self._apply_console_retrieval_scope_save(session, scope),
+                exclusive=True,
+                group="console-retrieval-scope-save",
+            )
+
+        self.app.push_screen(
+            ConsoleScopePickerModal(
+                target_label,
+                None,
+                initial,
+                _on_save,
+                media_lister=media_lister,
+                notes_lister=notes_lister,
+                tag_lister=tag_lister,
+            )
+        )
+
+    async def _clear_console_retrieval_scope(self) -> None:
+        """Clear the active Console session's RAG retrieval scope."""
+        session = self._active_native_console_session()
+        if session is None:
+            return
+        await self._apply_console_retrieval_scope_save(session, None)
+
+    async def _apply_console_retrieval_scope_save(
+        self,
+        session: ConsoleChatSession,
+        scope: Optional[RagScope],
+    ) -> None:
+        """Persist (or session-hold) a scope chosen in the picker modal.
+
+        A persisted conversation writes through ``write_conversation_scope``
+        off-loop; ``write_conversation_scope`` fails SOFT on corrupt
+        existing metadata (silently skips the write rather than raising or
+        erasing sibling metadata keys) -- this is detected here by
+        re-reading afterward: a non-``None`` target scope that reads back
+        as ``None`` means the write was refused, and an honest notify is
+        surfaced rather than a false "saved". A not-yet-persisted session
+        holds the scope in ``session.rag_scope_holder`` instead --
+        ``ConsoleChatStore.persist_session_if_needed`` flushes it through
+        exactly once, at first persistence. Either branch ends by
+        refreshing the Inspector row and the run-recipe line.
+
+        Args:
+            session: The Console session the scope applies to.
+            scope: The new scope, or ``None`` to clear it.
+        """
+        if session.persisted_conversation_id is not None:
+            conversation_id = session.persisted_conversation_id
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            if db is None:
+                self.app_instance.notify(
+                    "Couldn't save scope: no database is available.",
+                    severity="error",
+                )
+                return
+            try:
+                await self._write_console_retrieval_scope(db, conversation_id, scope)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Failed to write retrieval scope for conversation {}",
+                    conversation_id,
+                )
+                self.app_instance.notify(
+                    "Couldn't save scope: conversation metadata is corrupted.",
+                    severity="error",
+                )
+                return
+            after = await self._read_console_retrieval_scope(db, conversation_id)
+            if scope is not None and after is None:
+                self.app_instance.notify(
+                    "Couldn't save scope: conversation metadata is corrupted.",
+                    severity="error",
+                )
+                return
+            self._console_retrieval_scope_cache[conversation_id] = after
+        else:
+            session.rag_scope_holder.set(scope)
+        if self.is_mounted:
+            self._sync_console_retrieval_scope_row()
+            self._sync_console_control_bar()
+
+    @on(Button.Pressed, ".console-retrieval-scope-open-btn")
+    async def _console_retrieval_scope_open_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._open_console_retrieval_scope_picker()
+
+    @on(Button.Pressed, ".console-retrieval-scope-clear-btn")
+    async def _console_retrieval_scope_clear_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._clear_console_retrieval_scope()
+
     def _current_console_conversation_id(
         self,
         session_data: Optional[ChatSessionData] = None,
@@ -3478,6 +3708,13 @@ class ChatScreen(BaseAppScreen):
             settings=self._console_session_settings_for_resume(conversation),
         )
         self._set_active_workspace_for_console_session(session.id)
+        # task-9: warm the retrieval-scope cache for this conversation now
+        # (off-loop) so the Inspector row reflects reality immediately on
+        # resume, rather than defaulting to "everything" until the user
+        # opens Edit or saves a change (the picker's other two read
+        # triggers). Before the sync calls below so whichever of them
+        # (re)renders the row already sees the warm cache.
+        await self._warm_console_retrieval_scope_cache(target)
         # Finding C: resuming a saved conversation switches the active
         # conversation just as much as a tab switch does -- clear any
         # sub-agent drill-in immediately rather than rely solely on the
@@ -3488,6 +3725,26 @@ class ChatScreen(BaseAppScreen):
         await self._sync_native_console_chat_ui()
         self._focus_console_composer_if_needed(force=True)
         return True
+
+    async def _warm_console_retrieval_scope_cache(self, conversation_id: str) -> None:
+        """Populate the retrieval-scope cache for `conversation_id`, off-loop.
+
+        Args:
+            conversation_id: Persisted Chat conversation id to read the
+                stored RAG retrieval scope for.
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            self._console_retrieval_scope_cache[conversation_id] = None
+            return
+        try:
+            scope = await self._read_console_retrieval_scope(db, conversation_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to read retrieval scope for conversation {}", conversation_id
+            )
+            scope = None
+        self._console_retrieval_scope_cache[conversation_id] = scope
 
     def _build_console_workspace_context_state(
         self,
@@ -5814,6 +6071,7 @@ class ChatScreen(BaseAppScreen):
             mcp_tool_count=self._console_mcp_tool_count(),
             mcp_not_connected_count=self._console_mcp_not_connected_count(),
             can_save_chatbook=can_save_chatbook,
+            scope_item_count=self._console_retrieval_scope_run_recipe_count(),
         )
         setup_blocker_copy = self._console_provider_blocker_copy()
         if setup_blocker_copy:
@@ -7896,6 +8154,23 @@ class ChatScreen(BaseAppScreen):
                             variant=self._staged_context_frame_variant(
                                 staged_context_state
                             ),
+                        )
+                        # task-9: Retrieval scope row -- a sibling of the
+                        # Sources tray above (never a row inside it or
+                        # inside ConsoleRunInspector below: design spec
+                        # section 4 keeps the staged-vs-scope mechanism
+                        # boundary visible). Renders purely from session
+                        # state -- no DB reads on compose/recompose.
+                        retrieval_scope_row = ConsoleRetrievalScopeRow(
+                            self._build_console_retrieval_scope_state(),
+                            id=CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
+                            classes="console-inspector-context-section",
+                        )
+                        retrieval_scope_row.styles.width = "100%"
+                        retrieval_scope_row.styles.min_width = 0
+                        retrieval_scope_row.styles.height = "auto"
+                        yield self._frame_console_region(
+                            retrieval_scope_row, variant="quiet"
                         )
                         with Vertical(id="console-run-inspector"):
                             yield ConsoleRunInspector(

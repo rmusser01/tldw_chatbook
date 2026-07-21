@@ -81,8 +81,13 @@ class LibraryRagSearchOutcome:
     recovery_state: DestinationRecoveryState | None = None
     runtime_backend: str = ""
     #: Non-result-shaped notices a backend attaches to this outcome (e.g. the
-    #: conversations seam being excluded under an active scope, task-6).
-    #: Empty for every outcome that carries no such notice.
+    #: conversations and/or prompts seams being excluded under an active
+    #: scope, tasks 6/9). Empty for every outcome that carries no such
+    #: notice. ``LibraryLocalRagSearchService``'s scope-exclusion notices
+    #: live under the shared ``SCOPE_DIAGNOSTICS_KEY`` slot as a LIST of
+    #: ``{"status", "reason"}`` entries (task-9), never a single dict, so
+    #: conversations and prompts can both be recorded under one scoped call
+    #: without one silently overwriting the other.
     diagnostics: Mapping[str, Any] = field(default_factory=dict)
 
 
