@@ -1196,9 +1196,17 @@ class LibraryScreen(BaseAppScreen):
         ``screen.refresh(recompose=True)``, which replaces the footer widget;
         the registration must survive that.
         """
-        self.register_footer_shortcuts(
-            source="library", shortcuts=self.LIBRARY_SHORTCUTS
+        # task-420: the "u" action hard-gates on the Search/RAG row, so
+        # advertising it screen-wide made it a dead shortcut everywhere
+        # else -- register it only where it works, re-registered on every
+        # rail-row switch (the personas-style dynamic-context use of this
+        # API).
+        shortcuts = (
+            self.LIBRARY_SHORTCUTS
+            if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+            else ()
         )
+        self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
 
     def on_mount(self) -> None:
         """Populate the Library on entry, rendering instantly from cache.
@@ -6432,6 +6440,8 @@ class LibraryScreen(BaseAppScreen):
             self._notify_skill_dirty_veto()
             return
         self._library_selected_row_id = row_id
+        # task-420: keep the footer's "u" hint in sync with the row gate.
+        self._register_footer_shortcuts()
         # A rail-row press is always a fresh entry into a content type, so
         # the media canvas must never resume a previously opened viewer
         # (e.g. Browse Media -> open item -> Browse Conversations -> Browse
@@ -7678,7 +7688,6 @@ class LibraryScreen(BaseAppScreen):
     @on(Input.Changed, "#library-skill-description")
     @on(Input.Changed, "#library-skill-argument-hint")
     @on(Input.Changed, "#library-skill-allowed-tools")
-    @on(Input.Changed, "#library-skill-model")
     def handle_library_skill_input_changed(self, event: Input.Changed) -> None:
         """Mark the open skill dirty on a field edit.
 

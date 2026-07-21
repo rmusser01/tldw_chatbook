@@ -297,7 +297,9 @@ async def test_skill_editor_renders_all_field_ids_populated():
         model_hint = str(
             pilot.app.query_one("#library-skill-model-hint", Static).renderable
         )
-        assert model_hint == "Not applied in v1."
+        assert (
+            model_hint == "Not applied in v1 — shown for SKILL.md round-tripping only."
+        )
         body_area = pilot.app.query_one("#library-skill-body", TextArea)
         assert body_area.text == "Review the diff."
         supporting = str(
@@ -1712,3 +1714,49 @@ async def test_skill_editor_no_description_hint_for_real_description():
     app = _EditorHost(mode="editor", editor_state=state)
     async with app.run_test() as pilot:
         assert not pilot.app.query("#library-skill-description-hint")
+
+
+# ---------------------------------------------------------------------------
+# task-420: dead chrome -- the inert Model override input and the footer
+# "u" hint advertised on rows where the action is a no-op.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_model_override_is_read_only():
+    """The field has no runtime effect in v1: render it disabled (still
+    visible for SKILL.md round-tripping) instead of live-and-inert."""
+    state = _editor_state(model="gpt-4o")
+    app = _EditorHost(mode="editor", editor_state=state)
+    async with app.run_test() as pilot:
+        model_input = pilot.app.query_one("#library-skill-model", Input)
+        assert model_input.disabled is True
+        assert model_input.value == "gpt-4o"
+
+
+@pytest.mark.asyncio
+async def test_footer_u_hint_only_registered_on_search_row():
+    """task-420: the u action hard-gates on the Search/RAG row; the footer
+    hint must not advertise it anywhere else."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(available=[], blocked=[])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-skills").press()
+        await pilot.pause()
+        await pilot.pause()
+        source, shortcuts = screen._footer_shortcut_registration
+        assert shortcuts == ()
+
+        screen.query_one("#library-row-browse-search").press()
+        await pilot.pause()
+        await pilot.pause()
+        source, shortcuts = screen._footer_shortcut_registration
+        assert shortcuts and shortcuts[0][0] == "u"

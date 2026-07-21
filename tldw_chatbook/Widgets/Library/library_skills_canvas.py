@@ -84,7 +84,7 @@ _NEEDS_REVIEW_WARNING = (
     'Saving marks this skill "needs review" — re-approve it in the trust '
     "panel after saving."
 )
-MODEL_HINT_COPY = "Not applied in v1."
+MODEL_HINT_COPY = "Not applied in v1 — shown for SKILL.md round-tripping only."
 
 # Fix wave (Skills Phase-1 gate, FIX 2): a brand-new install has no trust
 # manifest at all (``trust_status == "trust_uninitialized"``) -- the Library
@@ -600,7 +600,14 @@ class LibrarySkillsListCanvas(VerticalScroll):
         yield Static(
             "Model override", classes="library-prompt-field-label", markup=False
         )
-        yield Input(value=editor_state.model or "", id="library-skill-model")
+        # task-420: the field has no runtime effect in v1 -- render it
+        # read-only (still visible for SKILL.md round-tripping of an
+        # imported skill's value) instead of live-and-inert.
+        yield Input(
+            value=editor_state.model or "",
+            id="library-skill-model",
+            disabled=True,
+        )
         yield Static(
             MODEL_HINT_COPY,
             id="library-skill-model-hint",
