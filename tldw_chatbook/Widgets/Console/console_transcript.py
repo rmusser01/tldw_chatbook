@@ -833,6 +833,14 @@ class ConsoleTranscript(VerticalScroll):
 
         previous_widget: Widget | None = None
         for index, row in enumerate(rows):
+            if self._closing or self._pruning or not self.is_attached:
+                # This instance is being removed (a parent recompose/session
+                # surface swap can prune the transcript between this loop's
+                # awaits). Widget.mount() silently no-ops while pruning, so
+                # continuing would record detached widgets in the row maps
+                # and then crash in move_child. The replacement instance
+                # composes fresh state; abandon this pass.
+                return
             widget = self._row_widgets.get(row.key)
             row_was_mounted = False
             if widget is None:

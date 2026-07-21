@@ -39,6 +39,20 @@ class _DraftSegment:
     label: str | None = None
 
 
+@dataclass
+class ConsoleDraftStash:
+    """A draft captured synchronously at the send keypress (TASK-340).
+
+    Holds the composer's real segment objects so paste provenance and
+    collapse state survive a restore, plus the canonical text the send
+    path uses as its payload.
+    """
+
+    segments: list[_DraftSegment]
+    text: str
+    has_paste: bool
+
+
 @dataclass(frozen=True)
 class _DraftSegmentDisplayRange:
     """Visible character range occupied by a segment display token."""
@@ -915,6 +929,52 @@ class ConsoleComposerBar(Horizontal):
         self._segments = [_DraftSegment(text)] if text else []
         self._segments_initialized = True
         self._cursor_index = len(text)
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
+
+    def stash_draft_for_send(self) -> ConsoleDraftStash | None:
+        """Capture and clear the draft synchronously at the send keypress.
+
+        Keystrokes processed after this call land in a fresh, empty draft —
+        they can never fold into the captured send payload (TASK-340). A
+        rejected send hands the stash back via ``restore_stashed_draft``.
+
+        Returns:
+            The captured stash, or ``None`` when the draft is empty (an
+            image-only send has nothing to capture or restore).
+        """
+        text = self.draft_text()
+        if not text:
+            return None
+        if not self._segments_initialized:
+            self._segments = [_DraftSegment(text)]
+            self._segments_initialized = True
+        stash = ConsoleDraftStash(
+            segments=self._segments,
+            text=text,
+            has_paste=self.has_paste_segments(),
+        )
+        self.clear_draft()
+        return stash
+
+    def restore_stashed_draft(self, stash: ConsoleDraftStash | None) -> None:
+        """Put a stashed draft back, ahead of anything typed since the stash.
+
+        The stashed segments are prepended so a rejected send reads exactly
+        as before the keypress, with later keystrokes appended after it;
+        paste provenance and collapse state come back untouched.
+        """
+        if stash is None or not stash.segments:
+            return
+        self._draft_selection_all = False
+        if not self._segments_initialized:
+            existing = self.draft_text()
+            self._segments = [_DraftSegment(existing)] if existing else []
+            self._segments_initialized = True
+        self._segments = list(stash.segments) + self._segments
+        self._cursor_index = len(self._canonical_draft_text())
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
