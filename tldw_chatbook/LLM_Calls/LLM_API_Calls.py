@@ -198,6 +198,33 @@ def _openai_use_responses_api(
     )
 
 
+_OPENAI_REASONING_MODEL_FAMILIES = ("o1", "o3", "o4", "gpt-5")
+
+
+def _is_openai_reasoning_model(model: object) -> bool:
+    """Return True for OpenAI reasoning-family models (o-series, gpt-5).
+
+    These models reject classic sampling parameters (``temperature``,
+    ``top_p``) with HTTP 400 on both the Chat Completions and Responses
+    APIs, so the handler must not inject its config-backed defaults for
+    them (task-404). Family names match exactly or at a ``-``/``.``
+    boundary so e.g. ``o365-copilot`` or ``olmo-7b`` never match.
+
+    Args:
+        model: Model identifier as passed to the OpenAI handler.
+
+    Returns:
+        True when the model belongs to a reasoning family.
+    """
+    normalized = str(model or "").strip().lower()
+    return any(
+        normalized == family
+        or normalized.startswith(family + "-")
+        or normalized.startswith(family + ".")
+        for family in _OPENAI_REASONING_MODEL_FAMILIES
+    )
+
+
 def _extract_openai_responses_text(response_data: Dict[str, Any]) -> str:
     output_text = response_data.get("output_text")
     if isinstance(output_text, str) and output_text:
@@ -533,11 +560,22 @@ def chat_with_openai(
         payload["input"] = api_messages
     else:
         payload["messages"] = api_messages
-    # Add optional parameters if they have a value
-    if final_temp is not None:
-        payload["temperature"] = final_temp
-    if final_top_p is not None:
-        payload["top_p"] = final_top_p  # OpenAI uses top_p
+    # Add optional parameters if they have a value. Reasoning-family models
+    # (and therefore every Responses-API request, which this handler only
+    # builds for reasoning params) reject temperature/top_p with HTTP 400,
+    # so the config-backed defaults must not be injected there (task-404).
+    omit_sampling_params = use_responses_api or _is_openai_reasoning_model(final_model)
+    if omit_sampling_params:
+        if temp is not None or maxp is not None:
+            logger.warning(
+                "OpenAI: dropping explicit temperature/top_p for reasoning "
+                f"model '{final_model}' — the API rejects them."
+            )
+    else:
+        if final_temp is not None:
+            payload["temperature"] = final_temp
+        if final_top_p is not None:
+            payload["top_p"] = final_top_p  # OpenAI uses top_p
     if final_max_tokens is not None and use_responses_api:
         payload["max_output_tokens"] = final_max_tokens
     elif final_max_tokens is not None:
