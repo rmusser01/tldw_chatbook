@@ -74,10 +74,15 @@ def _normalize_world_info_history(
 
     ``WorldInfoProcessor.process_messages`` types content as ``str``; native
     provider messages may carry multimodal list content, so extract the text
-    parts (joined) and drop images before scanning.
+    parts (joined) and drop images before scanning. System messages are
+    skipped entirely -- world-info should scan only the user/assistant
+    conversation, matching the legacy path; keywords in the system prompt
+    must not spuriously activate entries.
     """
     out: list[dict[str, Any]] = []
     for message in messages:
+        if message.get("role") == ConsoleMessageRole.SYSTEM.value:
+            continue
         content = message.get("content")
         if isinstance(content, str):
             text = content
@@ -1793,20 +1798,27 @@ class ConsoleChatController:
                 )
                 if injected == combined:
                     return provider_messages
+                prefix, _, suffix = injected.partition(combined)
+                text_indices = [
+                    i
+                    for i, part in enumerate(content)
+                    if isinstance(part, dict)
+                    and part.get("type") == "text"
+                    and isinstance(part.get("text"), str)
+                ]
+                first_idx = text_indices[0]
+                last_idx = text_indices[-1]
                 new_parts: list[Any] = []
-                first_text_done = False
-                for part in content:
-                    if (
-                        isinstance(part, dict)
-                        and part.get("type") == "text"
-                        and isinstance(part.get("text"), str)
-                    ):
-                        if not first_text_done:
-                            new_parts.append({**part, "text": injected})
-                            first_text_done = True
-                        # subsequent text parts are folded into the injected block
-                        continue
-                    new_parts.append(part)
+                for i, part in enumerate(content):
+                    if i == first_idx or i == last_idx:
+                        new_text = part["text"]
+                        if i == first_idx:
+                            new_text = prefix + new_text
+                        if i == last_idx:
+                            new_text = new_text + suffix
+                        new_parts.append({**part, "text": new_text})
+                    else:
+                        new_parts.append(part)
                 new_content = new_parts
             else:
                 return provider_messages

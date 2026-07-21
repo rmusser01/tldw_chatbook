@@ -131,3 +131,63 @@ async def test_apply_world_info_applier_none():
     messages = [{"role": ConsoleMessageRole.USER.value, "content": "a dragon appears"}]
     out = await controller._apply_world_info(messages, session.id)
     assert out[-1]["content"] == "a dragon appears"
+
+
+@pytest.mark.asyncio
+async def test_apply_world_info_history_excludes_system_message():
+    """Qodo finding: keywords in the system prompt must not spuriously
+    activate world-info entries -- the applier's `history` argument should
+    only ever contain user/assistant turns, never the leading system
+    message."""
+    captured = {}
+
+    def _recording_wi(conv_id, text, history):
+        captured["history"] = history
+        return f"[WI]\n\n{text}"
+
+    controller, store = _controller(_recording_wi)
+    session = _session_with_conv(store)
+    messages = [
+        {"role": "system", "content": "sys prompt mentioning dragon"},
+        {"role": "assistant", "content": "earlier reply"},
+        {"role": ConsoleMessageRole.USER.value, "content": "a dragon appears"},
+    ]
+    await controller._apply_world_info(messages, session.id)
+
+    history = captured["history"]
+    assert all(entry["role"] != "system" for entry in history)
+    assert any(entry["role"] == "assistant" for entry in history)
+
+
+@pytest.mark.asyncio
+async def test_apply_world_info_multimodal_preserves_interleaved_order():
+    """Gemini finding: folding all text parts into the first reorders
+    interleaved [Text1, Image1, Text2] content. The injection must instead
+    be partitioned so the prefix lands on the first text part, the suffix
+    lands on the last text part, and images/other parts stay in place."""
+
+    def _stub_wi_wrap(conv_id, text, history):
+        return f"[START]\n\n{text}\n\n[END]"
+
+    controller, store = _controller(_stub_wi_wrap)
+    session = _session_with_conv(store)
+    image_part = {
+        "type": "image_url",
+        "image_url": {"url": "data:image/png;base64,AAAA"},
+    }
+    messages = [
+        {
+            "role": ConsoleMessageRole.USER.value,
+            "content": [
+                {"type": "text", "text": "Text1"},
+                image_part,
+                {"type": "text", "text": "Text2"},
+            ],
+        }
+    ]
+    out = await controller._apply_world_info(messages, session.id)
+
+    parts = out[-1]["content"]
+    assert parts[0] == {"type": "text", "text": "[START]\n\nText1"}
+    assert parts[1] is image_part
+    assert parts[2] == {"type": "text", "text": "Text2\n\n[END]"}
