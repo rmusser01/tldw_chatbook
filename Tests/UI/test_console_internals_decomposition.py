@@ -3178,9 +3178,11 @@ async def test_console_native_control_bar_and_staged_context_reflect_pending_han
     }
     host = ConsoleHarness(app)
 
-    # Task-398: staged context renders in the Inspector rail, which the
-    # pending launch auto-opens only at standard widths (>= 150 columns) --
-    # narrower terminals keep it behind the badged Inspector handle.
+    # Task-398: staged context renders in the Inspector rail. The pending
+    # launch auto-open is suppressed while the rail is force-collapsed
+    # (widths under 150 columns OUTSIDE the 118-128 standard-width contract,
+    # which auto-opens a fresh Inspector on its own); 170 columns keeps the
+    # auto-open effective so the staged text is measurable here.
     async with host.run_test(size=(170, 42)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-control-bar")

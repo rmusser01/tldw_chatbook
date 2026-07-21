@@ -2480,10 +2480,10 @@ ConsoleSystemPromptModal {
     margin: 1 0 0 0;
 }
 
-/* Context (staged sources) section in the Inspector rail (task-398): same
-   top-margin rhythm as the source-readiness card it sits directly above. */
+/* Context (staged sources) section pinned at the top of the Inspector rail
+   body (task-398): bottom margin separates it from the run inspector below. */
 .console-inspector-context-section {
-    margin: 1 0 0 0;
+    margin: 0 0 1 0;
     padding: 0 1;
 }
 

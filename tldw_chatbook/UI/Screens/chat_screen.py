@@ -6838,17 +6838,11 @@ class ChatScreen(BaseAppScreen):
                 rail_body = self.query_one(
                     "#console-inspector-rail-body", VerticalScroll
                 )
-                # Task-398: the Context (staged sources) section sits between
-                # the run inspector and the live-work card, so swapped cards
-                # anchor after the staged-context tray to stay directly below
-                # it. The run-inspector fallback covers a mid-recompose gap
-                # where the tray is not mounted yet.
-                try:
-                    anchor: Any = self.query_one(
-                        "#console-staged-context-tray", ConsoleStagedContextTray
-                    )
-                except QueryError:
-                    anchor = self.query_one("#console-run-inspector", Vertical)
+                # Task-398: the Context (staged sources) tray is pinned at
+                # the TOP of the rail body, so live-work cards keep their
+                # pre-move anchor -- mounted after the run-inspector block,
+                # at the bottom of the rail body.
+                anchor = self.query_one("#console-run-inspector", Vertical)
             except QueryError:
                 return
             for selector in (
@@ -7386,24 +7380,16 @@ class ChatScreen(BaseAppScreen):
                         id="console-inspector-rail-body",
                         classes="console-inspector-rail-body",
                     ):
-                        with Vertical(id="console-run-inspector"):
-                            yield ConsoleRunInspector(
-                                inspector_state,
-                                id="console-run-inspector-state",
-                            )
-                            settings_summary = ConsoleSettingsSummary(
-                                self._build_console_settings_summary_state(),
-                                id="console-settings-summary",
-                                classes="console-inspector-session-settings console-settings-summary",
-                            )
-                            settings_summary.styles.width = "100%"
-                            settings_summary.styles.min_width = 0
-                            yield settings_summary
                         # Context (staged sources) section -- moved here from
-                        # the left rail (task-398) so staged sources read
-                        # directly above the source-readiness/pending-launch
-                        # card below. Same pure display-state seam as before:
-                        # no DB reads on compose/recompose.
+                        # the left rail (task-398). Pinned to the TOP of the
+                        # Inspector body so it is visible without scrolling
+                        # and reads above the run inspector's Source
+                        # Readiness section (splitting the monolithic
+                        # ConsoleRunInspector at that boundary would have
+                        # meant reworking its TASK-259 in-place-update
+                        # fingerprinting for a placement change). Same pure
+                        # display-state seam as before: no DB reads on
+                        # compose/recompose.
                         staged_context_tray = ConsoleStagedContextTray(
                             staged_context_state,
                             id="console-staged-context-tray",
@@ -7424,6 +7410,19 @@ class ChatScreen(BaseAppScreen):
                                 staged_context_state
                             ),
                         )
+                        with Vertical(id="console-run-inspector"):
+                            yield ConsoleRunInspector(
+                                inspector_state,
+                                id="console-run-inspector-state",
+                            )
+                            settings_summary = ConsoleSettingsSummary(
+                                self._build_console_settings_summary_state(),
+                                id="console-settings-summary",
+                                classes="console-inspector-session-settings console-settings-summary",
+                            )
+                            settings_summary.styles.width = "100%"
+                            settings_summary.styles.min_width = 0
+                            yield settings_summary
                         if pending_launch:
                             yield from self._render_console_live_work_status_card(
                                 pending_launch

@@ -2894,7 +2894,13 @@ async def test_console_settings_modal_restores_freeform_model_after_provider_rou
 
 @pytest.mark.asyncio
 async def test_console_inspector_hosts_staged_context_above_source_readiness() -> None:
-    """Task-398: the Context section lives in the Inspector, not the left rail."""
+    """Task-398: the Context section tops the Inspector, not the left rail.
+
+    The tray is the FIRST child of the Inspector rail body so it is visible
+    without scrolling and reads above the run inspector's "Source Readiness"
+    section; the bottom "Live work sources" card keeps its pre-move slot
+    after the run-inspector block.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2905,20 +2911,19 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
         staged_context = console.query_one("#console-staged-context-tray")
         settings = console.query_one("#console-settings-summary")
         rail_body = console.query_one("#console-inspector-rail-body")
+        run_inspector = console.query_one("#console-run-inspector")
         readiness = console.query_one("#console-live-work-source-readiness")
         left_rail = console.query_one("#console-left-rail")
 
-        # The staged-context tray is a direct child of the Inspector rail
-        # body, between the run-inspector block and the readiness card.
+        # DOM order: tray first, then the run-inspector block (which renders
+        # the Source Readiness section), then the bottom readiness card.
         assert settings.parent.id == "console-run-inspector"
         assert staged_context.parent is rail_body
         assert readiness.parent is rail_body
         children = list(rail_body.children)
-        run_inspector_index = children.index(
-            console.query_one("#console-run-inspector")
-        )
-        assert run_inspector_index < children.index(staged_context)
-        assert children.index(staged_context) < children.index(readiness)
+        assert children.index(staged_context) == 0
+        assert children.index(staged_context) < children.index(run_inspector)
+        assert children.index(run_inspector) < children.index(readiness)
 
         # The left rail no longer hosts a Context section (header, body, or
         # tray): only Session, Model, Agent, and Details remain.
@@ -2926,16 +2931,22 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
         assert not list(console.query("#console-rail-section-header-context"))
         assert not list(console.query("#console-rail-section-body-context"))
 
-        # With the Inspector opened, the section measures directly above the
-        # source-readiness card.
+        # With the Inspector opened, the tray measures at the top of the rail
+        # body, above the run inspector's "Source Readiness" heading (the
+        # section the user sees) and above the bottom readiness card.
         await pilot.click("#console-inspector-rail-open")
+        readiness_heading = console.query_one(
+            "#console-inspector-source-readiness-heading"
+        )
         for _ in range(40):
             if (
                 staged_context.region.height > 0
-                and readiness.region.height > 0
+                and readiness_heading.region.height > 0
             ):
                 break
             await pilot.pause(0.05)
+        assert staged_context.region.y == rail_body.region.y
+        assert staged_context.region.y < readiness_heading.region.y
         assert staged_context.region.y < readiness.region.y
 
 

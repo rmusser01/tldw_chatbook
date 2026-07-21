@@ -458,12 +458,13 @@ async def test_console_left_rail_keeps_session_and_moves_staged_context_out():
         assert "Stage sources from Library" not in visible_text
         assert not list(rail.query("#console-staged-context-tray"))
 
-        # The staged-context tray now sits in the Inspector rail body,
-        # directly above the source-readiness card.
+        # The staged-context tray now tops the Inspector rail body, above
+        # the run inspector (Source Readiness section) and the bottom card.
         tray = console.query_one("#console-staged-context-tray")
         rail_body = console.query_one("#console-inspector-rail-body")
         assert tray.parent is rail_body
         children = list(rail_body.children)
+        assert children.index(tray) == 0
         readiness = console.query_one("#console-live-work-source-readiness")
         assert children.index(tray) < children.index(readiness)
 
