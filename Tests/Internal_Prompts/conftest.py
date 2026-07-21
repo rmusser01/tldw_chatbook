@@ -1,6 +1,7 @@
 import pytest
 
 
+# Automatically applies to every test module in Tests/Internal_Prompts/ so caplog captures loguru output.
 @pytest.fixture(autouse=True)
 def _loguru_to_caplog(caplog):
     import logging

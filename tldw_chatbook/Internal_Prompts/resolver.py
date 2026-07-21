@@ -11,6 +11,8 @@ import chain and out of config.py import cycles.
 
 from __future__ import annotations
 
+import re
+
 from loguru import logger
 
 from .catalog import CATALOG, PromptSpec
@@ -21,15 +23,33 @@ _warned_ids: set[str] = set()
 def safe_substitute(text: str, **values: object) -> str:
     """Replace only the exact ``{name}`` tokens named in ``values``.
 
-    All other braces (JSON examples, Ollama ``{{ .Prompt }}`` cruft, stray
-    user typos) pass through untouched. Cannot raise.
+    Single-pass: tokens introduced by substituted values are NOT re-expanded,
+    and all other braces (JSON examples, Ollama ``{{ .Prompt }}`` cruft,
+    stray user typos) pass through untouched. Cannot raise.
     """
-    for name, value in values.items():
-        text = text.replace("{" + name + "}", str(value))
-    return text
+    if not values:
+        return text
+    pattern = re.compile(
+        "|".join(re.escape("{" + name + "}") for name in values)
+    )
+    return pattern.sub(lambda m: str(values[m.group(0)[1:-1]]), text)
 
 
 def get_internal_prompt(prompt_id: str) -> str:
+    """Resolve the internal prompt, prioritizing override → legacy → default.
+
+    Never raises for user-caused problems (bad override text falls back to
+    default with a once-per-prompt warning).
+
+    Args:
+        prompt_id: Prompt identifier (e.g., "chat.system_prompt").
+
+    Returns:
+        Resolved prompt text with placeholders intact.
+
+    Raises:
+        KeyError: If prompt_id is not registered in CATALOG.
+    """
     spec = CATALOG[prompt_id]
 
     override = _extract_text(_config_value("internal_prompts." + prompt_id))
@@ -55,6 +75,18 @@ def get_internal_prompt(prompt_id: str) -> str:
 
 
 def render_internal_prompt(prompt_id: str, **values: object) -> str:
+    """Resolve and substitute placeholders in an internal prompt.
+
+    Args:
+        prompt_id: Prompt identifier (e.g., "chat.system_prompt").
+        **values: Placeholder values, e.g., name="Ada", context="...".
+
+    Returns:
+        Prompt text with placeholders replaced.
+
+    Raises:
+        KeyError: If prompt_id is not registered in CATALOG.
+    """
     return safe_substitute(get_internal_prompt(prompt_id), **values)
 
 

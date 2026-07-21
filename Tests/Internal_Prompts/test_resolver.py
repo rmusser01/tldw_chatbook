@@ -42,6 +42,13 @@ def test_substitute_never_raises_on_stray_braces():
     assert safe_substitute("{unclosed {weird}} {q}", q="ok") == "{unclosed {weird}} ok"
 
 
+def test_substitute_value_containing_token_not_reexpanded():
+    # Single-pass: a value that looks like another token must survive as-is,
+    # regardless of kwarg order.
+    assert safe_substitute("{a} {b}", b="{a}", a="X") == "X {a}"
+    assert safe_substitute("{a} {b}", a="X", b="{a}") == "X {a}"
+
+
 # --- precedence ------------------------------------------------------------
 
 def test_default_when_no_config(demo_spec, scratch_config):
