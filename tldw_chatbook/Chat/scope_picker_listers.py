@@ -35,6 +35,7 @@ import asyncio
 from collections.abc import Mapping
 from typing import Any
 
+from tldw_chatbook.DB.Client_Media_DB_v2 import fetch_keywords_for_media_batch
 from tldw_chatbook.Library.library_fts_query import build_fts_match_query
 from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     SORT_TITLE,
@@ -70,9 +71,22 @@ _MEDIA_ID_ONLY_LIMIT = 5000
 #: to fix (found during task-9 testing; flagged for a follow-up). Sorting
 #: client-side over a bounded recency-ordered window sidesteps it entirely.
 _MEDIA_TITLE_SORT_FETCH_CAP = 500
+#: Bounded, text-filtered candidate window for client-side OR-of-tags
+#: matching when 2+ tags are selected (task-9 review finding 3):
+#: ``search_media``'s ``must_have_keywords`` filter is AND-only at the DB
+#: layer, so multi-tag OR semantics are computed here instead, mirroring
+#: ``_NotesSourceLister._matching``'s same client-side-OR pattern. Only the
+#: TAG filter moves client-side -- the text query itself still runs
+#: server-side, so it stays ANDed against the OR'd tags. Mirrors
+#: ``_NOTES_FETCH_CAP``/``_MEDIA_TITLE_SORT_FETCH_CAP``'s bounded-fetch
+#: precedent (a filter matching more than this many candidates is a
+#: documented v1 edge case, not a silent-wrong-result bug).
+_MEDIA_TAG_OR_FETCH_CAP = 500
 
 
-def _media_scope_item(row: Mapping[str, Any]) -> ScopeListItem:
+def _media_scope_item(
+    row: Mapping[str, Any], tags: tuple[str, ...] = ()
+) -> ScopeListItem:
     """Build a ``ScopeListItem`` from one ``media_reading_scope_service.search_media``
     normalized row.
 
@@ -82,12 +96,17 @@ def _media_scope_item(row: Mapping[str, Any]) -> ScopeListItem:
     identity -- never the seam's own ``id`` field, which is a
     backend-prefixed canonical string (``"local:media:<id>"``) used for
     cross-backend routing, not the RAG index's ``source_id`` stamp.
+
+    ``tags`` defaults to ``()`` for the untagged/single-tag path (unchanged
+    behavior -- those items' tags were never surfaced here and nothing
+    downstream reads them); the multi-tag OR path (task-9 review finding 3)
+    passes the item's actual keyword tags through instead.
     """
     return ScopeListItem(
         source_id=str(row.get("source_id") or row.get("id") or ""),
         title=str(row.get("title") or ""),
         updated_at=str(row.get("updated_at") or ""),
-        tags=(),
+        tags=tags,
     )
 
 
@@ -96,11 +115,14 @@ class _MediaSourceLister:
 
     Tag filtering (picker tag chips active) forwards as the seam's
     ``must_have_keywords`` filter, which is an ALL-of-selected-tags (AND)
-    match at the DB layer -- the seam exposes no OR-of-keywords filter.
-    This is narrower than the design spec's "multi-tag OR" semantics for
-    the media source specifically: a documented v1 limitation (fewer
-    matches shown when 2+ tags are active, never a wrong/extra match), not
-    a functional bug.
+    match at the DB layer -- the seam exposes no OR-of-keywords filter. For
+    a SINGLE selected tag this is identical to the design spec's OR
+    semantics (AND of one term == OR of one term), so that path is left
+    alone. For TWO OR MORE selected tags, OR is computed client-side
+    instead (task-9 review finding 3, see ``_MEDIA_TAG_OR_FETCH_CAP``):
+    ``must_have_keywords`` is no longer forwarded, and matching batch-fetches
+    each candidate's tags via ``fetch_keywords_for_media_batch`` and keeps
+    any item sharing at least one tag with the selection.
     """
 
     def __init__(self, app: Any) -> None:
@@ -109,9 +131,90 @@ class _MediaSourceLister:
     def _service(self) -> Any:
         return getattr(self._app, "media_reading_scope_service", None)
 
+    def _media_db(self) -> Any:
+        return getattr(self._app, "media_db", None)
+
+    async def _keywords_for_media(
+        self, media_ids: tuple[str, ...]
+    ) -> dict[str, tuple[str, ...]]:
+        """Batch-fetch keyword tags for a set of media ids, off-loop.
+
+        Single query via ``fetch_keywords_for_media_batch`` (task-9 review
+        finding 3) -- mirrors ``_NotesSourceLister._tags_for``'s per-item
+        seam, but batched since the media DB exposes a batch query and the
+        notes DB does not. Degrades to an empty mapping (no matches) on any
+        missing seam or query failure -- callers already only reach here
+        under an active tag filter, so a broken lookup must never widen to
+        "everything matches".
+        """
+        db = self._media_db()
+        if db is None or not media_ids:
+            return {}
+        try:
+            int_ids = [int(media_id) for media_id in media_ids]
+        except (TypeError, ValueError):
+            return {}
+        try:
+            keywords_by_id = await asyncio.to_thread(
+                fetch_keywords_for_media_batch, db, int_ids
+            )
+        except Exception:
+            return {}
+        return {
+            str(media_id): tuple(keywords)
+            for media_id, keywords in keywords_by_id.items()
+        }
+
+    async def _matching_multi_tag(
+        self, *, text: str, tags: tuple[str, ...]
+    ) -> list[ScopeListItem]:
+        """Client-side OR-of-tags match over a bounded, text-filtered window.
+
+        Only reached for 2+ selected tags -- see the class docstring and
+        ``_MEDIA_TAG_OR_FETCH_CAP``.
+        """
+        service = self._service()
+        if service is None:
+            return []
+        try:
+            payload = await service.search_media(
+                mode="local",
+                query=text or None,
+                limit=_MEDIA_TAG_OR_FETCH_CAP,
+                offset=0,
+                sort_by="last_modified_desc",
+            )
+        except Exception:
+            return []
+        items = payload.get("items", []) if isinstance(payload, Mapping) else []
+        rows = [row for row in items if isinstance(row, Mapping)]
+        media_ids = tuple(
+            str(row.get("source_id") or row.get("id") or "")
+            for row in rows
+            if row.get("source_id") or row.get("id")
+        )
+        tags_by_id = await self._keywords_for_media(media_ids)
+        tag_set = set(tags)
+        matched: list[ScopeListItem] = []
+        for row in rows:
+            source_id = str(row.get("source_id") or row.get("id") or "")
+            item_tags = tags_by_id.get(source_id, ())
+            if not (tag_set & set(item_tags)):
+                continue
+            matched.append(_media_scope_item(row, item_tags))
+        return matched
+
     async def list_page(
         self, *, text: str, tags: tuple[str, ...], sort: str, offset: int, limit: int
     ) -> ScopeListPage:
+        if len(tags) >= 2:
+            matched = await self._matching_multi_tag(text=text, tags=tags)
+            if sort == SORT_TITLE:
+                matched.sort(key=lambda item: item.title.lower())
+            else:
+                matched.sort(key=lambda item: item.updated_at or "", reverse=True)
+            page = tuple(matched[offset : offset + limit])
+            return ScopeListPage(items=page, total_matching=len(matched))
         if sort == SORT_TITLE:
             return await self._list_page_title_sorted(
                 text=text, tags=tags, offset=offset, limit=limit
@@ -148,7 +251,9 @@ class _MediaSourceLister:
         """Title-sort path: DB-side recency fetch + client-side sort/page.
 
         See ``_MEDIA_TITLE_SORT_FETCH_CAP`` for why this avoids
-        ``search_media_db``'s own (currently broken) title sort.
+        ``search_media_db``'s own (currently broken) title sort. Only
+        reached for 0/1 selected tags (see ``list_page``); 2+ tags route
+        through ``_matching_multi_tag`` instead.
         """
         service = self._service()
         if service is None:
@@ -173,6 +278,9 @@ class _MediaSourceLister:
         return ScopeListPage(items=page, total_matching=len(rows))
 
     async def list_ids(self, *, text: str, tags: tuple[str, ...]) -> tuple[str, ...]:
+        if len(tags) >= 2:
+            matched = await self._matching_multi_tag(text=text, tags=tags)
+            return tuple(item.source_id for item in matched)
         service = self._service()
         if service is None:
             return ()

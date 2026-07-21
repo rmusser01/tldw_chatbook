@@ -107,6 +107,94 @@ async def test_media_lister_paginates_and_sorts_by_title(lister_stack):
 
 
 @pytest.mark.asyncio
+async def test_media_lister_multi_tag_selection_is_or_not_and(lister_stack):
+    """task-9 review finding 3: selecting 2+ tags must OR them (any
+    selected tag matches), not AND (all selected tags required) --
+    ``search_media``'s own ``must_have_keywords`` filter is AND-only at the
+    DB layer, so multi-tag selection is computed client-side instead (like
+    ``_NotesSourceLister._matching``'s existing client-side-OR pattern)."""
+    app, _chachanotes_db, media_db, _notes_interop = lister_stack
+    sales_id, _u1, _m1 = media_db.add_media_with_keywords(
+        title="Sales report",
+        media_type="document",
+        content="sales body",
+        keywords=["sales"],
+    )
+    q3_id, _u2, _m2 = media_db.add_media_with_keywords(
+        title="Q3 summary",
+        media_type="document",
+        content="q3 body",
+        keywords=["q3"],
+    )
+    both_id, _u3, _m3 = media_db.add_media_with_keywords(
+        title="Sales Q3 combo",
+        media_type="document",
+        content="combo body",
+        keywords=["sales", "q3"],
+    )
+    neither_id, _u4, _m4 = media_db.add_media_with_keywords(
+        title="Unrelated",
+        media_type="document",
+        content="unrelated body",
+    )
+    lister = build_media_source_lister(app)
+
+    ids = await lister.list_ids(text="", tags=("sales", "q3"))
+
+    assert set(ids) == {str(sales_id), str(q3_id), str(both_id)}
+    assert str(neither_id) not in ids
+
+
+@pytest.mark.asyncio
+async def test_media_lister_single_tag_semantics_unchanged(lister_stack):
+    """A single selected tag keeps the existing (unchanged) seam-side AND
+    path -- AND of one tag is identical to OR of one tag, so this must
+    behave exactly as before the finding-3 fix."""
+    app, _chachanotes_db, media_db, _notes_interop = lister_stack
+    sales_id, _u1, _m1 = media_db.add_media_with_keywords(
+        title="Sales report",
+        media_type="document",
+        content="sales body",
+        keywords=["sales"],
+    )
+    media_db.add_media_with_keywords(
+        title="Q3 summary",
+        media_type="document",
+        content="q3 body",
+        keywords=["q3"],
+    )
+    lister = build_media_source_lister(app)
+
+    ids = await lister.list_ids(text="", tags=("sales",))
+
+    assert ids == (str(sales_id),)
+
+
+@pytest.mark.asyncio
+async def test_media_lister_multi_tag_still_ands_against_text_query(lister_stack):
+    """Multi-tag OR still ANDs against the text query: only items matching
+    the text query AND at least one of the selected tags are returned."""
+    app, _chachanotes_db, media_db, _notes_interop = lister_stack
+    matching_id, _u1, _m1 = media_db.add_media_with_keywords(
+        title="Roadmap sales doc",
+        media_type="document",
+        content="roadmap sales content",
+        keywords=["sales"],
+    )
+    media_db.add_media_with_keywords(
+        title="Unrelated q3 doc",
+        media_type="document",
+        content="unrelated q3 content",
+        keywords=["q3"],
+    )
+    lister = build_media_source_lister(app)
+
+    ids = await lister.list_ids(text="roadmap", tags=("sales", "q3"))
+
+    assert ids == (str(matching_id),)
+
+
+@pytest.mark.asyncio
 async def test_media_lister_missing_seam_degrades_to_empty():
     app = SimpleNamespace(media_reading_scope_service=None)
     lister = build_media_source_lister(app)

@@ -2675,6 +2675,7 @@ class ChatScreen(BaseAppScreen):
             self._console_chat_store = ConsoleChatStore(
                 persistence=persistence,
                 workspace_context=self._current_console_workspace_context(),
+                on_scope_flushed=self._on_console_scope_flushed,
             )
         return self._console_chat_store
 
@@ -3297,6 +3298,15 @@ class ChatScreen(BaseAppScreen):
         exactly once, at first persistence. Either branch ends by
         refreshing the Inspector row and the run-recipe line.
 
+        ``write_conversation_scope`` can also raise (task-9 review finding
+        4): a ``ConflictError`` (optimistic-lock version race -- a
+        concurrent write, e.g. a dictionary attach/detach, landed on the
+        same conversation row between read and write; real per PR #734's
+        docs) and a ``ValueError`` (the conversation no longer exists) are
+        both genuine, distinct failure modes -- neither is "corrupted
+        metadata", so each gets its own honest notify instead of the
+        generic corrupt-metadata wording.
+
         Args:
             session: The Console session the scope applies to.
             scope: The new scope, or ``None`` to clear it.
@@ -3310,8 +3320,31 @@ class ChatScreen(BaseAppScreen):
                     severity="error",
                 )
                 return
+            from ...DB.ChaChaNotes_DB import ConflictError
+
             try:
                 await self._write_console_retrieval_scope(db, conversation_id, scope)
+            except ConflictError:
+                logger.opt(exception=True).warning(
+                    "Retrieval scope write conflict for conversation {}",
+                    conversation_id,
+                )
+                self.app_instance.notify(
+                    "Couldn't save scope: the conversation was modified "
+                    "concurrently — try again.",
+                    severity="error",
+                )
+                return
+            except ValueError:
+                logger.opt(exception=True).warning(
+                    "Retrieval scope write target missing for conversation {}",
+                    conversation_id,
+                )
+                self.app_instance.notify(
+                    "Couldn't save scope: this conversation no longer exists.",
+                    severity="error",
+                )
+                return
             except Exception:
                 logger.opt(exception=True).warning(
                     "Failed to write retrieval scope for conversation {}",
@@ -3745,6 +3778,28 @@ class ChatScreen(BaseAppScreen):
             )
             scope = None
         self._console_retrieval_scope_cache[conversation_id] = scope
+
+    def _on_console_scope_flushed(
+        self, conversation_id: str, scope: Optional[RagScope]
+    ) -> None:
+        """Keep the retrieval-scope cache in sync with a first-persist flush.
+
+        Wired into ``ConsoleChatStore`` as ``on_scope_flushed`` (task-9
+        review finding 1). ``persist_session_if_needed`` calls this the
+        moment it flushes a not-yet-persisted session's held
+        ``SessionScopeHolder`` scope through to durable storage -- the real
+        message-send path (``append_message(..., persist=True)`` ->
+        ``_persist_new_message_or_defer``) reaches that flush with none of
+        the Inspector row's other three read triggers (resume, modal-open,
+        after-save) in between. Without this hook the row would keep
+        rendering "everything" for the newly persisted conversation id
+        until the user reopened Edit or saved a change, even though the
+        scope was written correctly.
+        """
+        self._console_retrieval_scope_cache[conversation_id] = scope
+        if self.is_mounted:
+            self._sync_console_retrieval_scope_row()
+            self._sync_console_control_bar()
 
     def _build_console_workspace_context_state(
         self,

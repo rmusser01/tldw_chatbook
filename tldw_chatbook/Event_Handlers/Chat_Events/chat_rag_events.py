@@ -388,7 +388,17 @@ def _notify_semantic_leg_state(
             is keyword-only; no results at all means semantic retrieval
             contributed nothing and there is no context either.
     """
-    scope_state = diagnostics.get(SCOPE_DIAGNOSTICS_KEY) or {}
+    # SCOPE_DIAGNOSTICS_KEY is a LIST of entries (task-9 review finding 2 --
+    # normalized to the same append-to-list convention
+    # ``library_local_rag_search_service`` uses, since more than one leg can
+    # record into it during a single call, e.g. several parallel legs each
+    # failing closed on the same EMPTY scope). Find the relevant entry
+    # rather than assuming the whole slot is one dict.
+    scope_entries = diagnostics.get(SCOPE_DIAGNOSTICS_KEY) or []
+    scope_state = next(
+        (entry for entry in scope_entries if entry.get("status") == SCOPE_STATUS_EMPTY),
+        {},
+    )
     if scope_state.get("status") == SCOPE_STATUS_EMPTY:
         cause = scope_state.get("cause") or "unknown"
         notification = SCOPE_EMPTY_NOTICE_TEMPLATE.format(cause=cause)
@@ -428,7 +438,10 @@ def _record_scope_empty(diagnostics: Dict[str, Any], cause: Optional[str]) -> No
     shape for the shared ``SCOPE_DIAGNOSTICS_KEY`` diagnostics slot, but for
     the EMPTY case: no leg ever runs (see ``get_rag_context_for_chat``'s
     short-circuit), so this is written directly by the caller rather than by
-    a pipeline leg.
+    a pipeline leg. Appended (not assigned) to a list, matching
+    ``pipeline_functions_simple``'s own writers (task-9 review finding 2) --
+    every reader of ``SCOPE_DIAGNOSTICS_KEY`` sees the same list shape
+    regardless of which writer populated it.
 
     Args:
         diagnostics: The diagnostics dict to record into (never ``None``
@@ -436,11 +449,13 @@ def _record_scope_empty(diagnostics: Dict[str, Any], cause: Optional[str]) -> No
         cause: The ``EffectiveScope.cause`` explaining why resolution landed
             on EMPTY (``"no-workspace-overlap"`` or ``"deleted-items"``).
     """
-    diagnostics[SCOPE_DIAGNOSTICS_KEY] = {
-        "status": SCOPE_STATUS_EMPTY,
-        "reason": SCOPE_REASON_EMPTY,
-        "cause": cause,
-    }
+    diagnostics.setdefault(SCOPE_DIAGNOSTICS_KEY, []).append(
+        {
+            "status": SCOPE_STATUS_EMPTY,
+            "reason": SCOPE_REASON_EMPTY,
+            "cause": cause,
+        }
+    )
 
 
 def _active_console_session(app: "TldwCli") -> Optional[Any]:
@@ -553,9 +568,12 @@ async def resolve_effective_scope_for_chat(app: "TldwCli") -> EffectiveScope:
     conversation is persisted, its scope is read from storage
     (``read_conversation_scope``). When the session has not been persisted
     yet, an in-session ``SessionScopeHolder`` attached to the session object
-    (``session.rag_scope_holder``, duck-typed) is consulted instead -- a
-    forward-compat seam for the not-yet-built scope-picker UI; no production
-    session carries one yet, so unpersisted sessions resolve unscoped today.
+    (``session.rag_scope_holder``, duck-typed) is consulted instead -- this
+    holder is live in production (task-9): the Console's RAG retrieval-scope
+    picker populates it when a user narrows an unpersisted session's scope
+    before its first send, and ``ConsoleChatStore.persist_session_if_needed``
+    flushes it through to durable storage exactly once, at first
+    persistence.
 
     Workspace scope resolution is out of scope for this task (Phase 3 of the
     rag-scope-narrowing program wires it); always passed as ``None`` here.

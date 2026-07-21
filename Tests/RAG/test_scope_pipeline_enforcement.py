@@ -348,10 +348,12 @@ class TestConversationsLegExclusion:
         )
 
         assert results == []
-        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == {
-            "status": SCOPE_STATUS_EXCLUDED,
-            "reason": SCOPE_REASON_CONVERSATIONS_EXCLUDED,
-        }
+        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == [
+            {
+                "status": SCOPE_STATUS_EXCLUDED,
+                "reason": SCOPE_REASON_CONVERSATIONS_EXCLUDED,
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_unscoped_conversations_search_is_zero_drift(self, cha_db):
@@ -580,9 +582,10 @@ class TestCustomPipelineInheritance:
         assert by_source["media"] == media_ids[0]
         assert by_source["note"] == note_ids[0]
         assert "conversation" not in by_source
-        assert diagnostics[SCOPE_DIAGNOSTICS_KEY]["reason"] == (
+        scope_entries = diagnostics[SCOPE_DIAGNOSTICS_KEY]
+        assert [entry["reason"] for entry in scope_entries] == [
             SCOPE_REASON_CONVERSATIONS_EXCLUDED
-        )
+        ]
         assert len(spy.search_calls) == 2  # one per source_type, not one flat call
 
     @pytest.mark.asyncio
@@ -645,11 +648,13 @@ class TestEmptyScopeFailsClosedAtEachLeg:
         )
 
         assert results == []
-        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == {
-            "status": SCOPE_STATUS_EMPTY,
-            "reason": SCOPE_REASON_EMPTY,
-            "cause": "deleted-items",
-        }
+        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == [
+            {
+                "status": SCOPE_STATUS_EMPTY,
+                "reason": SCOPE_REASON_EMPTY,
+                "cause": "deleted-items",
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_notes_leg_empty_scope_fails_closed(self):
@@ -661,11 +666,13 @@ class TestEmptyScopeFailsClosedAtEachLeg:
         )
 
         assert results == []
-        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == {
-            "status": SCOPE_STATUS_EMPTY,
-            "reason": SCOPE_REASON_EMPTY,
-            "cause": "deleted-items",
-        }
+        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == [
+            {
+                "status": SCOPE_STATUS_EMPTY,
+                "reason": SCOPE_REASON_EMPTY,
+                "cause": "deleted-items",
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_conversations_leg_empty_scope_fails_closed(self):
@@ -677,11 +684,13 @@ class TestEmptyScopeFailsClosedAtEachLeg:
         )
 
         assert results == []
-        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == {
-            "status": SCOPE_STATUS_EMPTY,
-            "reason": SCOPE_REASON_EMPTY,
-            "cause": "deleted-items",
-        }
+        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == [
+            {
+                "status": SCOPE_STATUS_EMPTY,
+                "reason": SCOPE_REASON_EMPTY,
+                "cause": "deleted-items",
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_semantic_leg_empty_scope_fails_closed(self):
@@ -698,11 +707,13 @@ class TestEmptyScopeFailsClosedAtEachLeg:
         )
 
         assert results == []
-        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == {
-            "status": SCOPE_STATUS_EMPTY,
-            "reason": SCOPE_REASON_EMPTY,
-            "cause": "deleted-items",
-        }
+        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == [
+            {
+                "status": SCOPE_STATUS_EMPTY,
+                "reason": SCOPE_REASON_EMPTY,
+                "cause": "deleted-items",
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_no_diagnostics_dict_is_a_safe_no_op(self):
@@ -777,11 +788,18 @@ class TestEmptyScopeFailsClosedThroughPipeline:
 
         assert results == []
         assert spy.search_calls == []  # semantic leg never called the service
-        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == {
+        # All four legs independently fail closed on the same EMPTY scope and
+        # each records its own entry (task-9 review finding 2: appended, not
+        # assigned, so one leg's entry never clobbers another's).
+        scope_entries = diagnostics[SCOPE_DIAGNOSTICS_KEY]
+        assert scope_entries
+        expected_entry = {
             "status": SCOPE_STATUS_EMPTY,
             "reason": SCOPE_REASON_EMPTY,
             "cause": "deleted-items",
         }
+        assert all(entry == expected_entry for entry in scope_entries)
+        assert len(scope_entries) == 4  # media, notes, conversations, semantic
 
 
 # === Task-5: chat entry point (get_rag_context_for_chat) end to end ===
@@ -958,11 +976,16 @@ class TestChatEntryPointEmptyScopeShortCircuit:
 
         assert context is None
         assert captured["results"] is None
-        assert captured["diagnostics"][SCOPE_DIAGNOSTICS_KEY] == {
-            "status": SCOPE_STATUS_EMPTY,
-            "reason": SCOPE_REASON_EMPTY,
-            "cause": "deleted-items",
-        }
+        # The caller-side short-circuit (chat_rag_events._record_scope_empty)
+        # records a single entry, same appended-list shape as every pipeline
+        # leg's own writer (task-9 review finding 2).
+        assert captured["diagnostics"][SCOPE_DIAGNOSTICS_KEY] == [
+            {
+                "status": SCOPE_STATUS_EMPTY,
+                "reason": SCOPE_REASON_EMPTY,
+                "cause": "deleted-items",
+            }
+        ]
         assert any(
             "retrieval scope is empty" in message.lower()
             and "deleted-items" in message.lower()

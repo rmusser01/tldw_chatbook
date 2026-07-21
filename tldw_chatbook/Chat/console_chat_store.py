@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, Protocol, Sequence
+from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 from uuid import uuid4
 
 from loguru import logger
@@ -24,7 +24,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-from tldw_chatbook.Chat.rag_scope import SessionScopeHolder
+from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder
 
 #: Maximum number of attachments a Console session may stage before send.
 MAX_PENDING_ATTACHMENTS = 5
@@ -177,6 +177,7 @@ class ConsoleChatStore:
         sync_v2_server_profile_id: str | None = None,
         sync_v2_authenticated_principal_id: str | None = None,
         sync_v2_workspace_scope: str | None = None,
+        on_scope_flushed: Callable[[str, "RagScope | None"], None] | None = None,
     ) -> None:
         """Initialize the Console chat store.
 
@@ -190,6 +191,20 @@ class ConsoleChatStore:
             sync_v2_authenticated_principal_id: Optional authenticated principal scope
                 for Chat outbox entries.
             sync_v2_workspace_scope: Optional workspace scope for Chat outbox entries.
+            on_scope_flushed: Optional callback invoked with
+                ``(conversation_id, scope)`` immediately after
+                ``persist_session_if_needed`` successfully flushes a
+                session-held RAG retrieval scope (``SessionScopeHolder``)
+                through to durable storage at first persistence (task-9
+                review finding 1). This is the ONLY moment a session
+                transitions from "scope held in memory" to "scope persisted
+                under a new conversation id" without going through any of
+                the UI's other read triggers (resume, modal-open,
+                after-save) -- callers that keep a display-side cache keyed
+                by conversation id (e.g. the Console Inspector's retrieval-
+                scope row) use this hook to stay in sync instead of reading
+                stale/absent cache state. Never called when nothing was
+                held, or when the flush itself raised.
         """
         self.persistence = persistence
         self.workspace_context = workspace_context or ConsoleWorkspaceContext()
@@ -197,6 +212,7 @@ class ConsoleChatStore:
         self.sync_v2_server_profile_id = sync_v2_server_profile_id
         self.sync_v2_authenticated_principal_id = sync_v2_authenticated_principal_id
         self.sync_v2_workspace_scope = sync_v2_workspace_scope
+        self.on_scope_flushed = on_scope_flushed
         self.active_session_id: str | None = None
         self._sessions: dict[str, ConsoleChatSession] = {}
         self._messages_by_session: dict[str, list[ConsoleChatMessage]] = {}
@@ -999,6 +1015,10 @@ class ConsoleChatStore:
         # when the seam it needs is absent.
         persistence_db = getattr(self.persistence, "db", None)
         if persistence_db is not None:
+            # Captured BEFORE the flush -- `flush_to` empties the holder on
+            # success, so this is the only chance to learn what was
+            # actually written through (task-9 review finding 1).
+            flushed_scope = session.rag_scope_holder.scope
             try:
                 session.rag_scope_holder.flush_to(
                     persistence_db, session.persisted_conversation_id
@@ -1008,6 +1028,20 @@ class ConsoleChatStore:
                     session_id=session_id,
                     conversation_id=session.persisted_conversation_id,
                 ).exception("Failed to flush RAG retrieval scope on first persist.")
+            else:
+                if flushed_scope is not None and self.on_scope_flushed is not None:
+                    try:
+                        self.on_scope_flushed(
+                            session.persisted_conversation_id, flushed_scope
+                        )
+                    except Exception:
+                        logger.bind(
+                            session_id=session_id,
+                            conversation_id=session.persisted_conversation_id,
+                        ).exception(
+                            "on_scope_flushed callback raised after a "
+                            "successful RAG retrieval scope flush."
+                        )
         return session.persisted_conversation_id
 
     def set_session_system_prompt(

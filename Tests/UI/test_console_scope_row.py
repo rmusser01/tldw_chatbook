@@ -21,12 +21,13 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     _visible_text,
 )
 from Tests.UI.test_screen_navigation import _build_test_app
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.rag_scope import (
     RagScope,
     ScopeItem,
     read_conversation_scope,
 )
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from tldw_chatbook.Widgets.Console.console_retrieval_scope_row import (
     CLEAR_BTN_ID,
     EDIT_BTN_ID,
@@ -263,7 +264,22 @@ async def test_save_unpersisted_stores_in_holder_and_refreshes_row():
 
 
 @pytest.mark.asyncio
-async def test_save_persisted_writes_through_refreshes_row_and_run_recipe():
+async def test_scope_saved_unpersisted_then_first_send_flush_refreshes_row():
+    """task-9 review finding 1: narrow-then-first-send must not leave the
+    Inspector row stale.
+
+    Saving a scope on an UNPERSISTED session holds it in
+    ``session.rag_scope_holder``. The bug: when the first message send
+    later persists the session (``ConsoleChatStore.append_message(...,
+    persist=True)`` -> ``persist_session_if_needed``, which flushes the
+    holder to the DB and empties it), nothing told
+    ``ChatScreen._console_retrieval_scope_cache`` about the new
+    conversation id -- the row then rendered "everything" even though the
+    scope was persisted correctly. This drives the REAL message-send path
+    (``store.append_message(..., persist=True)``, exactly what
+    ``ConsoleChatController.submit_draft`` calls) with no modal-open/resume
+    read trigger in between.
+    """
     db = CharactersRAGDB(":memory:", "test-client")
     try:
         app = _build_test_app()
@@ -272,6 +288,58 @@ async def test_save_persisted_writes_through_refreshes_row_and_run_recipe():
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
             row = await _open_inspector_and_get_row(console, pilot)
+            store = console._ensure_console_chat_store()
+            session = console._active_native_console_session()
+            assert session.persisted_conversation_id is None
+            scope = RagScope(
+                items=(ScopeItem("media", "m1"), ScopeItem("note", "n1")),
+                updated_at="2026-01-01T00:00:00Z",
+            )
+
+            # 1. Narrow the scope FIRST, while still unpersisted.
+            await console._apply_console_retrieval_scope_save(session, scope)
+            assert session.rag_scope_holder.scope == scope
+            assert session.persisted_conversation_id is None
+
+            # 2. Persist via the real message-send path (no modal-open, no
+            # resume in between) -- mirrors
+            # ``ConsoleChatController.submit_draft``'s
+            # ``store.append_message(..., persist=True)`` call.
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.USER,
+                content="hello",
+                persist=True,
+            )
+            await pilot.pause()
+
+            assert session.persisted_conversation_id is not None
+            conversation_id = session.persisted_conversation_id
+            # The scope persisted correctly...
+            assert read_conversation_scope(db, conversation_id) == scope
+            # ...and the row must already reflect it (no modal-open/resume).
+            state = console._build_console_retrieval_scope_state()
+            assert state.is_scoped
+            assert state.item_count == 2
+            row = console.query_one(f"#{ROW_ID}")
+            assert (
+                _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
+                == "Scope: 2 items"
+            )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_save_persisted_writes_through_refreshes_row_and_run_recipe():
+    db = CharactersRAGDB(":memory:", "test-client")
+    try:
+        app = _build_test_app()
+        app.chachanotes_db = db
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(240, 64)) as pilot:
+            console = host.screen_stack[-1]
+            await _open_inspector_and_get_row(console, pilot)
             store = console._ensure_console_chat_store()
             session = console._active_native_console_session()
             conversation_id = store.persist_session_if_needed(session.id)
@@ -306,7 +374,7 @@ async def test_save_persisted_corrupt_metadata_surfaces_honest_notify():
         host = ConsoleHarness(app)
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
-            row = await _open_inspector_and_get_row(console, pilot)
+            await _open_inspector_and_get_row(console, pilot)
             store = console._ensure_console_chat_store()
             session = console._active_native_console_session()
             conversation_id = store.persist_session_if_needed(session.id)
@@ -336,6 +404,82 @@ async def test_save_persisted_corrupt_metadata_surfaces_honest_notify():
                 _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
                 == "Scope: everything"
             )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_save_persisted_conflict_error_surfaces_specific_notify():
+    """task-9 review finding 4: a version-conflict write (``ConflictError``
+    -- e.g. a concurrent dictionary-attach write racing the same
+    conversation row, real per PR #734 docs) must not be lumped in with the
+    generic "corrupted metadata" wording."""
+    db = CharactersRAGDB(":memory:", "test-client")
+    try:
+        app = _build_test_app()
+        app.chachanotes_db = db
+        notifications: list[tuple[str, dict]] = []
+        app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(240, 64)) as pilot:
+            console = host.screen_stack[-1]
+            await _open_inspector_and_get_row(console, pilot)
+            store = console._ensure_console_chat_store()
+            session = console._active_native_console_session()
+            conversation_id = store.persist_session_if_needed(session.id)
+
+            def _raise_conflict(*args, **kwargs):
+                raise ConflictError(
+                    "Version mismatch", entity="conversations", entity_id=conversation_id
+                )
+
+            db.update_conversation = _raise_conflict
+            scope = RagScope(
+                items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
+            )
+
+            await console._apply_console_retrieval_scope_save(session, scope)
+            await pilot.pause()
+
+            assert notifications, "expected an honest notify on write conflict"
+            message, kwargs = notifications[-1]
+            assert "concurrently" in message.lower()
+            assert "corrupt" not in message.lower()
+            assert kwargs.get("severity") == "error"
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_save_persisted_conversation_not_found_surfaces_specific_notify():
+    """task-9 review finding 4: a ``ValueError`` (conversation not found --
+    e.g. deleted out from under the session) must not be lumped in with the
+    generic "corrupted metadata" wording either."""
+    db = CharactersRAGDB(":memory:", "test-client")
+    try:
+        app = _build_test_app()
+        app.chachanotes_db = db
+        notifications: list[tuple[str, dict]] = []
+        app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(240, 64)) as pilot:
+            console = host.screen_stack[-1]
+            await _open_inspector_and_get_row(console, pilot)
+            store = console._ensure_console_chat_store()
+            session = console._active_native_console_session()
+            conversation_id = store.persist_session_if_needed(session.id)
+            db.soft_delete_conversation(conversation_id, expected_version=1)
+            scope = RagScope(
+                items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
+            )
+
+            await console._apply_console_retrieval_scope_save(session, scope)
+            await pilot.pause()
+
+            assert notifications, "expected an honest notify when the conversation is gone"
+            message, kwargs = notifications[-1]
+            assert "corrupt" not in message.lower()
+            assert kwargs.get("severity") == "error"
     finally:
         db.close_connection()
 
@@ -374,7 +518,7 @@ async def test_clear_button_persisted_session():
         host = ConsoleHarness(app)
         async with host.run_test(size=(240, 64)) as pilot:
             console = host.screen_stack[-1]
-            row = await _open_inspector_and_get_row(console, pilot)
+            await _open_inspector_and_get_row(console, pilot)
             store = console._ensure_console_chat_store()
             session = console._active_native_console_session()
             conversation_id = store.persist_session_if_needed(session.id)
