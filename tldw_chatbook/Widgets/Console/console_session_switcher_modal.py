@@ -164,7 +164,11 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
             results = self.query_one("#console-switcher-results", Vertical)
         except NoMatches:
             return []
-        return list(results.query(Button))
+        return [
+            button
+            for button in results.query(Button)
+            if button.has_class("console-switcher-result")
+        ]
 
     def _focused_result_index(self) -> int | None:
         focused = self.app.focused

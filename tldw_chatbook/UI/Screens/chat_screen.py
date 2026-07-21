@@ -22,6 +22,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
+from textual.color import Color
 from textual.events import Click, DescendantFocus, Key, MouseUp, Paste
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
@@ -11809,7 +11810,10 @@ class ChatScreen(BaseAppScreen):
             border = (
                 CONSOLE_FOCUS_FRAME_BORDER if focused_within else CONSOLE_FRAME_BORDER
             )
-            if rail.styles.border_top != border:
+            # styles.border_top holds (str, Color) — compare against the
+            # parsed color, or the dedup guard never dedups (review #739).
+            current_kind, current_color = rail.styles.border_top
+            if current_kind != border[0] or current_color != Color.parse(border[1]):
                 rail.styles.border = border
 
     def on_key(self, event: Key) -> None:
