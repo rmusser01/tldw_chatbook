@@ -366,6 +366,25 @@ class PersonasCharacterEditorWidget(Container):
         self._character_data["extensions"] = ext
         self._character_data["version"] = new_version
 
+    def sync_attached_world_books(
+        self, character_world_books: list, new_version: int
+    ) -> None:
+        """Patch the loaded base after an out-of-band world-book attach/detach.
+
+        Updates only ``extensions['character_world_books']`` and ``version`` on
+        the base copy the Save path starts from, so an instant attach is neither
+        clobbered by a later Save nor forces a version conflict. No-op when no
+        character is loaded (empty base).
+        """
+        if not self._character_data:
+            return
+        ext = self._character_data.get("extensions")
+        if not isinstance(ext, dict):
+            ext = {}
+        ext["character_world_books"] = list(character_world_books)
+        self._character_data["extensions"] = ext
+        self._character_data["version"] = new_version
+
     # ===== Internals =====
 
     def _form_snapshot(self) -> tuple:

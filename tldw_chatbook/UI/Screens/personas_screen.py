@@ -50,6 +50,12 @@ from ...Widgets.Persona_Widgets.personas_character_dictionaries import (
     CharacterDictionaryDetachRequested,
 )
 from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
+from ...Widgets.Persona_Widgets.personas_character_world_books import (
+    PersonasCharacterWorldBooksWidget,
+    CharacterWorldBookAttachRequested,
+    CharacterWorldBookDetachRequested,
+)
+from ...Widgets.Persona_Widgets.world_book_picker import WorldBookPicker
 from ...Widgets.Persona_Widgets.personas_conversation_transcript_widget import (
     PersonasConversationTranscriptWidget,
 )
@@ -402,16 +408,50 @@ class PersonasScreen(BaseAppScreen):
         margin-right: 1;
     }
 
-    /* The character dictionaries panel sits alongside the character card
-       view (both visible when a character is selected), not swapped by
-       _show_center like the other detail-stack children. Dock it to the
-       bottom so PersonasCharacterCardWidget's `height: 100%` resolves
-       against the remaining space instead of the panel being squeezed to
-       nothing / clipped by the stack's hidden overflow. */
-    #personas-detail-stack PersonasCharacterDictionariesWidget {
+    /* The character dictionaries + world-books panels sit alongside the
+       character card view (both visible when a character is selected), not
+       swapped by _show_center like the other detail-stack children. Dock
+       ONE wrapper to the bottom so PersonasCharacterCardWidget's
+       `height: 100%` resolves against the remaining space instead of the
+       panels being squeezed to nothing / clipped by the stack's hidden
+       overflow. The two panels flow top-to-bottom *inside* that wrapper -
+       Textual does not auto-stack multiple same-edge `dock` siblings (two
+       independently-docked-bottom widgets land on the SAME region and
+       overlap, silently stealing each other's clicks), so only the wrapper
+       itself is docked. */
+    #personas-detail-stack #personas-character-attachments {
         dock: bottom;
         height: auto;
+        /* Explicit cap (== the sum of the two children's max-heights below)
+           is load-bearing, not decorative: each panel's button row is a
+           Horizontal, whose Textual default is `height: 1fr`. Nested inside
+           a plain `height: auto` Vertical with no cap of its own, that `1fr`
+           descendant makes auto-height measurement resolve to "fill all
+           available space" instead of "sum of children" (verified via a
+           minimal repro), which silently squeezed PersonasCharacterCardWidget
+           to zero height and made the dictionaries panel's buttons
+           unclickable (they were being covered/never actually laid out).
+           Giving the wrapper a concrete max-height breaks that circular
+           fr-resolution and restores normal auto-sizing. */
+        max-height: 16;
+        width: 100%;
+    }
+
+    #personas-character-attachments PersonasCharacterDictionariesWidget {
+        height: auto;
         max-height: 12;
+        width: 100%;
+    }
+
+    /* Kept low (well below the dictionaries panel's 12) so the two stacked
+       panels combined still leave PersonasCharacterCardWidget some room at
+       the smallest supported terminal size (100x30 - see the geometry
+       check): #personas-detail-stack's own budget there is only ~17 lines
+       total, so 12 (dictionaries) + 4 (world books) is close to the ceiling
+       already. */
+    #personas-character-attachments PersonasCharacterWorldBooksWidget {
+        height: auto;
+        max-height: 4;
         width: 100%;
     }
     """
@@ -532,7 +572,15 @@ class PersonasScreen(BaseAppScreen):
                     with Container(id="personas-detail-stack"):
                         yield PersonasCharacterCardWidget()
                         yield PersonasCharacterEditorWidget()
-                        yield PersonasCharacterDictionariesWidget()
+                        # A single docked-bottom wrapper: Textual does not
+                        # auto-stack multiple same-edge `dock` siblings (they
+                        # overlap at the same region instead), so the two
+                        # character-attachment panels flow top-to-bottom
+                        # *inside* one dock rather than each docking bottom
+                        # independently.
+                        with Vertical(id="personas-character-attachments"):
+                            yield PersonasCharacterDictionariesWidget()
+                            yield PersonasCharacterWorldBooksWidget()
                         yield PersonaProfileCardWidget()
                         yield PersonaProfileEditorWidget()
                         with Horizontal(id="personas-conversation-actions"):
@@ -1196,6 +1244,19 @@ class PersonasScreen(BaseAppScreen):
         lore_tryit.display = is_lore
         if is_lore:
             lore_tryit.set_ready(False, "Select a lore book to preview injections.")
+        # The character dictionaries/world-books panels are only meaningful
+        # in Characters mode; they are not swapped by _show_center (they sit
+        # alongside the character card rather than replacing it), so without
+        # this they would stay mounted and docked at the bottom of
+        # #personas-detail-stack in every other mode too - eating into space
+        # that other modes' own detail widgets (e.g. the dictionary detail's
+        # Settings tab) need for their own lower controls.
+        try:
+            self.query_one("#personas-character-attachments").display = (
+                mode == "characters"
+            )
+        except QueryError:
+            pass
         # clear_selection empties the conversations panel; drop the caches too.
         self.conversations.reset()
         await self.preview.reset("")
@@ -1342,6 +1403,7 @@ class PersonasScreen(BaseAppScreen):
             record=record,
         )
         await self._refresh_character_dictionaries()
+        await self._refresh_character_worldbooks()
 
     async def _select_profile(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(
@@ -1906,6 +1968,30 @@ class PersonasScreen(BaseAppScreen):
             panel.load_character_dictionaries([])
             return
         panel.load_character_dictionaries(list(response.get("dictionaries") or []))
+
+    async def _refresh_character_worldbooks(self) -> None:
+        """Re-feed the character world-books panel (best-effort)."""
+        entity_id = self.state.selected_entity_id
+        if self.state.selected_entity_kind != "character" or not entity_id:
+            return
+        manager = self._lore_manager()
+        if manager is None:
+            return
+        try:
+            rows = await asyncio.to_thread(
+                manager.get_world_books_for_character, int(entity_id)
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not list world books for character {entity_id}."
+            )
+            rows = []
+        if self.state.selected_entity_id != entity_id or self.state.selected_entity_kind != "character":
+            return
+        try:
+            self.query_one(PersonasCharacterWorldBooksWidget).load_world_books(rows)
+        except QueryError:
+            pass
 
     @on(CharacterDictionaryAttachRequested)
     async def _handle_character_dictionary_attach(
