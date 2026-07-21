@@ -169,7 +169,14 @@ class StatsScreen(BaseAppScreen):
 
             db = self._resolve_stats_db(self.app_instance)
             if not db:
-                logger.error("ChaChaNotes database is not available yet")
+                notes_service = getattr(self.app_instance, "notes_service", None)
+                logger.error(
+                    "Stats load aborted: no ChaChaNotes DB handle "
+                    "(chachanotes_db is "
+                    f"{'set' if getattr(self.app_instance, 'chachanotes_db', None) else 'unset'}, "
+                    "notes_service.db is "
+                    f"{'set' if getattr(notes_service, 'db', None) else 'unset'})"
+                )
                 error_message = "Database not available"
                 return
 

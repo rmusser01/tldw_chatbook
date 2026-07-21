@@ -22,6 +22,7 @@ _APP_CSS = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.t
 
 @pytest.mark.asyncio
 async def test_stats_screen_renders_stat_cards_with_real_db(tmp_path):
+    """The mounted screen lays out visible StatCards under the real app CSS."""
     db = CharactersRAGDB(tmp_path / "stats.db", client_id="test-client")
 
     class HostApp(App):
