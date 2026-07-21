@@ -244,9 +244,16 @@ the prefill turn.
   could not be confirmed live; Anthropic documents prefill as supported).
 - **OpenAI (Chat Completions):** accepted the trailing-assistant payload via the app's
   handler; response was influenced-but-not-literal continuation, exactly as §5 documents.
-- **NOT verified (no key / not configured):** Gemini (`chat_with_google` role-remap) and the
-  OpenAI Responses-API branch. These remain open §5 verification items; no guard entries
-  were added for them.
+- **OpenAI Responses-API branch (verified 2026-07-21, task-403):** the Responses API
+  ACCEPTS a trailing-assistant `input` (raw call with the handler's exact input shape;
+  `gpt-5-mini` + `reasoning.effort`): influence-not-literal continuation, same as Chat
+  Completions. No guard needed. Note: verification through `chat_with_openai` itself is
+  currently blocked by an unrelated pre-existing bug — the handler force-sends default
+  `temperature`/`top_p`, which reasoning models reject with 400 (filed as task-404).
+- **Gemini: STILL NOT verified** — no Google API key available in this environment
+  (task-403 AC left open). No guard entry added; the skip+warn guard mechanism from §5
+  still does not exist and would need building if Gemini turns out to reject trailing
+  `model` turns.
 
 ## 9. Follow-up candidates (explicitly not v1)
 
