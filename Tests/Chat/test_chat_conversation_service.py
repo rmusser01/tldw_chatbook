@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -801,6 +802,57 @@ def test_get_conversation_tree_carries_system_prompt_through_real_db(tmp_path):
         tree = service.get_conversation_tree(conversation_id)
 
         assert tree["conversation"]["system_prompt"] == "Answer only in French."
+    finally:
+        db.close_connection()
+
+
+def test_get_conversation_tree_carries_metadata_through_real_db(tmp_path):
+    """Full production path: real DB row -> get_conversation_tree()["conversation"].
+
+    Console's pinned-response-prefill feature stores
+    ``{"pinned_response_prefill": "..."}`` in the ``conversations.metadata``
+    JSON column and reads it back via
+    ``ChatScreen._console_session_settings_for_resume`` ->
+    ``pinned_prefill_from_conversation_metadata(conversation.get("metadata"))``.
+    A whitelist projection in ``normalize_conversation_row`` that omits
+    ``metadata`` would silently break resume, so this exercises the real
+    ``CharactersRAGDB`` + ``ChatConversationService`` stack end to end and
+    asserts the raw JSON string round-trips unchanged.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test-client")
+    try:
+        conversation_id = db.add_conversation({"title": "Saved chat"})
+        record = db.get_conversation_by_id(conversation_id)
+        metadata_json = json.dumps({"pinned_response_prefill": "Understood:"})
+        db.update_conversation(
+            conversation_id,
+            {"metadata": metadata_json},
+            expected_version=record["version"],
+        )
+        service = ChatConversationService(db)
+
+        tree = service.get_conversation_tree(conversation_id)
+
+        assert tree["conversation"]["metadata"] == metadata_json
+    finally:
+        db.close_connection()
+
+
+def test_get_conversation_tree_metadata_is_none_for_new_conversation(tmp_path):
+    """A conversation with no metadata written yields an explicit ``None``.
+
+    Consumers use ``.get("metadata")``, but the key must still be present on
+    the normalized dict so the contract is explicit rather than accidental.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test-client")
+    try:
+        conversation_id = db.add_conversation({"title": "Fresh chat"})
+        service = ChatConversationService(db)
+
+        tree = service.get_conversation_tree(conversation_id)
+
+        assert "metadata" in tree["conversation"]
+        assert tree["conversation"]["metadata"] is None
     finally:
         db.close_connection()
 
