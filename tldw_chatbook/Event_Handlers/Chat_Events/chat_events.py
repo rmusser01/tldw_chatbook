@@ -1393,6 +1393,10 @@ async def handle_chat_send_button_pressed(
         # not "text changed" — so a matched-but-empty-content entry still counts.
         app.current_world_info_active = _wi_count > 0
         app.current_world_info_count = _wi_count
+    else:
+        # World info disabled: clear any stale indicator from a prior send.
+        app.current_world_info_active = False
+        app.current_world_info_count = 0
 
     # --- 11. Prepare and Dispatch API Call via Worker ---
     loguru_logger.debug(

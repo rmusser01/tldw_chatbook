@@ -74,8 +74,22 @@ def resolve_world_info_injection(
 
     Same collect→build→process→format→join as ``apply_world_info_to_message``,
     but also reports how many world-info entries matched (for the legacy
-    ``[World Info: N entries]`` indicator). Never raises; returns
-    ``(message_text, 0)`` on no-match / no-books / no-conversation / error.
+    ``[World Info: N entries]`` indicator).
+
+    Args:
+        db: A ``CharactersRAGDB`` (or None).
+        conversation_id: The active conversation (string UUID) or None.
+        char_data: The active character record, or None (conversation-only).
+        message_text: The current user message text (already plain string).
+        history: Prior messages as ``{"role","content": str}`` (string content;
+            the caller normalizes multimodal content to text before calling).
+
+    Returns:
+        ``(text, count)`` — the message text wrapped with world-info injections
+        in the order ``at_start → before_char → message → after_char → at_end``
+        (``"\\n\\n"`` separated) plus the number of matched entries, or
+        ``(message_text, 0)`` when nothing matches / no books / no conversation /
+        any error. Never raises.
     """
     if not isinstance(message_text, str):
         return message_text, 0
