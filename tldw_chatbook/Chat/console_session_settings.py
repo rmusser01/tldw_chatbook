@@ -174,6 +174,7 @@ class ConsoleSessionSettings:
     #: (refreshable when config changes while the session is unused) vs
     #: ``"user"`` for explicit user selections (never auto-replaced).
     source: str = "derived"
+    pinned_prefill: str | None = None
 
 
 @dataclass(frozen=True)

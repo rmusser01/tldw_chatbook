@@ -132,6 +132,7 @@ class ConsoleChatSession:
     draft: str = ""
     updated_at: str = field(default_factory=_utc_now_iso)
     pending_attachments: list[PendingAttachment] = field(default_factory=list)
+    one_shot_prefill: str | None = None
 
 
 class ConsoleChatStore:
@@ -322,6 +323,18 @@ class ConsoleChatStore:
         session.draft = draft
         return session
 
+
+    def session_one_shot_prefill(self, session_id: str) -> str | None:
+        """Return the armed one-shot response prefill for a session, if any."""
+        return self._session_or_raise(session_id).one_shot_prefill
+
+    def set_session_one_shot_prefill(
+        self, session_id: str, prefill: str | None
+    ) -> ConsoleChatSession:
+        """Arm (or clear, with ``None``) the one-shot response prefill."""
+        session = self._session_or_raise(session_id)
+        session.one_shot_prefill = prefill
+        return session
     def pending_attachments(self, session_id: str) -> list[PendingAttachment]:
         """Return the staged attachments for a session (stage order).
 

@@ -1572,3 +1572,21 @@ def test_collapsed_buffer_variant_stream_finalizes_full_content():
         "original",
         "regenerated",
     ]
+
+
+def test_one_shot_prefill_accessors_round_trip():
+    store = ConsoleChatStore()
+    session = store.create_session(title="Chat 1")
+    assert store.session_one_shot_prefill(session.id) is None
+    store.set_session_one_shot_prefill(session.id, "Sure thing:")
+    assert store.session_one_shot_prefill(session.id) == "Sure thing:"
+    store.set_session_one_shot_prefill(session.id, None)
+    assert store.session_one_shot_prefill(session.id) is None
+
+
+def test_one_shot_prefill_is_per_session():
+    store = ConsoleChatStore()
+    session_a = store.create_session(title="A")
+    session_b = store.create_session(title="B")
+    store.set_session_one_shot_prefill(session_a.id, "only A")
+    assert store.session_one_shot_prefill(session_b.id) is None
