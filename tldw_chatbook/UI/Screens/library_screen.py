@@ -170,7 +170,7 @@ from ...Sync_Interop.sync_readiness import (
     DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
     build_sync_readiness_report,
 )
-from ...Third_Party.textual_fspicker import FileOpen, FileSave
+from ...Third_Party.textual_fspicker import FileOpen, FileSave, SelectDirectory
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import (
@@ -1054,6 +1054,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_import_open: bool = False
         self._library_skills_import_path: str = ""
         self._library_skills_import_status: str = ""
+        # task-422: the last successful import's skill name -- backs the
+        # "Review …" button that jumps straight to its trust panel.
+        self._library_skills_import_review_name: str = ""
         # Skill detail/trust editor (Task 4 of the Skills sub-project).
         # Mirrors the prompts editor's own state shape
         # (``_library_prompts_view``/``_library_prompt_detail``/etc.) --
@@ -3709,6 +3712,7 @@ class LibraryScreen(BaseAppScreen):
                         import_open=self._library_skills_import_open,
                         import_path=self._library_skills_import_path,
                         import_status=self._library_skills_import_status,
+                        import_review_name=self._library_skills_import_review_name,
                         id="library-skills-canvas",
                     )
                 elif shell.canvas_kind == "search":
@@ -6460,6 +6464,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_filter_records = None
         self._reset_library_note_editor_state()
         self._reset_library_prompt_editor_state()
+        self._reset_library_skills_import_state()
         self._reset_library_notes_sync_transient_state()
         self._reset_library_ingest_transient_state()
         # Always resets to the Everything scope (a plain rail-row press,
@@ -6925,6 +6930,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_import_open = False
         self._library_skills_import_path = ""
         self._library_skills_import_status = ""
+        self._library_skills_import_review_name = ""
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-skills-import-browse")
@@ -6952,6 +6958,60 @@ class LibraryScreen(BaseAppScreen):
             FileOpen(title="Import Skill (SKILL.md)"),
             browse_callback,
         )
+
+    @on(Button.Pressed, "#library-skills-import-browse-folder")
+    def handle_library_skills_import_browse_folder(self, event: Button.Pressed) -> None:
+        """Push a ``SelectDirectory`` dialog to pick a skill's own folder.
+
+        task-422: a real skill package is a directory named after the
+        skill containing ``SKILL.md`` -- the file-only Browse forced that
+        common shape to be typed by hand.
+
+        Args:
+            event: Button press event emitted by the "Browse folder…"
+                action.
+        """
+        event.stop()
+
+        async def browse_callback(selected_path: Path | None) -> None:
+            if selected_path is None:
+                return
+            self._library_skills_import_path = str(selected_path)
+            self.refresh(recompose=True)
+
+        self.app.push_screen(
+            SelectDirectory(title="Import Skill Folder"),
+            browse_callback,
+        )
+
+    @on(Button.Pressed, "#library-skills-import-review")
+    async def handle_library_skills_import_review(self, event: Button.Pressed) -> None:
+        """Open the just-imported skill's editor (its trust panel included).
+
+        task-422: the import success copy tells the user to "re-review it
+        in the trust panel" -- this is the direct path, reusing the exact
+        row-press open flow.
+
+        Args:
+            event: Button press event emitted by the import row's
+                "Review …" action.
+        """
+        event.stop()
+        name = self._library_skills_import_review_name
+        if not name:
+            return
+        if not await self._flush_library_skill_save():
+            return
+        self._reset_library_skill_editor_state()
+        self._selected_skill_name = name
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
+        self._library_skills_view = "editor"
+        self.run_worker(
+            self._refresh_library_skill_detail(name),
+            exclusive=True,
+            group="library_skill_detail",
+        )
+        self.refresh(recompose=True)
 
     @on(Input.Changed, "#library-skills-import-path")
     def handle_library_skills_import_path_changed(self, event: Input.Changed) -> None:
@@ -6997,6 +7057,7 @@ class LibraryScreen(BaseAppScreen):
         """
         if self._library_skills_view != "list":
             return
+        self._library_skills_import_review_name = ""
         raw_path = self._library_skills_import_path.strip()
         if not raw_path:
             self._apply_library_skills_import_status(
@@ -7223,6 +7284,7 @@ class LibraryScreen(BaseAppScreen):
         exactly like a fresh one.
         """
         self._library_skills_import_path = ""
+        self._library_skills_import_review_name = skill_name
         self._apply_library_skills_import_status(
             f'Imported "{skill_name}" · re-review it in the trust panel'
         )
@@ -7483,6 +7545,19 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_scroll_pending = False
         self._library_skill_editor_armed = False
 
+    def _reset_library_skills_import_state(self) -> None:
+        """Close the inline Import row and drop its path/outcome (task-422).
+
+        Called on every list re-entry (editor exits via
+        ``_reset_library_skill_editor_state``, fresh rail-row entries via
+        ``_select_library_rail_row``) so a stale import error can't
+        resurface minutes later (verified live in the UX review).
+        """
+        self._library_skills_import_open = False
+        self._library_skills_import_path = ""
+        self._library_skills_import_status = ""
+        self._library_skills_import_review_name = ""
+
     def _reset_library_skill_editor_state(self) -> None:
         """Clear all in-canvas Library skill editor/save/trust state.
 
@@ -7490,6 +7565,7 @@ class LibraryScreen(BaseAppScreen):
         so every exit from the editor leaves save/conflict/trust-review
         tracking clean for the next skill.
         """
+        self._reset_library_skills_import_state()
         self._library_skills_view = "list"
         self._library_skill_detail = None
         self._library_skill_original_name = ""

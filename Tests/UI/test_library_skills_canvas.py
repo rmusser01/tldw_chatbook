@@ -1802,3 +1802,91 @@ async def test_skill_editor_trust_panel_renders_remediation_for_manifest_error()
         remediation = pilot.app.query_one("#library-skill-trust-remediation", Static)
         text = str(remediation.renderable)
         assert "/tmp/store/skills/demo" in text
+
+
+# ---------------------------------------------------------------------------
+# task-422: import row polish -- folder browse, stale-state reset on list
+# re-entry, and a direct path to the imported skill's trust panel.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_skills_import_row_renders_folder_browse_button():
+    app = _CanvasHost(_two_row_state(), import_open=True)
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#library-skills-import-browse-folder", Button)
+
+
+def test_reset_skill_editor_state_clears_import_row():
+    """task-422: the import row and its last error persisted across editor
+    round-trips and resurfaced stale minutes later (verified live)."""
+    fake = SimpleNamespace(
+        _library_skills_view="editor",
+        _library_skill_detail={},
+        _library_skill_original_name="",
+        _library_skill_editor_state=None,
+        _library_skill_dirty=True,
+        _library_skill_status="x",
+        _library_skill_conflict=False,
+        _library_skill_active_review=None,
+        _library_skill_confirming_delete=False,
+        _library_skill_scroll_pending=False,
+        _library_skill_editor_armed=True,
+        _library_skills_import_open=True,
+        _library_skills_import_path="/stale",
+        _library_skills_import_status="Please enter a file or folder path.",
+        _library_skills_import_review_name="stale-skill",
+    )
+    fake._reset_library_skills_import_state = (
+        lambda: LibraryScreen._reset_library_skills_import_state(fake)
+    )
+    LibraryScreen._reset_library_skill_editor_state(fake)
+    assert fake._library_skills_import_open is False
+    assert fake._library_skills_import_path == ""
+    assert fake._library_skills_import_status == ""
+    assert fake._library_skills_import_review_name == ""
+
+
+@pytest.mark.asyncio
+async def test_skills_import_success_offers_review_button():
+    app = _CanvasHost(
+        _two_row_state(),
+        import_open=True,
+        import_status='Imported "demo" · re-review it in the trust panel',
+        import_review_name="demo",
+    )
+    async with app.run_test() as pilot:
+        review = pilot.app.query_one("#library-skills-import-review", Button)
+        assert "demo" in str(review.label)
+
+
+@pytest.mark.asyncio
+async def test_handle_library_skills_import_review_opens_editor():
+    worker_calls: list[dict] = []
+    fake = SimpleNamespace(
+        _library_skills_view="list",
+        _library_skills_import_review_name="demo",
+        _selected_skill_name="",
+        _library_selected_row_id="",
+        _flush_library_skill_save=AsyncMock(return_value=True),
+        _reset_library_skill_editor_state=lambda: None,
+        _refresh_library_skill_detail=lambda name: None,
+        run_worker=lambda coro, **kwargs: worker_calls.append(kwargs),
+        refresh=lambda recompose=False: None,
+    )
+    event = SimpleNamespace(stop=lambda: None)
+    await LibraryScreen.handle_library_skills_import_review(fake, event)
+    assert fake._selected_skill_name == "demo"
+    assert fake._library_skills_view == "editor"
+    assert worker_calls and worker_calls[0]["group"] == "library_skill_detail"
+
+
+@pytest.mark.asyncio
+async def test_handle_library_skills_import_browse_folder_pushes_directory_dialog():
+    pushed: list[Any] = []
+    fake = SimpleNamespace(
+        app=SimpleNamespace(push_screen=lambda dialog, cb=None: pushed.append(dialog)),
+    )
+    event = SimpleNamespace(stop=lambda: None)
+    LibraryScreen.handle_library_skills_import_browse_folder(fake, event)
+    assert pushed and type(pushed[0]).__name__ == "SelectDirectory"

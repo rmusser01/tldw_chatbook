@@ -376,6 +376,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
         import_open: bool = False,
         import_path: str = "",
         import_status: str = "",
+        import_review_name: str = "",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -396,6 +397,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
         self.import_open = import_open
         self.import_path = import_path
         self.import_status = import_status
+        self.import_review_name = import_review_name
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -528,13 +530,19 @@ class LibrarySkillsListCanvas(VerticalScroll):
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
         with toolbar:
-            # Browse… picks a FILE via the same FileOpen dialog the
-            # prompts/media-ingest Browse actions use -- that dialog has no
-            # directory-selection mode, so importing a skill BY ITS FOLDER
-            # path still has to be typed by hand into the path Input above.
+            # Browse… picks a FILE via the shared FileOpen dialog;
+            # task-422 adds the folder variant beside it (SelectDirectory)
+            # since a real skill package is a directory named after the
+            # skill -- the common shape no longer has to be typed by hand.
             yield Button(
                 "Browse…",
                 id="library-skills-import-browse",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Button(
+                "Browse folder…",
+                id="library-skills-import-browse-folder",
                 classes="library-canvas-action",
                 compact=True,
             )
@@ -555,6 +563,15 @@ class LibrarySkillsListCanvas(VerticalScroll):
             id="library-skills-import-status",
             markup=False,
         )
+        if self.import_review_name:
+            # task-422: the success copy says "re-review it in the trust
+            # panel" -- this is the direct path there.
+            yield Button(
+                f'Review "{self.import_review_name}"…',
+                id="library-skills-import-review",
+                classes="library-canvas-action",
+                compact=True,
+            )
 
     def _compose_editor(self) -> ComposeResult:
         """Render the SKILL.md editor: Back, fields, warnings, trust panel, actions.
