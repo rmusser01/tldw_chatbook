@@ -1,5 +1,5 @@
 ---
-id: TASK-300
+id: TASK-392
 title: >-
   Decide RAG admin surface: rebuild reachable Console-parity screen or delete
   the services
