@@ -250,10 +250,14 @@ the prefill turn.
   Completions. No guard needed. Note: verification through `chat_with_openai` itself is
   currently blocked by an unrelated pre-existing bug — the handler force-sends default
   `temperature`/`top_p`, which reasoning models reject with 400 (filed as task-404).
-- **Gemini: STILL NOT verified** — no Google API key available in this environment
-  (task-403 AC left open). No guard entry added; the skip+warn guard mechanism from §5
-  still does not exist and would need building if Gemini turns out to reject trailing
-  `model` turns.
+- **Gemini (verified 2026-07-21, task-403): ACCEPTED, with LITERAL continuation.** Both
+  raw `generateContent` (trailing `model`-role turn) and the app's own
+  `chat_with_google` handler (assistant→`model` remap + alternation) accept the prefilled
+  payload; the model continues directly from the prefill text ("The answer is" →
+  " 7, because…") — stronger continuation semantics than OpenAI's restart behavior.
+  Verified on `gemini-flash-lite-latest`; free-tier per-minute quota produces transient
+  429s (retry/backoff handles them). No guard needed for any verified provider; the §5
+  skip+warn guard mechanism was never built and no known provider requires it.
 
 ## 9. Follow-up candidates (explicitly not v1)
 
