@@ -3775,9 +3775,20 @@ class ChatScreen(BaseAppScreen):
         # (off-loop) so the Inspector row reflects reality immediately on
         # resume, rather than defaulting to "everything" until the user
         # opens Edit or saves a change (the picker's other two read
-        # triggers). Before the sync calls below so whichever of them
-        # (re)renders the row already sees the warm cache.
+        # triggers).
         await self._warm_console_retrieval_scope_cache(target)
+        # task-10 review finding 2: warming the cache above is not enough
+        # by itself -- neither `_sync_native_console_chat_ui()` below nor
+        # its own `_sync_console_control_bar()` call ever touches the
+        # retrieval-scope row or `ConsoleControlBar.sync_scope_chip`
+        # (`sync_scope_chip` is deliberately its own method, kept off the
+        # general control-bar sync tick -- see its docstring). Without this
+        # explicit call the MOUNTED row/chip stayed on whatever state they
+        # last rendered until the user opened Edit/Narrow or saved a
+        # change, even though the cache above already had the right
+        # answer. This is the same helper (and the same one-state,
+        # two-renderers push) the scope-picker save path already uses.
+        self._sync_console_retrieval_scope_row()
         # Finding C: resuming a saved conversation switches the active
         # conversation just as much as a tab switch does -- clear any
         # sub-agent drill-in immediately rather than rely solely on the

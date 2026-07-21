@@ -15,7 +15,10 @@ import time
 import pytest
 from textual.widgets import Static
 
-from Tests.UI.test_console_native_chat_flow import _static_plain_text
+from Tests.UI.test_console_native_chat_flow import (
+    StaticConversationTreeService,
+    _static_plain_text,
+)
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
@@ -24,9 +27,11 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_display_state import ConsoleRetrievalScopeState
 from tldw_chatbook.Chat.rag_scope import (
+    SCOPE_EMPTY_NOTICE_TEMPLATE,
     RagScope,
     ScopeItem,
     read_conversation_scope,
+    write_conversation_scope,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleScopeChip
@@ -193,6 +198,54 @@ async def test_retrieval_scope_row_zero_db_on_forced_recompose():
         row = console.query_one(f"#{ROW_ID}")
         assert _static_plain_text(row.query_one(f"#{LABEL_ID}", Static)) == "Scope: everything"
         assert console.query_one(f"#{SCOPE_CHIP_ID}").display is False
+
+
+@pytest.mark.asyncio
+async def test_retrieval_scope_row_empty_state_matches_chip_rendering():
+    """task-10 review finding 1: row/chip renderer divergence on EMPTY.
+
+    ``compose()`` branched only on ``is_scoped`` and never checked
+    ``is_empty``/``cause`` -- the fields ``ConsoleRetrievalScopeState``
+    gained for task-10's header chip. The chip's own
+    ``_scope_chip_render`` DOES render EMPTY ("Scope: empty" + alert +
+    cause tooltip via ``SCOPE_EMPTY_NOTICE_TEMPLATE``); since row and chip
+    are documented as "one state, two renderers" of the exact same
+    snapshot (``ConsoleRetrievalScopeState``'s own docstring), they must
+    not diverge -- an EMPTY snapshot must not silently render as the
+    "everything" default the way an ``is_scoped=False`` check alone would
+    produce.
+
+    EMPTY is not reachable from the real conversation-only
+    ``_build_console_retrieval_scope_state`` path today (that builder is
+    zero-DB by contract; detecting a fully-deleted scope needs a DB
+    existence check) -- mirrors the chip's own EMPTY test
+    (``test_scope_chip_empty_state_action_required_styling_and_cause_tooltip``)
+    by driving the row directly with an EMPTY state via ``sync_state``.
+    EMPTY becomes reachable once Phase 3 of the rag-scope-narrowing
+    program wires conversation/workspace intersection into the display
+    path.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(240, 64)) as pilot:
+        console = host.screen_stack[-1]
+        row = await _open_inspector_and_get_row(console, pilot)
+
+        row.sync_state(ConsoleRetrievalScopeState.empty(cause="deleted-items"))
+        await pilot.pause()
+
+        row = console.query_one(f"#{ROW_ID}")
+        label = row.query_one(f"#{LABEL_ID}", Static)
+        assert _static_plain_text(label) == "Scope: empty"
+        assert str(label.tooltip) == SCOPE_EMPTY_NOTICE_TEMPLATE.format(
+            cause="deleted-items"
+        )
+        # Same action-available affordance as the plain-unscoped row (an
+        # empty *evaluated* scope still lets the user narrow to something
+        # that actually resolves, or clear it outright).
+        assert list(row.query(f"#{NARROW_BTN_ID}"))
+        assert not list(row.query(f"#{EDIT_BTN_ID}"))
+        assert not list(row.query(f"#{CLEAR_BTN_ID}"))
 
 
 @pytest.mark.asyncio
@@ -550,6 +603,84 @@ async def test_clear_button_persisted_session():
                 _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
                 == "Scope: everything"
             )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_resume_console_workspace_conversation_refreshes_row_and_chip():
+    """task-10 review finding 2: resuming a scoped saved conversation must
+    show the scoped row/chip immediately, not "Scope: everything" until the
+    user touches Edit/Narrow/save.
+
+    ``_resume_console_workspace_conversation`` already warms the
+    retrieval-scope cache (``_warm_console_retrieval_scope_cache``) for the
+    resumed conversation id, but nothing downstream refreshed the MOUNTED
+    row/chip: its own ``_sync_native_console_chat_ui()`` call ->
+    ``_sync_console_control_bar()`` only pushes into
+    ``#console-control-bar``/``#console-run-inspector-state`` -- never the
+    sibling retrieval-scope row, and never
+    ``ConsoleControlBar.sync_scope_chip`` (deliberately a separate method
+    from the control bar's general ``sync_state``, per its own docstring).
+    Drives the real production coroutine directly (the same pattern the
+    save/clear tests above already use for
+    ``_apply_console_retrieval_scope_save``), not a UI pixel-click, so this
+    proves the actual resume seam rather than a rebuilt double.
+    """
+    db = CharactersRAGDB(":memory:", "test-client")
+    try:
+        app = _build_test_app()
+        app.chachanotes_db = db
+        conversation_id = db.add_conversation({"title": "Resumed scoped chat"})
+        assert conversation_id
+        scope = RagScope(
+            items=(ScopeItem("media", "m1"), ScopeItem("note", "n1")),
+            updated_at="2026-01-01T00:00:00Z",
+        )
+        write_conversation_scope(db, conversation_id, scope)
+        app.chat_conversation_scope_service = StaticConversationTreeService(
+            {
+                conversation_id: {
+                    "conversation": {
+                        "id": conversation_id,
+                        "title": "Resumed scoped chat",
+                        "workspace_id": None,
+                    },
+                    "root_threads": [],
+                }
+            }
+        )
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(240, 64)) as pilot:
+            console = host.screen_stack[-1]
+            row = await _open_inspector_and_get_row(console, pilot)
+            # Pre-condition: the currently active (not-yet-resumed) session
+            # is unscoped -- matches the row/chip's default compose-time
+            # state, so a pass here can't be a coincidental leftover.
+            assert (
+                _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
+                == "Scope: everything"
+            )
+            assert console.query_one(f"#{SCOPE_CHIP_ID}").display is False
+
+            resumed = await console._resume_console_workspace_conversation(
+                conversation_id
+            )
+            await pilot.pause()
+
+            assert resumed is True
+            session = console._active_native_console_session()
+            assert session is not None
+            assert session.persisted_conversation_id == conversation_id
+
+            row = console.query_one(f"#{ROW_ID}")
+            assert (
+                _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
+                == "Scope: 2 items"
+            )
+            chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
+            assert chip.display is True
+            assert _static_plain_text(chip) == "Scope: 2"
     finally:
         db.close_connection()
 
