@@ -5,6 +5,7 @@ registered: ``from tldw_chatbook.Internal_Prompts import get_internal_prompt``.
 """
 
 from .catalog import CATALOG, PromptSpec, register
+from . import websearch_prompts  # noqa: F401  (registers specs on import)
 from .resolver import get_internal_prompt, render_internal_prompt, safe_substitute
 
 __all__ = [
