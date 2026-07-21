@@ -243,3 +243,76 @@ class TestTwoDockedPanelsGeometry:
             assert card.size.height > 0, f"card clipped at size={size}"
             assert wb.size.height > 0, f"world-books panel clipped at size={size}"
             assert dicts.size.height > 0, f"dictionaries panel clipped at size={size}"
+
+
+# ===================================================================
+# Regression (code review, Task 6 follow-up): the docked wrapper holding
+# BOTH character-attachment panels must be gated by _show_center's
+# per-center-view condition, not just the coarse "mode == characters"
+# toggle _apply_mode used to set. Before the fix, moving the dict panel
+# into #personas-character-attachments meant the world-books panel was no
+# longer covered by _show_center's per-view gate at all, so it stayed
+# docked/visible (stale data) once the center view swapped away from the
+# character card/editor within Characters mode (e.g. the conversation
+# transcript), and showed as an empty docked panel at initial mount before
+# any character was selected.
+# ===================================================================
+
+
+class TestCharacterAttachmentsWrapperGating:
+    async def test_initial_mount_hides_wrapper_before_any_selection(
+        self,
+        mock_app_instance,
+        worldbooks_db,
+        seeded_character_with_worldbook,
+        stub_characters_for_worldbooks,
+    ):
+        mock_app_instance.chachanotes_db = worldbooks_db
+        mock_app_instance.chat_dictionary_scope_service = None
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _mounted(pilot)
+            wrapper = screen.query_one("#personas-character-attachments")
+            assert wrapper.display is False, (
+                "the world-books/dictionaries wrapper must not be visible "
+                "before any character is selected"
+            )
+
+    async def test_leaving_the_card_view_hides_the_wrapper(
+        self,
+        mock_app_instance,
+        worldbooks_db,
+        seeded_character_with_worldbook,
+        stub_characters_for_worldbooks,
+    ):
+        """Switching the center view away from the character card/editor
+        (e.g. opening the conversation transcript, which calls
+        ``screen._show_center(_CONVERSATION_VIEW_ID)`` per
+        ``personas_conversations_controller.open_conversation``) while still
+        in Characters mode must hide the docked attachments wrapper too, so
+        the world-books panel does not leak stale data over the transcript.
+        """
+        mock_app_instance.chachanotes_db = worldbooks_db
+        mock_app_instance.chat_dictionary_scope_service = None
+        char_id = seeded_character_with_worldbook["char_id"]
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _select_seeded_character(pilot, char_id)
+            wrapper = screen.query_one("#personas-character-attachments")
+            assert wrapper.display is True, (
+                "sanity: selecting a character shows the wrapper"
+            )
+
+            # Same center-view swap the conversation-transcript open path
+            # performs, without needing to stand up the full conversations
+            # list/transcript-loading harness.
+            screen._show_center("#personas-conversation-transcript-view")
+            await pilot.pause()
+
+            assert wrapper.display is False, (
+                "the attachments wrapper must be hidden once the center "
+                "view swaps away from the character card/editor, even "
+                "within Characters mode"
+            )

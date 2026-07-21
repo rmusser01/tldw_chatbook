@@ -1245,18 +1245,14 @@ class PersonasScreen(BaseAppScreen):
         if is_lore:
             lore_tryit.set_ready(False, "Select a lore book to preview injections.")
         # The character dictionaries/world-books panels are only meaningful
-        # in Characters mode; they are not swapped by _show_center (they sit
-        # alongside the character card rather than replacing it), so without
-        # this they would stay mounted and docked at the bottom of
-        # #personas-detail-stack in every other mode too - eating into space
-        # that other modes' own detail widgets (e.g. the dictionary detail's
-        # Settings tab) need for their own lower controls.
-        try:
-            self.query_one("#personas-character-attachments").display = (
-                mode == "characters"
-            )
-        except QueryError:
-            pass
+        # in Characters mode; they are not one of the exclusive
+        # _CENTER_VIEW_IDS pages (they sit alongside the character card
+        # rather than replacing it). They used to need a coarse
+        # mode-level toggle here, but every branch below already calls
+        # _show_center(...), which now gates
+        # #personas-character-attachments itself (single source of truth -
+        # see _show_center) - leaving Characters mode always lands on a
+        # non-character visible_id, so the wrapper is hidden there too.
         # clear_selection empties the conversations panel; drop the caches too.
         self.conversations.reset()
         await self.preview.reset("")
@@ -4631,6 +4627,27 @@ class PersonasScreen(BaseAppScreen):
             dict_panel = None
         if dict_panel is not None:
             dict_panel.display = visible_id in (
+                "#ccp-character-card-view",
+                "#ccp-character-editor-view",
+            )
+        # The docked wrapper that holds BOTH character-attachment panels
+        # (Roleplay P2f Task 6 added the world-books panel alongside the
+        # P1f dictionaries panel inside #personas-character-attachments)
+        # is the single source of truth for the same characters-only
+        # condition as dict_panel above - gating the wrapper hides both
+        # children in one step. This has to be re-derived here (not left to
+        # a mode-level toggle alone) because _show_center also runs *within*
+        # Characters mode when swapping to the conversation transcript view
+        # (see personas_conversations_controller.open_conversation), which
+        # must hide the wrapper too so it doesn't stay docked/visible with
+        # stale data over the transcript, or empty at initial mount before
+        # any character is selected.
+        try:
+            attachments_wrapper = self.query_one("#personas-character-attachments")
+        except QueryError:
+            attachments_wrapper = None
+        if attachments_wrapper is not None:
+            attachments_wrapper.display = visible_id in (
                 "#ccp-character-card-view",
                 "#ccp-character-editor-view",
             )
