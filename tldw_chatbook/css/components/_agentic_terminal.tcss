@@ -4723,3 +4723,193 @@ Button.mcp-callout {
 .approval-row-decision {
     width: 26;
 }
+
+/* ConsoleScopePickerModal (rag-scope-narrowing spec §4, Task 8): RAG
+   retrieval scope picker -- type tabs, text+tag filters, sort select,
+   paginated checkbox list, All/Selected view toggle, bulk select-all/clear
+   confirmation, and footer count/Save/Clear/Cancel. Mirrors
+   ConsolePromptPickerModal's modal shell (round border, $ds-surface-panel,
+   1 2 padding) sized wider/taller for the extra filter/list chrome. */
+ConsoleScopePickerModal {
+    align: center middle;
+}
+
+#console-scope-picker-modal {
+    width: 90;
+    max-width: 95%;
+    height: auto;
+    max-height: 90%;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    padding: 1 2;
+}
+
+.console-scope-picker-tabs {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.console-scope-picker-tab {
+    margin: 0 1 0 0;
+}
+
+.console-scope-picker-tab-active {
+    background: $ds-action-focus;
+    text-style: bold;
+}
+
+#console-scope-picker-text-filter {
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-scope-picker-text-filter:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+.console-scope-picker-tag-row {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+.console-scope-picker-chip-row {
+    height: auto;
+    min-height: 1;
+}
+
+#console-scope-picker-tag-search {
+    height: 3;
+    min-height: 3;
+    margin: 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-scope-picker-tag-search:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+.console-scope-picker-tag-chip {
+    margin: 0 1 0 0;
+}
+
+.console-scope-picker-tag-chip-active {
+    background: $ds-action-focus;
+    text-style: bold;
+}
+
+.console-scope-picker-sort-row {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.console-scope-picker-sort-label {
+    width: 6;
+    min-width: 6;
+    content-align: left middle;
+}
+
+.console-scope-picker-view-row {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.console-scope-picker-view-btn {
+    margin: 0 1 0 0;
+}
+
+.console-scope-picker-view-active {
+    background: $ds-action-focus;
+    text-style: bold;
+}
+
+#console-scope-picker-list {
+    height: 1fr;
+    min-height: 8;
+    max-height: 20;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+.console-scope-picker-row {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    color: $ds-text-primary;
+}
+
+.console-scope-picker-row-greyed {
+    color: $ds-text-muted;
+}
+
+#console-scope-picker-empty {
+    height: auto;
+    margin: 1 0;
+    color: $ds-text-muted;
+}
+
+.console-scope-picker-page-row {
+    height: auto;
+    min-height: 1;
+    margin: 1 0;
+    align-horizontal: center;
+}
+
+#console-scope-picker-page-label {
+    width: auto;
+    min-width: 12;
+    content-align: center middle;
+    margin: 0 1;
+}
+
+.console-scope-picker-bulk-row {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+#console-scope-picker-confirm-text {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    background: $ds-status-warning 10%;
+    color: $ds-text-primary;
+}
+
+.console-scope-picker-confirm-actions {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.console-scope-picker-footer {
+    height: auto;
+    min-height: 1;
+    margin: 1 0 0 0;
+    align-horizontal: right;
+}
+
+#console-scope-picker-count {
+    width: 1fr;
+    min-width: 0;
+    content-align: left middle;
+    color: $ds-text-muted;
+}
