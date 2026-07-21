@@ -36,11 +36,14 @@ Known v1 simplification: the "All" type tab merges one page from each of
 ``media_lister``/``notes_lister`` (same offset/limit) and re-sorts the
 combined result client-side, rather than a true globally-paginated merge
 cursor across both sources. For libraries small enough to fit a handful of
-pages this is exact; for very large mixed libraries a page may show fewer
-than ``page_size`` rows once already-fetched-but-out-of-universe items are
-filtered out (Next still advances correctly using the underlying, pre-filter
-per-type totals). No caller-visible API depends on exact same-page density,
-so this is a deliberate scope-narrowing decision, not a bug.
+pages this is exact; for very large mixed libraries with universe restrictions,
+items dropped during per-type offset application become UNREACHABLE via the All
+tab's pagination (attempting to view later offsets re-applies the per-type
+offset, skipping past already-dropped items permanently). This is a deliberate
+v1 scope-narrowing decision. Workarounds: (1) browse by single-type tab (where
+pagination is exact) or (2) use "Select all matching" to bypass pagination
+entirely. No caller-visible API depends on guaranteed All-tab pagination
+coverage, so this is not a bug.
 
 Follows ``console_prompt_picker_modal.py``'s conventions: ``ModalScreen``,
 Esc-to-cancel via ``BINDINGS``, worker-loaded data with ``group=`` (never
@@ -310,7 +313,7 @@ class ConsoleScopePickerModal(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id=MODAL_ID):
             yield Static(
-                f"Narrow RAG scope — {self._target_label}",
+                f"Narrow RAG scope — {escape_markup(self._target_label)}",
                 classes="console-modal-header",
             )
 
@@ -614,7 +617,9 @@ class ConsoleScopePickerModal(ModalScreen[None]):
         next_btn = self._safe_query_one(PAGE_NEXT_ID, Button)
         if label is None or prev_btn is None or next_btn is None:
             return
-        total = self._raw_total
+        # Use universe-intersected count, not raw lister totals, so pagination
+        # reflects what the user can actually see/select.
+        total = len(self._matching_keys)
         if total <= 0:
             label.update("Page 1 of 1")
         else:

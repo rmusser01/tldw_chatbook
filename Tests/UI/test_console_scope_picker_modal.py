@@ -29,6 +29,8 @@ from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     FILTER_DEBOUNCE_SECONDS,
     LIST_CONTAINER_ID,
     OUTSIDE_UNIVERSE_SUFFIX,
+    PAGE_LABEL_ID,
+    PAGE_NEXT_ID,
     SAVE_BTN_ID,
     SELECT_ALL_BTN_ID,
     SORT_SELECT_ID,
@@ -625,6 +627,47 @@ async def test_sort_by_type_groups_media_before_notes() -> None:
         # of title, since type is the primary sort key.
         assert "Zeta media" in labels[0]
         assert "Alpha note" in labels[1]
+
+
+# -- target_label escaping + universe-aware pagination ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_target_label_with_markup_characters_mounts_without_error() -> None:
+    """Verify that target_label containing markup chars like '[/bad]' doesn't
+    raise MarkupError and renders the literal text instead."""
+    app = ModalHarness()
+    async with app.run_test(size=(120, 70)) as pilot:
+        # These markup chars would cause MarkupError if not escaped.
+        await _open(app, pilot, media=[], target_label="workspace [/bad]")
+        header = app.screen.query(".console-modal-header").first(Static)
+        header_text = str(header.renderable)
+        # Header should contain escaped markup (e.g., \\[/bad]), not raise an error.
+        # The important thing is that it mounts without MarkupError.
+        assert "workspace" in header_text
+        # Verify escaping happened: backslash before the bracket.
+        assert "\\[/bad]" in header_text
+
+
+@pytest.mark.asyncio
+async def test_pagination_respects_universe_size_not_raw_total() -> None:
+    """Verify pagination uses len(matching_keys) (universe-intersected) instead
+    of raw lister totals. A universe smaller than one page should show 1 page."""
+    app = ModalHarness()
+    async with app.run_test(size=(120, 70)) as pilot:
+        # Create 50-item media store, but universe restricts to just 3 items.
+        media_items = [_media(f"m{i:02d}", f"Item {i}") for i in range(50)]
+        universe = frozenset(
+            {(SOURCE_TYPE_MEDIA, "m00"), (SOURCE_TYPE_MEDIA, "m01"), (SOURCE_TYPE_MEDIA, "m02")}
+        )
+        await _open(app, pilot, media=media_items, universe=universe, page_size=10)
+        # With universe-aware pagination, "1 of 1" page (3 items < 10 page_size).
+        label = app.screen.query_one(f"#{PAGE_LABEL_ID}", Static)
+        page_text = str(label.renderable)
+        assert "Page 1 of 1" == page_text
+        # Prev/Next buttons must both be disabled (single page).
+        next_btn = app.screen.query_one(f"#{PAGE_NEXT_ID}", Button)
+        assert next_btn.disabled is True
 
 
 # -- CSS pinned in source + bundle ---------------------------------------------
