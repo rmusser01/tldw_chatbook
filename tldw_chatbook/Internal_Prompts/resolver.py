@@ -129,5 +129,5 @@ def _warn_once(prompt_id: str, message: str) -> None:
     _warned_ids.add(prompt_id)
     logger.warning(
         f"internal_prompts: {message} (prompt id: {prompt_id}); "
-        "using shipped default"
+        "falling back"
     )

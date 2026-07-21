@@ -32,6 +32,4 @@ def scratch_config(tmp_path, monkeypatch):
     resolver._warned_ids.clear()
     write("")
     yield write
-    monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
     resolver._warned_ids.clear()
-    config.load_settings(force_reload=True)

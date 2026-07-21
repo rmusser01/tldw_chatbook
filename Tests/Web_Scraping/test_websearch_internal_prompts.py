@@ -2,10 +2,10 @@
 """Overrides in config.toml must change the text handed to the LLM transport.
 Fakes live ONLY at chat_api_call — the pipeline code runs real.
 
-The `scratch_config` fixture is defined in Tests/Web_Scraping/conftest.py (a
-copy of the one in Tests/Internal_Prompts/conftest.py) rather than pulled in
-via `pytest_plugins`, because declaring `pytest_plugins =
-["Tests.Internal_Prompts.conftest"]` — in this test module or in a
+The `scratch_config` fixture comes from Tests/Web_Scraping/conftest.py, which
+re-exports the canonical definition in Tests/Internal_Prompts/conftest.py
+(plain import, not `pytest_plugins`), because declaring `pytest_plugins =
+["Tests.Internal_Prompts.conftest"]` — in this test module or in
 Tests/Web_Scraping/conftest.py — collides with pytest's implicit auto-load
 of Tests/Internal_Prompts/conftest.py under --import-mode=importlib when
 both test directories are collected in the same session (ValueError: Plugin
