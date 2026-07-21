@@ -1,7 +1,8 @@
 """Conversation/workspace RAG retrieval scope: model, codecs, resolution."""
 from __future__ import annotations
+import json
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Literal, Mapping, Optional
 from loguru import logger
 
 logger = logger.bind(module="rag_scope")
@@ -23,6 +24,20 @@ SCOPE_REASON_CONVERSATIONS_EXCLUDED = "scope_conversations_excluded"
 #: distinguish ``"scoped"`` from everything else); reserved for the
 #: caller-side ``EMPTY`` short-circuit that seeds ``PipelineContext``.
 SCOPE_REASON_EMPTY = "scope_empty"
+
+#: Status values recorded under a pipeline diagnostics dict's ``"scope"``
+#: key (mirrors ``semantic_availability.py``'s ``SEMANTIC_STATUS_*``
+#: pattern). ``SCOPE_STATUS_EXCLUDED`` replaces the raw ``"excluded"``
+#: string literal flagged in the task-4 review
+#: (``pipeline_functions_simple._record_scope_conversations_excluded``);
+#: ``SCOPE_STATUS_EMPTY`` is the caller-side EMPTY short-circuit's status.
+SCOPE_STATUS_EXCLUDED = "excluded"
+SCOPE_STATUS_EMPTY = "empty"
+
+#: Metadata key under which a conversation's scope is stored (schema-v20
+#: ``conversations.metadata`` JSON column -- the same seam the
+#: chat-dictionaries attach mechanism uses for ``active_dictionaries``).
+CONVERSATION_METADATA_SCOPE_KEY = "rag_scope"
 
 def _warn_malformed(reason: str) -> None:
     """Log a warning about malformed rag_scope payload.
@@ -323,3 +338,159 @@ def build_semantic_allowlists(eff: EffectiveScope) -> Optional[list[dict[str, se
         {"source_type": {source_type}, "source_id": set(ids)}
         for source_type, ids in sorted(eff.allowlist.items())
     ]
+
+
+def _load_conversation_metadata(record: Mapping[str, Any]) -> dict:
+    """Parse a conversation record's metadata JSON, guarded.
+
+    Args:
+        record: A conversation row dict (as returned by
+            ``CharactersRAGDB.get_conversation_by_id``); only its
+            ``"metadata"`` key is read.
+
+    Returns:
+        The parsed metadata dict, or ``{}`` for missing/malformed JSON or a
+        non-dict payload. Never raises.
+    """
+    try:
+        meta = json.loads(record.get("metadata") or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def read_conversation_scope(db: Any, conversation_id: str) -> Optional[RagScope]:
+    """Read a conversation's stored RAG retrieval scope.
+
+    Reads ``conversations.metadata["rag_scope"]`` through the same seam the
+    chat-dictionaries attach mechanism uses
+    (``CharactersRAGDB.get_conversation_by_id``) rather than hand-rolled SQL.
+    Guarded end to end: an unknown conversation, a DB error, malformed
+    metadata JSON, a non-dict metadata payload, or a malformed/forward-
+    versioned scope payload (``parse_scope``'s own guards) all read as
+    unscoped (``None``) rather than raising.
+
+    A stored scope with zero items also reads as unscoped: ``EffectiveScope``
+    has no "scoped with nothing in it" state distinct from ``"unscoped"``
+    (Task 2), and the picker's "Save with zero selected" action already
+    means "clear scope" (design spec section 4) -- so a persisted zero-item
+    payload, however it got there, must not be treated differently from a
+    cleared scope (adjudicated in the Task 2 review).
+
+    Args:
+        db: ``CharactersRAGDB`` instance to read from.
+        conversation_id: Conversation identifier.
+
+    Returns:
+        The stored ``RagScope``, or ``None`` when unscoped, missing,
+        malformed, or empty.
+    """
+    try:
+        record = db.get_conversation_by_id(str(conversation_id))
+    except Exception as e:
+        logger.warning(
+            "rag_scope read failed for conversation {}: {}", conversation_id, e
+        )
+        return None
+    if record is None:
+        return None
+    meta = _load_conversation_metadata(record)
+    scope = parse_scope(meta.get(CONVERSATION_METADATA_SCOPE_KEY))
+    if scope is not None and not scope.items:
+        return None
+    return scope
+
+
+def write_conversation_scope(
+    db: Any, conversation_id: str, scope: Optional[RagScope]
+) -> None:
+    """Write or clear a conversation's stored RAG retrieval scope.
+
+    Uses the same read-merge-write seam the chat-dictionaries attach
+    mechanism uses: the full metadata dict is read via
+    ``get_conversation_by_id``, the ``rag_scope`` key is set (or removed for
+    ``scope=None``), and the merged dict is written back through
+    ``update_conversation`` with optimistic locking.
+
+    This function does not generate a timestamp itself -- the caller stamps
+    ``scope.updated_at`` (a single clock read taken at the UI-layer "Save"
+    action) before calling. That stamp is what gets persisted verbatim and
+    is later used as part of the ``ScopeCache`` key.
+
+    Args:
+        db: ``CharactersRAGDB`` instance to write to.
+        conversation_id: Conversation identifier.
+        scope: The scope to persist, or ``None`` to delete the ``rag_scope``
+            key (clearing the conversation's scope).
+
+    Raises:
+        ValueError: If the conversation does not exist.
+        ConflictError: If the conversation's version is stale at write time
+            (a concurrent edit landed between the read and this write).
+    """
+    record = db.get_conversation_by_id(str(conversation_id))
+    if record is None:
+        raise ValueError(f"Conversation '{conversation_id}' was not found.")
+    meta = _load_conversation_metadata(record)
+    if scope is None:
+        meta.pop(CONVERSATION_METADATA_SCOPE_KEY, None)
+    else:
+        meta[CONVERSATION_METADATA_SCOPE_KEY] = serialize_scope(scope)
+    db.update_conversation(
+        str(conversation_id),
+        {"metadata": json.dumps(meta)},
+        expected_version=record["version"],
+    )
+
+
+class SessionScopeHolder:
+    """Holds a RAG retrieval scope for a not-yet-persisted Console session.
+
+    A native Console chat session with no ``persisted_conversation_id`` yet
+    has no ``conversations`` row to store a scope in via
+    ``write_conversation_scope``. Per the design spec's unpersisted-session
+    lifecycle: the scope lives here -- session-only -- until the conversation
+    is first persisted, at which point ``flush_to`` writes it through exactly
+    once and empties the holder, mirroring how other session-only settings
+    graduate to durable storage on first persistence. Before that first
+    flush, the scope exists only in this in-memory holder and is lost if the
+    session is closed without persisting.
+    """
+
+    def __init__(self) -> None:
+        self._scope: Optional[RagScope] = None
+
+    @property
+    def scope(self) -> Optional[RagScope]:
+        """The currently held scope, or ``None``."""
+        return self._scope
+
+    def set(self, scope: Optional[RagScope]) -> None:
+        """Replace the held scope (``None`` clears it).
+
+        Args:
+            scope: The scope to hold for this session, or ``None``.
+        """
+        self._scope = scope
+
+    def flush_to(self, db: Any, conversation_id: str) -> None:
+        """Write the held scope through to storage once, then empty the holder.
+
+        A no-op (leaves the holder empty) when nothing is held -- callers may
+        call this unconditionally on first persistence without checking
+        whether a scope was ever set during the session.
+
+        Args:
+            db: ``CharactersRAGDB`` instance to write to.
+            conversation_id: The conversation id the session was just
+                persisted under.
+
+        Raises:
+            ValueError: If the conversation does not exist.
+            ConflictError: If the conversation's version is stale at write
+                time.
+        """
+        if self._scope is None:
+            return
+        write_conversation_scope(db, conversation_id, self._scope)
+        self._scope = None

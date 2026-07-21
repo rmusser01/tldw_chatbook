@@ -3,11 +3,25 @@
 #
 # Imports
 from typing import TYPE_CHECKING, Dict, Any, List, Optional, Tuple
+import asyncio
 import copy
+import json
 from loguru import logger
 
 # Local Imports
+from ...Chat.rag_scope import (
+    EffectiveScope,
+    RagScope,
+    SCOPE_REASON_EMPTY,
+    SCOPE_STATUS_EMPTY,
+    SOURCE_TYPE_MEDIA,
+    SOURCE_TYPE_NOTE,
+    SessionScopeHolder,
+    read_conversation_scope,
+    resolve_effective_scope,
+)
 from ...RAG_Search.pipeline_builder_simple import execute_pipeline, BUILTIN_PIPELINES
+from ...RAG_Search.pipeline_functions_simple import SCOPE_DIAGNOSTICS_KEY
 from ...RAG_Search.fusion import resolve_hybrid_alpha
 from ...RAG_Search.semantic_availability import (
     resolve_semantic_rag_service,
@@ -48,9 +62,15 @@ async def perform_plain_rag_search(
     reranker_model: str = "flashrank",
     keyword_filter_list: Optional[List[str]] = None,
     diagnostics: Optional[Dict[str, Any]] = None,
+    scope: Optional[EffectiveScope] = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Perform a plain RAG search using the pipeline system.
+
+    Args:
+        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
+            task-5). Forwarded to ``execute_pipeline`` so every leg
+            self-enforces it; ``None`` performs today's unrestricted search.
     """
     logger.info(f"Performing plain RAG search for query: '{query}'")
 
@@ -76,7 +96,7 @@ async def perform_plain_rag_search(
 
     # Execute pipeline
     return await execute_pipeline(
-        config, app, query, sources, diagnostics=diagnostics, top_k=top_k
+        config, app, query, sources, diagnostics=diagnostics, scope=scope, top_k=top_k
     )
 
 
@@ -94,9 +114,15 @@ async def perform_full_rag_pipeline(
     reranker_model: str = "flashrank",
     keyword_filter_list: Optional[List[str]] = None,
     diagnostics: Optional[Dict[str, Any]] = None,
+    scope: Optional[EffectiveScope] = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Perform a full semantic RAG pipeline using the pipeline system.
+
+    Args:
+        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
+            task-5). Forwarded to ``execute_pipeline`` so every leg
+            self-enforces it; ``None`` performs today's unrestricted search.
     """
     logger.info(f"Performing semantic RAG search for query: '{query}'")
 
@@ -124,7 +150,7 @@ async def perform_full_rag_pipeline(
 
     # Execute pipeline
     return await execute_pipeline(
-        config, app, query, sources, diagnostics=diagnostics, top_k=top_k
+        config, app, query, sources, diagnostics=diagnostics, scope=scope, top_k=top_k
     )
 
 
@@ -144,6 +170,7 @@ async def perform_hybrid_rag_search(
     vector_weight: Optional[float] = None,
     keyword_filter_list: Optional[List[str]] = None,
     diagnostics: Optional[Dict[str, Any]] = None,
+    scope: Optional[EffectiveScope] = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """Perform a hybrid RAG search using the pipeline system.
 
@@ -174,6 +201,9 @@ async def perform_hybrid_rag_search(
         keyword_filter_list: Optional keywords the media FTS leg must match.
         diagnostics: Optional dict receiving the semantic-leg availability
             state (task-250) so callers can say when results are FTS-only.
+        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
+            task-5). Forwarded to ``execute_pipeline`` so every leg
+            self-enforces it; ``None`` performs today's unrestricted search.
 
     Returns:
         Tuple of (result dicts sorted by fused score, formatted context
@@ -221,7 +251,7 @@ async def perform_hybrid_rag_search(
 
     # Execute pipeline
     return await execute_pipeline(
-        config, app, query, sources, diagnostics=diagnostics, top_k=top_k
+        config, app, query, sources, diagnostics=diagnostics, scope=scope, top_k=top_k
     )
 
 
@@ -231,12 +261,19 @@ async def perform_search_with_pipeline(
     sources: Dict[str, bool],
     pipeline_id: str,
     diagnostics: Optional[Dict[str, Any]] = None,
+    scope: Optional[EffectiveScope] = None,
     **kwargs,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Perform a search using a specific pipeline ID.
 
     This allows using custom pipelines defined in TOML files.
+
+    Args:
+        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
+            task-5). Forwarded to ``execute_pipeline`` so every leg
+            self-enforces it, including custom TOML pipeline shapes;
+            ``None`` performs today's unrestricted search.
     """
     logger.info(f"Performing search with pipeline '{pipeline_id}' for query: '{query}'")
 
@@ -258,7 +295,7 @@ async def perform_search_with_pipeline(
 
     # Execute pipeline with merged parameters
     return await execute_pipeline(
-        config, app, query, sources, diagnostics=diagnostics, **merged_params
+        config, app, query, sources, diagnostics=diagnostics, scope=scope, **merged_params
     )
 
 
@@ -322,26 +359,44 @@ def _notify_semantic_leg_state(
     diagnostics: Dict[str, Any],
     results: Optional[List[Dict[str, Any]]],
 ) -> None:
-    """Tell the user when the semantic leg was skipped, failed, or was empty.
+    """Tell the user when scope was empty, or the semantic leg was skipped/failed/empty.
 
     Hybrid (or custom) searches that quietly ran keyword-only, and semantic
     searches over an unavailable runtime or an empty index, all surface an
     honest notification instead of degrading silently (task-250, AC #1/#2).
+    The rag-scope-narrowing program's EMPTY short-circuit (task-5) reuses
+    this same notification pathway: when ``diagnostics["scope"]`` records the
+    caller-side EMPTY state, that takes priority and no semantic-state check
+    runs (no pipeline call happened, so there is nothing there anyway).
 
-    The wording keys off what the search actually produced rather than the
-    mode string: custom pipeline IDs ride through ``search_mode`` verbatim,
-    so a hybrid-like custom pipeline whose FTS legs produced results while
-    the semantic leg could not run must still read as keyword-only
-    (PR #692 review).
+    The semantic-state wording keys off what the search actually produced
+    rather than the mode string: custom pipeline IDs ride through
+    ``search_mode`` verbatim, so a hybrid-like custom pipeline whose FTS legs
+    produced results while the semantic leg could not run must still read as
+    keyword-only (PR #692 review).
 
     Args:
         app: App instance used for ``notify``.
-        diagnostics: Pipeline diagnostics collected during the search.
-        results: Result dicts the executed pipeline returned. Non-empty
+        diagnostics: Pipeline diagnostics collected during the search (or,
+            for the EMPTY short-circuit, recorded directly by the caller
+            without ever calling a pipeline).
+        results: Result dicts the executed pipeline returned, or ``None``
+            when no pipeline ran at all (the EMPTY short-circuit). Non-empty
             results with an unavailable/empty semantic leg mean the context
             is keyword-only; no results at all means semantic retrieval
             contributed nothing and there is no context either.
     """
+    scope_state = diagnostics.get(SCOPE_DIAGNOSTICS_KEY) or {}
+    if scope_state.get("status") == SCOPE_STATUS_EMPTY:
+        cause = scope_state.get("cause") or "unknown"
+        notification = f"Retrieval scope is empty ({cause}); no sources searched."
+        logger.warning(notification)
+        try:
+            app.notify(notification, severity="warning")
+        except Exception as e:
+            logger.debug(f"Could not notify scope-empty state: {e}")
+        return
+
     semantic_state = diagnostics.get(SEMANTIC_DIAGNOSTICS_KEY) or {}
     status = semantic_state.get("status")
     if status not in (SEMANTIC_STATUS_UNAVAILABLE, SEMANTIC_STATUS_EMPTY_INDEX):
@@ -364,9 +419,196 @@ def _notify_semantic_leg_state(
         logger.debug(f"Could not notify semantic-leg state: {e}")
 
 
+def _record_scope_empty(diagnostics: Dict[str, Any], cause: Optional[str]) -> None:
+    """Record the caller-side EMPTY-scope short-circuit into diagnostics.
+
+    Mirrors ``pipeline_functions_simple._record_scope_conversations_excluded``'s
+    shape for the shared ``SCOPE_DIAGNOSTICS_KEY`` diagnostics slot, but for
+    the EMPTY case: no leg ever runs (see ``get_rag_context_for_chat``'s
+    short-circuit), so this is written directly by the caller rather than by
+    a pipeline leg.
+
+    Args:
+        diagnostics: The diagnostics dict to record into (never ``None``
+            here -- the caller always constructs one before resolving scope).
+        cause: The ``EffectiveScope.cause`` explaining why resolution landed
+            on EMPTY (``"no-workspace-overlap"`` or ``"deleted-items"``).
+    """
+    diagnostics[SCOPE_DIAGNOSTICS_KEY] = {
+        "status": SCOPE_STATUS_EMPTY,
+        "reason": SCOPE_REASON_EMPTY,
+        "cause": cause,
+    }
+
+
+def _active_console_session(app: "TldwCli") -> Optional[Any]:
+    """Return the active native-Console chat session object, or ``None``.
+
+    Conversation identity for RAG-scope resolution must come from the native
+    Console's own session state (``ConsoleChatSession.persisted_conversation_id``)
+    -- never the legacy ``app.current_chat_conversation_id`` /
+    ``app.current_chat_active_character_data`` reactives, which native
+    Console never writes (the documented bug class also called out in
+    ``UI/Screens/chat_screen.py``'s dictionary-summary comment: those
+    reactives are written only by the legacy sidebar chat flow in this same
+    ``chat_events.py`` module).
+
+    Sourced via ``app.screen`` (the same ``isinstance(self.screen,
+    ChatScreen)`` pattern ``app.py`` already uses elsewhere) rather than a
+    dedicated attribute, since no such attribute exists on the app today.
+    Any missing piece along the way (no active screen, not the Console
+    screen, no store, no active session) degrades to ``None``; this function
+    never raises.
+
+    Args:
+        app: The running app instance.
+
+    Returns:
+        The active ``ConsoleChatSession``, or ``None``.
+    """
+    try:
+        from ...UI.Screens.chat_screen import ChatScreen
+    except Exception:
+        return None
+    screen = getattr(app, "screen", None)
+    if not isinstance(screen, ChatScreen):
+        return None
+    store = getattr(screen, "_console_chat_store", None)
+    if store is None:
+        return None
+    session_id = getattr(store, "active_session_id", None)
+    if not session_id:
+        return None
+    try:
+        for session in store.sessions():
+            if session.id == session_id:
+                return session
+    except Exception as e:
+        logger.debug(f"Could not resolve the active Console session: {e}")
+    return None
+
+
+def _existing_ids_sync(
+    app: "TldwCli", source_type: str, ids: "frozenset[str]"
+) -> "frozenset[str]":
+    """Cheap surviving-id check for scope resolution's dangling-drop step.
+
+    Runs a single ``id IN (SELECT value FROM json_each(...))`` query against
+    the media or notes table (whichever ``source_type`` names) so
+    ``resolve_effective_scope`` can drop references to since-deleted content.
+    Synchronous -- callers run this off the event loop themselves (via
+    ``asyncio.to_thread`` around the whole ``resolve_effective_scope`` call,
+    matching this file's existing threading discipline for DB work).
+
+    Missing DB handles or query errors degrade to "nothing survives" (an
+    empty ``frozenset``) rather than raising or assuming existence: a broken
+    existence check must never let scope enforcement silently widen to
+    "search everything".
+
+    Args:
+        app: App-like object exposing ``media_db``/``chachanotes_db``.
+        source_type: ``SOURCE_TYPE_MEDIA`` or ``SOURCE_TYPE_NOTE``.
+        ids: Candidate ids to check.
+
+    Returns:
+        The subset of ``ids`` that still exist (not soft-deleted).
+    """
+    if not ids:
+        return frozenset()
+    if source_type == SOURCE_TYPE_MEDIA:
+        db = getattr(app, "media_db", None)
+        table = "Media"
+    elif source_type == SOURCE_TYPE_NOTE:
+        db = getattr(app, "chachanotes_db", None)
+        table = "notes"
+    else:
+        return frozenset()
+    if db is None:
+        return frozenset()
+    try:
+        rows = db.execute_query(
+            f"SELECT id FROM {table} "
+            "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
+            (json.dumps(sorted(ids)),),
+        ).fetchall()
+        return frozenset(str(row[0]) for row in rows)
+    except Exception as e:
+        logger.warning(
+            f"rag_scope existing-ids check failed for {source_type}: {e}"
+        )
+        return frozenset()
+
+
+async def _resolve_effective_scope_for_chat(app: "TldwCli") -> EffectiveScope:
+    """Resolve the RAG retrieval scope for the message about to be sent.
+
+    Conversation identity comes from the active native-Console session's
+    ``persisted_conversation_id`` (see ``_active_console_session``). When the
+    conversation is persisted, its scope is read from storage
+    (``read_conversation_scope``). When the session has not been persisted
+    yet, an in-session ``SessionScopeHolder`` attached to the session object
+    (``session.rag_scope_holder``, duck-typed) is consulted instead -- a
+    forward-compat seam for the not-yet-built scope-picker UI; no production
+    session carries one yet, so unpersisted sessions resolve unscoped today.
+
+    Workspace scope resolution is out of scope for this task (Phase 3 of the
+    rag-scope-narrowing program wires it); always passed as ``None`` here.
+
+    Args:
+        app: The running app instance.
+
+    Returns:
+        The resolved ``EffectiveScope`` -- ``state == "unscoped"`` (with no
+        DB work at all) whenever there is no active Console session, no
+        conversation scope, and no workspace scope, matching
+        ``resolve_effective_scope``'s own both-``None`` contract.
+    """
+    session = _active_console_session(app)
+    conversation_id = (
+        getattr(session, "persisted_conversation_id", None)
+        if session is not None
+        else None
+    )
+
+    conv_scope: Optional[RagScope] = None
+    db = getattr(app, "chachanotes_db", None)
+    if conversation_id and db is not None:
+        conv_scope = await asyncio.to_thread(
+            read_conversation_scope, db, conversation_id
+        )
+    elif session is not None:
+        holder = getattr(session, "rag_scope_holder", None)
+        if isinstance(holder, SessionScopeHolder):
+            conv_scope = holder.scope
+
+    # Workspace scope resolution lands in Phase 3 of the rag-scope-narrowing
+    # program; explicitly unset here.
+    ws_scope: Optional[RagScope] = None
+
+    if conv_scope is None and ws_scope is None:
+        # No DB-backed existence check needed for the both-unset case --
+        # resolve_effective_scope's own early return covers it synchronously.
+        return resolve_effective_scope(conv_scope, ws_scope, lambda st, ids: ids)
+
+    def _existing_ids(source_type: str, ids: "frozenset[str]") -> "frozenset[str]":
+        return _existing_ids_sync(app, source_type, ids)
+
+    return await asyncio.to_thread(
+        resolve_effective_scope, conv_scope, ws_scope, _existing_ids
+    )
+
+
 async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optional[str]:
     """
     Get RAG context for a chat message based on current settings.
+
+    Resolves the effective RAG retrieval scope (rag-scope narrowing, task-5)
+    before running any pipeline: unscoped (the default -- no active native
+    Console session, or no scope configured) performs today's unrestricted
+    search; a scoped conversation restricts every pipeline leg to its
+    allowlist; an EMPTY resolution (a configured scope with nothing left to
+    search, e.g. its items were deleted) short-circuits before any
+    pipeline/leg call and returns ``None`` with a notification instead.
 
     Returns the context string to be prepended to the user message, or None if RAG is disabled.
     """
@@ -448,6 +690,28 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
         app.notify("Please select at least one RAG source", severity="warning")
         return None
 
+    # Semantic-leg availability states, and the resolved-scope state, ride
+    # out of the pipeline (or the EMPTY short-circuit below) here.
+    diagnostics: Dict[str, Any] = {}
+
+    # rag-scope-narrowing (task-5): resolve the effective retrieval scope
+    # BEFORE running any pipeline. UNSCOPED seeds nothing into the pipeline
+    # (byte-identical to pre-scope behavior); SCOPED seeds
+    # PipelineContext['scope'] so every leg self-enforces it (task-4); EMPTY
+    # short-circuits entirely -- task-4's legs deliberately treat an EMPTY
+    # scope the same as unscoped (they would search everything), so this
+    # caller must never let one reach a leg call.
+    effective_scope = await _resolve_effective_scope_for_chat(app)
+
+    if effective_scope.state == "empty":
+        _record_scope_empty(diagnostics, effective_scope.cause)
+        _notify_semantic_leg_state(app, diagnostics, results=None)
+        return None
+
+    scope_for_pipeline: Optional[EffectiveScope] = (
+        effective_scope if effective_scope.state == "scoped" else None
+    )
+
     # Initialize RAG service if needed for semantic search. When the runtime
     # is unavailable the user is TOLD why before the search degrades to
     # keyword-only (task-250) -- the old path fell back with only a log line.
@@ -468,9 +732,6 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
             )
             search_mode = "plain"
 
-    # Semantic-leg availability states ride out of the pipeline here.
-    diagnostics: Dict[str, Any] = {}
-
     # Perform the search
     try:
         logger.info(f"Performing {search_mode} RAG search for: '{user_message}'")
@@ -486,6 +747,7 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                 reranker_model=reranker_model,
                 keyword_filter_list=keyword_filter_list,
                 diagnostics=diagnostics,
+                scope=scope_for_pipeline,
             )
         elif search_mode == "semantic" or search_mode == "full":
             results, context = await perform_full_rag_pipeline(
@@ -502,6 +764,7 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                 reranker_model=reranker_model,
                 keyword_filter_list=keyword_filter_list,
                 diagnostics=diagnostics,
+                scope=scope_for_pipeline,
             )
         elif search_mode == "hybrid":
             results, context = await perform_hybrid_rag_search(
@@ -517,6 +780,7 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                 chunk_type=chunk_type,
                 keyword_filter_list=keyword_filter_list,
                 diagnostics=diagnostics,
+                scope=scope_for_pipeline,
             )
         else:
             # Custom pipeline
@@ -534,6 +798,7 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                 chunk_type=chunk_type,
                 keyword_filter_list=keyword_filter_list,
                 diagnostics=diagnostics,
+                scope=scope_for_pipeline,
             )
 
         _notify_semantic_leg_state(app, diagnostics, results)

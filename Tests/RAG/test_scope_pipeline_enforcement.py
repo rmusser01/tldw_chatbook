@@ -1,4 +1,5 @@
-"""Tests for task-4: pipeline legs self-enforce RAG retrieval scope.
+"""Tests for task-4/task-5: pipeline legs self-enforce RAG retrieval scope,
+and the chat entry point wires resolution + the EMPTY short-circuit end to end.
 
 Covers the ``rag-scope-narrowing`` program's pipeline-leg enforcement layer:
 media/notes FTS legs restrict to the scope's id allowlist (or return ``[]``
@@ -9,6 +10,12 @@ query per source_type present in the scope and merges by score. All four
 legs must also inherit enforcement identically when driven through
 ``execute_pipeline`` (builtin/parallel pipeline shape), proving
 self-enforcement rather than caller-side leg-skipping (the task-250 lesson).
+
+Task-5 adds the caller-side entry point: ``Event_Handlers.Chat_Events.
+chat_rag_events.get_rag_context_for_chat`` resolves the effective scope
+before any pipeline runs, seeds it into scoped searches, and short-circuits
+entirely on an EMPTY scope (task-4's legs deliberately treat EMPTY the same
+as unscoped, so the caller must never let one reach a leg call).
 
 Real in-memory-adjacent (tmp_path file-backed) DBs are used throughout,
 mirroring ``Tests/RAG_Search/test_pipeline_notes_search.py`` and
@@ -22,15 +29,22 @@ import pytest
 
 from tldw_chatbook.Chat.rag_scope import (
     EffectiveScope,
+    RagScope,
     SCOPE_REASON_CONVERSATIONS_EXCLUDED,
+    SCOPE_REASON_EMPTY,
+    SCOPE_STATUS_EMPTY,
+    SCOPE_STATUS_EXCLUDED,
+    ScopeItem,
     SOURCE_TYPE_MEDIA,
     SOURCE_TYPE_NOTE,
     build_semantic_allowlists,
     media_id_params,
     note_id_params,
+    write_conversation_scope,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as cre
 from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
 from tldw_chatbook.RAG_Search import pipeline_functions_simple as pfs
 from tldw_chatbook.RAG_Search.pipeline_functions_simple import SCOPE_DIAGNOSTICS_KEY
@@ -309,7 +323,7 @@ class TestConversationsLegExclusion:
 
         assert results == []
         assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == {
-            "status": "excluded",
+            "status": SCOPE_STATUS_EXCLUDED,
             "reason": SCOPE_REASON_CONVERSATIONS_EXCLUDED,
         }
 
@@ -575,3 +589,241 @@ class TestCustomPipelineInheritance:
         ids_with = sorted(r["id"] for r in with_scope_key)
         ids_without = sorted(r["id"] for r in without_scope_key)
         assert ids_with == ids_without == sorted(media_ids + note_ids)
+
+
+# === Task-5: chat entry point (get_rag_context_for_chat) end to end ===
+
+
+class _MockWidget:
+    def __init__(self, value):
+        self.value = value
+
+
+class _ChatMockApp:
+    """Minimal query_one/notify surface for ``get_rag_context_for_chat``,
+    plus the real DB handles the scope-resolution wiring and pipeline legs
+    read directly off the app (mirrors ``Tests/RAG/test_semantic_honest_states
+    .py``'s ``_ChatMockApp`` fixture, extended with ``media_db``/
+    ``chachanotes_db`` since this task drives real seeded DBs end to end)."""
+
+    def __init__(
+        self,
+        search_mode: str = "plain",
+        *,
+        media_db: Any = None,
+        chachanotes_db: Any = None,
+        rag_service: Any = None,
+    ):
+        self._widgets = {
+            "#chat-rag-enable-checkbox": _MockWidget(True),
+            "#chat-rag-plain-enable-checkbox": _MockWidget(search_mode == "plain"),
+            "#chat-rag-search-mode": _MockWidget(search_mode),
+            "#chat-rag-search-media-checkbox": _MockWidget(True),
+            "#chat-rag-search-conversations-checkbox": _MockWidget(False),
+            "#chat-rag-search-notes-checkbox": _MockWidget(True),
+            "#chat-rag-keyword-filter": _MockWidget(""),
+            "#chat-rag-top-k": _MockWidget("10"),
+            "#chat-rag-max-context-length": _MockWidget("10000"),
+            "#chat-rag-rerank-enable-checkbox": _MockWidget(False),
+            "#chat-rag-reranker-model": _MockWidget("flashrank"),
+            "#chat-rag-chunk-size": _MockWidget("400"),
+            "#chat-rag-chunk-overlap": _MockWidget("100"),
+            "#chat-rag-chunk-type": _MockWidget("words"),
+            "#chat-rag-include-metadata-checkbox": _MockWidget(False),
+        }
+        self.media_db = media_db
+        self.chachanotes_db = chachanotes_db
+        if rag_service is not None:
+            self._rag_service = rag_service
+        self.notifications: List[tuple] = []
+
+    def query_one(self, selector):
+        return self._widgets[selector]
+
+    def notify(self, message, severity="information", **kwargs):
+        self.notifications.append((message, severity))
+
+
+class TestChatEntryPointScopedE2E:
+    """Driving ``get_rag_context_for_chat`` with seeded DBs and a scoped,
+    persisted conversation returns context built ONLY from in-scope content
+    (design spec section 5's end-to-end requirement)."""
+
+    @pytest.mark.asyncio
+    async def test_scoped_send_context_contains_only_in_scope_content(
+        self, media_db, cha_db, monkeypatch
+    ):
+        media_ids = _seed_media(media_db, n=3)
+        note_ids = _seed_notes(cha_db, n=3)
+        conv_id = cha_db.add_conversation({"title": "Scoped conversation"})
+
+        scope = RagScope(
+            items=(
+                ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),
+                ScopeItem(SOURCE_TYPE_NOTE, note_ids[2]),
+            ),
+            updated_at="2026-07-21T00:00:00+00:00",
+        )
+        write_conversation_scope(cha_db, conv_id, scope)
+
+        session = SimpleNamespace(persisted_conversation_id=conv_id)
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        app = _ChatMockApp(
+            search_mode="plain", media_db=media_db, chachanotes_db=cha_db
+        )
+
+        context = await cre.get_rag_context_for_chat(app, "zanzibarite")
+
+        assert context is not None
+        # In-scope content present.
+        assert "Doc 1" in context
+        assert "Note 2" in context
+        # Out-of-scope content absent (both other media and both other notes).
+        for excluded_title in ("Doc 0", "Doc 2", "Note 0", "Note 1"):
+            assert excluded_title not in context, context
+
+    @pytest.mark.asyncio
+    async def test_unpersisted_session_with_no_holder_is_unscoped(
+        self, media_db, cha_db, monkeypatch
+    ):
+        """A native-Console session that has not been persisted yet, and
+        carries no ``SessionScopeHolder``, resolves unscoped -- there is
+        nowhere yet for a scope-picker UI (not built in this task) to have
+        put one."""
+        # Media is seeded with n=1: search_media_db does not project the
+        # `content` column (a pre-existing, scope-unrelated choice), so the
+        # plain pipeline's deduplicate_results step -- keyed on content --
+        # collapses multiple same-score media results with >1 seeded rows
+        # regardless of scope. n=1 sidesteps that collision so this test
+        # stays about scope, not about that orthogonal pipeline quirk.
+        _seed_media(media_db, n=1)
+        _seed_notes(cha_db, n=2)
+
+        session = SimpleNamespace(persisted_conversation_id=None)
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        app = _ChatMockApp(
+            search_mode="plain", media_db=media_db, chachanotes_db=cha_db
+        )
+
+        context = await cre.get_rag_context_for_chat(app, "zanzibarite")
+
+        assert context is not None
+        assert "Doc 0" in context
+        for i in range(2):
+            assert f"Note {i}" in context
+
+
+class TestChatEntryPointEmptyScopeShortCircuit:
+    """An EMPTY effective scope (all scoped ids since deleted) short-circuits
+    ``get_rag_context_for_chat`` before any pipeline/leg call, and records
+    the cause into diagnostics via the existing notification pathway."""
+
+    @pytest.mark.asyncio
+    async def test_empty_scope_short_circuits_with_zero_leg_calls(
+        self, media_db, cha_db, monkeypatch
+    ):
+        conv_id = cha_db.add_conversation({"title": "Deleted-item scope"})
+        # References a media id that was never seeded -- the real
+        # dangling-drop existence check (_existing_ids_sync) will find
+        # nothing survives, landing on EMPTY/"deleted-items".
+        scope = RagScope(
+            items=(ScopeItem(SOURCE_TYPE_MEDIA, "999999"),), updated_at="t1"
+        )
+        write_conversation_scope(cha_db, conv_id, scope)
+
+        session = SimpleNamespace(persisted_conversation_id=conv_id)
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        for fn_name in (
+            "perform_plain_rag_search",
+            "perform_full_rag_pipeline",
+            "perform_hybrid_rag_search",
+            "perform_search_with_pipeline",
+        ):
+            def _refuse(*args, __name=fn_name, **kwargs):
+                raise AssertionError(f"{__name} must not be called on EMPTY scope")
+
+            monkeypatch.setattr(cre, fn_name, _refuse)
+
+        captured: Dict[str, Any] = {}
+        original_notify = cre._notify_semantic_leg_state
+
+        def _spy_notify(app_arg, diagnostics, results):
+            captured["diagnostics"] = dict(diagnostics)
+            captured["results"] = results
+            return original_notify(app_arg, diagnostics, results)
+
+        monkeypatch.setattr(cre, "_notify_semantic_leg_state", _spy_notify)
+
+        app = _ChatMockApp(
+            search_mode="plain", media_db=media_db, chachanotes_db=cha_db
+        )
+
+        context = await cre.get_rag_context_for_chat(app, "zanzibarite")
+
+        assert context is None
+        assert captured["results"] is None
+        assert captured["diagnostics"][SCOPE_DIAGNOSTICS_KEY] == {
+            "status": SCOPE_STATUS_EMPTY,
+            "reason": SCOPE_REASON_EMPTY,
+            "cause": "deleted-items",
+        }
+        assert any(
+            "retrieval scope is empty" in message.lower()
+            and "deleted-items" in message.lower()
+            for message, _severity in app.notifications
+        ), app.notifications
+
+
+class TestChatEntryPointUnscopedZeroDrift:
+    """No active native-Console session (today's real default) must resolve
+    unscoped and thread ``scope=None`` through to the pipeline exactly like
+    before scope resolution existed -- zero drift through the full entry
+    path."""
+
+    @pytest.mark.asyncio
+    async def test_no_active_session_searches_everything(
+        self, media_db, cha_db, monkeypatch
+    ):
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: None)
+        # n=1 media: see the comment in
+        # TestChatEntryPointScopedE2E.test_unpersisted_session_with_no_holder_is_unscoped
+        # for why >1 same-score media rows collide in deduplicate_results
+        # regardless of scope (content is never projected by search_media_db).
+        _seed_media(media_db, n=1)
+        _seed_notes(cha_db, n=3)
+
+        app = _ChatMockApp(
+            search_mode="plain", media_db=media_db, chachanotes_db=cha_db
+        )
+
+        context = await cre.get_rag_context_for_chat(app, "zanzibarite")
+
+        assert context is not None
+        assert "Doc 0" in context
+        for i in range(3):
+            assert f"Note {i}" in context
+
+    @pytest.mark.asyncio
+    async def test_unscoped_pipeline_call_receives_scope_none(self, monkeypatch):
+        """Direct proof of the call shape: no active session -> the pipeline
+        dispatch receives ``scope=None``, matching the pre-task call shape."""
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: None)
+
+        captured: Dict[str, Any] = {}
+
+        async def _spy_plain(app_arg, query, sources, **kwargs):
+            captured.update(kwargs)
+            return [], "some context"
+
+        monkeypatch.setattr(cre, "perform_plain_rag_search", _spy_plain)
+
+        app = _ChatMockApp(search_mode="plain")
+
+        context = await cre.get_rag_context_for_chat(app, "hello")
+
+        assert context == "some context"
+        assert "scope" in captured
+        assert captured["scope"] is None

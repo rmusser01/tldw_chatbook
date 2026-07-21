@@ -12,6 +12,7 @@ from loguru import logger
 from ..Chat.rag_scope import (
     EffectiveScope,
     SCOPE_REASON_CONVERSATIONS_EXCLUDED,
+    SCOPE_STATUS_EXCLUDED,
     build_semantic_allowlists,
     media_id_params,
     note_id_params,
@@ -45,7 +46,7 @@ def _record_scope_conversations_excluded(diagnostics: Optional[Dict[str, Any]]) 
     if diagnostics is None:
         return
     diagnostics[SCOPE_DIAGNOSTICS_KEY] = {
-        "status": "excluded",
+        "status": SCOPE_STATUS_EXCLUDED,
         "reason": SCOPE_REASON_CONVERSATIONS_EXCLUDED,
     }
 
