@@ -9466,6 +9466,15 @@ class ChatScreen(BaseAppScreen):
             workspace_id=store.workspace_context.active_workspace_id,
             settings=self._default_console_session_settings(),
         )
+        if session.settings is None:
+            # `ensure_session` only applies `settings=` when it CREATES the
+            # session; one created earlier without settings (e.g. by a bare
+            # system-message append) would make the pinned-prefill update a
+            # silent no-op in `set_session_pinned_prefill` (PR #729 Qodo
+            # finding 3), so seed defaults before any pin/clear below.
+            session = store.replace_session_settings(
+                session.id, self._default_console_session_settings()
+            )
         if action.kind == ACTION_ERROR:
             await self._append_native_console_system_message(action.error)
             return

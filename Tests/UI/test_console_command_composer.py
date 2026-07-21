@@ -891,3 +891,32 @@ async def test_console_prefill_pin_and_clear_round_trip():
         assert store.session_settings(session_id).pinned_prefill is None
         assert store.session_one_shot_prefill(session_id) is None
         assert composer.draft_text() == ""
+
+
+@pytest.mark.asyncio
+async def test_console_prefill_pin_seeds_settings_on_settings_less_session():
+    """PR #729 Qodo finding 3: a session created without settings (e.g. by a
+    bare system-message append before any send) must not make `/prefill pin`
+    a silent no-op — the handler seeds default settings first."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session(
+            workspace_id=store.workspace_context.active_workspace_id
+        )
+        store.replace_session_settings(session.id, None)
+        assert store.session_settings(session.id) is None
+
+        composer.load_draft("/prefill pin Voice:")
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "Prefill pinned")
+
+        settings = store.session_settings(session.id)
+        assert settings is not None
+        assert settings.pinned_prefill == "Voice:"

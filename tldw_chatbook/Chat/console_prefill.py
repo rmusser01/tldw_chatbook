@@ -69,6 +69,14 @@ def parse_prefill_args(args: str) -> PrefillCommandAction:
     only as the first token with trailing text. A one-shot whose text
     literally starts with ``pin `` or equals ``clear`` therefore cannot be
     expressed — documented spec limitation.
+
+    Args:
+        args: Raw text after the ``/prefill`` command word.
+
+    Returns:
+        A `PrefillCommandAction` whose ``kind`` is one of the ``ACTION_*``
+        constants; ``text`` carries the normalized prefill for
+        ``pin``/``one-shot`` kinds, ``error`` the message for ``error``.
     """
     stripped = args.strip()
     if not stripped:
@@ -87,7 +95,16 @@ def parse_prefill_args(args: str) -> PrefillCommandAction:
 
 
 def describe_prefill_preview(text: str, max_chars: int = _PREVIEW_MAX_CHARS) -> str:
-    """Return a single-line preview of ``text``, truncated with an ellipsis."""
+    """Return a single-line preview of ``text``, truncated with an ellipsis.
+
+    Args:
+        text: Full prefill text to summarize.
+        max_chars: Maximum preview length, including the ellipsis.
+
+    Returns:
+        ``text`` with whitespace runs collapsed to single spaces, cut to
+        ``max_chars`` with a trailing ``…`` when longer.
+    """
     flattened = " ".join(text.split())
     if len(flattened) <= max_chars:
         return flattened
@@ -100,6 +117,15 @@ def pinned_prefill_from_conversation_metadata(raw_metadata: object) -> str | Non
     Mirrors ``local_chat_dictionary_service._active_dictionaries``'s guarded
     parse (the ``json.loads(None)`` crash class): any missing/invalid shape
     yields ``None`` rather than raising.
+
+    Args:
+        raw_metadata: The conversation record's ``metadata`` column value —
+            a JSON string, ``None``, or any invalid shape.
+
+    Returns:
+        The stored non-blank pinned prefill string, or ``None`` when the
+        metadata is missing, malformed, or has no usable value under
+        `PINNED_PREFILL_METADATA_KEY`.
     """
     try:
         meta = json.loads(raw_metadata or "{}")
