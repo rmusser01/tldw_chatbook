@@ -333,3 +333,27 @@ def test_parse_schema_still_raw_for_genuine_multitype_union():
         "properties": {"val": {"anyOf": [{"type": "string"}, {"type": "integer"}]}},
     }
     assert parse_schema(schema) is None
+
+
+def test_parse_schema_required_nullable_field_stays_required():
+    """A `T | None` param with no default lands in the schema's `required`
+    list; unwrapping the nullable idiom must NOT silently make it optional,
+    or the user could omit a parameter the tool requires."""
+    schema = {
+        "type": "object",
+        "properties": {"note": {"anyOf": [{"type": "string"}, {"type": "null"}]}},
+        "required": ["note"],
+    }
+    fields = parse_schema(schema)
+    assert fields is not None
+    assert fields[0].name == "note" and fields[0].kind == "string"
+    assert fields[0].required is True
+
+
+def test_parse_schema_type_array_multitype_union_stays_raw():
+    """type:[string,integer] (no null) is a genuine union — still raw."""
+    schema = {
+        "type": "object",
+        "properties": {"val": {"type": ["string", "integer"]}},
+    }
+    assert parse_schema(schema) is None

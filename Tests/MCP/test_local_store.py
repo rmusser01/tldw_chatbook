@@ -482,3 +482,30 @@ def test_local_store_still_rejects_secret_shaped_env_literal_over_path_acceptanc
                 env_literals={"API_KEY": "/looks/like/a/path/but/secret/key"},
             )
         )
+
+
+def test_local_store_rejects_path_shaped_secret_under_neutral_key(tmp_path):
+    """Accepting filesystem paths must NOT let a token-shaped secret slip the
+    value guard by wearing a leading path anchor under a non-secret key name
+    (the leading '/'/'~' used to break the ^sk-…$ full-match)."""
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    for key, value in [
+        ("HOME_WS", "~/sk-live-abcdef012345ghij"),
+        ("GENERIC", "/ghp_1234567890abcdefghijklmno"),
+        ("NESTED", "/opt/creds/xoxb-1234567890-abcdefghij"),
+    ]:
+        with pytest.raises(ValueError, match="[Ss]ecret"):
+            store.save_profile(
+                LocalExternalMCPProfile(
+                    profile_id="p", command="python", env_literals={key: value}
+                )
+            )
+    # A genuine multi-segment workspace path is still accepted.
+    saved = store.save_profile(
+        LocalExternalMCPProfile(
+            profile_id="p",
+            command="python",
+            env_literals={"ATHF_WORKSPACE": "/home/analyst/hunts/prod"},
+        )
+    )
+    assert saved.env_literals["ATHF_WORKSPACE"] == "/home/analyst/hunts/prod"

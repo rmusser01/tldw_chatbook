@@ -3,13 +3,15 @@
 raw-JSON fallback.
 
 `parse_schema()` is pure: it turns a JSON-Schema "object" schema into a list
-of `SchemaField`s the widget can render as real controls. If ANY declared
-property can't be rendered faithfully (a nested object/array, `oneOf`, a
-missing/unsupported `type`), the WHOLE parse fails (returns `None`) rather
-than silently dropping that property -- a form missing a parameter the tool
-actually requires would lie to the user. `MCPSchemaForm` falls back to a raw
-JSON `TextArea` in that case, so every tool call remains possible even when
-its schema can't be rendered.
+of `SchemaField`s the widget can render as real controls. Simple/enum types
+render directly, and the Optional[T] idiom (Pydantic v2's `anyOf: [T, null]`
+/ `type: [T, "null"]`) is unwrapped to the underlying type. If ANY declared
+property can't be rendered faithfully (a nested object/array, a real
+multi-type union, `oneOf`, a missing/unsupported `type`), the WHOLE parse
+fails (returns `None`) rather than silently dropping that property -- a form
+missing a parameter the tool actually requires would lie to the user.
+`MCPSchemaForm` falls back to a raw JSON `TextArea` in that case, so every
+tool call remains possible even when its schema can't be rendered.
 """
 
 from __future__ import annotations
@@ -126,10 +128,13 @@ def parse_schema(schema: dict | None) -> list[SchemaField] | None:
             # Nested object/array, real multi-type union, oneOf, missing
             # type, etc. -- one unrenderable property fails the WHOLE schema.
             return None
-        kind, choices, nullable = resolved
-        # A nullable field accepts null/absence, so a blank is valid -- never
-        # force it required even if the schema's `required` list names it.
-        required = field_name in required_names and not nullable
+        kind, choices, _nullable = resolved
+        # The schema's `required` list is authoritative: a nullable field
+        # WITH a default isn't in it (renders optional), but `T | None` with
+        # NO default IS in it and the tool wants it -- forcing it optional
+        # would let the user silently omit a required parameter (the exact
+        # "partial form lies" failure this module's raw fallback prevents).
+        required = field_name in required_names
         fields.append(
             SchemaField(
                 name=field_name,

@@ -158,7 +158,20 @@ def _is_secret_bearing_env_key(key: str) -> bool:
 
 
 def _looks_like_raw_secret_value(value: str) -> bool:
-    return any(pattern.fullmatch(value) for pattern in _SECRET_VALUE_PATTERNS)
+    # Test the whole value AND — so a leading path anchor can't smuggle a
+    # secret past the full-match patterns now that filesystem paths are
+    # accepted literals (e.g. "~/sk-live-…", "/foo/ghp_…") — the
+    # anchor-stripped value and each path segment.
+    candidates = [value]
+    stripped = value.lstrip("~/")
+    if stripped != value:
+        candidates.append(stripped)
+        candidates.extend(segment for segment in stripped.split("/") if segment)
+    return any(
+        pattern.fullmatch(candidate)
+        for candidate in candidates
+        for pattern in _SECRET_VALUE_PATTERNS
+    )
 
 
 def _is_safe_literal_value(value: str) -> bool:
