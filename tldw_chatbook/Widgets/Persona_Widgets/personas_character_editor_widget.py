@@ -18,6 +18,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, Static, TextArea
 
+from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from .personas_pane_messages import (
     CharacterEditorCancelled,
     CharacterImageUploadRequested,
@@ -381,7 +382,7 @@ class PersonasCharacterEditorWidget(Container):
         ext = self._character_data.get("extensions")
         if not isinstance(ext, dict):
             ext = {}
-        ext["character_world_books"] = list(character_world_books)
+        ext[CHARACTER_WORLD_BOOKS_KEY] = list(character_world_books)
         self._character_data["extensions"] = ext
         self._character_data["version"] = new_version
 

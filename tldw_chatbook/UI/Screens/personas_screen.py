@@ -24,6 +24,7 @@ from ...Character_Chat.Character_Chat_Lib import (
     validate_character_book,
 )
 from ...Character_Chat.world_book_import import normalize_world_book_import
+from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
@@ -2167,7 +2168,7 @@ class PersonasScreen(BaseAppScreen):
                     "Could not show the world-book picker."
                 )
                 return
-            if not picked:
+            if picked is None:
                 return
             try:
                 await asyncio.to_thread(
@@ -2232,7 +2233,7 @@ class PersonasScreen(BaseAppScreen):
             return
         if int(editor._character_data.get("id") or 0) == int(character_id):
             editor.sync_attached_world_books(
-                ext.get("character_world_books") or [], record.get("version")
+                ext.get(CHARACTER_WORLD_BOOKS_KEY) or [], record.get("version")
             )
 
     @on(CharacterWorldBookDetachRequested)

@@ -18,6 +18,11 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDBError,
 )
 
+# Shared key for the embedded-snapshot list under a character's
+# ``extensions`` dict. Centralized so the write side (attach/detach) and the
+# read side (resolver, editor sync) can never drift into a typo mismatch.
+CHARACTER_WORLD_BOOKS_KEY = "character_world_books"
+
 
 def _coerce_int(value: Any, default: int = 0) -> int:
     """Best-effort int coercion for loosely-typed entry fields.
@@ -72,7 +77,22 @@ def resolve_character_world_books(
     (an enabled conversation-attached book already covers it — conversation
     wins) or whose book-level ``enabled`` is false, and returns the survivors
     as ``WorldInfoProcessor._process_world_books``-ready book dicts. Never
-    raises on malformed embedded/imported card content.
+    raises on malformed embedded/imported card content: each surviving block
+    is returned as a sanitized copy (numeric ``scan_depth``/``token_budget``/
+    ``priority``, list-of-dicts ``entries``) so a hostile/hand-edited snapshot
+    can never make the processor's ``max()``/arithmetic/iteration choke and
+    silently disable world-info injection for the whole send.
+
+    Args:
+        char_data: The character record (as returned by
+            ``get_character_card_by_id``), or ``None``.
+        exclude_names: Book names already covered by an enabled
+            conversation-attached world book; conversation wins on a name
+            collision so these are excluded from the result.
+
+    Returns:
+        Sanitized, deduped, enabled-only book dicts ready to pass as the
+        ``world_books`` argument to ``WorldInfoProcessor``.
     """
     if not isinstance(char_data, dict):
         return []
@@ -84,7 +104,7 @@ def resolve_character_world_books(
             ext = {}
     if not isinstance(ext, dict):
         return []
-    raw = ext.get("character_world_books")
+    raw = ext.get(CHARACTER_WORLD_BOOKS_KEY)
     if not isinstance(raw, list):
         return []
     resolved: List[Dict[str, Any]] = []
@@ -98,7 +118,18 @@ def resolve_character_world_books(
         seen.add(name)
         if not _coerce_bool(block.get("enabled"), True):
             continue
-        resolved.append(block)
+        entries = block.get("entries")
+        if not isinstance(entries, list):
+            entries = []
+        resolved.append(
+            {
+                **block,
+                "scan_depth": _coerce_int(block.get("scan_depth"), 3),
+                "token_budget": _coerce_int(block.get("token_budget"), 500),
+                "priority": _coerce_int(block.get("priority"), 0),
+                "entries": [e for e in entries if isinstance(e, dict)],
+            }
+        )
     return resolved
 
 
@@ -767,7 +798,7 @@ class WorldBookManager:
         record: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
         ext = WorldBookManager._normalize_extensions(record)
-        raw = ext.get("character_world_books") or []
+        raw = ext.get(CHARACTER_WORLD_BOOKS_KEY) or []
         if not isinstance(raw, list):
             raw = []
         return [b for b in raw if isinstance(b, dict) and b.get("name")]
@@ -782,7 +813,7 @@ class WorldBookManager:
         self, record: Dict[str, Any], character_id: int, blocks: List[Dict[str, Any]]
     ) -> None:
         ext = self._normalize_extensions(record)
-        ext["character_world_books"] = blocks
+        ext[CHARACTER_WORLD_BOOKS_KEY] = blocks
         self.db.update_character_card(
             int(character_id),
             {"extensions": ext},
@@ -798,6 +829,15 @@ class WorldBookManager:
         book's ``enabled`` (export omits book-level ``enabled``). Names are
         compared as strings so a hostile/imported card whose embedded name is a
         non-str still dedups against the freshly exported (always-str) name.
+
+        Args:
+            world_book_id: The standalone world book to snapshot and embed.
+            character_id: The character to embed the snapshot into.
+
+        Returns:
+            ``{"world_book_id": int, "character_id": int, "name": str,
+            "attached": bool}`` — ``attached`` is ``False`` when a block with
+            this name was already embedded (no-op, idempotent).
 
         Raises:
             InputError: If the world book or the character does not exist.
@@ -828,6 +868,15 @@ class WorldBookManager:
     ) -> Dict[str, Any]:
         """Remove an embedded world book from a character by name (no-op when absent).
 
+        Args:
+            character_id: The character to remove the embedded snapshot from.
+            name: The embedded block's ``name`` to remove (string-compared).
+
+        Returns:
+            ``{"character_id": int, "name": str, "detached": bool}`` —
+            ``detached`` is ``False`` when no block with this name was found
+            (no-op).
+
         Raises:
             InputError: If the character does not exist.
             ConflictError: If the character's version is stale at write time.
@@ -853,6 +902,13 @@ class WorldBookManager:
         Deduped by name (a hostile card can carry two same-named blocks; the
         panel keys DataTable rows by name and would ``DuplicateKey``-crash on a
         dup). Entry counts degrade to 0 for a malformed non-list ``entries``.
+
+        Args:
+            character_id: The character to summarize embedded world books for.
+
+        Returns:
+            ``[{"name": str, "entry_count": int, "enabled": bool}, ...]``,
+            deduped by name (first occurrence wins).
 
         Raises:
             InputError: If the character does not exist.
