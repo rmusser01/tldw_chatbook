@@ -1,10 +1,14 @@
 ---
 id: TASK-349
 title: Stop rail Starred-Workspaces-Chats sections vanishing while a run is active
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
-labels: [console, ux]
+updated_date: '2026-07-21 20:12'
+labels:
+  - console
+  - ux
 dependencies: []
 priority: medium
 ---
@@ -23,5 +27,35 @@ During generation the rail drops its whole conversation area: j4-33 (mid-stream)
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The rail should keep its content stable during runs (at most disable interactions), never removing the conversation list wholesale
+- [x] #1 The rail should keep its content stable during runs (at most disable interactions), never removing the conversation list wholesale
 <!-- AC:END -->
+
+## Implementation Notes
+
+Root cause (both findings, one bug): `_sync_native_console_chat_ui` calls
+`_sync_console_workspace_context()` on every 0.2s run tick, and
+`ConsoleWorkspaceContextTray.sync_state` does `refresh(recompose=True)`
+UNCONDITIONALLY — so during a streaming run the conversation browser tore
+down and rebuilt ~5x/second, visibly vanishing (344's async swap / 349's
+list disappearing) and displacing clicks.
+
+A widget-level equality guard is forbidden (TASK-251 pinned
+`test_console_workspace_context_tray_sync_state_always_recomposes`): the
+unconditional recompose ALSO self-heals a real DOM/state desync — a
+full-screen recompose sets the fresh tray's `.state` but its rows can be
+superseded before they settle, so `.state` says X while the DOM shows
+nothing, and the next tick's recompose repaints it. Instrumentation
+confirmed this live (a search-selection tick showed `changed=False` yet
+`dom_rows=0`), which is exactly why a plain equality guard reintroduces the
+"row not found" failures.
+
+Fix: a SCREEN-side guard scoped to ACTIVE RUNS only. During a run tick
+(`_console_transcript_sync_timer is not None`) with unchanged workspace
+state, skip the tray push — no search/resume happens mid-run, so the
+self-heal isn't needed. Every non-run sync keeps the original
+always-recompose, so search/resume click-targeting is untouched.
+
+Verified: new `test_console_workspace_context_tray_not_recomposed_when_state_unchanged`
+(RED first), the full tick-gating + workspace-context-rail suites, and the
+50 search/resume/browser flow tests all pass. File:
+`UI/Screens/chat_screen.py` (`_sync_console_workspace_context`).

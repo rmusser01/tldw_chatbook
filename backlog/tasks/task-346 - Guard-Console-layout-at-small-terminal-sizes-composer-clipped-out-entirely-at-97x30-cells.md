@@ -1,10 +1,17 @@
 ---
 id: TASK-346
-title: Guard Console layout at small terminal sizes - composer clipped out entirely at 97x30 cells
+title: >-
+  Guard Console layout at small terminal sizes - composer clipped out entirely
+  at 97x30 cells
 status: To Do
-assignee: []
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
-labels: [console, ux, keyboard]
+updated_date: '2026-07-21 20:27'
+labels:
+  - console
+  - ux
+  - keyboard
 dependencies: []
 priority: high
 ---
@@ -25,3 +32,9 @@ Cold start at 700x480 px (97x30 cells): rail, transcript and Inspector chip rend
 <!-- AC:BEGIN -->
 - [ ] #1 Below the minimum viable height, either the layout drops lower-priority panes (rail/inspector) to preserve transcript+composer, or an explicit 'terminal too small' overlay appears. Key hints should win over debug stats in footer truncation
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Deferred from the 344/349 rail-stability batch (2026-07-21): the composer clip does NOT reproduce in the pytest pilot at 97x30 (composer renders visible there) because the UI test harness loads neither the app stylesheet nor the first-run setup-card state that consume the real vertical budget in the browser (xterm) where the review saw it. Reproducing/verifying this layout fix requires the textual-serve capture harness (currently wiped from scratchpad). Picking an on_resize threshold without reproducing the real clip would be an unverifiable guess. Take next with a rebuilt harness: reproduce at 700x480px cold-start, then drop chrome/rails to preserve composer OR show a too-small overlay, plus footer key-hints-over-memory-stats priority.
+<!-- SECTION:NOTES:END -->

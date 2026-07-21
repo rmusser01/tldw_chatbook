@@ -5552,15 +5552,32 @@ class ChatScreen(BaseAppScreen):
             # construction time, so comparing against it here stays safe
             # across recomposes too.
             state_changed = state != workspace_context.state
-            workspace_context.sync_state(state)
-            try:
-                details_tray = self.query_one(
-                    "#console-workspace-details", ConsoleWorkspaceDetailsTray
-                )
-            except (NoMatches, QueryError):
-                pass
-            else:
-                details_tray.sync_state(state)
+            # TASK-344/349: the tray recomposes unconditionally in its own
+            # sync_state (a widget-level equality guard is forbidden -- it
+            # breaks grouped-browser click targeting, see
+            # test_console_workspace_context_tray_sync_state_always_recomposes).
+            # That unconditional recompose ALSO self-heals a real DOM/state
+            # desync (a full-screen recompose sets the fresh tray's `.state`
+            # but its rows can be torn down/superseded before they settle, so
+            # `.state` says X while the DOM shows nothing -- the next tick's
+            # recompose repaints it). So an equality guard here is unsafe in
+            # general. It IS safe during an ACTIVE RUN: the 0.2s transcript
+            # tick fires ~5x/second with unchanged workspace state and no
+            # concurrent search/resume, and recomposing the browser that
+            # often tore it visibly down mid-run (the list vanished / showed
+            # a half-composed frame and displaced clicks). Skip only that
+            # case; every non-run sync keeps the original always-recompose.
+            run_tick_active = self._console_transcript_sync_timer is not None
+            if state_changed or not run_tick_active:
+                workspace_context.sync_state(state)
+                try:
+                    details_tray = self.query_one(
+                        "#console-workspace-details", ConsoleWorkspaceDetailsTray
+                    )
+                except (NoMatches, QueryError):
+                    pass
+                else:
+                    details_tray.sync_state(state)
             # PR #660 review: a full-screen recompose constructs a FRESH tray
             # already carrying the current state, so `state_changed` alone
             # would never re-kick the legacy-alias worker after a recompose —

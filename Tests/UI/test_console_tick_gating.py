@@ -369,3 +369,69 @@ async def test_console_streaming_message_excerpt_is_static_placeholder():
         rows = console._selected_console_message_inspector_rows()
         excerpt_row = next(row for row in rows if row.label == "Excerpt")
         assert excerpt_row.value == "Streaming…"
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_context_tray_not_recomposed_when_state_unchanged():
+    """TASK-344/349: the rail must not tear down + rebuild the conversation
+    browser every tick during a run.
+
+    `_sync_console_workspace_context` pushes to the tray on EVERY 0.2s sync;
+    `ConsoleWorkspaceContextTray.sync_state` recomposes unconditionally (a
+    widget-level guard is forbidden — it breaks browser click targeting).
+    The screen must therefore only push when the built state changed, exactly
+    like the legacy-alias kick already does. Unguarded, the browser vanished
+    mid-run (legacy/half-composed frames) and displaced clicks.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+
+        original_build = console._build_console_workspace_context_state
+
+        def pinned_build(*args, **kwargs):
+            return replace(original_build(*args, **kwargs), heading="Pinned heading")
+
+        recompose_calls: list[int] = []
+        original_refresh = ConsoleWorkspaceContextTray.refresh
+
+        def counting_refresh(self, *args, **kwargs):
+            if kwargs.get("recompose"):
+                recompose_calls.append(1)
+            return original_refresh(self, *args, **kwargs)
+
+        # The skip applies only while a run tick is active (no concurrent
+        # search/resume then). Simulate the streaming run's 0.2s tick.
+        console._start_console_transcript_sync_timer()
+        self_stop = console._stop_console_transcript_sync_timer
+        try:
+            with (
+                patch.object(
+                    console, "_build_console_workspace_context_state", pinned_build
+                ),
+                patch.object(
+                    ConsoleWorkspaceContextTray, "refresh", counting_refresh
+                ),
+            ):
+                # First sync settles the pinned state onto the tray.
+                console._sync_console_workspace_context()
+                await pilot.pause()
+                first = len(recompose_calls)
+                # Subsequent identical ticks (the streaming-run case) must not
+                # recompose the tray again.
+                console._sync_console_workspace_context()
+                await pilot.pause()
+                console._sync_console_workspace_context()
+                await pilot.pause()
+        finally:
+            self_stop()
+            assert len(recompose_calls) == first, (
+                "unchanged-state ticks must not recompose the workspace "
+                "context tray (rail thrash during runs)"
+            )
