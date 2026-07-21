@@ -16,7 +16,7 @@ The native Console applies conversation-attached world books on send (P2g-1), bu
 - **Zero-DB-on-recompose:** a cached `self._active_dictionaries_summary` (`:1622`); `refresh_active_dictionaries_summary()` (`:5795`, the ONLY DB summarize call, off-thread via `asyncio.to_thread` + a private `asyncio.run` loop, `:535`); `_refresh_active_dictionaries_summary_if_scope_changed()` (`:5829`, compares `_active_console_dictionary_scope_ids()` vs `_last_console_dictionary_scope_ids`), invoked from `_sync_native_console_chat_ui()` (also on the 0.2s transcript poll while streaming).
 - **Action click routing:** `@on(Button.Pressed, "#console-inspector-dictionaries-attach")` / `"#…-detach"` handlers (`chat_screen.py:829`, `:847`) guard a `_console_dictionary_dialog_active` flag and `run_worker(worker, group="console-io")`. The **detach uses a picker** too (pick which attached dictionary to remove).
 - **Conversation id:** `ChatScreen._current_console_rail_conversation_id()` (`:3088`, sources from the native session's `persisted_conversation_id`).
-- **Reusable pieces:** `summarize`-style resolver seam via P2g-1's `_collect_active_world_books(db, conversation_id, char_data)` (`world_info_resolver.py:17`); `WorldBookPicker(world_books, *, title, confirm_label)` returning an int id (P2f); `WorldBookManager.get_world_books_for_conversation` / `associate_world_book_with_conversation` / `disassociate_world_book_from_conversation` / `list_world_books` (P2a/P2e).
+- **Reusable pieces:** `WorldBookManager.get_world_books_for_conversation(conversation_id, enabled_only=…)` (the summary uses `enabled_only=False` to show the full attachment picture; P2a/P2e) / `associate_world_book_with_conversation` / `disassociate_world_book_from_conversation` / `list_world_books`; `WorldBookPicker(world_books, *, title, confirm_label)` returning an int id (P2f). (P2g-1's `_collect_active_world_books` is the *send-path* collector — enabled-only + character union — so the inspector does NOT reuse it; see §1.)
 
 ## Scope
 
@@ -27,7 +27,7 @@ The native Console applies conversation-attached world books on send (P2g-1), bu
 1. **Full parity with the dict inspector** (read block + Attach/Detach actions) — the user chose Read + Attach/Detach.
 2. **Trailing custom block, not routed rows.** The world-book block mirrors the dict block's trailing pattern (`world_book_rows`/`world_book_actions`), threaded through **all three** render spots. It needs **no** `_ROW_ID_BY_LABEL`/`_ROW_GROUPS` registration.
 3. **Detach via picker** (mirror dict): a picker of the currently-attached books → `disassociate`. `WorldBookPicker` is reused for both Attach and Detach via its `title`/`confirm_label` params — no new picker.
-4. **Conversation-only on native.** The summary uses `_collect_active_world_books(db, conversation_id, char_data)` with `char_data=None` on native Console (no character), so it shows conversation-attached books — matching the send path.
+4. **Conversation-only on native.** On native Console there is no character (`char_data=None`), so the summary shows conversation-attached books only (it queries `get_world_books_for_conversation` directly — see §1).
 5. **No scope service.** Dictionaries route through `ChatDictionaryScopeService` (local/server split); world books have no such split — `summarize_active_world_books` is a plain function in `world_info_resolver.py`, called off-thread directly.
 
 ## Behavior-change framing
@@ -36,14 +36,13 @@ Additive: a new inspector block + a summarize function + a cached scope-guarded 
 
 ## Ground truths
 
-- `_collect_active_world_books` returns `(world_books: list[dict], has_character_book: bool)`; each book dict has `name`, `entries` (list), `enabled`. On native (`char_data=None`) it returns conversation books only.
-- `get_world_books_for_conversation` returns book dicts with `id`, `name`, `entries`, `enabled`; map to `{"world_book_id": id, "name": name}` for the picker.
+- `get_world_books_for_conversation(conv_id, enabled_only=False)` returns book dicts with `id`, `name`, `entries` (list), `enabled` for ALL attached books; the summary reads those directly; for the pickers, map to `{"world_book_id": id, "name": name}`.
 - The inspector projection methods and the action-list method read ONLY the cache + the conversation id — never the DB (the DB read happens only in the scope-guarded off-thread refresh).
 
 ## Architecture
 
 ### 1. Summarize resolver (`world_info_resolver.py`)
-`summarize_active_world_books(db, conversation_id: str | None, char_data: dict | None) -> dict` — reuse `_collect_active_world_books`, return `{"world_books": [{"name": str, "enabled": bool, "entry_count": int}], "source": "local"}` (names normalized to str, `entry_count = len(entries) if list else 0`). **No dedup-by-name** — conversation books are keyed by id (two distinct books may share a name), and the inspector rows are index-keyed (`…-row-{index}`), not name-keyed, so there is no `DuplicateKey` risk (unlike the P2f widget). Never raises (returns `{"world_books": [], "source": "local"}` on any error). Mirrors `summarize_active_dictionaries`.
+`summarize_active_world_books(db, conversation_id: str | None, char_data: dict | None) -> dict` — return `{"world_books": [{"name": str, "enabled": bool, "entry_count": int}], "source": "local"}` (names normalized to str, `entry_count = len(entries) if list else 0`). **Shows ALL attached books, not just enabled ones** — it calls `WorldBookManager.get_world_books_for_conversation(conversation_id, enabled_only=False)` directly (NOT the send-path `_collect_active_world_books`, which is correctly `enabled_only=True`): the inspector reflects the *attachment picture* (disabled books are shown and marked), whereas the send path reflects what *applies*. This matches the dict inspector, which shows disabled dictionaries marked "(disabled)". `char_data` is accepted for signature parity with `summarize_active_dictionaries` but P2g-2 is conversation-only (native `char_data=None`). **No dedup-by-name** — conversation books are keyed by id (two distinct books may share a name), and the inspector rows are index-keyed (`…-row-{index}`), not name-keyed, so there is no `DuplicateKey` risk (unlike the P2f widget). Never raises (returns `{"world_books": [], "source": "local"}` on any error).
 
 ### 2. Inspector state (`console_display_state.py`)
 Add `world_book_rows: tuple[ConsoleDisplayRow, ...] = ()` and `world_book_actions: tuple[ConsoleInspectorAction, ...] = ()` to `ConsoleInspectorState`.
@@ -64,7 +63,7 @@ Add a "World Books" heading block mirroring the dict block, threaded through **a
 ### 6. Attach/Detach handlers + workers (`chat_screen.py`)
 - `@on(Button.Pressed, "#console-inspector-worldbooks-attach")` / `"#…-detach"` — guard a new `_console_worldbook_dialog_active` flag; `run_worker(worker, group="console-io")`.
 - **Attach worker:** `conv_id = _current_console_rail_conversation_id()`; off-thread list standalone books not already attached (`list_world_books` minus `get_world_books_for_conversation`); `WorldBookPicker(books, title="Attach world book", confirm_label="Attach")`; on pick, off-thread `associate_world_book_with_conversation(conv_id, picked)`; then `refresh_active_world_books_summary()` + rebuild the inspector + notify; `finally` reset the flag.
-- **Detach worker:** attached books via `get_world_books_for_conversation(conv_id)` → `WorldBookPicker(attached, title="Detach world book", confirm_label="Detach")`; on pick, off-thread `disassociate_world_book_from_conversation(conv_id, picked)`; refresh + rebuild + notify.
+- **Detach worker:** attached books via `get_world_books_for_conversation(conv_id, enabled_only=False)` (so a disabled-but-attached book can still be detached) → `WorldBookPicker(attached, title="Detach world book", confirm_label="Detach")`; on pick, off-thread `disassociate_world_book_from_conversation(conv_id, picked)`; refresh + rebuild + notify.
 - All DB I/O off-thread, wrapped → notify, never crash; re-entrancy guarded; the picker is shown via `push_screen_wait`.
 
 ## Error handling
@@ -81,7 +80,7 @@ Add a "World Books" heading block mirroring the dict block, threaded through **a
 P2g-2 of 3. No migration. P2g-3 = legacy `chat_events.py` character-gate fix + dead-code deletion.
 
 ## Acceptance criteria
-- [ ] `summarize_active_world_books` returns the conversation's active world books (`name`/`enabled`/`entry_count`) reusing `_collect_active_world_books`; never raises; conversation-only when `char_data=None`.
+- [ ] `summarize_active_world_books` returns the conversation's attached world books (`name`/`enabled`/`entry_count`) via `get_world_books_for_conversation(enabled_only=False)` — including disabled-but-attached books; never raises; conversation-only when `char_data=None`.
 - [ ] `ConsoleInspectorState` gains `world_book_rows`/`world_book_actions`; the "World Books" block renders via `compose()`/`_rendered_row_entries()`/`_structural_key()` (all three) with no `_ROW_ID_BY_LABEL` change; the dict block is unaffected.
 - [ ] The world-book summary is cached and refreshed ONLY by a scope-guarded off-thread `refresh_active_world_books_summary()`; the projection/action methods never touch the DB.
 - [ ] Attach/Detach actions (gated on conversation presence / attached-book presence) open a `WorldBookPicker` and `associate`/`disassociate` a conversation world book off-thread, guarded by `_console_worldbook_dialog_active`, then refresh; never crash.
