@@ -1,7 +1,7 @@
 """Conversation/workspace RAG retrieval scope: model, codecs, resolution."""
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Literal, Optional
 from loguru import logger
 
 logger = logger.bind(module="rag_scope")
@@ -100,3 +100,139 @@ def parse_scope(raw: Any) -> Optional[RagScope]:
             return None
         items.append(ScopeItem(str(stype), str(sid)))
     return RagScope(items=tuple(items), updated_at=updated_at)
+
+@dataclass(frozen=True)
+class EffectiveScope:
+    """The resolved RAG retrieval scope after combining conversation and workspace scopes.
+
+    Attributes:
+        state: ``"unscoped"`` when neither the conversation nor the workspace
+            has a scope (no restriction); ``"scoped"`` when retrieval is
+            restricted to ``allowlist``; ``"empty"`` when the configured
+            scope(s) leave nothing to retrieve from.
+        allowlist: Mapping of source_type to the frozenset of surviving ids.
+            Contains only non-empty entries; ``{}`` unless ``state ==
+            "scoped"``.
+        cause: Explanation for an ``"empty"`` state (``"no-workspace-overlap"``
+            or ``"deleted-items"``); ``None`` for ``"unscoped"`` and
+            ``"scoped"``.
+    """
+    state: Literal["unscoped", "scoped", "empty"]
+    allowlist: dict[str, frozenset[str]]
+    cause: Optional[str]
+
+_UNSCOPED = EffectiveScope(state="unscoped", allowlist={}, cause=None)
+
+def resolve_effective_scope(
+    conv_scope: Optional[RagScope],
+    ws_scope: Optional[RagScope],
+    existing_ids: Callable[[str, frozenset[str]], frozenset[str]],
+) -> EffectiveScope:
+    """Resolve the effective RAG retrieval scope from conversation and workspace scopes.
+
+    Pure function: the only side-channel access is the injected
+    ``existing_ids`` callable, which the caller wires to the DB to drop
+    references to since-deleted items (dangling-drop). Resolution order:
+    intersect conv and workspace scopes when both are set (a single set
+    when only one is set, or global unscoped when neither is set), then
+    apply ``existing_ids`` per source_type to the surviving ids.
+
+    Args:
+        conv_scope: The conversation's scope, or ``None`` if unset.
+        ws_scope: The linked workspace's scope, or ``None`` if unset or
+            the conversation has no linked workspace.
+        existing_ids: Callable that, given a source_type and a candidate
+            frozenset of ids, returns the subset that still exists. Used
+            to drop dangling references after intersection.
+
+    Returns:
+        The resolved ``EffectiveScope``.
+    """
+    if conv_scope is None and ws_scope is None:
+        return _UNSCOPED
+
+    if conv_scope is not None and ws_scope is not None:
+        candidate_items = frozenset(conv_scope.items) & frozenset(ws_scope.items)
+    elif conv_scope is not None:
+        candidate_items = frozenset(conv_scope.items)
+    else:
+        candidate_items = frozenset(ws_scope.items)
+
+    pre_existence: dict[str, set[str]] = {}
+    for item in candidate_items:
+        pre_existence.setdefault(item.source_type, set()).add(item.source_id)
+
+    if not pre_existence:
+        # Nothing to check for existence: the configured scope(s) don't overlap
+        # (or, for a single-level scope, are already empty).
+        return EffectiveScope(state="empty", allowlist={}, cause="no-workspace-overlap")
+
+    allowlist: dict[str, frozenset[str]] = {}
+    # Cheapest set first: cheapest existence lookups run before larger ones.
+    for source_type, ids in sorted(pre_existence.items(), key=lambda kv: len(kv[1])):
+        surviving = existing_ids(source_type, frozenset(ids))
+        if surviving:
+            allowlist[source_type] = frozenset(surviving)
+
+    if not allowlist:
+        return EffectiveScope(state="empty", allowlist={}, cause="deleted-items")
+
+    return EffectiveScope(state="scoped", allowlist=allowlist, cause=None)
+
+class ScopeCache:
+    """In-process cache of resolved ``EffectiveScope`` values.
+
+    Keyed on the full ``(conversation_id, workspace_id, conv_stamp,
+    ws_stamp)`` 4-tuple, so a scope edit on either side (reflected in its
+    ``updated_at`` stamp) or a conversation being re-linked to a different
+    workspace invalidates the cached entry. Plain dict wrapper: no TTL and
+    no locking, since the UI process is single-threaded and scope
+    resolution runs off the event loop.
+    """
+
+    def __init__(self) -> None:
+        self._entries: dict[tuple[Any, Any, Any, Any], EffectiveScope] = {}
+
+    def get(
+        self, conversation_id: Any, workspace_id: Any, conv_stamp: Any, ws_stamp: Any,
+    ) -> Optional[EffectiveScope]:
+        """Look up a cached effective scope.
+
+        Args:
+            conversation_id: Conversation identifier.
+            workspace_id: Linked workspace identifier (or ``None``).
+            conv_stamp: The conversation scope's ``updated_at`` stamp (or
+                ``None`` if the conversation has no scope).
+            ws_stamp: The workspace scope's ``updated_at`` stamp (or
+                ``None`` if unset/unlinked).
+
+        Returns:
+            The cached ``EffectiveScope`` when the full 4-tuple matches an
+            entry exactly, else ``None``.
+        """
+        return self._entries.get((conversation_id, workspace_id, conv_stamp, ws_stamp))
+
+    def put(
+        self,
+        conversation_id: Any,
+        workspace_id: Any,
+        conv_stamp: Any,
+        ws_stamp: Any,
+        effective: EffectiveScope,
+    ) -> None:
+        """Store a resolved effective scope under its full 4-tuple key.
+
+        Args:
+            conversation_id: Conversation identifier.
+            workspace_id: Linked workspace identifier (or ``None``).
+            conv_stamp: The conversation scope's ``updated_at`` stamp (or
+                ``None`` if the conversation has no scope).
+            ws_stamp: The workspace scope's ``updated_at`` stamp (or
+                ``None`` if unset/unlinked).
+            effective: The resolved scope to cache.
+        """
+        self._entries[(conversation_id, workspace_id, conv_stamp, ws_stamp)] = effective
+
+    def clear(self) -> None:
+        """Remove all cached entries."""
+        self._entries.clear()
