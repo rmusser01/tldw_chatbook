@@ -112,7 +112,16 @@ class ConsoleChatPersistence(Protocol):
         conversation_id: str,
         title: str,
     ) -> bool:
-        """Persist a changed title for an already-saved conversation."""
+        """Persist a changed title for an already-saved conversation.
+
+        Args:
+            conversation_id: Durable Chat conversation identifier.
+            title: New conversation title (already validated non-blank).
+
+        Returns:
+            True when the update was applied; False when refused (e.g. an
+            optimistic-lock version check failed).
+        """
 
     def get_attachments_for_messages(
         self, message_ids: Sequence[str]
@@ -276,10 +285,21 @@ class ConsoleChatStore:
         conversation — renaming only the in-memory session looked successful
         (tab + transcript header updated) but evaporated on restart.
 
+        Args:
+            session_id: Native Console session ID to rename.
+            title: New title; surrounding whitespace is trimmed.
+
         Returns:
-            ``(session, persisted)`` — ``persisted`` is ``False`` only when a
-            saved conversation's title update failed; the in-memory rename is
-            always applied (mirrors ``update_session_system_prompt``).
+            ``(session, persisted)`` — the in-memory rename is always
+            applied. ``persisted`` is ``False`` when the session has a saved
+            conversation whose durable title update did not happen: the
+            persistence call raised, returned falsy (e.g. an optimistic-lock
+            version check refused the write), or the persistence object has
+            no ``update_conversation_title`` seam at all.
+
+        Raises:
+            ValueError: If the trimmed title is blank.
+            KeyError: If no session with ``session_id`` exists.
         """
         normalized_title = title.strip()
         if not normalized_title:
@@ -292,11 +312,18 @@ class ConsoleChatStore:
             and self.persistence is not None
         ):
             update_title = getattr(self.persistence, "update_conversation_title", None)
-            if callable(update_title):
+            if not callable(update_title):
+                # A saved conversation with no durable rename seam: claiming
+                # persisted=True here would recreate the original silent-loss
+                # bug for exactly the sessions this fix targets.
+                persisted = False
+            else:
                 try:
-                    update_title(
-                        conversation_id=session.persisted_conversation_id,
-                        title=normalized_title,
+                    persisted = bool(
+                        update_title(
+                            conversation_id=session.persisted_conversation_id,
+                            title=normalized_title,
+                        )
                     )
                 except Exception:
                     persisted = False

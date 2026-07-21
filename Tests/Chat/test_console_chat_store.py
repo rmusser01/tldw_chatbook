@@ -1744,3 +1744,42 @@ def test_rename_session_without_persisted_conversation_stays_in_memory():
 
     assert renamed.title == "Local only"
     assert persisted is True
+
+
+def test_rename_session_reports_unpersisted_when_update_returns_false():
+    """Optimistic-lock/version-check failures surface as persisted=False."""
+
+    class RefusingTitlePersistence(FakePersistence):
+        def update_conversation_title(self, *, conversation_id, title):
+            return False
+
+    store = ConsoleChatStore(persistence=RefusingTitlePersistence())
+    session = store.restore_persisted_session(
+        title="Old title",
+        workspace_id=None,
+        persisted_conversation_id="conv-99",
+        messages=[],
+    )
+
+    renamed, persisted = store.rename_session(session.id, "New title")
+
+    assert renamed.title == "New title"
+    assert persisted is False
+
+
+def test_rename_session_reports_unpersisted_when_seam_is_missing():
+    """A saved conversation whose persistence lacks the title seam cannot
+    have persisted silently — the modal's warning depends on it."""
+    # FakePersistence predates update_conversation_title on purpose here.
+    store = ConsoleChatStore(persistence=FakePersistence())
+    session = store.restore_persisted_session(
+        title="Old title",
+        workspace_id=None,
+        persisted_conversation_id="conv-100",
+        messages=[],
+    )
+
+    renamed, persisted = store.rename_session(session.id, "New title")
+
+    assert renamed.title == "New title"
+    assert persisted is False
