@@ -39,17 +39,66 @@ class SchemaField:
     choices: tuple[str, ...] = field(default_factory=tuple)
 
 
+def _resolve_property(spec: dict) -> tuple[str, tuple[str, ...], bool] | None:
+    """Resolve a JSON-Schema property to `(kind, enum_choices, nullable)`.
+
+    Renders the simple/enum types and unwraps the Optional[T] idiom that
+    Pydantic v2 (the most common third-party MCP server framework) emits:
+    `anyOf: [{...}, {"type": "null"}]` and `type: [T, "null"]` become an
+    optional field of the underlying type. `nullable` is True when `null`
+    was one of the allowed options -- the caller marks such fields
+    not-required (blank == the accepted null).
+
+    Returns `None` for genuinely unrenderable shapes -- nested object/array,
+    a real multi-type union (e.g. `string|integer`), `oneOf`, or a missing
+    type -- preserving the honest raw-JSON fallback (a partial form that
+    silently drops a parameter the tool needs would lie to the user).
+    """
+    enum_values = spec.get("enum")
+    if isinstance(enum_values, list) and enum_values:
+        return ("enum", tuple(str(value) for value in enum_values), False)
+
+    prop_type = spec.get("type")
+    if prop_type in _SIMPLE_KINDS:
+        return (str(prop_type), (), False)
+    if isinstance(prop_type, list):
+        nullable = "null" in prop_type
+        non_null = [t for t in prop_type if t != "null"]
+        if len(non_null) == 1 and non_null[0] in _SIMPLE_KINDS:
+            return (str(non_null[0]), (), nullable)
+        return None
+
+    branches = spec.get("anyOf")
+    if isinstance(branches, list):
+        subs = [b for b in branches if isinstance(b, dict)]
+        nullable = any(b.get("type") == "null" for b in subs)
+        non_null = [b for b in subs if b.get("type") != "null"]
+        if len(non_null) == 1:
+            inner = _resolve_property(non_null[0])
+            if inner is None:
+                return None
+            kind, choices, inner_nullable = inner
+            return (kind, choices, nullable or inner_nullable)
+        return None
+
+    return None
+
+
 def parse_schema(schema: dict | None) -> list[SchemaField] | None:
     """Turn a JSON-Schema `object` schema into a list of `SchemaField`s.
 
     PURE -- no widget/Textual dependency.
 
+    Renders simple/enum properties and the Optional[T] idiom (Pydantic v2's
+    `anyOf: [T, null]` / `type: [T, "null"]`) via `_resolve_property`.
+
     Returns:
         `None` when `schema` is falsy/not a dict, its `type` isn't
         `"object"`, `properties` isn't a mapping, or ANY property is
-        unrenderable (nested object/array, `oneOf`/`anyOf`, missing/
-        unsupported `type`) -- the raw-JSON-fallback trigger. Otherwise the
-        parsed fields, in `properties` iteration order.
+        unrenderable (nested object/array, a real multi-type union,
+        `oneOf`, missing/unsupported `type`) -- the raw-JSON-fallback
+        trigger. Otherwise the parsed fields, in `properties` iteration
+        order.
     """
     if not schema or not isinstance(schema, dict):
         return None
@@ -71,38 +120,26 @@ def parse_schema(schema: dict | None) -> list[SchemaField] | None:
         description = str(spec.get("description") or "")
         default = spec.get("default")
         field_name = str(name)
-        required = field_name in required_names
 
-        enum_values = spec.get("enum")
-        if isinstance(enum_values, list) and enum_values:
-            fields.append(
-                SchemaField(
-                    name=field_name,
-                    kind="enum",
-                    required=required,
-                    description=description,
-                    default=default,
-                    choices=tuple(str(value) for value in enum_values),
-                )
+        resolved = _resolve_property(spec)
+        if resolved is None:
+            # Nested object/array, real multi-type union, oneOf, missing
+            # type, etc. -- one unrenderable property fails the WHOLE schema.
+            return None
+        kind, choices, nullable = resolved
+        # A nullable field accepts null/absence, so a blank is valid -- never
+        # force it required even if the schema's `required` list names it.
+        required = field_name in required_names and not nullable
+        fields.append(
+            SchemaField(
+                name=field_name,
+                kind=kind,
+                required=required,
+                description=description,
+                default=default,
+                choices=choices,
             )
-            continue
-
-        prop_type = spec.get("type")
-        if prop_type in _SIMPLE_KINDS:
-            fields.append(
-                SchemaField(
-                    name=field_name,
-                    kind=str(prop_type),
-                    required=required,
-                    description=description,
-                    default=default,
-                )
-            )
-            continue
-
-        # Nested object/array, oneOf/anyOf, missing/unsupported type, etc.
-        # -- one unrenderable property fails the WHOLE schema.
-        return None
+        )
 
     return fields
 

@@ -294,3 +294,42 @@ async def test_collect_arguments_raises_for_integer_with_decimal_string():
         with pytest.raises(ValueError) as exc_info:
             form.collect_arguments()
         assert str(exc_info.value) == "count: must be a whole number."
+
+
+def test_parse_schema_unwraps_pydantic_optional_anyof_null():
+    """Pydantic v2 encodes Optional[T] as anyOf:[{type:T},{type:null}]; render
+    it as an optional field of the underlying type rather than falling the whole
+    schema back to raw JSON. (ATHF third-party UAT finding, 2026-07-21.)"""
+    schema = {
+        "type": "object",
+        "properties": {
+            "technique_id": {"type": "string"},
+            "limit": {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": None},
+            "status": {"anyOf": [{"enum": ["open", "done"]}, {"type": "null"}]},
+        },
+    }
+    fields = parse_schema(schema)
+    assert fields is not None
+    by_name = {f.name: f for f in fields}
+    assert by_name["limit"].kind == "integer" and by_name["limit"].required is False
+    assert by_name["status"].kind == "enum" and by_name["status"].choices == ("open", "done")
+
+
+def test_parse_schema_unwraps_type_array_nullable():
+    """The type:[T,"null"] spelling of Optional is unwrapped the same way."""
+    schema = {
+        "type": "object",
+        "properties": {"note": {"type": ["string", "null"]}},
+    }
+    fields = parse_schema(schema)
+    assert fields is not None and fields[0].kind == "string" and fields[0].required is False
+
+
+def test_parse_schema_still_raw_for_genuine_multitype_union():
+    """A real multi-type union (string|integer, no null) can't render as one
+    field and must still trigger the honest raw fallback."""
+    schema = {
+        "type": "object",
+        "properties": {"val": {"anyOf": [{"type": "string"}, {"type": "integer"}]}},
+    }
+    assert parse_schema(schema) is None
