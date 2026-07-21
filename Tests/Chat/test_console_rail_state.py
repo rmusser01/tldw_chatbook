@@ -147,6 +147,7 @@ def test_console_rail_preference_key_treats_whitespace_scope_ids_as_absent():
 
 
 def test_console_context_rail_badge_reflects_workspace_and_session_only():
+    """Left badge summarizes workspace/session only (task-400)."""
     # Task-400: staged-context signals moved to the Inspector badge with the
     # staged-sources section; the left badge is workspace/session only.
     assert (
@@ -158,6 +159,7 @@ def test_console_context_rail_badge_reflects_workspace_and_session_only():
 
 
 def test_console_inspector_rail_badge_surfaces_staged_context():
+    """Inspector badge carries staged context below action-required signals."""
     assert build_console_inspector_rail_badge(staged_source_count=3) == "3 staged"
     assert (
         build_console_inspector_rail_badge(
@@ -207,6 +209,7 @@ def test_console_context_rail_badge_ignores_workspace_fallback_labels():
 
 
 def test_console_inspector_rail_badge_ignores_empty_staged_summary():
+    """Empty and legacy empty-state summaries never trigger the staged badge."""
     # Task-400: the empty state carries no summary line (the tray renders its
     # own guidance copy), so the badge treats it as inactive by emptiness.
     empty_summary = ConsoleStagedContextState.empty().summary
@@ -472,6 +475,7 @@ def test_console_rail_badges_do_not_mutate_open_booleans():
 
 
 def test_console_rail_state_routes_staged_context_to_inspector_badge():
+    """Rail-state build surfaces staged context on the right badge only."""
     key = build_console_rail_preference_key(
         workspace_id="workspace-1",
         session_id="session-1",
@@ -541,6 +545,7 @@ def test_serialize_console_rail_preferences_round_trips_sections():
 
 
 def test_coerce_console_rail_preferences_ignores_legacy_context_key():
+    """Stored payloads with the retired context_open key coerce cleanly."""
     # Task-400 migration path: payloads persisted while the rail still had a
     # Context section keep a context_open key; it must be ignored, not fail.
     with_legacy_key = coerce_console_rail_preferences(

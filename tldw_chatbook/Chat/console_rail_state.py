@@ -251,7 +251,15 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
 def serialize_console_rail_preferences(
     preferences: ConsoleRailPreferences,
 ) -> dict[str, bool]:
-    """Serialize Console rail preferences to the persistence shape."""
+    """Serialize Console rail preferences to the persistence shape.
+
+    Args:
+        preferences: Rail preferences to serialize.
+
+    Returns:
+        Persistence dict with the left/right rail flags and the four
+        left-rail section flags (task-400 dropped ``context_open``).
+    """
     return {
         "left_open": bool(preferences.left_open),
         "right_open": bool(preferences.right_open),
@@ -296,6 +304,14 @@ def build_console_context_rail_badge(
     Task-400: staged-context signals moved to the Inspector rail badge along
     with the staged-sources section itself, so the left badge summarizes only
     what the left rail actually holds (workspace + session context).
+
+    Args:
+        workspace_label: Active workspace display label; default/fallback
+            labels are treated as no workspace.
+        session_label: Active session title, when any.
+
+    Returns:
+        ``"workspace"``, ``"session"``, or ``""`` when neither applies.
     """
     workspace_text = _clean_text(workspace_label)
     if workspace_text and workspace_text.lower() not in _WORKSPACE_FALLBACK_LABELS:
@@ -380,6 +396,19 @@ def build_console_inspector_rail_badge(
     so its "N staged"/"staged" badge surfaces here. Action-required signals
     (failed/setup/blocked/approvals/tools) keep precedence; staged context
     outranks the informational artifact/source readiness fallbacks.
+
+    Args:
+        run_status: Current Console run status value or enum.
+        inspector_rows: Inspector display rows used for keyword matching.
+        tool_count: Pending tool-call count.
+        approval_count: Pending approval count.
+        can_save_chatbook: Whether a Chatbook artifact save is available.
+        staged_source_count: Number of staged sources for the next send.
+        staged_summary: Staged-context summary line; inactive/legacy
+            empty-state copy is ignored.
+
+    Returns:
+        The highest-precedence badge string, or ``""`` when nothing applies.
     """
     normalized_run_status = _normalized_status(run_status)
     if normalized_run_status == "failed" or _has_row_match(inspector_rows, {"failed"}):
@@ -437,7 +466,30 @@ def build_console_rail_state(
     can_save_chatbook: bool = False,
     available_columns: int | None = None,
 ) -> ConsoleRailState:
-    """Build effective Console rail state without importing Textual."""
+    """Build effective Console rail state without importing Textual.
+
+    Args:
+        preference_key: Persistence key for the active workspace/scope.
+        stored_preferences: Raw stored preference payload, if any (legacy
+            ``context_open`` keys are ignored; task-400).
+        staged_source_count: Staged-source count routed to the Inspector
+            rail badge.
+        staged_summary: Staged-context summary routed to the Inspector
+            rail badge.
+        workspace_label: Active workspace display label for the left badge.
+        session_label: Active session title for the left badge.
+        run_status: Current Console run status for the right badge.
+        inspector_rows: Inspector display rows for right-badge matching.
+        tool_count: Pending tool-call count for the right badge.
+        approval_count: Pending approval count for the right badge.
+        can_save_chatbook: Whether a Chatbook artifact save is available.
+        available_columns: Current terminal width, when known, for the
+            compact right-rail collapse rule.
+
+    Returns:
+        Effective rail state combining stored preferences, badges, and the
+        responsive right-rail collapse.
+    """
     preferences = coerce_console_rail_preferences(stored_preferences)
     right_forced_collapsed = (
         available_columns is not None
