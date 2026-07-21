@@ -1639,6 +1639,15 @@ class ChatScreen(BaseAppScreen):
         self._last_console_dictionary_scope_ids: (
             tuple[str | None, int | None] | None
         ) = None
+        # P2g-2: cached "what's in play" world-book summary for the active
+        # native Console session's conversation scope, recomputed only by
+        # `refresh_active_world_books_summary()`. Mirrors the dictionary
+        # cache above -- `_build_console_inspector_state` reads only this
+        # cache, never a DB query on recompose.
+        self._active_world_books_summary: dict | None = None
+        # Sentinel distinct from any real `(conversation_id,)` tuple so the
+        # first scope check always refreshes.
+        self._last_console_world_book_scope_ids: tuple | None = None
         # P1g Task 5: guards the Console dictionary attach/detach picker
         # flow against a double-open (mirrors P1f's `_io_dialog_active`),
         # reset in a `finally` in both attach/detach workers.
@@ -5778,6 +5787,7 @@ class ChatScreen(BaseAppScreen):
             inspector_state,
             dictionary_rows=self._console_dictionary_inspector_rows(),
             dictionary_actions=self._console_dictionary_inspector_actions(),
+            world_book_rows=self._console_world_book_inspector_rows(),
         )
         return inspector_state
 
@@ -5933,6 +5943,74 @@ class ChatScreen(BaseAppScreen):
             )
             if entry.get("shadowed"):
                 value += " (shadowed)"
+            if not entry.get("enabled", True):
+                value += " (disabled)"
+            rows.append(ConsoleDisplayRow(name, value))
+        return tuple(rows)
+
+    def _active_console_world_book_scope_ids(self) -> tuple[str | None]:
+        """(conversation_id,) for the active native Console world-book scope.
+
+        Conversation-only: native Console has no character (see
+        `_active_console_dictionary_scope_ids`).
+        """
+        return (self._current_console_rail_conversation_id(),)
+
+    async def refresh_active_world_books_summary(self) -> None:
+        """The ONLY place that performs the DB-backed world-book summarize.
+
+        `_build_console_inspector_state` reads only the cache set here. The
+        sync summarize is marshalled onto a worker thread via `asyncio.to_thread`
+        so it never blocks the UI loop.
+        """
+        conversation_id = self._current_console_rail_conversation_id()
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if not conversation_id or db is None:
+            self._active_world_books_summary = {"world_books": []}
+            self._sync_console_control_bar()
+            return
+        try:
+            from ...Character_Chat.world_info_resolver import (
+                summarize_active_world_books,
+            )
+
+            summary = await asyncio.to_thread(
+                summarize_active_world_books, db, conversation_id, None
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Could not summarize active world books for the Console inspector."
+            )
+            summary = {"world_books": []}
+        self._active_world_books_summary = (
+            summary if isinstance(summary, dict) else {"world_books": []}
+        )
+        self._sync_console_control_bar()
+
+    async def _refresh_active_world_books_summary_if_scope_changed(self) -> None:
+        """Recompute the world-book summary only when the scope changed."""
+        scope_ids = self._active_console_world_book_scope_ids()
+        if scope_ids == self._last_console_world_book_scope_ids:
+            return
+        self._last_console_world_book_scope_ids = scope_ids
+        await self.refresh_active_world_books_summary()
+
+    def _console_world_book_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
+        """Project the cached world-book summary into inspector rows (no DB)."""
+        conversation_id = self._current_console_rail_conversation_id()
+        if conversation_id is None:
+            return (ConsoleDisplayRow("No active chat", ""),)
+        summary = self._active_world_books_summary or {}
+        books = summary.get("world_books") or []
+        if not books:
+            return (ConsoleDisplayRow("No world books in play", ""),)
+        rows = []
+        for entry in books:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "Unnamed")
+            count = entry.get("entry_count")
+            value = f"{count} entries" if isinstance(count, int) else "0 entries"
             if not entry.get("enabled", True):
                 value += " (disabled)"
             rows.append(ConsoleDisplayRow(name, value))
@@ -8806,6 +8884,7 @@ class ChatScreen(BaseAppScreen):
             # build already sees the freshly recomputed cache instead of one
             # stale frame behind.
             await self._refresh_active_dictionaries_summary_if_scope_changed()
+            await self._refresh_active_world_books_summary_if_scope_changed()
             # task-280: hand the control bar a pre-await snapshot (its own
             # pre-existing timing). The rail-VISIBILITY call below must NOT
             # reuse this snapshot: `_sync_console_native_session_tabs` can
