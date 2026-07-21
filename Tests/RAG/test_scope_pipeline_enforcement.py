@@ -395,6 +395,84 @@ class TestSemanticLegAllowlists:
         assert spy.search_calls[0]["metadata_allowlist"] is None
         assert [r.id for r in results] == ["v1"]
 
+    @pytest.mark.asyncio
+    async def test_cross_type_id_collision_both_survive(self):
+        """Scope contains media id "42" AND note id "42"; both results appear in output."""
+        spy = _SpyRagService(
+            results_by_call=[
+                [_RagResult("42", score=0.5)],  # media type, id="42"
+                [_RagResult("42", score=0.7)],  # note type, id="42"
+            ]
+        )
+        app = _App(rag_service=spy)
+        eff = _scoped(media={"42"}, note={"42"})
+
+        results = await pfs.search_semantic(
+            app, "query", {"media": True}, limit=10, scope=eff
+        )
+
+        # Both results should appear (no dedup by source_id alone).
+        assert len(results) == 2
+        result_ids = [r.id for r in results]
+        assert result_ids.count("42") == 2
+        # Note result (0.7) should come before media result (0.5) due to higher score.
+        assert results[0].score == 0.7
+        assert results[1].score == 0.5
+
+    @pytest.mark.asyncio
+    async def test_semantic_merge_tie_break_deterministic(self):
+        """Two results with equal scores from different types; order is deterministic."""
+        spy = _SpyRagService(
+            results_by_call=[
+                [_RagResult("m1", score=0.5)],
+                [_RagResult("n1", score=0.5)],  # Same score as m1
+            ]
+        )
+        app = _App(rag_service=spy)
+        eff = _scoped(media={"m1"}, note={"n1"})
+
+        # Run twice to ensure determinism
+        results_1 = await pfs.search_semantic(
+            app, "query", {"media": True}, limit=10, scope=eff
+        )
+
+        spy2 = _SpyRagService(
+            results_by_call=[
+                [_RagResult("m1", score=0.5)],
+                [_RagResult("n1", score=0.5)],
+            ]
+        )
+        app2 = _App(rag_service=spy2)
+        results_2 = await pfs.search_semantic(
+            app2, "query", {"media": True}, limit=10, scope=eff
+        )
+
+        # Order should be deterministic and match
+        ids_1 = [r.id for r in results_1]
+        ids_2 = [r.id for r in results_2]
+        assert ids_1 == ids_2
+        # Per alphabetical type ordering (media < note): media should come first
+        assert ids_1 == ["m1", "n1"]
+
+    @pytest.mark.asyncio
+    async def test_single_type_scope_issues_one_search_call(self):
+        """Scope with only media ids; spy receives exactly ONE search call."""
+        spy = _SpyRagService(
+            results_by_call=[
+                [_RagResult("m1", score=0.5)],
+            ]
+        )
+        app = _App(rag_service=spy)
+        eff = _scoped(media={"m1"})  # Only media type
+
+        results = await pfs.search_semantic(
+            app, "query", {"media": True}, limit=10, scope=eff
+        )
+
+        # Only one search call should be issued
+        assert len(spy.search_calls) == 1
+        assert [r.id for r in results] == ["m1"]
+
 
 # === Custom-pipeline inheritance (self-enforcement proof) ===
 
