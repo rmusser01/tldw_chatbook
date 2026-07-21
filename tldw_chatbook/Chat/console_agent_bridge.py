@@ -52,15 +52,14 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Internal_Prompts import get_internal_prompt
+from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 
-CONSOLE_AGENT_OPERATING_PROMPT = (
-    "You are a capable assistant with optional tools. Answer directly when no "
-    "tool is needed. When a tool would help, call exactly one tool per reply "
-    "using the fenced protocol described below, then continue once you have the "
-    "result. Use spawn_subagent to delegate a self-contained sub-task to an "
-    "isolated helper. Keep replies concise."
-)
+# Catalog-default re-export: keeps existing imports/tests valid and pins
+# the "shipped default" text. compose_agent_system_prompt below resolves
+# the live (possibly overridden) value at call time via get_internal_prompt.
+CONSOLE_AGENT_OPERATING_PROMPT = CATALOG["agents.console_agent_operating"].default
 
 # Skills Phase-2 gate finding 1 (Task-14 report, scenario 5: "Find a skill
 # that can shout, load it, and use it on: hello"): a discovery-heavy run --
@@ -106,14 +105,15 @@ def compose_agent_system_prompt(session_prompt: str) -> str:
         session_prompt: The Console session's own system prompt, if any.
 
     Returns:
-        ``session_prompt`` followed by ``CONSOLE_AGENT_OPERATING_PROMPT``
-        (blank-line separated), or just the operating prompt when
-        ``session_prompt`` is blank.
+        ``session_prompt`` followed by the (registry-resolved) console agent
+        operating prompt (blank-line separated), or just the operating
+        prompt when ``session_prompt`` is blank.
     """
+    operating = get_internal_prompt("agents.console_agent_operating")
     base = (session_prompt or "").strip()
     if not base:
-        return CONSOLE_AGENT_OPERATING_PROMPT
-    return f"{session_prompt}\n\n{CONSOLE_AGENT_OPERATING_PROMPT}"
+        return operating
+    return f"{session_prompt}\n\n{operating}"
 
 
 def format_agent_step_marker(
@@ -284,8 +284,9 @@ class _StreamingModelAdapter:
     AgentService calls it as ``chat_call(api_endpoint=…, messages_payload=…,
     streaming=False, model=…)`` and expects a
     ``{"choices":[{"message":{"content": <full text>}}]}`` response. Sub-agent
-    turns (leading system content == SUBAGENT_SYSTEM_PROMPT) are streamed to a
-    throwaway gate and never touch the transcript.
+    turns (leading system content prefixed by the registry-resolved or
+    shipped-default ``agents.subagent_system`` prompt — see ``_is_subagent``)
+    are streamed to a throwaway gate and never touch the transcript.
 
     Every non-sealed primary turn streams live to the store as it arrives —
     not just the final answer — since the gate cannot know in advance
@@ -417,9 +418,18 @@ class _StreamingModelAdapter:
         if not messages_payload:
             return False
         first = messages_payload[0]
-        return first.get("role") == "system" and str(
-            first.get("content", "")
-        ).startswith(SUBAGENT_SYSTEM_PROMPT)
+        if first.get("role") != "system":
+            return False
+        content = str(first.get("content", ""))
+        # Dual-prefix match: the CURRENT registry-resolved prompt (an
+        # override may have been applied between spawn and detection) OR
+        # the shipped default (SUBAGENT_SYSTEM_PROMPT) -- covers an
+        # override applied in either direction so detection never flips
+        # false just because config changed mid-run.
+        resolved = get_internal_prompt("agents.subagent_system")
+        return content.startswith(resolved) or content.startswith(
+            SUBAGENT_SYSTEM_PROMPT
+        )
 
 
 def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any]]:

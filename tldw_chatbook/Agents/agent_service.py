@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from typing import Callable, Protocol
 
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Internal_Prompts import get_internal_prompt
+from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 
 from .agent_models import (
     AGENT_KIND_PRIMARY,
@@ -46,10 +48,10 @@ from .tool_catalog import (
     initial_disclosure,
 )
 
-SUBAGENT_SYSTEM_PROMPT = (
-    "You are a focused sub-agent. Complete the task you are given and "
-    "reply with a concise result. You cannot ask the user questions."
-)
+# Catalog-default re-export: keeps existing imports (console_agent_bridge,
+# tests) valid and pins the "shipped default" used by the dual-prefix
+# sub-agent check. Runtime call sites resolve live via get_internal_prompt.
+SUBAGENT_SYSTEM_PROMPT = CATALOG["agents.subagent_system"].default
 
 TRUNCATION_NOTICE = "\n[truncated]"
 
@@ -406,7 +408,7 @@ class AgentService:
             )
             child_config = AgentConfig(
                 model=config.model,
-                system_prompt=SUBAGENT_SYSTEM_PROMPT,
+                system_prompt=get_internal_prompt("agents.subagent_system"),
                 allowed_tools=child_allowed_tools,
                 budget=clamp_child_budget(config.budget, remaining),
                 native_tools=config.native_tools,
