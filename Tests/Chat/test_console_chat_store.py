@@ -304,9 +304,10 @@ def test_store_renames_session_with_trimmed_title():
     store = ConsoleChatStore()
     session = store.ensure_session(title="Chat 1")
 
-    renamed = store.rename_session(session.id, "  Planning tab  ")
+    renamed, persisted = store.rename_session(session.id, "  Planning tab  ")
 
     assert renamed is session
+    assert persisted is True
     assert store.sessions()[0].title == "Planning tab"
 
 
@@ -1682,3 +1683,103 @@ def test_one_shot_prefill_is_per_session():
     session_b = store.create_session(title="B")
     store.set_session_one_shot_prefill(session_a.id, "only A")
     assert store.session_one_shot_prefill(session_b.id) is None
+
+def test_rename_session_persists_conversation_title_when_saved():
+    """TASK-341: renaming a saved conversation's tab must rename the
+    persisted conversation, not just the ephemeral tab label."""
+
+    class TitleRecordingPersistence(FakePersistence):
+        def __init__(self):
+            super().__init__()
+            self.updated_titles = []
+
+        def update_conversation_title(self, *, conversation_id, title):
+            self.updated_titles.append(
+                {"conversation_id": conversation_id, "title": title}
+            )
+            return True
+
+    persistence = TitleRecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.restore_persisted_session(
+        title="Old title",
+        workspace_id=None,
+        persisted_conversation_id="conv-77",
+        messages=[],
+    )
+
+    renamed, persisted = store.rename_session(session.id, "New title")
+
+    assert renamed.title == "New title"
+    assert persisted is True
+    assert persistence.updated_titles == [
+        {"conversation_id": "conv-77", "title": "New title"}
+    ]
+
+
+def test_rename_session_keeps_memory_title_when_persistence_fails():
+    class ExplodingTitlePersistence(FakePersistence):
+        def update_conversation_title(self, *, conversation_id, title):
+            raise RuntimeError("db locked")
+
+    store = ConsoleChatStore(persistence=ExplodingTitlePersistence())
+    session = store.restore_persisted_session(
+        title="Old title",
+        workspace_id=None,
+        persisted_conversation_id="conv-88",
+        messages=[],
+    )
+
+    renamed, persisted = store.rename_session(session.id, "New title")
+
+    assert renamed.title == "New title"
+    assert persisted is False
+
+
+def test_rename_session_without_persisted_conversation_stays_in_memory():
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+
+    renamed, persisted = store.rename_session(session.id, "Local only")
+
+    assert renamed.title == "Local only"
+    assert persisted is True
+
+
+def test_rename_session_reports_unpersisted_when_update_returns_false():
+    """Optimistic-lock/version-check failures surface as persisted=False."""
+
+    class RefusingTitlePersistence(FakePersistence):
+        def update_conversation_title(self, *, conversation_id, title):
+            return False
+
+    store = ConsoleChatStore(persistence=RefusingTitlePersistence())
+    session = store.restore_persisted_session(
+        title="Old title",
+        workspace_id=None,
+        persisted_conversation_id="conv-99",
+        messages=[],
+    )
+
+    renamed, persisted = store.rename_session(session.id, "New title")
+
+    assert renamed.title == "New title"
+    assert persisted is False
+
+
+def test_rename_session_reports_unpersisted_when_seam_is_missing():
+    """A saved conversation whose persistence lacks the title seam cannot
+    have persisted silently — the modal's warning depends on it."""
+    # FakePersistence predates update_conversation_title on purpose here.
+    store = ConsoleChatStore(persistence=FakePersistence())
+    session = store.restore_persisted_session(
+        title="Old title",
+        workspace_id=None,
+        persisted_conversation_id="conv-100",
+        messages=[],
+    )
+
+    renamed, persisted = store.rename_session(session.id, "New title")
+
+    assert renamed.title == "New title"
+    assert persisted is False

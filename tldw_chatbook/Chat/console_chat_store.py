@@ -106,6 +106,23 @@ class ConsoleChatPersistence(Protocol):
     ) -> bool:
         """Set or clear the pinned response prefill on a conversation."""
 
+    def update_conversation_title(
+        self,
+        *,
+        conversation_id: str,
+        title: str,
+    ) -> bool:
+        """Persist a changed title for an already-saved conversation.
+
+        Args:
+            conversation_id: Durable Chat conversation identifier.
+            title: New conversation title (already validated non-blank).
+
+        Returns:
+            True when the update was applied; False when refused (e.g. an
+            optimistic-lock version check failed).
+        """
+
     def get_attachments_for_messages(
         self, message_ids: Sequence[str]
     ) -> dict[str, list[dict[str, Any]]]:
@@ -259,14 +276,65 @@ class ConsoleChatStore:
         self.active_session_id = session.id
         return session
 
-    def rename_session(self, session_id: str, title: str) -> ConsoleChatSession:
-        """Rename an existing native Console session."""
+    def rename_session(
+        self, session_id: str, title: str
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Rename a native Console session, persisting a saved conversation's title.
+
+        TASK-341: the tab IS the conversation for a resumed saved
+        conversation — renaming only the in-memory session looked successful
+        (tab + transcript header updated) but evaporated on restart.
+
+        Args:
+            session_id: Native Console session ID to rename.
+            title: New title; surrounding whitespace is trimmed.
+
+        Returns:
+            ``(session, persisted)`` — the in-memory rename is always
+            applied. ``persisted`` is ``False`` when the session has a saved
+            conversation whose durable title update did not happen: the
+            persistence call raised, returned falsy (e.g. an optimistic-lock
+            version check refused the write), or the persistence object has
+            no ``update_conversation_title`` seam at all.
+
+        Raises:
+            ValueError: If the trimmed title is blank.
+            KeyError: If no session with ``session_id`` exists.
+        """
         normalized_title = title.strip()
         if not normalized_title:
             raise ValueError("Console chat session title cannot be blank.")
         session = self._session_or_raise(session_id)
         session.title = normalized_title
-        return session
+        persisted = True
+        if (
+            session.persisted_conversation_id is not None
+            and self.persistence is not None
+        ):
+            update_title = getattr(self.persistence, "update_conversation_title", None)
+            if not callable(update_title):
+                # A saved conversation with no durable rename seam: claiming
+                # persisted=True here would recreate the original silent-loss
+                # bug for exactly the sessions this fix targets.
+                persisted = False
+            else:
+                try:
+                    persisted = bool(
+                        update_title(
+                            conversation_id=session.persisted_conversation_id,
+                            title=normalized_title,
+                        )
+                    )
+                except Exception:
+                    persisted = False
+                    logger.bind(
+                        session_id=session_id,
+                        conversation_id=session.persisted_conversation_id,
+                    ).exception(
+                        "Failed to persist Console session title; "
+                        "in-memory session keeps the applied value."
+                    )
+        return session, persisted
 
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
         """Close a native Console session and activate a neighboring session.

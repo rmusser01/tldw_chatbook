@@ -13,7 +13,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     supported_console_provider_readiness_keys,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
-    URL_BASED_PROVIDER_KEYS,
+    URL_BASED_PROVIDER_KEYS,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
     first_configured_endpoint,
     generic_endpoint_differs,
     normalize_generic_endpoint_for_compare,
@@ -392,7 +392,18 @@ def build_default_console_session_settings(
         chat_defaults.get("model"),
     )
     model_profile = _model_default_profile(provider_settings, configured_model)
-    default_sources = (model_profile, chat_defaults, provider_settings)
+    # TASK-342: [console.provider_defaults.<provider>] holds ONLY values the
+    # Console's Save-as-default wrote, so it outranks everything except a
+    # model profile. chat_defaults stays ahead of raw [api_settings.*]
+    # scalars (f14d22dc3, review feedback): factory provider templates carry
+    # sampling values for every provider and must not shadow user-tuned
+    # global defaults — which is precisely why saved defaults need their own
+    # section instead of writing into api_settings.
+    saved_defaults = _mapping_value(
+        _mapping_value(_mapping_value(app_config, "console"), "provider_defaults"),
+        configured_provider,
+    )
+    default_sources = (model_profile, saved_defaults, chat_defaults, provider_settings)
 
     return ConsoleSessionSettings(
         provider=configured_provider,

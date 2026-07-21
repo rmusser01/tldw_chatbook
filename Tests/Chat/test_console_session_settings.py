@@ -904,3 +904,84 @@ def test_pinned_prefill_defaults_none_and_replaces():
     pinned = replace(settings, pinned_prefill="*She pauses*")
     assert pinned.pinned_prefill == "*She pauses*"
     assert settings.pinned_prefill is None
+
+def test_provider_scoped_defaults_beat_chat_defaults_for_sampling_fields():
+    """TASK-342: Save-as-default persists sampling values under
+    [console.provider_defaults.<provider>] — a section that only ever holds
+    Console-saved defaults, so the boot builder ranks it above chat_defaults
+    without letting factory api_settings scalars shadow user-tuned globals
+    (that protection is pinned by f14d22dc3's tests)."""
+    config = {
+        "chat_defaults": {
+            "provider": "llama_cpp",
+            "model": "chat-model",
+            "temperature": 0.6,
+            "top_p": 0.95,
+            "streaming": True,
+        },
+        "api_settings": {"llama_cpp": {"model": "saved-model"}},
+        "console": {
+            "provider_defaults": {
+                "llama_cpp": {
+                    "temperature": 0.88,
+                    "top_p": 0.5,
+                    "top_k": 17,
+                    "max_tokens": 1234,
+                    "seed": 42,
+                    "presence_penalty": 0.25,
+                    "frequency_penalty": 0.75,
+                    "reasoning_effort": "high",
+                    "reasoning_summary": "detailed",
+                    "verbosity": "low",
+                    "thinking_effort": "medium",
+                    "thinking_budget_tokens": 2048,
+                    "min_p": 0.07,
+                },
+            },
+        },
+    }
+
+    settings = build_default_console_session_settings(
+        app_config=config,
+        provider="llama_cpp",
+        model=None,
+    )
+
+    assert settings.temperature == 0.88
+    assert settings.top_p == 0.5
+    assert settings.min_p == 0.07
+    assert settings.top_k == 17
+    assert settings.max_tokens == 1234
+    assert settings.seed == 42
+    assert settings.presence_penalty == 0.25
+    assert settings.frequency_penalty == 0.75
+    assert settings.reasoning_effort == "high"
+    assert settings.reasoning_summary == "detailed"
+    assert settings.verbosity == "low"
+    assert settings.thinking_effort == "medium"
+    assert settings.thinking_budget_tokens == 2048
+
+
+def test_chat_defaults_still_apply_when_no_console_saved_defaults_exist():
+    # Factory api_settings sampling scalars must STILL lose to chat_defaults
+    # (f14d22dc3) — only Console-saved defaults outrank them.
+    config = {
+        "chat_defaults": {
+            "provider": "llama_cpp",
+            "model": "chat-model",
+            "temperature": 0.6,
+            "top_p": 0.9,
+        },
+        "api_settings": {
+            "llama_cpp": {"model": "saved-model", "temperature": 0.7, "top_p": 0.95}
+        },
+    }
+
+    settings = build_default_console_session_settings(
+        app_config=config,
+        provider="llama_cpp",
+        model=None,
+    )
+
+    assert settings.temperature == 0.6
+    assert settings.top_p == 0.9

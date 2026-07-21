@@ -259,6 +259,36 @@ class ChatPersistenceService:
         )
         return True
 
+    def update_conversation_title(
+        self,
+        *,
+        conversation_id: str,
+        title: str,
+    ) -> bool:
+        """Update the persisted title for an existing conversation.
+
+        Args:
+            conversation_id: UUID of the conversation to update.
+            title: New conversation title (already validated non-blank).
+
+        Returns:
+            True if the update was applied.
+
+        Raises:
+            ValueError: If the conversation cannot be found.
+        """
+        current_conversation = self.db.get_conversation_by_id(conversation_id)
+        if not current_conversation:
+            raise ValueError(f"Conversation {conversation_id} not found")
+
+        return bool(
+            self.db.update_conversation(
+                conversation_id,
+                {"title": title},
+                expected_version=current_conversation["version"],
+            )
+        )
+
     def update_message_content(
         self,
         *,
