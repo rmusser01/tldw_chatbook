@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape as html_escape
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
 
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
@@ -395,7 +395,9 @@ class ConsoleStagedContextState:
 
 @dataclass(frozen=True)
 class ConsoleRetrievalScopeState:
-    """Display state for the Inspector's "Retrieval scope" row (task-9).
+    """Display state for the Inspector's "Retrieval scope" row (task-9) and
+    the header's "Scope" chip (task-10) -- both render from this SAME
+    snapshot, never a second state source.
 
     Pure snapshot -- built from session-held state only (a persisted
     conversation's cached last-read scope, or an unpersisted session's
@@ -404,10 +406,22 @@ class ConsoleRetrievalScopeState:
     storage-layer entry points (``read_conversation_scope``,
     ``SessionScopeHolder.set``) already normalize a zero-item scope to
     ``None`` (unscoped) before this state is ever built from it.
+
+    ``is_empty``/``cause`` mirror ``EffectiveScope``'s ``"empty"`` state
+    (rag_scope.py) -- the configured scope(s) leave nothing to retrieve
+    from (either every item in an active scope has since been deleted, or,
+    once Phase 3 of the rag-scope-narrowing program lands workspace-level
+    scoping, a conversation/workspace intersection with no overlap). Not
+    reachable from ``ChatScreen._build_console_retrieval_scope_state``
+    today: that builder is zero-DB by contract, and detecting either cause
+    needs a DB existence check. ``empty()`` exists so the chip's renderer
+    can be exercised ahead of that wiring.
     """
 
     is_scoped: bool
     item_count: int = 0
+    is_empty: bool = False
+    cause: Optional[str] = None
 
     @classmethod
     def unscoped(cls) -> "ConsoleRetrievalScopeState":
@@ -420,6 +434,17 @@ class ConsoleRetrievalScopeState:
         if scope is None or not scope.items:
             return cls.unscoped()
         return cls(is_scoped=True, item_count=len(scope.items))
+
+    @classmethod
+    def empty(cls, cause: Optional[str] = None) -> "ConsoleRetrievalScopeState":
+        """Return the EMPTY (action-required) display state.
+
+        Args:
+            cause: Short machine-readable reason (e.g. ``"deleted-items"``
+                or ``"no-workspace-overlap"``, mirroring
+                ``EffectiveScope.cause``); surfaced in the chip's tooltip.
+        """
+        return cls(is_scoped=False, item_count=0, is_empty=True, cause=cause)
 
 
 @dataclass(frozen=True)

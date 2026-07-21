@@ -265,6 +265,7 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
+from ...Widgets.Console.console_control_bar import ConsoleScopeChip
 from ...Widgets.Console.console_retrieval_scope_row import (
     ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
 )
@@ -3176,14 +3177,30 @@ class ChatScreen(BaseAppScreen):
         return state.item_count if state.is_scoped else None
 
     def _sync_console_retrieval_scope_row(self) -> None:
-        """Refresh the mounted retrieval-scope row from current session state."""
+        """Refresh the mounted retrieval-scope row AND header chip.
+
+        Task-10: the header's ``#console-scope-chip`` renders from the
+        exact same ``ConsoleRetrievalScopeState`` snapshot as the
+        Inspector row -- computed once here and pushed into both, never a
+        second state source or a second cache. This keeps the chip's
+        refresh triggers identical to the row's (this method's own two
+        call sites: after a scope-picker save, and the first-send
+        persist-flush hook).
+        """
+        state = self._build_console_retrieval_scope_state()
         try:
             row = self.query_one(
                 f"#{CONSOLE_RETRIEVAL_SCOPE_ROW_ID}", ConsoleRetrievalScopeRow
             )
         except QueryError:
+            pass
+        else:
+            row.sync_state(state)
+        try:
+            control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
+        except QueryError:
             return
-        row.sync_state(self._build_console_retrieval_scope_state())
+        control_bar.sync_scope_chip(state)
 
     @staticmethod
     async def _read_console_retrieval_scope(db: Any, conversation_id: str) -> Optional[RagScope]:
@@ -3378,6 +3395,19 @@ class ChatScreen(BaseAppScreen):
     async def _console_retrieval_scope_clear_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         await self._clear_console_retrieval_scope()
+
+    @on(ConsoleScopeChip.OpenRequested)
+    async def _console_scope_chip_activated(
+        self, event: ConsoleScopeChip.OpenRequested
+    ) -> None:
+        """Open the scope picker from the header chip (task-10).
+
+        Same handler seam as the Inspector row's Edit/Narrow… button
+        (``_console_retrieval_scope_open_pressed`` above) -- just a second
+        entry point into the same async opener.
+        """
+        event.stop()
+        await self._open_console_retrieval_scope_picker()
 
     def _current_console_conversation_id(
         self,
@@ -7753,6 +7783,10 @@ class ChatScreen(BaseAppScreen):
         staged_context_state = self._build_console_staged_context_state(pending_launch)
         inspector_state = self._build_console_inspector_state(pending_launch)
         workspace_context_state = self._build_console_workspace_context_state()
+        # task-10: built once, shared verbatim by the header's "Scope" chip
+        # and the Inspector's retrieval-scope row below -- one zero-DB
+        # state, two renderers.
+        retrieval_scope_state = self._build_console_retrieval_scope_state()
         rail_state = self._build_console_rail_state(
             staged_context_state=staged_context_state,
             inspector_state=inspector_state,
@@ -7827,6 +7861,7 @@ class ChatScreen(BaseAppScreen):
                     control_state,
                     self.app_instance,
                     actions=workbench_state.actions,
+                    scope_state=retrieval_scope_state,
                     on_sidebar_toggle_requested=self._toggle_console_chat_sidebar,
                     id="console-control-bar",
                     classes="console-control-bar",
@@ -8217,7 +8252,7 @@ class ChatScreen(BaseAppScreen):
                         # boundary visible). Renders purely from session
                         # state -- no DB reads on compose/recompose.
                         retrieval_scope_row = ConsoleRetrievalScopeRow(
-                            self._build_console_retrieval_scope_state(),
+                            retrieval_scope_state,
                             id=CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
                             classes="console-inspector-context-section",
                         )

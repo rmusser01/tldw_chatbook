@@ -22,12 +22,14 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_display_state import ConsoleRetrievalScopeState
 from tldw_chatbook.Chat.rag_scope import (
     RagScope,
     ScopeItem,
     read_conversation_scope,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
+from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleScopeChip
 from tldw_chatbook.Widgets.Console.console_retrieval_scope_row import (
     CLEAR_BTN_ID,
     EDIT_BTN_ID,
@@ -38,6 +40,8 @@ from tldw_chatbook.Widgets.Console.console_retrieval_scope_row import (
 from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     ConsoleScopePickerModal,
 )
+
+SCOPE_CHIP_ID = "console-scope-chip"
 
 
 async def _open_console_inspector(console, pilot) -> None:
@@ -154,7 +158,10 @@ async def test_retrieval_scope_row_zero_db_on_forced_recompose():
     """A persisted-but-not-yet-cached conversation id must render the safe
     "everything" default on recompose WITHOUT ever touching the DB -- the
     brief's two read triggers are modal-open and after-save, never
-    compose/recompose."""
+    compose/recompose. Task-10: the header chip shares this exact
+    zero-DB compose path (built from the same
+    ``_build_console_retrieval_scope_state()`` call), so it must stay
+    hidden through the forced recompose too."""
 
     class _RaisingDB:
         def __init__(self):
@@ -170,6 +177,7 @@ async def test_retrieval_scope_row_zero_db_on_forced_recompose():
         console = host.screen_stack[-1]
         row = await _open_inspector_and_get_row(console, pilot)
         assert _static_plain_text(row.query_one(f"#{LABEL_ID}", Static)) == "Scope: everything"
+        assert console.query_one(f"#{SCOPE_CHIP_ID}").display is False
 
         session = console._active_native_console_session()
         session.persisted_conversation_id = "conv-not-cached"
@@ -184,6 +192,7 @@ async def test_retrieval_scope_row_zero_db_on_forced_recompose():
         assert raising_db.calls == []
         row = console.query_one(f"#{ROW_ID}")
         assert _static_plain_text(row.query_one(f"#{LABEL_ID}", Static)) == "Scope: everything"
+        assert console.query_one(f"#{SCOPE_CHIP_ID}").display is False
 
 
 @pytest.mark.asyncio
@@ -543,3 +552,175 @@ async def test_clear_button_persisted_session():
             )
     finally:
         db.close_connection()
+
+
+# --- task-10: header "Scope" chip -------------------------------------
+#
+# The chip lives in the Console header's chip row (``#console-scope-chip``,
+# a sibling of "Sources: 0 staged" / "RAG: off") and renders from the exact
+# same ``ConsoleRetrievalScopeState`` snapshot as the Inspector row above --
+# see ``ChatScreen._sync_console_retrieval_scope_row`` and
+# ``ConsoleControlBar.sync_scope_chip``/``_scope_chip_render``.
+
+
+@pytest.mark.asyncio
+async def test_scope_chip_hidden_when_unscoped():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(240, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+
+        chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
+        assert chip.display is False
+
+
+@pytest.mark.asyncio
+async def test_scope_chip_shows_count_and_tooltip_when_scoped():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(240, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+
+        session = console._active_native_console_session()
+        assert session is not None
+        session.rag_scope_holder.set(
+            RagScope(
+                items=(ScopeItem("media", "m1"), ScopeItem("note", "n1")),
+                updated_at="2026-01-01T00:00:00Z",
+            )
+        )
+        console._sync_console_retrieval_scope_row()
+        await pilot.pause()
+
+        chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
+        assert chip.display is True
+        assert _static_plain_text(chip) == "Scope: 2"
+        # Phase-3 will widen this to the intersection breakdown
+        # ("conversation A ∩ workspace B → N") once workspace-level
+        # scoping resolves through the same seam; today it is
+        # conversation-only.
+        assert str(chip.tooltip) == "conversation 2 items"
+        assert not chip.has_class("console-chip-alert")
+
+
+@pytest.mark.asyncio
+async def test_scope_chip_refreshes_on_modal_save():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(240, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        session = console._active_native_console_session()
+        assert session.persisted_conversation_id is None
+        scope = RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
+
+        await console._apply_console_retrieval_scope_save(session, scope)
+        await pilot.pause()
+
+        chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
+        assert chip.display is True
+        assert _static_plain_text(chip) == "Scope: 1"
+
+
+@pytest.mark.asyncio
+async def test_scope_chip_refreshes_on_persist_transition_flush():
+    """Mirrors ``test_scope_saved_unpersisted_then_first_send_flush_refreshes_row``:
+    the real message-send path (``store.append_message(..., persist=True)``)
+    must refresh the chip too, with no modal-open/resume read trigger in
+    between."""
+    db = CharactersRAGDB(":memory:", "test-client")
+    try:
+        app = _build_test_app()
+        app.chachanotes_db = db
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(240, 64)) as pilot:
+            console = host.screen_stack[-1]
+            await _open_console_inspector(console, pilot)
+            store = console._ensure_console_chat_store()
+            session = console._active_native_console_session()
+            scope = RagScope(
+                items=(ScopeItem("media", "m1"), ScopeItem("note", "n1")),
+                updated_at="2026-01-01T00:00:00Z",
+            )
+
+            await console._apply_console_retrieval_scope_save(session, scope)
+            assert console.query_one(f"#{SCOPE_CHIP_ID}").display is True
+
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.USER,
+                content="hello",
+                persist=True,
+            )
+            await pilot.pause()
+
+            chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
+            assert chip.display is True
+            assert _static_plain_text(chip) == "Scope: 2"
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_scope_chip_click_opens_picker_modal():
+    """Same handler seam as the Inspector row's Edit button (task-9):
+    activating the chip -- via ``_on_click`` or Enter/Space while focused,
+    exactly like ``ConsoleApprovalsChip`` -- posts ``OpenRequested``, which
+    ``ChatScreen`` routes straight into
+    ``_open_console_retrieval_scope_picker``. Driven via focus + Enter
+    here (the codebase's established activation pattern for these header
+    chips, e.g. the approvals chip's own contract tests) rather than a
+    pixel-coordinate ``pilot.click``, which is flaky against this
+    viewport's clipped/overflowing chip row."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(240, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        session = console._active_native_console_session()
+        session.rag_scope_holder.set(
+            RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
+        )
+        console._sync_console_retrieval_scope_row()
+        await pilot.pause()
+
+        chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
+        chip.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        for _ in range(20):
+            await pilot.pause(0.02)
+
+        modals = [s for s in host.screen_stack if isinstance(s, ConsoleScopePickerModal)]
+        assert len(modals) == 1
+
+
+@pytest.mark.asyncio
+async def test_scope_chip_empty_state_action_required_styling_and_cause_tooltip():
+    """EMPTY is not reachable from the real conversation-only path yet --
+    ``_build_console_retrieval_scope_state`` is zero-DB by contract, and
+    detecting a fully-deleted scope (or, once Phase 3 lands, a
+    no-overlap conversation/workspace intersection) needs a DB existence
+    check. This drives the renderer directly with an EMPTY state object
+    (monkeypatching the builder), exactly as the brief calls for, ahead of
+    that Phase-3 wiring."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(240, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+
+        console._build_console_retrieval_scope_state = lambda: ConsoleRetrievalScopeState.empty(
+            cause="deleted-items"
+        )
+        console._sync_console_retrieval_scope_row()
+        await pilot.pause()
+
+        chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
+        assert chip.display is True
+        assert _static_plain_text(chip) == "Scope: empty"
+        assert chip.has_class("console-chip-alert")
+        assert "deleted-items" in str(chip.tooltip)
