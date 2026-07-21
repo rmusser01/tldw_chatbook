@@ -918,12 +918,20 @@ def test_library_skill_row_class_matches_prompt_row_visual_parity():
         prompt_row_block = _css_block(text, ".library-prompt-row {")
         for pinned in (
             "width: 100%;",
-            "height: 2;",
             "border: none;",
             "background: $ds-surface-panel;",
         ):
             assert pinned in skill_row_block
             assert pinned in prompt_row_block
+        # task-424: anatomy differs -- prompts pack name+secondary into one
+        # 2-high Button label; skills render the secondary as a separate
+        # Static, so the Button is 1 high and flush against it (the block
+        # separation margin lives on the secondary line instead). The old
+        # height-2 + bottom-margin combo left two blank rows between a
+        # skill's name and its own metadata.
+        assert "height: 2;" in prompt_row_block
+        assert "height: 1;" in skill_row_block
+        assert "margin: 0;" in skill_row_block
 
         assert ".library-skill-row-blocked {" in text
         blocked_block = _css_block(text, ".library-skill-row-blocked {")
@@ -1890,3 +1898,133 @@ async def test_handle_library_skills_import_browse_folder_pushes_directory_dialo
     event = SimpleNamespace(stop=lambda: None)
     LibraryScreen.handle_library_skills_import_browse_folder(fake, event)
     assert pushed and type(pushed[0]).__name__ == "SelectDirectory"
+
+
+# ---------------------------------------------------------------------------
+# task-424: keyboard accelerators (Ctrl+S save, Escape back-with-guard),
+# create-editor Name focus, and upfront name-format guidance.
+# ---------------------------------------------------------------------------
+
+
+def test_library_screen_binds_skill_editor_keys():
+    keys = {binding[0] for binding in LibraryScreen.BINDINGS}
+    assert "ctrl+s" in keys
+    assert "escape" in keys
+
+
+def _bind_editor_active(fake):
+    """Bind the real editor-active predicate onto a SimpleNamespace fake."""
+    fake._library_skill_editor_active = (
+        lambda: LibraryScreen._library_skill_editor_active(fake)
+    )
+    return fake
+
+
+def test_check_action_gates_skill_editor_keys_to_editor():
+    fake = _bind_editor_active(
+        SimpleNamespace(
+            _library_selected_row_id="browse-media",
+            _library_skills_view="editor",
+        )
+    )
+    assert (
+        LibraryScreen.check_action(fake, "library_skill_save", ()) is False
+    )
+    fake_editor = _bind_editor_active(
+        SimpleNamespace(
+            _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
+            _library_skills_view="editor",
+        )
+    )
+    assert (
+        LibraryScreen.check_action(fake_editor, "library_skill_save", ()) is True
+    )
+    fake_list = _bind_editor_active(
+        SimpleNamespace(
+            _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
+            _library_skills_view="list",
+        )
+    )
+    assert (
+        LibraryScreen.check_action(fake_list, "library_skill_back", ()) is False
+    )
+
+
+def test_action_library_skill_save_kicks_save_worker():
+    worker_calls: list[dict] = []
+    fake = _bind_editor_active(
+        SimpleNamespace(
+            _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
+            _library_skills_view="editor",
+            _library_skill_conflict=False,
+            _save_library_skill=lambda: None,
+            run_worker=lambda coro, **kwargs: worker_calls.append(kwargs),
+        )
+    )
+    LibraryScreen.action_library_skill_save(fake)
+    assert worker_calls and worker_calls[0]["group"] == "library_skill_save"
+
+
+@pytest.mark.asyncio
+async def test_action_library_skill_back_honors_dirty_guard():
+    vetoes: list[bool] = []
+    fake = _bind_editor_active(
+        SimpleNamespace(
+            _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
+            _library_skills_view="editor",
+            _flush_library_skill_save=AsyncMock(return_value=False),
+            _notify_skill_dirty_veto=lambda: vetoes.append(True),
+        )
+    )
+    fake._exit_library_skill_editor_guarded = (
+        lambda: LibraryScreen._exit_library_skill_editor_guarded(fake)
+    )
+    await LibraryScreen.action_library_skill_back(fake)
+    assert vetoes == [True]
+
+    resets: list[bool] = []
+    refreshes: list[bool] = []
+    clean = _bind_editor_active(
+        SimpleNamespace(
+            _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
+            _library_skills_view="editor",
+            _flush_library_skill_save=AsyncMock(return_value=True),
+            _reset_library_skill_editor_state=lambda: resets.append(True),
+            _refresh_local_source_snapshot=lambda: None,
+            refresh=lambda recompose=False: refreshes.append(recompose),
+        )
+    )
+    clean._exit_library_skill_editor_guarded = (
+        lambda: LibraryScreen._exit_library_skill_editor_guarded(clean)
+    )
+    await LibraryScreen.action_library_skill_back(clean)
+    assert resets == [True]
+    assert refreshes == [True]
+
+
+@pytest.mark.asyncio
+async def test_create_skill_editor_focuses_name_field():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(available=[], blocked=[])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-skill").press()
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen.query_one("#library-skill-name", Input).has_focus
+
+
+@pytest.mark.asyncio
+async def test_create_skill_name_placeholder_states_format():
+    state = _editor_state(name="")
+    app = _EditorHost(mode="editor", editor_state=state, is_create=True)
+    async with app.run_test() as pilot:
+        name_input = pilot.app.query_one("#library-skill-name", Input)
+        assert "lowercase" in name_input.placeholder

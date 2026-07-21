@@ -595,6 +595,13 @@ class LibrarySkillsListCanvas(VerticalScroll):
             value=editor_state.name,
             id="library-skill-name",
             disabled=not self.is_create,
+            # task-424: the format rule is known upfront -- say it before
+            # the save-time error can fire.
+            placeholder=(
+                "lowercase letters, numbers, hyphens (e.g. code-review)"
+                if self.is_create
+                else ""
+            ),
         )
         if not self.is_create:
             yield Static(

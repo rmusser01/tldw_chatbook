@@ -796,6 +796,11 @@ class LibraryScreen(BaseAppScreen):
 
     BINDINGS = [
         ("u", "library_rag_use_in_console", "Use Library context in Console"),
+        # task-424: skill-editor accelerators. ``check_action`` gates both
+        # to the open skill editor, so the keys pass through untouched
+        # everywhere else on the screen.
+        ("ctrl+s", "library_skill_save", "Save skill"),
+        ("escape", "library_skill_back", "Back to skills list"),
     ]
 
     #: Footer hint set — mirrors the show=True bindings the retired Textual
@@ -6502,6 +6507,9 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(self._arm_library_prompt_editor)
         if row_id == LIBRARY_ROW_CREATE_SKILL and self.is_mounted:
             self.call_after_refresh(self._arm_library_skill_editor)
+            # task-424: first action in a blank create editor is always
+            # naming it -- put the caret there.
+            self.call_after_refresh(self._focus_library_skill_name)
 
     @on(Button.Pressed, ".console-rail-section-toggle")
     def handle_library_rail_section_toggle(self, event: Button.Pressed) -> None:
@@ -8185,6 +8193,63 @@ class LibraryScreen(BaseAppScreen):
             if isinstance(button, Button):
                 button.disabled = not enabled
 
+    def _library_skill_editor_active(self) -> bool:
+        """True while the in-canvas skill editor is the live view (task-424)."""
+        return (
+            self._library_selected_row_id
+            in (LIBRARY_ROW_BROWSE_SKILLS, LIBRARY_ROW_CREATE_SKILL)
+            and self._library_skills_view == "editor"
+        )
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Gate the skill-editor key bindings to the open editor (task-424).
+
+        Returning ``False`` deactivates the binding entirely, so Escape /
+        Ctrl+S behave as if unbound anywhere else on the Library screen.
+        """
+        if action in ("library_skill_save", "library_skill_back"):
+            return self._library_skill_editor_active()
+        return True
+
+    def action_library_skill_save(self) -> None:
+        """Ctrl+S: save the open skill from anywhere in the editor (task-424)."""
+        if not self._library_skill_editor_active():
+            return
+        if self._library_skill_conflict:
+            return
+        self.run_worker(
+            self._save_library_skill(),
+            exclusive=True,
+            group="library_skill_save",
+        )
+
+    async def action_library_skill_back(self) -> None:
+        """Escape: leave the editor, honoring the unsaved-changes guard (task-424)."""
+        if not self._library_skill_editor_active():
+            return
+        await self._exit_library_skill_editor_guarded()
+
+    async def _exit_library_skill_editor_guarded(self) -> bool:
+        """Shared Back exit: veto (with toast) while dirty, else reset to list.
+
+        Returns:
+            ``True`` when the editor was exited; ``False`` on a dirty veto.
+        """
+        if not await self._flush_library_skill_save():
+            self._notify_skill_dirty_veto()
+            return False
+        self._reset_library_skill_editor_state()
+        self._refresh_local_source_snapshot()
+        self.refresh(recompose=True)
+        return True
+
+    def _focus_library_skill_name(self) -> None:
+        """Focus the create editor's Name field (task-424)."""
+        try:
+            self.query_one("#library-skill-name", Input).focus()
+        except (NoMatches, QueryError):
+            pass
+
     @on(Button.Pressed, "#library-skill-back")
     async def handle_library_skill_back(self, event: Button.Pressed) -> None:
         """Return the Library skills canvas from the editor to its list view.
@@ -8196,12 +8261,7 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the "‹ Back to list" action.
         """
         event.stop()
-        if not await self._flush_library_skill_save():
-            self._notify_skill_dirty_veto()
-            return
-        self._reset_library_skill_editor_state()
-        self._refresh_local_source_snapshot()
-        self.refresh(recompose=True)
+        await self._exit_library_skill_editor_guarded()
 
     @on(Button.Pressed, "#library-skill-discard")
     def handle_library_skill_discard(self, event: Button.Pressed) -> None:
