@@ -43,6 +43,9 @@ from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
+from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
+    describe_stream_failure,
+)
 from tldw_chatbook.model_capabilities import is_vision_capable
 
 if TYPE_CHECKING:
@@ -200,48 +203,6 @@ def build_mcp_review_hook(
         return {call.llm_name: "proceed" for call in pending}
 
     return review_tool_calls
-
-
-def describe_stream_failure(exc: BaseException) -> str:
-    """Return user-facing copy classifying a provider stream failure.
-
-    ``str(exc)`` alone can be empty (observed live as ``"Provider stream
-    failed: "`` rendering ``"[failed]"``), so the failure class is always
-    included in user terms: timeout vs connection vs HTTP status.
-
-    Args:
-        exc: The exception raised by the provider stream.
-
-    Returns:
-        A short, user-readable failure description that is never empty.
-    """
-    detail = str(exc).strip()
-    response = getattr(exc, "response", None)
-    status_code = getattr(response, "status_code", None) or getattr(
-        exc, "status_code", None
-    )
-    exc_name = type(exc).__name__
-    lowered_name = exc_name.lower()
-
-    if (
-        isinstance(exc, (asyncio.TimeoutError, TimeoutError))
-        or "timeout" in lowered_name
-    ):
-        summary = "request timed out waiting for the provider"
-    elif isinstance(
-        exc, ConnectionRefusedError
-    ) or "connectrefused" in lowered_name.replace("_", ""):
-        summary = "connection refused - is the provider server running?"
-    elif isinstance(exc, ConnectionError) or "connect" in lowered_name:
-        summary = "could not connect to the provider"
-    elif status_code is not None:
-        summary = f"provider returned HTTP {status_code}"
-    else:
-        summary = f"{exc_name} error"
-
-    if detail and detail.lower() != summary.lower():
-        return f"{summary} ({detail})"
-    return summary
 
 
 def _split_skill_command_word(text: str) -> tuple[str, str]:
@@ -2039,6 +2000,30 @@ class ConsoleChatController:
             # must never abort an already-accepted provider run.
             pass
 
+    _IMAGE_REJECTION_RECOVERY_HINT = (
+        " This conversation includes an image attachment; if the model can't "
+        "accept images, remove that message (select it and use Delete) or "
+        "switch to a vision-capable model."
+    )
+
+    def _session_history_carries_images(self, session_id: str) -> bool:
+        """Return whether any message in the session carries an image.
+
+        TASK-335: history re-sends attachments on every turn, so a provider
+        that rejects images fails ALL later sends in the conversation with
+        the same opaque status — the failure copy names the likely cause.
+        """
+        try:
+            messages = self.store.messages_for_session(session_id)
+        except KeyError:
+            return False
+        for message in messages:
+            if getattr(message, "attachments", None):
+                return True
+            if getattr(message, "image_data", None) is not None:
+                return True
+        return False
+
     def _append_failure_system_row(self, session_id: str, visible_copy: str) -> None:
         """Append a transcript-only system row describing a provider failure."""
         try:
@@ -2346,6 +2331,12 @@ class ConsoleChatController:
             # preserves whatever partial content already streamed
             # otherwise).
             visible_copy = f"Agent run failed: {describe_stream_failure(exc)}"
+            if (
+                getattr(getattr(exc, "response", None), "status_code", None)
+                is not None
+                and self._session_history_carries_images(session_id)
+            ):
+                visible_copy += self._IMAGE_REJECTION_RECOVERY_HINT
             try:
                 self.store.mark_message_failed(assistant_message_id)
             except KeyError:
@@ -2517,6 +2508,10 @@ class ConsoleChatController:
         possible, otherwise append a new failed assistant message.
         """
         visible_copy = self._agent_failure_visible_copy(outcome)
+        if "provider returned HTTP" in visible_copy and (
+            self._session_history_carries_images(session_id)
+        ):
+            visible_copy += self._IMAGE_REJECTION_RECOVERY_HINT
         placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
         if placeholder is not None:
             failed = self.store.mark_message_failed(assistant_message_id)

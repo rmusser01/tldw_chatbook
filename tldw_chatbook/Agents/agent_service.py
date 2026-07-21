@@ -505,9 +505,20 @@ class AgentService:
         try:
             outcome = run_agent_loop(config, messages, active, deps)
         except Exception as exc:  # noqa: BLE001 — a run never raises out
+            from tldw_chatbook.Chat.provider_failures import describe_stream_failure
+
+            # TASK-335: raw str(exc) is httpx's status line + MDN boilerplate;
+            # the classified copy carries the provider's response-body message
+            # instead — this summary becomes user-facing failure copy.
             outcome = RunOutcome(
                 status=RUN_ERROR,
-                steps=[AgentStep(index=0, kind=STEP_ERROR, summary=str(exc)[:500])],
+                steps=[
+                    AgentStep(
+                        index=0,
+                        kind=STEP_ERROR,
+                        summary=describe_stream_failure(exc)[:500],
+                    )
+                ],
             )
         self._persist(run_id, outcome)
         return run_id, outcome
