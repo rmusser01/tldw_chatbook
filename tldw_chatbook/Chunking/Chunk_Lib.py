@@ -98,6 +98,7 @@ from .chunking_templates import (  # noqa: E402
     ChunkingTemplate,
 )
 from ..Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
+from tldw_chatbook.Internal_Prompts import get_internal_prompt  # noqa: E402
 
 
 #
@@ -265,10 +266,8 @@ _default_chunk_options_from_config = {
     "summarize_verbose": _get_bool_setting(
         "chunking_config", "summarize_verbose", False
     ),
-    "summarize_system_prompt": get_cli_setting(
-        "chunking_config",
-        "summarize_system_prompt",
-        "Rewrite this text in summarized form.",
+    "summarize_system_prompt": get_internal_prompt(
+        "summarization.rolling_summarize_system"
     ),
     "summarize_additional_instructions": get_cli_setting(
         "chunking_config", "summarize_additional_instructions", None
@@ -678,7 +677,8 @@ class Chunker:
                 ),
                 verbose=self._get_option("summarize_verbose", False),
                 system_prompt_content=self._get_option(
-                    "summarize_system_prompt", "Rewrite this text in summarized form."
+                    "summarize_system_prompt",
+                    get_internal_prompt("summarization.rolling_summarize_system"),
                 ),
                 additional_instructions=self._get_option(
                     "summarize_additional_instructions", None

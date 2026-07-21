@@ -44,6 +44,7 @@ from tldw_chatbook.LLM_Calls.Local_Summarization_Lib import (
 )
 from tldw_chatbook.Logging_Config import logging
 from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.Internal_Prompts import get_internal_prompt
 
 try:
     from tldw_chatbook.Chunking.Chunk_Lib import improved_chunking_process
@@ -525,29 +526,7 @@ def analyze(
     # Set default system message if not provided
     if system_message is None:
         logging.debug("Using default system message.")
-        system_message = (
-            "You are a bulleted notes specialist. ```When creating comprehensive bulleted notes, "
-            "you should follow these guidelines: Use multiple headings based on the referenced topics, "
-            "not categories like quotes or terms. Headings should be surrounded by bold formatting and not be "
-            "listed as bullet points themselves. Leave no space between headings and their corresponding list items "
-            "underneath. Important terms within the content should be emphasized by setting them in bold font. "
-            "Any text that ends with a colon should also be bolded. Before submitting your response, review the "
-            "instructions, and make any corrections necessary to adhered to the specified format. Do not reference "
-            "these instructions within the notes.``` \nBased on the content between backticks create comprehensive "
-            "bulleted notes.\n"
-            "**Bulleted Note Creation Guidelines**\n\n"
-            "**Headings**:\n"
-            "- Based on referenced topics, not categories like quotes or terms\n"
-            "- Surrounded by **bold** formatting\n"
-            "- Not listed as bullet points\n"
-            "- No space between headings and list items underneath\n\n"
-            "**Emphasis**:\n"
-            "- **Important terms** set in bold font\n"
-            "- **Text ending in a colon**: also bolded\n\n"
-            "**Review**:\n"
-            "- Ensure adherence to specified format\n"
-            "- Do not reference these instructions in your response."
-        )
+        system_message = get_internal_prompt("summarization.analyze_default_system")
 
     try:
         # 1. Extract text content from input_data
