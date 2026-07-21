@@ -711,6 +711,7 @@ class NotesScopeService:
         workspace_id: Optional[str] = None,
         workspace_notes: Optional[Sequence[dict[str, Any]]] = None,
         fts_match_query: Optional[str] = None,
+        id_allowlist: Optional[Sequence[str]] = None,
     ) -> Any:
         """Route a notes search to the scope's backing service.
 
@@ -720,6 +721,10 @@ class NotesScopeService:
                 plural/singular-widened query). Ignored for server and
                 workspace scopes; when omitted the local backend keeps its
                 exact-phrase behavior.
+            id_allowlist: Optional note ids to restrict results to
+                (rag-scope narrowing, task-6). Only meaningful for the
+                local-notes seam -- ignored for server/workspace scopes,
+                which are out of scope for conversation-level RAG scoping.
         """
         normalized_scope = self._normalize_scope(scope)
         self._enforce_policy(self._note_action_id(normalized_scope, "list"))
@@ -731,6 +736,8 @@ class NotesScopeService:
                 if fts_match_query is not None
                 else {}
             )
+            if id_allowlist is not None:
+                local_kwargs["id_allowlist"] = id_allowlist
             return self.local_notes_service.search_notes(
                 self._require_user_id(user_id),
                 query,

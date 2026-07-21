@@ -19,21 +19,22 @@ except ImportError:
             pass
 
 
-from typing import List, Dict, Optional, Protocol, Any, Union
-from pathlib import Path
 import json
-from loguru import logger
-from dataclasses import dataclass
 import time
-import psutil
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Collection, Dict, List, Mapping, Optional, Protocol, Union
 
-from .citations import Citation, CitationType, SearchResultWithCitations
+import psutil
+from loguru import logger
+
 from tldw_chatbook.Metrics.metrics_logger import (
     log_counter,
     log_histogram,
     log_gauge,
     timeit,
 )
+from .citations import Citation, CitationType, SearchResultWithCitations
 
 
 # Import constants from rag_service
@@ -60,6 +61,62 @@ class SearchResult:
         }
 
 
+def _build_chroma_where(
+    metadata_allowlist: Optional[Mapping[str, Collection[str]]],
+) -> Optional[Dict[str, Any]]:
+    """Translate a metadata allowlist into a ChromaDB ``where`` clause.
+
+    Args:
+        metadata_allowlist: Metadata key -> allowed values. A candidate must
+            match every key's allowlist (AND semantics across keys).
+
+    Returns:
+        ``None`` when no allowlist is given, so callers omit ``where``
+        entirely and keep today's unfiltered query shape. A single-key
+        allowlist becomes ``{key: {"$in": sorted(values)}}``; multiple keys
+        are combined with ``{"$and": [...]}``, one clause per key.
+    """
+    if not metadata_allowlist:
+        return None
+
+    clauses = [
+        {key: {"$in": sorted(values)}} for key, values in metadata_allowlist.items()
+    ]
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"$and": clauses}
+
+
+def _passes_metadata_allowlist(
+    metadata: Optional[dict],
+    metadata_allowlist: Optional[Mapping[str, Collection[str]]],
+) -> bool:
+    """Check whether stored metadata satisfies an allowlist filter.
+
+    Used by ``InMemoryVectorStore`` to skip candidates before ranking, so
+    scoped searches never lose in-scope documents to top-k truncation.
+
+    Args:
+        metadata: The candidate's stored metadata (values may be any type,
+            e.g. ints, since ChromaDB and the in-memory store both accept
+            non-string metadata values).
+        metadata_allowlist: Metadata key -> allowed values (allowlist values
+            are always strings). ``None``/empty means "no filter".
+
+    Returns:
+        True if `metadata` is missing no key's allowlist (i.e. for every
+        key in `metadata_allowlist`, ``str(metadata.get(key))`` is a member
+        of that key's allowed values). True unconditionally when no
+        allowlist is given.
+    """
+    if not metadata_allowlist:
+        return True
+    metadata = metadata or {}
+    return all(
+        str(metadata.get(key)) in values for key, values in metadata_allowlist.items()
+    )
+
+
 class VectorStore(Protocol):
     """
     Protocol defining vector store interface with citations support.
@@ -78,7 +135,11 @@ class VectorStore(Protocol):
         ...
 
     def search(
-        self, query_embedding: Union[np.ndarray, List[float]], top_k: int = 10
+        self,
+        query_embedding: Union[np.ndarray, List[float]],
+        top_k: int = 10,
+        *,
+        metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
     ) -> List[SearchResult]:
         """Basic search without citations (backward compatibility)."""
         ...
@@ -88,6 +149,8 @@ class VectorStore(Protocol):
         query_embedding: Union[np.ndarray, List[float]],
         query_text: str,
         top_k: int = 10,
+        *,
+        metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
     ) -> List[SearchResultWithCitations]:
         """Enhanced search that includes citations."""
         ...
@@ -366,9 +429,29 @@ class ChromaVectorStore:
 
     @timeit("vector_store_search")
     def search(
-        self, query_embedding: Union[np.ndarray, List[float]], top_k: int = 10
+        self,
+        query_embedding: Union[np.ndarray, List[float]],
+        top_k: int = 10,
+        *,
+        metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
     ) -> List[SearchResult]:
-        """Basic search without citations (backward compatibility)."""
+        """Basic search without citations (backward compatibility).
+
+        Args:
+            query_embedding: Query vector.
+            top_k: Number of results to return.
+            metadata_allowlist: Optional metadata key -> allowed values.
+                Pushed down into ChromaDB's own ``where=`` clause so
+                out-of-scope candidates are excluded before ranking/
+                truncation, instead of being discarded afterward by a
+                caller-side post-filter (which starves top-k for narrow
+                scopes). ``None`` (the default) omits ``where`` entirely,
+                keeping the exact call shape used before this parameter
+                existed.
+
+        Returns:
+            List of matching ``SearchResult`` objects, most similar first.
+        """
         start_time = time.time()
 
         # Log search attempt
@@ -386,11 +469,16 @@ class ChromaVectorStore:
             )
 
         try:
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=top_k,
-                include=["documents", "metadatas", "distances"],
-            )
+            query_kwargs: Dict[str, Any] = {
+                "query_embeddings": [query_embedding],
+                "n_results": top_k,
+                "include": ["documents", "metadatas", "distances"],
+            }
+            where = _build_chroma_where(metadata_allowlist)
+            if where is not None:
+                query_kwargs["where"] = where
+
+            results = self.collection.query(**query_kwargs)
 
             search_results = []
             scores = []
@@ -442,6 +530,8 @@ class ChromaVectorStore:
         query_text: str,
         top_k: int = 10,
         score_threshold: float = 0.0,
+        *,
+        metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
     ) -> List[SearchResultWithCitations]:
         """
         Enhanced search that includes citations.
@@ -451,13 +541,16 @@ class ChromaVectorStore:
             query_text: Original query text (used for citation context)
             top_k: Number of results to return
             score_threshold: Minimum score threshold for results
+            metadata_allowlist: Optional metadata key -> allowed values,
+                forwarded to :meth:`search`'s store-level filtering. See
+                :meth:`search` for semantics.
 
         Returns:
             List of results with citations
         """
         # First, get basic search results
         basic_results = self.search(
-            query_embedding, top_k * 2
+            query_embedding, top_k * 2, metadata_allowlist=metadata_allowlist
         )  # Get extra for filtering
 
         # Filter by score threshold
@@ -993,6 +1086,8 @@ class InMemoryVectorStore:
         ] = None,
         query_embedding_or_top_k: Optional[Union[np.ndarray, List[float], int]] = None,
         top_k: int = 10,
+        *,
+        metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
         **kwargs,
     ) -> List[SearchResult]:
         """Search using the specified distance metric.
@@ -1000,6 +1095,24 @@ class InMemoryVectorStore:
         Supports both the current API, ``search(query_embedding, top_k=10)``,
         and the collection-compatible API used by older callers,
         ``search(collection_name, query_embedding, top_k=10)``.
+
+        Args:
+            query_embedding_or_collection: Query vector, or (legacy API) a
+                collection name with the vector passed as the next argument.
+            query_embedding_or_top_k: Query vector (legacy API) or ``top_k``
+                when the first argument is the query vector directly.
+            top_k: Number of results to return.
+            metadata_allowlist: Optional metadata key -> allowed values.
+                Candidates are excluded *before* similarity ranking/
+                truncation to ``top_k``, so an in-scope document is never
+                starved out by higher-ranked out-of-scope documents.
+                ``None`` (the default) keeps every candidate, exactly as
+                before this parameter existed.
+            **kwargs: ``n_results`` (legacy alias for ``top_k``) or
+                ``query_embedding`` (legacy alias for the query vector).
+
+        Returns:
+            List of matching ``SearchResult`` objects, most similar first.
         """
         if "n_results" in kwargs:
             top_k = int(kwargs.pop("n_results"))
@@ -1068,9 +1181,13 @@ class InMemoryVectorStore:
             if not isinstance(query_embedding, list):
                 raise TypeError("Without numpy, query_embedding must be a list")
 
-        # Compute similarities
+        # Compute similarities, skipping candidates outside the allowlist
+        # *before* ranking so a narrow scope can't be starved out by
+        # higher-similarity out-of-scope candidates being truncated first.
         similarities = []
         for i, emb in enumerate(embeddings):
+            if not _passes_metadata_allowlist(metadata[i], metadata_allowlist):
+                continue
             similarity = self._compute_similarity(query_embedding, emb)
             similarities.append((i, similarity))
 
@@ -1115,10 +1232,28 @@ class InMemoryVectorStore:
         query_text: str,
         top_k: int = 10,
         score_threshold: float = 0.0,
+        *,
+        metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
     ) -> List[SearchResultWithCitations]:
-        """Enhanced search with citations."""
+        """Enhanced search with citations.
+
+        Args:
+            query_embedding: Query vector.
+            query_text: Original query text (kept for interface parity with
+                ``ChromaVectorStore``; unused for citation generation here).
+            top_k: Number of results to return.
+            score_threshold: Minimum score threshold for results.
+            metadata_allowlist: Optional metadata key -> allowed values,
+                forwarded to :meth:`search`'s store-level filtering. See
+                :meth:`search` for semantics.
+
+        Returns:
+            List of results with citations.
+        """
         # Get basic results (get extra to account for filtering)
-        basic_results = self.search(query_embedding, top_k * 2)
+        basic_results = self.search(
+            query_embedding, top_k * 2, metadata_allowlist=metadata_allowlist
+        )
 
         # Filter by score threshold
         filtered_results = [r for r in basic_results if r.score >= score_threshold]

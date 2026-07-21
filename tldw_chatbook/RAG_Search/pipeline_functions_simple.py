@@ -6,19 +6,84 @@ No complex error handling - just let exceptions propagate.
 """
 
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 from loguru import logger
 
+from ..Chat.rag_scope import (
+    EffectiveScope,
+    SCOPE_REASON_CONVERSATIONS_EXCLUDED,
+    SCOPE_REASON_EMPTY,
+    SCOPE_STATUS_EMPTY,
+    SCOPE_STATUS_EXCLUDED,
+    build_semantic_allowlists,
+    media_id_params,
+    note_id_params,
+)
 from .pipeline_types import SearchResult
 from .semantic_availability import (
+    SEMANTIC_REASON_SEARCH_ERROR,
+    SEMANTIC_UNAVAILABLE_MESSAGES,
     record_semantic_empty_index,
     record_semantic_ok,
     record_semantic_unavailable,
     resolve_semantic_rag_service,
     semantic_index_is_empty,
-    SEMANTIC_REASON_SEARCH_ERROR,
-    SEMANTIC_UNAVAILABLE_MESSAGES,
 )
+
+#: Key under which pipeline diagnostics record scope-enforcement state
+#: (mirrors semantic_availability.SEMANTIC_DIAGNOSTICS_KEY's pattern).
+SCOPE_DIAGNOSTICS_KEY = "scope"
+
+
+def _record_scope_conversations_excluded(diagnostics: Optional[Dict[str, Any]]) -> None:
+    """Record that an active scope excluded the conversations leg.
+
+    Mirrors ``semantic_availability.record_semantic_unavailable``'s
+    None-diagnostics no-op contract.
+
+    Args:
+        diagnostics: The pipeline diagnostics dict, or ``None`` for legacy
+            callers that did not thread one through (a no-op then).
+    """
+    if diagnostics is None:
+        return
+    diagnostics[SCOPE_DIAGNOSTICS_KEY] = {
+        "status": SCOPE_STATUS_EXCLUDED,
+        "reason": SCOPE_REASON_CONVERSATIONS_EXCLUDED,
+    }
+
+
+def _record_scope_empty(
+    diagnostics: Optional[Dict[str, Any]], cause: Optional[str]
+) -> None:
+    """Record that an EMPTY effective scope reached a leg's fail-closed guard.
+
+    Defense-in-depth (PR #734 review, id 3621197384): ``chat_rag_events.
+    get_rag_context_for_chat`` already short-circuits an EMPTY scope before
+    ever calling a pipeline, so this path is not expected to fire in normal
+    operation -- but every leg previously only checked
+    ``scope.state == "scoped"``, so ``EffectiveScope(state="empty")``
+    reaching a leg directly (a caller that forgot to short-circuit, or a
+    hand-built/custom pipeline) fell through to an UNRESTRICTED search.
+    Each leg must instead refuse outright. Mirrors
+    ``chat_rag_events._record_scope_empty``'s diagnostics shape exactly, so
+    a caller inspecting ``diagnostics[SCOPE_DIAGNOSTICS_KEY]`` sees the same
+    shape regardless of which layer caught the EMPTY scope.
+
+    Args:
+        diagnostics: The pipeline diagnostics dict, or ``None`` for legacy
+            callers that did not thread one through (a no-op then).
+        cause: ``EffectiveScope.cause`` explaining why resolution landed on
+            EMPTY (``"no-workspace-overlap"`` or ``"deleted-items"``).
+    """
+    if diagnostics is None:
+        return
+    diagnostics[SCOPE_DIAGNOSTICS_KEY] = {
+        "status": SCOPE_STATUS_EMPTY,
+        "reason": SCOPE_REASON_EMPTY,
+        "cause": cause,
+    }
 
 
 # ==============================================================================
@@ -27,22 +92,71 @@ from .semantic_availability import (
 
 
 async def search_media_fts5(
-    app: Any, query: str, limit: int = 10, keyword_filter: Optional[List[str]] = None
+    app: Any,
+    query: str,
+    limit: int = 10,
+    keyword_filter: Optional[List[str]] = None,
+    *,
+    scope: Optional[EffectiveScope] = None,
+    diagnostics: Optional[Dict[str, Any]] = None,
 ) -> List[SearchResult]:
-    """Search media database using FTS5."""
+    """Search media database using FTS5.
+
+    Args:
+        app: App-like object exposing ``media_db``.
+        query: FTS search text.
+        limit: Maximum number of results to return.
+        keyword_filter: Optional keywords a result must carry (post-filter).
+        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
+            task-4). ``None`` or ``scope.state == "unscoped"`` performs
+            today's exact unrestricted search. When scoped, results are
+            restricted to the media ids in ``scope.allowlist["media"]``;
+            when scoped but media has no surviving ids, this leg returns
+            ``[]`` without querying the DB at all. When ``scope.state ==
+            "empty"`` this leg fails CLOSED -- returns ``[]`` without
+            querying the DB -- rather than falling through to an
+            unrestricted search (defense-in-depth, PR #734 review; callers
+            are expected to short-circuit EMPTY before ever reaching a leg).
+        diagnostics: Optional dict that records the EMPTY-scope refusal
+            (``SCOPE_REASON_EMPTY``) under ``SCOPE_DIAGNOSTICS_KEY``; a
+            no-op when ``None``.
+
+    Returns:
+        Matching SearchResult entries, or ``[]`` when ``app.media_db`` is
+        unset or an active scope excludes media entirely.
+    """
+    id_allowlist: Optional[List[str]] = None
+    if scope is not None:
+        if scope.state == "empty":
+            _record_scope_empty(diagnostics, scope.cause)
+            return []
+        if scope.state == "scoped":
+            id_allowlist = media_id_params(scope)
+            if id_allowlist is None:
+                # Media absent from the allowlist under an active scope:
+                # empty allowlist for this leg, not "search everything".
+                return []
+
     if not app.media_db:
         return []
 
     logger.debug(f"Searching media for: {query}")
 
-    # Search media database
-    media_results = await asyncio.to_thread(
-        app.media_db.search_media_db,
+    search_kwargs: Dict[str, Any] = dict(
         search_query=query,
         search_fields=["title", "content"],
         page=1,
         results_per_page=limit * 2,  # Get extra for filtering
         include_trash=False,
+    )
+    if id_allowlist is not None:
+        # Only added when actually scoped: keeps the unscoped call shape
+        # byte-identical to before this parameter existed.
+        search_kwargs["media_ids_filter"] = id_allowlist
+
+    # Search media database
+    media_results = await asyncio.to_thread(
+        app.media_db.search_media_db, **search_kwargs
     )
 
     # Extract results list
@@ -120,7 +234,12 @@ def _resolve_chacha_db(app: Any):
 
 
 async def search_conversations_fts5(
-    app: Any, query: str, limit: int = 10
+    app: Any,
+    query: str,
+    limit: int = 10,
+    *,
+    scope: Optional[EffectiveScope] = None,
+    diagnostics: Optional[Dict[str, Any]] = None,
 ) -> List[SearchResult]:
     """Search conversations database using FTS5.
 
@@ -128,11 +247,33 @@ async def search_conversations_fts5(
         app: App-like object exposing ``db_config['chacha_db_path']``.
         query: FTS search text.
         limit: Maximum number of conversation results to return.
+        scope: Optional resolved RAG retrieval scope. Conversations are not
+            part of the scope vocabulary (rag-scope-narrowing spec D5): any
+            active scope (``scope.state == "scoped"``) excludes this leg
+            entirely rather than silently searching unrestricted or
+            guessing at an allowlist. ``scope.state == "empty"`` also
+            excludes this leg -- fails CLOSED rather than falling through to
+            an unrestricted search (defense-in-depth, PR #734 review;
+            callers are expected to short-circuit EMPTY before ever
+            reaching a leg).
+        diagnostics: Optional dict that records the scope-exclusion state
+            (``SCOPE_REASON_CONVERSATIONS_EXCLUDED`` or, for an EMPTY
+            scope, ``SCOPE_REASON_EMPTY``) when ``scope`` is active; a
+            no-op when ``None``.
 
     Returns:
         SearchResult entries in content-relevance order, each carrying a
-        snippet built from the conversation's first messages.
+        snippet built from the conversation's first messages. ``[]`` when
+        an active scope excludes this leg (see ``scope`` above).
     """
+    if scope is not None:
+        if scope.state == "empty":
+            _record_scope_empty(diagnostics, scope.cause)
+            return []
+        if scope.state == "scoped":
+            _record_scope_conversations_excluded(diagnostics)
+            return []
+
     db = _resolve_chacha_db(app)
     if db is None:
         return []
@@ -177,7 +318,12 @@ async def search_conversations_fts5(
 
 
 async def search_notes_fts5(
-    app: Any, query: str, limit: int = 10
+    app: Any,
+    query: str,
+    limit: int = 10,
+    *,
+    scope: Optional[EffectiveScope] = None,
+    diagnostics: Optional[Dict[str, Any]] = None,
 ) -> List[SearchResult]:
     """Search notes using FTS5.
 
@@ -190,10 +336,37 @@ async def search_notes_fts5(
         app: App-like object; see ``_resolve_chacha_db`` for the seams.
         query: FTS search text (matched as a literal phrase).
         limit: Maximum number of note results to return.
+        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
+            task-4). ``None`` or ``scope.state == "unscoped"`` performs
+            today's exact unrestricted search. When scoped, results are
+            restricted to the note ids in ``scope.allowlist["note"]``; when
+            scoped but notes has no surviving ids, this leg returns ``[]``
+            without querying the DB at all. When ``scope.state == "empty"``
+            this leg fails CLOSED -- returns ``[]`` without resolving the DB
+            -- rather than falling through to an unrestricted search
+            (defense-in-depth, PR #734 review; callers are expected to
+            short-circuit EMPTY before ever reaching a leg).
+        diagnostics: Optional dict that records the EMPTY-scope refusal
+            (``SCOPE_REASON_EMPTY``) under ``SCOPE_DIAGNOSTICS_KEY``; a
+            no-op when ``None``.
 
     Returns:
-        SearchResult entries for matching notes.
+        SearchResult entries for matching notes, or ``[]`` when an active
+        scope excludes notes entirely.
     """
+    id_allowlist: Optional[List[str]] = None
+    if scope is not None:
+        if scope.state == "empty":
+            _record_scope_empty(diagnostics, scope.cause)
+            return []
+        if scope.state == "scoped":
+            id_allowlist = note_id_params(scope)
+            if id_allowlist is None:
+                # Notes absent from the allowlist under an active scope:
+                # empty allowlist for this leg, not "search everything".
+                # Short-circuit before resolving/constructing the DB at all.
+                return []
+
     db = _resolve_chacha_db(app)
     if db is None:
         return []
@@ -201,7 +374,7 @@ async def search_notes_fts5(
     logger.debug(f"Searching notes for: {query}")
 
     note_results = await asyncio.to_thread(
-        db.search_notes, search_term=query, limit=limit
+        db.search_notes, search_term=query, limit=limit, id_allowlist=id_allowlist
     )
 
     results = []
@@ -228,6 +401,7 @@ async def search_semantic(
     sources: Dict[str, bool],
     limit: int = 10,
     diagnostics: Optional[Dict[str, Any]] = None,
+    scope: Optional[EffectiveScope] = None,
     **kwargs,
 ) -> List[SearchResult]:
     """Search using semantic embeddings, initializing the runtime lazily.
@@ -246,6 +420,23 @@ async def search_semantic(
         diagnostics: Optional dict that receives the semantic-leg state under
             ``SEMANTIC_DIAGNOSTICS_KEY`` (ok / unavailable+reason /
             empty_index).
+        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
+            task-4). ``None`` or an unscoped scope performs today's single
+            unrestricted store query (no ``metadata_allowlist`` at all). A
+            scoped value runs one store query per source_type present in
+            the scope's allowlist -- a flat ``metadata_allowlist`` cannot
+            express an OR across source types, see
+            ``rag_scope.build_semantic_allowlists`` -- and merges the
+            per-type results by score, descending, before trimming to
+            ``limit``. Composes with ``filter_metadata``/``kwargs`` (AND):
+            both may be forwarded to the same store call. ``scope.state ==
+            "empty"`` fails this leg CLOSED -- returns ``[]`` without ever
+            resolving/calling the RAG service -- rather than falling
+            through to an unrestricted search (defense-in-depth, PR #734
+            review; callers are expected to short-circuit EMPTY before ever
+            reaching a leg); that refusal is recorded under
+            ``SCOPE_DIAGNOSTICS_KEY`` (not ``SEMANTIC_DIAGNOSTICS_KEY``) in
+            ``diagnostics``, matching every other leg's EMPTY-scope shape.
         **kwargs: Extra kwargs forwarded verbatim to ``rag_service.search``
             (call sites whitelist these; see pipeline_builder_simple).
 
@@ -253,6 +444,10 @@ async def search_semantic(
         SearchResult list; empty when semantic retrieval is unavailable (the
         reason then rides in ``diagnostics``) or genuinely matches nothing.
     """
+    if scope is not None and scope.state == "empty":
+        _record_scope_empty(diagnostics, scope.cause)
+        return []
+
     rag_service, unavailable_reason = await resolve_semantic_rag_service(app)
     if rag_service is None:
         logger.warning(
@@ -266,6 +461,8 @@ async def search_semantic(
 
     logger.debug(f"Performing semantic search for: {query}")
 
+    allowlists = build_semantic_allowlists(scope) if scope is not None else None
+
     # Use the shared RAG service. A raising search must not leave the
     # semantic leg unaccounted for: on the direct semantic/retrieve path an
     # uncaught exception would surface raw error text (or, in gather-based
@@ -273,13 +470,31 @@ async def search_semantic(
     # search_error state and degrade to the honest-empty outcome instead
     # (PR #692 review).
     try:
-        rag_results = await rag_service.search(
-            query=query,
-            search_type="semantic",
-            top_k=limit,
-            include_citations=True,
-            **kwargs,
-        )
+        if allowlists is None:
+            # Unscoped: exact current behavior, no metadata_allowlist kwarg.
+            rag_results = await rag_service.search(
+                query=query,
+                search_type="semantic",
+                top_k=limit,
+                include_citations=True,
+                **kwargs,
+            )
+        else:
+            # Scoped: one store query per source_type, merged by score.
+            per_type_results = []
+            for allowlist in allowlists:
+                per_type_results.extend(
+                    await rag_service.search(
+                        query=query,
+                        search_type="semantic",
+                        top_k=limit,
+                        include_citations=True,
+                        metadata_allowlist=allowlist,
+                        **kwargs,
+                    )
+                )
+            per_type_results.sort(key=lambda r: r.score, reverse=True)
+            rag_results = per_type_results[:limit]
     except Exception:
         logger.opt(exception=True).error(
             "Semantic search raised; recording search_error state."
@@ -458,8 +673,22 @@ async def parallel_search(
     sources: Dict[str, bool],
     functions: List[Dict[str, Any]],
     diagnostics: Optional[Dict[str, Any]] = None,
+    scope: Optional[EffectiveScope] = None,
 ) -> List[SearchResult]:
-    """Execute multiple search functions in parallel."""
+    """Execute multiple search functions in parallel.
+
+    Args:
+        app: App-like object forwarded to each leg.
+        query: Search query text.
+        sources: Enabled sources mapping.
+        functions: Leg configs (``{"function": ..., "config": {...}}``).
+        diagnostics: Optional pipeline diagnostics dict, forwarded to every
+            leg that records availability/exclusion/EMPTY-scope state.
+        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
+            task-4), forwarded unchanged to every leg so this helper
+            self-enforces identically to the ``_execute_parallel_step``
+            pipeline-builder path.
+    """
     tasks = []
     task_func_names = []
 
@@ -470,13 +699,25 @@ async def parallel_search(
         if func_name == "search_fts5":
             # Run FTS5 searches for each enabled source
             if sources.get("media"):
-                tasks.append(search_media_fts5(app, query, **config))
+                tasks.append(
+                    search_media_fts5(
+                        app, query, scope=scope, diagnostics=diagnostics, **config
+                    )
+                )
                 task_func_names.append("search_media_fts5")
             if sources.get("conversations"):
-                tasks.append(search_conversations_fts5(app, query, **config))
+                tasks.append(
+                    search_conversations_fts5(
+                        app, query, scope=scope, diagnostics=diagnostics, **config
+                    )
+                )
                 task_func_names.append("search_conversations_fts5")
             if sources.get("notes"):
-                tasks.append(search_notes_fts5(app, query, **config))
+                tasks.append(
+                    search_notes_fts5(
+                        app, query, scope=scope, diagnostics=diagnostics, **config
+                    )
+                )
                 task_func_names.append("search_notes_fts5")
         elif func_name == "search_semantic":
             # Forward only kwargs the RAG service accepts (same fix as the
@@ -495,6 +736,7 @@ async def parallel_search(
                     sources,
                     limit=config.get("top_k", config.get("limit", 10)),
                     diagnostics=diagnostics,
+                    scope=scope,
                     **semantic_kwargs,
                 )
             )

@@ -15,6 +15,7 @@ else:
     import tomllib
 from pathlib import Path
 
+from ..Chat.rag_scope import EffectiveScope
 from .pipeline_types import SearchResult, PipelineContext
 from .pipeline_functions_simple import (
     RETRIEVAL_FUNCTIONS,
@@ -43,6 +44,7 @@ async def execute_pipeline(
     query: str,
     sources: Dict[str, bool],
     diagnostics: Optional[Dict[str, Any]] = None,
+    scope: Optional[EffectiveScope] = None,
     **params,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
@@ -58,6 +60,13 @@ async def execute_pipeline(
             unavailable/empty-index reasons, task-250). Callers that pass a
             dict can inspect it after the call; the (results, context) return
             shape is unchanged.
+        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
+            task-4). Seeded into ``PipelineContext["scope"]`` so every
+            retrieval leg -- across builtin, parallel, and custom-TOML
+            pipeline shapes -- self-enforces it identically, regardless of
+            which step type invokes it. ``None`` performs today's
+            unrestricted retrieval (real callers resolving and passing a
+            live scope land in a follow-up task).
         **params: Additional parameters
 
     Returns:
@@ -76,6 +85,7 @@ async def execute_pipeline(
         "params": {**config.get("parameters", {}), **params},
         "results": [],
         "diagnostics": diagnostics if diagnostics is not None else {},
+        "scope": scope,
     }
 
     # Execute each step
@@ -123,6 +133,13 @@ async def _execute_retrieve_step(
 
     func = RETRIEVAL_FUNCTIONS[func_name]
     config = {**context["params"], **step_config.get("config", {})}
+    # Only forwarded when an active scope exists: keeps the unscoped call
+    # shape to every leg byte-identical to before this parameter existed
+    # (tests that monkeypatch RETRIEVAL_FUNCTIONS with narrow-signature
+    # fakes -- e.g. Tests/RAG/test_fusion.py -- never pass scope, so they
+    # never see the extra kwarg).
+    scope = context.get("scope")
+    scope_kwargs: Dict[str, Any] = {"scope": scope} if scope is not None else {}
 
     # Special handling for different retrieval functions
     if func_name == "parallel_search":
@@ -132,14 +149,23 @@ async def _execute_retrieve_step(
             context["sources"],
             step_config.get("functions", []),
             diagnostics=context.setdefault("diagnostics", {}),
+            **scope_kwargs,
         )
     elif func_name.endswith("_fts5"):
-        # FTS5 functions don't take sources parameter
+        # FTS5 functions don't take sources parameter. All three FTS5 legs
+        # now accept diagnostics (media/notes gained it alongside the
+        # EMPTY-scope fail-closed guard, PR #734 review) -- forwarded only
+        # when an active scope exists, matching scope_kwargs' own
+        # zero-drift-for-unscoped-calls convention.
+        fts5_kwargs: Dict[str, Any] = dict(scope_kwargs)
+        if scope is not None:
+            fts5_kwargs["diagnostics"] = context.setdefault("diagnostics", {})
         return await func(
             context["app"],
             context["query"],
             config.get("top_k", 10),
             config.get("keyword_filter"),
+            **fts5_kwargs,
         )
     elif func_name == "search_semantic":
         # Vector leg: forward only kwargs the RAG service accepts. This is
@@ -159,6 +185,7 @@ async def _execute_retrieve_step(
             context["sources"],
             limit=config.get("top_k", 10),
             diagnostics=context.setdefault("diagnostics", {}),
+            **scope_kwargs,
             **semantic_kwargs,
         )
     else:
@@ -176,6 +203,13 @@ async def _execute_parallel_step(
     if not functions:
         return []
 
+    # Only forwarded when an active scope exists: keeps the unscoped call
+    # shape to every leg byte-identical to before this parameter existed
+    # (tests that monkeypatch RETRIEVAL_FUNCTIONS with narrow-signature
+    # fakes -- e.g. Tests/RAG/test_fusion.py -- never pass scope, so they
+    # never see the extra kwarg).
+    scope = context.get("scope")
+    scope_kwargs: Dict[str, Any] = {"scope": scope} if scope is not None else {}
     tasks = []
     task_func_names = []
     for func_config in functions:
@@ -186,6 +220,16 @@ async def _execute_parallel_step(
 
             # Create appropriate task based on function
             if func_name.endswith("_fts5"):
+                # All three FTS5 legs now accept diagnostics (media/notes
+                # gained it alongside the EMPTY-scope fail-closed guard,
+                # PR #734 review) -- forwarded only when an active scope
+                # exists, matching scope_kwargs' own
+                # zero-drift-for-unscoped-calls convention.
+                fts5_kwargs = dict(scope_kwargs)
+                if scope is not None:
+                    fts5_kwargs["diagnostics"] = context.setdefault(
+                        "diagnostics", {}
+                    )
                 # Only search_media_fts5 accepts keyword_filter
                 if func_name == "search_media_fts5":
                     task = func(
@@ -193,11 +237,15 @@ async def _execute_parallel_step(
                         context["query"],
                         config.get("top_k", 10),
                         config.get("keyword_filter"),
+                        **fts5_kwargs,
                     )
                 else:
-                    # search_conversations_fts5 and search_notes_fts5
+                    # search_conversations_fts5 / search_notes_fts5
                     task = func(
-                        context["app"], context["query"], config.get("top_k", 10)
+                        context["app"],
+                        context["query"],
+                        config.get("top_k", 10),
+                        **fts5_kwargs,
                     )
             elif func_name == "search_semantic":
                 # Vector leg: forward only kwargs the RAG service accepts.
@@ -216,6 +264,7 @@ async def _execute_parallel_step(
                     context["sources"],
                     limit=config.get("top_k", 10),
                     diagnostics=context.setdefault("diagnostics", {}),
+                    **scope_kwargs,
                     **semantic_kwargs,
                 )
             else:

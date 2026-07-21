@@ -45,6 +45,13 @@ from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
     handle_console_dictionary_attach,
     handle_console_dictionary_detach,
 )
+# Reused rather than duplicated (task-6): the same conversation-scope
+# resolution the native-Console chat entry point uses (task-5) -- session
+# identity via `persisted_conversation_id`, `SessionScopeHolder` for
+# unpersisted sessions, `EffectiveScope` state.
+from ...Event_Handlers.Chat_Events.chat_rag_events import (
+    resolve_effective_scope_for_chat,
+)
 from ...Chat.console_command_grammar import (
     KIND_COMMAND,
     KIND_FALLBACK,
@@ -198,8 +205,10 @@ from ...config import (
 )
 from ...Library.library_prompts_state import classify_prompt_save_error
 from ...Library.library_rag_service import (
+    LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
     run_library_rag_search,
+    scope_empty_recovery_state,
 )
 from ...Notes.notes_scope_service import ScopeType
 from ...Constants import TAB_SETTINGS
@@ -7023,12 +7032,51 @@ class ChatScreen(BaseAppScreen):
         tray.styles.max_height = 6 if state.is_empty else 10
         tray.sync_state(state)
 
+    async def _resolve_console_library_rag_scope(
+        self, request: LibraryRagSearchRequest
+    ) -> tuple[LibraryRagSearchRequest, Optional[LibraryRagSearchOutcome]]:
+        """Resolve the active conversation's RAG retrieval scope for `request`.
+
+        Plain `async def` (not `@work`-decorated) so it is directly
+        awaitable in tests without the Textual worker machinery -- only
+        `_execute_console_library_rag_search` itself needs to run as a
+        worker.
+
+        Args:
+            request: The unscoped Library RAG search request as built by the
+                run-action call site.
+
+        Returns:
+            A `(request, outcome)` tuple. When the resolved scope is EMPTY
+            (a configured scope with nothing left to search), `outcome`
+            carries the short-circuit recovery state and `request` is
+            returned unchanged -- the caller must not proceed to
+            `run_library_rag_search`. Otherwise `outcome` is `None` and
+            `request` carries `scope=effective_scope` when scoped, or is
+            returned unchanged when unscoped (byte-identical to before this
+            resolution step existed).
+        """
+        effective_scope = await resolve_effective_scope_for_chat(self.app_instance)
+        if effective_scope.state == "empty":
+            return request, LibraryRagSearchOutcome(
+                status="empty",
+                recovery_state=scope_empty_recovery_state(effective_scope.cause),
+            )
+        if effective_scope.state == "scoped":
+            return replace(request, scope=effective_scope), None
+        return request, None
+
     @work(exclusive=True, group="console-library-rag-search")
     async def _execute_console_library_rag_search(
         self, request: LibraryRagSearchRequest
     ) -> None:
-        outcome = await run_library_rag_search(self.app_instance, request)
-        await self._apply_console_library_rag_search_outcome(request, outcome)
+        scoped_request, short_circuit_outcome = (
+            await self._resolve_console_library_rag_scope(request)
+        )
+        outcome = short_circuit_outcome or await run_library_rag_search(
+            self.app_instance, scoped_request
+        )
+        await self._apply_console_library_rag_search_outcome(scoped_request, outcome)
 
     async def _apply_console_library_rag_search_outcome(
         self,

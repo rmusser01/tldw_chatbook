@@ -507,6 +507,116 @@ class TestTimeBasedAndSearchQueries:
         )  # Initial: 1, Trash: 2, Manual Date Change: 3, Delete: 4
 
 
+class TestLargeMediaIdsFilterUsesJsonEach:
+    """PR #734 review (id 3621197385): ``search_media_db``'s
+    ``media_ids_filter`` expanded into one bound SQL placeholder per id --
+    fine for the handful of ids most callers pass, but the rag-scope-
+    narrowing pipeline's media leg can forward an allowlist at ~1k scale.
+    Above 500 entries the predicate switches to a single JSON-bound
+    ``id IN (SELECT value FROM json_each(?))`` (mirrors
+    ``ChaChaNotes_DB.search_notes``'s ``id_allowlist`` handling); 500 or
+    fewer keeps the pre-existing per-id placeholder form untouched (proven
+    by every other ``media_ids_filter`` test above still passing).
+    """
+
+    def test_large_allowlist_returns_only_the_seeded_in_scope_rows(
+        self, db_instance: MediaDatabase
+    ):
+        seeded_ids = []
+        for i in range(5):
+            media_id, _, _ = db_instance.add_media_with_keywords(
+                title=f"Scoped Doc {i}",
+                media_type="document",
+                content=f"large allowlist probe {i}",
+                keywords=["probe"],
+            )
+            seeded_ids.append(media_id)
+
+        # 1200 ids crosses the 500-id json_each threshold: the 5 real
+        # seeded rows plus 1195 ids that were never created.
+        allowlist = list(seeded_ids) + list(range(1_000_000, 1_000_000 + 1195))
+        assert len(allowlist) == 1200
+
+        results, total = db_instance.search_media_db(
+            search_query=None,
+            media_ids_filter=allowlist,
+            results_per_page=10,
+        )
+
+        assert total == 5
+        assert {r["id"] for r in results} == set(seeded_ids)
+
+    def test_large_allowlist_excludes_ids_outside_it(
+        self, db_instance: MediaDatabase
+    ):
+        in_scope_id, _, _ = db_instance.add_media_with_keywords(
+            title="In scope",
+            media_type="document",
+            content="large allowlist exclusion probe",
+            keywords=["probe"],
+        )
+        out_of_scope_id, _, _ = db_instance.add_media_with_keywords(
+            title="Out of scope",
+            media_type="document",
+            content="large allowlist exclusion probe",
+            keywords=["probe"],
+        )
+
+        allowlist = [in_scope_id] + list(range(2_000_000, 2_000_000 + 999))
+        assert len(allowlist) == 1000
+
+        results, total = db_instance.search_media_db(
+            search_query=None,
+            media_ids_filter=allowlist,
+            results_per_page=10,
+        )
+
+        assert total == 1
+        assert results[0]["id"] == in_scope_id
+        assert out_of_scope_id not in {r["id"] for r in results}
+
+    def test_large_allowlist_switches_sql_predicate_to_json_each(
+        self, db_instance: MediaDatabase, monkeypatch
+    ):
+        """Proves the actual predicate SQL, not just the end result: a >500
+        allowlist must bind through ``json_each`` (one parameter total), and
+        a <=500 allowlist must keep the pre-existing one-placeholder-per-id
+        form (zero drift)."""
+        media_id, _, _ = db_instance.add_media_with_keywords(
+            title="Spy probe",
+            media_type="document",
+            content="json_each spy probe",
+            keywords=["probe"],
+        )
+
+        captured_sql = []
+        original_execute_query = db_instance.execute_query
+
+        def _spy_execute_query(query, params=None, **kwargs):
+            captured_sql.append(query)
+            return original_execute_query(query, params, **kwargs)
+
+        monkeypatch.setattr(db_instance, "execute_query", _spy_execute_query)
+
+        large_allowlist = [media_id] + list(range(3_000_000, 3_000_000 + 999))
+        db_instance.search_media_db(
+            search_query=None,
+            media_ids_filter=large_allowlist,
+            results_per_page=10,
+        )
+        assert captured_sql, "expected search_media_db to execute at least one query"
+        assert any("json_each" in q for q in captured_sql)
+
+        captured_sql.clear()
+        db_instance.search_media_db(
+            search_query=None,
+            media_ids_filter=[media_id],
+            results_per_page=10,
+        )
+        assert captured_sql, "expected search_media_db to execute at least one query"
+        assert all("json_each" not in q for q in captured_sql)
+
+
 #
 # End of test_media_db_properties.py
 #######################################################################################################################

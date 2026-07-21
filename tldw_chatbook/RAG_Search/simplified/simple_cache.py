@@ -24,6 +24,27 @@ from tldw_chatbook.Metrics.metrics_logger import (
 )
 
 
+def _canonicalize_metadata_allowlist(
+    metadata_allowlist: Optional[Dict[str, Any]],
+) -> Optional[frozenset]:
+    """Canonicalize a metadata allowlist into a stable, hashable form.
+
+    ``None`` (or an empty mapping) stays ``None`` so cache keys built
+    without an allowlist are byte-identical to keys built before this
+    parameter existed -- no behavior change for existing callers.
+
+    Otherwise, returns a ``frozenset`` of ``(key, sorted_values_tuple)``
+    pairs so that dict key order and value iteration order (values are
+    commonly passed as ``set``, whose iteration order is not guaranteed)
+    do not affect equality.
+    """
+    if not metadata_allowlist:
+        return None
+    return frozenset(
+        (k, tuple(sorted(str(x) for x in v))) for k, v in metadata_allowlist.items()
+    )
+
+
 @dataclass
 class CacheEntry:
     """A single cache entry with metadata."""
@@ -111,6 +132,7 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Create a cache key from search parameters.
@@ -122,6 +144,13 @@ class SimpleRAGCache:
             search_type: Type of search (semantic, hybrid, keyword)
             top_k: Number of results
             filters: Optional metadata filters
+            metadata_allowlist: Optional metadata key -> allowed-values
+                scoping filter. Included in the key so two searches that
+                are identical except for their allowlist never share a
+                cached entry. Defaults to ``None``, which produces a key
+                identical to what this method returned before this
+                parameter existed -- no behavior change for existing
+                callers.
 
         Returns:
             A unique cache key
@@ -133,6 +162,14 @@ class SimpleRAGCache:
             str(top_k),
             json.dumps(filters or {}, sort_keys=True),
         ]
+
+        canonical_allowlist = _canonicalize_metadata_allowlist(metadata_allowlist)
+        if canonical_allowlist is not None:
+            # Sort for a deterministic string representation: frozenset
+            # iteration order is not guaranteed (and is hash-seed
+            # dependent for strings), but sorting the (key, values) tuples
+            # is stable.
+            key_parts.append(json.dumps(sorted(canonical_allowlist)))
 
         # Use a faster hash function - fallback to md5 if xxhash not available
         key_str = "|".join(key_parts)
@@ -151,6 +188,7 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Dict[str, Any]] = None,
     ) -> Optional[Tuple[List[Any], str]]:
         """
         Async-safe get cached search results.
@@ -160,6 +198,10 @@ class SimpleRAGCache:
             search_type: Type of search
             top_k: Number of results
             filters: Optional metadata filters
+            metadata_allowlist: Optional metadata scoping filter; included
+                in the cache key so differently-scoped searches never share
+                a cache entry. Defaults to ``None`` (no change for existing
+                callers).
 
         Returns:
             Tuple of (results, context) if found and valid, None otherwise
@@ -176,7 +218,7 @@ class SimpleRAGCache:
                 await self._prune_expired_async()
                 self._last_prune_time = current_time
 
-            key = self._make_key(query, search_type, top_k, filters)
+            key = self._make_key(query, search_type, top_k, filters, metadata_allowlist)
             log_counter("cache_request", labels={"type": search_type})
 
             if key not in self._cache:
@@ -230,6 +272,7 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Dict[str, Any]] = None,
     ) -> Optional[Tuple[List[Any], str]]:
         """
         Thread-safe synchronous cache get.
@@ -249,14 +292,21 @@ class SimpleRAGCache:
             # We're in an async context, use thread pool to avoid blocking
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(
-                    self._sync_get_impl, query, search_type, top_k, filters
+                    self._sync_get_impl,
+                    query,
+                    search_type,
+                    top_k,
+                    filters,
+                    metadata_allowlist,
                 )
                 return future.result(
                     timeout=1.0
                 )  # 1 second timeout for cache operations
         except RuntimeError:
             # No running loop, safe to run directly
-            return self._sync_get_impl(query, search_type, top_k, filters)
+            return self._sync_get_impl(
+                query, search_type, top_k, filters, metadata_allowlist
+            )
 
     def _sync_get_impl(
         self,
@@ -264,6 +314,7 @@ class SimpleRAGCache:
         search_type: str,
         top_k: int,
         filters: Optional[Dict[str, Any]],
+        metadata_allowlist: Optional[Dict[str, Any]] = None,
     ) -> Optional[Tuple[List[Any], str]]:
         """Internal synchronous implementation using threading lock."""
         with self._lock:
@@ -275,7 +326,7 @@ class SimpleRAGCache:
                 self._prune_expired_sync()
                 self._last_prune_time = current_time
 
-            key = self._make_key(query, search_type, top_k, filters)
+            key = self._make_key(query, search_type, top_k, filters, metadata_allowlist)
             log_counter("cache_request", labels={"type": search_type})
 
             if key not in self._cache:
@@ -327,6 +378,7 @@ class SimpleRAGCache:
         results: List[Any],
         context: str,
         filters: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Async-safe cache search results.
@@ -338,12 +390,16 @@ class SimpleRAGCache:
             results: Search results to cache
             context: Context string to cache
             filters: Optional metadata filters
+            metadata_allowlist: Optional metadata scoping filter; included
+                in the cache key so differently-scoped searches never share
+                a cache entry. Defaults to ``None`` (no change for existing
+                callers).
         """
         if not self.enabled:
             return
 
         async with self._async_lock:
-            key = self._make_key(query, search_type, top_k, filters)
+            key = self._make_key(query, search_type, top_k, filters, metadata_allowlist)
 
             # Calculate memory for new entry
             entry = CacheEntry(key=key, value=(results, context), timestamp=time.time())
@@ -425,6 +481,7 @@ class SimpleRAGCache:
         results: List[Any],
         context: str,
         filters: Optional[Dict[str, Any]] = None,
+        metadata_allowlist: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Thread-safe synchronous cache put.
@@ -451,11 +508,14 @@ class SimpleRAGCache:
                     results,
                     context,
                     filters,
+                    metadata_allowlist,
                 )
                 future.result(timeout=1.0)  # 1 second timeout for cache operations
         except RuntimeError:
             # No running loop, safe to run directly
-            self._sync_put_impl(query, search_type, top_k, results, context, filters)
+            self._sync_put_impl(
+                query, search_type, top_k, results, context, filters, metadata_allowlist
+            )
 
     def _sync_put_impl(
         self,
@@ -465,10 +525,11 @@ class SimpleRAGCache:
         results: List[Any],
         context: str,
         filters: Optional[Dict[str, Any]],
+        metadata_allowlist: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Internal synchronous implementation using threading lock."""
         with self._lock:
-            key = self._make_key(query, search_type, top_k, filters)
+            key = self._make_key(query, search_type, top_k, filters, metadata_allowlist)
 
             # Create cache entry
             entry = CacheEntry(key=key, value=(results, context), timestamp=time.time())
