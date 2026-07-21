@@ -1350,6 +1350,12 @@ async def test_render_trust_panel_patches_review_content_in_place():
         screen.query_one("#library-row-create-skill").press()
         await pilot.pause()
         await pilot.pause()
+        # task-416: create mode renders no trust panel, so patch-test the
+        # existing-skill shape (selected name set -> is_create False).
+        screen._selected_skill_name = "code-review"
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
 
         screen._library_skill_active_review = {
             "review_id": "r1",
@@ -1523,3 +1529,26 @@ async def test_handle_library_skill_delete_cancel_leaves_confirm_state():
     LibraryScreen.handle_library_skill_delete_cancel(fake, event)
     assert fake._library_skill_confirming_delete is False
     assert refresh_calls == [True]
+
+
+# ---------------------------------------------------------------------------
+# task-416: create mode must not render the trust panel -- a never-saved
+# skill has no on-disk files, so "Trust: trusted" + Unlock/Review/Approve
+# was a false state with dead buttons.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_create_mode_renders_no_trust_panel():
+    state = _editor_state()
+    app = _EditorHost(mode="editor", editor_state=state, is_create=True)
+    async with app.run_test() as pilot:
+        assert not pilot.app.query("#library-skill-trust-panel")
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_existing_skill_still_renders_trust_panel():
+    state = _editor_state()
+    app = _EditorHost(mode="editor", editor_state=state, is_create=False)
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#library-skill-trust-panel")

@@ -579,7 +579,13 @@ class LibrarySkillsListCanvas(VerticalScroll):
             )
         else:
             yield Static(self.status, id="library-skill-save-status", markup=False)
-        yield from self._compose_trust_panel(editor_state)
+        # task-416: no trust panel in create mode -- a never-saved skill
+        # has no on-disk files, so the panel could only show a false state
+        # ("Trust: trusted") with dead buttons. The post-create snapshot
+        # refresh recomposes with is_create=False, which renders the real
+        # panel for the just-saved skill.
+        if not self.is_create:
+            yield from self._compose_trust_panel(editor_state)
         # task-415: inline two-step delete, mirroring the notes/media
         # confirming-delete pattern. The confirm copy is a full-width
         # Static ABOVE the toolbar (mixing a Static into the toolbar's
