@@ -26,47 +26,46 @@ class _FakeResponse:
         return self._body
 
 
-class _FakeSession:
-    """Stands in for ``requests.Session`` in the non-streaming send path."""
-
-    captured: list[dict] = []
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc_info):
-        return False
-
-    def mount(self, *_args, **_kwargs) -> None:
-        return None
-
-    def post(self, url, headers=None, json=None, timeout=None, **_kwargs):
-        _FakeSession.captured.append({"url": url, "payload": json})
-        if url.rstrip("/").endswith("responses"):
-            return _FakeResponse(
-                {"id": "resp_1", "output_text": "ok", "output": [], "usage": {}}
-            )
-        return _FakeResponse(
-            {
-                "id": "chatcmpl_1",
-                "model": json.get("model", ""),
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {"role": "assistant", "content": "ok"},
-                        "finish_reason": "stop",
-                    }
-                ],
-                "usage": {},
-            }
-        )
-
-
 @pytest.fixture
 def captured_payloads(monkeypatch):
-    _FakeSession.captured = []
+    """Swap ``requests.Session`` for a fake that records posted payloads."""
+    payloads: list[dict] = []
+
+    class _FakeSession:
+        """Stands in for ``requests.Session`` in the non-streaming send path."""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def mount(self, *_args, **_kwargs) -> None:
+            return None
+
+        def post(self, url, headers=None, json=None, timeout=None, **_kwargs):
+            payloads.append({"url": url, "payload": json})
+            if url.rstrip("/").endswith("responses"):
+                return _FakeResponse(
+                    {"id": "resp_1", "output_text": "ok", "output": [], "usage": {}}
+                )
+            return _FakeResponse(
+                {
+                    "id": "chatcmpl_1",
+                    "model": json.get("model", ""),
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "ok"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {},
+                }
+            )
+
     monkeypatch.setattr(llm_calls.requests, "Session", _FakeSession)
-    return _FakeSession.captured
+    return payloads
 
 
 _MESSAGES = [{"role": "user", "content": "hi"}]
