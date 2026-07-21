@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 #: Hotkey digits for the nav keyboard layer: ctrl+1..ctrl+9 select the first
 #: nine destinations in SHELL_DESTINATION_ORDER and ctrl+0 selects the tenth.
-#: The remaining destinations (Lab, Settings) carry no hotkey, so their
+#: The remaining destinations (Lab, Logs, Settings) carry no hotkey, so their
 #: labels stay unnumbered.
 NAV_HOTKEY_DIGITS: tuple[str, ...] = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
 

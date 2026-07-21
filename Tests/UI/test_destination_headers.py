@@ -154,7 +154,7 @@ async def test_folded_screens_box_owning_destination_in_nav():
         "llm": "nav-lab",
         "stts": "nav-lab",
         "evals": "nav-lab",
-        "logs": "nav-settings",
+        "logs": "nav-logs",
         "stats": "nav-settings",
         "coding": "nav-console",
     }

@@ -318,7 +318,7 @@ class TestTabNavigationProvider:
         async for hit in tab_provider.search("tab"):
             hits.append(hit)
 
-        assert len(hits) == len(TabNavigationProvider.command_palette_tab_ids()) == 12
+        assert len(hits) == len(TabNavigationProvider.command_palette_tab_ids()) == 13
         tab_texts = [hit.text for hit in hits]
         assert any("Console" in text for text in tab_texts)
         assert any("Library" in text for text in tab_texts)
@@ -434,7 +434,7 @@ class TestTabNavigationProvider:
             ("evals", "Tab Navigation: Switch to Lab"),
             ("stts", "Tab Navigation: Switch to Lab"),
             ("models", "Tab Navigation: Switch to Lab"),
-            ("logs", "Tab Navigation: Switch to Settings"),
+            ("logs", "Tab Navigation: Switch to Logs"),
             ("stats", "Tab Navigation: Switch to Settings"),
             ("media", "Tab Navigation: Switch to Library"),
             ("tools_settings", "Tab Navigation: Switch to MCP"),
