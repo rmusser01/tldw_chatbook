@@ -506,6 +506,7 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
         "mcp": "MCPScreen",
         "acp": "ACPScreen",
         "llm": "LLMScreen",
+        "logs": "LogsScreen",
         "settings": "SettingsScreen",
     }
 
@@ -1261,6 +1262,7 @@ async def test_main_navigation_copy_and_order():
         ("nav-mcp", "9 MCP"),
         ("nav-acp", "0 ACP"),
         ("nav-lab", "Lab"),
+        ("nav-logs", "Logs"),
         ("nav-settings", "Settings"),
     ]
 

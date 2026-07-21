@@ -18,6 +18,7 @@ def test_master_shell_destination_order_matches_spec():
         "MCP",
         "ACP",
         "Lab",
+        "Logs",
         "Settings",
     ]
 
@@ -42,7 +43,8 @@ def test_legacy_routes_resolve_to_master_destinations():
         "subscriptions": ("watchlists_collections", "subscriptions"),
         "tools_settings": ("mcp", "tools_settings"),
         "settings": ("settings", "settings"),
-        "logs": ("settings", "logs"),
+        # Logs is a top-level destination again; its route resolves to itself.
+        "logs": ("logs", "logs"),
         "stats": ("settings", "stats"),
         "llm": ("lab", "llm"),
         "llm_management": ("lab", "llm"),
