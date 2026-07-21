@@ -1,10 +1,15 @@
 ---
 id: TASK-359
 title: Make the F6 rail focus stop visible
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
-labels: [console, ux, keyboard]
+updated_date: '2026-07-21 15:18'
+labels:
+  - console
+  - ux
+  - keyboard
 dependencies: []
 priority: medium
 ---
@@ -23,5 +28,21 @@ F6 cycles 3 stops: rail -> transcript -> composer. Transcript and composer stops
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every F6 stop is visibly distinguishable with the same pane-border treatment (accent border on the rail like transcript/composer), so the user always knows which pane owns focus
+- [x] #1 Every F6 stop is visibly distinguishable with the same pane-border treatment (accent border on the rail like transcript/composer), so the user always knows which pane owns focus
 <!-- AC:END -->
+
+## Implementation Notes
+
+F6's rail stop focuses the collapse button inside an INLINE-framed
+region — `widget.styles.border` beats any CSS, so the existing
+`#console-left-rail:focus` rule (border $ds-column-line — the frame color
+itself, invisible by construction) could never work. Fix: a
+`DescendantFocus` handler swaps the rail region's inline border to the
+pane-stop accent (#0178D4, matching the transcript/composer stops) while
+focus is anywhere inside either rail, and restores CONSOLE_FRAME_BORDER
+when it leaves. The collapse handle also gains a contract-style
+control-level focus rule (task-345).
+
+Verified: harness test asserts the border color swap and restore; live
+cell scan finds 61 accent rows at the rail stop where the review's scan
+found zero. Files: `UI/Screens/chat_screen.py`.

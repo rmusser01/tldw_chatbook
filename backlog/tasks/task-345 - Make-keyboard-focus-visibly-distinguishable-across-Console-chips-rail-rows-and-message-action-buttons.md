@@ -1,10 +1,17 @@
 ---
 id: TASK-345
-title: Make keyboard focus visibly distinguishable across Console chips, rail rows and message action buttons
-status: To Do
-assignee: []
+title: >-
+  Make keyboard focus visibly distinguishable across Console chips, rail rows
+  and message action buttons
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
-labels: [console, ux, keyboard]
+updated_date: '2026-07-21 15:18'
+labels:
+  - console
+  - ux
+  - keyboard
 dependencies: []
 priority: high
 ---
@@ -25,6 +32,23 @@ Also observed independently in J3 attachments as `j3-weak-focus-indicator-compos
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Focused controls get an unmistakable indicator (inverse video, accent bg, or bracket/underline marker) meeting a ~3:1 contrast ratio
-- [ ] #2 Every Tab press produces a visible focus change so Enter's target is always predictable
+- [x] #1 Focused controls get an unmistakable indicator (inverse video, accent bg, or bracket/underline marker) meeting a ~3:1 contrast ratio
+- [x] #2 Every Tab press produces a visible focus change so Enter's target is always predictable
 <!-- AC:END -->
+
+## Implementation Notes
+
+Root cause was the design system itself: `$ds-focus-bg` aliased
+`$ds-surface-raised` = `$surface`, so the non-obscuring focus contract's
+own mechanism (background + bold underline) rendered a ~1.1:1 shift on
+every conforming control. Fix honors the settled contract rather than
+fighting it: the token now carries a raised steel-blue (#51677e, ~3:1
+against the dark control surfaces) — one change that fixes every
+conforming control app-wide — plus contract-style `:focus` rules for the
+Console controls that had NONE (rail collapse handles, switcher results,
+rail conversation rows, rail header/action buttons). No accent, no
+reverse; all contract tests pass unchanged (228 across the focus/contract
+suites). Live-verified with the review's own cell-attribute method: the
+focused rail control renders the raised band + bold underline where the
+review measured a #090909 delta. Files: `css/core/_variables.tcss`,
+`css/components/_agentic_terminal.tcss`, bundle rebuilt.

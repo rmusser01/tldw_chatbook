@@ -22,7 +22,8 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
-from textual.events import Click, Key, MouseUp, Paste
+from textual.color import Color
+from textual.events import Click, DescendantFocus, Key, MouseUp, Paste
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
@@ -316,6 +317,14 @@ CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE = (
 CONSOLE_FRAME_COLOR = "#6f7782"
 CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
 CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
+# TASK-359: the F6 rail stop focuses the collapse button inside an
+# INLINE-framed region — CSS :focus-within can never win against
+# widget.styles.border, so the pane-stop accent (matching the transcript/
+# composer stops, review-measured #0178D4) is swapped in Python on focus
+# change. $ds-focus-accent resolves to $primary; this mirrors it the same
+# way CONSOLE_FRAME_COLOR hardcodes the frame gray.
+CONSOLE_FOCUS_FRAME_COLOR = "#0178D4"
+CONSOLE_FOCUS_FRAME_BORDER = ("solid", CONSOLE_FOCUS_FRAME_COLOR)
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
 # Mirrors `library_screen.LIBRARY_PROMPT_SAVE_STATUS_COPY` verbatim: the
@@ -11778,6 +11787,35 @@ class ChatScreen(BaseAppScreen):
             composer,
         ) or self._is_legacy_chat_input_focus(focused)
 
+    @on(DescendantFocus)
+    def _paint_console_rail_focus_frame(self, event: DescendantFocus) -> None:
+        """Swap the rail regions' inline frame to the accent while focused.
+
+        TASK-359: F6's rail stop focuses the collapse button; the region
+        border is inline-styled (single-frame contract), so this is the
+        only place a visible pane-stop indicator can be painted.
+        """
+        for rail_id in ("console-left-rail", "console-right-rail"):
+            try:
+                rail = self.query_one(f"#{rail_id}")
+            except QueryError:
+                continue
+            focused_within = False
+            node = event.widget
+            while node is not None:
+                if node is rail:
+                    focused_within = True
+                    break
+                node = node.parent
+            border = (
+                CONSOLE_FOCUS_FRAME_BORDER if focused_within else CONSOLE_FRAME_BORDER
+            )
+            # styles.border_top holds (str, Color) — compare against the
+            # parsed color, or the dedup guard never dedups (review #739).
+            current_kind, current_color = rail.styles.border_top
+            if current_kind != border[0] or current_color != Color.parse(border[1]):
+                rail.styles.border = border
+
     def on_key(self, event: Key) -> None:
         """Treat the Console composer as the default printable text target."""
         try:
@@ -11876,6 +11914,23 @@ class ChatScreen(BaseAppScreen):
                 self.app_instance.notify(
                     "Console send is unavailable.", severity="error"
                 )
+            return
+        if event.key in {"pageup", "pagedown"}:
+            # TASK-348: scrollback must be keyboard-reachable. The composer
+            # never uses paging keys (Home/End move its caret), so route
+            # them to the transcript — the standard chat-app idiom.
+            try:
+                transcript = self.query_one(
+                    "#console-native-transcript", ConsoleTranscript
+                )
+            except QueryError:
+                return
+            if event.key == "pageup":
+                transcript.scroll_page_up(animate=False)
+            else:
+                transcript.scroll_page_down(animate=False)
+            event.stop()
+            event.prevent_default()
             return
         if event.key == "ctrl+u":
             composer.clear_draft()
