@@ -24,6 +24,7 @@ except ImportError:
 from ..Chat.Chat_Functions import chat_api_call
 from ..config import load_settings
 from ..Metrics.metrics_logger import log_counter, log_histogram, timeit
+from tldw_chatbook.Internal_Prompts import get_internal_prompt, safe_substitute
 from .simplified.vector_store import SearchResult, SearchResultWithCitations
 
 
@@ -213,28 +214,15 @@ class PointwiseReranker(BaseReranker):
     def __init__(self, config: RerankingConfig):
         super().__init__(config)
 
-        # Default system prompt for pointwise reranking
+        # Registry defaults only when the caller supplied none (caller wins).
         if not config.system_prompt:
-            self.config.system_prompt = """You are a search result relevance evaluator. 
-Your task is to score how relevant a search result is to a given query.
-Return only a JSON object with a 'score' field (0.0 to 1.0) and optionally a 'reasoning' field.
-Higher scores indicate better relevance."""
-
-        # Default scoring template
+            self.config.system_prompt = get_internal_prompt(
+                "rag_reranker.pointwise_system"
+            )
         if not config.scoring_prompt_template:
-            self.config.scoring_prompt_template = """Query: {query}
-
-Search Result:
-Title: {title}
-Content: {content}
-
-How relevant is this search result to the query? Consider:
-1. Direct answer to the query
-2. Topical relevance
-3. Information quality
-4. Completeness
-
-Return JSON: {{"score": 0.0-1.0{reasoning}}}"""
+            self.config.scoring_prompt_template = get_internal_prompt(
+                "rag_reranker.pointwise_template"
+            )
 
     @timeit("reranker_pointwise")
     async def rerank(
@@ -322,8 +310,9 @@ Return JSON: {{"score": 0.0-1.0{reasoning}}}"""
         reasoning_part = (
             ', "reasoning": "explanation"' if self.config.include_reasoning else ""
         )
-        prompt = self.config.scoring_prompt_template.format(
-            query=query, title=title, content=content, reasoning=reasoning_part
+        prompt = safe_substitute(
+            self.config.scoring_prompt_template,
+            query=query, title=title, content=content, reasoning=reasoning_part,
         )
 
         try:
@@ -439,25 +428,15 @@ class PairwiseReranker(BaseReranker):
     def __init__(self, config: RerankingConfig):
         super().__init__(config)
 
+        # Registry defaults only when the caller supplied none (caller wins).
         if not config.system_prompt:
-            self.config.system_prompt = """You are a search result comparator.
-Given a query and two search results, determine which one is more relevant.
-Return only a JSON object with 'choice' (1 or 2) and optionally 'reasoning'."""
-
+            self.config.system_prompt = get_internal_prompt(
+                "rag_reranker.pairwise_system"
+            )
         if not config.scoring_prompt_template:
-            self.config.scoring_prompt_template = """Query: {query}
-
-Result 1:
-Title: {title1}
-Content: {content1}
-
-Result 2:
-Title: {title2}
-Content: {content2}
-
-Which result better answers the query? Consider relevance, accuracy, and completeness.
-
-Return JSON: {{"choice": 1 or 2{reasoning}}}"""
+            self.config.scoring_prompt_template = get_internal_prompt(
+                "rag_reranker.pairwise_template"
+            )
 
     @timeit("reranker_pairwise")
     async def rerank(
@@ -537,7 +516,8 @@ Return JSON: {{"choice": 1 or 2{reasoning}}}"""
         reasoning_part = (
             ', "reasoning": "explanation"' if self.config.include_reasoning else ""
         )
-        prompt = self.config.scoring_prompt_template.format(
+        prompt = safe_substitute(
+            self.config.scoring_prompt_template,
             query=query,
             title1=result1.metadata.get("doc_title", "Untitled"),
             content1=result1.document[:300],
@@ -567,21 +547,15 @@ class ListwiseReranker(BaseReranker):
     def __init__(self, config: RerankingConfig):
         super().__init__(config)
 
+        # Registry defaults only when the caller supplied none (caller wins).
         if not config.system_prompt:
-            self.config.system_prompt = """You are a search result ranker.
-Given a query and a list of search results, reorder them by relevance.
-Return a JSON object with 'ranking' as an array of result indices in order of relevance."""
-
+            self.config.system_prompt = get_internal_prompt(
+                "rag_reranker.listwise_system"
+            )
         if not config.scoring_prompt_template:
-            self.config.scoring_prompt_template = """Query: {query}
-
-Search Results:
-{results_list}
-
-Reorder these results by relevance to the query (most relevant first).
-Return the indices in order.
-
-Return JSON: {{"ranking": [indices in order]{reasoning}}}"""
+            self.config.scoring_prompt_template = get_internal_prompt(
+                "rag_reranker.listwise_template"
+            )
 
     @timeit("reranker_listwise")
     async def rerank(
@@ -613,8 +587,9 @@ Return JSON: {{"ranking": [indices in order]{reasoning}}}"""
         reasoning_part = (
             ', "reasoning": "explanation"' if self.config.include_reasoning else ""
         )
-        prompt = self.config.scoring_prompt_template.format(
-            query=query, results_list=results_list, reasoning=reasoning_part
+        prompt = safe_substitute(
+            self.config.scoring_prompt_template,
+            query=query, results_list=results_list, reasoning=reasoning_part,
         )
 
         try:
