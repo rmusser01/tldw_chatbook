@@ -32,6 +32,7 @@ import asyncio
 
 import pytest
 
+from tldw_chatbook.RAG_Search.simplified.simple_cache import SimpleRAGCache
 from tldw_chatbook.RAG_Search.simplified.vector_store import (
     ChromaVectorStore,
     SearchResult,
@@ -340,6 +341,174 @@ class TestSemanticSearchThreadsAllowlist:
         )
 
         assert spy.search_calls[0]["metadata_allowlist"] is None
+
+
+# === Cache key isolation (metadata_allowlist must not cross-contaminate) ===
+
+
+class _CountingScopedStore:
+    """Vector-store double whose result depends on the allowlist it was
+    called with, and that counts how many times it was actually invoked
+    (i.e. was NOT served from cache)."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def search(self, query_embedding, top_k=10, *, metadata_allowlist=None):
+        self.calls += 1
+        if metadata_allowlist:
+            doc_id = next(iter(next(iter(metadata_allowlist.values()))))
+        else:
+            doc_id = "unscoped"
+        return [
+            SearchResult(
+                id=doc_id,
+                score=0.9,
+                document=f"document for {doc_id}",
+                metadata={"source_id": doc_id},
+            )
+        ]
+
+
+class TestCacheKeyIsolatesAllowlists:
+    def test_cache_key_isolates_allowlists(self):
+        """Direct cache object: same query/type/top_k, three different
+        allowlists (including unscoped) -> three distinct entries."""
+        cache = SimpleRAGCache(max_size=10, ttl_seconds=3600, enabled=True)
+
+        cache.put(
+            "same query",
+            "semantic",
+            5,
+            ["unscoped-result"],
+            "unscoped-context",
+            None,
+            metadata_allowlist=None,
+        )
+        cache.put(
+            "same query",
+            "semantic",
+            5,
+            ["scope-a-result"],
+            "scope-a-context",
+            None,
+            metadata_allowlist={"source_id": {"1"}},
+        )
+        cache.put(
+            "same query",
+            "semantic",
+            5,
+            ["scope-b-result"],
+            "scope-b-context",
+            None,
+            metadata_allowlist={"source_id": {"2"}},
+        )
+
+        assert len(cache) == 3
+        assert cache.get("same query", "semantic", 5) == (
+            ["unscoped-result"],
+            "unscoped-context",
+        )
+        assert cache.get(
+            "same query", "semantic", 5, metadata_allowlist={"source_id": {"1"}}
+        ) == (["scope-a-result"], "scope-a-context")
+        assert cache.get(
+            "same query", "semantic", 5, metadata_allowlist={"source_id": {"2"}}
+        ) == (["scope-b-result"], "scope-b-context")
+
+    def test_scoped_semantic_searches_do_not_share_cached_results(self):
+        """End-to-end via RAGService with a counting fake store: a second
+        search scoped to a different allowlist must not be served the
+        first search's cached hit."""
+        service = _make_service()
+        # Bypass the process-wide cache singleton (see _make_service's
+        # docstring) with a fresh, explicitly-enabled cache so this test is
+        # deterministic regardless of what earlier tests did to the
+        # singleton's `enabled` flag.
+        service.cache = SimpleRAGCache(max_size=10, ttl_seconds=3600, enabled=True)
+        store = _CountingScopedStore()
+        service.vector_store = store
+
+        results_a = asyncio.run(
+            service.search(
+                "same query",
+                top_k=3,
+                search_type="semantic",
+                include_citations=False,
+                metadata_allowlist={"source_id": {"a"}},
+            )
+        )
+        results_b = asyncio.run(
+            service.search(
+                "same query",
+                top_k=3,
+                search_type="semantic",
+                include_citations=False,
+                metadata_allowlist={"source_id": {"b"}},
+            )
+        )
+        # Repeat the first search: this one SHOULD be a cache hit.
+        results_a_again = asyncio.run(
+            service.search(
+                "same query",
+                top_k=3,
+                search_type="semantic",
+                include_citations=False,
+                metadata_allowlist={"source_id": {"a"}},
+            )
+        )
+
+        assert store.calls == 2  # only the two distinct allowlists hit the store
+        assert [r.id for r in results_a] == ["a"]
+        assert [r.id for r in results_b] == ["b"]
+        assert [r.id for r in results_a_again] == ["a"]
+
+
+# === metadata_allowlist rejected for non-semantic search types ===
+
+
+class TestAllowlistRejectedForNonSemantic:
+    def test_hybrid_raises_value_error(self):
+        service = _make_service()
+
+        with pytest.raises(ValueError, match="metadata_allowlist"):
+            asyncio.run(
+                service.search(
+                    "query text",
+                    top_k=3,
+                    search_type="hybrid",
+                    metadata_allowlist={"source_id": {"1"}},
+                )
+            )
+
+    def test_keyword_raises_value_error(self):
+        service = _make_service()
+
+        with pytest.raises(ValueError, match="metadata_allowlist"):
+            asyncio.run(
+                service.search(
+                    "query text",
+                    top_k=3,
+                    search_type="keyword",
+                    metadata_allowlist={"source_id": {"1"}},
+                )
+            )
+
+    def test_semantic_does_not_raise(self):
+        service = _make_service()
+        spy = _SpyStore(hits=[])
+        service.vector_store = spy
+
+        # Should not raise.
+        asyncio.run(
+            service.search(
+                "query text",
+                top_k=3,
+                search_type="semantic",
+                include_citations=False,
+                metadata_allowlist={"source_id": {"1"}},
+            )
+        )
 
 
 # === Starvation regression (the actual bug this task fixes) ===

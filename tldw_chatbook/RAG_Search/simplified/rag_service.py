@@ -559,12 +559,24 @@ class RAGService:
             score_threshold: Minimum score threshold (default from config)
             metadata_allowlist: Metadata key -> allowed values, pushed down
                 into the vector store's own candidate selection instead of
-                filtered afterward. Currently only honored for
-                ``search_type="semantic"``; see ``_semantic_search``.
+                filtered afterward. Only supported for
+                ``search_type="semantic"``; see ``_semantic_search``. Passing
+                a non-empty allowlist with ``search_type="hybrid"`` or
+                ``search_type="keyword"`` raises ``ValueError`` rather than
+                silently ignoring the scoping request.
 
         Returns:
             List of search results (with or without citations)
+
+        Raises:
+            ValueError: If ``metadata_allowlist`` is provided with a
+                ``search_type`` other than ``"semantic"``.
         """
+        if metadata_allowlist and search_type != "semantic":
+            raise ValueError(
+                "metadata_allowlist is only supported for search_type='semantic'"
+            )
+
         # Use defaults from config if not specified
         top_k = top_k or self.config.default_top_k
         include_citations = (
@@ -588,7 +600,7 @@ class RAGService:
 
         # Check cache first
         cached_result = await self.cache.get_async(
-            query, search_type, top_k, filter_metadata
+            query, search_type, top_k, filter_metadata, metadata_allowlist
         )
         if cached_result is not None:
             results, context = cached_result
@@ -665,7 +677,13 @@ class RAGService:
             # For caching, we need to extract a simple context string
             context = self._extract_context_from_results(results)
             await self.cache.put_async(
-                query, search_type, top_k, results, context, filter_metadata
+                query,
+                search_type,
+                top_k,
+                results,
+                context,
+                filter_metadata,
+                metadata_allowlist,
             )
 
             return results
