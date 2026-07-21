@@ -50,7 +50,7 @@ from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
 # identity via `persisted_conversation_id`, `SessionScopeHolder` for
 # unpersisted sessions, `EffectiveScope` state.
 from ...Event_Handlers.Chat_Events.chat_rag_events import (
-    _resolve_effective_scope_for_chat,
+    resolve_effective_scope_for_chat,
 )
 from ...Chat.console_command_grammar import (
     KIND_COMMAND,
@@ -7056,7 +7056,7 @@ class ChatScreen(BaseAppScreen):
             returned unchanged when unscoped (byte-identical to before this
             resolution step existed).
         """
-        effective_scope = await _resolve_effective_scope_for_chat(self.app_instance)
+        effective_scope = await resolve_effective_scope_for_chat(self.app_instance)
         if effective_scope.state == "empty":
             return request, LibraryRagSearchOutcome(
                 status="empty",

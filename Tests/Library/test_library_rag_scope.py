@@ -34,6 +34,7 @@ from tldw_chatbook.Chat.rag_scope import (
     EffectiveScope,
     RagScope,
     SCOPE_REASON_CONVERSATIONS_EXCLUDED,
+    SCOPE_REASON_PROMPTS_EXCLUDED,
     SCOPE_STATUS_EXCLUDED,
     ScopeItem,
     SOURCE_TYPE_MEDIA,
@@ -120,6 +121,18 @@ class _SpyConversationsDB:
         self.call_count = 0
 
     def search_conversations_by_content(self, query, limit):
+        self.call_count += 1
+        return self.rows
+
+
+class _SpyPromptScopeService:
+    """Mirrors PromptScopeService.search_prompts's keyword-only signature."""
+
+    def __init__(self, rows=None):
+        self.rows = rows if rows is not None else []
+        self.call_count = 0
+
+    async def search_prompts(self, *, mode=None, query=None, limit=10, fts_match_query=None):
         self.call_count += 1
         return self.rows
 
@@ -398,6 +411,56 @@ async def test_unscoped_keyword_search_includes_conversations_no_diagnostics():
     result = await service.search("q", ("conversations",), "search", top_k=5)
 
     assert conv_db.call_count == 1
+    assert result["diagnostics"] == {}
+
+
+@pytest.mark.asyncio
+async def test_scoped_keyword_search_excludes_prompts_and_diagnoses():
+    """Mirrors ``test_scoped_keyword_search_excludes_conversations_and_diagnoses``:
+    prompts are not part of the scope vocabulary either (spec D5), so a
+    scoped search must never call the prompts seam and must record the
+    same-shaped exclusion diagnostic under a dedicated reason."""
+    prompts_service = _SpyPromptScopeService(
+        rows=[{"local_id": "p1", "name": "P1", "user_prompt": "c"}]
+    )
+    notes_service = _SpyNotesScopeService(rows=[{"id": "n1", "title": "N1", "content": "c"}])
+    app = SimpleNamespace(
+        prompt_scope_service=prompts_service,
+        notes_scope_service=notes_service,
+        media_reading_scope_service=None,
+        chachanotes_db=None,
+    )
+    service = LibraryLocalRagSearchService(app)
+    scope = _scoped(**{SOURCE_TYPE_NOTE: {"n1"}})
+
+    result = await service.search(
+        "q", ("notes", "prompts"), "search", top_k=5, scope=scope
+    )
+
+    assert prompts_service.call_count == 0
+    assert result["diagnostics"][SCOPE_DIAGNOSTICS_KEY] == {
+        "status": SCOPE_STATUS_EXCLUDED,
+        "reason": SCOPE_REASON_PROMPTS_EXCLUDED,
+    }
+    assert {row["source_id"] for row in result["results"]} == {"n1"}
+
+
+@pytest.mark.asyncio
+async def test_unscoped_keyword_search_includes_prompts_no_diagnostics():
+    prompts_service = _SpyPromptScopeService(
+        rows=[{"local_id": "p1", "name": "P1", "user_prompt": "c"}]
+    )
+    app = SimpleNamespace(
+        prompt_scope_service=prompts_service,
+        notes_scope_service=None,
+        media_reading_scope_service=None,
+        chachanotes_db=None,
+    )
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search("q", ("prompts",), "search", top_k=5)
+
+    assert prompts_service.call_count == 1
     assert result["diagnostics"] == {}
 
 

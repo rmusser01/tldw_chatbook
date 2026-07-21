@@ -196,6 +196,29 @@ class TestSessionScopeHolder:
 
         assert holder.scope is None
 
+    def test_set_zero_item_scope_normalizes_to_none(self):
+        """A zero-item scope reports unscoped exactly like
+        ``read_conversation_scope`` normalizes a stored zero-item scope on
+        read (TestZeroItemNormalization above) -- no Phase-2 producer of a
+        held scope can create the divergence."""
+        holder = SessionScopeHolder()
+
+        holder.set(RagScope(items=(), updated_at="t1"))
+
+        assert holder.scope is None
+
+    def test_flush_to_zero_item_scope_writes_nothing(self, cha_db, conversation_id):
+        holder = SessionScopeHolder()
+        holder.set(RagScope(items=(), updated_at="t1"))
+
+        holder.flush_to(cha_db, conversation_id)
+
+        assert holder.scope is None
+        assert read_conversation_scope(cha_db, conversation_id) is None
+        assert CONVERSATION_METADATA_SCOPE_KEY not in _raw_metadata(
+            cha_db, conversation_id
+        )
+
     def test_flush_to_writes_through_and_empties_holder(self, cha_db, conversation_id):
         scope = RagScope(items=(ScopeItem(SOURCE_TYPE_NOTE, "n1"),), updated_at="t1")
         holder = SessionScopeHolder()

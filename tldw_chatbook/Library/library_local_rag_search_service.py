@@ -11,6 +11,7 @@ from loguru import logger
 from tldw_chatbook.Chat.rag_scope import (
     EffectiveScope,
     SCOPE_REASON_CONVERSATIONS_EXCLUDED,
+    SCOPE_REASON_PROMPTS_EXCLUDED,
     SCOPE_STATUS_EXCLUDED,
     build_semantic_allowlists,
     media_id_params,
@@ -127,10 +128,10 @@ class LibraryLocalRagSearchService:
                 behavior (spec decision D2). `None` or an unscoped scope
                 performs unrestricted retrieval; a scoped value restricts
                 keyword search to the scope's media/note id allowlists and
-                excludes the conversations seam entirely (conversations are
-                not part of the scope vocabulary, spec D5), and restricts
-                semantic search via one store query per allowlisted source
-                type, merged by score.
+                excludes the conversations and prompts seams entirely
+                (neither is part of the scope vocabulary, spec D5), and
+                restricts semantic search via one store query per
+                allowlisted source type, merged by score.
             **kwargs: Backend options. `top_k` caps the result count per
                 source (default 5). `include_citations` is used in `rag`
                 mode only.
@@ -209,7 +210,16 @@ class LibraryLocalRagSearchService:
             else:
                 coroutines["conversations"] = self._search_conversations(query, top_k)
         if "prompts" in source_types:
-            coroutines["prompts"] = self._search_prompts(query, top_k)
+            if is_scoped:
+                # Prompts are not part of the scope vocabulary either (spec
+                # D5): mirror the conversations exclusion exactly rather
+                # than searching unrestricted or guessing at an allowlist.
+                diagnostics[SCOPE_DIAGNOSTICS_KEY] = {
+                    "status": SCOPE_STATUS_EXCLUDED,
+                    "reason": SCOPE_REASON_PROMPTS_EXCLUDED,
+                }
+            else:
+                coroutines["prompts"] = self._search_prompts(query, top_k)
 
         if not coroutines:
             return LibraryRagSearchOutcome(

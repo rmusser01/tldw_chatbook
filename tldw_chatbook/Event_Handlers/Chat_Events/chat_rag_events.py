@@ -12,6 +12,7 @@ from loguru import logger
 from ...Chat.rag_scope import (
     EffectiveScope,
     RagScope,
+    SCOPE_EMPTY_NOTICE_TEMPLATE,
     SCOPE_REASON_EMPTY,
     SCOPE_STATUS_EMPTY,
     SOURCE_TYPE_MEDIA,
@@ -389,7 +390,7 @@ def _notify_semantic_leg_state(
     scope_state = diagnostics.get(SCOPE_DIAGNOSTICS_KEY) or {}
     if scope_state.get("status") == SCOPE_STATUS_EMPTY:
         cause = scope_state.get("cause") or "unknown"
-        notification = f"Retrieval scope is empty ({cause}); no sources searched."
+        notification = SCOPE_EMPTY_NOTICE_TEMPLATE.format(cause=cause)
         logger.warning(notification)
         try:
             app.notify(notification, severity="warning")
@@ -543,7 +544,7 @@ def _existing_ids_sync(
         return frozenset()
 
 
-async def _resolve_effective_scope_for_chat(app: "TldwCli") -> EffectiveScope:
+async def resolve_effective_scope_for_chat(app: "TldwCli") -> EffectiveScope:
     """Resolve the RAG retrieval scope for the message about to be sent.
 
     Conversation identity comes from the active native-Console session's
@@ -600,6 +601,13 @@ async def _resolve_effective_scope_for_chat(app: "TldwCli") -> EffectiveScope:
     return await asyncio.to_thread(
         resolve_effective_scope, conv_scope, ws_scope, _existing_ids
     )
+
+
+# Deprecated: kept as a module-level alias to the public name above so any
+# caller still referencing the old private spelling (e.g. via
+# `chat_rag_events._resolve_effective_scope_for_chat`) keeps working. New
+# code should import `resolve_effective_scope_for_chat` directly.
+_resolve_effective_scope_for_chat = resolve_effective_scope_for_chat
 
 
 async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optional[str]:
@@ -705,7 +713,7 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
     # short-circuits entirely -- task-4's legs deliberately treat an EMPTY
     # scope the same as unscoped (they would search everything), so this
     # caller must never let one reach a leg call.
-    effective_scope = await _resolve_effective_scope_for_chat(app)
+    effective_scope = await resolve_effective_scope_for_chat(app)
 
     if effective_scope.state == "empty":
         _record_scope_empty(diagnostics, effective_scope.cause)

@@ -18,6 +18,12 @@ _KNOWN_SOURCE_TYPES = (SOURCE_TYPE_MEDIA, SOURCE_TYPE_NOTE)
 #: leg is excluded outright rather than silently searching unrestricted or
 #: guessing at an allowlist.
 SCOPE_REASON_CONVERSATIONS_EXCLUDED = "scope_conversations_excluded"
+#: Diagnostic reason recorded when an active scope excludes the prompts FTS
+#: seam entirely. Mirrors ``SCOPE_REASON_CONVERSATIONS_EXCLUDED`` exactly:
+#: prompts are not part of the scope vocabulary either (spec D5's posture
+#: extends to every seam outside the media/note allowlist), so a scoped
+#: search excludes this seam outright rather than searching unrestricted.
+SCOPE_REASON_PROMPTS_EXCLUDED = "scope_prompts_excluded"
 #: Diagnostic reason recorded when an ``EffectiveScope`` resolves to
 #: ``"empty"`` -- the configured scope(s) leave nothing to retrieve from.
 #: Not produced by this module's pipeline-leg helpers (which only
@@ -38,6 +44,12 @@ SCOPE_STATUS_EMPTY = "empty"
 #: ``conversations.metadata`` JSON column -- the same seam the
 #: chat-dictionaries attach mechanism uses for ``active_dictionaries``).
 CONVERSATION_METADATA_SCOPE_KEY = "rag_scope"
+
+#: Shared copy for the caller-side EMPTY-scope short-circuit notice, used by
+#: both the native-Console chat entry point (``chat_rag_events.py``) and the
+#: Library RAG service (``library_rag_service.py``) so the two call sites
+#: never drift apart. Format with ``.format(cause=...)``.
+SCOPE_EMPTY_NOTICE_TEMPLATE = "Retrieval scope is empty ({cause}); no sources searched."
 
 def _warn_malformed(reason: str) -> None:
     """Log a warning about malformed rag_scope payload.
@@ -468,9 +480,18 @@ class SessionScopeHolder:
     def set(self, scope: Optional[RagScope]) -> None:
         """Replace the held scope (``None`` clears it).
 
+        A zero-item ``scope`` (``scope.items == ()``) normalizes to ``None``
+        here exactly like ``read_conversation_scope`` normalizes a stored
+        zero-item scope on read: neither entry point into an
+        ``EffectiveScope`` resolution should be able to produce a "scoped
+        with nothing selected" state that ``resolve_effective_scope`` was
+        never designed to distinguish from unscoped.
+
         Args:
             scope: The scope to hold for this session, or ``None``.
         """
+        if scope is not None and not scope.items:
+            scope = None
         self._scope = scope
 
     def flush_to(self, db: Any, conversation_id: str) -> None:
