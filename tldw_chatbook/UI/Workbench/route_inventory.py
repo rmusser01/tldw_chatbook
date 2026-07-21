@@ -26,6 +26,8 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "acp": "acp",
     "lab": "lab",
     "settings": "settings",
+    # Retired Customize screen: the alias resolves to Settings.
+    "customize": "settings",
     "ingest": "library",
     "coding": "console",
     "conversation": "library",
