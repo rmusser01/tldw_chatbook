@@ -15,6 +15,7 @@ snapshot fetch -> canvas mount path end to end.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -1690,3 +1691,24 @@ async def test_trust_passphrase_modal_accepts_purpose_copy():
         await pilot.pause()
         title = modal.query_one("#skill-trust-passphrase-title", Static)
         assert str(title.renderable) == "Approve Reviewed Skill Version"
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_shows_derived_description_hint():
+    """task-419: an auto-derived description renders as an explanatory
+    hint under the (empty) Description field, not as silent field text."""
+    state = _editor_state(description="")
+    state = dataclasses.replace(state, description_derived=True)
+    app = _EditorHost(mode="editor", editor_state=state)
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#library-skill-description", Input).value == ""
+        hint = pilot.app.query_one("#library-skill-description-hint", Static)
+        assert "first body line" in str(hint.renderable)
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_no_description_hint_for_real_description():
+    state = _editor_state(description="Real description.")
+    app = _EditorHost(mode="editor", editor_state=state)
+    async with app.run_test() as pilot:
+        assert not pilot.app.query("#library-skill-description-hint")

@@ -131,6 +131,10 @@ class SkillEditorState:
     trust_status: str
     trust_blocked: bool
     trust_changed_files: tuple[str, ...]
+    # task-419: the record's description was derived from the first body
+    # line (no frontmatter description on disk) -- shown as a hint, never
+    # echoed into the Description field.
+    description_derived: bool = False
 
 
 def _text(value: Any) -> str:
@@ -326,7 +330,7 @@ def build_skill_editor_state(detail: Mapping[str, Any]) -> SkillEditorState:
     if not isinstance(detail, Mapping):
         detail = {}
     content = _raw_text(detail.get("content"))
-    _, body = LocalSkillsService._parse_front_matter(content)
+    front_matter, body = LocalSkillsService._parse_front_matter(content)
 
     supporting_source = detail.get("supporting_files") or {}
     supporting_files = tuple(
@@ -338,9 +342,23 @@ def build_skill_editor_state(detail: Mapping[str, Any]) -> SkillEditorState:
 
     changed_files = detail.get("trust_changed_files") or ()
 
+    # task-419: the service backfills a missing frontmatter description
+    # from the first body line for LIST display. Echoing that into the
+    # editor's Description field would misrepresent the file -- and a
+    # later save would ratchet the derived text into the frontmatter.
+    # Exact discriminator: derived iff the record carries a description
+    # but the parsed frontmatter does not.
+    record_description = _text(detail.get("description"))
+    front_matter_description = (
+        _text(front_matter.get("description"))
+        if isinstance(front_matter, Mapping)
+        else ""
+    )
+    description_derived = bool(record_description) and not front_matter_description
     return SkillEditorState(
         name=_text(detail.get("name")),
-        description=_text(detail.get("description")),
+        description="" if description_derived else record_description,
+        description_derived=description_derived,
         argument_hint=_text(detail.get("argument_hint")) or None,
         allowed_tools_csv=_csv_from_list(detail.get("allowed_tools")),
         user_invocable=bool(detail.get("user_invocable", True)),

@@ -554,6 +554,17 @@ class LibrarySkillsListCanvas(VerticalScroll):
             )
         yield Static("Description", classes="library-prompt-field-label", markup=False)
         yield Input(value=editor_state.description, id="library-skill-description")
+        if editor_state.description_derived:
+            # task-419: the record's description was auto-derived (no
+            # frontmatter description on disk); say so instead of quietly
+            # pre-filling the field with text the user never wrote.
+            yield Static(
+                "No description set — lists show the skill's first body line "
+                "automatically. Type here to set your own.",
+                id="library-skill-description-hint",
+                classes="library-skill-field-hint",
+                markup=False,
+            )
         yield Static(
             "Argument hint", classes="library-prompt-field-label", markup=False
         )
