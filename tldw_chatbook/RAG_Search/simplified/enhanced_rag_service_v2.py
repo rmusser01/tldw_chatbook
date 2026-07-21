@@ -9,9 +9,11 @@ This extends the Phase 1 enhanced RAG service with:
 
 import asyncio
 import time
-from typing import List, Optional, Dict, Any, Literal, Union, Tuple, Mapping, Collection
+from typing import Any, Collection, Dict, List, Literal, Mapping, Optional, Tuple, Union
+
 from loguru import logger
 
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, timeit
 from .enhanced_rag_service import EnhancedRAGService
 from .config import RAGConfig
 from .vector_store import SearchResult, SearchResultWithCitations
@@ -29,7 +31,6 @@ from ..config_profiles import (
     ConfigProfileManager,
 )
 from .data_models import IndexingResult
-from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, timeit
 
 
 class EnhancedRAGServiceV2(EnhancedRAGService):

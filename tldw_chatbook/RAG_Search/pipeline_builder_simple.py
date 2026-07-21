@@ -152,9 +152,13 @@ async def _execute_retrieve_step(
             **scope_kwargs,
         )
     elif func_name.endswith("_fts5"):
-        # FTS5 functions don't take sources parameter
+        # FTS5 functions don't take sources parameter. All three FTS5 legs
+        # now accept diagnostics (media/notes gained it alongside the
+        # EMPTY-scope fail-closed guard, PR #734 review) -- forwarded only
+        # when an active scope exists, matching scope_kwargs' own
+        # zero-drift-for-unscoped-calls convention.
         fts5_kwargs: Dict[str, Any] = dict(scope_kwargs)
-        if func_name == "search_conversations_fts5" and scope is not None:
+        if scope is not None:
             fts5_kwargs["diagnostics"] = context.setdefault("diagnostics", {})
         return await func(
             context["app"],
@@ -216,6 +220,16 @@ async def _execute_parallel_step(
 
             # Create appropriate task based on function
             if func_name.endswith("_fts5"):
+                # All three FTS5 legs now accept diagnostics (media/notes
+                # gained it alongside the EMPTY-scope fail-closed guard,
+                # PR #734 review) -- forwarded only when an active scope
+                # exists, matching scope_kwargs' own
+                # zero-drift-for-unscoped-calls convention.
+                fts5_kwargs = dict(scope_kwargs)
+                if scope is not None:
+                    fts5_kwargs["diagnostics"] = context.setdefault(
+                        "diagnostics", {}
+                    )
                 # Only search_media_fts5 accepts keyword_filter
                 if func_name == "search_media_fts5":
                     task = func(
@@ -223,27 +237,15 @@ async def _execute_parallel_step(
                         context["query"],
                         config.get("top_k", 10),
                         config.get("keyword_filter"),
-                        **scope_kwargs,
+                        **fts5_kwargs,
                     )
-                elif func_name == "search_conversations_fts5":
-                    fts5_kwargs = dict(scope_kwargs)
-                    if scope is not None:
-                        fts5_kwargs["diagnostics"] = context.setdefault(
-                            "diagnostics", {}
-                        )
+                else:
+                    # search_conversations_fts5 / search_notes_fts5
                     task = func(
                         context["app"],
                         context["query"],
                         config.get("top_k", 10),
                         **fts5_kwargs,
-                    )
-                else:
-                    # search_notes_fts5
-                    task = func(
-                        context["app"],
-                        context["query"],
-                        config.get("top_k", 10),
-                        **scope_kwargs,
                     )
             elif func_name == "search_semantic":
                 # Vector leg: forward only kwargs the RAG service accepts.

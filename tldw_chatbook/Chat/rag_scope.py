@@ -1,8 +1,10 @@
 """Conversation/workspace RAG retrieval scope: model, codecs, resolution."""
 from __future__ import annotations
+
 import json
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Mapping, Optional
+
 from loguru import logger
 
 logger = logger.bind(module="rag_scope")
@@ -413,6 +415,40 @@ def read_conversation_scope(db: Any, conversation_id: str) -> Optional[RagScope]
     return scope
 
 
+def _load_conversation_metadata_for_write(
+    record: Mapping[str, Any],
+) -> Optional[dict]:
+    """Parse a conversation record's metadata JSON for a write, fail-closed.
+
+    Unlike ``_load_conversation_metadata`` (used for reads, where any parse
+    failure safely degrades to "unscoped" -- there is nothing to lose by
+    reading a scope as absent), a write must not silently normalize a
+    corrupt payload to ``{}`` and write that back: doing so would erase
+    whatever else lives in the same JSON column (e.g. chat-dictionaries'
+    ``active_dictionaries``, PR #734 review). This distinguishes "nothing
+    there yet" (safe to proceed with a fresh dict, identical to today) from
+    "something there that we can't parse" (the caller must refuse the write).
+
+    Args:
+        record: A conversation row dict; only its ``"metadata"`` key is read.
+
+    Returns:
+        ``{}`` when metadata is absent, ``None``, or an empty string
+        (nothing to preserve -- proceeds exactly as before this guard). The
+        parsed dict when metadata is valid JSON that decodes to a dict.
+        ``None`` when metadata is present but malformed JSON, or valid JSON
+        that is not a dict -- the caller must refuse to write in that case.
+    """
+    raw = record.get("metadata")
+    if raw is None or raw == "":
+        return {}
+    try:
+        meta = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return meta if isinstance(meta, dict) else None
+
+
 def write_conversation_scope(
     db: Any, conversation_id: str, scope: Optional[RagScope]
 ) -> None:
@@ -429,11 +465,26 @@ def write_conversation_scope(
     action) before calling. That stamp is what gets persisted verbatim and
     is later used as part of the ``ScopeCache`` key.
 
+    Fails soft when the existing ``metadata`` payload is corrupt (malformed
+    JSON, or valid JSON that is not a dict): rather than normalizing it to
+    ``{}`` and silently erasing whatever else lives in that JSON column
+    (e.g. chat-dictionaries' ``active_dictionaries``, PR #734 review), the
+    write is skipped entirely and a warning naming the conversation id is
+    logged. This applies identically to both the set path (``scope`` given)
+    and the delete path (``scope=None``) -- both need the same
+    read-merge-write seam. Absent/``None``/empty-string metadata is NOT
+    corrupt and proceeds exactly as before.
+
     Args:
         db: ``CharactersRAGDB`` instance to write to.
         conversation_id: Conversation identifier.
         scope: The scope to persist, or ``None`` to delete the ``rag_scope``
             key (clearing the conversation's scope).
+
+    Returns:
+        None always. In particular, a corrupt existing ``metadata`` payload
+        is not surfaced as an exception -- the write is silently skipped
+        (after logging a warning) rather than raised.
 
     Raises:
         ValueError: If the conversation does not exist.
@@ -443,7 +494,15 @@ def write_conversation_scope(
     record = db.get_conversation_by_id(str(conversation_id))
     if record is None:
         raise ValueError(f"Conversation '{conversation_id}' was not found.")
-    meta = _load_conversation_metadata(record)
+    meta = _load_conversation_metadata_for_write(record)
+    if meta is None:
+        logger.warning(
+            "rag_scope write skipped for conversation {}: existing metadata "
+            "is corrupt (malformed JSON or a non-dict payload); refusing to "
+            "overwrite it.",
+            conversation_id,
+        )
+        return
     if scope is None:
         meta.pop(CONVERSATION_METADATA_SCOPE_KEY, None)
     else:

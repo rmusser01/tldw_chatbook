@@ -2,10 +2,11 @@
 # Description: Simplified event handlers for RAG functionality using pipeline system
 #
 # Imports
-from typing import TYPE_CHECKING, Dict, Any, List, Optional, Tuple
 import asyncio
 import copy
 import json
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
 from loguru import logger
 
 # Local Imports
@@ -21,17 +22,17 @@ from ...Chat.rag_scope import (
     read_conversation_scope,
     resolve_effective_scope,
 )
-from ...RAG_Search.pipeline_builder_simple import execute_pipeline, BUILTIN_PIPELINES
-from ...RAG_Search.pipeline_functions_simple import SCOPE_DIAGNOSTICS_KEY
 from ...RAG_Search.fusion import resolve_hybrid_alpha
+from ...RAG_Search.pipeline_builder_simple import BUILTIN_PIPELINES, execute_pipeline
+from ...RAG_Search.pipeline_functions_simple import SCOPE_DIAGNOSTICS_KEY
 from ...RAG_Search.semantic_availability import (
-    resolve_semantic_rag_service,
     SEMANTIC_DIAGNOSTICS_KEY,
     SEMANTIC_EMPTY_INDEX_MESSAGE,
     SEMANTIC_REASON_INIT_FAILED,
     SEMANTIC_STATUS_EMPTY_INDEX,
     SEMANTIC_STATUS_UNAVAILABLE,
     SEMANTIC_UNAVAILABLE_MESSAGES,
+    resolve_semantic_rag_service,
 )
 
 if TYPE_CHECKING:

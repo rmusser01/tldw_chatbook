@@ -6,12 +6,13 @@ embeddings, vector stores, chunking, and search operations.
 """
 
 import asyncio
-from typing import List, Optional, Dict, Any, Literal, Union, Tuple, Mapping, Collection
-from pathlib import Path
-from loguru import logger
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any, Collection, Dict, List, Literal, Mapping, Optional, Tuple, Union
+
+from loguru import logger
 
 # Optional numpy import
 try:
@@ -23,6 +24,14 @@ except ImportError:
     np = None
 import psutil
 
+from tldw_chatbook.config import load_settings
+from tldw_chatbook.Metrics.metrics_logger import (
+    log_counter,
+    log_histogram,
+    log_gauge,
+    timeit,
+)
+from tldw_chatbook.Utils.path_validation import validate_path
 from .embeddings_wrapper import EmbeddingsServiceWrapper
 from .vector_store import create_vector_store, SearchResult, SearchResultWithCitations
 from .citations import Citation, CitationType, merge_citations
@@ -38,14 +47,6 @@ from .indexing_helpers import (
 )
 from .health_check import init_health_checker, get_health_status
 from .data_models import IndexingResult
-from tldw_chatbook.Metrics.metrics_logger import (
-    log_counter,
-    log_histogram,
-    log_gauge,
-    timeit,
-)
-from tldw_chatbook.Utils.path_validation import validate_path
-from tldw_chatbook.config import load_settings
 
 
 # Load constants from config with fallbacks

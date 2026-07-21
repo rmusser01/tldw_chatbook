@@ -133,6 +133,96 @@ class TestMalformedMetadataGuard:
         assert read_conversation_scope(cha_db, "does-not-exist") is None
 
 
+class TestWriteConversationScopeCorruptMetadataGuard:
+    """PR #734 review (id 3621197388): write_conversation_scope must not
+    normalize a corrupt existing ``metadata`` payload to ``{}`` and silently
+    write that back -- doing so would erase whatever else lives in the same
+    JSON column (e.g. chat-dictionaries' ``active_dictionaries``). Absent/
+    ``None``/empty metadata is NOT corrupt and proceeds exactly as before
+    (``TestReadWriteRoundTrip`` covers that path); this covers the
+    fail-closed refusal for a present-but-invalid payload -- the write is
+    skipped entirely, not raised.
+    """
+
+    def test_malformed_json_metadata_is_untouched_by_a_write_attempt(
+        self, cha_db, conversation_id
+    ):
+        record = cha_db.get_conversation_by_id(conversation_id)
+        cha_db.update_conversation(
+            conversation_id,
+            {"metadata": "{not valid json"},
+            expected_version=record["version"],
+        )
+
+        scope = RagScope(items=(ScopeItem(SOURCE_TYPE_MEDIA, "1"),), updated_at="t1")
+        write_conversation_scope(cha_db, conversation_id, scope)
+
+        raw = cha_db.get_conversation_by_id(conversation_id)
+        assert raw["metadata"] == "{not valid json"
+
+    def test_non_dict_json_metadata_is_untouched_by_a_write_attempt(
+        self, cha_db, conversation_id
+    ):
+        record = cha_db.get_conversation_by_id(conversation_id)
+        original_raw = json.dumps(["not", "a", "dict"])
+        cha_db.update_conversation(
+            conversation_id,
+            {"metadata": original_raw},
+            expected_version=record["version"],
+        )
+
+        scope = RagScope(items=(ScopeItem(SOURCE_TYPE_MEDIA, "1"),), updated_at="t1")
+        write_conversation_scope(cha_db, conversation_id, scope)
+
+        raw = cha_db.get_conversation_by_id(conversation_id)
+        assert raw["metadata"] == original_raw
+
+    def test_delete_path_also_refuses_on_corrupt_metadata(
+        self, cha_db, conversation_id
+    ):
+        """``scope=None`` (the 'clear scope' path) refuses identically -- it
+        still needs the read-merge-write seam, and a corrupt payload is
+        just as unsafe to normalize-and-write for a delete as for a set."""
+        record = cha_db.get_conversation_by_id(conversation_id)
+        original_raw = "{not valid json"
+        cha_db.update_conversation(
+            conversation_id,
+            {"metadata": original_raw},
+            expected_version=record["version"],
+        )
+
+        write_conversation_scope(cha_db, conversation_id, None)
+
+        raw = cha_db.get_conversation_by_id(conversation_id)
+        assert raw["metadata"] == original_raw
+
+    def test_write_returns_none_without_raising_on_corrupt_metadata(
+        self, cha_db, conversation_id
+    ):
+        record = cha_db.get_conversation_by_id(conversation_id)
+        cha_db.update_conversation(
+            conversation_id,
+            {"metadata": "{not valid json"},
+            expected_version=record["version"],
+        )
+        scope = RagScope(items=(ScopeItem(SOURCE_TYPE_MEDIA, "1"),), updated_at="t1")
+
+        result = write_conversation_scope(cha_db, conversation_id, scope)
+
+        assert result is None
+
+    def test_normal_write_over_absent_metadata_is_unaffected(
+        self, cha_db, conversation_id
+    ):
+        """Sanity check: absent metadata (this fixture's default) is NOT
+        corrupt -- writes still proceed exactly as before this fix."""
+        scope = RagScope(items=(ScopeItem(SOURCE_TYPE_NOTE, "n1"),), updated_at="t1")
+
+        write_conversation_scope(cha_db, conversation_id, scope)
+
+        assert read_conversation_scope(cha_db, conversation_id) == scope
+
+
 class TestZeroItemNormalization:
     def test_stored_zero_item_scope_reads_as_none(self, cha_db, conversation_id):
         """A stored scope with an empty items list is unscoped on read

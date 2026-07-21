@@ -125,6 +125,14 @@ _MEDIA_POST_INGEST_CALLBACKS: List[MediaPostIngestCallback] = []
 # invokes callbacks outside it, so a slow callback never blocks registration.
 _MEDIA_POST_INGEST_CALLBACKS_LOCK = threading.Lock()
 
+#: search_media_db's media_ids_filter switches from one SQL placeholder per
+#: id to a single json_each-bound JSON array above this many ids (PR #734
+#: review, id 3621197385) -- avoids ballooning the query string/parameter
+#: list for the rag-scope-narrowing pipeline's ~1k-scale scoped allowlists,
+#: while keeping the existing placeholder form (zero drift) for the common
+#: small-allowlist case.
+_MEDIA_IDS_FILTER_JSON_EACH_THRESHOLD = 500
+
 
 def register_media_post_ingest_callback(callback: MediaPostIngestCallback) -> None:
     """Register a callback invoked after a media item is added or updated.
@@ -1811,7 +1819,19 @@ class MediaDatabase:
         if media_ids_filter:
             if not all(isinstance(mid, (int, str)) for mid in media_ids_filter):
                 raise ValueError("media_ids_filter must be a list of ints or strings.")
-            if media_ids_filter:
+            if len(media_ids_filter) > _MEDIA_IDS_FILTER_JSON_EACH_THRESHOLD:
+                # Large allowlists (e.g. the rag-scope-narrowing pipeline's
+                # scoped media leg, PR #734 review) bind through a single
+                # JSON-encoded array via json_each rather than one SQL
+                # placeholder per id -- mirrors
+                # ChaChaNotes_DB.search_notes's id_allowlist handling and
+                # avoids ballooning the query string/parameter list for
+                # ~1k-scale allowlists. The placeholder form below is
+                # unchanged for the common small-allowlist case (zero drift
+                # for existing callers).
+                conditions.append("m.id IN (SELECT value FROM json_each(?))")
+                params.append(json.dumps(sorted(str(mid) for mid in media_ids_filter)))
+            else:
                 id_placeholders = ",".join("?" * len(media_ids_filter))
                 conditions.append(f"m.id IN ({id_placeholders})")
                 params.extend(media_ids_filter)

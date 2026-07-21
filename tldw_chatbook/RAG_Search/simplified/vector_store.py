@@ -19,21 +19,22 @@ except ImportError:
             pass
 
 
-from typing import List, Dict, Optional, Protocol, Any, Union, Mapping, Collection
-from pathlib import Path
 import json
-from loguru import logger
-from dataclasses import dataclass
 import time
-import psutil
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Collection, Dict, List, Mapping, Optional, Protocol, Union
 
-from .citations import Citation, CitationType, SearchResultWithCitations
+import psutil
+from loguru import logger
+
 from tldw_chatbook.Metrics.metrics_logger import (
     log_counter,
     log_histogram,
     log_gauge,
     timeit,
 )
+from .citations import Citation, CitationType, SearchResultWithCitations
 
 
 # Import constants from rag_service

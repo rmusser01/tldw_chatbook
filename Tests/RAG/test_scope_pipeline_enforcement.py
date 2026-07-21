@@ -136,6 +136,25 @@ class _RefusingChaChaDB:
         raise AssertionError("search_notes must not be called")
 
 
+class _RefusingConversationsDB:
+    """Proves the conversations leg short-circuits without querying the DB."""
+
+    def search_conversations_by_content(self, *args, **kwargs):
+        raise AssertionError("search_conversations_by_content must not be called")
+
+    def get_messages_for_conversations_batch(self, *args, **kwargs):
+        raise AssertionError(
+            "get_messages_for_conversations_batch must not be called"
+        )
+
+
+class _RefusingRagService:
+    """Proves the semantic leg short-circuits without ever calling search()."""
+
+    async def search(self, *args, **kwargs):
+        raise AssertionError("rag_service.search must not be called")
+
+
 # === Fixtures ===
 
 
@@ -596,6 +615,173 @@ class TestCustomPipelineInheritance:
         ids_with = sorted(r["id"] for r in with_scope_key)
         ids_without = sorted(r["id"] for r in without_scope_key)
         assert ids_with == ids_without == sorted(media_ids + note_ids)
+
+
+# === EMPTY-scope fail-closed defense-in-depth (PR #734 review, id 3621197384) ===
+
+
+class TestEmptyScopeFailsClosedAtEachLeg:
+    """The caller-side EMPTY short-circuit (``chat_rag_events.
+    get_rag_context_for_chat``) is expected to keep an EMPTY
+    ``EffectiveScope`` from ever reaching a leg in normal operation -- but
+    every leg only checked ``scope.state == "scoped"``, so an
+    ``EffectiveScope(state="empty")`` reaching a leg directly (a caller that
+    forgot to short-circuit, or a hand-built pipeline) fell through to an
+    UNRESTRICTED search: fail-OPEN. Each leg must instead fail CLOSED --
+    return ``[]`` without ever touching its DB/service -- and record
+    ``SCOPE_REASON_EMPTY`` into diagnostics exactly like the caller-side
+    short-circuit does.
+    """
+
+    _EMPTY = EffectiveScope(state="empty", allowlist={}, cause="deleted-items")
+
+    @pytest.mark.asyncio
+    async def test_media_leg_empty_scope_fails_closed(self):
+        app = _App(media_db=_RefusingMediaDB())
+        diagnostics: Dict[str, Any] = {}
+
+        results = await pfs.search_media_fts5(
+            app, "zanzibarite", limit=10, scope=self._EMPTY, diagnostics=diagnostics
+        )
+
+        assert results == []
+        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == {
+            "status": SCOPE_STATUS_EMPTY,
+            "reason": SCOPE_REASON_EMPTY,
+            "cause": "deleted-items",
+        }
+
+    @pytest.mark.asyncio
+    async def test_notes_leg_empty_scope_fails_closed(self):
+        app = _App(chachanotes_db=_RefusingChaChaDB())
+        diagnostics: Dict[str, Any] = {}
+
+        results = await pfs.search_notes_fts5(
+            app, "zanzibarite", limit=10, scope=self._EMPTY, diagnostics=diagnostics
+        )
+
+        assert results == []
+        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == {
+            "status": SCOPE_STATUS_EMPTY,
+            "reason": SCOPE_REASON_EMPTY,
+            "cause": "deleted-items",
+        }
+
+    @pytest.mark.asyncio
+    async def test_conversations_leg_empty_scope_fails_closed(self):
+        app = _App(chachanotes_db=_RefusingConversationsDB())
+        diagnostics: Dict[str, Any] = {}
+
+        results = await pfs.search_conversations_fts5(
+            app, "zanzibarite", limit=10, scope=self._EMPTY, diagnostics=diagnostics
+        )
+
+        assert results == []
+        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == {
+            "status": SCOPE_STATUS_EMPTY,
+            "reason": SCOPE_REASON_EMPTY,
+            "cause": "deleted-items",
+        }
+
+    @pytest.mark.asyncio
+    async def test_semantic_leg_empty_scope_fails_closed(self):
+        app = _App(rag_service=_RefusingRagService())
+        diagnostics: Dict[str, Any] = {}
+
+        results = await pfs.search_semantic(
+            app,
+            "query",
+            {"media": True},
+            limit=10,
+            scope=self._EMPTY,
+            diagnostics=diagnostics,
+        )
+
+        assert results == []
+        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == {
+            "status": SCOPE_STATUS_EMPTY,
+            "reason": SCOPE_REASON_EMPTY,
+            "cause": "deleted-items",
+        }
+
+    @pytest.mark.asyncio
+    async def test_no_diagnostics_dict_is_a_safe_no_op(self):
+        """``diagnostics=None`` (the default for legacy callers) must not
+        raise -- mirrors every other scope/semantic recorder's None-safe
+        contract."""
+        app = _App(media_db=_RefusingMediaDB())
+
+        results = await pfs.search_media_fts5(
+            app, "zanzibarite", limit=10, scope=self._EMPTY
+        )
+
+        assert results == []
+
+
+class TestEmptyScopeFailsClosedThroughPipeline:
+    """Same invariant, proven end to end through ``execute_pipeline`` (the
+    review's own focus: ``execute_pipeline`` forwards any non-None scope to
+    every leg unconditionally) -- a custom parallel pipeline built from all
+    four legs must come back with zero results and zero leg-service calls
+    when driven with an EMPTY scope.
+    """
+
+    @pytest.mark.asyncio
+    async def test_custom_parallel_pipeline_empty_scope_returns_nothing(
+        self, media_db, cha_db
+    ):
+        _seed_media(media_db)
+        _seed_notes(cha_db)
+        conv_id = cha_db.add_conversation({"title": "Conversation"})
+        cha_db.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": "User",
+                "content": "zanzibarite discussion",
+            }
+        )
+        spy = _SpyRagService()
+        app = SimpleNamespace(
+            media_db=media_db, chachanotes_db=cha_db, _rag_service=spy
+        )
+        eff = EffectiveScope(state="empty", allowlist={}, cause="deleted-items")
+        diagnostics: Dict[str, Any] = {}
+
+        config = {
+            "name": "Custom Test Pipeline",
+            "steps": [
+                {
+                    "type": "parallel",
+                    "functions": [
+                        {"function": "search_media_fts5", "config": {"top_k": 10}},
+                        {"function": "search_notes_fts5", "config": {"top_k": 10}},
+                        {
+                            "function": "search_conversations_fts5",
+                            "config": {"top_k": 10},
+                        },
+                        {"function": "search_semantic", "config": {"top_k": 10}},
+                    ],
+                },
+                {"type": "format", "function": "format_as_context"},
+            ],
+        }
+
+        results, _formatted = await pbs.execute_pipeline(
+            config,
+            app,
+            "zanzibarite",
+            {"media": True, "conversations": True, "notes": True},
+            diagnostics=diagnostics,
+            scope=eff,
+        )
+
+        assert results == []
+        assert spy.search_calls == []  # semantic leg never called the service
+        assert diagnostics[SCOPE_DIAGNOSTICS_KEY] == {
+            "status": SCOPE_STATUS_EMPTY,
+            "reason": SCOPE_REASON_EMPTY,
+            "cause": "deleted-items",
+        }
 
 
 # === Task-5: chat entry point (get_rag_context_for_chat) end to end ===
