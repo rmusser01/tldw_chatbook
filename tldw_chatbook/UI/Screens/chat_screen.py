@@ -853,6 +853,24 @@ class ChatScreen(BaseAppScreen):
         self._console_dictionary_dialog_active = True
         self.run_worker(self._console_dictionary_detach_worker(), group="console-io")
 
+    @on(Button.Pressed, "#console-inspector-worldbooks-attach")
+    def on_console_inspector_worldbooks_attach(self, event: Button.Pressed) -> None:
+        """Open the attach-world-book picker for the active Console conversation."""
+        event.stop()
+        if self._console_worldbook_dialog_active:
+            return
+        self._console_worldbook_dialog_active = True
+        self.run_worker(self._console_worldbook_attach_worker(), group="console-io")
+
+    @on(Button.Pressed, "#console-inspector-worldbooks-detach")
+    def on_console_inspector_worldbooks_detach(self, event: Button.Pressed) -> None:
+        """Open the detach-world-book picker for the active Console conversation."""
+        event.stop()
+        if self._console_worldbook_dialog_active:
+            return
+        self._console_worldbook_dialog_active = True
+        self.run_worker(self._console_worldbook_detach_worker(), group="console-io")
+
     async def _open_console_settings(self, *, focus_model: bool = False) -> None:
         """Open Console session settings for the active native session."""
         settings = self._ensure_active_console_session_settings()
@@ -1652,6 +1670,9 @@ class ChatScreen(BaseAppScreen):
         # flow against a double-open (mirrors P1f's `_io_dialog_active`),
         # reset in a `finally` in both attach/detach workers.
         self._console_dictionary_dialog_active = False
+        # P2g-2 Task 4: same double-open guard, for the World Books
+        # inspector block's Attach/Detach picker flow.
+        self._console_worldbook_dialog_active = False
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -5788,6 +5809,7 @@ class ChatScreen(BaseAppScreen):
             dictionary_rows=self._console_dictionary_inspector_rows(),
             dictionary_actions=self._console_dictionary_inspector_actions(),
             world_book_rows=self._console_world_book_inspector_rows(),
+            world_book_actions=self._console_world_book_inspector_actions(),
         )
         return inspector_state
 
@@ -6097,6 +6119,162 @@ class ChatScreen(BaseAppScreen):
             await self.refresh_active_dictionaries_summary()
         finally:
             self._console_dictionary_dialog_active = False
+
+    def _console_world_book_inspector_actions(
+        self,
+    ) -> tuple[ConsoleInspectorAction, ...]:
+        """Attach/Detach actions for the Console world-book block (cache + conv id only)."""
+        conversation_id = self._current_console_rail_conversation_id()
+        summary = self._active_world_books_summary or {}
+        has_attached = bool(summary.get("world_books"))
+        return (
+            ConsoleInspectorAction(
+                "console-inspector-worldbooks-attach",
+                "Attach world book…",
+                enabled=bool(conversation_id),
+                disabled_reason="Start or load a conversation first",
+            ),
+            ConsoleInspectorAction(
+                "console-inspector-worldbooks-detach",
+                "Detach world book…",
+                enabled=has_attached,
+            ),
+        )
+
+    async def _console_worldbook_attach_worker(self) -> None:
+        """Pick and attach a world book to the active Console conversation.
+
+        Mirrors :meth:`_console_dictionary_attach_worker`: every await is
+        individually guarded so no exception escapes the worker boundary --
+        an uncaught worker exception kills the whole app under
+        ``run_worker(exit_on_error=True)``.
+        """
+        try:
+            conversation_id = self._current_console_rail_conversation_id()
+            if not conversation_id:
+                self.app_instance.notify(
+                    "Start or load a conversation first.", severity="warning"
+                )
+                return
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            if db is None:
+                return
+            from ...Character_Chat.world_book_manager import WorldBookManager
+            from ...Widgets.Persona_Widgets.world_book_picker import WorldBookPicker
+
+            def _attachable() -> list[dict]:
+                mgr = WorldBookManager(db)
+                attached_ids = {
+                    b.get("id")
+                    for b in mgr.get_world_books_for_conversation(
+                        str(conversation_id), enabled_only=False
+                    )
+                }
+                return [
+                    {"world_book_id": int(b.get("id")), "name": str(b.get("name"))}
+                    for b in (mgr.list_world_books(include_disabled=False) or [])
+                    if b.get("id") not in attached_ids
+                ]
+
+            try:
+                rows = await asyncio.to_thread(_attachable)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not load world books for the Console attach picker."
+                )
+                return
+            if not rows:
+                self.app_instance.notify(
+                    "No more world books to attach.", severity="information"
+                )
+                return
+            try:
+                picked = await self.app_instance.push_screen_wait(WorldBookPicker(rows))
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the Console world-book picker."
+                )
+                return
+            if not picked:
+                return
+            try:
+                await asyncio.to_thread(
+                    WorldBookManager(db).associate_world_book_with_conversation,
+                    str(conversation_id),
+                    int(picked),
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning("Could not attach the world book.")
+                self.app_instance.notify(f"Attach failed: {exc}", severity="error")
+                return
+            await self.refresh_active_world_books_summary()
+        finally:
+            self._console_worldbook_dialog_active = False
+
+    async def _console_worldbook_detach_worker(self) -> None:
+        """Pick and detach a world book from the active Console conversation.
+
+        Analogous to :meth:`_console_worldbook_attach_worker`.
+        """
+        try:
+            conversation_id = self._current_console_rail_conversation_id()
+            if not conversation_id:
+                self.app_instance.notify(
+                    "Start or load a conversation first.", severity="warning"
+                )
+                return
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            if db is None:
+                return
+            from ...Character_Chat.world_book_manager import WorldBookManager
+            from ...Widgets.Persona_Widgets.world_book_picker import WorldBookPicker
+
+            def _attached() -> list[dict]:
+                mgr = WorldBookManager(db)
+                return [
+                    {"world_book_id": int(b.get("id")), "name": str(b.get("name"))}
+                    for b in mgr.get_world_books_for_conversation(
+                        str(conversation_id), enabled_only=False
+                    )
+                ]
+
+            try:
+                rows = await asyncio.to_thread(_attached)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not load world books for the Console detach picker."
+                )
+                return
+            if not rows:
+                self.app_instance.notify(
+                    "No world books attached to this conversation.",
+                    severity="information",
+                )
+                return
+            try:
+                picked = await self.app_instance.push_screen_wait(
+                    WorldBookPicker(rows, title="Detach world book", confirm_label="Detach")
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the Console world-book picker."
+                )
+                return
+            if not picked:
+                return
+            try:
+                await asyncio.to_thread(
+                    WorldBookManager(db).disassociate_world_book_from_conversation,
+                    str(conversation_id),
+                    int(picked),
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning("Could not detach the world book.")
+                self.app_instance.notify(f"Detach failed: {exc}", severity="error")
+                return
+            await self.refresh_active_world_books_summary()
+        finally:
+            self._console_worldbook_dialog_active = False
 
     async def _console_dictionary_detach_worker(self) -> None:
         """Pick and detach a chat dictionary from the active Console conversation.
