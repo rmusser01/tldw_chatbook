@@ -2857,7 +2857,7 @@ async def test_console_left_rail_sections_use_available_space():
         assert body.region.y >= header.region.y + header.region.height
         assert body.region.height <= left_rail.region.height - header.region.height
         # The workspace tray lives inside its collapsible Session section
-        # body. (Task-398: the staged-context tray moved to the Inspector
+        # body. (Task-400: the staged-context tray moved to the Inspector
         # rail, so the left rail no longer hosts a Context section.)
         assert workspace_context.parent is session_body
         assert not list(left_rail.query("#console-staged-context-tray"))
@@ -3056,7 +3056,7 @@ async def test_console_empty_staged_context_omits_attach_action():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-staged-context-empty")
 
-        # Task-398: the tray lives in the Inspector rail, so its content is
+        # Task-400: the tray lives in the Inspector rail, so its content is
         # only display-visible once the Inspector is open.
         await _open_console_inspector(console, pilot)
 
@@ -3178,7 +3178,7 @@ async def test_console_native_control_bar_and_staged_context_reflect_pending_han
     }
     host = ConsoleHarness(app)
 
-    # Task-398: staged context renders in the Inspector rail. The pending
+    # Task-400: staged context renders in the Inspector rail. The pending
     # launch auto-open is suppressed while the rail is force-collapsed
     # (widths under 150 columns OUTSIDE the 118-128 standard-width contract,
     # which auto-opens a fresh Inspector on its own); 170 columns keeps the

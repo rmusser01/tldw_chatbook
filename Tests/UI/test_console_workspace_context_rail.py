@@ -1089,7 +1089,7 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         left_rail = console.query_one("#console-left-rail")
         staged_context = console.query_one("#console-staged-context-tray")
         workspace_context = console.query_one("#console-workspace-context")
-        # Task-398: staged sources (Context) split out of the left rail
+        # Task-400: staged sources (Context) split out of the left rail
         # entirely -- the tray renders in the Inspector rail body while the
         # workspace context keeps the left rail's Session section.
         assert workspace_context.parent.id == "console-rail-section-body-session"

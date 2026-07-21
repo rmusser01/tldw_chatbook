@@ -2894,7 +2894,7 @@ async def test_console_settings_modal_restores_freeform_model_after_provider_rou
 
 @pytest.mark.asyncio
 async def test_console_inspector_hosts_staged_context_above_source_readiness() -> None:
-    """Task-398: the Context section tops the Inspector, not the left rail.
+    """Task-400: the Context section tops the Inspector, not the left rail.
 
     The tray is the FIRST child of the Inspector rail body so it is visible
     without scrolling and reads above the run inspector's "Source Readiness"
@@ -2973,7 +2973,7 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         assert body.region.height <= left_rail.region.height - header.region.height
         assert settings.parent.id == "console-run-inspector"
         # Phase 1 nests each tray inside its own rail-section body, which is
-        # itself a direct child of the scrolling rail body. (Task-398: the
+        # itself a direct child of the scrolling rail body. (Task-400: the
         # staged-context tray moved to the Inspector rail.)
         assert workspace_context.parent is session_body
         assert session_body.parent is body

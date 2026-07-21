@@ -1,5 +1,5 @@
 ---
-id: TASK-398
+id: TASK-400
 title: >-
   Move Console Context (staged sources) section from left rail into Inspector
   above source readiness

@@ -147,7 +147,7 @@ def test_console_rail_preference_key_treats_whitespace_scope_ids_as_absent():
 
 
 def test_console_context_rail_badge_reflects_workspace_and_session_only():
-    # Task-398: staged-context signals moved to the Inspector badge with the
+    # Task-400: staged-context signals moved to the Inspector badge with the
     # staged-sources section; the left badge is workspace/session only.
     assert (
         build_console_context_rail_badge(workspace_label="Research workspace")
@@ -207,7 +207,7 @@ def test_console_context_rail_badge_ignores_workspace_fallback_labels():
 
 
 def test_console_inspector_rail_badge_ignores_empty_staged_summary():
-    # Task-398: the empty state carries no summary line (the tray renders its
+    # Task-400: the empty state carries no summary line (the tray renders its
     # own guidance copy), so the badge treats it as inactive by emptiness.
     empty_summary = ConsoleStagedContextState.empty().summary
     assert empty_summary == ""
@@ -465,7 +465,7 @@ def test_console_rail_badges_do_not_mutate_open_booleans():
 
     assert state.left_open is False
     assert state.right_open is False
-    # Task-398: staged context no longer badges the left handle; the blocked
+    # Task-400: staged context no longer badges the left handle; the blocked
     # provider row still wins the right badge over the staged count.
     assert state.left_badge == ""
     assert state.right_badge == "setup"
@@ -509,7 +509,7 @@ def test_console_rail_section_defaults():
     from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_SECTION_IDS
 
     prefs = ConsoleRailPreferences()
-    # Task-398: "context" (staged sources) is no longer a left-rail section;
+    # Task-400: "context" (staged sources) is no longer a left-rail section;
     # it renders in the Inspector rail instead.
     assert CONSOLE_RAIL_SECTION_IDS == (
         "session",
@@ -541,7 +541,7 @@ def test_serialize_console_rail_preferences_round_trips_sections():
 
 
 def test_coerce_console_rail_preferences_ignores_legacy_context_key():
-    # Task-398 migration path: payloads persisted while the rail still had a
+    # Task-400 migration path: payloads persisted while the rail still had a
     # Context section keep a context_open key; it must be ignored, not fail.
     with_legacy_key = coerce_console_rail_preferences(
         {"left_open": False, "context_open": False, "details_open": True}

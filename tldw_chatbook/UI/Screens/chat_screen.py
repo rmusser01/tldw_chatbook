@@ -6838,7 +6838,7 @@ class ChatScreen(BaseAppScreen):
                 rail_body = self.query_one(
                     "#console-inspector-rail-body", VerticalScroll
                 )
-                # Task-398: the Context (staged sources) tray is pinned at
+                # Task-400: the Context (staged sources) tray is pinned at
                 # the TOP of the rail body, so live-work cards keep their
                 # pre-move anchor -- mounted after the run-inspector block,
                 # at the bottom of the rail body.
@@ -7073,7 +7073,7 @@ class ChatScreen(BaseAppScreen):
                     left_rail_header.styles.max_height = 1
                     with left_rail_header:
                         # The "Context" (staged sources) section moved into
-                        # the Inspector rail (task-398); this title now only
+                        # the Inspector rail (task-400); this title now only
                         # names the rail itself.
                         rail_label = Static(
                             "Console context",
@@ -7381,7 +7381,7 @@ class ChatScreen(BaseAppScreen):
                         classes="console-inspector-rail-body",
                     ):
                         # Context (staged sources) section -- moved here from
-                        # the left rail (task-398). Pinned to the TOP of the
+                        # the left rail (task-400). Pinned to the TOP of the
                         # Inspector body so it is visible without scrolling
                         # and reads above the run inspector's Source
                         # Readiness section (splitting the monolithic

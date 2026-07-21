@@ -11,7 +11,7 @@ from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPS
 
 CONSOLE_RAIL_LEFT_DEFAULT_OPEN = True
 CONSOLE_RAIL_RIGHT_DEFAULT_OPEN = False
-# Task-398: the "context" (staged sources) section moved from the left rail
+# Task-400: the "context" (staged sources) section moved from the left rail
 # into the Inspector rail, so it is no longer a collapsible left-rail section.
 CONSOLE_RAIL_SECTION_IDS = ("session", "model", "details", "agent")
 CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
@@ -231,7 +231,7 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
 
     Returns:
         Rail preferences with invalid or missing fields replaced by defaults.
-        Legacy ``context_open`` keys (persisted before task-398 moved the
+        Legacy ``context_open`` keys (persisted before task-400 moved the
         staged-sources Context section into the Inspector rail) are ignored.
     """
     defaults = ConsoleRailPreferences()
@@ -293,7 +293,7 @@ def build_console_context_rail_badge(
 ) -> str:
     """Build the left rail badge from workspace/session state.
 
-    Task-398: staged-context signals moved to the Inspector rail badge along
+    Task-400: staged-context signals moved to the Inspector rail badge along
     with the staged-sources section itself, so the left badge summarizes only
     what the left rail actually holds (workspace + session context).
     """
@@ -376,7 +376,7 @@ def build_console_inspector_rail_badge(
 ) -> str:
     """Build the right rail badge from run, review, tool, and staged state.
 
-    Task-398: the staged-sources Context section lives in the Inspector rail,
+    Task-400: the staged-sources Context section lives in the Inspector rail,
     so its "N staged"/"staged" badge surfaces here. Action-required signals
     (failed/setup/blocked/approvals/tools) keep precedence; staged context
     outranks the informational artifact/source readiness fallbacks.

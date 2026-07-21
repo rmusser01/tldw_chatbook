@@ -2003,7 +2003,7 @@ async def test_stage_console_library_rag_launch_restage_replaces_single_card():
 
 @pytest.mark.asyncio
 async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom():
-    """Task-398: swaps keep the pre-move card slot; the tray stays on top.
+    """Task-400: swaps keep the pre-move card slot; the tray stays on top.
 
     ``_frame_console_region`` styles the tray IN PLACE (adds a class and an
     inline border, returns the same widget -- no wrapper container), so the

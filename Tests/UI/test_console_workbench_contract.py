@@ -438,7 +438,7 @@ async def test_console_control_bar_exposes_compact_visible_actions():
 
 @pytest.mark.asyncio
 async def test_console_left_rail_keeps_session_and_moves_staged_context_out():
-    """Task-398: staged sources render in the Inspector, not the left rail."""
+    """Task-400: staged sources render in the Inspector, not the left rail."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 

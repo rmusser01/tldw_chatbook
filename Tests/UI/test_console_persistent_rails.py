@@ -229,7 +229,7 @@ def _rail_prefs(
 
     The persisted shape carries the four collapsible left-rail section states
     alongside the left/right rail openness. Section states default to the
-    first-run layout (Session/Model open, Details/Agent collapsed). Task-398
+    first-run layout (Session/Model open, Details/Agent collapsed). Task-400
     dropped the Context section (staged sources moved to the Inspector), so
     serialized payloads no longer carry a ``context_open`` key.
     """
@@ -337,7 +337,7 @@ async def test_console_first_start_renders_left_rail_and_right_handle():
         assert _is_displayed(console.query_one("#console-workspace-context"))
         _assert_selector_hidden_or_absent(console, "#console-context-rail-handle")
         _assert_selector_hidden_or_absent(console, "#console-right-rail")
-        # Task-398: the staged-context tray lives in the Inspector rail, so it
+        # Task-400: the staged-context tray lives in the Inspector rail, so it
         # stays hidden behind the collapsed right handle on first start.
         _assert_selector_hidden_or_absent(console, "#console-staged-context-tray")
         _assert_selector_hidden_or_absent(console, "#console-run-inspector-state")
@@ -443,7 +443,7 @@ async def test_console_visible_rail_headers_are_left_aligned_and_collapse_button
         context_collapse = console.query_one("#console-context-rail-collapse", Button)
         assert context_title.has_class("console-rail-title")
         # Pane title names the rail itself (task-186); the "Context" (staged
-        # sources) section moved to the Inspector rail in task-398.
+        # sources) section moved to the Inspector rail in task-400.
         assert str(context_title.renderable) == "Console context"
         assert str(context_collapse.label) == "◂"
         assert context_collapse.tooltip == "Collapse Console context rail"
@@ -997,7 +997,7 @@ async def test_console_tool_badge_when_no_higher_priority_inspector_badge():
 
 @pytest.mark.asyncio
 async def test_console_staged_context_badge_lands_on_inspector_handle_not_left():
-    """Task-398: staged context badges the Inspector handle, not the left one.
+    """Task-400: staged context badges the Inspector handle, not the left one.
 
     Ready provider setup keeps the higher-precedence "setup" badge out of the
     way so the staged signal is observable. The pending launch auto-opens the
@@ -1180,7 +1180,7 @@ async def test_console_left_rail_renders_sections_with_details_collapsed():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-details")
 
-        # Task-398: no Context section in the left rail anymore -- staged
+        # Task-400: no Context section in the left rail anymore -- staged
         # sources render in the Inspector rail instead.
         for section_id in ("session", "model", "details"):
             assert _is_displayed(
