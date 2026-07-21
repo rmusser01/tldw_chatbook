@@ -1981,9 +1981,19 @@ class MCPWorkbench(Container):
         """
         event.stop()
         if event.action is HubAction.VIEW_DETAILS and event.server_key:
-            self._selected_server_key = event.server_key
+            # F1 (PR #722 Qodo bot review): route through `_select_server_
+            # key()` rather than assigning `_selected_server_key` directly --
+            # that shared path also tells the SERVICE which target is now
+            # active (`select_server_target()`) and re-collects `_snapshots`
+            # under it. Without it, a remediation button naming a target
+            # OTHER than the one the service already considers active would
+            # desync the two: `_collect_snapshots()`'s external-servers fetch
+            # stays scoped to the OLD (service) target while this workbench
+            # labels/caches whatever comes back under the NEW (UI-selected)
+            # key -- wrong-target data under the right-looking key. Mirrors
+            # the rail/table selection path, which already gets this right.
+            await self._select_server_key(event.server_key)
             self.set_mode("servers")
-            await self._sync_children()
         elif event.action is HubAction.OPEN_TOOL_CATALOG:
             self.set_mode("tools")
         elif event.action is HubAction.OPEN_AUDIT:
@@ -2018,9 +2028,12 @@ class MCPWorkbench(Container):
             and event.server_key.startswith("server:")
             and self._source == "server"
         ):
-            self._selected_server_key = event.server_key
+            # F1 (PR #722 Qodo bot review): same fix as VIEW_DETAILS above --
+            # route through `_select_server_key()` so a target switch
+            # implied by this remediation button actually reaches the
+            # service.
+            await self._select_server_key(event.server_key)
             self.set_mode("servers")
-            await self._sync_children()
             self.app.notify("Credentials are managed in the server's config.")
         elif event.server_key and event.server_key.startswith("server:"):
             # No more silent drops: CONNECT/VALIDATE/EDIT_CONFIG (local-only

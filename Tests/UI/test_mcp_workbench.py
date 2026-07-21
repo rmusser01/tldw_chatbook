@@ -6086,6 +6086,100 @@ async def test_finding_refresh_routes_to_findings_own_target_not_active_one():
         assert workbench._selected_server_key == "server:aux"
 
 
+class TargetSwitchTrackingHubService(FakeHubService):
+    """F1 (Qodo bot review, PR #722): `on_mcp_inspector_hub_action_
+    requested()`'s VIEW_DETAILS/OPEN_CREDENTIALS `server:`-key branches used
+    to set `_selected_server_key` directly and resync WITHOUT calling
+    `service.select_server_target()` first -- but `_collect_snapshots()`'s
+    external-servers fetch is scoped to whatever target the SERVICE ITSELF
+    considers active (`self.context.selected_active_server_id`), not the
+    workbench's own UI selection. A remediation button naming a target
+    other than the one already active would then label/cache the OLD
+    target's data under the NEW target's key.
+
+    Two targets ("main"/"aux", via `TwoTargetStore`) so a VIEW_DETAILS
+    remediation can name a genuinely non-active one. Tracks, mirroring
+    `MultiTargetAuditFindingsHubService`'s own per-fetch target list but for
+    the `external_servers` section `_collect_snapshots()` reads (rather
+    than "advanced"/"governance"):
+
+    - `select_server_target_calls`: every target id the service was told to
+      activate, in order.
+    - `external_servers_fetch_targets`: `self.context.selected_active_
+      server_id` AT THE MOMENT each `external_servers` fetch ran -- proving
+      which target's data actually came back, not just which key the
+      workbench labeled it under.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.target_store = TwoTargetStore()
+        self.context = UnifiedMCPContext(
+            selected_source="server", selected_active_server_id="main"
+        )
+        self.select_server_target_calls: list[str] = []
+        self.external_servers_fetch_targets: list[str | None] = []
+
+    async def select_server_target(self, server_id):
+        self.select_server_target_calls.append(server_id)
+        return await super().select_server_target(server_id)
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if self.context.selected_source == "server" and effective_section == "external_servers":
+            self.external_servers_fetch_targets.append(self.context.selected_active_server_id)
+            return {
+                "external_servers": [{"name": "ext"}],
+                "source": "server",
+                "section": "external_servers",
+            }
+        return await super().load_section(section)
+
+
+class TargetSwitchTrackingApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = TargetSwitchTrackingHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_view_details_remediation_for_non_active_target_switches_service_target_before_sync():
+    """F1 (PR #722 Qodo bot review): a VIEW_DETAILS remediation button
+    naming a `server:` key for a target OTHER than the one the SERVICE
+    already considers active must switch the service's own active target
+    BEFORE the resulting resync -- mirroring `_select_server_key()`'s
+    already-correct rail/table selection path -- rather than only updating
+    the workbench's local `_selected_server_key` and resyncing from
+    whatever was already loaded under the OLD target.
+    """
+    app = TargetSwitchTrackingApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        service = app.unified_mcp_service
+        # Mount-time reload auto-selects the service's own active target.
+        assert workbench._selected_server_key == "server:main"
+        assert service.external_servers_fetch_targets == ["main"]
+
+        workbench.post_message(
+            MCPInspector.HubActionRequested(HubAction.VIEW_DETAILS, "server:aux")
+        )
+        await pilot.pause()
+
+        # The service was actually told to switch targets...
+        assert service.select_server_target_calls == ["aux"]
+        # ...and the NEXT external-servers fetch landed on "aux", not the
+        # stale "main" -- proving the fetch/cache identity now matches the
+        # UI-selected key rather than silently reusing "main"'s data under
+        # the "aux" label.
+        assert service.external_servers_fetch_targets[-1] == "aux"
+        assert workbench.active_mode == "servers"
+        assert workbench._selected_server_key == "server:aux"
+
+
 @pytest.mark.asyncio
 async def test_unrouted_action_for_server_key_shows_managed_on_server_toast_not_silent_drop():
     """CONNECT/VALIDATE/EDIT_CONFIG (local-only lifecycle seams) posted with
