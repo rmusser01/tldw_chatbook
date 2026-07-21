@@ -4050,14 +4050,19 @@ async def test_console_settings_modal_save_as_default_writes_through_config(
     assert provider_section["model"] == "model-a"
     # llama_cpp already persists its endpoint under api_url in ModalHarness config.
     assert provider_section["api_url"] == "http://127.0.0.1:9099"
-    assert provider_section["temperature"] == 0.6
+    # TASK-342: sampling values land in the Console-saved-defaults section the
+    # boot builder ranks above chat_defaults; writing them into api_settings
+    # was inert (chat_defaults deliberately outranks it, f14d22dc3).
+    assert "temperature" not in provider_section
+    saved_section = sections["console.provider_defaults.llama_cpp"]
+    assert saved_section["temperature"] == 0.6
     # Streaming persists on the canonical chat_defaults key (bridged legacy key),
     # and the provider itself becomes the default (PR #606 review finding:
     # chat_defaults.provider is the ONLY source of the default provider).
     assert sections["chat_defaults"] == {"streaming": False, "provider": "llama_cpp"}
     # Never persist None-valued optionals.
-    assert "min_p" not in provider_section
-    assert "seed" not in provider_section
+    assert "min_p" not in saved_section
+    assert "seed" not in saved_section
 
 
 @pytest.mark.asyncio

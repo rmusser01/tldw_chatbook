@@ -715,9 +715,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     ) -> dict[str, dict[str, object]]:
         """Build config sections written through by Save as default.
 
-        Provider-scoped values land in ``[api_settings.<provider>]`` (the source
-        ``build_default_console_session_settings`` reads on the next boot);
-        streaming lands on the canonical ``chat_defaults.streaming`` key (the
+        Model and endpoint land in ``[api_settings.<provider>]`` (the sources
+        ``build_default_console_session_settings`` resolves provider/model
+        from). Sampling values land in ``[console.provider_defaults.
+        <provider>]`` — a section that only ever contains Console-saved
+        defaults, so the boot builder can rank it above ``chat_defaults``
+        without letting factory ``api_settings`` template scalars shadow
+        user-tuned globals (TASK-342; writing sampling into api_settings was
+        inert because chat_defaults deliberately outranks it, f14d22dc3).
+        Streaming lands on the canonical ``chat_defaults.streaming`` key (the
         legacy ``enable_streaming`` bridge only applies when the canonical key
         is absent). ``chat_defaults.provider`` is written too — the default
         provider itself resolves ONLY from that key, so omitting it would make
@@ -733,12 +739,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         base_url = (draft.base_url or "").strip()
         if base_url and self._provider_uses_base_url(draft.provider):
             provider_values[self._endpoint_persist_key(provider_key)] = base_url
+        saved_defaults: dict[str, object] = {}
         for field_name in PROVIDER_DEFAULT_PERSIST_FIELDS:
             value = getattr(draft, field_name)
             if value is not None:
-                provider_values[field_name] = value
+                saved_defaults[field_name] = value
         if provider_key and provider_values:
             sections[f"api_settings.{provider_key}"] = provider_values
+        if provider_key and saved_defaults:
+            sections[f"console.provider_defaults.{provider_key}"] = saved_defaults
         chat_defaults: dict[str, object] = {"streaming": bool(draft.streaming)}
         if provider_key:
             chat_defaults["provider"] = provider_key

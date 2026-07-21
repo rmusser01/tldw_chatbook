@@ -1,10 +1,16 @@
 ---
 id: TASK-342
-title: Fix Save-as-default writing temperature to a config location the boot path never reads
-status: To Do
-assignee: []
+title: >-
+  Fix Save-as-default writing temperature to a config location the boot path
+  never reads
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
-labels: [console, ux]
+updated_date: '2026-07-21 03:34'
+labels:
+  - console
+  - ux
 dependencies: []
 priority: high
 ---
@@ -23,5 +29,38 @@ With temperature set to 0.88, clicking 'Save as default' closed the modal with n
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Save as default should either round-trip all shown values, or the dialog should state that sampling values are session-only and not write them to config at all. Silent acceptance followed by silent reversion after restart is the worst combination
+- [x] #1 Save as default should either round-trip all shown values, or the dialog should state that sampling values are session-only and not write them to config at all. Silent acceptance followed by silent reversion after restart is the worst combination
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Align build_default_console_session_settings source precedence with the documented Save-as-default contract: (model_profile, provider_settings, chat_defaults) — provider-scoped saves beat global defaults, matching how model already resolves
+2. TDD: precedence unit test + parametrized round-trip over PROVIDER_DEFAULT_PERSIST_FIELDS
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+Two deliberate-but-conflicting contracts existed: f14d22dc3 (review
+feedback, pinned by tests) ranks chat_defaults ABOVE [api_settings.*]
+scalars so factory provider templates can't shadow user-tuned globals —
+which made Save-as-default's sampling writes into [api_settings.<provider>]
+permanently inert (the docstring claimed it was the boot source).
+
+Fix honors both: Save-as-default now writes sampling values to
+**[console.provider_defaults.<provider>]** — a section that only ever
+contains Console-saved defaults — and the boot builder ranks it
+(model_profile, console_saved_defaults, chat_defaults, provider_settings).
+Model/endpoint writes stay in api_settings (model already resolves
+provider-first). The f14d22dc3 protection is untouched and its tests stay
+green; a first attempt that blanket-reordered provider_settings above
+chat_defaults was caught by exactly those tests and reverted.
+
+Verified: precedence unit tests over all PROVIDER_DEFAULT_PERSIST_FIELDS +
+factory-shadow control (RED first); write-path test updated to the new
+section; against a real config file, api_settings temperature=0.88 alone
+boots 0.6 (protection intact) while console.provider_defaults 0.88 boots
+0.88 (round-trip fixed; the review's j5-74 evidence showed this reverting).
+Note: defaults saved by the modal BEFORE this fix sit inert in
+api_settings and need one re-save to migrate. Files:
+`Chat/console_session_settings.py`, `Widgets/Console/console_settings_modal.py`.

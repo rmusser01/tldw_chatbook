@@ -486,7 +486,7 @@ class ConsoleChatController:
             return
         derived = derive_console_session_title(draft)
         if derived:
-            self.store.rename_session(session.id, derived)
+            self.store.rename_session(session.id, derived)  # (session, persisted) — auto-title best-effort
 
     def update_provider_selection(self, selection: ConsoleProviderSelection) -> None:
         """Sync controller provider settings from a Console selection."""

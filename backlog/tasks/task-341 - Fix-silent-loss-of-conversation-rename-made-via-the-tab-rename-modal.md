@@ -1,10 +1,14 @@
 ---
 id: TASK-341
 title: Fix silent loss of conversation rename made via the tab rename modal
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
-labels: [console, ux]
+updated_date: '2026-07-21 03:34'
+labels:
+  - console
+  - ux
 dependencies: []
 priority: high
 ---
@@ -23,5 +27,34 @@ Resumed 'Websocket reconnect strategy', clicked its active tab to open 'Rename C
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Renaming the tab of a saved conversation should rename (or offer to rename) the conversation, or the modal must state that the change is tab-only and temporary
+- [x] #1 Renaming the tab of a saved conversation should rename (or offer to rename) the conversation, or the modal must state that the change is tab-only and temporary
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add update_conversation_title to ConsoleChatPersistence protocol + ChatPersistenceService (mirror update_conversation_system_prompt: version-checked db.update_conversation)
+2. rename_session persists when the session has a persisted_conversation_id, returns (session, persisted) like the system-prompt seam; in-memory title always applied
+3. _apply_rename warns when persistence fails
+4. TDD store-level (fake persistence recorder) + UI-level modal flow
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+Renaming now persists: `ConsoleChatStore.rename_session` returns
+`(session, persisted)` and, for sessions with a `persisted_conversation_id`,
+calls a new `update_conversation_title` persistence seam (protocol method +
+`ChatPersistenceService` implementation mirroring
+`update_conversation_system_prompt`: version-checked `db.update_conversation`).
+The in-memory rename is always applied; a persistence failure logs and
+returns `persisted=False`, and `_apply_rename` warns the user that the
+stored conversation kept its old name. Unsaved sessions are unchanged
+(title flows into `create_conversation` at first persist). The controller's
+auto-title path picks up persistence for free.
+
+Verified: 3 store-level tests (recorder/exploding/unsaved fakes) + a
+UI-level modal-flow test (`Tests/UI/test_console_rename_persistence.py`),
+reproduced RED first; live served-app check — renamed via the real tab
+modal, restarted the app, rail shows the new title. Files:
+`Chat/console_chat_store.py`, `Chat/chat_persistence_service.py`,
+`UI/Screens/chat_screen.py`.

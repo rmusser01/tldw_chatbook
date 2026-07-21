@@ -106,6 +106,14 @@ class ConsoleChatPersistence(Protocol):
     ) -> bool:
         """Set or clear the pinned response prefill on a conversation."""
 
+    def update_conversation_title(
+        self,
+        *,
+        conversation_id: str,
+        title: str,
+    ) -> bool:
+        """Persist a changed title for an already-saved conversation."""
+
     def get_attachments_for_messages(
         self, message_ids: Sequence[str]
     ) -> dict[str, list[dict[str, Any]]]:
@@ -259,14 +267,47 @@ class ConsoleChatStore:
         self.active_session_id = session.id
         return session
 
-    def rename_session(self, session_id: str, title: str) -> ConsoleChatSession:
-        """Rename an existing native Console session."""
+    def rename_session(
+        self, session_id: str, title: str
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Rename a native Console session, persisting a saved conversation's title.
+
+        TASK-341: the tab IS the conversation for a resumed saved
+        conversation — renaming only the in-memory session looked successful
+        (tab + transcript header updated) but evaporated on restart.
+
+        Returns:
+            ``(session, persisted)`` — ``persisted`` is ``False`` only when a
+            saved conversation's title update failed; the in-memory rename is
+            always applied (mirrors ``update_session_system_prompt``).
+        """
         normalized_title = title.strip()
         if not normalized_title:
             raise ValueError("Console chat session title cannot be blank.")
         session = self._session_or_raise(session_id)
         session.title = normalized_title
-        return session
+        persisted = True
+        if (
+            session.persisted_conversation_id is not None
+            and self.persistence is not None
+        ):
+            update_title = getattr(self.persistence, "update_conversation_title", None)
+            if callable(update_title):
+                try:
+                    update_title(
+                        conversation_id=session.persisted_conversation_id,
+                        title=normalized_title,
+                    )
+                except Exception:
+                    persisted = False
+                    logger.bind(
+                        session_id=session_id,
+                        conversation_id=session.persisted_conversation_id,
+                    ).exception(
+                        "Failed to persist Console session title; "
+                        "in-memory session keeps the applied value."
+                    )
+        return session, persisted
 
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
         """Close a native Console session and activate a neighboring session.

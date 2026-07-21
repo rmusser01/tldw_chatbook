@@ -1094,7 +1094,7 @@ class ChatScreen(BaseAppScreen):
             if result is None:
                 return
             try:
-                store.rename_session(session_id, result)
+                _renamed, persisted = store.rename_session(session_id, result)
             except ValueError as exc:
                 self.app_instance.notify(str(exc), severity="warning")
                 return
@@ -1103,6 +1103,12 @@ class ChatScreen(BaseAppScreen):
                     "Console tab is no longer available.", severity="error"
                 )
                 return
+            if not persisted:
+                self.app_instance.notify(
+                    "Renamed this tab, but saving the conversation title "
+                    "failed — the stored conversation keeps its old name.",
+                    severity="warning",
+                )
             # TASK-251: a renamed session's persisted conversation title
             # must appear in the browser on the very next sync.
             self._invalidate_console_persisted_rows_cache()
