@@ -1552,3 +1552,86 @@ async def test_skill_editor_existing_skill_still_renders_trust_panel():
     app = _EditorHost(mode="editor", editor_state=state, is_create=False)
     async with app.run_test() as pilot:
         assert pilot.app.query_one("#library-skill-trust-panel")
+
+
+# ---------------------------------------------------------------------------
+# task-417: the create-save recompose must land back on the action row
+# (not snap to the top away from the just-pressed Save), and "Saved." must
+# not persist as stale status across later edits/trust actions.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_scroll_to_actions_lands_on_save_row():
+    """With ``scroll_to_actions`` the freshly-mounted editor canvas scrolls
+    its action row into view instead of starting at the top."""
+    state = _editor_state()
+    app = _EditorHost(mode="editor", editor_state=state, scroll_to_actions=True)
+    async with app.run_test(size=(80, 12)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        canvas = pilot.app.query_one("#library-skills-canvas")
+        assert canvas.scroll_offset.y > 0
+
+
+@pytest.mark.asyncio
+async def test_create_save_success_arms_scroll_to_actions():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(available=[], blocked=[])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-skill").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        screen._apply_library_skill_save_success(
+            {"name": "fresh-skill", "description": "d", "body": "b", "version": 1},
+            is_create=True,
+        )
+        assert screen._library_skill_scroll_pending is True
+
+
+@pytest.mark.asyncio
+async def test_mark_dirty_clears_stale_saved_status():
+    """Typing after a save must clear the lingering 'Saved.' -- the status
+    otherwise stays wrong across any number of later edits."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(available=[], blocked=[])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-skill").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        screen._update_library_skill_status_static("Saved.")
+        screen.query_one("#library-skill-name", Input).value = "editing-again"
+        await pilot.pause()
+
+        assert screen._library_skill_status == ""
+        status = screen.query_one("#library-skill-save-status", Static)
+        assert str(status.renderable) == ""
+
+
+@pytest.mark.asyncio
+async def test_trust_review_press_clears_stale_saved_status():
+    cleared: list[str] = []
+    fake = SimpleNamespace(
+        _update_library_skill_status_static=lambda text: cleared.append(text),
+        _review_library_skill_trust=lambda: None,
+        run_worker=lambda coro, **kwargs: None,
+    )
+    event = SimpleNamespace(stop=lambda: None)
+    LibraryScreen.handle_library_skill_trust_review(fake, event)
+    assert cleared == [""]

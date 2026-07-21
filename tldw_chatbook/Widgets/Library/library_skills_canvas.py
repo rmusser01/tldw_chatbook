@@ -324,6 +324,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
         is_create: bool = False,
         dirty: bool = False,
         confirming_delete: bool = False,
+        scroll_to_actions: bool = False,
         import_open: bool = False,
         import_path: str = "",
         import_status: str = "",
@@ -342,6 +343,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
         self.is_create = is_create
         self.dirty = dirty
         self.confirming_delete = confirming_delete
+        self.scroll_to_actions = scroll_to_actions
         self.import_open = import_open
         self.import_path = import_path
         self.import_status = import_status
@@ -353,6 +355,26 @@ class LibrarySkillsListCanvas(VerticalScroll):
             yield from self._compose_editor()
             return
         yield from self._compose_list()
+
+    def on_mount(self) -> None:
+        """task-417: a recompose lands a fresh canvas scrolled to the top.
+
+        When the screen armed ``scroll_to_actions`` (the create-save
+        snapshot recompose), bring the action row back into view so the
+        user still sees the Save button and its status line they just
+        acted on.
+        """
+        if not (self.scroll_to_actions and self.mode == "editor"):
+            return
+
+        def _scroll_to_save_row() -> None:
+            try:
+                target = self.query_one("#library-skill-save")
+            except Exception:
+                return
+            target.scroll_visible(animate=False)
+
+        self.call_after_refresh(_scroll_to_save_row)
 
     def _compose_list(self) -> ComposeResult:
         state = self.state
