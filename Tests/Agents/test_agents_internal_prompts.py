@@ -73,3 +73,21 @@ def test_is_subagent_detects_overridden_and_shipped_prefix(scratch_config):
         bridge._StreamingModelAdapter._is_subagent(_history_with_system(shipped))
         is True
     )
+
+
+def test_is_subagent_false_for_ordinary_system_turn_under_active_override(
+    scratch_config,
+):
+    from tldw_chatbook.Chat import console_agent_bridge as bridge
+
+    scratch_config(
+        '[internal_prompts.agents]\nsubagent_system = "CUSTOM SUBAGENT RULES"\n'
+    )
+    # An ordinary Console session system prompt sharing no prefix with either
+    # the override or the shipped subagent prompt must NOT be classified as a
+    # subagent turn.
+    ordinary = "You are a helpful assistant for this Console session."
+    assert (
+        bridge._StreamingModelAdapter._is_subagent(_history_with_system(ordinary))
+        is False
+    )

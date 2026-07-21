@@ -68,6 +68,7 @@ register(
         used_in="Chunking/Chunk_Lib.py (chunk_text's \"summarize\" method, via _rolling_summarize)",
         default="Rewrite this text in summarized form.",
         legacy_config_path="chunking_config.summarize_system_prompt",
+        applies="process restart (frozen at Chunk_Lib import; overrides apply on next app start for default-option callers)",
         contract_note=(
             "This legacy key has no entry in the shipped default TOML, so "
             "_shipped_default_for returns None and any user-set value at "
