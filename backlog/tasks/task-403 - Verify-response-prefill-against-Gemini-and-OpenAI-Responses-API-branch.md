@@ -1,11 +1,11 @@
 ---
 id: TASK-403
 title: Verify response prefill against Gemini and OpenAI Responses-API branch
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 03:48'
-updated_date: '2026-07-21 07:12'
+updated_date: '2026-07-21 14:03'
 labels: []
 dependencies: []
 ---
@@ -18,7 +18,7 @@ Spec section 5/8 verification items left open (no key/config available at implem
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Gemini prefilled send verified accepted or guarded
+- [x] #1 Gemini prefilled send verified accepted or guarded
 - [x] #2 Responses-API branch verified accepted or guarded
 - [x] #3 Spec section 8 updated with outcomes
 <!-- AC:END -->
@@ -26,5 +26,5 @@ Spec section 5/8 verification items left open (no key/config available at implem
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Responses-API leg VERIFIED ACCEPTED 2026-07-21: raw /v1/responses call with the handler's exact trailing-assistant input shape (gpt-5-mini, reasoning.effort=low) succeeds; influence-not-literal continuation like Chat Completions; no guard needed. Through-the-handler check blocked by pre-existing unrelated bug (handler force-sends temperature/top_p which reasoning models 400) — filed as task-404. Gemini leg remains BLOCKED: no Google API key in this environment; AC #1 left open, task stays In Progress until a key is available.
+COMPLETE 2026-07-21. Gemini leg: ACCEPTED with literal continuation, verified both raw (generateContent, trailing model turn) and through chat_with_google's remap/alternation path on gemini-flash-lite-latest (free-tier 429s are quota noise; gemini-2.5-flash-lite 404s as retired-for-new-users — use -latest aliases). Responses-API leg: verified accepted earlier (see notes below). No provider requires the skip+warn guard; it remains unbuilt by design. Spec §8 records all outcomes.
 <!-- SECTION:NOTES:END -->
