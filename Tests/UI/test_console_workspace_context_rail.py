@@ -15,7 +15,6 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_models import ChatSessionData
-from tldw_chatbook.Chat.console_glyphs import GLYPH_ACTIVE
 from tldw_chatbook.Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
@@ -978,14 +977,18 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
             is False
         )
         assert len(console.query("#console-workspace-conversations-toggle")) == 0
+        # Row names wrap at the rail budget, so match against the
+        # whitespace-normalized label rather than a single raw line.
         assert any(
-            "Collapse Chat A" in text for text in _conversation_row_texts(console)
+            "Collapse Chat A" in " ".join(text.split())
+            for text in _conversation_row_texts(console)
         )
 
         _browser_group_toggle(console, "section:chats").press()
         await pilot.pause(0.1)
         assert all(
-            "Collapse Chat A" not in text for text in _conversation_row_texts(console)
+            "Collapse Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
         )
         collapsed_groups = app.app_config["console"]["conversation_browser"][
             "collapsed_groups"
@@ -997,7 +1000,8 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversations")) == 1
         assert all(
-            "Collapse Chat A" not in text for text in _conversation_row_texts(console)
+            "Collapse Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
         )
 
         service.set_active_workspace(default_workspace.workspace_id)
@@ -1005,7 +1009,8 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversations")) == 1
         assert all(
-            "Collapse Chat A" not in text for text in _conversation_row_texts(console)
+            "Collapse Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
         )
 
 
@@ -1405,6 +1410,11 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
     ``test_console_send_after_workspace_switch_persists_to_selected_workspace``
     (Tests/UI/test_console_native_chat_flow.py, the "shared-open-chat"
     case) already locks in. This test now drives the marker the same way.
+
+    Since the flush-left row rework, rows no longer carry a textual
+    ``GLYPH_ACTIVE`` prefix; the active row is marked solely by the
+    ``console-workspace-conversation-row-selected`` class, which is what
+    this test asserts on.
     """
     app = _build_test_app()
     service = app.workspace_registry_service
@@ -1436,9 +1446,11 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
         )
         await pilot.pause()
 
-        row_texts = _conversation_row_texts(console)
         active_row_texts = [
-            text for text in row_texts if text.startswith(f"{GLYPH_ACTIVE} ")
+            " ".join(str(row.label).split())
+            for row in console.query(".console-workspace-conversation-row")
+            if row.display
+            and row.has_class("console-workspace-conversation-row-selected")
         ]
         assert active_row_texts == [
             text for text in active_row_texts if "Planning thread" in text
@@ -1571,8 +1583,9 @@ def test_console_workspace_aggregate_height_pins_badge_row_cost() -> None:
         ConsoleConversationBrowserRow,
     )
 
-    # Plain row (no subagent_count): costs 3px (base 3 + delta 0).
-    # Badge row (subagent_count > 0): costs 4px (base 3 + delta 1).
+    # At budget 20 every title here is a single name line, so:
+    # Plain row (no subagent_count): costs 3px (1 name + 1 metadata + 1 margin).
+    # Badge row (subagent_count > 0): costs 4px (plus a dedicated badge line).
     plain_rows = tuple(
         ConsoleConversationBrowserRow(
             row_key=f"plain-{i}",
@@ -1614,12 +1627,16 @@ def test_console_workspace_aggregate_height_pins_badge_row_cost() -> None:
     # Expected sum: 3 plain rows * 3px/row + 2 badge rows * 4px/row = 17px.
     expected_height = 3 * 3 + 2 * 4
     actual_height = ConsoleWorkspaceContextTray._conversation_browser_rows_height(
-        mixed_rows
+        mixed_rows, 20
     )
 
     assert actual_height == expected_height == 17
     assert (
         actual_height
-        == ConsoleWorkspaceContextTray._conversation_browser_rows_height(plain_rows)
-        + ConsoleWorkspaceContextTray._conversation_browser_rows_height(badge_rows)
+        == ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+            plain_rows, 20
+        )
+        + ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+            badge_rows, 20
+        )
     )

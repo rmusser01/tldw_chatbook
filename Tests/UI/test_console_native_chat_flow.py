@@ -77,22 +77,27 @@ def _configure_native_ready_console(app, model: str = "local-model") -> None:
     app.chat_api_model_value = model
 
 
-def test_console_workspace_conversation_visible_title_is_rail_safe():
-    """Verify long workspace conversation titles fit in the left rail."""
-    assert (
-        ConsoleWorkspaceContextTray._conversation_visible_title(
-            "Console UAT Workspace Chat"
-        )
-        == "Console UAT Works..."
+def test_console_workspace_conversation_titles_wrap_instead_of_truncating():
+    """Long workspace conversation titles wrap at the rail budget."""
+    from tldw_chatbook.Widgets.Console.console_workspace_context import (
+        wrap_console_conversation_title,
+    )
+
+    assert wrap_console_conversation_title("Console UAT Workspace Chat", 20) == (
+        "Console UAT",
+        "Workspace Chat",
     )
 
 
 def test_console_workspace_conversation_title_preserves_duplicate_suffix():
     """Duplicate-title disambiguators should remain visible in rail labels."""
-    title = "Chat [deadbeef]"
+    from tldw_chatbook.Widgets.Console.console_workspace_context import (
+        wrap_console_conversation_title,
+    )
 
+    title = "Chat [deadbeef]"
     assert ConsoleWorkspaceContextTray._conversation_title(title) == title
-    assert ConsoleWorkspaceContextTray._conversation_visible_title(title) == title
+    assert wrap_console_conversation_title(title, 20) == (title,)
 
 
 def test_console_workspace_status_row_empty_value_uses_unavailable():
@@ -728,6 +733,54 @@ def _console_workspace_conversation_texts(console) -> list[str]:
     return [_widget_text(row) for row in rows]
 
 
+def _normalized_row_text(row) -> str:
+    """Row label with wrapped name lines rejoined for containment checks.
+
+    Rail row names wrap at the rail budget, so a title like "Needle in
+    Workspace B" renders across two label lines; joining on whitespace lets
+    tests keep matching the full title.
+    """
+    return " ".join(_widget_text(row).split())
+
+
+def _row_is_selected(row) -> bool:
+    """Whether a rail row is marked active.
+
+    The flush-left row rework removed the textual active marker ("▸ ");
+    selection is expressed solely via the selected row class.
+    """
+    return row.has_class("console-workspace-conversation-row-selected")
+
+
+def _selected_workspace_conversation_texts(console) -> list[str]:
+    """Whitespace-normalized labels of the rows marked active."""
+    return [
+        _normalized_row_text(row)
+        for row in console.query(".console-workspace-conversation-row")
+        if _row_is_selected(row)
+    ]
+
+
+def _console_conversation_browser_rows(console):
+    """Flatten every row out of the live grouped conversation-browser state.
+
+    ``ConsoleConversationBrowserRow.updated_label`` is only populated by
+    ``_normalize_input_row`` inside ``build_console_conversation_browser_state``
+    (see ``tldw_chatbook/Workspaces/conversation_browser_state.py``); the raw
+    ``_native_console_browser_rows``/``_membership_console_browser_rows``
+    accessors return un-normalized input rows whose ``updated_label`` is
+    always the dataclass default (``""``). Rebuilding the full context state
+    is the seam that actually feeds the rendered row label.
+    """
+    browser = console._build_console_workspace_context_state().conversation_browser
+    rows = []
+    for section in browser.sections:
+        rows.extend(section.rows)
+        for group in section.groups:
+            rows.extend(group.rows)
+    return rows
+
+
 def _workspace_conversation_row_by_id(console, conversation_id: str):
     for row in console.query(".console-workspace-conversation-row"):
         if getattr(row, "conversation_id", None) == conversation_id:
@@ -870,12 +923,19 @@ async def _wait_for_workspace_conversation_text(
     selected: bool | None = None,
     attempts: int = 40,
 ) -> list[str]:
+    """Wait for a rail row whose (wrap-normalized) label contains ``expected``.
+
+    Returns the normalized label texts of every rail row. ``selected`` gates
+    the match on the row's active state (the selected row class -- rows no
+    longer carry a textual marker prefix).
+    """
     for _ in range(attempts):
-        row_texts = _console_workspace_conversation_texts(console)
-        for text in row_texts:
+        rows = list(console.query(".console-workspace-conversation-row"))
+        row_texts = [_normalized_row_text(row) for row in rows]
+        for row, text in zip(rows, row_texts):
             if expected not in text:
                 continue
-            if selected is None or text.startswith("▸ ") == selected:
+            if selected is None or _row_is_selected(row) == selected:
                 return row_texts
         await pilot.pause(0.05)
     raise AssertionError(
@@ -1727,7 +1787,7 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
 
         row = console.query_one("#console-workspace-conversation-0")
         row_text = _widget_text(row)
-        assert row_text.startswith("▸ ")
+        assert _row_is_selected(row)
         # Once the first message is accepted, the default "Chat 1" title is
         # replaced by an auto-title derived from the message (see
         # _maybe_auto_title_session in console_chat_controller.py).
@@ -1737,9 +1797,14 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
         assert "Chats" in row_text
         assert "workspace-thread" not in row_text
         assert not re.search(r"\[[0-9a-f]{8}\]", row_text)
-        # The secondary line also carries a relative age label appended after
-        # persistence (e.g. "now", "2m", "1h"...).
-        assert "now" in row_text
+        # The row metadata also carries a relative age label appended after
+        # persistence (e.g. "now", "2m", "1h"...). The rendered metadata line
+        # cell-truncates at the rail budget, so assert the age at the
+        # normalized browser-state seam that feeds the row label instead.
+        assert any(
+            "now" in str(getattr(state_row, "updated_label", ""))
+            for state_row in _console_conversation_browser_rows(console)
+        )
         assert len(console.query("#console-workspace-empty-conversations")) == 0
 
 
@@ -3829,9 +3894,10 @@ async def test_console_conversation_browser_search_filters_all_groups():
             raise AssertionError(f"Needle row not found. Rows: {row_texts!r}")
         row_texts = _console_workspace_conversation_texts(console)
 
-        assert any("Needle in Workspa" in text for text in row_texts)
-        assert any("Workspace B" in text for text in row_texts)
-        assert all("Alpha in Workspace A" not in text for text in row_texts)
+        normalized_texts = [" ".join(text.split()) for text in row_texts]
+        assert any("Needle in Workspa" in text for text in normalized_texts)
+        assert any("Workspace B" in text for text in normalized_texts)
+        assert all("Alpha in Workspace A" not in text for text in normalized_texts)
 
 
 @pytest.mark.asyncio
@@ -3998,7 +4064,7 @@ async def test_console_browser_selecting_duplicate_membership_row_ignores_other_
         )
 
         assert ws_b_row is not None
-        assert not _widget_text(ws_b_row).startswith("▸ ")
+        assert not _row_is_selected(ws_b_row)
         assert (
             console._find_console_browser_row(
                 "workspace:missing:conversation:shared-open-chat",
@@ -4026,7 +4092,7 @@ async def test_console_browser_selecting_duplicate_membership_row_ignores_other_
             row
             for row in console.query(".console-workspace-conversation-row")
             if getattr(row, "conversation_id", None) == "shared-open-chat"
-            and _widget_text(row).startswith("▸ ")
+            and _row_is_selected(row)
         ]
         assert len(selected_shared_rows) == 1
         assert (
@@ -4386,7 +4452,7 @@ async def test_console_conversation_browser_dedupes_membership_and_persisted_sam
         assert getattr(rows[0], "row_key", None) == (
             "workspace:ws-a:conversation:same-workspace-conversation"
         )
-        assert "Membership Title" in _widget_text(rows[0])
+        assert "Membership Title" in _normalized_row_text(rows[0])
         assert len(stars) == 1
 
 
@@ -4473,7 +4539,7 @@ async def test_console_conversation_browser_group_collapse_persists_locally():
         await pilot.pause(0.1)
 
         assert all(
-            "Collapse Target" not in text
+            "Collapse Target" not in " ".join(text.split())
             for text in _console_workspace_conversation_texts(console)
         )
         collapsed_groups = app.app_config["console"]["conversation_browser"][
@@ -4484,7 +4550,7 @@ async def test_console_conversation_browser_group_collapse_persists_locally():
         console._sync_console_workspace_context()
         await pilot.pause(0.1)
         assert all(
-            "Collapse Target" not in text
+            "Collapse Target" not in " ".join(text.split())
             for text in _console_workspace_conversation_texts(console)
         )
 
@@ -4509,7 +4575,7 @@ async def test_console_conversation_browser_workspaces_section_collapse_persists
             console, pilot, "#console-workspace-conversation-search"
         )
         assert any(
-            "Section Collapse" in text
+            "Section Collapse" in " ".join(text.split())
             for text in _console_workspace_conversation_texts(console)
         )
 
@@ -4517,7 +4583,7 @@ async def test_console_conversation_browser_workspaces_section_collapse_persists
         await pilot.pause(0.1)
 
         assert all(
-            "Section Collapse" not in text
+            "Section Collapse" not in " ".join(text.split())
             for text in _console_workspace_conversation_texts(console)
         )
         collapsed_groups = app.app_config["console"]["conversation_browser"][
@@ -4528,7 +4594,7 @@ async def test_console_conversation_browser_workspaces_section_collapse_persists
         console._sync_console_workspace_context()
         await pilot.pause(0.1)
         assert all(
-            "Section Collapse" not in text
+            "Section Collapse" not in " ".join(text.split())
             for text in _console_workspace_conversation_texts(console)
         )
 
@@ -4675,8 +4741,8 @@ async def test_console_conversation_browser_default_includes_sync_persisted_rows
         assert "Starred" in visible_text
         assert "Workspaces" in visible_text
         assert "Chats" in visible_text
-        assert "Global persisted" in _widget_text(global_row)
-        assert "Workspace A persi" in _widget_text(workspace_row)
+        assert "Global persisted" in _normalized_row_text(global_row)
+        assert "Workspace A persi" in _normalized_row_text(workspace_row)
         assert any(
             call.get("scope_type") == "global"
             for call in app.chat_conversation_scope_service.list_calls
@@ -4746,8 +4812,8 @@ async def test_console_conversation_browser_default_prefers_sync_local_service()
             "local-workspace-default",
         )
 
-        assert "Local global default" in _widget_text(global_row)
-        assert "Local Workspace" in _widget_text(workspace_row)
+        assert "Local global default" in _normalized_row_text(global_row)
+        assert "Local Workspace" in _normalized_row_text(workspace_row)
         assert any(
             call.get("scope_type") == "global"
             for call in app.local_chat_conversation_service.list_calls
@@ -4817,8 +4883,8 @@ async def test_console_conversation_browser_default_omits_mode_for_local_service
             "local-no-mode-workspace",
         )
 
-        assert "No mode local global" in _widget_text(global_row)
-        assert "No mode Workspace" in _widget_text(workspace_row)
+        assert "No mode local global" in _normalized_row_text(global_row)
+        assert "No mode Workspace" in _normalized_row_text(workspace_row)
         assert all(
             "mode" not in call
             for call in app.local_chat_conversation_service.list_calls
@@ -4873,8 +4939,8 @@ async def test_console_conversation_browser_search_omits_mode_for_local_service(
             "local-search-workspace",
         )
 
-        assert "Needle local global" in _widget_text(global_row)
-        assert "Needle local Wor" in _widget_text(workspace_row)
+        assert "Needle local global" in _normalized_row_text(global_row)
+        assert "Needle local Wor" in _normalized_row_text(workspace_row)
         for _ in range(80):
             if console._console_conversation_browser_total is not None:
                 break
@@ -4964,7 +5030,10 @@ async def test_console_new_chat_tab_appears_in_workspace_conversation_rail():
         row_texts = _console_workspace_conversation_texts(console)
         assert any("Chat 1" in text for text in row_texts)
         assert any("Chat 2" in text for text in row_texts)
-        assert any(text.startswith("▸ ") and "Chat 2" in text for text in row_texts)
+        assert any(
+            "Chat 2" in text
+            for text in _selected_workspace_conversation_texts(console)
+        )
 
 
 @pytest.mark.asyncio
@@ -5014,7 +5083,7 @@ async def test_console_workspace_conversation_search_includes_all_workspace_pers
             selected=False,
         )
         row_texts = _console_workspace_conversation_texts(console)
-        assert any("Alpha persisted" in text for text in row_texts)
+        assert any("Alpha persisted" in " ".join(text.split()) for text in row_texts)
         assert any(
             getattr(row, "conversation_id", None) == "other-alpha"
             for row in console.query(".console-workspace-conversation-row")
@@ -5198,13 +5267,16 @@ async def test_console_workspace_conversation_search_selection_invalidates_pendi
         assert "Slow Alpha" in _static_plain_text(
             console.query_one("#console-workspace-selected-conversation", Static)
         )
-        row_texts = await _wait_for_workspace_conversation_text(
+        await _wait_for_workspace_conversation_text(
             console,
             pilot,
             "Slow Alpha",
             selected=True,
         )
-        assert any(text.startswith("▸ ") and "Slow Alpha" in text for text in row_texts)
+        assert any(
+            "Slow Alpha" in text
+            for text in _selected_workspace_conversation_texts(console)
+        )
 
 
 @pytest.mark.asyncio
@@ -5382,7 +5454,9 @@ async def test_console_workspace_conversation_search_shows_local_rows_before_slo
 
             assert "1 match" in _visible_text(console)
             row_texts = _console_workspace_conversation_texts(console)
-            assert any("Alpha membership" in text for text in row_texts)
+            assert any(
+                "Alpha membership" in " ".join(text.split()) for text in row_texts
+            )
         finally:
             app.chat_conversation_scope_service.release.set()
             await pilot.pause(0.2)
@@ -5424,7 +5498,9 @@ async def test_console_workspace_conversation_search_filters_all_workspace_membe
             console, pilot, "Alpha membership", selected=False
         )
         row_texts = _console_workspace_conversation_texts(console)
-        assert any("Alpha membership" in text for text in row_texts)
+        assert any(
+            "Alpha membership" in " ".join(text.split()) for text in row_texts
+        )
         assert any(
             getattr(row, "conversation_id", None) == "member-other-alpha"
             for row in console.query(".console-workspace-conversation-row")
@@ -5514,7 +5590,8 @@ async def test_console_new_chat_tab_promotes_active_native_session_in_workspace_
             selected=True,
         )
         assert "Chat 2" in row_texts[0]
-        assert row_texts[0].startswith("▸ ")
+        first_row = next(iter(console.query(".console-workspace-conversation-row")))
+        assert _row_is_selected(first_row)
 
 
 @pytest.mark.asyncio
@@ -5588,13 +5665,16 @@ async def test_console_workspace_rail_new_conversation_creates_default_workspace
             session for session in store.sessions() if session.id == second
         )
         assert active_session.workspace_id == DEFAULT_WORKSPACE_ID
-        row_texts = await _wait_for_workspace_conversation_text(
+        await _wait_for_workspace_conversation_text(
             console,
             pilot,
             "Chat 2",
             selected=True,
         )
-        assert any(text.startswith("▸ ") and "Chat 2" in text for text in row_texts)
+        assert any(
+            "Chat 2" in text
+            for text in _selected_workspace_conversation_texts(console)
+        )
         assert (
             _static_plain_text(
                 console.query_one("#console-workspace-runtime-label", Static)
@@ -5644,13 +5724,16 @@ async def test_console_workspace_rail_new_conversation_stays_scoped_to_active_wo
         assert active_session.workspace_id == "ws-a"
         active_title = active_session.title
 
-        row_texts = await _wait_for_workspace_conversation_text(
+        await _wait_for_workspace_conversation_text(
             console,
             pilot,
             active_title,
             selected=True,
         )
-        assert any(text.startswith("▸ ") and active_title in text for text in row_texts)
+        assert any(
+            active_title in text
+            for text in _selected_workspace_conversation_texts(console)
+        )
 
         console.query_one("#console-change-workspace", Button).press()
         modal_screen = await _wait_for_workspace_switcher_modal(host, pilot)
@@ -5697,13 +5780,16 @@ async def test_console_workspace_conversation_row_switches_native_session():
         )
 
         assert store.active_session_id == first.id
-        row_texts = await _wait_for_workspace_conversation_text(
+        await _wait_for_workspace_conversation_text(
             console,
             pilot,
             "Chat 1",
             selected=True,
         )
-        assert any(text.startswith("▸ ") and "Chat 1" in text for text in row_texts)
+        assert any(
+            "Chat 1" in text
+            for text in _selected_workspace_conversation_texts(console)
+        )
 
 
 @pytest.mark.asyncio
@@ -5780,15 +5866,15 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
             if message.content == "resume saved assistant reply"
         ]
         assert assistant_messages[-1].role is ConsoleMessageRole.ASSISTANT
-        row_texts = await _wait_for_workspace_conversation_text(
+        await _wait_for_workspace_conversation_text(
             console,
             pilot,
             "Saved research chat",
             selected=True,
         )
         assert any(
-            text.startswith("▸ ") and "Saved research chat" in text
-            for text in row_texts
+            "Saved research chat" in text
+            for text in _selected_workspace_conversation_texts(console)
         )
         selected_row = _workspace_conversation_row_by_id(console, "persisted-chat-1")
         assert selected_row is not None
@@ -5943,13 +6029,13 @@ async def test_console_workspace_conversation_resume_uses_persisted_workspace():
         assert (
             service.get_active_workspace().workspace_id == target_workspace.workspace_id
         )
-        row_texts = await _wait_for_workspace_conversation_text(
+        await _wait_for_workspace_conversation_text(
             console,
             pilot,
             "Saved cross works",
             selected=True,
         )
-        assert any(text.startswith("▸ ") for text in row_texts)
+        assert _selected_workspace_conversation_texts(console)
 
 
 @pytest.mark.asyncio
@@ -6032,14 +6118,15 @@ async def test_console_workspace_conversation_resume_uses_real_local_services(tm
         assert active_session.persisted_conversation_id == conversation_id
         assert active_session.title == "Real saved chat"
         assert active_session.workspace_id == workspace.workspace_id
+        await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Real saved chat",
+            selected=True,
+        )
         assert any(
-            text.startswith("▸ ") and "Real saved chat" in text
-            for text in await _wait_for_workspace_conversation_text(
-                console,
-                pilot,
-                "Real saved chat",
-                selected=True,
-            )
+            "Real saved chat" in text
+            for text in _selected_workspace_conversation_texts(console)
         )
         left_rail_text = _visible_text(console.query_one("#console-left-rail"))
         console._set_console_rail_preference(right_open=True, notify_on_failure=False)
@@ -6120,7 +6207,7 @@ async def test_console_workspace_conversation_search_keeps_selected_global_nativ
         console.query_one("#console-workspace-conversation-search", Input).focus()
         await _set_console_conversation_browser_search(console, pilot, "global")
         await _wait_for_text(console, pilot, "1 match")
-        row_texts = await _wait_for_workspace_conversation_text(
+        await _wait_for_workspace_conversation_text(
             console,
             pilot,
             "Global Search Chat",
@@ -6128,7 +6215,8 @@ async def test_console_workspace_conversation_search_keeps_selected_global_nativ
         )
 
         assert any(
-            text.startswith("▸ ") and "Global Search Chat" in text for text in row_texts
+            "Global Search Chat" in text
+            for text in _selected_workspace_conversation_texts(console)
         )
 
 

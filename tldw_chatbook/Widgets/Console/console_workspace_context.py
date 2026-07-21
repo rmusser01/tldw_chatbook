@@ -12,7 +12,6 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Chat.console_glyphs import (
-    GLYPH_ACTIVE,
     GLYPH_COLLAPSED,
     GLYPH_EXPANDED,
 )
@@ -23,7 +22,6 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserState,
 )
 from tldw_chatbook.Workspaces.display_state import (
-    CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT,
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationSectionState,
 )
@@ -50,15 +48,8 @@ _STATUS_DETAIL_LABELS = {
     "active": "active session",
     "open": "open session",
 }
-_MAX_CONVERSATION_ROW_TITLE = 20
 _CONVERSATION_BROWSER_HEADER_HEIGHT = 1
 _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT = 1
-_ROW_BUTTON_HEIGHT = 2
-# Button height for a conversation row that carries a `[N Sub-Agents]` badge.
-# One line more than a plain two-line row (title + secondary-detail) so the
-# badge renders on its own dedicated trailing line -- see
-# `format_console_conversation_row_label` for why that decoupling matters.
-_ROW_BUTTON_HEIGHT_WITH_BADGE = 3
 
 _TITLE_WRAP_MAX_LINES = 2
 _MIN_TITLE_WRAP_BUDGET = 10
@@ -129,19 +120,30 @@ def wrap_console_conversation_title(title: str, budget: int) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def _conversation_row_render_height(subagent_count: int) -> int:
-    """Return the button height needed to render a conversation row.
+# Pre-measurement fallback for the tray's usable row width. Only the first
+# frame before `_fit_height_to_content` measures the real width renders with
+# it; the guarded relabel pass corrects it immediately (see
+# `_maybe_relabel_for_width`).
+_FALLBACK_ROW_CONTENT_WIDTH = 20
+# Grouped-browser rows share their line with the star control (width 3 +
+# 1 margin) and carry 1 cell of button padding per side.
+_BROWSER_ROW_CHROME_WIDTH = 6
+# Legacy-section rows have no star column; only button padding.
+_LEGACY_ROW_CHROME_WIDTH = 2
+# Every row button carries a 1-line bottom margin (see the row CSS).
+_ROW_BOTTOM_MARGIN = 1
 
-    Args:
-        subagent_count: Historical sub-agent run count for this conversation.
 
-    Returns:
-        ``_ROW_BUTTON_HEIGHT_WITH_BADGE`` when a badge will render,
-        otherwise the plain two-line ``_ROW_BUTTON_HEIGHT``.
-    """
+def _conversation_row_render_height(
+    name_line_count: int, subagent_count: int
+) -> int:
+    """Return the button height for a row: name lines + metadata line,
+    plus a dedicated badge line when this conversation has historical
+    sub-agent runs (see `format_console_conversation_row_label`)."""
+    height = max(1, int(name_line_count)) + 1
     if subagent_count > 0:
-        return _ROW_BUTTON_HEIGHT_WITH_BADGE
-    return _ROW_BUTTON_HEIGHT
+        height += 1
+    return height
 
 
 def format_console_conversation_row_label(
@@ -252,6 +254,7 @@ class ConsoleWorkspaceContextTray(Vertical):
         super().__init__(**kwargs)
         self.state = state
         self.show_heading = show_heading
+        self._row_content_width = _FALLBACK_ROW_CONTENT_WIDTH
         self.styles.height = "auto"
         self.styles.min_height = 0
 
@@ -499,6 +502,7 @@ class ConsoleWorkspaceContextTray(Vertical):
         tooltip_label: str | None = None,
         selected: bool = False,
         subagent_count: int = 0,
+        name_line_count: int = 1,
     ) -> Button:
         # Escaped-then-markup rendering round-trips plain text unchanged while
         # letting `format_console_conversation_row_label` safely append a dim
@@ -513,9 +517,10 @@ class ConsoleWorkspaceContextTray(Vertical):
             compact=True,
         )
         button.conversation_id = conversation_id
-        button.tooltip = f"Switch to {tooltip_label or text.lstrip('> ').strip()}"
+        fallback_tooltip = text.splitlines()[0].strip() if text else text
+        button.tooltip = f"Switch to {tooltip_label or fallback_tooltip}"
         button.set_class(selected, "console-workspace-conversation-row-selected")
-        row_height = _conversation_row_render_height(subagent_count)
+        row_height = _conversation_row_render_height(name_line_count, subagent_count)
         button.styles.height = row_height
         button.styles.min_height = row_height
         return button
@@ -523,59 +528,45 @@ class ConsoleWorkspaceContextTray(Vertical):
     @staticmethod
     def _legacy_conversation_list_height(
         section: ConsoleWorkspaceConversationSectionState,
+        budget: int,
     ) -> int:
-        """Return the full content height for legacy conversation rows.
-
-        Args:
-            section: Legacy conversation section state.
-
-        Returns:
-            Height needed to render every row without internal scrolling.
-        """
-
+        """Return the full content height for legacy conversation rows."""
         if not section.rows:
             return _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
         return max(
             _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT,
-            len(section.rows) * CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT,
+            sum(
+                _conversation_row_render_height(
+                    len(wrap_console_conversation_title(row.title, budget)),
+                    0,
+                )
+                + _ROW_BOTTOM_MARGIN
+                for row in section.rows
+            ),
         )
 
     @staticmethod
     def _conversation_browser_rows_height(
         rows: tuple[ConsoleConversationBrowserRow, ...],
+        budget: int,
     ) -> int:
-        """Return the total height needed to render a sequence of rows.
-
-        Each row normally costs ``CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT``
-        (button height plus row margin). Rows that carry a
-        ``[N Sub-Agents]`` badge get one extra line so the badge renders on
-        its own dedicated line -- see `_conversation_row_render_height`.
-
-        Args:
-            rows: Browser rows to size.
-
-        Returns:
-            Total height needed to render every row without clipping.
-        """
+        """Total height for a row sequence: per-row button height (from the
+        same wrap the labels use, so the two cannot disagree) plus margin."""
         return sum(
-            CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT
-            + (_conversation_row_render_height(row.subagent_count) - _ROW_BUTTON_HEIGHT)
+            _conversation_row_render_height(
+                len(wrap_console_conversation_title(row.title, budget)),
+                row.subagent_count,
+            )
+            + _ROW_BOTTOM_MARGIN
             for row in rows
         )
 
     @staticmethod
     def _conversation_browser_list_height(
         browser: ConsoleConversationBrowserState,
+        budget: int,
     ) -> int:
-        """Return the full content height for the grouped browser rows.
-
-        Args:
-            browser: Grouped conversation browser state.
-
-        Returns:
-            Height needed to render every visible browser row.
-        """
-
+        """Return the full content height for the grouped browser rows."""
         height = 0
         for section in browser.sections:
             height += _CONVERSATION_BROWSER_HEADER_HEIGHT
@@ -588,14 +579,14 @@ class ConsoleWorkspaceContextTray(Vertical):
                         continue
                     if group.rows:
                         height += ConsoleWorkspaceContextTray._conversation_browser_rows_height(
-                            group.rows
+                            group.rows, budget
                         )
                     elif group.empty_copy:
                         height += _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
                 continue
             if section.rows:
                 height += ConsoleWorkspaceContextTray._conversation_browser_rows_height(
-                    section.rows
+                    section.rows, budget
                 )
             elif section.empty_copy:
                 height += _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
@@ -750,26 +741,31 @@ class ConsoleWorkspaceContextTray(Vertical):
                     classes="console-workspace-recovery",
                 )
             conversation_list = Vertical(id="console-workspace-conversations")
+            legacy_budget = self._legacy_title_budget()
             conversation_list.styles.height = self._legacy_conversation_list_height(
-                section
+                section, legacy_budget
             )
             conversation_list.styles.min_height = 0
             with conversation_list:
                 if section.rows:
                     for index, row in enumerate(section.rows):
-                        marker = f"{GLYPH_ACTIVE} " if row.selected else "  "
                         title = self._conversation_title(row.title)
-                        visible_title = self._conversation_visible_title(title)
+                        name_lines = wrap_console_conversation_title(
+                            row.title, legacy_budget
+                        )
                         status = self._conversation_status(row.status)
                         detail = self._conversation_detail_status(row.status)
                         status_suffix = f" [{status}]" if status else ""
-                        secondary = detail or "conversation"
+                        secondary = truncate_console_row_cells(
+                            detail or "conversation", legacy_budget
+                        )
                         yield self._conversation_button(
-                            f"{marker}{visible_title}\n  {secondary}",
+                            "\n".join((*name_lines, secondary)),
                             id=f"console-workspace-conversation-{index}",
                             conversation_id=row.conversation_id,
                             tooltip_label=f"{title}{status_suffix}",
                             selected=row.selected,
+                            name_line_count=len(name_lines),
                         )
                 else:
                     yield self._static(
@@ -859,7 +855,7 @@ class ConsoleWorkspaceContextTray(Vertical):
         row_index = 0
         conversation_list = Vertical(id="console-workspace-conversations")
         conversation_list.styles.height = self._conversation_browser_list_height(
-            browser
+            browser, self._browser_title_budget()
         )
         conversation_list.styles.min_height = 0
         with conversation_list:
@@ -986,8 +982,9 @@ class ConsoleWorkspaceContextTray(Vertical):
         """Render one grouped browser row plus its local star control."""
 
         with Horizontal(classes="console-conversation-browser-row-line"):
+            budget = self._browser_title_budget()
             title = self._conversation_title(row.title)
-            visible_title = self._conversation_visible_title(title)
+            name_lines = wrap_console_conversation_title(row.title, budget)
             status = self._conversation_status(row.status)
             detail = self._conversation_detail_status(row.status)
             secondary_parts = [
@@ -995,16 +992,18 @@ class ConsoleWorkspaceContextTray(Vertical):
                 for part in (row.workspace_label, detail, row.updated_label)
                 if str(part or "").strip()
             ]
-            secondary = " - ".join(secondary_parts) or "conversation"
-            marker = f"{GLYPH_ACTIVE} " if row.selected else "  "
+            secondary = truncate_console_row_cells(
+                " - ".join(secondary_parts) or "conversation", budget
+            )
             status_suffix = f" [{status}]" if status else ""
             row_button = self._conversation_button(
-                f"{marker}{visible_title}\n  {secondary}",
+                "\n".join((*name_lines, secondary)),
                 id=f"console-workspace-conversation-{index}",
                 conversation_id=row.conversation_id or row.row_key,
                 tooltip_label=f"{title}{status_suffix}",
                 selected=row.selected,
                 subagent_count=row.subagent_count,
+                name_line_count=len(name_lines),
             )
             row_button.row_key = row.row_key
             row_button.native_session_id = row.native_session_id
@@ -1023,9 +1022,10 @@ class ConsoleWorkspaceContextTray(Vertical):
                 disabled=star_disabled,
             )
             # Match the row button's height so the star control still spans
-            # the full row when a badge adds a third line (see
-            # `_conversation_row_render_height`).
-            star_row_height = _conversation_row_render_height(row.subagent_count)
+            # the full row whatever the name-line and badge count.
+            star_row_height = _conversation_row_render_height(
+                len(name_lines), row.subagent_count
+            )
             star_button.styles.height = star_row_height
             star_button.styles.min_height = star_row_height
             if not marks_available:
@@ -1053,13 +1053,19 @@ class ConsoleWorkspaceContextTray(Vertical):
         """Return a readable conversation label."""
         return str(title).strip() or "Untitled conversation"
 
-    @staticmethod
-    def _conversation_visible_title(title: str) -> str:
-        """Return a rail-safe visible title that does not clip in narrow panes."""
-        readable = ConsoleWorkspaceContextTray._conversation_title(title)
-        if len(readable) <= _MAX_CONVERSATION_ROW_TITLE:
-            return readable
-        return f"{readable[: _MAX_CONVERSATION_ROW_TITLE - 3].rstrip()}..."
+    def _browser_title_budget(self) -> int:
+        """Cells available to grouped-browser row text."""
+        return max(
+            _MIN_TITLE_WRAP_BUDGET,
+            self._row_content_width - _BROWSER_ROW_CHROME_WIDTH,
+        )
+
+    def _legacy_title_budget(self) -> int:
+        """Cells available to legacy-section row text (no star column)."""
+        return max(
+            _MIN_TITLE_WRAP_BUDGET,
+            self._row_content_width - _LEGACY_ROW_CHROME_WIDTH,
+        )
 
     @staticmethod
     def _conversation_status(status: str) -> str:
