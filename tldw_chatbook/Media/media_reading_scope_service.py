@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 
 from .media_reading_normalizers import (
     normalize_file_artifact,
@@ -630,11 +630,24 @@ class MediaReadingScopeService:
         query: Optional[str] = None,
         limit: int = 20,
         offset: int = 0,
+        id_allowlist: Optional[Sequence[Any]] = None,
         **filters: Any,
     ) -> dict[str, Any]:
+        """Search media, optionally restricted to a caller-provided id allowlist.
+
+        Args:
+            id_allowlist: Optional media ids to restrict results to
+                (rag-scope narrowing, task-6). Translated to the local
+                backend's existing ``media_ids_filter`` filter kwarg; only
+                added to ``filters`` when provided, so unscoped callers keep
+                the exact legacy call shape.
+        """
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._reading_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
+        if id_allowlist is not None:
+            filters = dict(filters)
+            filters["media_ids_filter"] = list(id_allowlist)
         payload = await self._maybe_await(
             service.search_media(query=query, limit=limit, offset=offset, **filters)
         )
