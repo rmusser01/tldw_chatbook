@@ -402,6 +402,8 @@ class ConsoleInspectorState:
     can_save_chatbook: bool = False
     dictionary_rows: tuple[ConsoleDisplayRow, ...] = ()
     dictionary_actions: tuple[ConsoleInspectorAction, ...] = ()
+    world_book_rows: tuple[ConsoleDisplayRow, ...] = ()
+    world_book_actions: tuple[ConsoleInspectorAction, ...] = ()
 
     @classmethod
     def from_values(

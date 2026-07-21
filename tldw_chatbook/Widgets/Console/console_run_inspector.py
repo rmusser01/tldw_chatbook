@@ -228,6 +228,10 @@ class ConsoleRunInspector(Vertical):
             entries.append(
                 (f"console-inspector-dictionaries-row-{index}", row.text, row.status)
             )
+        for index, row in enumerate(getattr(state, "world_book_rows", ()) or ()):
+            entries.append(
+                (f"console-inspector-worldbooks-row-{index}", row.text, row.status)
+            )
         return entries
 
     @classmethod
@@ -261,6 +265,10 @@ class ConsoleRunInspector(Vertical):
             tuple(
                 _action_key(action)
                 for action in getattr(state, "dictionary_actions", ()) or ()
+            ),
+            tuple(
+                _action_key(action)
+                for action in getattr(state, "world_book_actions", ()) or ()
             ),
         )
 
@@ -428,4 +436,22 @@ class ConsoleRunInspector(Vertical):
                     markup=False,
                 )
             for action in dict_actions:
+                yield from self._compose_action(action)
+
+        world_book_rows = getattr(self.state, "world_book_rows", ())
+        world_book_actions = getattr(self.state, "world_book_actions", ())
+        if world_book_rows or world_book_actions:
+            yield Static(
+                "World Books",
+                id="console-inspector-worldbooks-heading",
+                classes="console-inspector-group-heading destination-section",
+            )
+            for index, row in enumerate(world_book_rows):
+                yield Static(
+                    row.text,
+                    id=f"console-inspector-worldbooks-row-{index}",
+                    classes=f"console-inspector-row console-inspector-row-{row.status}",
+                    markup=False,
+                )
+            for action in world_book_actions:
                 yield from self._compose_action(action)

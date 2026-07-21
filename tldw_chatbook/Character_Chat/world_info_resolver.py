@@ -122,4 +122,55 @@ def apply_world_info_to_message(
         return message_text
 
 
-__all__ = ["apply_world_info_to_message"]
+def summarize_active_world_books(
+    db: Any,
+    conversation_id: Optional[str],
+    char_data: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """World-book "what's in play" summary for the Console inspector (never raises).
+
+    Shows ALL attached books (enabled + disabled) — the *attachment picture* —
+    via ``get_world_books_for_conversation(enabled_only=False)``, NOT the
+    send-path ``_collect_active_world_books`` (which is enabled-only). ``char_data``
+    is accepted for signature parity but P2g-2 is conversation-only (native
+    ``char_data=None``).
+
+    Args:
+        db: A ``CharactersRAGDB`` (or None).
+        conversation_id: The active conversation (string UUID) or None.
+        char_data: Unused on native Console (accepted for parity).
+
+    Returns:
+        ``{"world_books": [{"name": str, "enabled": bool, "entry_count": int}],
+        "source": "local"}``. ``{"world_books": [], "source": "local"}`` on no
+        conversation / no books / any error.
+    """
+    if not conversation_id or db is None:
+        return {"world_books": [], "source": "local"}
+    try:
+        from .world_book_manager import WorldBookManager
+
+        books = WorldBookManager(db).get_world_books_for_conversation(
+            str(conversation_id), enabled_only=False
+        )
+    except Exception:
+        logger.opt(exception=True).debug(
+            "world-info: could not summarize conversation world books"
+        )
+        return {"world_books": [], "source": "local"}
+    world_books = []
+    for book in books:
+        if not isinstance(book, dict):
+            continue
+        entries = book.get("entries")
+        world_books.append(
+            {
+                "name": str(book.get("name") or "Unnamed"),
+                "enabled": bool(book.get("enabled", True)),
+                "entry_count": len(entries) if isinstance(entries, list) else 0,
+            }
+        )
+    return {"world_books": world_books, "source": "local"}
+
+
+__all__ = ["apply_world_info_to_message", "summarize_active_world_books"]
