@@ -1531,7 +1531,11 @@ async def test_handle_library_skill_delete_cancel_leaves_confirm_state():
     fake = SimpleNamespace(
         _library_skills_view="editor",
         _library_skill_confirming_delete=True,
+        _library_skill_scroll_pending=False,
         _library_skill_editor_armed=True,
+        # Cancel now re-snapshots live fields (review finding) so an edit
+        # typed during the confirmation survives.
+        _snapshot_library_skill_live_fields=lambda: None,
         _arm_library_skill_editor=lambda: None,
         refresh=lambda recompose=False: refresh_calls.append(recompose),
         call_after_refresh=lambda fn: None,
@@ -1957,6 +1961,7 @@ def test_action_library_skill_save_kicks_save_worker():
             _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
             _library_skills_view="editor",
             _library_skill_conflict=False,
+            _library_skill_confirming_delete=False,
             _save_library_skill=lambda: None,
             run_worker=lambda coro, **kwargs: worker_calls.append(kwargs),
         )
@@ -2028,3 +2033,134 @@ async def test_create_skill_name_placeholder_states_format():
     async with app.run_test() as pilot:
         name_input = pilot.app.query_one("#library-skill-name", Input)
         assert "lowercase" in name_input.placeholder
+
+
+# ---------------------------------------------------------------------------
+# Code-review follow-ups (xhigh workflow review of the skills UX branch).
+# ---------------------------------------------------------------------------
+
+
+def test_delete_arm_arms_scroll_pending():
+    """Review finding: the arm recompose scrolled the just-rendered
+    Delete/Cancel confirm buttons below the fold. The arm must request the
+    scroll-back so the confirmation is visible."""
+    fake = SimpleNamespace(
+        _library_skills_view="editor",
+        _selected_skill_name="x",
+        _snapshot_library_skill_live_fields=lambda: None,
+        _library_skill_confirming_delete=False,
+        _library_skill_scroll_pending=False,
+        _library_skill_editor_armed=True,
+        _arm_library_skill_editor=lambda: None,
+        is_mounted=True,
+        refresh=lambda recompose=False: None,
+        call_after_refresh=lambda fn: None,
+    )
+    LibraryScreen.handle_library_skill_delete(fake, SimpleNamespace(stop=lambda: None))
+    assert fake._library_skill_confirming_delete is True
+    assert fake._library_skill_scroll_pending is True
+
+
+def test_delete_cancel_arms_scroll_pending_and_snapshots():
+    """Review finding: Cancel dropped edits typed during confirm and left the
+    scroll at the top. It must re-snapshot live fields (preserving edits) and
+    request the scroll-back."""
+    snapshots: list[bool] = []
+    fake = SimpleNamespace(
+        _library_skill_confirming_delete=True,
+        _library_skill_scroll_pending=False,
+        _library_skill_editor_armed=True,
+        _snapshot_library_skill_live_fields=lambda: snapshots.append(True),
+        _arm_library_skill_editor=lambda: None,
+        is_mounted=True,
+        refresh=lambda recompose=False: None,
+        call_after_refresh=lambda fn: None,
+    )
+    LibraryScreen.handle_library_skill_delete_cancel(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+    assert fake._library_skill_confirming_delete is False
+    assert snapshots == [True]
+    assert fake._library_skill_scroll_pending is True
+
+
+@pytest.mark.asyncio
+async def test_confirm_delete_recompose_scrolls_confirm_row_into_view():
+    """Review finding: on a tall editor the confirm row sits below the fold.
+    With scroll_to_actions armed in confirm mode the canvas scrolls it in."""
+    state = _editor_state()
+    app = _EditorHost(
+        mode="editor",
+        editor_state=state,
+        confirming_delete=True,
+        scroll_to_actions=True,
+    )
+    async with app.run_test(size=(80, 12)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        canvas = pilot.app.query_one("#library-skills-canvas")
+        assert canvas.scroll_offset.y > 0
+        # The confirm row must actually be the anchor that is visible.
+        assert pilot.app.query_one("#library-skill-delete-confirm-copy", Static)
+
+
+def test_ctrl_s_does_not_save_during_delete_confirm():
+    """Review finding: Ctrl+S fired a save while only Delete/Cancel were
+    shown. The accelerator must no-op during the delete confirmation."""
+    worker_calls: list[dict] = []
+    fake = _bind_editor_active(
+        SimpleNamespace(
+            _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
+            _library_skills_view="editor",
+            _library_skill_conflict=False,
+            _library_skill_confirming_delete=True,
+            _save_library_skill=lambda: None,
+            run_worker=lambda coro, **kwargs: worker_calls.append(kwargs),
+        )
+    )
+    LibraryScreen.action_library_skill_save(fake)
+    assert worker_calls == []
+
+
+@pytest.mark.asyncio
+async def test_import_browse_folder_clears_stale_status_and_review():
+    """Review finding: picking a new folder left the previous import's
+    success status and 'Review …' button showing against the new path."""
+    pushed: dict = {}
+    fake = SimpleNamespace(
+        _library_skills_import_path="",
+        _library_skills_import_status='Imported "old" · re-review it in the trust panel',
+        _library_skills_import_review_name="old",
+        refresh=lambda recompose=False: None,
+        app=SimpleNamespace(
+            push_screen=lambda dialog, cb=None: pushed.update(dialog=dialog, cb=cb)
+        ),
+    )
+    LibraryScreen.handle_library_skills_import_browse_folder(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+    await pushed["cb"](Path("/new/folder"))
+    assert fake._library_skills_import_path == "/new/folder"
+    assert fake._library_skills_import_status == ""
+    assert fake._library_skills_import_review_name == ""
+
+
+@pytest.mark.asyncio
+async def test_import_browse_file_clears_stale_status_and_review():
+    """Same stranding via the file 'Browse…' variant."""
+    pushed: dict = {}
+    fake = SimpleNamespace(
+        _library_skills_import_path="",
+        _library_skills_import_status='Imported "old" · re-review it in the trust panel',
+        _library_skills_import_review_name="old",
+        refresh=lambda recompose=False: None,
+        app=SimpleNamespace(
+            push_screen=lambda dialog, cb=None: pushed.update(dialog=dialog, cb=cb)
+        ),
+    )
+    LibraryScreen.handle_library_skills_import_browse(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+    await pushed["cb"](Path("/new/file/SKILL.md"))
+    assert fake._library_skills_import_status == ""
+    assert fake._library_skills_import_review_name == ""

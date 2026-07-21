@@ -6960,6 +6960,11 @@ class LibraryScreen(BaseAppScreen):
             if selected_path is None:
                 return
             self._library_skills_import_path = str(selected_path)
+            # Clear a prior import's success status + "Review …" button so
+            # they don't hang against the newly-picked, not-yet-imported
+            # path (review finding).
+            self._library_skills_import_status = ""
+            self._library_skills_import_review_name = ""
             self.refresh(recompose=True)
 
         self.app.push_screen(
@@ -6985,6 +6990,11 @@ class LibraryScreen(BaseAppScreen):
             if selected_path is None:
                 return
             self._library_skills_import_path = str(selected_path)
+            # Clear a prior import's success status + "Review …" button so
+            # they don't hang against the newly-picked, not-yet-imported
+            # path (review finding).
+            self._library_skills_import_status = ""
+            self._library_skills_import_review_name = ""
             self.refresh(recompose=True)
 
         self.app.push_screen(
@@ -7795,7 +7805,6 @@ class LibraryScreen(BaseAppScreen):
         self._mark_library_skill_dirty()
         self._update_library_skill_warnings_static(name=event.value)
 
-    @on(Input.Changed, "#library-skill-description")
     @on(Input.Changed, "#library-skill-argument-hint")
     @on(Input.Changed, "#library-skill-allowed-tools")
     def handle_library_skill_input_changed(self, event: Input.Changed) -> None:
@@ -7806,6 +7815,32 @@ class LibraryScreen(BaseAppScreen):
                 single-line fields.
         """
         self._mark_library_skill_dirty()
+
+    @on(Input.Changed, "#library-skill-description")
+    def handle_library_skill_description_changed(self, event: Input.Changed) -> None:
+        """Mark dirty on a Description edit and sync the derived-hint (review
+        finding).
+
+        The "No description set" hint (rendered only when the skill's
+        description was auto-derived from its body) is compose-time-only, so
+        without this it would linger beneath a now-populated field. It is
+        meaningful only while the field is still empty.
+
+        Args:
+            event: Input change event emitted by the Description field.
+        """
+        self._mark_library_skill_dirty()
+        self._sync_library_skill_description_hint(event.value)
+
+    def _sync_library_skill_description_hint(self, live_value: str) -> None:
+        """Show the derived-description hint only while the field is empty."""
+        state = self._library_skill_editor_state
+        should_show = bool(
+            state is not None and state.description_derived and not live_value.strip()
+        )
+        for hint in self.query("#library-skill-description-hint"):
+            if isinstance(hint, Static):
+                hint.display = should_show
 
     @on(TextArea.Changed, "#library-skill-body")
     def handle_library_skill_body_changed(self, event: TextArea.Changed) -> None:
@@ -8215,7 +8250,11 @@ class LibraryScreen(BaseAppScreen):
         """Ctrl+S: save the open skill from anywhere in the editor (task-424)."""
         if not self._library_skill_editor_active():
             return
-        if self._library_skill_conflict:
+        # No save during the conflict banner or the delete confirmation --
+        # in both states the Save button is gone, so the accelerator must
+        # not fire an action the visible chrome no longer offers (review
+        # finding for the delete-confirm case).
+        if self._library_skill_conflict or self._library_skill_confirming_delete:
             return
         self.run_worker(
             self._save_library_skill(),
@@ -8309,6 +8348,11 @@ class LibraryScreen(BaseAppScreen):
             # which still-armed dirty-tracking would misread as an edit.
             # The dirty flag itself is deliberately left untouched.
             self._library_skill_editor_armed = False
+            # The confirm copy + Delete/Cancel row render at the very bottom
+            # of a tall editor; without the scroll-back the arm recompose
+            # (a fresh VerticalScroll at y=0) leaves them below the fold and
+            # the Delete press reads as a no-op (review finding).
+            self._library_skill_scroll_pending = True
             self.refresh(recompose=True)
             self.call_after_refresh(self._arm_library_skill_editor)
 
@@ -8338,6 +8382,11 @@ class LibraryScreen(BaseAppScreen):
             # typed name.
             name=raw_name if not self._selected_skill_name else state.name,
             description=raw_description,
+            # A typed description is no longer "derived from the body", so a
+            # state-driven recompose must not re-show the "No description
+            # set" hint next to the populated field (review finding). Stays
+            # derived only while the field is still empty.
+            description_derived=state.description_derived and not raw_description.strip(),
             argument_hint=raw_argument_hint,
             allowed_tools_csv=raw_allowed_tools_csv,
             model=raw_model,
@@ -8370,9 +8419,18 @@ class LibraryScreen(BaseAppScreen):
                 "Cancel" action.
         """
         event.stop()
+        # Fields stay editable during the confirmation, so fold any edit
+        # typed there back into state before the state-driven recompose --
+        # otherwise the recompose reverts it while _library_skill_dirty
+        # stays True, and a later Save would persist the reverted value
+        # (review finding). Mirrors the arm path's snapshot.
+        self._snapshot_library_skill_live_fields()
         self._library_skill_confirming_delete = False
         if self.is_mounted:
             self._library_skill_editor_armed = False
+            # Return the viewport to the action row the user was at, matching
+            # the arm recompose's scroll-back.
+            self._library_skill_scroll_pending = True
             self.refresh(recompose=True)
             self.call_after_refresh(self._arm_library_skill_editor)
 

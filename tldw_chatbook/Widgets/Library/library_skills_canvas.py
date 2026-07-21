@@ -418,14 +418,22 @@ class LibrarySkillsListCanvas(VerticalScroll):
         if not (self.scroll_to_actions and self.mode == "editor"):
             return
 
-        def _scroll_to_save_row() -> None:
-            try:
-                target = self.query_one("#library-skill-save")
-            except Exception:
+        def _scroll_to_action_row() -> None:
+            # During the delete confirmation the Save button is replaced by
+            # the Delete/Cancel row, so anchor on the confirm copy that is
+            # actually present; otherwise the Save row (review finding).
+            for selector in (
+                "#library-skill-delete-confirm-copy",
+                "#library-skill-save",
+            ):
+                try:
+                    target = self.query_one(selector)
+                except Exception:
+                    continue
+                target.scroll_visible(animate=False)
                 return
-            target.scroll_visible(animate=False)
 
-        self.call_after_refresh(_scroll_to_save_row)
+        self.call_after_refresh(_scroll_to_action_row)
 
     def _compose_list(self) -> ComposeResult:
         state = self.state

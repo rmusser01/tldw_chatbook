@@ -1029,3 +1029,119 @@ async def test_library_shell_create_skill_save_arrives_needs_review_with_panel_p
         assert "fresh-skill" in blocked_names
         available_names = [item["name"] for item in context["available_skills"]]
         assert "fresh-skill" not in available_names
+
+
+# ---------------------------------------------------------------------------
+# Code-review follow-ups (xhigh workflow review of the skills UX branch).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_cancel_preserves_edits_typed_during_confirm(tmp_path):
+    """Review finding: fields stay editable during the delete confirmation;
+    an edit typed there was silently reverted on Cancel (and _dirty stayed
+    True, so a later Save persisted the reverted value). Cancel must
+    re-snapshot live fields so the edit survives."""
+    local_service, service = _real_skills_scope_service(tmp_path)
+    await local_service.create_skill(
+        name="editme",
+        content=_skill_content(title="E", description="orig desc"),
+    )
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skill_editor(screen, pilot, "editme")
+
+        screen.query_one("#library-skill-delete", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_skill_confirming_delete is True
+
+        screen.query_one(
+            "#library-skill-description", Input
+        ).value = "edited during confirm"
+        await pilot.pause()
+
+        screen.query_one("#library-skill-delete-cancel", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_skill_confirming_delete is False
+        assert (
+            screen.query_one("#library-skill-description", Input).value
+            == "edited during confirm"
+        )
+        assert screen._library_skill_editor_state.description == "edited during confirm"
+
+
+@pytest.mark.asyncio
+async def test_derived_description_hint_hides_when_user_types(tmp_path):
+    """Review finding: the 'No description set' hint (gated on
+    description_derived at compose time) stayed visible after the user typed
+    a real description. Typing must hide it in place."""
+    local_service, service = _real_skills_scope_service(tmp_path)
+    # No frontmatter description -> the service derives one from the body, so
+    # description_derived is True and the field renders empty with the hint.
+    await local_service.create_skill(
+        name="no-desc-skill",
+        content="---\nargument_hint: note id\n---\n# Title\nFirst body line.\n",
+    )
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skill_editor(screen, pilot, "no-desc-skill")
+
+        assert screen.query_one("#library-skill-description", Input).value == ""
+        hint = screen.query_one("#library-skill-description-hint", Static)
+        assert hint.display is True
+
+        screen.query_one(
+            "#library-skill-description", Input
+        ).value = "a real description"
+        await pilot.pause()
+
+        assert (
+            screen.query_one("#library-skill-description-hint", Static).display is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_derived_flag_cleared_when_snapshotting_populated_description(tmp_path):
+    """Review finding: _snapshot_library_skill_live_fields folded typed text
+    into state but left description_derived True, so the delete-confirm
+    recompose rendered the populated field AND the 'No description set' hint
+    together."""
+    local_service, service = _real_skills_scope_service(tmp_path)
+    await local_service.create_skill(
+        name="derived-then-typed",
+        content="---\nargument_hint: note id\n---\n# Title\nFirst body line.\n",
+    )
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skill_editor(screen, pilot, "derived-then-typed")
+
+        screen.query_one("#library-skill-description", Input).value = "typed desc"
+        await pilot.pause()
+
+        screen.query_one("#library-skill-delete", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_skill_editor_state.description_derived is False
+        assert len(screen.query("#library-skill-description-hint")) == 0
