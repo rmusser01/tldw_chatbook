@@ -146,6 +146,18 @@ class StatsScreen(BaseAppScreen):
             )
         )
 
+    @staticmethod
+    def _resolve_stats_db(app_instance: Any) -> Any:
+        """Return the ChaChaNotes DB handle via the canonical access path.
+
+        Prefer ``app_instance.chachanotes_db``, fall back to
+        ``notes_service.db`` — the same resolution the Library screen uses.
+        """
+        notes_service = getattr(app_instance, "notes_service", None)
+        return getattr(app_instance, "chachanotes_db", None) or getattr(
+            notes_service, "db", None
+        )
+
     @work(thread=True)
     def load_statistics(self) -> None:
         """Load user statistics in a background thread."""
@@ -155,15 +167,16 @@ class StatsScreen(BaseAppScreen):
         try:
             logger.info("Starting statistics load...")
 
-            # Get database instance
-            if not hasattr(self.app_instance, "characters_rag_db"):
-                logger.error("App instance does not have characters_rag_db attribute")
-                error_message = "Database connection not initialized"
-                return
-
-            db = self.app_instance.characters_rag_db
+            db = self._resolve_stats_db(self.app_instance)
             if not db:
-                logger.error("Database instance is None")
+                notes_service = getattr(self.app_instance, "notes_service", None)
+                logger.error(
+                    "Stats load aborted: no ChaChaNotes DB handle "
+                    "(chachanotes_db is "
+                    f"{'set' if getattr(self.app_instance, 'chachanotes_db', None) else 'unset'}, "
+                    "notes_service.db is "
+                    f"{'set' if getattr(notes_service, 'db', None) else 'unset'})"
+                )
                 error_message = "Database not available"
                 return
 
@@ -290,40 +303,28 @@ class StatsScreen(BaseAppScreen):
 
         parent.mount(Label("📈 Overview", classes="section-header"))
 
-        overview_grid = Grid(classes="stats-grid overview-grid")
-
-        # Total conversations
-        overview_grid.mount(
+        # Children must ride the constructor: mounting into a detached
+        # container raises MountError on current Textual.
+        history = stats.get("data_history_length", {})
+        overview_grid = Grid(
             StatCard(
                 "Total Conversations",
                 str(stats.get("total_conversations", 0)),
                 icon="💬",
-            )
-        )
-
-        # Total messages
-        overview_grid.mount(
-            StatCard("Total Messages", str(stats.get("total_messages", 0)), icon="✉️")
-        )
-
-        # Average messages per conversation
-        overview_grid.mount(
+            ),
+            StatCard("Total Messages", str(stats.get("total_messages", 0)), icon="✉️"),
             StatCard(
                 "Avg Messages/Conversation",
                 f"{stats.get('avg_messages_per_conversation', 0):.1f}",
                 icon="📊",
-            )
-        )
-
-        # Data history
-        history = stats.get("data_history_length", {})
-        overview_grid.mount(
+            ),
             StatCard(
                 "Data History",
                 history.get("formatted", "No data"),
                 subtitle=f"Since {history.get('earliest_date', 'N/A')}",
                 icon="📅",
-            )
+            ),
+            classes="stats-grid overview-grid",
         )
 
         parent.mount(overview_grid)
@@ -334,42 +335,28 @@ class StatsScreen(BaseAppScreen):
 
         parent.mount(Label("⚡ Activity Patterns", classes="section-header"))
 
-        activity_grid = Grid(classes="stats-grid activity-grid")
-
-        # Last 30 days activity
         activity_30 = stats.get("activity_last_30_days", {})
-        activity_grid.mount(
+        streaks = stats.get("conversation_streaks", {})
+        activity_grid = Grid(
             StatCard(
                 "Last 30 Days",
                 f"{activity_30.get('messages', 0)} messages",
                 subtitle=f"{activity_30.get('daily_average', 0):.1f} per day",
                 icon="📆",
-            )
-        )
-
-        # Most active time
-        activity_grid.mount(
+            ),
             StatCard(
                 "Most Active Time", stats.get("most_active_time", "Unknown"), icon="🕐"
-            )
-        )
-
-        # Most active day
-        activity_grid.mount(
+            ),
             StatCard(
                 "Most Active Day", stats.get("most_active_day", "Unknown"), icon="📅"
-            )
-        )
-
-        # Conversation streaks
-        streaks = stats.get("conversation_streaks", {})
-        activity_grid.mount(
+            ),
             StatCard(
                 "Current Streak",
                 f"{streaks.get('current_streak', 0)} days",
                 subtitle=f"Longest: {streaks.get('longest_streak', 0)} days",
                 icon="🔥",
-            )
+            ),
+            classes="stats-grid activity-grid",
         )
 
         parent.mount(activity_grid)
@@ -380,33 +367,21 @@ class StatsScreen(BaseAppScreen):
 
         parent.mount(Label("👤 User Profile", classes="section-header"))
 
-        prefs_grid = Grid(classes="stats-grid prefs-grid")
-
-        # Preferred name
-        prefs_grid.mount(
-            StatCard("Preferred Name", stats.get("preferred_name", "User"), icon="👋")
-        )
-
-        # Preferred device
-        prefs_grid.mount(
+        cards = [
+            StatCard("Preferred Name", stats.get("preferred_name", "User"), icon="👋"),
             StatCard(
                 "Preferred Device", stats.get("preferred_device", "Unknown"), icon="💻"
-            )
-        )
-
-        # Average message length
-        prefs_grid.mount(
+            ),
             StatCard(
                 "Avg Message Length",
                 f"{stats.get('avg_message_length', 0):.0f} chars",
                 icon="📝",
-            )
-        )
+            ),
+        ]
 
-        # Satisfaction rate
         satisfaction = stats.get("satisfaction_rate")
         if satisfaction is not None:
-            prefs_grid.mount(
+            cards.append(
                 StatCard(
                     "Satisfaction Rate",
                     f"{satisfaction}%",
@@ -415,7 +390,7 @@ class StatsScreen(BaseAppScreen):
                 )
             )
 
-        parent.mount(prefs_grid)
+        parent.mount(Grid(*cards, classes="stats-grid prefs-grid"))
 
     def _mount_topics_section(self, parent: Container) -> None:
         """Mount the topics analysis section."""
@@ -427,34 +402,33 @@ class StatsScreen(BaseAppScreen):
         main_topics = stats.get("main_topics", [])
         if main_topics:
             parent.mount(Label("Main Discussion Topics", classes="subsection-header"))
-            topics_container = Container(classes="topics-container")
 
             max_count = main_topics[0][1] if main_topics else 1
-            for topic, count in main_topics[:5]:
-                topics_container.mount(TopicBar(topic.capitalize(), count, max_count))
-
-            parent.mount(topics_container)
+            parent.mount(
+                Container(
+                    *(
+                        TopicBar(topic.capitalize(), count, max_count)
+                        for topic, count in main_topics[:5]
+                    ),
+                    classes="topics-container",
+                )
+            )
 
         # Topics by message count ranges
         topics_by_count = stats.get("top_topics_by_message_count", {})
         if topics_by_count:
             parent.mount(Label("Recent Topics Trends", classes="subsection-header"))
 
-            ranges_grid = Grid(classes="stats-grid ranges-grid")
-
-            for range_name, topics in topics_by_count.items():
-                if topics:
-                    label = range_name.replace("_", " ").title()
-                    top_words = ", ".join([t[0] for t in topics[:3]])
-                    ranges_grid.mount(
-                        StatCard(
-                            label,
-                            top_words if top_words else "No data",
-                            classes="topic-range-card",
-                        )
-                    )
-
-            parent.mount(ranges_grid)
+            range_cards = [
+                StatCard(
+                    range_name.replace("_", " ").title(),
+                    ", ".join([t[0] for t in topics[:3]]) or "No data",
+                    classes="topic-range-card",
+                )
+                for range_name, topics in topics_by_count.items()
+                if topics
+            ]
+            parent.mount(Grid(*range_cards, classes="stats-grid ranges-grid"))
 
     def _mount_fun_stats_section(self, parent: Container) -> None:
         """Mount the fun statistics section."""
@@ -462,54 +436,41 @@ class StatsScreen(BaseAppScreen):
 
         parent.mount(Label("🎉 Fun Facts", classes="section-header"))
 
-        fun_grid = Grid(classes="stats-grid fun-grid")
-
-        # Emoji usage
         emoji_stats = stats.get("emoji_usage", {})
         top_emojis = emoji_stats.get("top_emojis", [])
         emoji_display = (
             " ".join([e[0] for e in top_emojis[:3]]) if top_emojis else "None"
         )
-        fun_grid.mount(
+        question_stats = stats.get("question_ratio", {})
+        vocab_stats = stats.get("vocabulary_diversity", {})
+        longest_conv = stats.get("longest_conversation", {})
+
+        fun_grid = Grid(
             StatCard(
                 "Emoji Usage",
                 f"{emoji_stats.get('usage_rate', 0)}%",
                 subtitle=f"Favorites: {emoji_display}",
                 icon="😊",
-            )
-        )
-
-        # Question ratio
-        question_stats = stats.get("question_ratio", {})
-        fun_grid.mount(
+            ),
             StatCard(
                 "Curiosity Level",
                 question_stats.get("curiosity_level", "Unknown"),
                 subtitle=f"{question_stats.get('question_percentage', 0)}% questions",
                 icon="❓",
-            )
-        )
-
-        # Vocabulary diversity
-        vocab_stats = stats.get("vocabulary_diversity", {})
-        fun_grid.mount(
+            ),
             StatCard(
                 "Vocabulary Score",
                 f"{vocab_stats.get('score', 0)}/100",
                 subtitle=vocab_stats.get("level", "Unknown"),
                 icon="📚",
-            )
-        )
-
-        # Longest conversation
-        longest_conv = stats.get("longest_conversation", {})
-        fun_grid.mount(
+            ),
             StatCard(
                 "Longest Chat",
                 f"{longest_conv.get('message_count', 0)} messages",
                 subtitle=longest_conv.get("title", "Unknown"),
                 icon="🏆",
-            )
+            ),
+            classes="stats-grid fun-grid",
         )
 
         parent.mount(fun_grid)
@@ -522,25 +483,20 @@ class StatsScreen(BaseAppScreen):
         if char_stats.get("total_characters", 0) > 0:
             parent.mount(Label("🎭 Character Chats", classes="section-header"))
 
-            char_container = Container(classes="character-stats-container")
-
-            # Total characters
-            char_container.mount(
+            children = [
                 Label(
                     f"Total Characters: {char_stats.get('total_characters', 0)}",
                     classes="character-total",
                 )
-            )
+            ]
 
-            # Top characters
             top_chars = char_stats.get("top_characters", [])
             if top_chars:
-                char_container.mount(
+                children.append(
                     Label("Most Chatted With:", classes="subsection-header")
                 )
-
-                for char in top_chars[:3]:
-                    char_info = Container(
+                children.extend(
+                    Container(
                         Label(f"🎭 {char['name']}", classes="character-name"),
                         Label(
                             f"{char['messages']} messages in {char['conversations']} chats",
@@ -548,9 +504,12 @@ class StatsScreen(BaseAppScreen):
                         ),
                         classes="character-item",
                     )
-                    char_container.mount(char_info)
+                    for char in top_chars[:3]
+                )
 
-            parent.mount(char_container)
+            parent.mount(
+                Container(*children, classes="character-stats-container")
+            )
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""

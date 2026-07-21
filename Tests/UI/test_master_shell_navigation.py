@@ -58,6 +58,7 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-mcp", "9 MCP"),
         ("nav-acp", "0 ACP"),
         ("nav-lab", "Lab"),
+        ("nav-logs", "Logs"),
         ("nav-settings", "Settings"),
     ]
 
@@ -66,12 +67,13 @@ def test_nav_button_label_numbering_scheme():
     from tldw_chatbook.UI.Navigation.main_navigation import nav_button_label
 
     # ctrl+1..ctrl+9 cover the first nine destinations, ctrl+0 the tenth;
-    # the remaining destinations (Lab, Settings) stay unnumbered.
+    # the remaining destinations (Lab, Logs, Settings) stay unnumbered.
     digits = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
     for index, digit in enumerate(digits):
         assert nav_button_label(index, "Label") == f"{digit} Label"
     assert nav_button_label(10, "Lab") == "Lab"
-    assert nav_button_label(11, "Settings") == "Settings"
+    assert nav_button_label(11, "Logs") == "Logs"
+    assert nav_button_label(12, "Settings") == "Settings"
 
 
 @pytest.mark.asyncio
@@ -277,7 +279,6 @@ def test_folded_routes_highlight_owning_destination():
         "llm": ("lab", "llm"),
         "stts": ("lab", "stts"),
         "evals": ("lab", "evals"),
-        "logs": ("settings", "logs"),
         "stats": ("settings", "stats"),
         # The retired Coding screen folds into Console.
         "coding": ("console", "chat"),

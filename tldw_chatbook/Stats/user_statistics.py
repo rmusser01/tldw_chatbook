@@ -70,7 +70,7 @@ class UserStatistics:
     def _get_total_conversations(self) -> int:
         """Get total number of conversations."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute(
                 "SELECT COUNT(*) FROM conversations WHERE deleted = 0"
             )
@@ -82,7 +82,7 @@ class UserStatistics:
     def _get_total_messages(self) -> int:
         """Get total number of messages."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("SELECT COUNT(*) FROM messages WHERE deleted = 0")
             return cursor.fetchone()[0]
         except Exception as e:
@@ -92,7 +92,7 @@ class UserStatistics:
     def _get_avg_messages_per_conversation(self) -> float:
         """Calculate average messages per conversation."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("""
                 SELECT AVG(msg_count) FROM (
                     SELECT COUNT(*) as msg_count 
@@ -111,7 +111,7 @@ class UserStatistics:
     def _get_avg_message_length(self) -> float:
         """Calculate average message length for user messages."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("""
                 SELECT AVG(LENGTH(content)) 
                 FROM messages 
@@ -127,7 +127,7 @@ class UserStatistics:
     def _get_data_history_length(self) -> Dict[str, Any]:
         """Get date range of user data."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("""
                 SELECT 
                     MIN(created_at) as earliest,
@@ -156,7 +156,7 @@ class UserStatistics:
     def _get_activity_last_30_days(self) -> Dict[str, Any]:
         """Get user activity statistics for the last 30 days."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
 
             # Messages in last 30 days
@@ -213,7 +213,7 @@ class UserStatistics:
     def _get_preferred_name(self) -> str:
         """Detect user's preferred name from message patterns."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("""
                 SELECT content 
                 FROM messages 
@@ -256,7 +256,7 @@ class UserStatistics:
     def _get_preferred_device(self) -> str:
         """Estimate preferred device based on message patterns and length."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("""
                 SELECT 
                     AVG(LENGTH(content)) as avg_len,
@@ -295,7 +295,7 @@ class UserStatistics:
     def _get_main_topics(self, limit: int = 5) -> List[Tuple[str, int]]:
         """Extract main topics from conversations using keyword extraction."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("""
                 SELECT content 
                 FROM messages 
@@ -460,7 +460,7 @@ class UserStatistics:
         results = {}
         for range_name, count in ranges.items():
             try:
-                conn = self.db.get_or_create_connection()
+                conn = self.db.get_connection()
                 cursor = conn.execute(
                     """
                     SELECT content 
@@ -507,7 +507,7 @@ class UserStatistics:
     def _get_satisfaction_rate(self) -> Optional[float]:
         """Calculate satisfaction rate based on conversation ratings."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("""
                 SELECT 
                     COUNT(CASE WHEN rating >= 4 THEN 1 END) as satisfied,
@@ -528,7 +528,7 @@ class UserStatistics:
     def _get_most_active_time(self) -> str:
         """Find the most active hour of the day."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("""
                 SELECT 
                     strftime('%H', timestamp) as hour,
@@ -562,7 +562,7 @@ class UserStatistics:
     def _get_most_active_day_of_week(self) -> str:
         """Find the most active day of the week."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("""
                 SELECT 
                     CASE strftime('%w', timestamp)
@@ -592,7 +592,7 @@ class UserStatistics:
     def _get_emoji_usage_stats(self) -> Dict[str, Any]:
         """Calculate emoji usage statistics."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("""
                 SELECT content 
                 FROM messages 
@@ -643,7 +643,7 @@ class UserStatistics:
     def _get_question_vs_statement_ratio(self) -> Dict[str, Any]:
         """Calculate ratio of questions to statements."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("""
                 SELECT content 
                 FROM messages 
@@ -682,7 +682,7 @@ class UserStatistics:
     def _get_longest_conversation_info(self) -> Dict[str, Any]:
         """Get information about the longest conversation."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("""
                 SELECT 
                     c.id,
@@ -712,7 +712,7 @@ class UserStatistics:
     def _get_conversation_streaks(self) -> Dict[str, Any]:
         """Calculate conversation streaks."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("""
                 SELECT DATE(timestamp) as day, COUNT(DISTINCT conversation_id) as convs
                 FROM messages
@@ -764,7 +764,7 @@ class UserStatistics:
     def _get_vocabulary_diversity(self) -> Dict[str, Any]:
         """Calculate vocabulary diversity score."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("""
                 SELECT content 
                 FROM messages 
@@ -816,7 +816,7 @@ class UserStatistics:
     def _get_character_chat_stats(self) -> Dict[str, Any]:
         """Get statistics about character chats."""
         try:
-            conn = self.db.get_or_create_connection()
+            conn = self.db.get_connection()
             cursor = conn.execute("""
                 SELECT 
                     cc.name,
