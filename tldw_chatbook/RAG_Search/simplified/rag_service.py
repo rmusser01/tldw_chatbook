@@ -6,7 +6,7 @@ embeddings, vector stores, chunking, and search operations.
 """
 
 import asyncio
-from typing import List, Optional, Dict, Any, Literal, Union, Tuple
+from typing import List, Optional, Dict, Any, Literal, Union, Tuple, Mapping, Collection
 from pathlib import Path
 from loguru import logger
 import time
@@ -542,6 +542,8 @@ class RAGService:
         filter_metadata: Optional[Dict[str, Any]] = None,
         include_citations: Optional[bool] = None,
         score_threshold: Optional[float] = None,
+        *,
+        metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
         Search with optional citations.
@@ -550,9 +552,15 @@ class RAGService:
             query: Search query text
             top_k: Number of results to return (default from config)
             search_type: Type of search to perform
-            filter_metadata: Metadata filters to apply
+            filter_metadata: Metadata filters to apply (Python-side equality
+                post-filter, applied after the store call; unchanged from
+                before, kept for backward compatibility)
             include_citations: Whether to include citations (default from config)
             score_threshold: Minimum score threshold (default from config)
+            metadata_allowlist: Metadata key -> allowed values, pushed down
+                into the vector store's own candidate selection instead of
+                filtered afterward. Currently only honored for
+                ``search_type="semantic"``; see ``_semantic_search``.
 
         Returns:
             List of search results (with or without citations)
@@ -600,7 +608,12 @@ class RAGService:
 
             if search_type == "semantic":
                 results = await self._semantic_search(
-                    query, top_k, filter_metadata, include_citations, score_threshold
+                    query,
+                    top_k,
+                    filter_metadata,
+                    include_citations,
+                    score_threshold,
+                    metadata_allowlist=metadata_allowlist,
                 )
             elif search_type == "hybrid":
                 results = await self._hybrid_search(
@@ -678,8 +691,30 @@ class RAGService:
         filter_metadata: Optional[Dict[str, Any]] = None,
         include_citations: bool = True,
         score_threshold: float = 0.0,
+        *,
+        metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
-        """Perform semantic similarity search."""
+        """Perform semantic similarity search.
+
+        Args:
+            query: Search query text.
+            top_k: Number of results to return.
+            filter_metadata: Metadata equality filters applied *after* the
+                store call (Python-side post-filter, unchanged from before
+                this parameter existed). Kept for backward compatibility;
+                prefer ``metadata_allowlist`` for scoping, since a narrow
+                post-filter can starve top-k on large corpora.
+            include_citations: Whether to fetch citations from the store.
+            score_threshold: Minimum similarity score to keep.
+            metadata_allowlist: Metadata key -> allowed values, threaded
+                through to the vector store's ``search``/
+                ``search_with_citations`` so out-of-scope candidates are
+                excluded before the store ranks and truncates to
+                ``top_k * SEARCH_RESULT_MULTIPLIER`` results.
+
+        Returns:
+            Up to ``top_k`` search results, most similar first.
+        """
         # Create query embedding
         logger.debug("Creating query embedding")
         query_embedding = await self.embeddings.create_embeddings_async([query])
@@ -692,10 +727,13 @@ class RAGService:
                 query,
                 top_k * SEARCH_RESULT_MULTIPLIER,
                 score_threshold,
+                metadata_allowlist=metadata_allowlist,
             )
         else:
             results = self.vector_store.search(
-                query_embedding, top_k * SEARCH_RESULT_MULTIPLIER
+                query_embedding,
+                top_k * SEARCH_RESULT_MULTIPLIER,
+                metadata_allowlist=metadata_allowlist,
             )
             # Apply score threshold for basic results
             results = [r for r in results if r.score >= score_threshold]

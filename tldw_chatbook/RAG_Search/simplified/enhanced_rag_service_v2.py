@@ -9,7 +9,7 @@ This extends the Phase 1 enhanced RAG service with:
 
 import asyncio
 import time
-from typing import List, Optional, Dict, Any, Literal, Union, Tuple
+from typing import List, Optional, Dict, Any, Literal, Union, Tuple, Mapping, Collection
 from loguru import logger
 
 from .enhanced_rag_service import EnhancedRAGService
@@ -167,6 +167,8 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         score_threshold: Optional[float] = None,
         rerank: Optional[bool] = None,
         user_id: Optional[str] = None,
+        *,
+        metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
         Enhanced search with optional reranking and experiment tracking.
@@ -180,6 +182,12 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             score_threshold: Minimum score
             rerank: Override reranking setting
             user_id: User ID for experiment tracking
+            metadata_allowlist: Metadata key -> allowed values, forwarded to
+                ``RAGService.search`` for store-level scoping. See
+                ``RAGService.search`` for semantics. This subclass is the
+                one actually instantiated at runtime, so it must accept and
+                forward this kwarg itself rather than relying on it merely
+                being present on the base class.
 
         Returns:
             Search results, optionally reranked
@@ -215,6 +223,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             filter_metadata=filter_metadata,
             include_citations=include_citations,
             score_threshold=score_threshold,
+            metadata_allowlist=metadata_allowlist,
         )
 
         # Apply reranking if enabled
