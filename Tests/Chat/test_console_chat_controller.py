@@ -2359,6 +2359,42 @@ async def test_stop_mid_stream_consumes_one_shot():
 
 
 @pytest.mark.asyncio
+async def test_re_armed_one_shot_survives_in_flight_send_completion():
+    """A ``/prefill`` issued mid-stream (re-arming the one-shot to a new
+    value) must survive the in-flight send's completion: the send should
+    only compare-and-clear the one-shot text it actually used, not
+    whatever happens to be armed by the time it finishes."""
+    store = ConsoleChatStore()
+
+    class ReArmMidStreamGateway(StreamingGateway):
+        def __init__(self):
+            self.store = None
+            self.session_id = None
+
+        async def stream_chat(self, resolution, messages):
+            yield "chunk-one"
+            # Simulate a `/prefill SECOND` issued while this send is
+            # still streaming.
+            self.store.set_session_one_shot_prefill(self.session_id, "SECOND")
+            yield "chunk-two"
+
+    gateway = ReArmMidStreamGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = _arm_session(store)
+    gateway.store = store
+    gateway.session_id = session.id
+    store.set_session_one_shot_prefill(session.id, "FIRST")
+
+    result = await controller.submit_draft("hello")
+    assert result.accepted
+    messages = store.messages_for_session(session.id)
+    assert messages[-1].status == "complete"
+    assert messages[-1].content.startswith("FIRST")
+    # SECOND survived — the send only consumed the FIRST it actually used.
+    assert store.session_one_shot_prefill(session.id) == "SECOND"
+
+
+@pytest.mark.asyncio
 async def test_retry_zero_tokens_leaves_failed_content_untouched():
     """A pinned-prefill retry that yields no tokens must not seed: the lazy
     prepare_message_retry never runs, so the original failed content (the

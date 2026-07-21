@@ -331,7 +331,6 @@ class ConsoleChatStore:
         session.draft = draft
         return session
 
-
     def session_one_shot_prefill(self, session_id: str) -> str | None:
         """Return the armed one-shot response prefill for a session, if any."""
         return self._session_or_raise(session_id).one_shot_prefill
@@ -343,6 +342,7 @@ class ConsoleChatStore:
         session = self._session_or_raise(session_id)
         session.one_shot_prefill = prefill
         return session
+
     def pending_attachments(self, session_id: str) -> list[PendingAttachment]:
         """Return the staged attachments for a session (stage order).
 

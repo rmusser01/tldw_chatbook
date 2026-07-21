@@ -9463,7 +9463,8 @@ class ChatScreen(BaseAppScreen):
         action = parse_prefill_args(parse.args)
         store = self._ensure_console_chat_store()
         session = store.ensure_session(
-            workspace_id=store.workspace_context.active_workspace_id
+            workspace_id=store.workspace_context.active_workspace_id,
+            settings=self._default_console_session_settings(),
         )
         if action.kind == ACTION_ERROR:
             await self._append_native_console_system_message(
@@ -9522,16 +9523,17 @@ class ChatScreen(BaseAppScreen):
             self._clear_console_composer_draft()
             await self._append_native_console_system_message(copy)
             return
-        # ACTION_ONE_SHOT
-        store.set_session_one_shot_prefill(session.id, action.text)
-        self._sync_console_chat_core_state()
-        self._sync_console_settings_summary()
-        self._clear_console_composer_draft()
-        await self._append_native_console_system_message(
-            f"Prefill armed for next send: '{preview}'. The reply continues "
-            "directly from the last character; tool calling is skipped on "
-            "prefilled sends."
-        )
+        if action.kind == ACTION_ONE_SHOT:
+            store.set_session_one_shot_prefill(session.id, action.text)
+            self._sync_console_chat_core_state()
+            self._sync_console_settings_summary()
+            self._clear_console_composer_draft()
+            await self._append_native_console_system_message(
+                f"Prefill armed for next send: '{preview}'. The reply continues "
+                "directly from the last character; tool calling is skipped on "
+                "prefilled sends."
+            )
+        return
 
     def _clear_console_composer_draft(self) -> None:
         """Clear the native Console composer's draft text, if mounted.

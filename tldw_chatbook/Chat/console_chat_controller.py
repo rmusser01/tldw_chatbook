@@ -1570,18 +1570,28 @@ class ConsoleChatController:
         return self._pinned_prefill_for_session(session_id), False
 
     def _consume_one_shot_prefill(
-        self, assistant_message_id: str, used_one_shot: bool
+        self, assistant_message_id: str, used_prefill: str | None
     ) -> None:
         """Clear the armed one-shot after a send that used it terminated
         ``complete`` or ``stopped``. Blocked and failed sends never call
-        this, so retry reproduces the original intent (spec §2)."""
-        if not used_one_shot:
+        this, so retry reproduces the original intent (spec §2).
+
+        Compare-and-clear: ``used_prefill`` is the exact one-shot text this
+        send consumed (or ``None`` if this send did not use a one-shot at
+        all, in which case this is a no-op). The session's armed one-shot
+        slot is only cleared when it still holds that same text. If a
+        ``/prefill`` re-armed a *different* one-shot while this send was
+        streaming, that newer one-shot must survive the in-flight send's
+        completion untouched.
+        """
+        if used_prefill is None:
             return
         try:
             session_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
             return
-        self.store.set_session_one_shot_prefill(session_id, None)
+        if self.store.session_one_shot_prefill(session_id) == used_prefill:
+            self.store.set_session_one_shot_prefill(session_id, None)
 
     async def _apply_skill_substitution(
         self, provider_messages: list[dict[str, Any]]
@@ -1867,7 +1877,7 @@ class ConsoleChatController:
         if (
             self._agent_runtime_enabled
             and self._agent_bridge is not None
-            and prefill is None
+            and not prefill
         ):
             return await self._run_agent_reply(
                 resolution=resolution,
@@ -1876,6 +1886,7 @@ class ConsoleChatController:
                 prepare_retry=prepare_retry,
                 variant_mode=variant_mode,
             )
+        one_shot_used = prefill if prefill_from_one_shot else None
         if prefill:
             provider_messages = [
                 *provider_messages,
@@ -1916,7 +1927,7 @@ class ConsoleChatController:
                     except KeyError:
                         return self._session_closed_result()
                     self._consume_one_shot_prefill(
-                        assistant_message_id, prefill_from_one_shot
+                        assistant_message_id, one_shot_used
                     )
                     return ConsoleSubmitResult(True, True, stopped.content)
                 if prepare_retry and not retry_prepared:
@@ -1946,7 +1957,7 @@ class ConsoleChatController:
                 except KeyError:
                     return self._session_closed_result()
                 self._consume_one_shot_prefill(
-                    assistant_message_id, prefill_from_one_shot
+                    assistant_message_id, one_shot_used
                 )
                 return ConsoleSubmitResult(True, True, stopped.content)
             if not emitted_content:
@@ -1976,7 +1987,7 @@ class ConsoleChatController:
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete.")
             )
-            self._consume_one_shot_prefill(assistant_message_id, prefill_from_one_shot)
+            self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
             return ConsoleSubmitResult(True, True, completed.content)
         except asyncio.CancelledError:
             if self._stop_requested:
@@ -1990,7 +2001,7 @@ class ConsoleChatController:
                 except KeyError:
                     return self._session_closed_result()
                 self._consume_one_shot_prefill(
-                    assistant_message_id, prefill_from_one_shot
+                    assistant_message_id, one_shot_used
                 )
                 return ConsoleSubmitResult(True, True, stopped.content)
             raise
