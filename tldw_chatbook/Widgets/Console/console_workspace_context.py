@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.cells import cell_len
 from rich.markup import escape as _escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
@@ -58,6 +59,74 @@ _ROW_BUTTON_HEIGHT = 2
 # badge renders on its own dedicated trailing line -- see
 # `format_console_conversation_row_label` for why that decoupling matters.
 _ROW_BUTTON_HEIGHT_WITH_BADGE = 3
+
+_TITLE_WRAP_MAX_LINES = 2
+_MIN_TITLE_WRAP_BUDGET = 10
+_ROW_ELLIPSIS = "…"
+
+
+def _cut_prefix_cells(text: str, budget: int) -> str:
+    """Return the longest prefix of ``text`` that fits within ``budget`` cells."""
+    used = 0
+    for index, char in enumerate(text):
+        width = cell_len(char)
+        if used + width > budget:
+            return text[:index]
+        used += width
+    return text
+
+
+def truncate_console_row_cells(text: str, budget: int) -> str:
+    """Truncate raw row text to at most ``budget`` terminal cells.
+
+    Cell-aware (CJK/emoji safe). Appends an ellipsis only when truncation
+    actually occurred. Operates on raw text -- markup escaping happens later
+    in ``format_console_conversation_row_label``.
+    """
+    budget = max(1, int(budget))
+    text = str(text)
+    if cell_len(text) <= budget:
+        return text
+    keep = _cut_prefix_cells(text, budget - cell_len(_ROW_ELLIPSIS))
+    return f"{keep.rstrip()}{_ROW_ELLIPSIS}"
+
+
+def wrap_console_conversation_title(title: str, budget: int) -> tuple[str, ...]:
+    """Word-wrap a raw conversation title into at most two budget-width lines.
+
+    Widths are measured in terminal cells, not characters. Spaceless tokens
+    longer than one line hard-break at the budget. When two lines are still
+    insufficient the second line is ellipsized. The budget is clamped to
+    ``_MIN_TITLE_WRAP_BUDGET`` to avoid degenerate wraps on absurdly narrow
+    rails. Blank titles normalize to "Untitled conversation" (keep in sync
+    with ``ConsoleWorkspaceContextTray._conversation_title``).
+    """
+    budget = max(_MIN_TITLE_WRAP_BUDGET, int(budget))
+    remaining = str(title).strip() or "Untitled conversation"
+    lines: list[str] = []
+    while remaining:
+        if len(lines) == _TITLE_WRAP_MAX_LINES - 1:
+            lines.append(truncate_console_row_cells(remaining, budget))
+            break
+        if cell_len(remaining) <= budget:
+            lines.append(remaining)
+            break
+        head = _cut_prefix_cells(remaining, budget)
+        on_boundary = head.endswith(" ") or (
+            len(head) < len(remaining) and remaining[len(head)] == " "
+        )
+        if on_boundary:
+            lines.append(head.rstrip())
+            remaining = remaining[len(head) :].lstrip()
+            continue
+        break_at = head.rfind(" ")
+        if break_at > 0:
+            lines.append(remaining[:break_at].rstrip())
+            remaining = remaining[break_at + 1 :].lstrip()
+        else:
+            lines.append(head)
+            remaining = remaining[len(head) :].lstrip()
+    return tuple(lines)
 
 
 def _conversation_row_render_height(subagent_count: int) -> int:
