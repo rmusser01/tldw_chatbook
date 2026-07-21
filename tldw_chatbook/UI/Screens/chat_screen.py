@@ -10111,17 +10111,26 @@ class ChatScreen(BaseAppScreen):
         if stop_button is not None:
             stop_button.label = "Stopping…"
             stop_button.disabled = True
-        controller = self._ensure_console_chat_controller()
-        if not controller.stop_active_run():
-            self.app_instance.notify(
-                "No active Console run to stop.", severity="warning"
-            )
-        await self._sync_native_console_chat_ui()
-        if stop_button is not None:
-            # The bar's sync governs visibility/variant but not the label —
-            # restore it so a later run's Stop button never reads Stopping….
-            stop_button.label = "Stop"
-            stop_button.disabled = False
+        try:
+            controller = self._ensure_console_chat_controller()
+            if not controller.stop_active_run():
+                self.app_instance.notify(
+                    "No active Console run to stop.", severity="warning"
+                )
+            await self._sync_native_console_chat_ui()
+        finally:
+            if stop_button is not None:
+                # The bar's sync governs visibility/variant but not the
+                # label — restore it so a later run's Stop button never
+                # reads Stopping…. Scheduled after the next refresh so the
+                # acknowledgment is guaranteed at least one painted frame
+                # even when the sync above coalesced away; the finally
+                # covers stop/sync exceptions leaving the button stuck.
+                def _restore_stop_button(button=stop_button) -> None:
+                    button.label = "Stop"
+                    button.disabled = False
+
+                self.call_after_refresh(_restore_stop_button)
 
     @on(Button.Pressed, "#console-attach-context")
     async def handle_console_attach_context(self, event: Button.Pressed) -> None:

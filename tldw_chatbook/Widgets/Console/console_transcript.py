@@ -480,9 +480,13 @@ class ConsoleTranscript(VerticalScroll):
         self._follow_intent_time = monotonic()
 
     def release_anchor(self) -> None:
-        # Every user-driven scroll path (wheel, keyboard scroll actions)
-        # funnels through release_anchor — stamp it so a scroll that
-        # happens after a send outranks that send's late-arriving anchor.
+        """Release tail-follow, stamping the scroll as user intent.
+
+        Every user-driven scroll path (wheel, keyboard scroll actions)
+        funnels through ``release_anchor`` — the timestamp lets a scroll
+        that happens after a send outrank that send's late-arriving anchor
+        (see ``note_follow_intent``, TASK-336).
+        """
         self._user_scroll_time = monotonic()
         super().release_anchor()
 

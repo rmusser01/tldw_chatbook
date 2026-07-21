@@ -110,7 +110,11 @@ async def test_stop_click_acknowledges_synchronously_and_records_stop_row():
         await console._stop_console_generation_from_visible_action()
         assert "Stopping" in seen["label"]
         assert seen["disabled"] is True
-        # …and the label is restored for the next run afterwards.
+        # The acknowledgment holds through at least one painted frame; the
+        # restore is scheduled after the next refresh.
+        assert "Stopping" in str(stop_button.label)
+        await pilot.pause()
+        await pilot.pause()
         assert str(stop_button.label) == "Stop"
         gateway.release.set()
         await pilot.pause()
