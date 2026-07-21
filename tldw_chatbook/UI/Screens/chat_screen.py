@@ -50,6 +50,8 @@ from ...Chat.console_command_grammar import (
     KIND_FALLBACK,
     KIND_NOT_COMMAND,
     KIND_UNKNOWN,
+    PREFILL_COMMAND_HANDLER_ID,
+    PREFILL_COMMAND_NAME,
     PROMPT_COMMAND_HANDLER_ID,
     PROMPT_COMMAND_NAME,
     SKILLS_COMMAND_HANDLER_ID,
@@ -59,6 +61,16 @@ from ...Chat.console_command_grammar import (
     CommandParse,
     ConsoleCommandRegistry,
     default_console_registry,
+)
+from ...Chat.console_prefill import (
+    ACTION_CLEAR,
+    ACTION_ERROR,
+    ACTION_ONE_SHOT,
+    ACTION_PIN,
+    ACTION_STATUS,
+    describe_prefill_preview,
+    parse_prefill_args,
+    pinned_prefill_from_conversation_metadata,
 )
 from ...Chat.console_skill_resolver import (
     SKILL_UNTRUSTED_REFUSE,
@@ -3309,7 +3321,12 @@ class ChatScreen(BaseAppScreen):
             if isinstance(raw_system_prompt, str) and raw_system_prompt.strip()
             else None
         )
-        return replace(settings, system_prompt=system_prompt)
+        pinned_prefill = pinned_prefill_from_conversation_metadata(
+            conversation.get("metadata")
+        )
+        return replace(
+            settings, system_prompt=system_prompt, pinned_prefill=pinned_prefill
+        )
 
     async def _resume_console_workspace_conversation(
         self,
@@ -6044,11 +6061,28 @@ class ChatScreen(BaseAppScreen):
             if persisted_id
             else "local session, not persisted yet"
         )
+        prefill_rows: list[ConsoleDisplayRow] = []
+        one_shot = active_session.one_shot_prefill
+        if one_shot:
+            prefill_rows.append(
+                ConsoleDisplayRow(
+                    "Prefill (next send only)", describe_prefill_preview(one_shot)
+                )
+            )
+        session_settings = active_session.settings
+        pinned = (
+            session_settings.pinned_prefill if session_settings is not None else None
+        )
+        if pinned:
+            prefill_rows.append(
+                ConsoleDisplayRow("Prefill (pinned)", describe_prefill_preview(pinned))
+            )
         return (
             ConsoleDisplayRow("Selected conversation", active_session.title),
             ConsoleDisplayRow("Conversation source", source),
             ConsoleDisplayRow("Workspace", workspace_label),
             ConsoleDisplayRow("Resume state", resume_state),
+            *prefill_rows,
         )
 
     def _selected_console_message_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
@@ -9116,6 +9150,7 @@ class ChatScreen(BaseAppScreen):
         PROMPT_COMMAND_NAME: PROMPT_COMMAND_HANDLER_ID,
         SYSTEM_COMMAND_NAME: SYSTEM_COMMAND_HANDLER_ID,
         SKILLS_COMMAND_NAME: SKILLS_COMMAND_HANDLER_ID,
+        PREFILL_COMMAND_NAME: PREFILL_COMMAND_HANDLER_ID,
     }
 
     def _console_unknown_command_hint(self, name: str) -> str:
@@ -9148,6 +9183,7 @@ class ChatScreen(BaseAppScreen):
             "insert-prompt": self._console_command_insert_prompt,
             "apply-system": self._console_command_apply_system,
             SKILLS_COMMAND_HANDLER_ID: self._console_command_skills,
+            PREFILL_COMMAND_HANDLER_ID: self._console_command_prefill,
         }
         handler = dispatch_map.get(handler_id)
         if handler is None:
@@ -9413,6 +9449,89 @@ class ChatScreen(BaseAppScreen):
             self._clear_console_composer_draft()
             return
         await self._open_console_prompt_picker_for_apply_system(args)
+
+    async def _console_command_prefill(self, parse: CommandParse) -> None:
+        """Arm, pin, clear, or report the Console response prefill (`/prefill`).
+
+        One-shot (`/prefill <text>`) applies to the next normal send only
+        and wins over pinned; `/prefill pin <text>` applies to every
+        submit/retry/regenerate until cleared and write-throughs to
+        conversation metadata when the session is persisted. Errors leave
+        the draft in place for correction (mirrors `/system`'s
+        no-system-part behavior); handled outcomes clear it.
+        """
+        action = parse_prefill_args(parse.args)
+        store = self._ensure_console_chat_store()
+        session = store.ensure_session(
+            workspace_id=store.workspace_context.active_workspace_id
+        )
+        if action.kind == ACTION_ERROR:
+            await self._append_native_console_system_message(
+                escape_markup(action.error)
+            )
+            return
+        if action.kind == ACTION_STATUS:
+            one_shot = store.session_one_shot_prefill(session.id)
+            settings = store.session_settings(session.id)
+            pinned = getattr(settings, "pinned_prefill", None) if settings else None
+            lines = []
+            if one_shot:
+                lines.append(
+                    "Prefill (next send only): "
+                    f"'{escape_markup(describe_prefill_preview(one_shot))}'"
+                )
+            if pinned:
+                lines.append(
+                    f"Prefill (pinned): '{escape_markup(describe_prefill_preview(pinned))}'"
+                )
+            if not lines:
+                lines.append("No prefill armed.")
+            # Clear before the message-append await: `_append_native_console_
+            # system_message` triggers nested syncs (transcript render among
+            # them) that make the confirmation visible to a polling caller
+            # before this coroutine resumes past the `await` -- clearing
+            # first closes that window instead of racing it.
+            self._clear_console_composer_draft()
+            await self._append_native_console_system_message("\n".join(lines))
+            return
+        if action.kind == ACTION_CLEAR:
+            store.set_session_one_shot_prefill(session.id, None)
+            _session, persisted = store.set_session_pinned_prefill(session.id, None)
+            self._sync_console_chat_core_state()
+            self._sync_console_settings_summary()
+            copy = "Prefill cleared."
+            if not persisted:
+                copy += " (Warning: saved conversation not updated.)"
+            self._clear_console_composer_draft()
+            await self._append_native_console_system_message(copy)
+            return
+        preview = escape_markup(describe_prefill_preview(action.text))
+        if action.kind == ACTION_PIN:
+            _session, persisted = store.set_session_pinned_prefill(
+                session.id, action.text
+            )
+            self._sync_console_chat_core_state()
+            self._sync_console_settings_summary()
+            copy = (
+                f"Prefill pinned: '{preview}'. Applies to every send, retry, and "
+                "regenerate until /prefill clear. The reply continues directly "
+                "from the last character; tool calling is skipped on prefilled sends."
+            )
+            if not persisted:
+                copy += " (Warning: saved conversation not updated.)"
+            self._clear_console_composer_draft()
+            await self._append_native_console_system_message(copy)
+            return
+        # ACTION_ONE_SHOT
+        store.set_session_one_shot_prefill(session.id, action.text)
+        self._sync_console_chat_core_state()
+        self._sync_console_settings_summary()
+        self._clear_console_composer_draft()
+        await self._append_native_console_system_message(
+            f"Prefill armed for next send: '{preview}'. The reply continues "
+            "directly from the last character; tool calling is skipped on "
+            "prefilled sends."
+        )
 
     def _clear_console_composer_draft(self) -> None:
         """Clear the native Console composer's draft text, if mounted.

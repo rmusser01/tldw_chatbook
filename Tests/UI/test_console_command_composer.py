@@ -843,3 +843,51 @@ async def test_console_consumes_pending_prompt_insert_noop_when_nothing_pending(
 
         assert composer.draft_text() == "abc"
         notify_spy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_console_prefill_command_arms_one_shot_and_confirms():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/prefill Sure thing:")
+
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "Prefill armed for next send")
+
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert store.session_one_shot_prefill(session_id) == "Sure thing:"
+        assert composer.draft_text() == ""  # handled command clears its draft
+
+
+@pytest.mark.asyncio
+async def test_console_prefill_pin_and_clear_round_trip():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        send_button = console.query_one("#console-send-message", Button)
+        store = console._ensure_console_chat_store()
+
+        composer.load_draft("/prefill pin Voice:")
+        send_button.press()
+        await _wait_for_text(console, pilot, "Prefill pinned")
+        session_id = store.active_session_id
+        assert store.session_settings(session_id).pinned_prefill == "Voice:"
+
+        composer.load_draft("/prefill clear")
+        send_button.press()
+        await _wait_for_text(console, pilot, "Prefill cleared")
+        assert store.session_settings(session_id).pinned_prefill is None
+        assert store.session_one_shot_prefill(session_id) is None
+        assert composer.draft_text() == ""
