@@ -1,7 +1,7 @@
 ---
 id: TASK-343
 title: Show in-flight status for Console Regenerate, Retry and Continue
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-20 14:21'
 labels: [console, ux, keyboard]
@@ -23,5 +23,28 @@ With the newest assistant reply selected, pressing r produced no visible change 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Regeneration shows the same in-flight affordances as send: an immediate placeholder or 'regenerating…' marker on the message, a Stop control, and a busy status
+- [x] #1 Regeneration shows the same in-flight affordances as send: an immediate placeholder or 'regenerating…' marker on the message, a Stop control, and a busy status
 <!-- AC:END -->
+
+## Implementation Notes
+
+Root cause exactly as the review's verifier pinned it: the 0.2s transcript
+sync timer was started only in `_submit_console_native_draft`; the
+retry/continue/regenerate handlers awaited the whole generation with zero UI
+sync. Fix: `_start_console_transcript_sync_timer()` at the top of all three
+handlers (the timer already self-stops when the run leaves active statuses).
+
+Enabling fix this exposed: with mid-flight syncs on the retry flow, the
+transcript reconciler could crash (`WidgetError: ... is not a child`) —
+Textual's `Widget.mount()` silently no-ops while a container is
+`_closing`/`_pruning`, so a reconcile pass interleaving a session-surface
+swap recorded detached widgets and then died in `move_child`. `_reconcile_rows`
+now abandons the pass when the instance is closing/pruning/detached (the
+replacement instance composes fresh state).
+
+Verified: 3 new UI tests in `Tests/UI/test_console_regenerate_feedback.py`
+(gated fake provider held open mid-stream; first chunk must be visible while
+in flight) — regenerate reproduced RED first; plus live served-app check
+against the real llama-server: in-flight feedback at 0.0s after `r`
+(previously 75s+ of nothing). Files: `UI/Screens/chat_screen.py`,
+`Widgets/Console/console_transcript.py`.

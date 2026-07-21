@@ -833,6 +833,14 @@ class ConsoleTranscript(VerticalScroll):
 
         previous_widget: Widget | None = None
         for index, row in enumerate(rows):
+            if self._closing or self._pruning or not self.is_attached:
+                # This instance is being removed (a parent recompose/session
+                # surface swap can prune the transcript between this loop's
+                # awaits). Widget.mount() silently no-ops while pruning, so
+                # continuing would record detached widgets in the row maps
+                # and then crash in move_child. The replacement instance
+                # composes fresh state; abandon this pass.
+                return
             widget = self._row_widgets.get(row.key)
             row_was_mounted = False
             if widget is None:
@@ -859,6 +867,14 @@ class ConsoleTranscript(VerticalScroll):
                     self._row_widgets[row.key] = widget
                     self._row_signatures[row.key] = row.signature
 
+            if row_was_mounted and widget.parent is not self:
+                # Version-proof backstop for the pruning check above:
+                # mount() completed without attaching (it no-ops while the
+                # container is being removed). Drop the phantom map entries
+                # and abandon the pass instead of poisoning later moves.
+                self._row_widgets.pop(row.key, None)
+                self._row_signatures.pop(row.key, None)
+                return
             if not row_was_mounted:
                 if previous_widget is None:
                     self.move_child(widget, before=0)

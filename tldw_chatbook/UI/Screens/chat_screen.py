@@ -214,6 +214,7 @@ from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
     ConsoleComposerBar,
+    ConsoleDraftStash,
     ConsoleControlBar,
     ConsoleEditMessageModal,
     ConsoleRailHandle,
@@ -1298,6 +1299,7 @@ class ChatScreen(BaseAppScreen):
         """
         controller = self._ensure_console_chat_controller()
         if controller.store.active_session_id != session_id:
+            self._capture_console_draft_switch_snapshot()
             self._set_active_workspace_for_console_session(session_id)
             controller.switch_session(session_id)
             # Finding C: a sub-agent drill-in is scoped to the conversation
@@ -1342,6 +1344,10 @@ class ChatScreen(BaseAppScreen):
 
     async def _create_native_console_session_from_active_context(self) -> None:
         """Create and focus a native Console session in the active workspace context."""
+        # TASK-339: new_session activates the fresh session inline; snapshot
+        # first so the deferred draft swap attributes settle-window typing
+        # to the new tab instead of clobbering it.
+        self._capture_console_draft_switch_snapshot()
         self._ensure_console_chat_controller().new_session(
             settings=(
                 self._active_console_session_settings()
@@ -1484,6 +1490,13 @@ class ChatScreen(BaseAppScreen):
         self._console_control_model: Optional[Any] = None
         self._console_library_rag_query = ""
         self._console_chat_store: ConsoleChatStore | None = None
+        # TASK-340: keyboard-send draft stashes — keypress->handler handoff,
+        # then the queued submit's accept/refuse consumption slot.
+        self._console_pending_send_stash: ConsoleDraftStash | None = None
+        self._console_inflight_send_stash: ConsoleDraftStash | None = None
+        # TASK-339: (visible session id, draft text, edit serial) captured at
+        # switch initiation; consumed by the deferred draft swap.
+        self._console_draft_switch_snapshot: tuple[str | None, str, int] | None = None
         self._console_agent_bridge: Any | None = None
         self._console_agent_drilldown_run_id: str | None = None
         # Finding C: the conversation the drill-in was set for -- used to
@@ -2846,8 +2859,10 @@ class ChatScreen(BaseAppScreen):
                     return
         for session in store.sessions():
             if session.workspace_id == target_workspace_id:
+                self._capture_console_draft_switch_snapshot()
                 store.switch_session(session.id)
                 return
+        self._capture_console_draft_switch_snapshot()
         store.create_session(
             title=self._console_workspace_session_title(target_workspace_id),
             workspace_id=target_workspace_id,
@@ -2922,12 +2937,34 @@ class ChatScreen(BaseAppScreen):
             return composers[0]
         return None
 
+    def _capture_console_draft_switch_snapshot(self) -> None:
+        """Record the composer state at the moment a session switch begins.
+
+        TASK-339: the draft swap in ``_sync_console_session_draft`` can run
+        a settle-window later (coalesced syncs, slow resume loads). Anything
+        the user types in that window is intended for the NEW session; this
+        snapshot lets the swap attribute it correctly instead of saving it
+        to the old session and wiping it from the composer.
+        """
+        composer = self._console_composer_or_none()
+        if composer is None:
+            self._console_draft_switch_snapshot = None
+            return
+        self._console_draft_switch_snapshot = (
+            self._console_visible_draft_session_id,
+            composer.draft_text(),
+            composer.edit_serial,
+        )
+
     def _sync_console_session_draft(self) -> None:
         """Reconcile the composer draft with the active runtime Console session.
 
-        Saves the visible draft back to the session that owns it, then loads the
-        active session's draft when the active session changed. Runs inside the
-        native Console sync pass so session transitions cannot lose drafts.
+        Saves the visible draft back to the session that owns it, then loads
+        the active session's draft when the active session changed. Runs
+        inside the native Console sync pass so session transitions cannot
+        lose drafts. Keystrokes typed between switch initiation (see
+        ``_capture_console_draft_switch_snapshot``) and this swap carry
+        forward into the new session, in order (TASK-339).
         """
         store = self._ensure_console_chat_store()
         session = store.ensure_session(
@@ -2942,17 +2979,41 @@ class ChatScreen(BaseAppScreen):
         if composer is None:
             return
         visible_session_id = self._console_visible_draft_session_id
+        if visible_session_id == active_session_id:
+            if visible_session_id is not None:
+                try:
+                    store.set_session_draft(visible_session_id, composer.draft_text())
+                except KeyError:
+                    pass
+            return
+        snapshot = self._console_draft_switch_snapshot
+        self._console_draft_switch_snapshot = None
+        live_text = composer.draft_text()
+        save_text = live_text
+        typed_suffix = ""
+        if snapshot is not None and snapshot[0] == visible_session_id:
+            snap_text, snap_serial = snapshot[1], snapshot[2]
+            if composer.edit_serial != snap_serial and live_text.startswith(
+                snap_text
+            ):
+                # User typed during the settle window: the old session keeps
+                # what it actually had at the keypress; the new typing rides
+                # into the new session below. (Non-append edits — e.g.
+                # backspacing into the old draft — fall back to today's
+                # save-the-live-text semantics.)
+                save_text = snap_text
+                typed_suffix = live_text[len(snap_text) :]
         if visible_session_id is not None:
             try:
-                store.set_session_draft(visible_session_id, composer.draft_text())
+                store.set_session_draft(visible_session_id, save_text)
             except KeyError:
                 pass
-        if visible_session_id == active_session_id:
-            return
         try:
             composer.load_draft(store.session_draft(active_session_id))
         except KeyError:
             composer.clear_draft()
+        if typed_suffix:
+            composer.insert_text(typed_suffix)
         self._console_visible_draft_session_id = active_session_id
 
     def _build_console_control_state(
@@ -3261,6 +3322,9 @@ class ChatScreen(BaseAppScreen):
         target = str(conversation_id or "").strip()
         if not target:
             return False
+        # TASK-339: keystrokes typed while the conversation tree loads
+        # belong to the resumed session — snapshot the composer now.
+        self._capture_console_draft_switch_snapshot()
         conversation_service = getattr(
             self.app_instance,
             "chat_conversation_scope_service",
@@ -8729,7 +8793,27 @@ class ChatScreen(BaseAppScreen):
     async def _submit_console_native_draft(self, draft: str) -> None:
         controller = self._ensure_console_chat_controller()
         self._start_console_transcript_sync_timer()
-        result = await controller.submit_draft(draft)
+        # TASK-340: a keyboard send already cleared the composer at the Enter
+        # keypress. The accepted-hook consumes this slot; a refusal below
+        # restores it instead. Snapshot before submit_draft so the hook's
+        # consumption is observable here.
+        inflight_stash = self._console_inflight_send_stash
+        try:
+            result = await controller.submit_draft(draft)
+        except Exception:
+            # An unexpected submit crash must not eat the keypress-cleared
+            # draft — and must not escape the worker (exit_on_error would
+            # take the whole app down with it).
+            leaked_stash = self._console_inflight_send_stash
+            self._console_inflight_send_stash = None
+            if leaked_stash is not None:
+                self._restore_console_send_stash(leaked_stash)
+            logger.exception("Console submit failed unexpectedly")
+            self.app_instance.notify(
+                "Console send failed unexpectedly — your draft was restored.",
+                severity="error",
+            )
+            return
         # TASK-251: a submit may have created/updated a persisted
         # conversation (title, updated_at) -- invalidate so the browser
         # reflects it on the very next sync instead of the TTL window.
@@ -8751,7 +8835,20 @@ class ChatScreen(BaseAppScreen):
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             composer = None
-        if result.should_clear_draft and composer is not None:
+        if not result.accepted and self._console_inflight_send_stash is not None:
+            # Controller-level refusal of a keyboard send: the composer was
+            # cleared at the keypress, so hand the draft back (ahead of any
+            # keystrokes typed since).
+            if composer is not None:
+                composer.restore_stashed_draft(self._console_inflight_send_stash)
+        self._console_inflight_send_stash = None
+        if (
+            result.should_clear_draft
+            and composer is not None
+            and inflight_stash is None
+        ):
+            # Stashed sends were cleared at the keypress — clearing again
+            # here would eat keystrokes typed after Enter (the next draft).
             composer.clear_draft()
         if (
             result.accepted
@@ -8796,7 +8893,12 @@ class ChatScreen(BaseAppScreen):
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             composer = None
-        if composer is not None:
+        if self._console_inflight_send_stash is not None:
+            # TASK-340: this submit's draft was captured and cleared at the
+            # Enter keypress — clearing now would eat keystrokes typed since
+            # (they are the NEXT draft). Consume the stash instead.
+            self._console_inflight_send_stash = None
+        elif composer is not None:
             composer.clear_draft()
         pending_skill_name = self._console_pending_skill_marker_name
         if pending_skill_name is not None:
@@ -8864,13 +8966,19 @@ class ChatScreen(BaseAppScreen):
 
     async def _send_console_message_from_visible_action(self) -> None:
         """Route the visible Console send action through the native controller."""
+        # TASK-340: a keyboard send captured its payload at the Enter
+        # keypress; the mouse path still reads the live draft here.
+        stash = self._console_pending_send_stash
+        self._console_pending_send_stash = None
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
-            draft = composer.draft_text()
+            draft = stash.text if stash is not None else composer.draft_text()
         except QueryError:
             composer = None
-            draft = ""
+            draft = stash.text if stash is not None else ""
         if not draft.strip() and self._console_pending_image_attachment() is None:
+            if composer is not None:
+                composer.restore_stashed_draft(stash)
             self._focus_console_composer_if_needed(force=True)
             return
         self._dismiss_console_guidance()
@@ -8883,12 +8991,22 @@ class ChatScreen(BaseAppScreen):
         # as command input -- Task 9's grammar module deliberately leaves
         # that gating to the caller, since only the composer knows the real
         # segment state.
-        if composer is not None and not composer.has_paste_segments():
+        has_paste = (
+            stash.has_paste
+            if stash is not None
+            else (composer is not None and composer.has_paste_segments())
+        )
+        if composer is not None and not has_paste:
             parse = self._console_command_registry.parse(draft)
         else:
             parse = CommandParse(kind=KIND_NOT_COMMAND)
 
         if parse.kind in (KIND_COMMAND, KIND_FALLBACK):
+            # Commands operate on the live composer draft (`/prompt` replaces
+            # it wholesale, unrecognized handlers leave it untouched) — put
+            # the stash back first so their semantics stay identical.
+            if composer is not None:
+                composer.restore_stashed_draft(stash)
             self._console_unknown_send_armed = None
             await self._dispatch_console_command(parse)
             return
@@ -8913,6 +9031,8 @@ class ChatScreen(BaseAppScreen):
             if await self._console_skill_blocked_match_response(
                 parse.name, blocked_summaries
             ):
+                if composer is not None:
+                    composer.restore_stashed_draft(stash)
                 return
             if self._console_unknown_send_armed == draft:
                 # Second consecutive Enter on the *same* unmodified draft:
@@ -8920,17 +9040,25 @@ class ChatScreen(BaseAppScreen):
                 self._console_unknown_send_armed = None
             else:
                 self._console_unknown_send_armed = draft
+                if composer is not None:
+                    composer.restore_stashed_draft(stash)
                 await self._append_native_console_system_message(
                     self._console_unknown_command_hint(parse.name)
                 )
                 return
 
-        await self._dispatch_console_draft_send(draft)
+        await self._dispatch_console_draft_send(draft, stash=stash)
 
-    async def _dispatch_console_draft_send(self, draft: str) -> bool:
+    async def _dispatch_console_draft_send(
+        self, draft: str, stash: "ConsoleDraftStash | None" = None
+    ) -> bool:
         """Run the send-blocked/readiness gate, then queue ``draft`` as the
         user turn (the normal-text-send tail, shared with Task 9's resolved
         `/skill-name` run path so both go through the exact same gating).
+
+        ``stash`` is the keypress-captured draft of a keyboard send
+        (TASK-340): restored on every blocked path here, handed to the
+        in-flight slot on queue so the accept/refuse sites can consume it.
 
         Returns:
             ``True`` once the submit has actually been queued via
@@ -8941,6 +9069,7 @@ class ChatScreen(BaseAppScreen):
             queued and an explanatory row/toast was already shown.
         """
         if blocked_reason := self._console_send_blocked_reason():
+            self._restore_console_send_stash(stash)
             setup_blocked_reason = self._console_setup_blocked_reason()
             if setup_blocked_reason and not blocked_reason.startswith(
                 "Console send blocked: Library Search/RAG"
@@ -8957,10 +9086,12 @@ class ChatScreen(BaseAppScreen):
             return False
         controller = self._ensure_console_chat_controller()
         if not controller.run_state.is_send_allowed:
+            self._restore_console_send_stash(stash)
             self.app_instance.notify(
                 CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning"
             )
             return False
+        self._console_inflight_send_stash = stash
         # group="console-run": a dedicated group so UI-sync kicks can never
         # cancel an in-flight run (TASK-228 — ungrouped exclusive workers all
         # share Textual's default group and cancel each other).
@@ -8970,6 +9101,16 @@ class ChatScreen(BaseAppScreen):
             group="console-run",
         )
         return True
+
+    def _restore_console_send_stash(self, stash: "ConsoleDraftStash | None") -> None:
+        """Hand a keypress-captured draft back to the composer (TASK-340)."""
+        if stash is None:
+            return
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return
+        composer.restore_stashed_draft(stash)
 
     _CONSOLE_COMMAND_NAME_TO_HANDLER_ID = {
         PROMPT_COMMAND_NAME: PROMPT_COMMAND_HANDLER_ID,
@@ -10790,6 +10931,10 @@ class ChatScreen(BaseAppScreen):
         controller: ConsoleChatController,
         message_id: str,
     ) -> None:
+        # TASK-343: without the sync timer these awaits run the whole
+        # generation with zero on-screen feedback (the timer self-stops
+        # when the run leaves an active status).
+        self._start_console_transcript_sync_timer()
         result = await controller.retry_message(message_id)
         if result.visible_copy:
             severity = "warning" if not result.accepted else "information"
@@ -10801,6 +10946,7 @@ class ChatScreen(BaseAppScreen):
         controller: ConsoleChatController,
         message_id: str,
     ) -> None:
+        self._start_console_transcript_sync_timer()
         result = await controller.continue_from_message(message_id)
         if result.visible_copy and not result.accepted:
             self.app_instance.notify(result.visible_copy, severity="warning")
@@ -10813,6 +10959,7 @@ class ChatScreen(BaseAppScreen):
         controller: ConsoleChatController,
         message_id: str,
     ) -> None:
+        self._start_console_transcript_sync_timer()
         result = await controller.regenerate_message(message_id)
         if result.visible_copy and not result.accepted:
             self.app_instance.notify(result.visible_copy, severity="warning")
@@ -11204,9 +11351,22 @@ class ChatScreen(BaseAppScreen):
                 return
             event.stop()
             event.prevent_default()
+            if self._console_pending_send_stash is not None:
+                # A send keypress is already on its way to the Pressed
+                # handler; a second Enter in that window would stash the
+                # now-empty composer (None) over the pending payload and
+                # eat the message. Swallow the duplicate.
+                return
+            # TASK-340: capture the payload NOW — Button.press() only posts a
+            # message, and printable keys handled before that message runs
+            # used to fold into the sent text.
+            stash = composer.stash_draft_for_send()
+            self._console_pending_send_stash = stash
             try:
                 self.query_one("#console-send-message", Button).press()
             except QueryError:
+                self._console_pending_send_stash = None
+                composer.restore_stashed_draft(stash)
                 self.app_instance.notify(
                     "Console send is unavailable.", severity="error"
                 )

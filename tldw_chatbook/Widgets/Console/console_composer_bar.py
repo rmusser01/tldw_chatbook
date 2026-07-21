@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import textwrap
 from typing import Any, Literal
 
@@ -37,6 +37,20 @@ class _DraftSegment:
     text: str
     collapse_state: _CollapseState = "literal"
     label: str | None = None
+
+
+@dataclass
+class ConsoleDraftStash:
+    """A draft captured synchronously at the send keypress (TASK-340).
+
+    Holds the composer's real segment objects so paste provenance and
+    collapse state survive a restore, plus the canonical text the send
+    path uses as its payload.
+    """
+
+    segments: list[_DraftSegment]
+    text: str
+    has_paste: bool
 
 
 @dataclass(frozen=True)
@@ -100,6 +114,10 @@ class ConsoleComposerBar(Horizontal):
         # every mutation. Collapsed/confirm paste tokens are single units for
         # caret movement and deletion.
         self._cursor_index = 0
+        # TASK-339: bumped by every user-edit entry point (typing/deletes);
+        # programmatic load/clear/restore leave it untouched so callers can
+        # detect "the user typed since X".
+        self._user_edit_serial = 0
         self._run_active = False
         self._send_blocked = False
         self._setup_blocked_reason = ""
@@ -920,6 +938,64 @@ class ConsoleComposerBar(Horizontal):
         self._sync_interaction_classes()
         self._sync_current_action_state()
 
+    def stash_draft_for_send(self) -> ConsoleDraftStash | None:
+        """Capture and clear the draft synchronously at the send keypress.
+
+        Keystrokes processed after this call land in a fresh, empty draft —
+        they can never fold into the captured send payload (TASK-340). A
+        rejected send hands the stash back via ``restore_stashed_draft``.
+
+        Returns:
+            The captured stash, or ``None`` when the draft is empty (an
+            image-only send has nothing to capture or restore).
+        """
+        text = self.draft_text()
+        if not text:
+            return None
+        if not self._segments_initialized:
+            self._segments = [_DraftSegment(text)]
+            self._segments_initialized = True
+        stash = ConsoleDraftStash(
+            # Copies, not the live objects: segments are mutable, and a
+            # restored draft keeps being edited — the stash must stay a
+            # faithful snapshot of the keypress moment.
+            segments=[replace(segment) for segment in self._segments],
+            text=text,
+            has_paste=self.has_paste_segments(),
+        )
+        self.clear_draft()
+        return stash
+
+    def restore_stashed_draft(self, stash: ConsoleDraftStash | None) -> None:
+        """Put a stashed draft back, ahead of anything typed since the stash.
+
+        The stashed segments are prepended so a rejected send reads exactly
+        as before the keypress, with later keystrokes appended after it;
+        paste provenance and collapse state come back untouched.
+
+        Args:
+            stash: The capture returned by ``stash_draft_for_send``, or
+                ``None`` (image-only send — nothing to restore).
+        """
+        if stash is None or not stash.segments:
+            return
+        self._draft_selection_all = False
+        if not self._segments_initialized:
+            existing = self.draft_text()
+            self._segments = [_DraftSegment(existing)] if existing else []
+            self._segments_initialized = True
+        self._segments = list(stash.segments) + self._segments
+        self._cursor_index = len(self._canonical_draft_text())
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
+
+    @property
+    def edit_serial(self) -> int:
+        """Monotonic count of user-originated draft edits (TASK-339)."""
+        return self._user_edit_serial
+
     def clear_draft(self) -> None:
         """Clear the native Console draft without falling back to stale input."""
         self._draft_selection_all = False
@@ -964,6 +1040,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Typed text to insert without paste-collapse transformation.
         """
+        self._user_edit_serial += 1
         if not text:
             self._sync_interaction_classes()
             self._sync_current_action_state()
@@ -1034,6 +1111,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Text to insert as if it had just been pasted.
         """
+        self._user_edit_serial += 1
         self.insert_pasted_text(text)
 
     def insert_file_segment(self, text: str, label: str) -> None:
@@ -1077,6 +1155,7 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_left(self) -> None:
         """Delete the character (or paste token) immediately left of the caret."""
+        self._user_edit_serial += 1
         if self._draft_selection_all:
             self.clear_draft()
             return
@@ -1108,6 +1187,7 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_right(self) -> None:
         """Delete the character (or paste token) immediately right of the caret."""
+        self._user_edit_serial += 1
         if self._draft_selection_all:
             self.clear_draft()
             return
@@ -1152,6 +1232,7 @@ class ConsoleComposerBar(Horizontal):
         Returns:
             True when text (or a full-draft selection) was deleted.
         """
+        self._user_edit_serial += 1
         if self._draft_selection_all:
             self.clear_draft()
             return True
