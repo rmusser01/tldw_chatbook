@@ -9,6 +9,7 @@ from rich.markup import escape as _escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Chat.console_glyphs import (
@@ -244,6 +245,15 @@ class ConsoleWorkspaceStatusPair(Horizontal):
 class ConsoleWorkspaceContextTray(Vertical):
     """Render workspace selection, conversation scope, and recovery copy."""
 
+    class Relabeled(Message):
+        """Posted after a width-driven relabel recompose.
+
+        A relabel rebuilds the tray's children from compose(), which
+        discards any controls the screen mounted out-of-band (the
+        transitional legacy "New conversation" alias). The screen listens
+        for this message and re-applies them.
+        """
+
     def __init__(
         self,
         state: ConsoleWorkspaceContextState,
@@ -374,6 +384,37 @@ class ConsoleWorkspaceContextTray(Vertical):
         if callable(scroll_to):
             scroll_to(y=max(0, scroll_y), animate=False)
 
+    def _maybe_relabel_for_width(self) -> bool:
+        """Rewrap row labels when the measured content width has changed.
+
+        The check lives in the fit pass rather than ``on_resize`` because the
+        tray's frame variant (solid <-> none) changes the *content* width
+        without changing the outer size, so no resize event fires for it.
+        The equality guard is what prevents recompose feedback loops --
+        steady-state passes are free. Returns True when a relabel recompose
+        was scheduled (the caller should skip fitting; the scheduled passes
+        re-fit after the recompose).
+        """
+        region = getattr(self, "content_region", None)
+        if region is None or region.width <= 0:
+            return False
+        measured = int(region.width)
+        if measured == self._row_content_width:
+            return False
+        self._row_content_width = measured
+        scroll_parent = self._nearest_scroll_parent()
+        parent_scroll_y = getattr(scroll_parent, "scroll_y", None)
+        restore_scroll_y = (
+            int(parent_scroll_y) if parent_scroll_y is not None else None
+        )
+        self.refresh(recompose=True)
+        if self.is_mounted:
+            self._schedule_recomposed_content_fit(
+                restore_scroll_y=restore_scroll_y
+            )
+            self.post_message(self.Relabeled())
+        return True
+
     def _fit_height_to_content(self) -> None:
         """Expose the full tray content height to the parent scroll container.
 
@@ -383,6 +424,9 @@ class ConsoleWorkspaceContextTray(Vertical):
 
         region = getattr(self, "region", None)
         if region is None or region.height <= 0:
+            return
+
+        if self._maybe_relabel_for_width():
             return
 
         content_top = 0

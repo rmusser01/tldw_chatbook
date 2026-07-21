@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import pytest
+from rich.cells import cell_len
 from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -1640,3 +1641,136 @@ def test_console_workspace_aggregate_height_pins_badge_row_cost() -> None:
             badge_rows, 20
         )
     )
+
+
+_LONG_ROW_TITLE = (
+    "A very long conversation title that overflows the rail width easily"
+)
+
+
+def _long_title_grouped_state():
+    return _base_grouped_workspace_state(
+        rows=(
+            _browser_row(
+                "conv-long",
+                _LONG_ROW_TITLE,
+                selected=True,
+                updated_sort="2026-06-27T09:00:00",
+            ),
+        )
+    )
+
+
+def _first_row_name_lines(console) -> list[str]:
+    row_button = console.query_one("#console-workspace-conversation-0", Button)
+    lines = str(row_button.label).splitlines()
+    # Last line is the metadata line; badge rows are not used in this fixture.
+    return lines[:-1]
+
+
+@pytest.mark.asyncio
+async def test_console_rail_titles_wrap_at_measured_width() -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_long_title_grouped_state())
+        await pilot.pause()
+        await pilot.pause()
+
+        # The fit pass replaced the pre-measurement fallback with the real
+        # measured width.
+        assert tray._row_content_width == tray.content_region.width
+        budget = tray._browser_title_budget()
+        name_lines = _first_row_name_lines(console)
+        assert 1 <= len(name_lines) <= 2
+        assert all(cell_len(line) <= budget for line in name_lines)
+        # Flush left: no marker prefix on the name.
+        assert not name_lines[0].startswith(" ")
+
+        # Stability: further fit passes must not flap the labels (guarded
+        # relabel -- no recompose oscillation).
+        settled = str(
+            console.query_one("#console-workspace-conversation-0", Button).label
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert (
+            str(
+                console.query_one(
+                    "#console-workspace-conversation-0", Button
+                ).label
+            )
+            == settled
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_rail_list_height_matches_rendered_rows() -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_long_title_grouped_state())
+        await pilot.pause()
+        await pilot.pause()
+
+        conversation_list = console.query_one("#console-workspace-conversations")
+        # Scope every query to the list: `console-workspace-empty-copy` is
+        # also used by status statics OUTSIDE the conversation list, which
+        # would overcount the expected height.
+        row_buttons = list(
+            conversation_list.query(
+                ".console-workspace-conversation-row"
+            ).results(Button)
+        )
+        assert row_buttons
+        rows_height = sum(
+            int(button.styles.height.value) + 1 for button in row_buttons
+        )
+        header_count = len(
+            conversation_list.query(".console-conversation-browser-section-header")
+        ) + len(
+            conversation_list.query(".console-conversation-browser-group-header")
+        )
+        empty_copies = len(
+            conversation_list.query(".console-workspace-empty-copy")
+        )
+        assert (
+            int(conversation_list.styles.height.value)
+            == rows_height + header_count + empty_copies
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_rail_wrap_budget_tracks_terminal_width() -> None:
+    """Spec: the same long title must wrap at different budgets at different
+    terminal widths (the rail is 3fr, not fixed)."""
+    budgets: dict[str, int] = {}
+    for label, size in (("wide", (200, 44)), ("narrow", (100, 44))):
+        app = _build_test_app()
+        host = ConsoleHarness(app)
+        async with host.run_test(size=size) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-workspace-context")
+            tray = console.query_one(
+                "#console-workspace-context", ConsoleWorkspaceContextTray
+            )
+            tray.sync_state(_long_title_grouped_state())
+            await pilot.pause()
+            await pilot.pause()
+            budget = tray._browser_title_budget()
+            budgets[label] = budget
+            name_lines = _first_row_name_lines(console)
+            assert all(cell_len(line) <= budget for line in name_lines)
+    assert budgets["narrow"] < budgets["wide"]
