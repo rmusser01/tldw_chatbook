@@ -41,6 +41,8 @@ _ROW_IDS = {
     "Conversation source": "console-inspector-conversation-source",
     "Workspace": "console-inspector-workspace",
     "Resume state": "console-inspector-resume-state",
+    "Prefill (next send only)": "console-inspector-prefill-one-shot",
+    "Prefill (pinned)": "console-inspector-prefill-pinned",
     "Session provider": "console-inspector-session-provider",
     "Session model": "console-inspector-session-model",
     "Session endpoint": "console-inspector-session-endpoint",
@@ -89,7 +91,14 @@ _ROW_GROUPS = (
     (
         "Selected Conversation",
         "console-inspector-selected-conversation-heading",
-        ("Selected conversation", "Conversation source", "Workspace", "Resume state"),
+        (
+            "Selected conversation",
+            "Conversation source",
+            "Workspace",
+            "Resume state",
+            "Prefill (next send only)",
+            "Prefill (pinned)",
+        ),
     ),
     (
         "Session Defaults",

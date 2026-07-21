@@ -431,6 +431,7 @@ class ConsoleChatController:
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session.id
         )
+        prefill, prefill_from_one_shot = self._resolve_submit_prefill(session.id)
         # The accepted-hook fires only once the turn is confirmed to
         # actually proceed (Qodo finding 3, PR #636 bot review): it used to
         # fire right after the USER row was appended, BEFORE this skill
@@ -456,6 +457,8 @@ class ConsoleChatController:
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=assistant.id,
+            prefill=prefill,
+            prefill_from_one_shot=prefill_from_one_shot,
         )
 
     def new_session(
@@ -1066,11 +1069,13 @@ class ConsoleChatController:
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id
         )
+        prefill = self._pinned_prefill_for_session(session_id)
         return await self._stream_assistant_response(
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=message_id,
             prepare_retry=True,
+            prefill=prefill,
         )
 
     async def continue_from_message(self, message_id: str) -> ConsoleSubmitResult:
@@ -1170,11 +1175,13 @@ class ConsoleChatController:
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id
         )
+        prefill = self._pinned_prefill_for_session(session_id)
         return await self._stream_assistant_response(
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=message_id,
             variant_mode=True,
+            prefill=prefill,
         )
 
     async def build_context_snapshot(
@@ -1544,6 +1551,48 @@ class ConsoleChatController:
                 }
             )
 
+    def _pinned_prefill_for_session(self, session_id: str) -> str | None:
+        """Return the session's pinned response prefill, if any."""
+        settings = self.store.session_settings(session_id)
+        pinned = getattr(settings, "pinned_prefill", None) if settings else None
+        return pinned or None
+
+    def _resolve_submit_prefill(self, session_id: str) -> tuple[str | None, bool]:
+        """Return ``(prefill, from_one_shot)`` for a normal send.
+
+        One-shot wins over pinned for the send it is armed for; pinned
+        resumes afterward (the one-shot is only cleared on a complete or
+        stopped outcome — see ``_consume_one_shot_prefill``).
+        """
+        one_shot = self.store.session_one_shot_prefill(session_id)
+        if one_shot:
+            return one_shot, True
+        return self._pinned_prefill_for_session(session_id), False
+
+    def _consume_one_shot_prefill(
+        self, assistant_message_id: str, used_prefill: str | None
+    ) -> None:
+        """Clear the armed one-shot after a send that used it terminated
+        ``complete`` or ``stopped``. Blocked and failed sends never call
+        this, so retry reproduces the original intent (spec §2).
+
+        Compare-and-clear: ``used_prefill`` is the exact one-shot text this
+        send consumed (or ``None`` if this send did not use a one-shot at
+        all, in which case this is a no-op). The session's armed one-shot
+        slot is only cleared when it still holds that same text. If a
+        ``/prefill`` re-armed a *different* one-shot while this send was
+        streaming, that newer one-shot must survive the in-flight send's
+        completion untouched.
+        """
+        if used_prefill is None:
+            return
+        try:
+            session_id = self.store.session_id_for_message(assistant_message_id)
+        except KeyError:
+            return
+        if self.store.session_one_shot_prefill(session_id) == used_prefill:
+            self.store.set_session_one_shot_prefill(session_id, None)
+
     async def _apply_skill_substitution(
         self, provider_messages: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], str | None]:
@@ -1822,8 +1871,14 @@ class ConsoleChatController:
         assistant_message_id: str,
         prepare_retry: bool = False,
         variant_mode: bool = False,
+        prefill: str | None = None,
+        prefill_from_one_shot: bool = False,
     ) -> ConsoleSubmitResult:
-        if self._agent_runtime_enabled and self._agent_bridge is not None:
+        if (
+            self._agent_runtime_enabled
+            and self._agent_bridge is not None
+            and not prefill
+        ):
             return await self._run_agent_reply(
                 resolution=resolution,
                 provider_messages=provider_messages,
@@ -1831,11 +1886,25 @@ class ConsoleChatController:
                 prepare_retry=prepare_retry,
                 variant_mode=variant_mode,
             )
+        one_shot_used = prefill if prefill_from_one_shot else None
+        if prefill:
+            provider_messages = [
+                *provider_messages,
+                {
+                    "role": ConsoleMessageRole.ASSISTANT.value,
+                    "content": prefill,
+                },
+            ]
         self._active_assistant_message_id = assistant_message_id
         self._active_stream_task = asyncio.current_task()
         self._stop_requested = False
         if variant_mode:
             self.store.begin_variant_stream(assistant_message_id)
+        if prefill and not prepare_retry:
+            try:
+                self.store.append_stream_chunk(assistant_message_id, prefill)
+            except KeyError:
+                return self._session_closed_result()
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
         )
@@ -1857,10 +1926,20 @@ class ConsoleChatController:
                         )
                     except KeyError:
                         return self._session_closed_result()
+                    self._consume_one_shot_prefill(
+                        assistant_message_id, one_shot_used
+                    )
                     return ConsoleSubmitResult(True, True, stopped.content)
                 if prepare_retry and not retry_prepared:
                     self.store.prepare_message_retry(assistant_message_id)
                     retry_prepared = True
+                    if prefill:
+                        try:
+                            self.store.append_stream_chunk(
+                                assistant_message_id, prefill
+                            )
+                        except KeyError:
+                            return self._session_closed_result()
                 try:
                     self.store.append_stream_chunk(assistant_message_id, chunk)
                 except KeyError:
@@ -1877,6 +1956,9 @@ class ConsoleChatController:
                     )
                 except KeyError:
                     return self._session_closed_result()
+                self._consume_one_shot_prefill(
+                    assistant_message_id, one_shot_used
+                )
                 return ConsoleSubmitResult(True, True, stopped.content)
             if not emitted_content:
                 try:
@@ -1905,6 +1987,7 @@ class ConsoleChatController:
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete.")
             )
+            self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
             return ConsoleSubmitResult(True, True, completed.content)
         except asyncio.CancelledError:
             if self._stop_requested:
@@ -1917,6 +2000,9 @@ class ConsoleChatController:
                     )
                 except KeyError:
                     return self._session_closed_result()
+                self._consume_one_shot_prefill(
+                    assistant_message_id, one_shot_used
+                )
                 return ConsoleSubmitResult(True, True, stopped.content)
             raise
         except Exception as exc:

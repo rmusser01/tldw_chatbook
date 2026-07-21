@@ -894,3 +894,13 @@ def test_rail_system_line_collapses_multiline_and_truncates_long_prompts():
     assert line.endswith("…")
     preview = line.removeprefix("System: ")
     assert len(preview) <= CONSOLE_RAIL_SYSTEM_PREVIEW_MAX_CHARS
+
+
+def test_pinned_prefill_defaults_none_and_replaces():
+    from dataclasses import replace
+
+    settings = ConsoleSessionSettings(provider="llama_cpp")
+    assert settings.pinned_prefill is None
+    pinned = replace(settings, pinned_prefill="*She pauses*")
+    assert pinned.pinned_prefill == "*She pauses*"
+    assert settings.pinned_prefill is None

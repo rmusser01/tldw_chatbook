@@ -1,8 +1,10 @@
 import base64
+import json
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from loguru import logger as _logger
 
+from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 logger = _logger.bind(module="ChatPersistenceService")
@@ -219,6 +221,43 @@ class ChatPersistenceService:
                 expected_version=current_conversation["version"],
             )
         )
+
+    def update_conversation_pinned_prefill(
+        self,
+        *,
+        conversation_id: str,
+        pinned_prefill: str | None,
+    ) -> bool:
+        """Set or clear the pinned response prefill in conversation metadata.
+
+        Merge-safe: re-parses the current ``metadata`` JSON and rewrites only
+        its own key, preserving siblings such as ``active_dictionaries``
+        (mirrors ``LocalChatDictionaryService._write_active_dictionaries``).
+        Optimistic-lock conflicts (``ConflictError``) propagate to the caller.
+
+        Returns:
+            True when the write happened; False when the conversation does
+            not exist.
+        """
+        record = self.db.get_conversation_by_id(str(conversation_id))
+        if record is None:
+            return False
+        try:
+            meta = json.loads(record.get("metadata") or "{}")
+        except (TypeError, ValueError):
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        if pinned_prefill:
+            meta[PINNED_PREFILL_METADATA_KEY] = pinned_prefill
+        else:
+            meta.pop(PINNED_PREFILL_METADATA_KEY, None)
+        self.db.update_conversation(
+            str(conversation_id),
+            {"metadata": json.dumps(meta)},
+            expected_version=record["version"],
+        )
+        return True
 
     def update_message_content(
         self,

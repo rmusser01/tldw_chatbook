@@ -86,10 +86,10 @@ def test_second_fallback_resolver_is_consulted_after_first_declines():
     assert registry.parse("/found here") == CommandParse("fallback", "found", "here")
 
 
-def test_default_console_registry_registers_prompt_system_and_skills_with_stable_ids():
+def test_default_console_registry_registers_prompt_system_skills_and_prefill_with_stable_ids():
     registry = default_console_registry()
 
-    assert registry.available_names() == ("prompt", "system", "skills")
+    assert registry.available_names() == ("prompt", "system", "skills", "prefill")
     assert registry.parse("/prompt") == CommandParse("command", "prompt", "")
     assert registry.parse("/system") == CommandParse("command", "system", "")
     assert registry.parse("/skills") == CommandParse("command", "skills", "")
@@ -135,3 +135,11 @@ def test_empty_registry_has_no_available_names_and_unknown_falls_through():
 
     assert registry.available_names() == ()
     assert registry.parse("/anything") == CommandParse("unknown", "anything", "")
+
+
+def test_prefill_parses_with_args():
+    registry = default_console_registry()
+    assert registry.parse("/prefill pin *She pauses*") == CommandParse(
+        "command", "prefill", "pin *She pauses*"
+    )
+    assert registry.parse("/prefill") == CommandParse("command", "prefill", "")

@@ -2222,3 +2222,288 @@ def test_build_tools_info_for_snapshot_mcp_provider_absent():
     assert info["native_schemas"] == []
     assert info["mcp_note"] is None
     assert info["preview_note"] == "No native tools are configured for preview."
+
+
+# -----------------------------------------------------------------------------
+# Response prefill (SDD Task 5) — resolve, bypass, payload, seed, consume
+# -----------------------------------------------------------------------------
+
+
+def _arm_session(store):
+    """Create+activate a session with settings; return it."""
+    session = store.ensure_session(
+        workspace_id=store.workspace_context.active_workspace_id
+    )
+    if session.settings is None:
+        session.settings = ConsoleSessionSettings(provider="llama_cpp")
+    return session
+
+
+@pytest.mark.asyncio
+async def test_submit_with_one_shot_prefill_appends_trailing_assistant_and_seeds():
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = _arm_session(store)
+    store.set_session_one_shot_prefill(session.id, "Sure thing:")
+
+    result = await controller.submit_draft("hello")
+    assert result.accepted
+    assert gateway.messages_seen[-1] == {
+        "role": "assistant",
+        "content": "Sure thing:",
+    }
+    assert gateway.messages_seen[-2]["role"] == "user"
+    messages = store.messages_for_session(session.id)
+    assert messages[-1].content == "Sure thing:ok"  # seed + RecordingStreamingGateway's "ok"
+    assert messages[-1].status == "complete"
+    # one-shot consumed on complete
+    assert store.session_one_shot_prefill(session.id) is None
+
+
+@pytest.mark.asyncio
+async def test_submit_with_pinned_prefill_applies_and_survives():
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = _arm_session(store)
+    store.set_session_pinned_prefill(session.id, "Voice:")
+
+    await controller.submit_draft("hello")
+    assert gateway.messages_seen[-1] == {"role": "assistant", "content": "Voice:"}
+    # pinned survives the send
+    assert store.session_settings(session.id).pinned_prefill == "Voice:"
+
+
+@pytest.mark.asyncio
+async def test_one_shot_wins_over_pinned_then_pinned_resumes():
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = _arm_session(store)
+    store.set_session_pinned_prefill(session.id, "PINNED")
+    store.set_session_one_shot_prefill(session.id, "ONESHOT")
+
+    await controller.submit_draft("first")
+    assert gateway.messages_seen[-1]["content"] == "ONESHOT"
+    await controller.submit_draft("second")
+    assert gateway.messages_seen[-1]["content"] == "PINNED"
+
+
+@pytest.mark.asyncio
+async def test_blocked_send_retains_one_shot():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=BlockedGateway())
+    session = _arm_session(store)
+    store.set_session_one_shot_prefill(session.id, "KEEP")
+    await controller.submit_draft("hello")
+    assert store.session_one_shot_prefill(session.id) == "KEEP"
+
+
+@pytest.mark.asyncio
+async def test_failed_send_retains_one_shot_and_shows_prefill():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=FailingBeforeChunkGateway()
+    )
+    session = _arm_session(store)
+    store.set_session_one_shot_prefill(session.id, "KEEP")
+    await controller.submit_draft("hello")
+    assert store.session_one_shot_prefill(session.id) == "KEEP"
+    # FailingBeforeChunkGateway raises, so a failure system row is appended
+    # after the assistant message; _last_failed_assistant skips it (the
+    # file's own convention for this exact shape, see line ~118).
+    failed = _last_failed_assistant(store, session.id)
+    assert failed.status == "failed"
+    assert failed.content == "KEEP"  # seed materialized, no provider tokens
+
+
+@pytest.mark.asyncio
+async def test_zero_token_stream_fails_with_prefill_only_content():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=EmptyStreamingGateway()
+    )
+    session = _arm_session(store)
+    store.set_session_one_shot_prefill(session.id, "PRE")
+    await controller.submit_draft("hello")
+    messages = store.messages_for_session(session.id)
+    assert messages[-1].status == "failed"
+    assert messages[-1].content == "PRE"
+    assert store.session_one_shot_prefill(session.id) == "PRE"
+
+
+@pytest.mark.asyncio
+async def test_stop_mid_stream_consumes_one_shot():
+    store = ConsoleChatStore()
+
+    class StopAfterFirstChunkGateway(StreamingGateway):
+        def __init__(self):
+            self.controller = None
+
+        async def stream_chat(self, resolution, messages):
+            yield "partial"
+            self.controller._stop_requested = True
+            yield "never-shown"
+
+    gateway = StopAfterFirstChunkGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    gateway.controller = controller
+    session = _arm_session(store)
+    store.set_session_one_shot_prefill(session.id, "PRE")
+    await controller.submit_draft("hello")
+    messages = store.messages_for_session(session.id)
+    assert messages[-1].status == "stopped"
+    assert messages[-1].content.startswith("PRE")
+    assert store.session_one_shot_prefill(session.id) is None
+
+
+@pytest.mark.asyncio
+async def test_re_armed_one_shot_survives_in_flight_send_completion():
+    """A ``/prefill`` issued mid-stream (re-arming the one-shot to a new
+    value) must survive the in-flight send's completion: the send should
+    only compare-and-clear the one-shot text it actually used, not
+    whatever happens to be armed by the time it finishes."""
+    store = ConsoleChatStore()
+
+    class ReArmMidStreamGateway(StreamingGateway):
+        def __init__(self):
+            self.store = None
+            self.session_id = None
+
+        async def stream_chat(self, resolution, messages):
+            yield "chunk-one"
+            # Simulate a `/prefill SECOND` issued while this send is
+            # still streaming.
+            self.store.set_session_one_shot_prefill(self.session_id, "SECOND")
+            yield "chunk-two"
+
+    gateway = ReArmMidStreamGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = _arm_session(store)
+    gateway.store = store
+    gateway.session_id = session.id
+    store.set_session_one_shot_prefill(session.id, "FIRST")
+
+    result = await controller.submit_draft("hello")
+    assert result.accepted
+    messages = store.messages_for_session(session.id)
+    assert messages[-1].status == "complete"
+    assert messages[-1].content.startswith("FIRST")
+    # SECOND survived — the send only consumed the FIRST it actually used.
+    assert store.session_one_shot_prefill(session.id) == "SECOND"
+
+
+@pytest.mark.asyncio
+async def test_retry_zero_tokens_leaves_failed_content_untouched():
+    """A pinned-prefill retry that yields no tokens must not seed: the lazy
+    prepare_message_retry never runs, so the original failed content (the
+    seed from the first attempt) stays exactly as it was."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=FailingBeforeChunkGateway()
+    )
+    session = _arm_session(store)
+    store.set_session_pinned_prefill(session.id, "PINNED")
+    await controller.submit_draft("hello")
+    # FailingBeforeChunkGateway raises, so a failure system row follows the
+    # assistant message; _last_failed_assistant skips it.
+    failed = _last_failed_assistant(store, session.id)
+    assert failed.status == "failed"
+    assert failed.content == "PINNED"  # seed from the failed first attempt
+
+    controller.provider_gateway = EmptyStreamingGateway()
+    await controller.retry_message(failed.id)
+    after = store.get_message(failed.id)
+    assert after.status == "failed"
+    assert after.content == "PINNED"  # untouched — no double-seed, no wipe
+
+
+@pytest.mark.asyncio
+async def test_retry_applies_pinned_but_not_one_shot():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=FailingBeforeChunkGateway()
+    )
+    session = _arm_session(store)
+    store.set_session_pinned_prefill(session.id, "PINNED")
+    await controller.submit_draft("hello")
+    # FailingBeforeChunkGateway raises, so a failure system row follows the
+    # assistant message; _last_failed_assistant skips it.
+    failed = _last_failed_assistant(store, session.id)
+    assert failed.status == "failed"
+
+    gateway = RecordingStreamingGateway()
+    controller.provider_gateway = gateway
+    result = await controller.retry_message(failed.id)
+    assert result.accepted
+    assert gateway.messages_seen[-1] == {"role": "assistant", "content": "PINNED"}
+    retried = store.get_message(failed.id)
+    assert retried.status == "complete"
+    assert retried.content == "PINNEDok"
+
+
+@pytest.mark.asyncio
+async def test_regenerate_applies_pinned_into_variant():
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = _arm_session(store)
+    await controller.submit_draft("hello")
+    original = store.messages_for_session(session.id)[-1]
+    store.set_session_pinned_prefill(session.id, "PINNED")
+
+    await controller.regenerate_message(original.id)
+    assert gateway.messages_seen[-1] == {"role": "assistant", "content": "PINNED"}
+    regenerated = store.get_message(original.id)
+    assert regenerated.content == "PINNEDok"
+
+
+@pytest.mark.asyncio
+async def test_continue_never_gets_prefill():
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = _arm_session(store)
+    await controller.submit_draft("hello")
+    assistant = store.messages_for_session(session.id)[-1]
+    store.set_session_pinned_prefill(session.id, "PINNED")
+    store.set_session_one_shot_prefill(session.id, "ONESHOT")
+
+    await controller.continue_from_message(assistant.id)
+    # continue keeps its synthetic USER instruction; nothing assistant-trailing
+    assert gateway.messages_seen[-1]["role"] == "user"
+    # one-shot untouched (continue is not a normal send)
+    assert store.session_one_shot_prefill(session.id) == "ONESHOT"
+
+
+@pytest.mark.asyncio
+async def test_prefilled_send_bypasses_agent_loop():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
+
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, agent_runtime_enabled=True
+    )
+    bridge_calls = []
+
+    def run_reply(**kwargs):
+        bridge_calls.append(kwargs)
+        return RunOutcome(status=RUN_DONE, steps=[], final_text="agent says")
+
+    controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+    session = _arm_session(store)
+
+    # Control: without prefill the agent path handles the send.
+    await controller.submit_draft("no prefill")
+    assert len(bridge_calls) == 1
+    assert gateway.messages_seen is None
+
+    # With prefill armed the direct provider path handles it.
+    store.set_session_one_shot_prefill(session.id, "PRE")
+    await controller.submit_draft("with prefill")
+    assert len(bridge_calls) == 1  # unchanged
+    assert gateway.messages_seen[-1] == {"role": "assistant", "content": "PRE"}

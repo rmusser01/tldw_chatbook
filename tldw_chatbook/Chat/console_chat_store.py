@@ -98,6 +98,14 @@ class ConsoleChatPersistence(Protocol):
     ) -> bool:
         """Persist a changed system prompt for an already-saved conversation."""
 
+    def update_conversation_pinned_prefill(
+        self,
+        *,
+        conversation_id: str,
+        pinned_prefill: str | None,
+    ) -> bool:
+        """Set or clear the pinned response prefill on a conversation."""
+
     def get_attachments_for_messages(
         self, message_ids: Sequence[str]
     ) -> dict[str, list[dict[str, Any]]]:
@@ -132,6 +140,7 @@ class ConsoleChatSession:
     draft: str = ""
     updated_at: str = field(default_factory=_utc_now_iso)
     pending_attachments: list[PendingAttachment] = field(default_factory=list)
+    one_shot_prefill: str | None = None
 
 
 class ConsoleChatStore:
@@ -320,6 +329,18 @@ class ConsoleChatStore:
         """Replace the in-memory composer draft for a native Console session."""
         session = self._session_or_raise(session_id)
         session.draft = draft
+        return session
+
+    def session_one_shot_prefill(self, session_id: str) -> str | None:
+        """Return the armed one-shot response prefill for a session, if any."""
+        return self._session_or_raise(session_id).one_shot_prefill
+
+    def set_session_one_shot_prefill(
+        self, session_id: str, prefill: str | None
+    ) -> ConsoleChatSession:
+        """Arm (or clear, with ``None``) the one-shot response prefill."""
+        session = self._session_or_raise(session_id)
+        session.one_shot_prefill = prefill
         return session
 
     def pending_attachments(self, session_id: str) -> list[PendingAttachment]:
@@ -874,6 +895,24 @@ class ConsoleChatStore:
             if session.settings is not None
             else None,
         )
+        pinned_prefill = (
+            session.settings.pinned_prefill if session.settings is not None else None
+        )
+        if pinned_prefill:
+            update_pinned = getattr(
+                self.persistence, "update_conversation_pinned_prefill", None
+            )
+            if callable(update_pinned):
+                try:
+                    update_pinned(
+                        conversation_id=session.persisted_conversation_id,
+                        pinned_prefill=pinned_prefill,
+                    )
+                except Exception:
+                    logger.bind(
+                        session_id=session_id,
+                        conversation_id=session.persisted_conversation_id,
+                    ).exception("Failed to flush pinned prefill on first persist.")
         return session.persisted_conversation_id
 
     def set_session_system_prompt(
@@ -945,6 +984,46 @@ class ConsoleChatStore:
                         conversation_id=session.persisted_conversation_id,
                     ).exception(
                         "Failed to persist Console session system prompt; "
+                        "in-memory session keeps the applied value."
+                    )
+        return session, persisted
+
+    def set_session_pinned_prefill(
+        self, session_id: str, prefill: str | None
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Set or clear a session's pinned response prefill.
+
+        Mirrors ``set_session_system_prompt``: updates the in-memory
+        settings snapshot and, when the session already owns a persisted
+        conversation, writes through to conversation metadata. A durable
+        write failure is caught and logged; the in-memory value is kept and
+        the honest ``persisted`` flag is returned.
+        """
+        session = self._session_or_raise(session_id)
+        normalized = prefill if isinstance(prefill, str) and prefill.strip() else None
+        if session.settings is not None:
+            session.settings = replace(session.settings, pinned_prefill=normalized)
+        persisted = True
+        if (
+            session.persisted_conversation_id is not None
+            and self.persistence is not None
+        ):
+            update_pinned = getattr(
+                self.persistence, "update_conversation_pinned_prefill", None
+            )
+            if callable(update_pinned):
+                try:
+                    update_pinned(
+                        conversation_id=session.persisted_conversation_id,
+                        pinned_prefill=normalized,
+                    )
+                except Exception:
+                    persisted = False
+                    logger.bind(
+                        session_id=session_id,
+                        conversation_id=session.persisted_conversation_id,
+                    ).exception(
+                        "Failed to persist Console pinned prefill; "
                         "in-memory session keeps the applied value."
                     )
         return session, persisted
