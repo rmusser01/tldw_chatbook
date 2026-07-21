@@ -294,3 +294,96 @@ async def test_collect_arguments_raises_for_integer_with_decimal_string():
         with pytest.raises(ValueError) as exc_info:
             form.collect_arguments()
         assert str(exc_info.value) == "count: must be a whole number."
+
+
+def test_parse_schema_unwraps_pydantic_optional_anyof_null():
+    """Pydantic v2 encodes Optional[T] as anyOf:[{type:T},{type:null}]; render
+    it as an optional field of the underlying type rather than falling the whole
+    schema back to raw JSON. (ATHF third-party UAT finding, 2026-07-21.)"""
+    schema = {
+        "type": "object",
+        "properties": {
+            "technique_id": {"type": "string"},
+            "limit": {"anyOf": [{"type": "integer"}, {"type": "null"}], "default": None},
+            "status": {"anyOf": [{"enum": ["open", "done"]}, {"type": "null"}]},
+        },
+    }
+    fields = parse_schema(schema)
+    assert fields is not None
+    by_name = {f.name: f for f in fields}
+    assert by_name["limit"].kind == "integer" and by_name["limit"].required is False
+    assert by_name["status"].kind == "enum" and by_name["status"].choices == ("open", "done")
+
+
+def test_parse_schema_unwraps_type_array_nullable():
+    """The type:[T,"null"] spelling of Optional is unwrapped the same way."""
+    schema = {
+        "type": "object",
+        "properties": {"note": {"type": ["string", "null"]}},
+    }
+    fields = parse_schema(schema)
+    assert fields is not None and fields[0].kind == "string" and fields[0].required is False
+
+
+def test_parse_schema_still_raw_for_genuine_multitype_union():
+    """A real multi-type union (string|integer, no null) can't render as one
+    field and must still trigger the honest raw fallback."""
+    schema = {
+        "type": "object",
+        "properties": {"val": {"anyOf": [{"type": "string"}, {"type": "integer"}]}},
+    }
+    assert parse_schema(schema) is None
+
+
+def test_parse_schema_required_nullable_field_stays_required():
+    """A `T | None` param with no default lands in the schema's `required`
+    list; unwrapping the nullable idiom must NOT silently make it optional,
+    or the user could omit a parameter the tool requires."""
+    schema = {
+        "type": "object",
+        "properties": {"note": {"anyOf": [{"type": "string"}, {"type": "null"}]}},
+        "required": ["note"],
+    }
+    fields = parse_schema(schema)
+    assert fields is not None
+    assert fields[0].name == "note" and fields[0].kind == "string"
+    assert fields[0].required is True
+
+
+def test_parse_schema_type_array_multitype_union_stays_raw():
+    """type:[string,integer] (no null) is a genuine union — still raw."""
+    schema = {
+        "type": "object",
+        "properties": {"val": {"type": ["string", "integer"]}},
+    }
+    assert parse_schema(schema) is None
+
+
+def test_parse_schema_enum_with_null_is_nullable_and_filters_null_choice():
+    """An enum listing null among its values is nullable, and the null is
+    dropped from the rendered choices (never a literal "null" option)."""
+    schema = {
+        "type": "object",
+        "properties": {"mode": {"enum": ["fast", "slow", None]}},
+    }
+    fields = parse_schema(schema)
+    assert fields is not None
+    assert fields[0].kind == "enum" and fields[0].nullable is True
+    assert fields[0].choices == ("fast", "slow")
+
+
+@pytest.mark.asyncio
+async def test_collect_arguments_sends_null_for_blank_required_nullable_field():
+    """A required-but-nullable field (Pydantic T|None, no default, in the
+    schema's required list) left blank sends explicit JSON null instead of
+    raising 'required.' — the honest way to satisfy a nullable requirement."""
+    schema = {
+        "type": "object",
+        "properties": {"note": {"anyOf": [{"type": "string"}, {"type": "null"}]}},
+        "required": ["note"],
+    }
+    app = SchemaFormApp(schema=schema)
+    async with app.run_test():
+        form = app.query_one(MCPSchemaForm)
+        args = form.collect_arguments()
+    assert args == {"note": None}

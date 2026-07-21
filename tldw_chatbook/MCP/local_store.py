@@ -48,6 +48,15 @@ _SAFE_DECIMAL_PATTERN = re.compile(r"^[0-9]{1,4}\.[0-9]{1,2}$")
 _SAFE_URL_LITERAL_PATTERN = re.compile(
     r"^https?://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[^\s]*)?$", re.IGNORECASE
 )
+# A non-secret filesystem path (workspace root, config/db path) is a safe
+# operational literal — the most common stdio-MCP-server env value. Mirrors
+# _LEGACY_SAFE_PATH_PATTERN so the strict and legacy env paths agree; the
+# secret guards (_is_secret_bearing_env_key / _looks_like_raw_secret_value)
+# still run first, so a token that happens to be path-shaped is rejected.
+_SAFE_PATH_LITERAL_PATTERN = re.compile(r"^(?:~|/)[A-Za-z0-9._/@:+-]{1,255}$")
+# Token separators in paths / URLs / query strings — used to extract candidate
+# secret segments from an otherwise-safe-looking literal.
+_SECRET_SEGMENT_SPLIT = re.compile(r"[/?&=:@~]+")
 _LEGACY_SAFE_URL_LITERAL_PATTERN = re.compile(
     r"^[A-Za-z][A-Za-z0-9+.-]*://[^\s]{1,255}$"
 )
@@ -152,7 +161,17 @@ def _is_secret_bearing_env_key(key: str) -> bool:
 
 
 def _looks_like_raw_secret_value(value: str) -> bool:
-    return any(pattern.fullmatch(value) for pattern in _SECRET_VALUE_PATTERNS)
+    # Full-match the whole value AND every token segment, so a secret can't be
+    # smuggled past the anchored patterns inside a path, URL, or query string
+    # (e.g. "~/sk-live-…", "/foo/ghp_…", "https://h/p?key=sk-live-…") now that
+    # paths and URLs are accepted literals. Split on the delimiters that
+    # separate tokens in those forms.
+    candidates = [value, *(seg for seg in _SECRET_SEGMENT_SPLIT.split(value) if seg)]
+    return any(
+        pattern.fullmatch(candidate)
+        for candidate in candidates
+        for pattern in _SECRET_VALUE_PATTERNS
+    )
 
 
 def _is_safe_literal_value(value: str) -> bool:
@@ -164,6 +183,8 @@ def _is_safe_literal_value(value: str) -> bool:
     if _SAFE_DECIMAL_PATTERN.fullmatch(normalized):
         return True
     if _SAFE_URL_LITERAL_PATTERN.fullmatch(value.strip()):
+        return True
+    if _SAFE_PATH_LITERAL_PATTERN.fullmatch(value.strip()):
         return True
     return False
 
@@ -251,7 +272,10 @@ def _sanitize_env_literals(env: Mapping[str, Any] | None) -> dict[str, str]:
             )
         if not _is_safe_literal_value(value):
             raise ValueError(
-                f"Literal env key '{key}' must use an explicit safe operational literal or an env placeholder"
+                f"Literal env key '{key}' must be a safe non-secret value "
+                f"(a filesystem path, boolean, number, log level, or URL). "
+                f"For anything else, set it as a $NAME env placeholder and "
+                f"export {key} in the environment that launches the app."
             )
         sanitized[key] = value
     return sanitized

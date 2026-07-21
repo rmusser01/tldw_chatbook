@@ -446,3 +446,94 @@ def test_local_store_raises_on_corrupt_payload_instead_of_treating_it_as_empty_s
         )
 
     assert path.read_text(encoding="utf-8") == corrupt_payload
+
+
+def test_local_store_accepts_filesystem_path_as_env_literal(tmp_path):
+    """A non-secret filesystem path (workspace root, config/db path — the most
+    common stdio-MCP-server env value, e.g. ATHF's ATHF_WORKSPACE) is a safe
+    operational literal, matching what the legacy env path already accepts.
+    (ATHF third-party UAT finding, 2026-07-21.)"""
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    saved = store.save_profile(
+        LocalExternalMCPProfile(
+            profile_id="athf",
+            command="/opt/athf/bin/athf-mcp",
+            env_literals={
+                "ATHF_WORKSPACE": "/private/tmp/athf/hunts",
+                "HOME_WS": "~/hunts",
+            },
+        )
+    )
+    assert saved.env_literals["ATHF_WORKSPACE"] == "/private/tmp/athf/hunts"
+    assert saved.env_literals["HOME_WS"] == "~/hunts"
+
+
+def test_local_store_still_rejects_secret_shaped_env_literal_over_path_acceptance(
+    tmp_path,
+):
+    """Widening literals to accept paths must NOT relax the secret guards:
+    a secret-bearing key or token-shaped value is still rejected."""
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    with pytest.raises(ValueError, match="[Ss]ecret"):
+        store.save_profile(
+            LocalExternalMCPProfile(
+                profile_id="p",
+                command="python",
+                env_literals={"API_KEY": "/looks/like/a/path/but/secret/key"},
+            )
+        )
+
+
+def test_local_store_rejects_path_shaped_secret_under_neutral_key(tmp_path):
+    """Accepting filesystem paths must NOT let a token-shaped secret slip the
+    value guard by wearing a leading path anchor under a non-secret key name
+    (the leading '/'/'~' used to break the ^sk-…$ full-match)."""
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    for key, value in [
+        ("HOME_WS", "~/sk-NOTAREALSECRET0000"),
+        ("GENERIC", "/ghp_NOTAREALSECRET00000"),
+        ("NESTED", "/opt/creds/xoxb-NOTAREAL-SECRET0000"),
+    ]:
+        with pytest.raises(ValueError, match="[Ss]ecret"):
+            store.save_profile(
+                LocalExternalMCPProfile(
+                    profile_id="p", command="python", env_literals={key: value}
+                )
+            )
+    # A genuine multi-segment workspace path is still accepted.
+    saved = store.save_profile(
+        LocalExternalMCPProfile(
+            profile_id="p",
+            command="python",
+            env_literals={"ATHF_WORKSPACE": "/home/analyst/hunts/prod"},
+        )
+    )
+    assert saved.env_literals["ATHF_WORKSPACE"] == "/home/analyst/hunts/prod"
+
+
+def test_local_store_rejects_secret_smuggled_in_url_or_query_param(tmp_path):
+    """Accepting URL literals must not let a secret hide in a URL path segment
+    or query parameter — the segment split covers /?&=:@ delimiters."""
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    for value in [
+        "https://host.example/api?token=sk-NOTAREALSECRET0000",
+        "https://host.example/ghp_NOTAREALSECRET00000/callback",
+        "https://user:xoxb-NOTAREAL-SECRET0000@host.example/",
+    ]:
+        with pytest.raises(ValueError, match="[Ss]ecret"):
+            store.save_profile(
+                LocalExternalMCPProfile(
+                    profile_id="p",
+                    command="python",
+                    env_literals={"ENDPOINT": value},
+                )
+            )
+    # A clean URL with no secret-shaped segment is still accepted.
+    saved = store.save_profile(
+        LocalExternalMCPProfile(
+            profile_id="p",
+            command="python",
+            env_literals={"ENDPOINT": "https://host.example/v1/hunts?limit=50"},
+        )
+    )
+    assert saved.env_literals["ENDPOINT"] == "https://host.example/v1/hunts?limit=50"
