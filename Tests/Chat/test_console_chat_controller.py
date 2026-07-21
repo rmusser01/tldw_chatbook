@@ -2507,3 +2507,56 @@ async def test_prefilled_send_bypasses_agent_loop():
     await controller.submit_draft("with prefill")
     assert len(bridge_calls) == 1  # unchanged
     assert gateway.messages_seen[-1] == {"role": "assistant", "content": "PRE"}
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_includes_armed_one_shot_prefill():
+    """task-401: an armed prefill must appear in the preview exactly as the
+    send would apply it -- trailing assistant turn + explicit indicator --
+    and the snapshot read must not consume the one-shot."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = _arm_session(store)
+    store.set_session_one_shot_prefill(session.id, "Sure thing:")
+
+    snapshot = await controller.build_context_snapshot(draft="Explain tools")
+
+    assert snapshot.next_send_payload["messages"][-1] == {
+        "role": "assistant",
+        "content": "Sure thing:",
+    }
+    assert snapshot.next_send_payload["response_prefill"] == {
+        "source": "one-shot",
+        "text": "Sure thing:",
+        "agent_loop_bypassed": True,
+    }
+    # Read-only: the snapshot must not consume the armed one-shot.
+    assert store.session_one_shot_prefill(session.id) == "Sure thing:"
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_includes_pinned_prefill():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = _arm_session(store)
+    store.set_session_pinned_prefill(session.id, "Voice:")
+
+    snapshot = await controller.build_context_snapshot(draft="Explain tools")
+
+    assert snapshot.next_send_payload["messages"][-1] == {
+        "role": "assistant",
+        "content": "Voice:",
+    }
+    assert snapshot.next_send_payload["response_prefill"]["source"] == "pinned"
+
+
+@pytest.mark.asyncio
+async def test_build_context_snapshot_unchanged_when_no_prefill_armed():
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    _arm_session(store)
+
+    snapshot = await controller.build_context_snapshot(draft="Explain tools")
+
+    assert "response_prefill" not in snapshot.next_send_payload
+    assert snapshot.next_send_payload["messages"][-1]["role"] == "user"

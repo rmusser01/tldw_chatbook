@@ -1294,6 +1294,22 @@ class ConsoleChatController:
             # Chat dictionaries are safe to apply (string replacements only).
             provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
 
+            # task-401: mirror the send path's response prefill exactly --
+            # same resolution (one-shot wins over pinned) and same trailing
+            # assistant turn -- WITHOUT consuming the one-shot (this is a
+            # read-only preview). Placed after dictionaries to match
+            # `_stream_assistant_response`'s ordering (dictionaries never
+            # rewrite prefill text).
+            prefill, prefill_from_one_shot = self._resolve_submit_prefill(session_id)
+            if prefill:
+                provider_messages = [
+                    *provider_messages,
+                    {
+                        "role": ConsoleMessageRole.ASSISTANT.value,
+                        "content": prefill,
+                    },
+                ]
+
             # Replace image data with placeholders for the preview, including historical images.
             provider_messages = self._replace_image_data_with_placeholders(provider_messages)
 
@@ -1307,19 +1323,30 @@ class ConsoleChatController:
             # Deep-copy messages so the snapshot is independent of the store.
             copied_messages = copy.deepcopy(current_messages)
 
+            next_send_payload: dict[str, Any] = {
+                "model": self.model or self.configured_model,
+                "messages": redacted_messages,
+                # `system` is intentionally duplicated from the leading system
+                # message in `messages` so the preview viewer can show the
+                # effective system prompt at a glance without scanning the
+                # message list.  It is the same redacted value.
+                "system": redacted_system,
+                "staged_sources": staged_sources_list,
+                "tools": tools_info,
+            }
+            if prefill:
+                # Text mirrors the redacted trailing assistant turn so the
+                # indicator can never leak what the messages list redacted.
+                next_send_payload["response_prefill"] = {
+                    "source": "one-shot" if prefill_from_one_shot else "pinned",
+                    "text": redacted_messages[-1]["content"]
+                    if redacted_messages
+                    else prefill,
+                    "agent_loop_bypassed": True,
+                }
             return ConsoleContextSnapshot(
                 current_messages=copied_messages,
-                next_send_payload={
-                    "model": self.model or self.configured_model,
-                    "messages": redacted_messages,
-                    # `system` is intentionally duplicated from the leading system
-                    # message in `messages` so the preview viewer can show the
-                    # effective system prompt at a glance without scanning the
-                    # message list.  It is the same redacted value.
-                    "system": redacted_system,
-                    "staged_sources": staged_sources_list,
-                    "tools": tools_info,
-                },
+                next_send_payload=next_send_payload,
             )
         except Exception as exc:
             logger.exception(

@@ -1,9 +1,11 @@
 ---
 id: TASK-401
 title: Show armed response prefill in Console context snapshot preview
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-21 03:48'
+updated_date: '2026-07-21 07:09'
 labels: []
 dependencies: []
 ---
@@ -16,7 +18,13 @@ The Console context snapshot modal claims to show the assembled next-send payloa
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Context snapshot preview includes the trailing assistant prefill turn when one is armed
-- [ ] #2 Preview indicates the agent loop is bypassed for that send
-- [ ] #3 No change when no prefill is armed
+- [x] #1 Context snapshot preview includes the trailing assistant prefill turn when one is armed
+- [x] #2 Preview indicates the agent loop is bypassed for that send
+- [x] #3 No change when no prefill is armed
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+build_context_snapshot now mirrors the send path after the dictionaries step: resolves one-shot-over-pinned via _resolve_submit_prefill (read-only, never consumes), appends the trailing assistant turn through the same redaction pipeline, and adds a response_prefill payload key {source, text (redacted), agent_loop_bypassed: true}. No payload change when nothing armed. 3 new controller tests; suite 103 passed.
+<!-- SECTION:NOTES:END -->
