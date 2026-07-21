@@ -93,6 +93,7 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
     EditPersonaRequested,
     PersonaProfileEditCancelled,
     PersonaProfileSaveRequested,
+    PreviewConfigureProviderRequested,
     PreviewOpenInConsoleRequested,
     PreviewReplyRequested,
     PreviewResetRequested,
@@ -3574,6 +3575,13 @@ class PersonasScreen(BaseAppScreen):
     ) -> None:
         message.stop()
         self.preview.open_in_console()
+
+    @on(PreviewConfigureProviderRequested)
+    def _handle_preview_configure(
+        self, message: PreviewConfigureProviderRequested
+    ) -> None:
+        message.stop()
+        self.preview.open_provider_settings()
 
     # ===== Create / edit =====
 

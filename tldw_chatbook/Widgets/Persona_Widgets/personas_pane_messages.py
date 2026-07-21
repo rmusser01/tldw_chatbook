@@ -122,3 +122,7 @@ class PreviewResetRequested(Message):
 
 class PreviewOpenInConsoleRequested(Message):
     """Open the preview-conversation transcript in Console."""
+
+
+class PreviewConfigureProviderRequested(Message):
+    """Open Settings > Providers & Models from the preview provider readout."""

@@ -2986,6 +2986,130 @@ class TestPreviewIntegration:
                 "character: Edited opener from Detective Sam to User."
             )
 
+    async def _readout_text(self, screen):
+        from textual.widgets import Static as _Static
+
+        return str(
+            screen.query_one("#personas-preview-provider", _Static).renderable
+        )
+
+    async def test_provider_readout_shows_character_and_fallback(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """The readout names the character provider/model and fallback target
+        (task-426)."""
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            text = await self._readout_text(screen)
+            assert "Anthropic" in text
+            assert "claude-3-haiku" in text
+            # The Console-default fallback target is named too.
+            assert "llama.cpp" in text
+
+    async def test_provider_readout_no_fallback_note_when_same_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """No fallback note when chat_defaults matches character_defaults."""
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "openai", "model": "gpt-4o"},
+            "chat_defaults": {"provider": "openai", "model": "gpt-4o"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            text = await self._readout_text(screen)
+            assert "OpenAI" in text
+            assert "gpt-4o" in text
+            assert "Console default" not in text
+
+    async def test_provider_readout_falls_to_chat_when_no_character_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """With no character provider, the chat default is what answers."""
+        mock_app_instance.app_config = {
+            "character_defaults": {},
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            text = await self._readout_text(screen)
+            assert "llama.cpp" in text
+            assert "local.gguf" in text
+            assert "Console default" in text
+
+    async def test_configure_button_navigates_to_settings_providers(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """The Configure affordance deep-links to Settings > Providers & Models
+        with the character provider preselected (task-426)."""
+        from textual.widgets import Button
+
+        from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+        from tldw_chatbook.UI.Screens.settings_config_models import (
+            SettingsCategoryId,
+        )
+
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            posted: list[NavigateToScreen] = []
+            original = screen.post_message
+
+            def _record(message):
+                if isinstance(message, NavigateToScreen):
+                    posted.append(message)
+                return original(message)
+
+            screen.post_message = _record
+            screen.query_one("#personas-preview-configure", Button).press()
+            await pilot.pause()
+            assert posted, "Configure should post a navigation message"
+            nav = posted[-1]
+            assert nav.screen_name == "settings"
+            category = nav.screen_context.get("category")
+            category_value = getattr(category, "value", category)
+            assert category_value == SettingsCategoryId.PROVIDERS_MODELS.value
+            assert nav.screen_context.get("provider") == "anthropic"
+
+    async def test_post_send_readout_reflects_resolved_fallback_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """After a fallback reply, the readout reflects the provider that
+        actually answered (task-425/426)."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+        }
+        fake = _ReadinessMapPreviewGateway(ready_providers={"llama_cpp"})
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.preview.ensure_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            text = await self._readout_text(screen)
+            assert "llama.cpp" in text
+            assert "Console default" in text
+            # Configure still targets the character-configured provider (the
+            # one to make ready), not the fallback that happened to answer.
+            assert screen.preview._readout_nav_provider == "anthropic"
+
     async def test_blocked_provider_shows_readable_status(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
