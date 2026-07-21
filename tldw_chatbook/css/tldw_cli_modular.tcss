@@ -6689,6 +6689,7 @@ InlineLoader.error {
 
 #stats-content {
     padding: 0 2;
+    height: auto;
 }
 
 /* Section headers */
@@ -6713,6 +6714,8 @@ InlineLoader.error {
     grid-size: 2 2;
     grid-gutter: 1 1;
     margin-bottom: 1;
+    height: auto;
+    grid-rows: auto;
 }
 
 .stats-grid.overview-grid {
@@ -6753,7 +6756,7 @@ StatCard:hover {
     layout: vertical;
     align: center middle;
     width: 100%;
-    height: 100%;
+    height: auto;
 }
 
 .stat-card-icon {
@@ -6816,6 +6819,7 @@ StatCard:hover {
     border: solid $border;
     padding: 1;
     margin-bottom: 1;
+    height: auto;
 }
 
 /* Topic range cards */
@@ -6834,6 +6838,7 @@ StatCard:hover {
     border: solid $border;
     padding: 1;
     margin-bottom: 1;
+    height: auto;
 }
 
 .character-total {
