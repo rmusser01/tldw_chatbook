@@ -437,7 +437,8 @@ async def test_console_control_bar_exposes_compact_visible_actions():
 
 
 @pytest.mark.asyncio
-async def test_console_left_rail_orders_session_then_staged_context():
+async def test_console_left_rail_keeps_session_and_moves_staged_context_out():
+    """Task-400: staged sources render in the Inspector, not the left rail."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -452,9 +453,20 @@ async def test_console_left_rail_orders_session_then_staged_context():
             if _is_displayed(child)
         )
 
-        assert visible_text.index("Conversations") < visible_text.index("Sources")
-        assert "Stage sources from Library" in visible_text
+        assert "Conversations" in visible_text
         assert "Chat 1" in visible_text
+        assert "Stage sources from Library" not in visible_text
+        assert not list(rail.query("#console-staged-context-tray"))
+
+        # The staged-context tray now tops the Inspector rail body, above
+        # the run inspector (Source Readiness section) and the bottom card.
+        tray = console.query_one("#console-staged-context-tray")
+        rail_body = console.query_one("#console-inspector-rail-body")
+        assert tray.parent is rail_body
+        children = list(rail_body.children)
+        assert children.index(tray) == 0
+        readiness = console.query_one("#console-live-work-source-readiness")
+        assert children.index(tray) < children.index(readiness)
 
 
 @pytest.mark.asyncio

@@ -2480,6 +2480,13 @@ ConsoleSystemPromptModal {
     margin: 1 0 0 0;
 }
 
+/* Context (staged sources) section pinned at the top of the Inspector rail
+   body (task-400): bottom margin separates it from the run inspector below. */
+.console-inspector-context-section {
+    margin: 0 0 1 0;
+    padding: 0 1;
+}
+
 .console-live-work-source-row {
     height: auto;
     min-height: 1;

@@ -2002,6 +2002,62 @@ async def test_stage_console_library_rag_launch_restage_replaces_single_card():
 
 
 @pytest.mark.asyncio
+async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom():
+    """Task-400: swaps keep the pre-move card slot; the tray stays on top.
+
+    ``_frame_console_region`` styles the tray IN PLACE (adds a class and an
+    inline border, returns the same widget -- no wrapper container), so the
+    tray is a direct child of the inspector rail body, pinned as its FIRST
+    child. Live-work cards keep anchoring after the run-inspector block at
+    the bottom. This drives the real swap seam both directions.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-live-work-source-readiness")
+
+        rail_body = screen.query_one("#console-inspector-rail-body")
+        tray = screen.query_one("#console-staged-context-tray")
+        run_inspector = screen.query_one("#console-run-inspector")
+        # Ancestry evidence: the framed tray is a DIRECT child of the rail
+        # body (no frame wrapper), composed at the very top.
+        assert tray.parent is rail_body
+        assert tray.has_class("console-frame-quiet")
+        assert list(rail_body.children).index(tray) == 0
+
+        # Readiness -> pending-launch swap mounts after the run inspector.
+        screen._stage_console_library_rag_launch(_library_rag_launch("searching"))
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#console-pending-launch-card")
+        card = screen.query_one("#console-pending-launch-card")
+        children = list(rail_body.children)
+        assert card.parent is rail_body
+        assert (
+            children.index(tray)
+            < children.index(run_inspector)
+            < children.index(card)
+        )
+
+        # Pending-launch -> readiness swap (launch resolved) re-anchors too.
+        screen._pending_console_launch_context = None
+        assert screen._sync_console_pending_launch_surfaces() is True
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#console-live-work-source-readiness")
+        assert len(screen.query("#console-pending-launch-card")) == 0
+        readiness = screen.query_one("#console-live-work-source-readiness")
+        children = list(rail_body.children)
+        assert readiness.parent is rail_body
+        assert (
+            children.index(tray)
+            < children.index(run_inspector)
+            < children.index(readiness)
+        )
+
+
+@pytest.mark.asyncio
 async def test_stage_console_library_rag_launch_still_auto_opens_inspector():
     """The blocked-outcome auto-open must survive the recompose removal."""
     app = _build_test_app()

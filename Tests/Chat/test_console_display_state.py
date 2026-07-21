@@ -82,7 +82,10 @@ def test_console_staged_context_state_preserves_live_work_payload_provenance():
 def test_console_staged_context_empty_state_uses_semantic_flag():
     state = ConsoleStagedContextState.empty()
 
-    assert state.summary == "No sources attached."
+    # Task-400: no summary line for the empty state -- the tray widget owns
+    # the "No sources attached. Stage sources from Library." guidance copy,
+    # and a summary here rendered the same copy twice.
+    assert state.summary == ""
     assert state.is_empty is True
 
 
