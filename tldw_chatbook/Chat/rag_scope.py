@@ -10,6 +10,14 @@ SOURCE_TYPE_MEDIA = "media"
 SOURCE_TYPE_NOTE = "note"
 _KNOWN_SOURCE_TYPES = (SOURCE_TYPE_MEDIA, SOURCE_TYPE_NOTE)
 
+def _warn_malformed(reason: str) -> None:
+    """Log a warning about malformed rag_scope payload.
+
+    Args:
+        reason: A short description of what was malformed.
+    """
+    logger.warning("rag_scope payload malformed ({}); treating as unscoped", reason)
+
 @dataclass(frozen=True)
 class ScopeItem:
     """Represents a single item in a RAG scope.
@@ -58,26 +66,37 @@ def parse_scope(raw: Any) -> Optional[RagScope]:
         A ``RagScope``, or ``None`` (unscoped) for missing, malformed,
         or newer-versioned payloads. Never raises.
     """
+    if raw is None:
+        return None
     if not isinstance(raw, dict):
+        _warn_malformed("raw is not a dict")
         return None
     version = raw.get("version")
     if not isinstance(version, int) or version > SCOPE_VERSION or version < 1:
         if version is not None and version != SCOPE_VERSION:
             logger.warning("rag_scope payload version {} unsupported; treating as unscoped", version)
+        else:
+            _warn_malformed("version missing or invalid type")
         return None
     items_raw = raw.get("items")
     updated_at = raw.get("updated_at")
-    if not isinstance(items_raw, list) or not isinstance(updated_at, str):
+    if not isinstance(items_raw, list):
+        _warn_malformed("items is not a list")
+        return None
+    if not isinstance(updated_at, str):
+        _warn_malformed("updated_at is not a string")
         return None
     items: list[ScopeItem] = []
     for entry in items_raw:
         if not isinstance(entry, dict):
+            _warn_malformed("entry in items is not a dict")
             return None
         stype = entry.get("source_type")
         sid = entry.get("source_id")
         if stype not in _KNOWN_SOURCE_TYPES:
             continue  # forward-compat: unknown types dropped (spec D5)
         if sid is None:
+            _warn_malformed("source_id is missing")
             return None
         items.append(ScopeItem(str(stype), str(sid)))
     return RagScope(items=tuple(items), updated_at=updated_at)
