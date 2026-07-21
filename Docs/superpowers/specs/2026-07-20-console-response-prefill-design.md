@@ -221,7 +221,34 @@ the prefill turn.
 - **Live smoke during verification:** Anthropic (native prefill honored) and local
   llama-server; Gemini/Responses-API as the §5 verification items.
 
-## 8. Follow-up candidates (explicitly not v1)
+## 8. Verification results (2026-07-20, live smoke on llama-server :9099 + remote API checks)
+
+- **llama.cpp: SUPPORTED, with a verification-determined fix.** llama-server returns HTTP 400
+  ("Assistant response prefill is incompatible with enable_thinking.") when the loaded
+  template's thinking mode is on. Fix shipped in this branch: `build_llamacpp_chat_payload`
+  adds `chat_template_kwargs: {"enable_thinking": false}` whenever the payload ends in an
+  assistant turn (the wire-level signature of a prefilled send). Verified live: the model
+  literally continues the prefill. This replaces §5's skip+warn guard for llama.cpp — the
+  provider is compatible, not incompatible. Rationale: thinking-first generation is
+  incoherent with a forced response opening (same logic as the agent-loop bypass).
+- **Resume-path bug found and fixed:** `normalize_conversation_row` whitelisted away the
+  `metadata` column, so pinned prefill never restored on conversation resume. Fixed with a
+  raw passthrough; verified live across a full app restart + rail resume.
+- **All lifecycle legs verified live in the running TUI:** one-shot arm → literal
+  continuation → consumed on complete; retained through blocked sends (unreachable-provider)
+  and failed sends (HTTP 400), with the seed visible on the failed message; pin → voice on
+  subsequent sends; merge-safe metadata write AND clear confirmed in SQLite; `/prefill pin`
+  (no text) usage error; status lines correct at every stage.
+- **Anthropic:** the trailing-assistant payload passes the app's handler unmodified and was
+  POSTed to api.anthropic.com (401 — the configured key is invalid, so literal continuation
+  could not be confirmed live; Anthropic documents prefill as supported).
+- **OpenAI (Chat Completions):** accepted the trailing-assistant payload via the app's
+  handler; response was influenced-but-not-literal continuation, exactly as §5 documents.
+- **NOT verified (no key / not configured):** Gemini (`chat_with_google` role-remap) and the
+  OpenAI Responses-API branch. These remain open §5 verification items; no guard entries
+  were added for them.
+
+## 9. Follow-up candidates (explicitly not v1)
 
 - Engine-native continuation flags (vLLM `continue_final_message`, DeepSeek `prefix: true`).
 - Multi-line prefill editor modal.
