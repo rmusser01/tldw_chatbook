@@ -598,6 +598,162 @@ DOMAIN_CONTRACT_BY_CATEGORY = _build_domain_contract_by_category(
 DOMAIN_SETTINGS_CATEGORY_IDS = frozenset(DOMAIN_CONTRACT_BY_CATEGORY)
 _WORKSPACE_RECORD_UNSET = object()
 
+# Impact-pane guidance rows keyed by non-domain Settings category. Domain
+# categories (DOMAIN_SETTINGS_CATEGORY_IDS) derive their guidance from their
+# ownership contract instead and are intentionally absent here. Every other
+# SettingsCategoryId MUST have an entry: this table is read inside compose, so
+# a missing key would otherwise take down the whole app (see PR #713 / #742).
+_INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
+    SettingsCategoryId.OVERVIEW: (
+        ("Affected config", "all Settings categories summarized for readiness"),
+        ("Recovery", "open the specific category before changing values"),
+        (
+            "Boundary",
+            "runtime MCP, ACP, and tool control stay in their own destinations",
+        ),
+    ),
+    SettingsCategoryId.PROVIDERS_MODELS: (
+        (
+            "Affected config",
+            "provider, model, endpoint, and credential source defaults",
+        ),
+        (
+            "Recovery",
+            "test provider readiness before saving provider-backed Console defaults",
+        ),
+        (
+            "Boundary",
+            "Sampling and transport defaults are routed to Console Defaults",
+        ),
+    ),
+    SettingsCategoryId.APPEARANCE: (
+        ("Affected config", "theme, density, font size, and motion defaults"),
+        (
+            "Recovery",
+            "open Theme for full theme editing; use Settings for persisted defaults",
+        ),
+        ("Boundary", "visual preferences do not change runtime or data access"),
+    ),
+    SettingsCategoryId.STORAGE: (
+        (
+            "Affected config",
+            "config file path, local database paths, media storage roots",
+        ),
+        (
+            "Recovery",
+            "verify paths, reload config, then restart only if storage roots changed",
+        ),
+        (
+            "Boundary",
+            "server handoff does not move local source content unless explicitly requested",
+        ),
+    ),
+    SettingsCategoryId.PRIVACY_SECURITY: (
+        (
+            "Affected config",
+            "encryption posture, credential-source status, and redaction status",
+        ),
+        (
+            "Credential source",
+            "Environment variables are preferred for provider credentials.",
+        ),
+        (
+            "Recovery",
+            "open Providers & Models for provider defaults or Advanced Config for expert repair",
+        ),
+        (
+            "Boundary",
+            "raw secret values are never displayed; encryption mutation needs a password-gated flow",
+        ),
+    ),
+    SettingsCategoryId.CONSOLE_BEHAVIOR: (
+        (
+            "Affected config",
+            "chat_defaults fallbacks plus Console composer paste behavior",
+        ),
+        (
+            "Recovery",
+            "revert unsaved changes or disable paste collapse if composer flow is disrupted",
+        ),
+        (
+            "Boundary",
+            "active sessions and provider+model profiles override these global fallbacks",
+        ),
+    ),
+    SettingsCategoryId.LIBRARY_RAG: (
+        (
+            "Affected config",
+            "AppRAGSearchConfig.rag.search and AppRAGSearchConfig.rag.retriever defaults",
+        ),
+        (
+            "Recovery",
+            "revert unsaved defaults or open Library to validate retrieval behavior",
+        ),
+        (
+            "Boundary",
+            "Library owns indexing, query execution, source browse, Collections, and staging",
+        ),
+    ),
+    SettingsCategoryId.DIAGNOSTICS: (
+        (
+            "Affected config",
+            "read-only validation, reload status, and troubleshooting output",
+        ),
+        (
+            "Recovery",
+            "validate first, reload only after confirming the config source is correct",
+        ),
+        (
+            "Boundary",
+            "diagnostics redact secrets and should not mutate advanced config",
+        ),
+    ),
+    SettingsCategoryId.ADVANCED_CONFIG: (
+        ("Affected config", "raw TOML for every loaded configuration section"),
+        (
+            "Recovery",
+            "validate current text, save atomically, then restore from backup if needed",
+        ),
+        ("Boundary", "save is blocked until the exact current text validates"),
+    ),
+    SettingsCategoryId.THEME: (
+        (
+            "Affected config",
+            "custom theme files under ~/.config/tldw_cli/themes/",
+        ),
+        (
+            "Recovery",
+            "use the editor's Apply/Save/Reset buttons; delete a theme file to remove it",
+        ),
+        (
+            "Boundary",
+            "launch visual defaults stay in Appearance; theme edits never touch config.toml",
+        ),
+    ),
+    SettingsCategoryId.SPLASH_SCREEN: (
+        (
+            "Affected config",
+            "splash_screen section defaults and card selection",
+        ),
+        (
+            "Recovery",
+            "reset defaults from this category or edit splash_screen values in Advanced Config",
+        ),
+        ("Boundary", "changes are saved immediately; no shared Settings draft state"),
+    ),
+}
+# Generic guidance for a category with no explicit entry. Kept as a runtime
+# safety net only; test_inspector_guidance_covers_every_settings_category fails
+# CI before an uncovered category can reach a user.
+_INSPECTOR_GUIDANCE_FALLBACK: tuple[tuple[str, str], ...] = (
+    ("Affected config", "this category manages its own settings"),
+    ("Recovery", "use the controls in the category detail pane"),
+    ("Boundary", "no shared Settings draft state is affected"),
+)
+# Categories already warned about, so the fallback logs once per run per
+# category instead of on every compose pass.
+_WARNED_MISSING_GUIDANCE_CATEGORIES: set[SettingsCategoryId] = set()
+
 
 def _textual_web_safe_url_display(value: str) -> str:
     """Break URL schemes in rendered input text without changing the stored value."""
@@ -5805,120 +5961,6 @@ class SettingsScreen(BaseAppScreen):
     def _inspector_guidance(
         self, category: SettingsCategoryId
     ) -> tuple[tuple[str, str], ...]:
-        guidance: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
-            SettingsCategoryId.OVERVIEW: (
-                ("Affected config", "all Settings categories summarized for readiness"),
-                ("Recovery", "open the specific category before changing values"),
-                (
-                    "Boundary",
-                    "runtime MCP, ACP, and tool control stay in their own destinations",
-                ),
-            ),
-            SettingsCategoryId.PROVIDERS_MODELS: (
-                (
-                    "Affected config",
-                    "provider, model, endpoint, and credential source defaults",
-                ),
-                (
-                    "Recovery",
-                    "test provider readiness before saving provider-backed Console defaults",
-                ),
-                (
-                    "Boundary",
-                    "Sampling and transport defaults are routed to Console Defaults",
-                ),
-            ),
-            SettingsCategoryId.APPEARANCE: (
-                ("Affected config", "theme, density, font size, and motion defaults"),
-                (
-                    "Recovery",
-                    "open Theme for full theme editing; use Settings for persisted defaults",
-                ),
-                ("Boundary", "visual preferences do not change runtime or data access"),
-            ),
-            SettingsCategoryId.STORAGE: (
-                (
-                    "Affected config",
-                    "config file path, local database paths, media storage roots",
-                ),
-                (
-                    "Recovery",
-                    "verify paths, reload config, then restart only if storage roots changed",
-                ),
-                (
-                    "Boundary",
-                    "server handoff does not move local source content unless explicitly requested",
-                ),
-            ),
-            SettingsCategoryId.PRIVACY_SECURITY: (
-                (
-                    "Affected config",
-                    "encryption posture, credential-source status, and redaction status",
-                ),
-                (
-                    "Credential source",
-                    "Environment variables are preferred for provider credentials.",
-                ),
-                (
-                    "Recovery",
-                    "open Providers & Models for provider defaults or Advanced Config for expert repair",
-                ),
-                (
-                    "Boundary",
-                    "raw secret values are never displayed; encryption mutation needs a password-gated flow",
-                ),
-            ),
-            SettingsCategoryId.CONSOLE_BEHAVIOR: (
-                (
-                    "Affected config",
-                    "chat_defaults fallbacks plus Console composer paste behavior",
-                ),
-                (
-                    "Recovery",
-                    "revert unsaved changes or disable paste collapse if composer flow is disrupted",
-                ),
-                (
-                    "Boundary",
-                    "active sessions and provider+model profiles override these global fallbacks",
-                ),
-            ),
-            SettingsCategoryId.LIBRARY_RAG: (
-                (
-                    "Affected config",
-                    "AppRAGSearchConfig.rag.search and AppRAGSearchConfig.rag.retriever defaults",
-                ),
-                (
-                    "Recovery",
-                    "revert unsaved defaults or open Library to validate retrieval behavior",
-                ),
-                (
-                    "Boundary",
-                    "Library owns indexing, query execution, source browse, Collections, and staging",
-                ),
-            ),
-            SettingsCategoryId.DIAGNOSTICS: (
-                (
-                    "Affected config",
-                    "read-only validation, reload status, and troubleshooting output",
-                ),
-                (
-                    "Recovery",
-                    "validate first, reload only after confirming the config source is correct",
-                ),
-                (
-                    "Boundary",
-                    "diagnostics redact secrets and should not mutate advanced config",
-                ),
-            ),
-            SettingsCategoryId.ADVANCED_CONFIG: (
-                ("Affected config", "raw TOML for every loaded configuration section"),
-                (
-                    "Recovery",
-                    "validate current text, save atomically, then restore from backup if needed",
-                ),
-                ("Boundary", "save is blocked until the exact current text validates"),
-            ),
-        }
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
             contract = self._domain_category_contract(category)
             return (
@@ -5935,7 +5977,21 @@ class SettingsScreen(BaseAppScreen):
                     f"{contract.owner_destination} remains the runtime owner; Settings cannot mutate it yet",
                 ),
             )
-        return guidance[category]
+        guidance = _INSPECTOR_GUIDANCE.get(category)
+        if guidance is not None:
+            return guidance
+        # A missing entry must degrade gracefully: this runs inside compose,
+        # where an uncaught exception takes down the whole app. Warn once per
+        # category so the coverage gap is visible in logs without spamming
+        # every rebuild.
+        if category not in _WARNED_MISSING_GUIDANCE_CATEGORIES:
+            _WARNED_MISSING_GUIDANCE_CATEGORIES.add(category)
+            logger.warning(
+                "No inspector guidance entry for Settings category %r; using "
+                "generic fallback. Add an entry to _INSPECTOR_GUIDANCE.",
+                category,
+            )
+        return _INSPECTOR_GUIDANCE_FALLBACK
 
     def _render_category_buttons(self) -> ComposeResult:
         summaries_by_id = {
