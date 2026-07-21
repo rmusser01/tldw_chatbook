@@ -24,5 +24,5 @@ In the Switch Session modal, ArrowDown from the search field (x3) changed nothin
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Quick-switcher idiom: Up/Down moves a clearly highlighted selection through the result list, Enter activates the highlighted item
-- [ ] #2 Highlight meets ~3:1 contrast
+- [ ] #2 The selection highlight meets a ~3:1 contrast ratio
 <!-- AC:END -->

@@ -23,6 +23,6 @@ Resumed conversations open tabs labelled with ~9-14 characters of the title and 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Wider labels with ellipsis, or middle-truncation preserving distinguishing words
-- [ ] #2 At minimum a visible '…'
+- [ ] #1 Truncated tab labels always show a visible truncation mark ('…') so a fragment is never mistaken for the full title
+- [ ] #2 Labels are wide enough (or middle-truncated) to preserve distinguishing words between similarly-named conversations
 <!-- AC:END -->

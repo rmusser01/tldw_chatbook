@@ -6,7 +6,7 @@
 
 **Method:** six end-to-end journeys against the real served app (textual-serve + Playwright xterm-buffer driver; each journey in an isolated HOME on its own port; live llama-server at :9099 for real streaming). Standard viewport 2050×1240 plus 900×620 and 700×480 degradation passes. Every finding was then adversarially verified against a 114-item prior-art ledger (five shipped UX phase plans, four UAT evidence sets, open backlog) and against the code; only NEW and REGRESSION verdicts are reported below. Raw journey output before screening: 84 findings → **4 regressions, 57 new (8 P1, 24 P2, 25 P3)**; 18 already-known and 5 invalid were screened out (listed at the end).
 
-**Journeys:** J1 cold start/setup · J2 returning power user (12 seeded conversations) · J3 attachments · J4 streaming · J5 settings · J6 keyboard-only + small terminals. Evidence screenshots live in this directory, prefixed `j1-`…`j6-`. (`pre-refresh-run1/` holds captures from an aborted earlier run on older code — ignore for adjudication.)
+**Journeys:** J1 cold start/setup · J2 returning power user (12 seeded conversations) · J3 attachments · J4 streaming · J5 settings · J6 keyboard-only + small terminals. Evidence screenshots are prefixed `j1-`…`j6-`. **Only the captures cited by regression and P1 findings are committed here** (41 files); the full 339-capture set is 72MB and is retained off-repo on the review machine, so P2/P3 evidence filenames below are records of what was captured, not repo paths — for those findings the quoted buffer text and repro steps are the primary record, and every repro was verified live before filing.
 
 ---
 

@@ -23,9 +23,8 @@ Two Stop interruptions, two different behaviors, zero feedback in both. Run A (j
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Stop should
-- [ ] #2 Visibly acknowledge immediately (button state change + 'Stopping...'),
-- [ ] #3 Reliably cancel the provider request, and
-- [ ] #4 Leave an explicit 'stopped by user' record in the transcript/event stream. What is persisted must match what was shown
-- [ ] #5 A regression test pins the restored behavior
+- [ ] #1 Stop visibly acknowledges immediately (button state change + 'Stopping...')
+- [ ] #2 Stop reliably cancels the provider request
+- [ ] #3 An explicit 'stopped by user' record appears in the transcript/event stream, and persisted content matches what was displayed
+- [ ] #4 A regression test pins the restored behavior
 <!-- AC:END -->

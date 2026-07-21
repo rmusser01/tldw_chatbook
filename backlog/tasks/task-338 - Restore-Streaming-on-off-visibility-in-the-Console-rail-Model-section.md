@@ -23,7 +23,6 @@ The rail Model section lists Provider/Model/Temperature/Max tokens/System but no
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 If the rail summarizes the session's model settings, it should include any setting the user can override per-session (or at least surface non-default state)
-- [ ] #2 Otherwise an override is undetectable at a glance
-- [ ] #3 A regression test pins the restored behavior
+- [ ] #1 Every model setting the user can override per-session (including Streaming) is visible at a glance on the default Console surface — in the rail Model summary or via a non-default-state indicator
+- [ ] #2 A regression test pins the restored behavior
 <!-- AC:END -->

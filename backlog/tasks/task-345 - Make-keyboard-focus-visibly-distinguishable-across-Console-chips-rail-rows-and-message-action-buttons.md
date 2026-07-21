@@ -25,6 +25,6 @@ Also observed independently in J3 attachments as `j3-weak-focus-indicator-compos
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Focused controls get an unmistakable indicator (inverse video, accent bg, or bracket/underline marker) meeting ~3:1
+- [ ] #1 Focused controls get an unmistakable indicator (inverse video, accent bg, or bracket/underline marker) meeting a ~3:1 contrast ratio
 - [ ] #2 Every Tab press produces a visible focus change so Enter's target is always predictable
 <!-- AC:END -->
