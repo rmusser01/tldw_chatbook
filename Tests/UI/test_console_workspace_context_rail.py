@@ -570,6 +570,20 @@ def test_console_workspace_context_grouped_browser_styles_are_declared() -> None
         assert "scrollbar-size:" not in list_block
         assert "#console-workspace-conversations:focus {" in css
 
+        # Row lines must size to their explicitly-heighted buttons; Textual's
+        # Horizontal defaults to `height: 1fr`, which divides the list height
+        # equally and breaks mixed wrapped/badge row heights.
+        row_line_block = css.split(
+            ".console-conversation-browser-row-line {", 1
+        )[1].split("}", 1)[0]
+        assert "height: auto" in row_line_block
+        # Reserve the scrollbar cell permanently so row-wrap width does not
+        # depend on scroll state (scrollbar toggle <-> rewrap feedback loop).
+        rail_body_block = css.split("#console-left-rail-body {", 1)[1].split(
+            "}", 1
+        )[0]
+        assert "scrollbar-gutter: stable" in rail_body_block
+
 
 def test_console_workspace_conversation_visible_rows_are_clamped() -> None:
     assert console_workspace_conversation_visible_rows(None) == 4
