@@ -52,3 +52,22 @@ def test_apply_wrapper_returns_only_text(wb_db):
     text = apply_world_info_to_message(wb_db, "c4", None, "a dragon appears", [])
     text2, _ = resolve_world_info_injection(wb_db, "c4", None, "a dragon appears", [])
     assert text == text2 and isinstance(text, str)
+
+
+def test_legacy_style_wiring_applies_without_character(wb_db):
+    # Roleplay P2g-3 Task 2 regression guard: mirrors the NEW chat_events.py
+    # call site (# --- 10.7 --- consume/join block), which now routes through
+    # resolve_world_info_injection OUTSIDE the `if active_char_data:` gate.
+    # No character (char_data=None), conversation-attached book -> injected.
+    _attach(wb_db, "c5", "dragon", "Dragons breathe fire.")
+    chat_history_for_api = []
+    message_text_with_handoff = "a dragon appears"
+    text, count = resolve_world_info_injection(
+        wb_db,
+        "c5",
+        None,  # active_char_data - no character loaded
+        message_text_with_handoff,
+        chat_history_for_api,
+    )
+    assert count >= 1 and "Dragons breathe fire." in text
+    assert text != message_text_with_handoff  # matches app.current_world_info_active check

@@ -836,9 +836,6 @@ async def handle_chat_send_button_pressed(
     pending_image = None
     pending_attachment = None
 
-    # Initialize world info processor
-    world_info_processor = None
-
     # Get DB and conversation ID early (needed for world info loading)
     active_conversation_id = app.current_chat_conversation_id
     db = app.chachanotes_db  # Use the correct instance from app
@@ -864,72 +861,6 @@ async def handle_chat_send_button_pressed(
                 f"Active character has no system_prompt or it's empty. Using system_prompt from left sidebar: '{final_system_prompt_for_api[:100]}...'"
             )
 
-        # Check for world info/character book
-        if get_cli_setting("character_chat", "enable_world_info", True):
-            world_books = []
-
-            # Get standalone world books for this conversation
-            if active_conversation_id and db:
-                try:
-                    from tldw_chatbook.Character_Chat.world_book_manager import (
-                        WorldBookManager,
-                    )
-
-                    wb_manager = WorldBookManager(db)
-                    world_books = wb_manager.get_world_books_for_conversation(
-                        active_conversation_id, enabled_only=True
-                    )
-                    if world_books:
-                        loguru_logger.info(
-                            f"Found {len(world_books)} world books for conversation {active_conversation_id}"
-                        )
-                except Exception as e:
-                    loguru_logger.opt(exception=True).error(
-                        f"Failed to load world books: {e}"
-                    )
-
-            # Check character's embedded world info
-            has_character_book = False
-            extensions = (
-                active_char_data.get("extensions", {}) if active_char_data else {}
-            )
-            if isinstance(extensions, dict) and extensions.get("character_book"):
-                has_character_book = True
-
-            # P2f: union character-attached world books (snapshots in
-            # extensions['character_world_books']), deduped against enabled
-            # conversation books by name (conversation wins). MUST be before the
-            # init guard below so an attached-only character still builds a
-            # processor.
-            from tldw_chatbook.Character_Chat.world_book_manager import (
-                resolve_character_world_books,
-            )
-
-            character_world_books = resolve_character_world_books(
-                active_char_data,
-                {str(b.get("name")) for b in world_books},
-            )
-            if character_world_books:
-                world_books = world_books + character_world_books
-
-            # Initialize processor if we have any world info sources
-            if has_character_book or world_books:
-                try:
-                    from tldw_chatbook.Character_Chat.world_info_processor import (
-                        WorldInfoProcessor,
-                    )
-
-                    world_info_processor = WorldInfoProcessor(
-                        character_data=active_char_data if has_character_book else None,
-                        world_books=world_books if world_books else None,
-                    )
-                    loguru_logger.info(
-                        f"World info processor initialized with {len(world_info_processor.entries)} active entries"
-                    )
-                except Exception as e:
-                    loguru_logger.opt(exception=True).error(
-                        f"Failed to initialize world info processor: {e}"
-                    )
     else:
         loguru_logger.info(
             "No active character data. Using system prompt from left sidebar UI."
@@ -1447,60 +1378,22 @@ async def handle_chat_send_button_pressed(
         app, message_text_with_rag
     )
     message_text_with_world_info = message_text_with_handoff
-    world_info_injections = {}
+    if get_cli_setting("character_chat", "enable_world_info", True):
+        from tldw_chatbook.Character_Chat.world_info_resolver import (
+            resolve_world_info_injection,
+        )
 
-    if world_info_processor:
-        try:
-            # Process messages to find matching world info entries
-            world_info_result = world_info_processor.process_messages(
-                message_text_with_handoff, chat_history_for_api
-            )
-
-            if world_info_result["matched_entries"]:
-                loguru_logger.info(
-                    f"World info: {len(world_info_result['matched_entries'])} entries matched"
-                )
-
-                # Format the injections for use
-                world_info_injections = world_info_processor.format_injections(
-                    world_info_result["injections"]
-                )
-
-                # Apply position-based injections
-                # For now, we'll inject "before_char" content before the message
-                # and "after_char" content after the message
-                before_content = world_info_injections.get("before_char", "")
-                after_content = world_info_injections.get("after_char", "")
-                at_start_content = world_info_injections.get("at_start", "")
-                at_end_content = world_info_injections.get("at_end", "")
-
-                # Build the final message with world info
-                parts = []
-                if at_start_content:
-                    parts.append(at_start_content)
-                if before_content:
-                    parts.append(before_content)
-                parts.append(message_text_with_handoff)
-                if after_content:
-                    parts.append(after_content)
-                if at_end_content:
-                    parts.append(at_end_content)
-
-                message_text_with_world_info = "\n\n".join(parts)
-                loguru_logger.debug(
-                    f"World info injected, new message length: {len(message_text_with_world_info)} chars"
-                )
-
-                # Store world info status for UI indicator
-                app.current_world_info_active = True
-                app.current_world_info_count = len(world_info_result["matched_entries"])
-            else:
-                loguru_logger.debug("No world info entries matched")
-                app.current_world_info_active = False
-                app.current_world_info_count = 0
-        except Exception as e:
-            loguru_logger.opt(exception=True).error(f"Error processing world info: {e}")
-            # Continue without world info on error
+        message_text_with_world_info, _wi_count = resolve_world_info_injection(
+            db,
+            active_conversation_id,
+            active_char_data,
+            message_text_with_handoff,
+            chat_history_for_api,
+        )
+        app.current_world_info_active = (
+            message_text_with_world_info != message_text_with_handoff
+        )
+        app.current_world_info_count = _wi_count
 
     # --- 11. Prepare and Dispatch API Call via Worker ---
     loguru_logger.debug(
