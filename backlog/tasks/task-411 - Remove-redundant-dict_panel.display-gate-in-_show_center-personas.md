@@ -1,5 +1,5 @@
 ---
-id: TASK-402
+id: TASK-411
 title: Remove redundant dict_panel.display gate in _show_center (personas)
 status: To Do
 assignee: []

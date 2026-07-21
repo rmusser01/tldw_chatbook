@@ -1,5 +1,5 @@
 ---
-id: TASK-401
+id: TASK-410
 title: 'Test: char world-book write preserves other extensions keys'
 status: To Do
 assignee: []
