@@ -6838,7 +6838,17 @@ class ChatScreen(BaseAppScreen):
                 rail_body = self.query_one(
                     "#console-inspector-rail-body", VerticalScroll
                 )
-                anchor = self.query_one("#console-run-inspector", Vertical)
+                # Task-398: the Context (staged sources) section sits between
+                # the run inspector and the live-work card, so swapped cards
+                # anchor after the staged-context tray to stay directly below
+                # it. The run-inspector fallback covers a mid-recompose gap
+                # where the tray is not mounted yet.
+                try:
+                    anchor: Any = self.query_one(
+                        "#console-staged-context-tray", ConsoleStagedContextTray
+                    )
+                except QueryError:
+                    anchor = self.query_one("#console-run-inspector", Vertical)
             except QueryError:
                 return
             for selector in (
@@ -7068,8 +7078,9 @@ class ChatScreen(BaseAppScreen):
                     left_rail_header.styles.min_height = 1
                     left_rail_header.styles.max_height = 1
                     with left_rail_header:
-                        # Titled distinctly from the "Context" (staged sources)
-                        # rail section below so no two rail titles collide.
+                        # The "Context" (staged sources) section moved into
+                        # the Inspector rail (task-398); this title now only
+                        # names the rail itself.
                         rail_label = Static(
                             "Console context",
                             id="console-context-rail-title",
@@ -7122,43 +7133,7 @@ class ChatScreen(BaseAppScreen):
                                 ),
                             )
 
-                        # Section 2: Context (staged sources).
-                        yield ConsoleRailSectionHeader(
-                            "Context",
-                            section_id="context",
-                            open=rail_state.context_open,
-                            id="console-rail-section-header-context",
-                        )
-                        context_body = Vertical(
-                            id="console-rail-section-body-context",
-                            classes="console-rail-section-body",
-                        )
-                        context_body.styles.height = "auto"
-                        if not rail_state.context_open:
-                            context_body.styles.display = "none"
-                        with context_body:
-                            staged_context_tray = ConsoleStagedContextTray(
-                                staged_context_state,
-                                id="console-staged-context-tray",
-                                classes="console-left-rail-section",
-                            )
-                            staged_context_tray.styles.width = "100%"
-                            staged_context_tray.styles.min_width = 0
-                            staged_context_tray.styles.height = "auto"
-                            staged_context_tray.styles.min_height = (
-                                3 if staged_context_state.is_empty else 4
-                            )
-                            staged_context_tray.styles.max_height = (
-                                6 if staged_context_state.is_empty else 10
-                            )
-                            yield self._frame_console_region(
-                                staged_context_tray,
-                                variant=self._staged_context_frame_variant(
-                                    staged_context_state
-                                ),
-                            )
-
-                        # Section 3: Model (provider/model readout lines plus a
+                        # Section 2: Model (provider/model readout lines plus a
                         # Configure shortcut into the Console session settings).
                         yield ConsoleRailSectionHeader(
                             "Model",
@@ -7288,7 +7263,7 @@ class ChatScreen(BaseAppScreen):
                             configure.tooltip = "Configure Console session settings"
                             yield configure
 
-                        # Section 4: Agent (run inspector -- the watch-and-drill
+                        # Section 3: Agent (run inspector -- the watch-and-drill
                         # surface for the live/most-recent agent run and its
                         # historical sub-agent runs).
                         yield ConsoleRailSectionHeader(
@@ -7337,7 +7312,7 @@ class ChatScreen(BaseAppScreen):
                                 back_button.styles.display = "none"
                             yield back_button
 
-                        # Section 5: Details (storage, sync, handoff plumbing).
+                        # Section 4: Details (storage, sync, handoff plumbing).
                         yield ConsoleRailSectionHeader(
                             "Details",
                             section_id="details",
@@ -7424,6 +7399,31 @@ class ChatScreen(BaseAppScreen):
                             settings_summary.styles.width = "100%"
                             settings_summary.styles.min_width = 0
                             yield settings_summary
+                        # Context (staged sources) section -- moved here from
+                        # the left rail (task-398) so staged sources read
+                        # directly above the source-readiness/pending-launch
+                        # card below. Same pure display-state seam as before:
+                        # no DB reads on compose/recompose.
+                        staged_context_tray = ConsoleStagedContextTray(
+                            staged_context_state,
+                            id="console-staged-context-tray",
+                            classes="console-inspector-context-section",
+                        )
+                        staged_context_tray.styles.width = "100%"
+                        staged_context_tray.styles.min_width = 0
+                        staged_context_tray.styles.height = "auto"
+                        staged_context_tray.styles.min_height = (
+                            3 if staged_context_state.is_empty else 4
+                        )
+                        staged_context_tray.styles.max_height = (
+                            6 if staged_context_state.is_empty else 10
+                        )
+                        yield self._frame_console_region(
+                            staged_context_tray,
+                            variant=self._staged_context_frame_variant(
+                                staged_context_state
+                            ),
+                        )
                         if pending_launch:
                             yield from self._render_console_live_work_status_card(
                                 pending_launch

@@ -221,22 +221,22 @@ def _rail_prefs(
     left_open: bool,
     right_open: bool,
     session_open: bool = True,
-    context_open: bool = True,
     model_open: bool = True,
     details_open: bool = False,
     agent_open: bool = False,
 ) -> dict[str, bool]:
-    """Full serialized rail-preference shape (left/right rails + five sections).
+    """Full serialized rail-preference shape (left/right rails + four sections).
 
-    The persisted shape now carries the five collapsible left-rail section
-    states alongside the left/right rail openness. Section states default to
-    the first-run layout (Session/Context/Model open, Details/Agent collapsed).
+    The persisted shape carries the four collapsible left-rail section states
+    alongside the left/right rail openness. Section states default to the
+    first-run layout (Session/Model open, Details/Agent collapsed). Task-398
+    dropped the Context section (staged sources moved to the Inspector), so
+    serialized payloads no longer carry a ``context_open`` key.
     """
     return {
         "left_open": left_open,
         "right_open": right_open,
         "session_open": session_open,
-        "context_open": context_open,
         "model_open": model_open,
         "details_open": details_open,
         "agent_open": agent_open,
@@ -334,10 +334,12 @@ async def test_console_first_start_renders_left_rail_and_right_handle():
         await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
 
         assert _is_displayed(console.query_one("#console-left-rail"))
-        assert _is_displayed(console.query_one("#console-staged-context-tray"))
         assert _is_displayed(console.query_one("#console-workspace-context"))
         _assert_selector_hidden_or_absent(console, "#console-context-rail-handle")
         _assert_selector_hidden_or_absent(console, "#console-right-rail")
+        # Task-398: the staged-context tray lives in the Inspector rail, so it
+        # stays hidden behind the collapsed right handle on first start.
+        _assert_selector_hidden_or_absent(console, "#console-staged-context-tray")
         _assert_selector_hidden_or_absent(console, "#console-run-inspector-state")
         _assert_selector_hidden_or_absent(
             console,
@@ -406,7 +408,6 @@ async def test_console_context_rail_collapse_hides_left_rail_and_expands_main_co
         await pilot.click("#console-context-rail-collapse")
 
         await _wait_for_hidden(console, pilot, "#console-left-rail")
-        await _wait_for_hidden(console, pilot, "#console-staged-context-tray")
         await _wait_for_hidden(console, pilot, "#console-workspace-context")
         assert _is_displayed(console.query_one("#console-context-rail-handle"))
         _assert_handle_aligned_with_workbench_frame(
@@ -441,8 +442,8 @@ async def test_console_visible_rail_headers_are_left_aligned_and_collapse_button
         context_title = console.query_one("#console-context-rail-title", Static)
         context_collapse = console.query_one("#console-context-rail-collapse", Button)
         assert context_title.has_class("console-rail-title")
-        # Pane title is distinct from the "Context" (staged sources) section
-        # header below it, so no two left-rail titles collide (task-186).
+        # Pane title names the rail itself (task-186); the "Context" (staged
+        # sources) section moved to the Inspector rail in task-398.
         assert str(context_title.renderable) == "Console context"
         assert str(context_collapse.label) == "◂"
         assert context_collapse.tooltip == "Collapse Console context rail"
@@ -1151,7 +1152,7 @@ async def test_console_desktop_composer_span_ignores_rail_width_changes():
 
 
 @pytest.mark.asyncio
-async def test_console_left_rail_renders_four_sections_with_details_collapsed():
+async def test_console_left_rail_renders_sections_with_details_collapsed():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1159,12 +1160,19 @@ async def test_console_left_rail_renders_four_sections_with_details_collapsed():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-details")
 
-        for section_id in ("session", "context", "model", "details"):
+        # Task-398: no Context section in the left rail anymore -- staged
+        # sources render in the Inspector rail instead.
+        for section_id in ("session", "model", "details"):
             assert _is_displayed(
                 console.query_one(f"#console-rail-section-header-{section_id}")
             )
+        _assert_selector_hidden_or_absent(
+            console, "#console-rail-section-header-context"
+        )
+        _assert_selector_hidden_or_absent(
+            console, "#console-rail-section-body-context"
+        )
         assert _is_displayed(console.query_one("#console-rail-section-body-session"))
-        assert _is_displayed(console.query_one("#console-rail-section-body-context"))
         assert _is_displayed(console.query_one("#console-rail-section-body-model"))
         assert not _is_displayed(
             console.query_one("#console-rail-section-body-details")

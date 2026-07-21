@@ -2893,7 +2893,8 @@ async def test_console_settings_modal_restores_freeform_model_after_provider_rou
 
 
 @pytest.mark.asyncio
-async def test_console_left_rail_orders_session_before_staged_context() -> None:
+async def test_console_inspector_hosts_staged_context_above_source_readiness() -> None:
+    """Task-398: the Context section lives in the Inspector, not the left rail."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2903,15 +2904,39 @@ async def test_console_left_rail_orders_session_before_staged_context() -> None:
 
         staged_context = console.query_one("#console-staged-context-tray")
         settings = console.query_one("#console-settings-summary")
-        workspace_context = console.query_one("#console-workspace-context")
+        rail_body = console.query_one("#console-inspector-rail-body")
+        readiness = console.query_one("#console-live-work-source-readiness")
+        left_rail = console.query_one("#console-left-rail")
 
-        # Phase 1 rail restructure: the rail is four sections in order
-        # Session (workspace context), Context (staged context), Model,
-        # Details -- so workspace context renders above staged context.
-        assert workspace_context.region.y < staged_context.region.y
+        # The staged-context tray is a direct child of the Inspector rail
+        # body, between the run-inspector block and the readiness card.
         assert settings.parent.id == "console-run-inspector"
-        assert workspace_context.parent.id == "console-rail-section-body-session"
-        assert staged_context.parent.id == "console-rail-section-body-context"
+        assert staged_context.parent is rail_body
+        assert readiness.parent is rail_body
+        children = list(rail_body.children)
+        run_inspector_index = children.index(
+            console.query_one("#console-run-inspector")
+        )
+        assert run_inspector_index < children.index(staged_context)
+        assert children.index(staged_context) < children.index(readiness)
+
+        # The left rail no longer hosts a Context section (header, body, or
+        # tray): only Session, Model, Agent, and Details remain.
+        assert not list(left_rail.query("#console-staged-context-tray"))
+        assert not list(console.query("#console-rail-section-header-context"))
+        assert not list(console.query("#console-rail-section-body-context"))
+
+        # With the Inspector opened, the section measures directly above the
+        # source-readiness card.
+        await pilot.click("#console-inspector-rail-open")
+        for _ in range(40):
+            if (
+                staged_context.region.height > 0
+                and readiness.region.height > 0
+            ):
+                break
+            await pilot.pause(0.05)
+        assert staged_context.region.y < readiness.region.y
 
 
 @pytest.mark.asyncio
@@ -2929,8 +2954,6 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         header = console.query_one(".console-rail-header")
         body = console.query_one("#console-left-rail-body")
         session_body = console.query_one("#console-rail-section-body-session")
-        context_body = console.query_one("#console-rail-section-body-context")
-        staged_context = console.query_one("#console-staged-context-tray")
         settings = console.query_one("#console-settings-summary")
         workspace_context = console.query_one("#console-workspace-context")
 
@@ -2939,12 +2962,10 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         assert body.region.height <= left_rail.region.height - header.region.height
         assert settings.parent.id == "console-run-inspector"
         # Phase 1 nests each tray inside its own rail-section body, which is
-        # itself a direct child of the scrolling rail body.
+        # itself a direct child of the scrolling rail body. (Task-398: the
+        # staged-context tray moved to the Inspector rail.)
         assert workspace_context.parent is session_body
-        assert staged_context.parent is context_body
         assert session_body.parent is body
-        assert context_body.parent is body
-        assert staged_context.region.width == workspace_context.region.width
         assert workspace_context.region.width <= body.region.width
         assert body.region.width - workspace_context.region.width <= 2
 

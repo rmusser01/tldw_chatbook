@@ -1089,17 +1089,12 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         left_rail = console.query_one("#console-left-rail")
         staged_context = console.query_one("#console-staged-context-tray")
         workspace_context = console.query_one("#console-workspace-context")
-        # Session (workspace context) now precedes Context (staged sources) in
-        # the four-section left rail, so workspace context renders above staged.
-        assert workspace_context.region.y < staged_context.region.y
-        assert staged_context.region.x == workspace_context.region.x
-        assert staged_context.region.x >= left_rail.region.x
-        assert (
-            staged_context.region.x + staged_context.region.width
-            <= left_rail.region.x + left_rail.region.width
-        )
-        assert staged_context.region.width == workspace_context.region.width
-        assert workspace_context.region.height > staged_context.region.height
+        # Task-398: staged sources (Context) split out of the left rail
+        # entirely -- the tray renders in the Inspector rail body while the
+        # workspace context keeps the left rail's Session section.
+        assert workspace_context.parent.id == "console-rail-section-body-session"
+        assert staged_context.parent.id == "console-inspector-rail-body"
+        assert not list(left_rail.query("#console-staged-context-tray"))
         conversations_title = console.query_one(
             "#console-workspace-conversations-title"
         )

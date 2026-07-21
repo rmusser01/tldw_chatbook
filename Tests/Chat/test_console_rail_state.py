@@ -175,12 +175,17 @@ def test_console_context_rail_badge_ignores_workspace_fallback_labels():
 
 
 def test_console_context_rail_badge_ignores_empty_staged_summary():
+    # Task-398: the empty state carries no summary line (the tray renders its
+    # own guidance copy), so the badge treats it as inactive by emptiness.
     empty_summary = ConsoleStagedContextState.empty().summary
+    assert empty_summary == ""
 
-    # Drift guard: if a future copy change alters the empty-state summary,
-    # this fails loudly instead of silently reintroducing the badge bug
+    # Drift guard for legacy payloads: the retired empty-state copy must stay
+    # in the inactive set so stored summaries never re-trigger the badge bug
     # where the empty-state summary was treated as "active" staged context.
-    assert _normalized_inactive_text(empty_summary) in _INACTIVE_STAGED_SUMMARIES
+    assert _normalized_inactive_text("No sources attached.") in (
+        _INACTIVE_STAGED_SUMMARIES
+    )
 
     assert (
         build_console_context_rail_badge(
@@ -190,6 +195,7 @@ def test_console_context_rail_badge_ignores_empty_staged_summary():
         == "session"
     )
     assert build_console_context_rail_badge(staged_summary=empty_summary) == ""
+    assert build_console_context_rail_badge(staged_summary="No sources attached.") == ""
 
 
 def test_console_context_rail_badge_ignores_default_workspace_display_labels():
@@ -410,7 +416,6 @@ def test_console_rail_preferences_serialize_to_public_dict_shape():
         "left_open": False,
         "right_open": True,
         "session_open": True,
-        "context_open": True,
         "model_open": True,
         "details_open": False,
         "agent_open": False,
@@ -459,15 +464,15 @@ def test_console_rail_section_defaults():
     from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_SECTION_IDS
 
     prefs = ConsoleRailPreferences()
+    # Task-398: "context" (staged sources) is no longer a left-rail section;
+    # it renders in the Inspector rail instead.
     assert CONSOLE_RAIL_SECTION_IDS == (
         "session",
-        "context",
         "model",
         "details",
         "agent",
     )
     assert prefs.session_open is True
-    assert prefs.context_open is True
     assert prefs.model_open is True
     assert prefs.details_open is False
 
@@ -482,11 +487,24 @@ def test_coerce_console_rail_preferences_reads_section_fields():
 
 
 def test_serialize_console_rail_preferences_round_trips_sections():
-    prefs = ConsoleRailPreferences(details_open=True, context_open=False)
+    prefs = ConsoleRailPreferences(details_open=True, model_open=False)
     serialized = serialize_console_rail_preferences(prefs)
     assert serialized["details_open"] is True
-    assert serialized["context_open"] is False
+    assert serialized["model_open"] is False
+    assert "context_open" not in serialized
     assert coerce_console_rail_preferences(serialized) == prefs
+
+
+def test_coerce_console_rail_preferences_ignores_legacy_context_key():
+    # Task-398 migration path: payloads persisted while the rail still had a
+    # Context section keep a context_open key; it must be ignored, not fail.
+    with_legacy_key = coerce_console_rail_preferences(
+        {"left_open": False, "context_open": False, "details_open": True}
+    )
+    without_legacy_key = coerce_console_rail_preferences(
+        {"left_open": False, "details_open": True}
+    )
+    assert with_legacy_key == without_legacy_key
 
 
 def test_build_console_rail_state_carries_section_flags():
@@ -497,5 +515,4 @@ def test_build_console_rail_state_carries_section_flags():
     )
     assert state.details_open is True
     assert state.session_open is False
-    assert state.context_open is True
     assert state.model_open is True

@@ -374,9 +374,13 @@ class ConsoleStagedContextState:
 
     @classmethod
     def empty(cls) -> "ConsoleStagedContextState":
+        # Task-398: no summary line for the empty state. The staged-context
+        # tray renders its own "No sources attached. Stage sources from
+        # Library." guidance Static when there are no rows, so a summary of
+        # "No sources attached." here rendered the same copy twice.
         return cls(
             heading="Staged Context",
-            summary="No sources attached.",
+            summary="",
             is_empty=True,
         )
 

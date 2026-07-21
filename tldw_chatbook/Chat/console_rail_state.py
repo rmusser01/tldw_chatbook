@@ -11,7 +11,9 @@ from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPS
 
 CONSOLE_RAIL_LEFT_DEFAULT_OPEN = True
 CONSOLE_RAIL_RIGHT_DEFAULT_OPEN = False
-CONSOLE_RAIL_SECTION_IDS = ("session", "context", "model", "details", "agent")
+# Task-398: the "context" (staged sources) section moved from the left rail
+# into the Inspector rail, so it is no longer a collapsible left-rail section.
+CONSOLE_RAIL_SECTION_IDS = ("session", "model", "details", "agent")
 CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
 CONSOLE_RAIL_CONTEXT_LABEL = f"Context {GLYPH_COLLAPSED}"
 CONSOLE_RAIL_INSPECTOR_LABEL = f"{GLYPH_COLLAPSE_LEFT} Inspector"
@@ -69,7 +71,6 @@ class ConsoleRailPreferences:
     left_open: bool = CONSOLE_RAIL_LEFT_DEFAULT_OPEN
     right_open: bool = CONSOLE_RAIL_RIGHT_DEFAULT_OPEN
     session_open: bool = True
-    context_open: bool = True
     model_open: bool = True
     details_open: bool = False
     agent_open: bool = False
@@ -100,7 +101,6 @@ class ConsoleRailState:
     persistence_key: str = ""
     right_forced_collapsed: bool = False
     session_open: bool = True
-    context_open: bool = True
     model_open: bool = True
     details_open: bool = False
     agent_open: bool = False
@@ -231,6 +231,8 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
 
     Returns:
         Rail preferences with invalid or missing fields replaced by defaults.
+        Legacy ``context_open`` keys (persisted before task-398 moved the
+        staged-sources Context section into the Inspector rail) are ignored.
     """
     defaults = ConsoleRailPreferences()
     if not isinstance(raw, Mapping):
@@ -240,7 +242,6 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
         left_open=_coerce_bool(raw.get("left_open"), defaults.left_open),
         right_open=_coerce_bool(raw.get("right_open"), defaults.right_open),
         session_open=_coerce_bool(raw.get("session_open"), defaults.session_open),
-        context_open=_coerce_bool(raw.get("context_open"), defaults.context_open),
         model_open=_coerce_bool(raw.get("model_open"), defaults.model_open),
         details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
         agent_open=_coerce_bool(raw.get("agent_open"), defaults.agent_open),
@@ -255,7 +256,6 @@ def serialize_console_rail_preferences(
         "left_open": bool(preferences.left_open),
         "right_open": bool(preferences.right_open),
         "session_open": bool(preferences.session_open),
-        "context_open": bool(preferences.context_open),
         "model_open": bool(preferences.model_open),
         "details_open": bool(preferences.details_open),
         "agent_open": bool(preferences.agent_open),
@@ -454,7 +454,6 @@ def build_console_rail_state(
         persistence_key=preference_key.value,
         right_forced_collapsed=right_forced_collapsed,
         session_open=preferences.session_open,
-        context_open=preferences.context_open,
         model_open=preferences.model_open,
         details_open=preferences.details_open,
         agent_open=preferences.agent_open,

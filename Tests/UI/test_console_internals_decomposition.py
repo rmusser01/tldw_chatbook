@@ -2850,29 +2850,26 @@ async def test_console_left_rail_sections_use_available_space():
         body = console.query_one("#console-left-rail-body")
         header = console.query_one(".console-rail-header")
         session_body = console.query_one("#console-rail-section-body-session")
-        context_body = console.query_one("#console-rail-section-body-context")
-        staged_context = console.query_one("#console-staged-context-tray")
         workspace_context = console.query_one("#console-workspace-context")
 
         assert body.parent is left_rail
         assert header.region.height == 1
         assert body.region.y >= header.region.y + header.region.height
         assert body.region.height <= left_rail.region.height - header.region.height
-        # The trays now live inside their collapsible section bodies: workspace
-        # context in Session (first), staged context in Context (second).
-        assert staged_context.parent is context_body
+        # The workspace tray lives inside its collapsible Session section
+        # body. (Task-398: the staged-context tray moved to the Inspector
+        # rail, so the left rail no longer hosts a Context section.)
         assert workspace_context.parent is session_body
-        assert workspace_context.region.y < staged_context.region.y
-        assert workspace_context.region.height > staged_context.region.height
+        assert not list(left_rail.query("#console-staged-context-tray"))
+        assert not list(console.query("#console-rail-section-body-context"))
 
         # Rail section widths can still be converging on the first render pass
         # (especially under a busy scheduler in a full-suite run), so settle
         # until the measured widths stop changing before asserting equality.
-        previous_widths: tuple[int, int, int] | None = None
+        previous_widths: tuple[int, int] | None = None
         for _ in range(20):
             current_widths = (
                 body.scrollable_content_region.width,
-                staged_context.region.width,
                 workspace_context.region.width,
             )
             if current_widths == previous_widths:
@@ -2882,7 +2879,6 @@ async def test_console_left_rail_sections_use_available_space():
 
         body_content_width = body.scrollable_content_region.width
         assert 0 <= body.region.width - body_content_width <= 2
-        assert staged_context.region.width == body_content_width
         assert workspace_context.region.width == body_content_width
 
 
@@ -3060,6 +3056,10 @@ async def test_console_empty_staged_context_omits_attach_action():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-staged-context-empty")
 
+        # Task-398: the tray lives in the Inspector rail, so its content is
+        # only display-visible once the Inspector is open.
+        await _open_console_inspector(console, pilot)
+
         tray = console.query_one("#console-staged-context-tray")
         assert not list(tray.query("#console-staged-context-attach"))
         assert "Stage sources from Library" in _visible_text(tray)
@@ -3178,9 +3178,13 @@ async def test_console_native_control_bar_and_staged_context_reflect_pending_han
     }
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(140, 42)) as pilot:
+    # Task-398: staged context renders in the Inspector rail, which the
+    # pending launch auto-opens only at standard widths (>= 150 columns) --
+    # narrower terminals keep it behind the badged Inspector handle.
+    async with host.run_test(size=(170, 42)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-control-bar")
+        await _open_console_inspector(console, pilot)
 
         text = _visible_text(console)
         assert "Provider:" in text
