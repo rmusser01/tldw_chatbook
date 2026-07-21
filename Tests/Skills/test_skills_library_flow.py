@@ -726,7 +726,14 @@ async def test_delete_skill_returns_to_list_and_decrements_count(tmp_path):
         await _wait_for_library_shell(screen, pilot)
         await _open_skill_editor(screen, pilot, "throwaway")
 
+        # task-415: Delete is a two-step inline confirmation now -- the
+        # first press arms it, the recomposed confirm button deletes.
         screen.query_one("#library-skill-delete", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_skill_confirming_delete is True
+        assert screen._library_skills_view == "editor"
+        screen.query_one("#library-skill-delete-confirm", Button).press()
         await pilot.pause()
         for _ in range(150):
             if screen._library_skills_view == "list":
@@ -821,7 +828,11 @@ async def test_skill_editor_opens_under_real_runtime_policy_enforcer(tmp_path):
         status_text = await _wait_for_skill_status(screen, pilot)
         assert status_text == "Saved."
 
+        # task-415: two-step delete -- arm the confirmation, then confirm.
         screen.query_one("#library-skill-delete", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one("#library-skill-delete-confirm", Button).press()
         await pilot.pause()
         for _ in range(150):
             if screen._library_skills_view == "list":

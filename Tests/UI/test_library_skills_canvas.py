@@ -1418,3 +1418,108 @@ async def test_approve_failure_discards_stale_review():
     assert fake._library_skill_active_review is None
     assert render_calls == [True]
     assert refresh_calls == [True]
+
+
+# ---------------------------------------------------------------------------
+# task-415: Delete needs an explicit confirmation step (inline two-step,
+# mirroring the notes/media confirming-delete pattern), and create mode must
+# not render a Delete button at all (nothing exists to delete).
+# ---------------------------------------------------------------------------
+
+
+def test_skill_delete_confirm_copy_names_skill_and_supporting_files():
+    from tldw_chatbook.Widgets.Library.library_skills_canvas import (
+        skill_delete_confirm_copy,
+    )
+
+    copy = skill_delete_confirm_copy("code-review", 2)
+    assert "code-review" in copy
+    assert "2 supporting files" in copy
+    bare = skill_delete_confirm_copy("code-review", 0)
+    assert "supporting" not in bare
+    assert "cannot be undone" in bare
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_confirming_delete_renders_confirm_row():
+    state = _editor_state()
+    app = _EditorHost(mode="editor", editor_state=state, confirming_delete=True)
+    async with app.run_test() as pilot:
+        copy = pilot.app.query_one("#library-skill-delete-confirm-copy", Static)
+        text = str(copy.renderable)
+        assert "code-review" in text
+        assert pilot.app.query_one("#library-skill-delete-confirm", Button)
+        assert pilot.app.query_one("#library-skill-delete-cancel", Button)
+        assert not pilot.app.query("#library-skill-save")
+        assert not pilot.app.query("#library-skill-delete")
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_create_mode_renders_no_delete_button():
+    """A brand-new unsaved skill has nothing on disk to delete -- the old
+    always-rendered Delete was a silent no-op in create mode."""
+    state = _editor_state()
+    app = _EditorHost(mode="editor", editor_state=state, is_create=True)
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#library-skill-save", Button)
+        assert not pilot.app.query("#library-skill-delete")
+
+
+@pytest.mark.asyncio
+async def test_handle_library_skill_delete_enters_confirm_state():
+    """First Delete press arms the inline confirmation -- it must NOT kick
+    the delete worker anymore."""
+    worker_calls: list[dict] = []
+    refresh_calls: list[bool] = []
+    after_refresh: list[Any] = []
+    fake = SimpleNamespace(
+        _library_skills_view="editor",
+        _selected_skill_name="code-review",
+        _library_skill_confirming_delete=False,
+        _library_skill_editor_state=_editor_state(),
+        _library_skill_editor_armed=True,
+        _snapshot_library_skill_live_fields=lambda: None,
+        _arm_library_skill_editor=lambda: None,
+        run_worker=lambda coro, **kwargs: worker_calls.append(kwargs),
+        refresh=lambda recompose=False: refresh_calls.append(recompose),
+        call_after_refresh=lambda fn: after_refresh.append(fn),
+        is_mounted=True,
+    )
+    event = SimpleNamespace(stop=lambda: None)
+    LibraryScreen.handle_library_skill_delete(fake, event)
+    assert fake._library_skill_confirming_delete is True
+    assert worker_calls == []
+    assert refresh_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_handle_library_skill_delete_confirm_kicks_delete_worker():
+    worker_calls: list[dict] = []
+    fake = SimpleNamespace(
+        _library_skills_view="editor",
+        _selected_skill_name="code-review",
+        _library_skill_confirming_delete=True,
+        _delete_library_skill=lambda name: None,
+        run_worker=lambda coro, **kwargs: worker_calls.append(kwargs),
+    )
+    event = SimpleNamespace(stop=lambda: None)
+    LibraryScreen.handle_library_skill_delete_confirm(fake, event)
+    assert worker_calls and worker_calls[0]["group"] == "library_skill_delete"
+
+
+@pytest.mark.asyncio
+async def test_handle_library_skill_delete_cancel_leaves_confirm_state():
+    refresh_calls: list[bool] = []
+    fake = SimpleNamespace(
+        _library_skills_view="editor",
+        _library_skill_confirming_delete=True,
+        _library_skill_editor_armed=True,
+        _arm_library_skill_editor=lambda: None,
+        refresh=lambda recompose=False: refresh_calls.append(recompose),
+        call_after_refresh=lambda fn: None,
+        is_mounted=True,
+    )
+    event = SimpleNamespace(stop=lambda: None)
+    LibraryScreen.handle_library_skill_delete_cancel(fake, event)
+    assert fake._library_skill_confirming_delete is False
+    assert refresh_calls == [True]

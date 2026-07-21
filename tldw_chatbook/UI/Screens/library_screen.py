@@ -1082,6 +1082,10 @@ class LibraryScreen(BaseAppScreen):
         # staleness reconciliation), this editor always starts a fresh
         # session per open, so no extra staleness check is needed.
         self._library_skill_active_review: dict[str, Any] | None = None
+        # task-415: inline two-step delete (mirrors
+        # ``_library_media_confirming_delete``): the first Delete press
+        # arms this; only the recomposed confirm button actually deletes.
+        self._library_skill_confirming_delete: bool = False
         self._library_note_detail: Mapping[str, Any] | None = None
         self._selected_note_id: str = ""
         self._library_note_version: int | None = None
@@ -3679,6 +3683,7 @@ class LibraryScreen(BaseAppScreen):
                             # ``_selected_skill_name`` empty).
                             is_create=not self._selected_skill_name,
                             dirty=self._library_skill_dirty,
+                            confirming_delete=self._library_skill_confirming_delete,
                             id="library-skills-canvas",
                         )
                 elif shell.canvas_kind == "skills":
@@ -7457,6 +7462,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_status = ""
         self._library_skill_conflict = False
         self._library_skill_active_review = None
+        self._library_skill_confirming_delete = False
         self._library_skill_editor_armed = False
 
     def _reset_library_skill_editor_state(self) -> None:
@@ -7474,6 +7480,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_status = ""
         self._library_skill_conflict = False
         self._library_skill_active_review = None
+        self._library_skill_confirming_delete = False
         self._library_skill_editor_armed = False
 
     def _mark_library_skill_dirty(self) -> None:
@@ -8044,14 +8051,70 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-skill-delete")
     def handle_library_skill_delete(self, event: Button.Pressed) -> None:
-        """Delete the open skill and return to the list view.
+        """Arm the inline delete confirmation (task-415).
 
-        Confirm-free by design (a single press deletes) -- matches the
-        notes/prompts delete affordance's "dim button, single press
-        acceptable" posture.
+        First press no longer deletes: it snapshots any live field edits
+        into the editor state (so the confirm recompose can't lose typed
+        text), then recomposes into the confirm-copy + Delete/Cancel row
+        -- the notes/media confirming-delete pattern. Only
+        ``handle_library_skill_delete_confirm`` actually deletes.
 
         Args:
             event: Button press event emitted by the editor's "Delete" action.
+        """
+        event.stop()
+        if self._library_skills_view != "editor" or not self._selected_skill_name:
+            return
+        self._snapshot_library_skill_live_fields()
+        self._library_skill_confirming_delete = True
+        if self.is_mounted:
+            # Disarm across the recompose (mirrors the bootstrap-trust
+            # tail): remounting Inputs fires their initial ``Changed``,
+            # which still-armed dirty-tracking would misread as an edit.
+            # The dirty flag itself is deliberately left untouched.
+            self._library_skill_editor_armed = False
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_skill_editor)
+
+    def _snapshot_library_skill_live_fields(self) -> None:
+        """Fold the editor's live (possibly unsaved) field values back into
+        ``_library_skill_editor_state`` so a state-driven recompose renders
+        exactly what the user had typed (task-415's confirm step).
+        """
+        state = self._library_skill_editor_state
+        if state is None:
+            return
+        fields = self._read_library_skill_editor_fields()
+        if fields is None:
+            return
+        (
+            raw_name,
+            raw_description,
+            raw_argument_hint,
+            raw_allowed_tools_csv,
+            raw_model,
+            raw_body,
+        ) = fields
+        self._library_skill_editor_state = dataclasses.replace(
+            state,
+            # Rename is unsupported; existing skills keep their name (the
+            # Name Input is disabled there anyway), create mode keeps the
+            # typed name.
+            name=raw_name if not self._selected_skill_name else state.name,
+            description=raw_description,
+            argument_hint=raw_argument_hint,
+            allowed_tools_csv=raw_allowed_tools_csv,
+            model=raw_model,
+            body=raw_body,
+        )
+
+    @on(Button.Pressed, "#library-skill-delete-confirm")
+    def handle_library_skill_delete_confirm(self, event: Button.Pressed) -> None:
+        """Run the confirmed delete (task-415's second step).
+
+        Args:
+            event: Button press event emitted by the confirm row's
+                "Delete" action.
         """
         event.stop()
         if self._library_skills_view != "editor" or not self._selected_skill_name:
@@ -8061,6 +8124,21 @@ class LibraryScreen(BaseAppScreen):
             exclusive=True,
             group="library_skill_delete",
         )
+
+    @on(Button.Pressed, "#library-skill-delete-cancel")
+    def handle_library_skill_delete_cancel(self, event: Button.Pressed) -> None:
+        """Leave the delete confirmation without deleting (task-415).
+
+        Args:
+            event: Button press event emitted by the confirm row's
+                "Cancel" action.
+        """
+        event.stop()
+        self._library_skill_confirming_delete = False
+        if self.is_mounted:
+            self._library_skill_editor_armed = False
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_skill_editor)
 
     async def _delete_library_skill(self, skill_name: str) -> None:
         """Delete the selected Library skill, then return to the list view.

@@ -180,6 +180,25 @@ def skill_trust_review_enabled(trust_status: str, trust_blocked: bool) -> bool:
     return bool(trust_blocked) and trust_status in _TRUST_REVIEWABLE_STATUSES
 
 
+def skill_delete_confirm_copy(name: str, supporting_count: int) -> str:
+    """Build the inline delete-confirmation line (task-415).
+
+    Args:
+        name: The skill's name.
+        supporting_count: Number of supporting files that would be removed
+            along with ``SKILL.md``.
+
+    Returns:
+        One line naming exactly what a confirmed delete removes.
+    """
+    scope = "the skill's directory"
+    if supporting_count == 1:
+        scope += " and 1 supporting file"
+    elif supporting_count > 1:
+        scope += f" and {supporting_count} supporting files"
+    return f'Delete "{name}"? This removes {scope} and cannot be undone.'
+
+
 def skill_editor_warning_lines(
     *,
     live_name: str,
@@ -304,6 +323,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
         active_review: Mapping[str, Any] | None = None,
         is_create: bool = False,
         dirty: bool = False,
+        confirming_delete: bool = False,
         import_open: bool = False,
         import_path: str = "",
         import_status: str = "",
@@ -321,6 +341,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
         self.active_review = active_review
         self.is_create = is_create
         self.dirty = dirty
+        self.confirming_delete = confirming_delete
         self.import_open = import_open
         self.import_path = import_path
         self.import_status = import_status
@@ -559,6 +580,22 @@ class LibrarySkillsListCanvas(VerticalScroll):
         else:
             yield Static(self.status, id="library-skill-save-status", markup=False)
         yield from self._compose_trust_panel(editor_state)
+        # task-415: inline two-step delete, mirroring the notes/media
+        # confirming-delete pattern. The confirm copy is a full-width
+        # Static ABOVE the toolbar (mixing a Static into the toolbar's
+        # Buttons is the known non-rendering failure mode the media
+        # viewer documents).
+        confirming_delete = (
+            self.confirming_delete and not self.conflict and not self.is_create
+        )
+        if confirming_delete:
+            yield Static(
+                skill_delete_confirm_copy(
+                    editor_state.name, len(editor_state.supporting_files)
+                ),
+                id="library-skill-delete-confirm-copy",
+                markup=False,
+            )
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
         with toolbar:
@@ -566,6 +603,19 @@ class LibrarySkillsListCanvas(VerticalScroll):
                 yield Button(
                     "Reload",
                     id="library-skill-conflict-reload",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+            elif confirming_delete:
+                yield Button(
+                    "Delete",
+                    id="library-skill-delete-confirm",
+                    classes="library-canvas-action library-media-action-danger",
+                    compact=True,
+                )
+                yield Button(
+                    "Cancel",
+                    id="library-skill-delete-cancel",
                     classes="library-canvas-action",
                     compact=True,
                 )
@@ -589,12 +639,16 @@ class LibrarySkillsListCanvas(VerticalScroll):
                     disabled=not self.dirty,
                     tooltip="Leave the editor without saving the current changes.",
                 )
-                yield Button(
-                    "Delete",
-                    id="library-skill-delete",
-                    classes="library-canvas-action library-media-action-danger",
-                    compact=True,
-                )
+                # task-415: no Delete in create mode -- a never-saved
+                # skill has nothing on disk to delete, and the old
+                # always-rendered button was a silent no-op there.
+                if not self.is_create:
+                    yield Button(
+                        "Delete",
+                        id="library-skill-delete",
+                        classes="library-canvas-action library-media-action-danger",
+                        compact=True,
+                    )
 
     def _compose_trust_panel(self, editor_state: SkillEditorState) -> ComposeResult:
         """Render the trust panel: state line, changed-files, Unlock/Review/Approve.
