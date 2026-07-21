@@ -157,12 +157,10 @@ async def test_execute_hub_tool_records_initiator_decision_on_failure(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_execute_hub_tool_unknown_prefix_raises_value_error_mentioning_phase_4(
-    tmp_path,
-):
+async def test_execute_hub_tool_unknown_prefix_raises_value_error_display_only(tmp_path):
     service, fake, client, store = _service(tmp_path)
 
-    with pytest.raises(ValueError, match="Phase 4"):
+    with pytest.raises(ValueError, match="display-only"):
         await service.execute_hub_tool("server:remote-1", "search", {})
 
 

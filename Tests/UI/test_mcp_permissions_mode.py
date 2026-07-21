@@ -5,13 +5,16 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, DataTable, Static
+from textual.widgets import Button, DataTable, Input, Static
 
 import tldw_chatbook
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     MCPPermissionsMode,
     PermRow,
     format_tool_state_label,
+    state_text,
+    tool_state_kind,
 )
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
@@ -535,6 +538,65 @@ async def test_preview_text_renders_verbatim():
         assert str(app.query_one("#mcp-perm-preview", Static).renderable) == preview
 
 
+# -- Task 3 (MCP Hub Phase 6): mutation echo ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_matrix_without_echo_renders_preview_unprefixed():
+    """`echo` defaults to `None` -- every pre-Task-3 `update_matrix()` call
+    site (every full `_sync_children()` pass) must render the preview
+    unchanged, exactly as before this parameter existed."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        preview = "global default: ask"
+        await canvas.update_matrix([_global_row()], kill_switch=False, preview=preview)
+        await pilot.pause()
+        assert str(app.query_one("#mcp-perm-preview", Static).renderable) == preview
+
+
+@pytest.mark.asyncio
+async def test_update_matrix_with_echo_prefixes_preview():
+    """A standalone mutation resync (Space-cycle/kill-switch/re-allow) passes
+    `echo` -- the workbench's own transient "{tool_name} → {ui_label} · "
+    (or kill-switch) copy -- and it is prepended verbatim to the preview
+    sentence, with no separator of its own (the echo string already carries
+    its trailing " · ")."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        preview = "global default: ask"
+        await canvas.update_matrix(
+            [_global_row()], kill_switch=False, preview=preview, echo="search → Allow · "
+        )
+        await pilot.pause()
+        assert (
+            str(app.query_one("#mcp-perm-preview", Static).renderable)
+            == "search → Allow · global default: ask"
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_matrix_echo_none_clears_a_previously_shown_echo():
+    """The NEXT `update_matrix()` call that passes `echo=None` (a full
+    resync that isn't itself a standalone mutation resync) must clear
+    whatever transient echo a previous call rendered -- no separate "clear"
+    call, just the natural next render."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(
+            [_global_row()], kill_switch=False, preview="global default: ask",
+            echo="search → Allow · ",
+        )
+        await pilot.pause()
+        await canvas.update_matrix(
+            [_global_row()], kill_switch=False, preview="global default: ask", echo=None,
+        )
+        await pilot.pause()
+        assert str(app.query_one("#mcp-perm-preview", Static).renderable) == "global default: ask"
+
+
 # -- UX batch item 4: marker legend ------------------------------------------
 
 
@@ -895,4 +957,440 @@ async def test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css():
         assert kill_button.size.height > 0, (
             "kill-switch button collapsed to zero height under bundled CSS after the "
             "server-profiles mount"
+        )
+
+
+@pytest.mark.asyncio
+async def test_filter_text_input_has_nonzero_geometry_with_bundled_css():
+    """Task 6 (MCP Hub Phase 6) dual-layer CSS audit: `#mcp-perm-filter-
+    text`'s own DEFAULT_CSS comment (Task 4) explicitly deferred verifying
+    it against the REAL bundled stylesheet to this task ("T6 note") rather
+    than assuming Input's own sane defaults survive the bundle's global
+    widget rules -- same Phase 3 lesson as the matrix table/kill-switch
+    checks above. No bare `Input { width/height: ... }` rule exists
+    anywhere in the bundle (grepped) to contest it, and this test confirms
+    that empirically rather than by inspection: a non-zero, single-line-
+    bordered (height 3) box, not a 0x0 collapse. No bundle-layer rule was
+    added for it -- this test is the verification T4 asked for, not a fix."""
+    app = PermissionsModeAppWithBundledCSS()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        filter_input = app.query_one("#mcp-perm-filter-text", Input)
+        assert filter_input.size.width > 0, "filter Input collapsed to zero width under bundled CSS"
+        assert filter_input.size.height > 0, "filter Input collapsed to zero height under bundled CSS"
+        # The single-line bordered box Input's own DEFAULT_CSS/comment
+        # promises (region includes the border, hence 3 not 1).
+        assert filter_input.region.height == 3, (
+            f"expected the bordered single-line Input's 3-row region, got "
+            f"{filter_input.region.height}"
+        )
+
+
+# -- Task 1 (MCP Hub Phase 6): semantic state colors ------------------------
+
+
+def test_state_text_styles_each_kind_and_falls_back_safely():
+    """`state_text()`'s own contract: a concrete, kind-specific Rich style,
+    verbatim label text (no markup parsing), and a safe fallback (no style
+    at all, not a crash) for an unrecognized kind."""
+    assert state_text("Allow", "ready").style == "green"
+    assert state_text("Ask", "warning").style == "yellow"
+    assert state_text("Off", "error").style == "red"
+    assert state_text("Checking", "info").style == "cyan"
+    assert state_text("—", "muted").style == "dim"
+    assert state_text("Allow", "not-a-real-kind").style == ""
+    # Markup-unsafe input must render literally, exactly like every other
+    # `Text(...)` cell in this canvas family (see
+    # `test_state_label_renders_verbatim_and_markup_safe` above) -- the
+    # style parameter does not change that discipline.
+    unsafe = state_text("[bold red]x[/bold red]", "ready")
+    assert unsafe.plain == "[bold red]x[/bold red]"
+
+
+def test_tool_state_kind_maps_allow_ask_deny_to_ready_warning_error():
+    """`tool_state_kind()` keys purely off `EffectiveToolState.state` --
+    `config_changed`/`risk_floored` both already resolve `state` to `"ask"`
+    themselves (see `permission_store.resolve_effective_state()`), so a
+    downgraded verdict still lands on `warning`, matching its `ui_label`
+    ("Ask ⚠"/"Ask ⚑")."""
+    assert tool_state_kind(EffectiveToolState(state="allow", origin="tool_override")) == "ready"
+    assert tool_state_kind(EffectiveToolState(state="ask", origin="global_default")) == "warning"
+    assert tool_state_kind(EffectiveToolState(state="deny", origin="tool_override")) == "error"
+    assert (
+        tool_state_kind(
+            EffectiveToolState(state="ask", origin="tool_override", config_changed=True)
+        )
+        == "warning"
+    )
+    assert (
+        tool_state_kind(
+            EffectiveToolState(state="ask", origin="server_default", risk_floored=True)
+        )
+        == "warning"
+    )
+
+
+@pytest.mark.asyncio
+async def test_state_column_cells_carry_semantic_color_by_resolved_word():
+    """The matrix's State cell is now colored by the resolved verdict its
+    own leading word names -- Allow -> ready/green, Ask -> warning/amber,
+    Off -> error/red -- regardless of row kind (global/server/tool) or
+    whatever origin marker (·/⚠/⚑) trails it. A DataTable cell can't carry a
+    CSS class, so `state_text()`'s Rich `Text.style` is the only per-cell
+    coloring mechanism available here (see that helper's own docstring)."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        rows = [
+            _global_row(state_label="Allow", cycle_current="allow"),
+            _server_row(server_key="local:docs", server_label="docs", state_label="Ask"),
+            _tool_row(
+                server_key="local:docs", server_label="docs", tool_name="search",
+                state_label="Off •",
+            ),
+            _tool_row(
+                server_key="local:docs", server_label="docs", tool_name="rug_pulled",
+                state_label="Ask ⚠",
+            ),
+        ]
+        await canvas.update_matrix(rows, kill_switch=False, preview="")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        assert table.get_cell_at((0, 1)).style == state_text("Allow", "ready").style
+        assert table.get_cell_at((1, 1)).style == state_text("Ask", "warning").style
+        assert table.get_cell_at((2, 1)).style == state_text("Off •", "error").style
+        assert table.get_cell_at((3, 1)).style == state_text("Ask ⚠", "warning").style
+        # The marker glyph is still part of the SAME plain text -- coloring
+        # never strips or re-derives it.
+        assert str(table.get_cell_at((2, 1))) == "Off •"
+        assert str(table.get_cell_at((3, 1))) == "Ask ⚠"
+
+
+# -- Task 4 (MCP Hub Phase 6): permissions matrix text filter ---------------
+
+
+def _two_server_rows() -> list[PermRow]:
+    """Fixture matrix shared by the filter tests below: two servers, each
+    with two tools, one of which is named "beta" so a "beta" filter spans
+    both servers."""
+    return [
+        _global_row(state_label="Ask", cycle_current="ask"),
+        _server_row(server_key="local:docs", server_label="docs", state_label="Ask"),
+        _tool_row(
+            server_key="local:docs", server_label="docs", tool_name="alpha_tool",
+            state_label="Ask",
+        ),
+        _tool_row(
+            server_key="local:docs", server_label="docs", tool_name="beta_tool",
+            state_label="Allow •",
+        ),
+        _server_row(server_key="local:notes", server_label="notes", state_label="Off •"),
+        _tool_row(
+            server_key="local:notes", server_label="notes", tool_name="beta_other",
+            state_label="Off •",
+        ),
+        _tool_row(
+            server_key="local:notes", server_label="notes", tool_name="gamma_tool",
+            state_label="Off •",
+        ),
+    ]
+
+
+async def _type_filter(pilot, text: str) -> None:
+    filter_input = pilot.app.query_one("#mcp-perm-filter-text", Input)
+    filter_input.value = text
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_filter_input_is_present_above_the_matrix_with_placeholder():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        filter_input = app.query_one("#mcp-perm-filter-text", Input)
+        assert filter_input.placeholder == "Filter tool or server…"
+
+
+@pytest.mark.asyncio
+async def test_empty_filter_shows_every_row():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(_two_server_rows(), kill_switch=False, preview="")
+        await pilot.pause()
+        table = app.query_one("#mcp-perm-table", DataTable)
+        assert table.row_count == 7
+
+
+@pytest.mark.asyncio
+async def test_filter_narrows_to_matching_tool_rows_and_hides_unrelated_pinned_rows():
+    """Task 4: a filter matching exactly one tool must still show the
+    global row and that tool's OWN server-default row (its server has >=1
+    visible tool row), but hides the OTHER server's default row and tools
+    entirely -- none of them match and that server has zero visible tools
+    left."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(_two_server_rows(), kill_switch=False, preview="")
+        await pilot.pause()
+        await _type_filter(pilot, "alpha")
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        assert table.row_count == 3
+        # No row in this fixture carries a tag -- Tags column omitted (UX
+        # batch item 11), same as every other tagless-batch test above.
+        assert _row_texts(table, 0) == ["Global default", "Ask"]
+        assert _row_texts(table, 1) == ["Server default — docs", "Ask"]
+        assert _row_texts(table, 2) == ["  alpha_tool", "Ask"]
+
+        rendered_keys = {
+            table.coordinate_to_cell_key((i, 0))[0].value for i in range(table.row_count)
+        }
+        assert "__server__::local:notes" not in rendered_keys
+        assert "local:notes::beta_other" not in rendered_keys
+        assert "local:notes::gamma_tool" not in rendered_keys
+        assert "local:docs::beta_tool" not in rendered_keys
+
+
+@pytest.mark.asyncio
+async def test_filter_matches_server_label_reveals_every_tool_under_that_server():
+    """Filter text matching a TOOL row's `server_label` field (not just its
+    own name) is a match too -- so a filter equal to a server's label
+    reveals every tool under that server, per the spec's "name +
+    server_label" match fields."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(_two_server_rows(), kill_switch=False, preview="")
+        await pilot.pause()
+        await _type_filter(pilot, "docs")
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        # global + docs server-default + alpha_tool + beta_tool
+        assert table.row_count == 4
+        rendered_keys = [
+            table.coordinate_to_cell_key((i, 0))[0].value for i in range(table.row_count)
+        ]
+        assert rendered_keys == [
+            "__global__",
+            "__server__::local:docs",
+            "local:docs::alpha_tool",
+            "local:docs::beta_tool",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_filter_is_case_insensitive():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(_two_server_rows(), kill_switch=False, preview="")
+        await pilot.pause()
+        await _type_filter(pilot, "ALPHA")
+        table = app.query_one("#mcp-perm-table", DataTable)
+        assert table.row_count == 3
+
+
+@pytest.mark.asyncio
+async def test_filter_matching_across_two_servers_keeps_both_pinned_server_rows():
+    """A filter that matches a tool in EACH server keeps both servers'
+    pinned default rows (plus global) and both matching tools -- the
+    non-matching third tool ("gamma_tool") is dropped."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(_two_server_rows(), kill_switch=False, preview="")
+        await pilot.pause()
+        await _type_filter(pilot, "beta")
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        rendered_keys = [
+            table.coordinate_to_cell_key((i, 0))[0].value for i in range(table.row_count)
+        ]
+        assert rendered_keys == [
+            "__global__",
+            "__server__::local:docs",
+            "local:docs::beta_tool",
+            "__server__::local:notes",
+            "local:notes::beta_other",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_clearing_the_filter_after_narrowing_restores_every_row():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(_two_server_rows(), kill_switch=False, preview="")
+        await pilot.pause()
+        await _type_filter(pilot, "alpha")
+        table = app.query_one("#mcp-perm-table", DataTable)
+        assert table.row_count == 3
+        await _type_filter(pilot, "")
+        assert table.row_count == 7
+
+
+@pytest.mark.asyncio
+async def test_cursor_row_key_survives_a_refilter_that_still_shows_it():
+    """Task 4: typing into the filter re-renders the table (`DataTable.
+    clear()` unconditionally resets the cursor to (0, 0)) -- the cursor's
+    ROW KEY, not its numeric position, must survive that rebuild exactly
+    like an ordinary `update_matrix()` resync already preserves it (Minor
+    7 precedent). Before the filter, "beta_tool" sits at unfiltered index
+    3; after filtering to "beta", it moves to index 2 -- proving the
+    restore is key-based, not a stale index carried over.
+    """
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(_two_server_rows(), kill_switch=False, preview="")
+        await pilot.pause()
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # "  beta_tool" in the unfiltered matrix
+        row_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
+        assert row_key.value == "local:docs::beta_tool"
+
+        await _type_filter(pilot, "beta")
+
+        assert table.cursor_row == 2
+        row_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
+        assert row_key.value == "local:docs::beta_tool"
+
+
+@pytest.mark.asyncio
+async def test_cursor_falls_back_to_row_zero_when_its_row_is_filtered_out():
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(_two_server_rows(), kill_switch=False, preview="")
+        await pilot.pause()
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=6)  # "  gamma_tool" -- will be filtered out below
+        await _type_filter(pilot, "alpha")
+        assert table.cursor_row == 0
+
+
+@pytest.mark.asyncio
+async def test_space_after_filter_cycles_the_row_actually_under_the_cursor():
+    """Task 4: Space must resolve whatever row is ACTUALLY rendered at the
+    cursor's current table position post-filter, not some row that would
+    have been there before filtering narrowed the table. Filtering to
+    "beta" renders (global, docs-default, beta_tool, notes-default,
+    beta_other) -- moving the cursor to the filtered table's row 4 must
+    cycle "beta_other" (server "local:notes"), which sat at unfiltered
+    index 5, not whatever row 4 held in the ORIGINAL unfiltered matrix
+    (there, index 4 was the notes server-default row).
+    """
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(_two_server_rows(), kill_switch=False, preview="")
+        await pilot.pause()
+        await _type_filter(pilot, "beta")
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        assert table.row_count == 5
+        table.focus()
+        table.move_cursor(row=4)
+        await pilot.press("space")
+        await pilot.pause()
+
+        assert len(app.events) == 1
+        event = app.events[0]
+        assert isinstance(event, MCPPermissionsMode.StateCycleRequested)
+        assert event.row_kind == "tool"
+        assert event.server_key == "local:notes"
+        assert event.tool_name == "beta_other"
+
+
+@pytest.mark.asyncio
+async def test_echo_prefixed_preview_survives_a_refilter():
+    """T3's mutation echo is part of the preview Static's own text --
+    typing into the filter only re-renders the TABLE, never touches
+    `#mcp-perm-preview`, so a previously shown echo must still read
+    verbatim after the user narrows the matrix with a filter."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(
+            _two_server_rows(), kill_switch=False, preview="global default: ask",
+            echo="beta_tool → Allow · ",
+        )
+        await pilot.pause()
+        await _type_filter(pilot, "alpha")
+
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview == "beta_tool → Allow · global default: ask"
+
+
+@pytest.mark.asyncio
+async def test_filter_persists_across_a_full_matrix_resync():
+    """A background `update_matrix()` resync (e.g. after a Space-cycle
+    elsewhere resolves a fresh matrix) must not silently clear whatever
+    filter text the user was mid-typing -- mirrors `MCPToolsMode`'s own
+    cached-filter-survives-`update_tools()` contract."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(_two_server_rows(), kill_switch=False, preview="")
+        await pilot.pause()
+        await _type_filter(pilot, "alpha")
+        table = app.query_one("#mcp-perm-table", DataTable)
+        assert table.row_count == 3
+
+        # A second update_matrix() call (a fresh resync) with the SAME
+        # rows -- the filter Input's own value is untouched by this call.
+        await canvas.update_matrix(_two_server_rows(), kill_switch=False, preview="")
+        await pilot.pause()
+        assert table.row_count == 3
+        filter_input = app.query_one("#mcp-perm-filter-text", Input)
+        assert filter_input.value == "alpha"
+
+
+@pytest.mark.asyncio
+async def test_select_tool_row_clears_an_active_filter_to_reveal_a_hidden_target():
+    """T7's external-drill entry point must not be silently defeated by an
+    active filter typed by the user in the meantime -- mirrors
+    `MCPToolsMode.select_tool_row()`'s own "an external drill's target row
+    must never be swallowed by an active filter" discipline."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(_two_server_rows(), kill_switch=False, preview="")
+        await pilot.pause()
+        await _type_filter(pilot, "alpha")
+        table = app.query_one("#mcp-perm-table", DataTable)
+        assert table.row_count == 3
+
+        found = canvas.select_tool_row("local:notes", "gamma_tool")
+        await pilot.pause()
+
+        assert found is True
+        assert table.row_count == 7
+        row_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
+        assert row_key.value == "local:notes::gamma_tool"
+        filter_input = app.query_one("#mcp-perm-filter-text", Input)
+        assert filter_input.value == ""
+
+
+# -- real bundled CSS: filter Input geometry ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_filter_input_has_nonzero_geometry_with_bundled_css():
+    app = PermissionsModeAppWithBundledCSS()
+    async with app.run_test(size=(120, 40)) as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        await canvas.update_matrix(_two_server_rows(), kill_switch=False, preview="")
+        await pilot.pause()
+
+        filter_input = app.query_one("#mcp-perm-filter-text", Input)
+        assert filter_input.outer_size.width > 0, (
+            "filter Input collapsed to zero width under bundled CSS"
+        )
+        assert filter_input.outer_size.height > 0, (
+            "filter Input collapsed to zero height under bundled CSS"
         )

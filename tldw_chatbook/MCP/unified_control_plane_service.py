@@ -2165,8 +2165,8 @@ class UnifiedMCPControlPlaneService:
 
         Args:
             server_key: Prefixed server key (``local:<profile_id>`` or
-                ``builtin:<id>``). Server-source keys are rejected until
-                Phase 4.
+                ``builtin:<id>``). Server-source keys are display-only
+                and rejected here.
             tool_name: Name of the tool to execute.
             arguments: Tool arguments; defaults to an empty dict.
             initiator: Who initiated the call, recorded on the execution
@@ -2201,7 +2201,7 @@ class UnifiedMCPControlPlaneService:
                 normalized_tool_name, normalized_arguments
             )
         else:
-            raise ValueError("Tool testing for server-source tools arrives in Phase 4.")
+            raise ValueError("Server-source tools are display-only.")
 
         timeout = (
             timeout_seconds
@@ -2273,8 +2273,8 @@ class UnifiedMCPControlPlaneService:
 
         Args:
             server_key: Prefixed server key (``local:<profile_id>`` or
-                ``builtin:<id>``). Server-source keys are rejected until
-                Phase 4.
+                ``builtin:<id>``). Server-source keys are display-only
+                and rejected here.
             tool_name: Name of the tool to execute.
             arguments: Tool arguments; defaults to an empty dict.
 

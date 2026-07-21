@@ -131,6 +131,44 @@ def test_server_external_record_passthrough_and_fallback():
     assert "not reported" in bare.message.lower()
 
 
+def test_server_external_record_resource_prompt_counts_follow_tool_count_rules():
+    """Task 5 (MCP Hub Phase 6): resource_count/prompt_count are derived the
+    same way as tool_count -- reported count wins, else the length of a raw
+    list, else None (unreported, rendered as "—" by the servers-mode detail
+    body -- never a fake zero)."""
+    reported = server_external_record_readiness(
+        {"server_id": "s1", "name": "S1", "resource_count": 3, "prompt_count": 0},
+        server_id="main",
+    )
+    assert reported.resource_count == 3
+    assert reported.prompt_count == 0
+
+    derived = server_external_record_readiness(
+        {
+            "server_id": "s2",
+            "name": "S2",
+            "resources": [{"uri": "a"}, {"uri": "b"}],
+            "prompts": [{"name": "p"}],
+        },
+        server_id="main",
+    )
+    assert derived.resource_count == 2
+    assert derived.prompt_count == 1
+
+    unreported = server_external_record_readiness(
+        {"server_id": "s3", "name": "S3"}, server_id="main"
+    )
+    assert unreported.resource_count is None
+    assert unreported.prompt_count is None
+
+    malformed = server_external_record_readiness(
+        {"server_id": "s4", "name": "S4", "resource_count": "many", "prompt_count": 2.5},
+        server_id="main",
+    )
+    assert malformed.resource_count is None
+    assert malformed.prompt_count is None
+
+
 def test_server_external_record_display_state_without_reason_codes_is_trusted():
     """F1 regression: a `display_state` the backend reports with no (or
     unrecognized) `reason_codes` must not silently resolve to READY via

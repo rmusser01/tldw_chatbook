@@ -183,7 +183,7 @@ def server_tools_from_inventory(
 
     Returns:
         One `HubTool` per valid tool entry. Never executable — server-
-        source execution ships in Phase 4 — and never stale (a payload
+        source tools are display-only — and never stale (a payload
         that was fetched at all implies a live connection at fetch time).
     """
     raw_tools = payload.get("tools") if isinstance(payload, Mapping) else None

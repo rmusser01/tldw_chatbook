@@ -23,7 +23,11 @@ from textual.widgets.data_table import RowDoesNotExist
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool, filter_tools
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
-from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import format_tool_state_label
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
+    format_tool_state_label,
+    state_text,
+    tool_state_kind,
+)
 from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import parse_schema
 
 _TABLE_COLUMNS = ("Tool", "State", "Server", "Tags", "Schema")
@@ -304,9 +308,7 @@ class MCPToolsMode(Vertical):
             # InvalidSelectValueError when the Select is constructed below.
             self._filter_server_key = None
         value: Any = (
-            self._filter_server_key
-            if self._filter_server_key is not None
-            else Select.NULL
+            self._filter_server_key if self._filter_server_key is not None else Select.NULL
         )
         # Select's `value` is a `var` with `init=False` -- mounting it only
         # actually FIRES a `Changed` echo when the constructor value differs
@@ -318,15 +320,11 @@ class MCPToolsMode(Vertical):
         # servers" (there is no second, later mount to re-arm it) -- so only
         # arm the guard when an echo is actually coming; otherwise mark it
         # pre-consumed.
-        self._displayed_server_value = (
-            value if value is not Select.NULL else _ECHO_CONSUMED
-        )
+        self._displayed_server_value = value if value is not Select.NULL else _ECHO_CONSUMED
         slot = self.query_one("#mcp-tools-filter-server-slot", Vertical)
         await slot.remove_children()
         await slot.mount(
-            Select(
-                options, id="mcp-tools-filter-server", prompt="All servers", value=value
-            )
+            Select(options, id="mcp-tools-filter-server", prompt="All servers", value=value)
         )
 
     def _apply_filter(self) -> None:
@@ -352,9 +350,7 @@ class MCPToolsMode(Vertical):
         # narrow the visible rows to an all-tagless subset must not make
         # the column flicker away mid-typing.
         table.clear(columns=True)
-        table.add_columns(
-            *(_TABLE_COLUMNS if self._has_tags else _TABLE_COLUMNS_NO_TAGS)
-        )
+        table.add_columns(*(_TABLE_COLUMNS if self._has_tags else _TABLE_COLUMNS_NO_TAGS))
         seen_keys: set[str] = set()
         for tool in ordered:
             if tool.tool_id in seen_keys:
@@ -367,20 +363,20 @@ class MCPToolsMode(Vertical):
                 continue
             seen_keys.add(tool.tool_id)
             tool_state = self._states.get((tool.server_key, tool.name))
-            state_cell = (
-                format_tool_state_label(tool_state) if tool_state is not None else "—"
-            )
-            server_cell = (
-                f"{tool.server_label} (stale)" if tool.stale else tool.server_label
-            )
-            schema_cell = (
-                "form" if parse_schema(tool.input_schema) is not None else "raw"
-            )
-            row_cells: list[Any] = [
-                Text(tool.name),
-                Text(state_cell),
-                Text(server_cell),
-            ]
+            # Task 1 (MCP Hub Phase 6): the State cell's word is colored by
+            # the resolved verdict it names -- a tool absent from `states`
+            # renders the plain "—" placeholder at the `muted` weight (no
+            # verdict to color), same visual tier as every other "not
+            # resolved yet" dash in this canvas family.
+            if tool_state is not None:
+                state_cell = state_text(
+                    format_tool_state_label(tool_state), tool_state_kind(tool_state)
+                )
+            else:
+                state_cell = state_text("—", "muted")
+            server_cell = f"{tool.server_label} (stale)" if tool.stale else tool.server_label
+            schema_cell = "form" if parse_schema(tool.input_schema) is not None else "raw"
+            row_cells: list[Any] = [Text(tool.name), state_cell, Text(server_cell)]
             if self._has_tags:
                 tags_cell = ", ".join(tool.tags) if tool.tags else "—"
                 row_cells.append(Text(tags_cell))
@@ -437,9 +433,7 @@ class MCPToolsMode(Vertical):
         ):
             self._displayed_server_value = _ECHO_CONSUMED
             return
-        self._filter_server_key = (
-            None if event.value is Select.NULL else str(event.value)
-        )
+        self._filter_server_key = None if event.value is Select.NULL else str(event.value)
         self._apply_filter()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:

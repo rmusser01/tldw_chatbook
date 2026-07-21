@@ -54,7 +54,6 @@ from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
-from .MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
 from .Outputs_Panel import OutputsPanel
 from .Sharing_Panel import SharingPanel
 from .Widgets import ConfigSearchResult, UIElementSearchEngine
@@ -488,8 +487,7 @@ class ToolsSettingsWindow(Container):
         super().__init__(**kwargs)
         self._app_instance = app_instance
         self.config_data = load_cli_config_and_ensure_existence()
-        self._pending_unified_mcp_view_state: Optional[Dict[str, Any]] = None
-
+    
     @property
     def app_instance(self):
         """Get the app instance, falling back to self.app if not set."""
@@ -3458,12 +3456,7 @@ Thank you for using tldw-chatbook! 🎉
                 "Database Tools", id="ts-nav-db-tools", classes="ts-nav-button"
             )
             yield Button("Appearance", id="ts-nav-appearance", classes="ts-nav-button")
-            yield Button(
-                "Tool Settings", id="ts-nav-tool-settings", classes="ts-nav-button"
-            )
-            yield Button(
-                "Unified MCP", id="ts-nav-unified-mcp", classes="ts-nav-button"
-            )
+            yield Button("Tool Settings", id="ts-nav-tool-settings", classes="ts-nav-button")
             yield Button("Outputs", id="ts-nav-outputs", classes="ts-nav-button")
             yield Button("Sharing", id="ts-nav-sharing", classes="ts-nav-button")
             yield Button("About", id="ts-nav-about", classes="ts-nav-button")
@@ -3496,11 +3489,6 @@ Thank you for using tldw-chatbook! 🎉
             yield Container(
                 *self._compose_tool_settings(),
                 id="ts-view-tool-settings",
-                classes="ts-view-area",
-            )
-            yield Container(
-                UnifiedMCPPanel(self.app_instance, id="unified-mcp-panel"),
-                id="ts-view-unified-mcp",
                 classes="ts-view-area",
             )
             yield Container(
@@ -3562,8 +3550,6 @@ Thank you for using tldw-chatbook! 🎉
             await self._show_view("ts-view-appearance")
         elif button_id == "ts-nav-tool-settings":
             await self._show_view("ts-view-tool-settings")
-        elif button_id == "ts-nav-unified-mcp":
-            await self._show_view("ts-view-unified-mcp")
         elif button_id == "ts-nav-outputs":
             await self._show_view("ts-view-outputs")
         elif button_id == "ts-nav-sharing":
@@ -5916,8 +5902,7 @@ Thank you for using tldw-chatbook! 🎉
             "ts-view-db-tools": "ts-nav-db-tools",
             "ts-view-appearance": "ts-nav-appearance",
             "ts-view-tool-settings": "ts-nav-tool-settings",
-            "ts-view-unified-mcp": "ts-nav-unified-mcp",
-            "ts-view-about": "ts-nav-about",
+            "ts-view-about": "ts-nav-about"
         }
 
         for v_id, btn_id in nav_buttons.items():
@@ -6991,21 +6976,6 @@ Thank you for using tldw-chatbook! 🎉
                 content_switcher.current = "ts-view-general-settings"
         except Exception as e:
             logger.debug(f"Could not verify initial view: {e}")
-
-    def get_unified_mcp_view_state(self) -> Dict[str, Any]:
-        try:
-            panel = self.query_one("#unified-mcp-panel", UnifiedMCPPanel)
-            return panel.get_view_state()
-        except QueryError:
-            return dict(self._pending_unified_mcp_view_state or {})
-
-    def set_unified_mcp_view_state(self, state: Optional[Dict[str, Any]]) -> None:
-        self._pending_unified_mcp_view_state = dict(state or {})
-        try:
-            panel = self.query_one("#unified-mcp-panel", UnifiedMCPPanel)
-        except QueryError:
-            return
-        panel.set_initial_view_state(self._pending_unified_mcp_view_state)
 
     async def _setup_encryption(self) -> None:
         """Setup encryption for the config file."""
