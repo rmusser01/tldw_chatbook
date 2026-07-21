@@ -191,6 +191,15 @@ def remediation_actions(finding: Mapping[str, Any]) -> tuple[HubAction, ...]:
     `finding_type` or `message` degrades to an empty contribution rather
     than raising -- `finding` is a server-side product versioned
     independently of this client, so every field is optional.
+
+    Args:
+        finding: One raw Findings-table row (a server-provided dict);
+            only `finding_type`/`type` and `message` are read.
+
+    Returns:
+        The matched bucket's `HubAction` tuple from
+        `_REMEDIATION_KEYWORDS`, or `_REMEDIATION_DEFAULT`
+        (`(VIEW_DETAILS,)`) when nothing matches.
     """
     finding_type = finding.get("finding_type") or finding.get("type") or ""
     message = finding.get("message") or ""

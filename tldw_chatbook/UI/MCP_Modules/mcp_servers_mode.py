@@ -49,6 +49,12 @@ _TABLE_COLUMNS_NO_SCOPE = _TABLE_COLUMNS[:-1]
 # rather than growing the callout list without bound.
 _CALLOUT_CAP = 4
 
+# `_named_items_text()`'s "show at most this many names, then '+N more'"
+# cap -- pulled out to a named constant (was three inline `8` literals) so
+# the truncation point and the "how many are left" arithmetic can't drift
+# apart from each other.
+_NAMED_ITEMS_CAP = 8
+
 # Task 1 (MCP Hub Phase 6): the overview Status cell's `state_text()` kind,
 # derived from `STATE_CSS_CLASSES` (readiness.py) rather than a second,
 # parallel `ReadinessState -> kind` table -- every class name in that dict is
@@ -79,24 +85,24 @@ def _named_items_text(items: Any, *, key: str) -> str:
     lines).
 
     Defensive reads: a missing/malformed `discovery_snapshot` field (not a
-    list at all) is treated as empty rather than raising; a non-Mapping
-    entry within an otherwise-list field falls back to `str(item)` instead
-    of assuming `.get()` exists. `key` is tried first (`"uri"` for
-    resources, `"name"` for tools/prompts), falling back to whichever of
-    `name`/`uri` the entry actually carries, then a literal `"?"` -- mirrors
-    the pre-Task-5 inline join this replaces.
+    list or tuple at all) is treated as empty rather than raising; a
+    non-Mapping entry within an otherwise-list/tuple field falls back to
+    `str(item)` instead of assuming `.get()` exists. `key` is tried first
+    (`"uri"` for resources, `"name"` for tools/prompts), falling back to
+    whichever of `name`/`uri` the entry actually carries, then a literal
+    `"?"` -- mirrors the pre-Task-5 inline join this replaces.
     """
-    if not isinstance(items, list) or not items:
+    if not isinstance(items, (list, tuple)) or not items:
         return "none"
     names: list[str] = []
-    for item in items[:8]:
+    for item in items[:_NAMED_ITEMS_CAP]:
         if isinstance(item, Mapping):
             names.append(str(item.get(key) or item.get("name") or item.get("uri") or "?"))
         else:
             names.append(str(item))
     text = ", ".join(names)
-    if len(items) > 8:
-        text += f", … +{len(items) - 8} more"
+    if len(items) > _NAMED_ITEMS_CAP:
+        text += f", … +{len(items) - _NAMED_ITEMS_CAP} more"
     return f"{len(items)}: {text}"
 
 

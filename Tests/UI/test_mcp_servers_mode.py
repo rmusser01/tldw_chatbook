@@ -21,7 +21,7 @@ from tldw_chatbook.MCP.readiness import (
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel
-from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
+from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode, _named_items_text
 
 _BUNDLED_CSS_PATH = str(
     Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
@@ -1317,3 +1317,27 @@ async def test_adv_scroll_focus_is_quiet_not_the_generic_outline_with_bundled_cs
         assert scroll.styles.border.top[0] in {"", "none"}
         assert scroll.styles.border.top[0] != "dashed"
         assert scroll.styles.background.a > 0
+
+
+# -- F3/F4 (PR #722 bot review): `_named_items_text()` tuple support + cap --
+
+
+def test_named_items_text_accepts_tuple_not_just_list():
+    """F3 (Gemini bot review): `_named_items_text()` gated on `isinstance(
+    items, list)` -- a tuple-valued `discovery_snapshot` field (tools/
+    resources/prompts don't strictly have to be a list on the wire) would
+    silently collapse to "none" instead of rendering. Now accepts either.
+    """
+    assert _named_items_text(("fetch", "search"), key="name") == "2: fetch, search"
+    assert _named_items_text([], key="name") == "none"
+    assert _named_items_text(None, key="name") == "none"
+
+
+def test_named_items_text_truncates_at_named_items_cap():
+    """F4: the truncation point and the "+N more" arithmetic both derive
+    from the same `_NAMED_ITEMS_CAP` constant now -- pin the boundary so a
+    future edit to one without the other regresses visibly."""
+    items = [{"name": f"tool{i}"} for i in range(10)]
+    text = _named_items_text(items, key="name")
+    assert text.startswith("10: tool0, tool1, tool2, tool3, tool4, tool5, tool6, tool7")
+    assert text.endswith("… +2 more")

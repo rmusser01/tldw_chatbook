@@ -116,6 +116,11 @@ def state_text(label: str, kind: str) -> Text:
             else falls back to no style at all (plain text) rather than
             raising -- mirrors `EffectiveToolState.ui_label`'s own
             defensive fallback for a state value this code hasn't seen.
+
+    Returns:
+        `label` wrapped in a `rich.text.Text`, styled per `kind` (or
+        unstyled plain text for an unrecognized `kind`). Never parses
+        markup out of `label`.
     """
     return Text(label, style=_STATE_TEXT_STYLES.get(kind, ""))
 
@@ -130,6 +135,15 @@ def tool_state_kind(effective: EffectiveToolState) -> str:
     this ever runs, so the ⚠/⚑ marker `format_tool_state_label()` bakes into
     the label is orthogonal to this color -- no extra branch needed for
     either.
+
+    Args:
+        effective: The resolved tool verdict (`.state` is one of
+            `"allow"|"ask"|"deny"`, or anything else for an unrecognized
+            value).
+
+    Returns:
+        `state_text()`'s `kind` bucket -- `"ready"`, `"warning"`, or
+        `"error"` for a recognized `effective.state`, else `"muted"`.
     """
     return {"allow": "ready", "ask": "warning", "deny": "error"}.get(effective.state, "muted")
 

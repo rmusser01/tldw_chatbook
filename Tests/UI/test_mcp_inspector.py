@@ -2748,3 +2748,21 @@ async def test_show_finding_none_clears_action_buttons_and_hides_container():
         assert not list(container.query(Button))
         # A stray press after clearing must not resurrect a stale server_key.
         assert inspector._current_finding_server_key is None
+
+
+# -- F2 (PR #722 bot review): `_render_section_payload()` broad fallback ----
+
+
+def test_render_section_payload_falls_back_to_str_on_non_typeerror_json_failure():
+    """F2 (Gemini bot review): `_render_section_payload()` used to catch
+    only `TypeError` -- a payload that fails `json.dumps()` with a
+    DIFFERENT exception (e.g. `ValueError` from a circular reference, which
+    `json.dumps()` raises rather than recursing forever) would raise out of
+    the Advanced pane instead of falling back to `str(payload)`. Now catches
+    `Exception` broadly.
+    """
+    circular: dict[str, Any] = {}
+    circular["self"] = circular
+    result = mcp_inspector_module._render_section_payload("advanced", circular)
+    assert isinstance(result, str)
+    assert result  # fell back to str(payload) rather than raising

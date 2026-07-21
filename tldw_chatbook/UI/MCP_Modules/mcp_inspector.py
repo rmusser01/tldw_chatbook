@@ -379,15 +379,17 @@ def _render_section_payload(section: str, payload: Any) -> str:
     `section` is accepted but not otherwise used -- kept in the signature
     so a future caller can prefix a section header without changing every
     call site again. `default=str` covers any payload value that isn't
-    natively JSON-serializable (an enum, a raw exception, ...); the
-    `TypeError` fallback covers a payload that isn't JSON-serializable at
-    all (e.g. a raw non-Mapping object), which should not happen for a
-    service-returned dict but must never crash the Advanced pane either
-    way.
+    natively JSON-serializable (an enum, a raw exception, ...); the broad
+    `Exception` fallback covers anything `json.dumps()` can raise on a
+    payload this code doesn't control -- not just `TypeError` (a raw
+    non-Mapping object), but also e.g. `ValueError` (a circular reference)
+    or `OverflowError` (an out-of-range float) -- which should not happen
+    for a service-returned dict but must never crash the Advanced pane
+    either way.
     """
     try:
         return json.dumps(payload, indent=2, sort_keys=True, default=str)
-    except TypeError:
+    except Exception:
         return str(payload)
 
 
