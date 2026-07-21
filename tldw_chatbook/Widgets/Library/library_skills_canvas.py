@@ -745,7 +745,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
                     classes="library-canvas-action",
                     compact=True,
                 )
-                # task-413: explicit leave-without-saving path. Disabled
+                # task-449: explicit leave-without-saving path. Disabled
                 # until the editor is actually dirty (live-enabled by
                 # ``_mark_library_skill_dirty`` without a recompose, and
                 # re-disabled by the save-success patcher) so a clean

@@ -642,7 +642,7 @@ async def test_handle_library_skill_row_vetoed_while_dirty():
         _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
         _library_skills_view="editor",
         _flush_library_skill_save=AsyncMock(return_value=False),
-        # task-413: the veto is no longer silent -- the handler reports it.
+        # task-449: the veto is no longer silent -- the handler reports it.
         _notify_skill_dirty_veto=lambda: veto_notices.append(True),
     )
     button = SimpleNamespace(skill_name="code-review")
@@ -1092,7 +1092,7 @@ def test_library_skill_trust_setup_explanation_css_block_matches_review_files_pa
 
 @pytest.mark.asyncio
 async def test_library_shell_rail_switch_vetoed_while_skill_editor_dirty():
-    """task-412 P0 regression: switching Library rail rows while the skill
+    """task-448 P0 regression: switching Library rail rows while the skill
     editor holds an unsaved edit must veto the switch -- the same contract
     ``_select_library_rail_row`` already enforces for dirty note and prompt
     edits. Before the fix the skill flush was omitted from that guard, so a
@@ -1132,7 +1132,7 @@ async def test_library_shell_rail_switch_vetoed_while_skill_editor_dirty():
 
 @pytest.mark.asyncio
 async def test_library_skill_back_veto_notifies_unsaved_changes():
-    """task-413: the Back-to-list dirty veto must produce visible feedback
+    """task-449: the Back-to-list dirty veto must produce visible feedback
     (a notification) instead of silently doing nothing -- before the fix
     the vetoed click gave zero indication why navigation was blocked."""
     app = _build_test_app()
@@ -1165,7 +1165,7 @@ async def test_library_skill_back_veto_notifies_unsaved_changes():
 
 @pytest.mark.asyncio
 async def test_library_shell_rail_switch_veto_notifies_unsaved_changes():
-    """task-413 companion to the task-412 guard: when the rail switch is
+    """task-449 companion to the task-448 guard: when the rail switch is
     vetoed by a dirty skill edit the user must be told why."""
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesListScopeService([])
@@ -1196,7 +1196,7 @@ async def test_library_shell_rail_switch_veto_notifies_unsaved_changes():
 
 @pytest.mark.asyncio
 async def test_library_skill_discard_button_leaves_without_saving():
-    """task-413: an explicit Discard affordance -- disabled until dirty,
+    """task-449: an explicit Discard affordance -- disabled until dirty,
     live-enabled on the first edit, and pressing it leaves the editor
     without saving (list view, dirty cleared). Before the fix the only
     exit from a dirty editor was Save."""
@@ -1232,7 +1232,7 @@ async def test_library_skill_discard_button_leaves_without_saving():
 
 @pytest.mark.asyncio
 async def test_library_flush_pending_work_skill_veto_notifies():
-    """task-413: a dirty skill edit vetoing screen-level navigation
+    """task-449: a dirty skill edit vetoing screen-level navigation
     (``flush_pending_work``) must surface the same unsaved-changes toast
     as the in-screen exits -- the app-level caller only logs the veto."""
     app = _build_test_app()

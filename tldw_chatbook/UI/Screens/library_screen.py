@@ -311,7 +311,7 @@ LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
 # keyed by ``classify_skill_save_error``'s return value. "version-conflict"
 # is deliberately absent -- it routes into the conflict banner instead (see
 # ``_save_library_skill``), never this status line.
-# task-413: toast shown whenever a dirty skill edit vetoes an exit (Back,
+# task-449: toast shown whenever a dirty skill edit vetoes an exit (Back,
 # skill-row switch, rail-row switch) -- the veto itself is silent widget
 # state, so without this the blocked click looks like a dead button.
 LIBRARY_SKILL_DIRTY_VETO_COPY = (
@@ -1564,7 +1564,7 @@ class LibraryScreen(BaseAppScreen):
         prompt_flush_allowed = await self._flush_library_prompt_save()
         skill_flush_allowed = await self._flush_library_skill_save()
         if not skill_flush_allowed:
-            # task-413: the app-level navigation veto only logs, so tell
+            # task-449: the app-level navigation veto only logs, so tell
             # the user why the tab switch was refused -- same toast as the
             # in-screen Back / row-switch / rail-switch vetoes. Notes show
             # their own conflict banner and prompts predate this pattern,
@@ -6438,7 +6438,7 @@ class LibraryScreen(BaseAppScreen):
         flush aborts the row switch entirely. Dirty prompt and skill edits
         are vetoed the same way (see ``_flush_library_prompt_save`` /
         ``_flush_library_skill_save`` -- both explicit-Save-only, so there
-        is nothing to flush, only to veto on). task-412: the skill guard was
+        is nothing to flush, only to veto on). task-448: the skill guard was
         originally omitted here, so a rail switch silently discarded dirty
         skill edits while Back/row-switch exits vetoed them.
         """
@@ -7662,7 +7662,7 @@ class LibraryScreen(BaseAppScreen):
         if not force and self._library_skill_text_fields_match_state():
             return
         self._library_skill_dirty = True
-        # task-413: dirty-marking never recomposes, so the Discard button's
+        # task-449: dirty-marking never recomposes, so the Discard button's
         # initial disabled render is patched live here.
         self._set_library_skill_discard_enabled(True)
         # task-417: a lingering "Saved." is stale the moment new edits
@@ -8104,7 +8104,7 @@ class LibraryScreen(BaseAppScreen):
         )
         self._library_skill_original_name = self._library_skill_editor_state.name
         self._library_skill_dirty = False
-        # task-413: this success tail deliberately never recomposes, so the
+        # task-449: this success tail deliberately never recomposes, so the
         # Discard button is re-disabled in place alongside the dirty clear.
         self._set_library_skill_discard_enabled(False)
         if is_create:
@@ -8171,7 +8171,7 @@ class LibraryScreen(BaseAppScreen):
         return not self._library_skill_dirty
 
     def _notify_skill_dirty_veto(self) -> None:
-        """Tell the user WHY a skill-editor exit was just vetoed (task-413).
+        """Tell the user WHY a skill-editor exit was just vetoed (task-449).
 
         Every ``_flush_library_skill_save`` veto site calls this so a
         blocked Back / skill-row / rail-row click never reads as a dead
@@ -8182,7 +8182,7 @@ class LibraryScreen(BaseAppScreen):
             notify(LIBRARY_SKILL_DIRTY_VETO_COPY, severity="warning")
 
     def _set_library_skill_discard_enabled(self, enabled: bool) -> None:
-        """Patch the Discard button's disabled state in place (task-413).
+        """Patch the Discard button's disabled state in place (task-449).
 
         Dirty-marking and the save-success tail both deliberately avoid a
         recompose (see ``_apply_library_skill_save_success``), so the
@@ -8265,7 +8265,7 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-skill-discard")
     def handle_library_skill_discard(self, event: Button.Pressed) -> None:
-        """Leave the skill editor WITHOUT saving the dirty edit (task-413).
+        """Leave the skill editor WITHOUT saving the dirty edit (task-449).
 
         The explicit counterpart to the dirty vetoes: Back and every row
         switch refuse to move while ``_library_skill_dirty`` is set, so
