@@ -48,6 +48,13 @@ from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as cre
 from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
 from tldw_chatbook.RAG_Search import pipeline_functions_simple as pfs
 from tldw_chatbook.RAG_Search.pipeline_functions_simple import SCOPE_DIAGNOSTICS_KEY
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+# Reuses the proven real-``TldwCli``-with-heavy-init-patched recipe already
+# shared across the Console UI test suites (e.g.
+# Tests/UI/test_console_internals_decomposition.py, Tests/UI/
+# test_destination_shells.py) rather than duplicating it here.
+from Tests.UI.test_screen_navigation import _build_test_app
 
 pytestmark = pytest.mark.unit
 
@@ -777,6 +784,47 @@ class TestChatEntryPointEmptyScopeShortCircuit:
         ), app.notifications
 
 
+class TestExistingIdsSyncDanglingDrop:
+    """``_existing_ids_sync``'s dangling-drop must act per source_type
+    independently: a mixed scope with one surviving media id and one
+    already-deleted (dangling) note id keeps the media id and drops the
+    note id, landing on ``state == "scoped"`` -- not ``"empty"``.
+
+    ``TestChatEntryPointEmptyScopeShortCircuit
+    .test_empty_scope_short_circuits_with_zero_leg_calls`` only exercises
+    the media-table branch of ``_existing_ids_sync`` (a single dangling
+    media id, landing EMPTY); this covers the notes-table branch with a
+    dangling note id, mirroring that test's fixture shape.
+    """
+
+    @pytest.mark.asyncio
+    async def test_surviving_media_id_kept_dangling_note_id_dropped(
+        self, media_db, cha_db, monkeypatch
+    ):
+        media_ids = _seed_media(media_db, n=1)
+        conv_id = cha_db.add_conversation({"title": "Mixed dangling scope"})
+        scope = RagScope(
+            items=(
+                ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),
+                # Never created in cha_db -- a dangling reference.
+                ScopeItem(SOURCE_TYPE_NOTE, "does-not-exist"),
+            ),
+            updated_at="t1",
+        )
+        write_conversation_scope(cha_db, conv_id, scope)
+
+        session = SimpleNamespace(persisted_conversation_id=conv_id)
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        app = _App(media_db=media_db, chachanotes_db=cha_db)
+
+        effective = await cre._resolve_effective_scope_for_chat(app)
+
+        assert effective.state == "scoped"
+        assert effective.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
+        assert effective.cause is None
+
+
 class TestChatEntryPointUnscopedZeroDrift:
     """No active native-Console session (today's real default) must resolve
     unscoped and thread ``scope=None`` through to the pipeline exactly like
@@ -827,3 +875,78 @@ class TestChatEntryPointUnscopedZeroDrift:
         assert context == "some context"
         assert "scope" in captured
         assert captured["scope"] is None
+
+
+class TestActiveConsoleSessionRealGlue:
+    """Integration coverage for ``chat_rag_events._active_console_session``'s
+    REAL chain: ``app.screen`` -> ``isinstance(screen, ChatScreen)`` ->
+    ``screen._console_chat_store`` -> ``store.active_session_id`` ->
+    matching session.
+
+    Every ``TestChatEntryPoint*`` test above (and every other consumer of
+    ``get_rag_context_for_chat``) monkeypatches ``_active_console_session``
+    itself away, so none of them exercise this glue -- a real hazard in an
+    area with a documented bug class (native Console never writes the
+    legacy ``app.current_chat_conversation_id`` reactives; see
+    ``UI/Screens/chat_screen.py``'s dictionary-summary comment around line
+    1595). These tests build a real ``TldwCli`` (``_build_test_app``, the
+    same heavy-init-patched recipe ``Tests/UI/test_screen_navigation.py``
+    and every Console UI suite share) and a real ``ChatScreen`` instance
+    constructed directly against it (unmounted -- the same
+    ``ChatScreen(app)`` pattern ``Tests/UI/
+    test_console_internals_decomposition.py`` uses to reach real
+    ``ConsoleChatStore``-backed internals without paying for a full
+    Textual mount), then place that real screen on the app's real screen
+    stack (``app._screen_stacks[app._current_mode]``) so ``app.screen``
+    itself -- not a stub -- resolves to it. Nothing here monkeypatches
+    ``_active_console_session`` (the function under test); only
+    unrelated heavy ``TldwCli.__init__`` collaborators are patched, via
+    ``_build_test_app``.
+    """
+
+    def test_active_session_with_persisted_conversation_id_is_returned_by_identity(
+        self,
+    ):
+        app = _build_test_app()
+        screen = ChatScreen(app)
+        store = screen._ensure_console_chat_store()
+        session = store.create_session(title="Console session")
+        session.persisted_conversation_id = "conv-real-glue-1"
+        app._screen_stacks[app._current_mode] = [screen]
+
+        result = cre._active_console_session(app)
+
+        assert result is session
+        assert result.persisted_conversation_id == "conv-real-glue-1"
+
+    def test_non_chat_screen_resolves_to_none(self):
+        app = _build_test_app()
+
+        class _NotAChatScreen:
+            """Stands in for any other real screen on the stack."""
+
+        app._screen_stacks[app._current_mode] = [_NotAChatScreen()]
+
+        assert cre._active_console_session(app) is None
+
+    def test_store_with_no_active_session_resolves_to_none(self):
+        app = _build_test_app()
+        screen = ChatScreen(app)
+        # Store created, but no session was ever created/activated on it.
+        store = screen._ensure_console_chat_store()
+        assert store.active_session_id is None
+        app._screen_stacks[app._current_mode] = [screen]
+
+        assert cre._active_console_session(app) is None
+
+    def test_empty_screen_stack_never_raises(self):
+        """FIX 2 guard: ``app.screen`` raises ``ScreenStackError`` with no
+        screens on the stack; ``_active_console_session`` must degrade to
+        ``None`` rather than propagate it (its own docstring's claim)."""
+        app = _build_test_app()
+        # A freshly constructed TldwCli has an empty default-mode screen
+        # stack (never pushed/mounted here) -- real ``app.screen`` access
+        # raises ScreenStackError, not a stubbed-out condition.
+        assert app._screen_stacks[app._current_mode] == []
+
+        assert cre._active_console_session(app) is None

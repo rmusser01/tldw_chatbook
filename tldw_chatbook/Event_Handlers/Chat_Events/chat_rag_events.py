@@ -470,7 +470,11 @@ def _active_console_session(app: "TldwCli") -> Optional[Any]:
         from ...UI.Screens.chat_screen import ChatScreen
     except Exception:
         return None
-    screen = getattr(app, "screen", None)
+    try:
+        screen = getattr(app, "screen", None)
+    except Exception as e:
+        logger.debug(f"Could not access the active screen: {e}")
+        return None
     if not isinstance(screen, ChatScreen):
         return None
     store = getattr(screen, "_console_chat_store", None)
