@@ -1389,9 +1389,9 @@ async def handle_chat_send_button_pressed(
             message_text_with_handoff,
             chat_history_for_api,
         )
-        app.current_world_info_active = (
-            message_text_with_world_info != message_text_with_handoff
-        )
+        # `active` mirrors the legacy `bool(matched_entries)` exactly (count>0),
+        # not "text changed" — so a matched-but-empty-content entry still counts.
+        app.current_world_info_active = _wi_count > 0
         app.current_world_info_count = _wi_count
 
     # --- 11. Prepare and Dispatch API Call via Worker ---
