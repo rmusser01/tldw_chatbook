@@ -68,7 +68,8 @@ wrap_console_conversation_title(title: str, budget: int) -> tuple[str, ...]
 
 The metadata line is cell-truncated to the same budget with `…` (today it is
 unbounded and clips at the rail edge — the same overflow class that forced the
-sub-agent badge onto its own line, task-226).
+sub-agent badge onto its own line, task-226). The same ordering applies:
+truncate the raw metadata string, then escape.
 
 `_MAX_CONVERSATION_ROW_TITLE` is retired.
 
@@ -79,22 +80,34 @@ sub-agent badge onto its own line, task-226).
 - Browser rows (share the line with the 3-cell star button + 1-cell margin,
   plus 2 cells button padding): `budget = width − 6`.
 - Legacy-section rows (no star column): `budget = width − 2`.
-- First compose runs before layout has measured anything: use a fixed
-  fallback (browser rows 16, legacy rows 20 — the rail's 24-cell CSS
-  min-width minus the tray's 2 cells of section padding, minus the per-path
-  deductions above). The first fit pass
+- Measuring `content_region.width` is deliberate: the width chain includes
+  frame borders that vary — the rail carries a solid frame (2 cells) and the
+  tray's own frame variant flips between `solid` (2 cells) and `none` (0)
+  with workspace state (`_frame_console_region` /
+  `_workspace_context_frame_variant`). `content_region` accounts for border
+  and padding automatically; no hand-derived arithmetic.
+- First compose runs before layout has measured anything: use one
+  conservative named fallback constant (exact value finalized during
+  implementation against the real layout chain; it only affects the
+  pre-measurement first frame). The first fit pass
   (`on_mount` → `call_after_refresh(_fit_height_to_content)`) measures the
-  real width and corrects it (see Resize handling). One extra recompose at
+  real width and corrects it (see Relabel triggers). One extra recompose at
   mount is accepted — consistent with `sync_state`'s existing unconditional
   recompose on every state change.
 
-## Resize handling
+## Relabel triggers
 
 - The tray stores the budget it last rendered with.
-- The existing `on_resize` hook recomputes the budget from measured width and,
-  **only when it differs**, schedules the existing recompose path (the
-  `sync_state`-style refresh with scroll-restore machinery already in the
-  widget). Steady-state resizes that don't change the budget do nothing.
+- The budget recheck lives in `_fit_height_to_content` — the single choke
+  point that already runs after mount, after every resize, and after every
+  `sync_state` recompose. When the freshly measured budget differs from the
+  stored one, it schedules the existing recompose path (the `sync_state`-style
+  refresh with scroll-restore machinery already in the widget); when it
+  matches, nothing happens.
+- `on_resize` alone would be insufficient: the tray's frame-variant flip
+  (solid ↔ none) changes its *content* width without changing its outer
+  size, so no resize event fires for it. The fit pass runs in that path
+  regardless.
 - **Oscillation guard**: the budget depends on tray width; tray width depends
   on whether `#console-left-rail-body`'s scrollbar shows; wrapping changes the
   content height that decides whether the scrollbar shows. To break that loop
@@ -108,7 +121,9 @@ sub-agent badge onto its own line, task-226).
 ## Heights stay honest
 
 - `_conversation_row_render_height` gains the wrapped-name line count:
-  `height = name_lines + 1 (metadata) + (1 if badge)`.
+  `height = name_lines + 1 (metadata) + (1 if badge)`. The star button's
+  matched height (set per-row so the star spans the full row) uses the same
+  new signature.
 - `_conversation_browser_rows_height` and `_legacy_conversation_list_height`
   sum per-row heights (button height + 1 margin) using the **same wrap
   helper with the same budget** used to build each label — the helper is pure
@@ -122,6 +137,15 @@ sub-agent badge onto its own line, task-226).
 ## CSS changes (`css/components/_agentic_terminal.tcss`)
 
 - `#console-left-rail-body`: add `scrollbar-gutter: stable;`.
+- `.console-conversation-browser-row-line`: add `height: auto;`.
+  **This fixes a latent bug the change would otherwise trigger**: Textual's
+  `Horizontal` defaults to `height: 1fr`, and the current CSS never overrides
+  it, so the list height is divided *equally* among row-lines. That happens
+  to be correct only while every row is the same height (and is likely
+  already subtly wrong for mixed badge/non-badge lists, the task-226 case).
+  With 3- and 4-line rows routinely adjacent, equal division would stretch
+  short rows and crop tall ones; `height: auto` makes each line size to its
+  explicitly-heighted button.
 - `.console-workspace-conversation-row`: keep `padding: 0 1`,
   `text-align: left`, `content-align: left middle`; `min-height: 2` remains
   correct (shortest row is name + metadata).
