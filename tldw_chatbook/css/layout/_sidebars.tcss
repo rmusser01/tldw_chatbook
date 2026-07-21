@@ -366,40 +366,6 @@
     background: $primary-background;
 }
 
-/* World Books specific styling */
-.worldbook-association-controls {
-    height: 3;
-    align: center middle;
-    margin: 1 0;
-}
-
-.worldbook-priority-select {
-    width: 30%;
-    min-width: 15;
-    margin-left: 1;
-}
-
-#chat-worldbook-available-listview {
-    height: 5;
-    border: round $primary-lighten-2;
-    background: $primary-background;
-    margin-bottom: 1;
-}
-
-#chat-worldbook-active-listview {
-    height: 5;
-    border: round $accent;
-    background: $primary-background;
-    margin-bottom: 1;
-}
-
-#chat-worldbook-details-display {
-    height: 8;
-    border: round $secondary;
-    background: $primary-background;
-    /* font-size: 11; - not supported in TCSS */
-}
-
 /* Enhanced sidebar sections with UX improvements */
 .sidebar-section-collapsible {
     margin-bottom: 1;

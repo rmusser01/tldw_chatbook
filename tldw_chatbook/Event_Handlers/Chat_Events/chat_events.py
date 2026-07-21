@@ -35,7 +35,6 @@ from textual.css.query import QueryError
 #
 # Local Imports
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_sidebar
-from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_worldbooks
 from tldw_chatbook.Chat.answer_citations import (
     AnswerCitationValidation,
     build_answer_citation_validation,
@@ -3046,8 +3045,6 @@ async def handle_chat_new_temp_chat_button_pressed(
     app.current_chat_is_ephemeral = True
     app.current_chat_active_character_data = None
 
-    await chat_events_worldbooks.refresh_active_worldbooks(app)
-
     try:
         default_system_prompt = app.app_config.get("chat_defaults", {}).get(
             "system_prompt", "You are a helpful AI assistant."
@@ -3123,9 +3120,6 @@ async def handle_chat_new_conversation_button_pressed(
 
     # Clear character data
     app.current_chat_active_character_data = None
-
-    # Clear world books
-    await chat_events_worldbooks.refresh_active_worldbooks(app)
 
     # Reset system prompt
     try:
@@ -4215,9 +4209,6 @@ async def display_conversation_in_chat_tab_ui(app: "TldwCli", conversation_id: s
 
     app.current_chat_conversation_id = conversation_id
     app.current_chat_is_ephemeral = False
-
-    # Refresh world books for the new conversation
-    await chat_events_worldbooks.refresh_active_worldbooks(app)
 
     try:
         character_id_from_conv = conv_metadata.get("character_id")
@@ -6597,7 +6588,6 @@ CHAT_BUTTON_HANDLERS = {
     "toggle-chat-left-sidebar": handle_chat_tab_sidebar_toggle,
     "toggle-chat-right-sidebar": handle_chat_tab_sidebar_toggle,
     **chat_events_sidebar.CHAT_SIDEBAR_BUTTON_HANDLERS,
-    **chat_events_worldbooks.CHAT_WORLDBOOK_BUTTON_HANDLERS,
 }
 
 #
