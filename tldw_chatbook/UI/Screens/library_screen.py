@@ -207,6 +207,7 @@ from ...Widgets.Library import (
     skill_disable_model_label,
     skill_editor_warning_lines,
     skill_trust_review_enabled,
+    skill_trust_review_preview,
     skill_trust_state_line,
     skill_trust_unlock_enabled,
     skill_user_invocable_label,
@@ -314,6 +315,13 @@ LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
 # state, so without this the blocked click looks like a dead button.
 LIBRARY_SKILL_DIRTY_VETO_COPY = (
     "Unsaved skill changes — Save or Discard changes first."
+)
+# task-414: specific approve-failure copy for the service's
+# ``ValueError("snapshot_mismatch")`` -- the files changed between capture
+# and approve, and the service has already discarded the review.
+LIBRARY_SKILL_TRUST_MISMATCH_COPY = (
+    "Skill files changed after the review was captured, so it was discarded. "
+    "Press Review changes again, then Approve."
 )
 LIBRARY_SKILL_SAVE_STATUS_COPY = {
     "ok": "Saved.",
@@ -7561,6 +7569,12 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
         try:
+            self.query_one("#library-skill-trust-review-content", Static).update(
+                skill_trust_review_preview(self._library_skill_active_review)
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
             self.query_one(
                 "#library-skill-trust-unlock", Button
             ).disabled = not skill_trust_unlock_enabled(state.trust_status)
@@ -8131,6 +8145,7 @@ class LibraryScreen(BaseAppScreen):
         self,
         method_name: str,
         *args: Any,
+        failure_copy: Mapping[str, str] | None = None,
     ) -> tuple[Any, bool]:
         """Call a ``local_skill_trust_service`` method off the UI loop.
 
@@ -8138,6 +8153,13 @@ class LibraryScreen(BaseAppScreen):
         (reused pattern, not forked): every ``SkillTrustService`` method
         this editor calls is a plain sync method, offloaded via
         ``asyncio.to_thread``.
+
+        Args:
+            method_name: Trust-service method to invoke.
+            *args: Positional arguments forwarded to the method.
+            failure_copy: Optional map of exception message -> specific
+                toast copy (task-414: e.g. ``snapshot_mismatch``); falls
+                back to the generic failure toast for unmapped errors.
 
         Returns:
             ``(result, True)`` on success, or ``(None, False)`` on any
@@ -8163,12 +8185,12 @@ class LibraryScreen(BaseAppScreen):
                 action=method_name,
                 error_type=type(exc).__name__,
             )
+            copy = "Local skill trust action could not be completed."
+            if failure_copy:
+                copy = failure_copy.get(str(exc), copy)
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
-                notify(
-                    "Local skill trust action could not be completed.",
-                    severity="warning",
-                )
+                notify(copy, severity="warning")
             return None, False
         return result, True
 
@@ -8391,9 +8413,23 @@ class LibraryScreen(BaseAppScreen):
         if not unlock_ok:
             return
         _, ok = await self._call_library_skill_trust_service(
-            "trust_reviewed_snapshot", review_id
+            "trust_reviewed_snapshot",
+            review_id,
+            failure_copy={"snapshot_mismatch": LIBRARY_SKILL_TRUST_MISMATCH_COPY},
         )
         if not ok:
+            # task-414: the service discards the review on EVERY
+            # ``trust_reviewed_snapshot`` raise path, so keeping the
+            # captured review here would leave Approve armed against a
+            # dead review id. Drop it and re-sync the panel so the user
+            # is cleanly back at the Review changes step.
+            if (
+                name == self._selected_skill_name
+                and self._library_skills_view == "editor"
+            ):
+                self._library_skill_active_review = None
+                self._render_library_skill_trust_panel()
+                await self._refresh_library_skill_trust_status()
             return
         if name != self._selected_skill_name or self._library_skills_view != "editor":
             return

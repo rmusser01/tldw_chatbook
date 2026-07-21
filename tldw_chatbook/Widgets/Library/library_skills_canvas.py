@@ -127,6 +127,54 @@ def skill_trust_unlock_enabled(trust_status: str) -> bool:
     return trust_status == "trust_locked"
 
 
+# task-414: per-file preview cap. Generous enough for any realistic
+# SKILL.md, small enough that a pathological file can't wedge the panel.
+_TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP = 4000
+
+
+def skill_trust_review_preview(active_review: Mapping[str, Any] | None) -> str:
+    """Render the captured review's changed-file CONTENT for human review.
+
+    task-414: ``capture_review`` has always returned ``current_files``
+    (filename -> full text), but the panel only ever showed the filename
+    list -- Approve was blind sign-off. This renders one labelled block
+    per changed file so the user can actually read what they are about to
+    trust. The trust store keeps fingerprints, not baseline text, so this
+    is an as-is content preview rather than a before/after diff.
+
+    Args:
+        active_review: The captured review mapping (or ``None`` while no
+            review is active).
+
+    Returns:
+        Labelled per-file content blocks, ``(deleted)`` markers for
+        changed files with no on-disk content, each file capped at
+        ``_TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP`` chars; empty string while
+        no review is active.
+    """
+    if not active_review:
+        return ""
+    changed_files = [str(item) for item in (active_review.get("changed_files") or [])]
+    if not changed_files:
+        return ""
+    raw_files = active_review.get("current_files")
+    current_files = dict(raw_files) if isinstance(raw_files, Mapping) else {}
+    blocks: list[str] = []
+    for file_name in changed_files:
+        content = current_files.get(file_name)
+        if content is None:
+            blocks.append(f"── {file_name} ──\n(deleted — no longer on disk)")
+            continue
+        text = str(content)
+        if len(text) > _TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP:
+            text = (
+                text[:_TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP]
+                + f"\n… truncated ({len(text)} chars total) — open the file on disk to read the rest."
+            )
+        blocks.append(f"── {file_name} ──\n{text}")
+    return "\n\n".join(blocks)
+
+
 def skill_trust_review_enabled(trust_status: str, trust_blocked: bool) -> bool:
     """Return whether the trust panel's Review changes action should be enabled."""
     return bool(trust_blocked) and trust_status in _TRUST_REVIEWABLE_STATUSES
@@ -600,6 +648,16 @@ class LibrarySkillsListCanvas(VerticalScroll):
             yield Static(
                 ", ".join(str(item) for item in changed_files),
                 id="library-skill-trust-review-files",
+                markup=False,
+            )
+            # task-414: the content actually under review. Always present
+            # (empty when no review is active) so the screen's no-recompose
+            # trust-panel patch can fill it in place, same contract as the
+            # changed-files line above. Without this, Approve was blind
+            # sign-off on a filename list.
+            yield Static(
+                skill_trust_review_preview(self.active_review),
+                id="library-skill-trust-review-content",
                 markup=False,
             )
             toolbar = Horizontal(classes="ds-toolbar")

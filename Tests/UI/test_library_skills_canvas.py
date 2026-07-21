@@ -1244,3 +1244,177 @@ async def test_library_flush_pending_work_skill_veto_notifies():
         assert await screen.flush_pending_work() is False
         assert notifications, "Screen-leave veto gave no visible feedback."
         assert "Unsaved skill changes" in notifications[-1][0]
+
+
+# ---------------------------------------------------------------------------
+# task-414: Review changes must show the content under review, and a failed
+# approve must say why (snapshot_mismatch) instead of the generic toast.
+# ---------------------------------------------------------------------------
+
+
+def test_skill_trust_review_preview_renders_per_file_content():
+    from tldw_chatbook.Widgets.Library.library_skills_canvas import (
+        skill_trust_review_preview,
+    )
+
+    preview = skill_trust_review_preview(
+        {
+            "changed_files": ["SKILL.md", "notes.md"],
+            "current_files": {
+                "SKILL.md": "---\nname: x\n---\nBody text.",
+                "notes.md": "supporting notes",
+            },
+        }
+    )
+    assert "SKILL.md" in preview
+    assert "Body text." in preview
+    assert "notes.md" in preview
+    assert "supporting notes" in preview
+
+
+def test_skill_trust_review_preview_labels_deleted_files():
+    from tldw_chatbook.Widgets.Library.library_skills_canvas import (
+        skill_trust_review_preview,
+    )
+
+    preview = skill_trust_review_preview(
+        {"changed_files": ["gone.md"], "current_files": {}}
+    )
+    assert "gone.md" in preview
+    assert "deleted" in preview.lower()
+
+
+def test_skill_trust_review_preview_truncates_huge_files():
+    from tldw_chatbook.Widgets.Library.library_skills_canvas import (
+        skill_trust_review_preview,
+    )
+
+    preview = skill_trust_review_preview(
+        {
+            "changed_files": ["SKILL.md"],
+            "current_files": {"SKILL.md": "x" * 100_000},
+        }
+    )
+    assert len(preview) < 20_000
+    assert "truncated" in preview
+
+
+def test_skill_trust_review_preview_empty_without_review():
+    from tldw_chatbook.Widgets.Library.library_skills_canvas import (
+        skill_trust_review_preview,
+    )
+
+    assert skill_trust_review_preview(None) == ""
+    assert skill_trust_review_preview({}) == ""
+
+
+@pytest.mark.asyncio
+async def test_skill_editor_trust_panel_renders_review_content_preview():
+    """task-414: with an active review the trust panel must show the actual
+    file content under review -- before the fix only the filename list
+    rendered, so Approve was blind sign-off."""
+    state = _editor_state(
+        trust_status="quarantined_modified",
+        trust_blocked=True,
+        trust_changed_files=("SKILL.md",),
+    )
+    app = _EditorHost(
+        mode="editor",
+        editor_state=state,
+        active_review={
+            "review_id": "r1",
+            "changed_files": ["SKILL.md"],
+            "current_files": {"SKILL.md": "reviewable body content"},
+        },
+    )
+    async with app.run_test() as pilot:
+        content = pilot.app.query_one("#library-skill-trust-review-content", Static)
+        text = str(content.renderable)
+        assert "reviewable body content" in text
+
+
+@pytest.mark.asyncio
+async def test_render_trust_panel_patches_review_content_in_place():
+    """task-414: capturing a review patches the content preview without a
+    recompose (same in-place contract as the changed-files line)."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(available=[], blocked=[])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-create-skill").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        screen._library_skill_active_review = {
+            "review_id": "r1",
+            "changed_files": ["SKILL.md"],
+            "current_files": {"SKILL.md": "patched preview content"},
+        }
+        screen._render_library_skill_trust_panel()
+        await pilot.pause()
+
+        content = screen.query_one("#library-skill-trust-review-content", Static)
+        assert "patched preview content" in str(content.renderable)
+
+
+@pytest.mark.asyncio
+async def test_trust_service_call_uses_failure_copy_override():
+    """task-414: a trust-service failure whose message has a registered
+    override must toast that specific copy instead of the generic one."""
+    notifications: list[str] = []
+
+    class _MismatchService:
+        def trust_reviewed_snapshot(self, review_id):
+            raise ValueError("snapshot_mismatch")
+
+    fake = SimpleNamespace(
+        app_instance=SimpleNamespace(
+            local_skill_trust_service=_MismatchService(),
+            notify=lambda message, **kwargs: notifications.append(message),
+        ),
+    )
+    result, ok = await LibraryScreen._call_library_skill_trust_service(
+        fake,
+        "trust_reviewed_snapshot",
+        "r1",
+        failure_copy={"snapshot_mismatch": "specific mismatch copy"},
+    )
+    assert ok is False
+    assert notifications == ["specific mismatch copy"]
+
+
+@pytest.mark.asyncio
+async def test_approve_failure_discards_stale_review():
+    """task-414: the service discards the review on every
+    ``trust_reviewed_snapshot`` raise, so a failed approve must not leave
+    the UI holding a dead review with Approve still enabled."""
+    render_calls: list[bool] = []
+    refresh_calls: list[bool] = []
+
+    async def _call(method_name, *args, **kwargs):
+        if method_name == "unlock_with_passphrase":
+            return None, True
+        return None, False
+
+    async def _refresh_status():
+        refresh_calls.append(True)
+
+    fake = SimpleNamespace(
+        _library_skills_view="editor",
+        _library_skill_active_review={"review_id": "r1"},
+        _selected_skill_name="code-review",
+        _request_library_skill_trust_passphrase=AsyncMock(return_value="pw"),
+        _call_library_skill_trust_service=_call,
+        _render_library_skill_trust_panel=lambda: render_calls.append(True),
+        _refresh_library_skill_trust_status=_refresh_status,
+    )
+    await LibraryScreen._approve_library_skill_trust(fake)
+    assert fake._library_skill_active_review is None
+    assert render_calls == [True]
+    assert refresh_calls == [True]
