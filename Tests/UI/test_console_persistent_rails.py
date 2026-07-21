@@ -996,16 +996,22 @@ async def test_console_tool_badge_when_no_higher_priority_inspector_badge():
 
 
 @pytest.mark.asyncio
-async def test_console_left_staged_context_badge_does_not_auto_open_context():
+async def test_console_staged_context_badge_lands_on_inspector_handle_not_left():
+    """Task-398: staged context badges the Inspector handle, not the left one.
+
+    Ready provider setup keeps the higher-precedence "setup" badge out of the
+    way so the staged signal is observable. The pending launch auto-opens the
+    Inspector (existing behavior); collapsing it shows the staged badge on the
+    Inspector handle while the left handle stays free of staged copy.
+    """
     app = _build_test_app()
+    _configure_native_ready_console(app)
     app.console_rail_session_id = "badge-session"
-    app.app_config = {
-        "console": {
-            "rail_state": {
-                f"console_rail_state:{DEFAULT_WORKSPACE_ID}:badge-session": {
-                    "left_open": False,
-                    "right_open": False,
-                }
+    app.app_config["console"] = {
+        "rail_state": {
+            f"console_rail_state:{DEFAULT_WORKSPACE_ID}:badge-session": {
+                "left_open": False,
+                "right_open": False,
             }
         }
     }
@@ -1021,11 +1027,25 @@ async def test_console_left_staged_context_badge_does_not_auto_open_context():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-context-rail-handle")
 
+        # The staged launch never auto-opens the LEFT rail, and the left
+        # handle badge no longer advertises staged context.
         _assert_selector_hidden_or_absent(console, "#console-left-rail")
+        left_badge_text = " ".join(
+            _static_text(widget)
+            for widget in console.query("#console-context-rail-badge")
+            if _is_displayed(widget)
+        )
+        assert "staged" not in left_badge_text
+
+        # The pending launch auto-opens the Inspector; collapse it to
+        # observe the handle badge carrying the staged signal.
+        await _wait_for_displayed(console, pilot, "#console-right-rail")
+        await pilot.click("#console-inspector-rail-collapse")
+        await _wait_for_hidden(console, pilot, "#console-right-rail")
         badge = await _wait_for_badge(
             console,
             pilot,
-            "#console-context-rail-badge",
+            "#console-inspector-rail-badge",
             "staged",
         )
         assert badge in {"1 staged", "staged"}

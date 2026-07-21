@@ -146,21 +146,53 @@ def test_console_rail_preference_key_treats_whitespace_scope_ids_as_absent():
     assert global_key.fallback_value is None
 
 
-def test_console_context_rail_badge_prioritizes_available_context():
-    assert build_console_context_rail_badge(staged_source_count=3) == "3 staged"
-    assert (
-        build_console_context_rail_badge(
-            staged_source_count="bad",
-            staged_summary="Ready staged citations",
-        )
-        == "staged"
-    )
+def test_console_context_rail_badge_reflects_workspace_and_session_only():
+    # Task-398: staged-context signals moved to the Inspector badge with the
+    # staged-sources section; the left badge is workspace/session only.
     assert (
         build_console_context_rail_badge(workspace_label="Research workspace")
         == "workspace"
     )
     assert build_console_context_rail_badge(session_label="Conversation 1") == "session"
     assert build_console_context_rail_badge() == ""
+
+
+def test_console_inspector_rail_badge_surfaces_staged_context():
+    assert build_console_inspector_rail_badge(staged_source_count=3) == "3 staged"
+    assert (
+        build_console_inspector_rail_badge(
+            staged_source_count="bad",
+            staged_summary="Ready staged citations",
+        )
+        == "staged"
+    )
+    # Action-required signals keep precedence over staged context...
+    assert (
+        build_console_inspector_rail_badge(
+            staged_source_count=3,
+            approval_count=1,
+        )
+        == "1 approval"
+    )
+    assert (
+        build_console_inspector_rail_badge(staged_source_count=3, tool_count=2)
+        == "tools"
+    )
+    # ...while staged context outranks the informational readiness fallbacks.
+    assert (
+        build_console_inspector_rail_badge(
+            staged_source_count=3,
+            can_save_chatbook=True,
+        )
+        == "3 staged"
+    )
+    assert (
+        build_console_inspector_rail_badge(
+            staged_summary="Ready staged citations",
+            inspector_rows=(Row("RAG/source", value="available"),),
+        )
+        == "staged"
+    )
 
 
 def test_console_context_rail_badge_ignores_workspace_fallback_labels():
@@ -174,7 +206,7 @@ def test_console_context_rail_badge_ignores_workspace_fallback_labels():
         )
 
 
-def test_console_context_rail_badge_ignores_empty_staged_summary():
+def test_console_inspector_rail_badge_ignores_empty_staged_summary():
     # Task-398: the empty state carries no summary line (the tray renders its
     # own guidance copy), so the badge treats it as inactive by emptiness.
     empty_summary = ConsoleStagedContextState.empty().summary
@@ -187,15 +219,10 @@ def test_console_context_rail_badge_ignores_empty_staged_summary():
         _INACTIVE_STAGED_SUMMARIES
     )
 
+    assert build_console_inspector_rail_badge(staged_summary=empty_summary) == ""
     assert (
-        build_console_context_rail_badge(
-            staged_summary=empty_summary,
-            session_label="Conversation 1",
-        )
-        == "session"
+        build_console_inspector_rail_badge(staged_summary="No sources attached.") == ""
     )
-    assert build_console_context_rail_badge(staged_summary=empty_summary) == ""
-    assert build_console_context_rail_badge(staged_summary="No sources attached.") == ""
 
 
 def test_console_context_rail_badge_ignores_default_workspace_display_labels():
@@ -438,8 +465,26 @@ def test_console_rail_badges_do_not_mutate_open_booleans():
 
     assert state.left_open is False
     assert state.right_open is False
-    assert state.left_badge == "2 staged"
+    # Task-398: staged context no longer badges the left handle; the blocked
+    # provider row still wins the right badge over the staged count.
+    assert state.left_badge == ""
     assert state.right_badge == "setup"
+
+
+def test_console_rail_state_routes_staged_context_to_inspector_badge():
+    key = build_console_rail_preference_key(
+        workspace_id="workspace-1",
+        session_id="session-1",
+    )
+
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"left_open": False, "right_open": False},
+        staged_source_count=2,
+    )
+
+    assert state.left_badge == ""
+    assert state.right_badge == "2 staged"
 
 
 def test_console_rail_state_compact_width_collapses_right_rail_effectively():

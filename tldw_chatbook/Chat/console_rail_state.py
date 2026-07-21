@@ -288,19 +288,15 @@ def _has_active_staged_summary(value: Any) -> bool:
 
 def build_console_context_rail_badge(
     *,
-    staged_source_count: Any = 0,
-    staged_summary: Any = "",
     workspace_label: Any = "",
     session_label: Any = "",
 ) -> str:
-    """Build the left rail badge from staged context and workspace state."""
-    count = _coerce_non_negative_int(staged_source_count)
-    if count > 0:
-        return f"{count} staged"
+    """Build the left rail badge from workspace/session state.
 
-    if _has_active_staged_summary(staged_summary):
-        return "staged"
-
+    Task-398: staged-context signals moved to the Inspector rail badge along
+    with the staged-sources section itself, so the left badge summarizes only
+    what the left rail actually holds (workspace + session context).
+    """
     workspace_text = _clean_text(workspace_label)
     if workspace_text and workspace_text.lower() not in _WORKSPACE_FALLBACK_LABELS:
         return "workspace"
@@ -375,8 +371,16 @@ def build_console_inspector_rail_badge(
     tool_count: Any = 0,
     approval_count: Any = 0,
     can_save_chatbook: bool = False,
+    staged_source_count: Any = 0,
+    staged_summary: Any = "",
 ) -> str:
-    """Build the right rail badge from run, review, tool, and artifact state."""
+    """Build the right rail badge from run, review, tool, and staged state.
+
+    Task-398: the staged-sources Context section lives in the Inspector rail,
+    so its "N staged"/"staged" badge surfaces here. Action-required signals
+    (failed/setup/blocked/approvals/tools) keep precedence; staged context
+    outranks the informational artifact/source readiness fallbacks.
+    """
     normalized_run_status = _normalized_status(run_status)
     if normalized_run_status == "failed" or _has_row_match(inspector_rows, {"failed"}):
         return "failed"
@@ -398,6 +402,13 @@ def build_console_inspector_rail_badge(
 
     if _coerce_non_negative_int(tool_count) > 0:
         return "tools"
+
+    staged_count = _coerce_non_negative_int(staged_source_count)
+    if staged_count > 0:
+        return f"{staged_count} staged"
+
+    if _has_active_staged_summary(staged_summary):
+        return "staged"
 
     if can_save_chatbook or _has_row_readiness_match(
         inspector_rows,
@@ -439,8 +450,6 @@ def build_console_rail_state(
         preferred_left_open=preferences.left_open,
         preferred_right_open=preferences.right_open,
         left_badge=build_console_context_rail_badge(
-            staged_source_count=staged_source_count,
-            staged_summary=staged_summary,
             workspace_label=workspace_label,
             session_label=session_label,
         ),
@@ -450,6 +459,8 @@ def build_console_rail_state(
             tool_count=tool_count,
             approval_count=approval_count,
             can_save_chatbook=can_save_chatbook,
+            staged_source_count=staged_source_count,
+            staged_summary=staged_summary,
         ),
         persistence_key=preference_key.value,
         right_forced_collapsed=right_forced_collapsed,
