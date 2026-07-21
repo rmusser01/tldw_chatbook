@@ -447,6 +447,7 @@ class FakePersistence:
         self.created_messages = []
         self.updated_messages = []
         self.updated_system_prompts = []
+        self.updated_pinned_prefills = []
 
     def create_conversation(self, **kwargs):
         self.created_conversations.append(kwargs)
@@ -456,6 +457,10 @@ class FakePersistence:
         self.updated_system_prompts.append(
             {"conversation_id": conversation_id, "system_prompt": system_prompt}
         )
+        return True
+
+    def update_conversation_pinned_prefill(self, *, conversation_id, pinned_prefill):
+        self.updated_pinned_prefills.append((conversation_id, pinned_prefill))
         return True
 
     def create_message(
@@ -682,6 +687,58 @@ def test_set_session_system_prompt_survives_persistence_failure():
     assert persisted is False
     assert updated.settings.system_prompt == "New prompt"
     assert store.session_settings(session.id).system_prompt == "New prompt"
+
+
+def test_set_session_pinned_prefill_updates_memory_and_writes_through():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Chat 1")
+    session.settings = ConsoleSessionSettings(provider="llama_cpp")
+    session.persisted_conversation_id = "conv-1"
+
+    updated, persisted = store.set_session_pinned_prefill(session.id, "Voice:")
+    assert persisted is True
+    assert updated.settings.pinned_prefill == "Voice:"
+    assert persistence.updated_pinned_prefills == [("conv-1", "Voice:")]
+
+    updated, persisted = store.set_session_pinned_prefill(session.id, None)
+    assert updated.settings.pinned_prefill is None
+    assert persistence.updated_pinned_prefills[-1] == ("conv-1", None)
+
+
+def test_set_session_pinned_prefill_blank_normalizes_to_none():
+    store = ConsoleChatStore()
+    session = store.create_session(title="Chat 1")
+    session.settings = ConsoleSessionSettings(provider="llama_cpp")
+    updated, persisted = store.set_session_pinned_prefill(session.id, "   ")
+    assert updated.settings.pinned_prefill is None
+    assert persisted is True  # no durable write needed
+
+
+def test_set_session_pinned_prefill_persistence_failure_keeps_memory():
+    class ExplodingPersistence(FakePersistence):
+        def update_conversation_pinned_prefill(self, **kwargs):
+            raise RuntimeError("db locked")
+
+    persistence = ExplodingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Chat 1")
+    session.settings = ConsoleSessionSettings(provider="llama_cpp")
+    session.persisted_conversation_id = "conv-1"
+    updated, persisted = store.set_session_pinned_prefill(session.id, "Voice:")
+    assert persisted is False
+    assert updated.settings.pinned_prefill == "Voice:"
+
+
+def test_persist_session_if_needed_flushes_pinned_prefill():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Chat 1")
+    session.settings = ConsoleSessionSettings(
+        provider="llama_cpp", pinned_prefill="Voice:"
+    )
+    store.persist_session_if_needed(session.id)
+    assert persistence.updated_pinned_prefills == [("conv-1", "Voice:")]
 
 
 def test_store_enqueues_chat_sync_after_user_message_is_durable():
@@ -1052,6 +1109,41 @@ def test_store_system_prompt_round_trips_through_real_chat_persistence_service(
         )
     finally:
         db.close()
+
+
+def test_update_conversation_pinned_prefill_preserves_sibling_metadata(tmp_path):
+    import json
+
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    service = ChatPersistenceService(db)
+    conversation_id = service.create_conversation(
+        assistant_kind="generic", assistant_id="console", conversation_title="T"
+    )
+    # Pre-seed a sibling key the dictionary-attach feature owns.
+    record = db.get_conversation_by_id(conversation_id)
+    db.update_conversation(
+        conversation_id,
+        {"metadata": json.dumps({"active_dictionaries": [1, 2]})},
+        expected_version=record["version"],
+    )
+
+    assert service.update_conversation_pinned_prefill(
+        conversation_id=conversation_id, pinned_prefill="Voice:"
+    )
+    meta = json.loads(db.get_conversation_by_id(conversation_id)["metadata"])
+    assert meta["active_dictionaries"] == [1, 2]
+    assert meta["pinned_response_prefill"] == "Voice:"
+
+    assert service.update_conversation_pinned_prefill(
+        conversation_id=conversation_id, pinned_prefill=None
+    )
+    meta = json.loads(db.get_conversation_by_id(conversation_id)["metadata"])
+    assert meta["active_dictionaries"] == [1, 2]
+    assert "pinned_response_prefill" not in meta
+
+    assert not service.update_conversation_pinned_prefill(
+        conversation_id="missing-conv", pinned_prefill="x"
+    )
 
 
 def test_store_delays_empty_assistant_persistence_until_terminal_content_with_real_service(
