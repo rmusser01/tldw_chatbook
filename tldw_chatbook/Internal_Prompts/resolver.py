@@ -26,6 +26,16 @@ def safe_substitute(text: str, **values: object) -> str:
     Single-pass: tokens introduced by substituted values are NOT re-expanded,
     and all other braces (JSON examples, Ollama ``{{ .Prompt }}`` cruft,
     stray user typos) pass through untouched. Cannot raise.
+
+    Args:
+        text: Template text containing ``{name}`` tokens.
+        **values: Token values; each is substituted as ``str(value)``. Tokens
+            not named here are left untouched (a full token includes its
+            closing brace, so overlapping names like ``query``/``query_list``
+            cannot corrupt each other).
+
+    Returns:
+        The text with the named tokens substituted.
     """
     if not values:
         return text
@@ -56,7 +66,11 @@ def get_internal_prompt(prompt_id: str) -> str:
     if override is not None:
         if _has_required_placeholders(override, spec):
             return override
-        _warn_once(prompt_id, "override is missing a required placeholder")
+        _warn_once(
+            prompt_id,
+            f"override for {prompt_id} is missing a required placeholder; "
+            "falling back",
+        )
 
     if spec.legacy_config_path:
         legacy = _extract_text(_config_value(spec.legacy_config_path))
@@ -67,8 +81,8 @@ def get_internal_prompt(prompt_id: str) -> str:
                 return legacy
             _warn_once(
                 prompt_id,
-                f"legacy value at [{spec.legacy_config_path}] is missing a "
-                "required placeholder",
+                f"legacy value at [{spec.legacy_config_path}] for {prompt_id} "
+                "is missing a required placeholder; falling back",
             )
 
     return spec.default
@@ -87,7 +101,20 @@ def render_internal_prompt(prompt_id: str, **values: object) -> str:
     Raises:
         KeyError: If prompt_id is not registered in CATALOG.
     """
-    return safe_substitute(get_internal_prompt(prompt_id), **values)
+    spec = CATALOG[prompt_id]
+    rendered = safe_substitute(get_internal_prompt(prompt_id), **values)
+    missing = [
+        name
+        for name in spec.required_placeholders
+        if name not in values and "{" + name + "}" in rendered
+    ]
+    if missing:
+        _warn_once(
+            prompt_id + ":render",
+            f"render_internal_prompt({prompt_id!r}) called without required "
+            f"placeholder value(s) {missing}; tokens left unsubstituted",
+        )
+    return rendered
 
 
 def _has_required_placeholders(text: str, spec: PromptSpec) -> bool:
@@ -123,11 +150,9 @@ def _shipped_default_for(dotted_path: str) -> object:
     return node
 
 
-def _warn_once(prompt_id: str, message: str) -> None:
-    if prompt_id in _warned_ids:
+def _warn_once(key: str, message: str) -> None:
+    """Log ``message`` once per ``key`` (typically a prompt id) per process."""
+    if key in _warned_ids:
         return
-    _warned_ids.add(prompt_id)
-    logger.warning(
-        f"internal_prompts: {message} (prompt id: {prompt_id}); "
-        "falling back"
-    )
+    _warned_ids.add(key)
+    logger.warning(f"internal_prompts: {message}")

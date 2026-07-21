@@ -49,6 +49,17 @@ def test_substitute_value_containing_token_not_reexpanded():
     assert safe_substitute("{a} {b}", a="X", b="{a}") == "X {a}"
 
 
+def test_substitute_handles_overlapping_key_names():
+    # A full token includes its closing brace, so a name that is a prefix of
+    # another name cannot corrupt it, regardless of kwarg order.
+    assert safe_substitute("{a} {ab}", a="X", ab="Y") == "X Y"
+    assert safe_substitute("{ab} {a}", ab="Y", a="X") == "Y X"
+    assert (
+        safe_substitute("{query} vs {query_list}", query="Q", query_list="QL")
+        == "Q vs QL"
+    )
+
+
 # --- precedence ------------------------------------------------------------
 
 def test_default_when_no_config(demo_spec, scratch_config):
@@ -95,8 +106,11 @@ def test_customized_legacy_honored(demo_spec, scratch_config):
 def test_legacy_equal_to_shipped_stub_ignored(demo_spec, scratch_config, monkeypatch):
     from tldw_chatbook import config as config_mod
 
+    # Direct indexing on purpose: [Prompts] always exists in shipped defaults;
+    # if that ever changes this fails loud (KeyError) instead of setdefault
+    # silently leaking an empty section past monkeypatch's undo.
     monkeypatch.setitem(
-        config_mod.DEFAULT_CONFIG_FROM_TOML.setdefault("Prompts", {}),
+        config_mod.DEFAULT_CONFIG_FROM_TOML["Prompts"],
         "demo_legacy",
         "the shipped stub {name}",
     )
@@ -126,4 +140,21 @@ def test_warn_once(demo_spec, scratch_config, caplog):
     get_internal_prompt("demo.greeting")
     get_internal_prompt("demo.greeting")
     warnings = [r for r in caplog.records if "demo.greeting" in r.getMessage()]
+    assert len(warnings) == 1
+
+
+def test_render_missing_required_value_warns_once_never_raises(
+    demo_spec, scratch_config, caplog
+):
+    # Caller forgot name= entirely: token survives in output (never raises),
+    # and a once-per-prompt warning fires so the bug is visible in logs.
+    out = render_internal_prompt("demo.greeting")
+    assert "{name}" in out
+    render_internal_prompt("demo.greeting")
+    warnings = [
+        r
+        for r in caplog.records
+        if "without required placeholder value" in r.getMessage()
+        and "demo.greeting" in r.getMessage()
+    ]
     assert len(warnings) == 1

@@ -32,6 +32,19 @@ CATALOG: dict[str, PromptSpec] = {}
 
 
 def register(spec: PromptSpec) -> PromptSpec:
+    """Add a prompt spec to the global ``CATALOG``.
+
+    Args:
+        spec: The spec to register. Its ``id`` must be globally unique and
+            must start with ``spec.subsystem + "."``.
+
+    Returns:
+        The registered spec, unchanged (convenient for module-level use).
+
+    Raises:
+        ValueError: If the id is already registered or does not match the
+            spec's subsystem prefix.
+    """
     if spec.id in CATALOG:
         raise ValueError(f"Duplicate internal prompt id: {spec.id!r}")
     if not spec.id.startswith(spec.subsystem + "."):
