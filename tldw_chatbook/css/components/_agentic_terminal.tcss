@@ -2315,6 +2315,34 @@ ConsoleSystemPromptModal {
     max-height: 3;
 }
 
+/* TASK-345: controls that previously had NO :focus rule fell back to
+   Textual's imperceptible default shift. Non-obscuring contract vocabulary
+   only (ds tokens + bold underline; no accent, no reverse). */
+.console-rail-collapse-button:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.console-switcher-result:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.console-workspace-conversation-row Button:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.console-workspace-action-row Button:focus,
+.console-rail-header Button:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 .console-rail-collapse-button {
     width: 3;
     min-width: 3;

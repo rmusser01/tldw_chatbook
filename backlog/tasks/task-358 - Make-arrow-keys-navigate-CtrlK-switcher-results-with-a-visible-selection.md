@@ -1,10 +1,15 @@
 ---
 id: TASK-358
 title: Make arrow keys navigate Ctrl+K switcher results with a visible selection
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
-labels: [console, ux, keyboard]
+updated_date: '2026-07-21 15:18'
+labels:
+  - console
+  - ux
+  - keyboard
 dependencies: []
 priority: medium
 ---
@@ -23,6 +28,21 @@ In the Switch Session modal, ArrowDown from the search field (x3) changed nothin
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Quick-switcher idiom: Up/Down moves a clearly highlighted selection through the result list, Enter activates the highlighted item
-- [ ] #2 The selection highlight meets a ~3:1 contrast ratio
+- [x] #1 Quick-switcher idiom: Up/Down moves a clearly highlighted selection through the result list, Enter activates the highlighted item
+- [x] #2 The selection highlight meets a ~3:1 contrast ratio
 <!-- AC:END -->
+
+## Implementation Notes
+
+Down/Up bindings added to `ConsoleSessionSwitcherModal`: Down moves
+search-field → first result → next result; Up walks back and returns to
+the search field from the first result (quick-switcher idiom). The
+settled Enter-in-search-activates-first-result behavior is untouched.
+Focus visibility for the focused result comes from the new
+`.console-switcher-result:focus` contract rule + the raised
+`$ds-focus-bg` token (task-345).
+
+Verified: harness test walks the full Down/Down/Up/Up cycle asserting
+focus ids; live screenshot shows the focused result as a clearly visible
+steel-blue band with bold underline after two ArrowDowns (previously a
+~1.08:1 bg delta). File: `Widgets/Console/console_session_switcher_modal.py`.

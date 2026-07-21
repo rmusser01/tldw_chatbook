@@ -8,6 +8,7 @@ from typing import Any
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
@@ -62,6 +63,8 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
     BINDINGS = [
         ("escape", "dismiss_switcher", "Cancel"),
         ("f2", "rename_entry", "Rename"),
+        ("down", "switcher_cursor_down", "Next result"),
+        ("up", "switcher_cursor_up", "Previous result"),
     ]
 
     def __init__(
@@ -154,6 +157,46 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         event.stop()
         if self._entries:
             self.dismiss(ConsoleSwitcherChoice("activate", self._entries[0]))
+
+    def _result_buttons(self) -> list[Button]:
+        """Return mounted result buttons in display order."""
+        try:
+            results = self.query_one("#console-switcher-results", Vertical)
+        except NoMatches:
+            return []
+        return list(results.query(Button))
+
+    def _focused_result_index(self) -> int | None:
+        focused = self.app.focused
+        buttons = self._result_buttons()
+        for index, button in enumerate(buttons):
+            if button is focused:
+                return index
+        return None
+
+    def action_switcher_cursor_down(self) -> None:
+        """ArrowDown: search field -> first result -> next result (TASK-358)."""
+        buttons = self._result_buttons()
+        if not buttons:
+            return
+        index = self._focused_result_index()
+        if index is None:
+            buttons[0].focus()
+            return
+        if index + 1 < len(buttons):
+            buttons[index + 1].focus()
+
+    def action_switcher_cursor_up(self) -> None:
+        """ArrowUp: previous result; from the first, back to the search field."""
+        buttons = self._result_buttons()
+        index = self._focused_result_index()
+        if index is None or index == 0:
+            try:
+                self.query_one("#console-switcher-query", Input).focus()
+            except NoMatches:
+                pass
+            return
+        buttons[index - 1].focus()
 
     @on(Button.Pressed, ".console-switcher-result")
     def _result_pressed(self, event: Button.Pressed) -> None:
