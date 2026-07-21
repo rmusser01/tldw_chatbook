@@ -263,17 +263,62 @@ class PersonasPreviewController:
             )
         return context
 
+    async def _resolve_selection_with_fallback(
+        self, gateway: ConsoleProviderGateway
+    ) -> tuple[ConsoleProviderSelection, Any, str | None]:
+        """Resolve ``character_defaults``, falling back to ``chat_defaults``.
+
+        First-run configs carry the shipped ``[character_defaults]`` template
+        (Anthropic) verbatim, so an unready character provider usually means
+        the section was never a user choice — the user's working Console
+        provider is the honest default (task-425). A usable character
+        provider always wins.
+
+        Returns:
+            ``(selection, resolution, fallback_provider)`` where
+            ``fallback_provider`` is the chat-defaults provider name when the
+            fallback was used, else ``None``. ``resolution`` may be unready;
+            the caller surfaces its copy.
+        """
+        config = getattr(self.screen.app_instance, "app_config", {}) or {}
+        defaults = config.get("character_defaults", {}) or {}
+        selection = ConsoleProviderSelection(
+            provider=str(defaults.get("provider") or ""),
+            explicit_model=str(defaults.get("model") or "") or None,
+        )
+        resolution = await gateway.resolve_for_send(selection)
+        if resolution.ready:
+            return selection, resolution, None
+        chat_defaults = config.get("chat_defaults", {}) or {}
+        chat_provider = str(chat_defaults.get("provider") or "")
+        chat_model = str(chat_defaults.get("model") or "")
+        same_target = (
+            chat_provider.lower() == (selection.provider or "").lower()
+            and (chat_model or None) == selection.explicit_model
+        )
+        if chat_provider and not same_target:
+            fallback = ConsoleProviderSelection(
+                provider=chat_provider, explicit_model=chat_model or None
+            )
+            fallback_resolution = await gateway.resolve_for_send(fallback)
+            if fallback_resolution.ready:
+                logger.bind(
+                    character_provider=selection.provider,
+                    fallback_provider=chat_provider,
+                ).info(
+                    "Character provider not ready; preview using chat_defaults."
+                )
+                return fallback, fallback_resolution, chat_provider
+            # Both providers are unready. Surface the chat_defaults blocker: it
+            # is the provider the guided-flow user actually configured, so its
+            # copy is more actionable than the shipped character default's.
+            return fallback, fallback_resolution, None
+        return selection, resolution, None
+
     async def _run_reply(self) -> None:
         """Resolve the configured provider and stream one preview reply."""
         screen = self.screen
         pane = screen.query_one(PersonasPreviewPane)
-        config = getattr(screen.app_instance, "app_config", {}) or {}
-        defaults = config.get("character_defaults", {}) or {}
-        provider = str(defaults.get("provider") or "")
-        model = str(defaults.get("model") or "")
-        selection = ConsoleProviderSelection(
-            provider=provider, explicit_model=model or None
-        )
         gateway = self.ensure_gateway()
         selection_key = (
             screen.state.selected_entity_kind,
@@ -290,15 +335,16 @@ class PersonasPreviewController:
             )
 
         try:
-            resolution = await gateway.resolve_for_send(selection)
+            (
+                selection,
+                resolution,
+                fallback_provider,
+            ) = await self._resolve_selection_with_fallback(gateway)
         except Exception:
             logger.bind(
-                **self._reply_log_context(
-                    selection=selection,
-                    selection_key=selection_key,
-                    generation=generation,
-                    attempt="resolve",
-                )
+                selection_key=selection_key,
+                generation=generation,
+                attempt="resolve",
             ).opt(exception=True).error("Preview provider resolution failed.")
             if not _stale():
                 self._pop_orphaned_user_turn()
@@ -307,12 +353,15 @@ class PersonasPreviewController:
         if not resolution.ready:
             if not _stale():
                 self._pop_orphaned_user_turn()
+                copy = resolution.visible_copy or "Provider unavailable."
                 pane.set_status(
-                    resolution.visible_copy
-                    or "Provider unavailable - configure in Settings"
+                    f"{copy} Configure a provider in Settings: Providers & Models."
                 )
             return
-        pane.set_status("Running")
+        if fallback_provider:
+            pane.set_status(f"Running via Console default: {fallback_provider}")
+        else:
+            pane.set_status("Running")
         await pane.discard_partial_reply()
         history: list[dict[str, str]] = []
         for entry in self.history:
@@ -394,6 +443,9 @@ class PersonasPreviewController:
         if reply:
             self.history.append({"role": "assistant", "content": reply})
             pane.finalize_reply()
-            pane.set_status("Ready")
+            if fallback_provider:
+                pane.set_status(f"Ready - via Console default: {fallback_provider}")
+            else:
+                pane.set_status("Ready")
         else:
             pane.set_status("No reply received")
