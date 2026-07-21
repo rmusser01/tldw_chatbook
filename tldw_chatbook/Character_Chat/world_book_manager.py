@@ -61,6 +61,47 @@ def _coerce_bool(value: Any, default: bool) -> bool:
     return default
 
 
+def resolve_character_world_books(
+    char_data: Optional[Dict[str, Any]],
+    exclude_names: Set[str],
+) -> List[Dict[str, Any]]:
+    """Character-attached world books to apply on the send path.
+
+    Reads snapshot blocks from ``char_data['extensions']['character_world_books']``,
+    dedups by name (first wins), drops any whose name is in ``exclude_names``
+    (an enabled conversation-attached book already covers it — conversation
+    wins) or whose book-level ``enabled`` is false, and returns the survivors
+    as ``WorldInfoProcessor._process_world_books``-ready book dicts. Never
+    raises on malformed embedded/imported card content.
+    """
+    if not isinstance(char_data, dict):
+        return []
+    ext = char_data.get("extensions")
+    if isinstance(ext, str):
+        try:
+            ext = json.loads(ext or "{}")
+        except (TypeError, ValueError):
+            ext = {}
+    if not isinstance(ext, dict):
+        return []
+    raw = ext.get("character_world_books")
+    if not isinstance(raw, list):
+        return []
+    resolved: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    for block in raw:
+        if not isinstance(block, dict) or not block.get("name"):
+            continue
+        name = str(block.get("name"))
+        if name in seen or name in exclude_names:
+            continue
+        seen.add(name)
+        if not _coerce_bool(block.get("enabled"), True):
+            continue
+        resolved.append(block)
+    return resolved
+
+
 class WorldBookManager:
     """Manages world books and their entries in the database."""
 
