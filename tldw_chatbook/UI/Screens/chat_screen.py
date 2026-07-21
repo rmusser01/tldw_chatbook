@@ -23,7 +23,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.color import Color
-from textual.events import Click, DescendantFocus, Key, MouseUp, Paste
+from textual.events import Click, DescendantFocus, Key, MouseUp, Paste, Resize
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
@@ -314,6 +314,13 @@ CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
 CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE = (
     "Type a Library RAG query before running retrieval."
 )
+# TASK-346: below this terminal height the composer row was clipped out of
+# existence at 97x30 (no input box, no warning). The visible header banner
+# (title + purpose + Ready, ~5 rows) is pure chrome; dropping it below the
+# threshold reclaims the rows the transcript+composer core loop needs.
+# Measured live: composer clips at <=34 rows, fits at 35; the freed header
+# lets it fit down to ~29-30 rows.
+CONSOLE_COMPACT_HEIGHT_ROWS = 35
 CONSOLE_FRAME_COLOR = "#6f7782"
 CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
 CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
@@ -11803,6 +11810,23 @@ class ChatScreen(BaseAppScreen):
             focused,
             composer,
         ) or self._is_legacy_chat_input_focus(focused)
+
+    @on(Resize)
+    def _adapt_console_shell_to_height(self, event: Resize) -> None:
+        """Drop the header banner at small heights to preserve the composer.
+
+        TASK-346: at <=34 rows the composer was pushed off the bottom with
+        no warning (a silently broken core loop at 97x30, larger than the
+        80x24 default terminal). Toggling `-console-compact` hides the ~5-row
+        header banner (title/purpose/Ready) so transcript+composer stay
+        visible; the setup-card/onboarding overlay is unaffected.
+        """
+        try:
+            shell = self.query_one("#console-shell")
+        except QueryError:
+            return
+        compact = event.size.height < CONSOLE_COMPACT_HEIGHT_ROWS
+        shell.set_class(compact, "-console-compact")
 
     @on(DescendantFocus)
     def _paint_console_rail_focus_frame(self, event: DescendantFocus) -> None:

@@ -1,5 +1,5 @@
 ---
-id: TASK-404
+id: TASK-447
 title: 'Fix misleading conversation_id: int type hints in WorldBookManager'
 status: To Do
 assignee: []

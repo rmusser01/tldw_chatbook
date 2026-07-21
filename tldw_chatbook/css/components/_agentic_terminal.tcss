@@ -2994,6 +2994,13 @@ ConsoleSystemPromptModal {
     layers: console-workbench console-setup-overlay;
 }
 
+/* TASK-346: at small terminal heights (<35 rows) the header banner is
+   dropped so the transcript+composer core loop stays on screen instead of
+   the composer being silently clipped off the bottom. */
+#console-shell.-console-compact #console-workbench-header {
+    display: none;
+}
+
 #console-setup-modal {
     layer: console-setup-overlay;
     display: none;
