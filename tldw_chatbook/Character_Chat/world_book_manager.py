@@ -659,6 +659,32 @@ class WorldBookManager:
 
             return world_books
 
+    def get_conversations_for_world_book(
+        self, world_book_id: int
+    ) -> List[Dict[str, Any]]:
+        """Conversations this world book is attached to (reverse of
+        get_world_books_for_conversation).
+
+        Args:
+            world_book_id: The world book to find attachments for.
+
+        Returns:
+            ``[{"conversation_id": str, "title": str}]`` (NULL title → "(untitled)").
+        """
+        query = """
+        SELECT cwb.conversation_id, c.title
+        FROM conversation_world_books cwb
+        JOIN conversations c ON c.id = cwb.conversation_id
+        WHERE cwb.world_book_id = ? AND c.deleted = 0
+        ORDER BY c.last_modified DESC
+        """
+        with self.db.transaction() as cursor:
+            cursor.execute(query, (world_book_id,))
+            return [
+                {"conversation_id": str(row[0]), "title": row[1] or "(untitled)"}
+                for row in cursor.fetchall()
+            ]
+
     # --- Import/Export Functions ---
 
     def export_world_book(self, world_book_id: int) -> Dict[str, Any]:

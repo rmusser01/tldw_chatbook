@@ -72,6 +72,18 @@ class LoreBookExportRequested(Message):
     """Intent: export the currently selected world book to a file (JSON)."""
 
 
+class LoreAttachRequested(Message):
+    """Intent: attach the selected world book to a conversation (opens a picker)."""
+
+
+class LoreDetachRequested(Message):
+    """Intent: detach the selected world book from a conversation."""
+
+    def __init__(self, conversation_id: str) -> None:
+        super().__init__()
+        self.conversation_id = conversation_id
+
+
 class PersonasLoreDetailWidget(Vertical):
     """Entries + Settings tabs for one lore/world book. Emits intents; owns no I/O."""
 
@@ -97,11 +109,16 @@ class PersonasLoreDetailWidget(Vertical):
     PersonasLoreDetailWidget #personas-lore-status {
         height: 1;
     }
+    PersonasLoreDetailWidget #personas-lore-attachments-table {
+        height: auto;
+        max-height: 8;
+    }
     """
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._entries: list[dict] = []
+        self._attachment_rows: list[dict] = []
         self._suppress_enabled_toggle: bool = (
             False  # True while we set the Switch programmatically
         )
@@ -208,6 +225,24 @@ class PersonasLoreDetailWidget(Vertical):
                     id="personas-lore-export",
                     classes="console-action-secondary",
                 )
+            with TabPane("Attachments", id="personas-lore-tab-attachments"):
+                yield Static(
+                    "Not attached to any conversation yet.",
+                    id="personas-lore-attachments-empty",
+                    markup=False,
+                )
+                yield DataTable(id="personas-lore-attachments-table", cursor_type="row")
+                with Horizontal(classes="personas-lore-form-row"):
+                    yield Button(
+                        "Attach to conversation…",
+                        id="personas-lore-attach-add",
+                        classes="console-action-secondary",
+                    )
+                    yield Button(
+                        "Detach",
+                        id="personas-lore-attach-detach",
+                        classes="console-action-secondary",
+                    )
         yield Static("", id="personas-lore-status", markup=False)
 
     def on_mount(self) -> None:
@@ -218,6 +253,9 @@ class PersonasLoreDetailWidget(Vertical):
         """
         table = self.query_one("#personas-lore-entries-table", DataTable)
         table.add_columns("keys", "content", "position", "priority", "enabled")
+        self.query_one("#personas-lore-attachments-table", DataTable).add_columns(
+            "conversation", "id"
+        )
         self._sync_secondary_keys_disabled()
 
     def _sync_secondary_keys_disabled(self) -> None:
@@ -295,6 +333,34 @@ class PersonasLoreDetailWidget(Vertical):
                 key=str(entry.get("id")),
             )
 
+    def load_attachments(self, rows: list[dict]) -> None:
+        """Render the conversations this world book is attached to (I/O-free).
+
+        Args:
+            rows: ``{"conversation_id": str, "title": str}`` entries.
+        """
+        self._attachment_rows = list(rows)
+        table = self.query_one("#personas-lore-attachments-table", DataTable)
+        table.clear()
+        for row in self._attachment_rows:
+            table.add_row(
+                Text(str(row.get("title") or "(untitled)")),
+                Text(str(row.get("conversation_id") or "")),
+                key=str(row.get("conversation_id")),
+            )
+        empty = self.query_one("#personas-lore-attachments-empty", Static)
+        empty.display = not self._attachment_rows
+        table.display = bool(self._attachment_rows)
+
+    def _selected_attachment_id(self) -> str | None:
+        table = self.query_one("#personas-lore-attachments-table", DataTable)
+        if table.row_count == 0 or table.cursor_row is None or table.cursor_row < 0:
+            return None
+        try:
+            return str(table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value)
+        except Exception:
+            return None
+
     def apply_enabled(self, enabled: bool) -> None:
         """Reflect an externally-toggled enabled flag without touching other fields."""
         self._set_enabled_switch(bool(enabled))
@@ -313,6 +379,7 @@ class PersonasLoreDetailWidget(Vertical):
         self.query_one("#personas-lore-token-budget", Input).value = "500"
         self.query_one("#personas-lore-recursive", Switch).value = False
         self._set_enabled_switch(True)
+        self.load_attachments([])
         self.query_one("#personas-lore-status", Static).update("")
 
     def _set_enabled_switch(self, value: bool) -> None:
@@ -582,6 +649,20 @@ class PersonasLoreDetailWidget(Vertical):
         event.stop()
         self.post_message(LoreBookExportRequested())
 
+    @on(Button.Pressed, "#personas-lore-attach-add")
+    def _attach_add(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(LoreAttachRequested())
+
+    @on(Button.Pressed, "#personas-lore-attach-detach")
+    def _attach_detach(self, event: Button.Pressed) -> None:
+        event.stop()
+        conversation_id = self._selected_attachment_id()
+        if conversation_id is None:
+            self.set_status("Select an attached conversation first.")
+            return
+        self.post_message(LoreDetachRequested(conversation_id))
+
     @on(Switch.Changed, "#personas-lore-enabled")
     def _enabled_changed(self, event: Switch.Changed) -> None:
         event.stop()
@@ -599,9 +680,11 @@ class PersonasLoreDetailWidget(Vertical):
 
 
 __all__ = [
+    "LoreAttachRequested",
     "LoreBookEnableToggled",
     "LoreBookExportRequested",
     "LoreBookSettingsSaveRequested",
+    "LoreDetachRequested",
     "LoreEntriesReorderRequested",
     "LoreEntryAddRequested",
     "LoreEntryDeleteRequested",
