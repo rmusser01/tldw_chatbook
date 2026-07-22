@@ -38,9 +38,12 @@ not state_changed`) removed that churn. The toggle handler itself
 (`on_console_inspector_rail_open` → `_set_console_rail_preference(right_open)` →
 `_sync_console_rail_visibility_if_changed`, a synchronous `styles.display` flip)
 was always immediate. Served-app measured (llama live, mid-run): Inspector-open
-latency 18–54ms during a run vs 6ms idle — well under the ~100ms AC. Regression-
-protected by `Tests/UI/test_console_tick_gating.py::test_console_workspace_
-context_fresh_tray_still_synced_mid_run`.
+latency 18–54ms during a run vs 6ms idle — well under the ~100ms AC. Regression
+test (kept on one line so it copies cleanly):
+
+```
+Tests/UI/test_console_tick_gating.py::test_console_workspace_context_fresh_tray_still_synced_mid_run
+```
 
 (a) COLD ECHO — remaining, a real behaviour change: append the USER message in
 `submit_draft` after validation but BEFORE `resolve_for_send`. On a not-ready
