@@ -2,7 +2,7 @@
 id: TASK-483
 title: >-
   RAG settings + profiles SP2a: profile storage foundation
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-22 01:15'
 updated_date: '2026-07-22 01:15'
