@@ -1,7 +1,4 @@
 import secrets
-from pathlib import Path
-
-import pytest
 
 from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
 from tldw_chatbook.Skills_Interop.skill_trust_store import (
@@ -69,3 +66,31 @@ def test_reset_trust_is_non_crashing_and_idempotent(tmp_path):
     svc.reset_trust()
     svc.reset_trust()  # idempotent, no raise
     assert svc.trust_posture() == "needs_setup"
+
+
+def test_posture_locked_when_manifest_and_marker_present_but_keys_absent(tmp_path):
+    # Bootstrap writes manifest + marker to disk; a FRESH service has keys=None.
+    svc1 = _service(tmp_path)
+    svc1.bootstrap_trust("pw", salt=secrets.token_bytes(32))
+    assert svc1.trust_posture() == "ready"
+    svc2 = _service(tmp_path)  # same on-disk store, no in-memory keys
+    assert svc2.trust_posture() == "locked"
+
+
+def test_posture_orphaned_manifest_beats_locked_when_keys_absent(tmp_path):
+    # THE ordering guarantee: manifest present + marker cleanly absent + keys None
+    # must be needs_resetup (branch 4), never locked (branch 5).
+    svc1 = _service(tmp_path)
+    svc1.bootstrap_trust("pw", salt=secrets.token_bytes(32))
+    svc2 = _service(tmp_path)  # fresh: keys None
+    svc2.trust_store.marker_store.clear()  # remove marker, leave manifest
+    assert svc2.trust_store.has_manifest() is True
+    assert svc2.trust_posture() == "needs_resetup"
+
+
+def test_posture_error_when_manifest_corrupted_with_keys_loaded(tmp_path):
+    svc = _service(tmp_path)
+    svc.bootstrap_trust("pw", salt=secrets.token_bytes(32))
+    # Corrupt the on-disk manifest so _load_valid_manifest raises while keys stay in memory.
+    svc.trust_store.manifest_path.write_text('{"tampered": true}', encoding="utf-8")
+    assert svc.trust_posture() == "error"
