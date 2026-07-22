@@ -32,41 +32,52 @@ Server root matches `console_provider_gateway`'s base-URL semantics and works on
 
 **Target the right line.** `config.py` has other llama entries that are NOT this bug and must be left alone: `llama_api_IP = "http://127.0.0.1:8080/v1/chat/completions"` (~:1072, a different/legacy key, already correct-form) and `llama_cpp = "http://localhost:8080"` (~:2270, a `[providers]` address, already server root). Only the `[api_settings.llama_cpp].api_url` line (~:2476, ending in `/completion`) is the defect.
 
-### 2. Expose the llama.cpp URL normalizer for reuse (`console_provider_gateway.py`)
-The gateway already owns the correct normalization. Make it reusable without changing behavior: rename `_normalize_llamacpp_base_url` → **`normalize_llamacpp_base_url`** (public) and update its in-module call site(s); keep `_normalize_llamacpp_base_url = normalize_llamacpp_base_url` as a private back-compat alias if any caller still references the underscore name. No logic change — the Console path is untouched. (`console_provider_gateway` does not import `LLM_Calls`, so importing it from `LLM_API_Calls_Local` is safe — no circular import.)
+### 2. Reuse the existing public llama.cpp URL normalizer
+`normalize_llamacpp_base_url` is **already public** at `console_provider_gateway.py:88` and is already imported by `chat_screen.py:137`, so **no rename is needed** (an earlier draft mistakenly said to publicize a `_`-prefixed name). It strips any known endpoint suffix (`/v1`, `/v1/models`, `/models`, `/v1/chat/completions`, `/chat/completions`, `/completion`, `/completions`) to the server root, prepends `http://` when scheme-less, and returns `DEFAULT_LLAMACPP_BASE_URL` (`http://127.0.0.1:9099`) for empty input.
+
+*Duplication note (pre-existing, not fixed here):* a second, equivalent `normalize_llamacpp_base_url` lives in `console_session_settings.py:112`. Reuse the **`console_provider_gateway`** copy (the one the UI already uses). Deduping the two copies is a follow-up, not part of this task (non-goal).
 
 ### 3. Normalize the base URL on the legacy llama.cpp path (`LLM_API_Calls_Local.py`, `chat_with_llama`)
-After `chat_with_llama` resolves `api_base_url = llama_config.get("api_url")` and its empty-guard, normalize it before handing it to `_chat_with_openai_compatible_local_server`:
+After `chat_with_llama` resolves `api_base_url = llama_config.get("api_url")` **and passes its existing empty-guard** (`if not api_base_url: raise ...`), normalize the non-empty value before handing it to `_chat_with_openai_compatible_local_server`. Use a **deferred (local) import** inside the function — this file already defers Chat/Character submodule imports, and a top-level import of `console_provider_gateway` (which pulls in `httpx`, `Chat_Deps`, etc.) would add app-startup weight and risk import cycles:
 ```python
-from ..Chat.console_provider_gateway import normalize_llamacpp_base_url
-...
-api_base_url = normalize_llamacpp_base_url(api_base_url)
+def chat_with_llama(...):
+    ...
+    api_base_url = llama_config.get("api_url")
+    if not api_base_url:
+        raise ...            # unchanged empty-guard
+    from ..Chat.console_provider_gateway import normalize_llamacpp_base_url
+    api_base_url = normalize_llamacpp_base_url(api_base_url)
+    ...
 ```
-`normalize_llamacpp_base_url` strips any known endpoint suffix to the server root; `_chat_with_openai_compatible_local_server` then appends `v1/chat/completions`. Result for every reasonable input:
+(Confirm the relative depth: `LLM_API_Calls_Local.py` is in `tldw_chatbook/LLM_Calls/`, so `from ..Chat.console_provider_gateway import ...`.)
+
+`normalize_llamacpp_base_url` strips a known endpoint suffix to the server root; `_chat_with_openai_compatible_local_server` then appends `v1/chat/completions`. Result for every reasonable input:
 - `http://localhost:8080/completion` → root `http://localhost:8080` → `http://localhost:8080/v1/chat/completions` ✅
 - `http://localhost:8080/v1` → root → `.../v1/chat/completions` ✅ (fixes the placeholder form)
 - `http://localhost:8080` → root → `.../v1/chat/completions` ✅
 - `http://localhost:8080/v1/chat/completions` → root → `.../v1/chat/completions` ✅ (idempotent)
+- `http://host/proxy/v1/chat/completions` (reverse-proxy prefix) → NOT an exact suffix match, returned unchanged → the caller's existing `endswith("v1/chat/completions")` branch uses it as-is ✅ (no regression — this is the one case the plain caller already handled).
 
-Scoped to `chat_with_llama` (covers `llama_cpp`, `local_llamacpp`, `local_llamafile`); the shared `_chat_with_openai_compatible_local_server` and other providers (kobold/ooba/vllm/mlx) are untouched.
+Scoped to `chat_with_llama` (covers `llama_cpp`, `local_llamacpp`, `local_llamafile`; `local-llm` uses a different handler `chat_with_local_llm` and is out of scope); the shared `_chat_with_openai_compatible_local_server` and other providers (kobold/ooba/vllm/mlx) are untouched.
 
-Confirm the import path/name in step 2 exactly (relative import depth from `LLM_Calls/` to `Chat/`), and place the normalization after the existing empty-guard so a missing URL still raises the existing clear error rather than being defaulted silently — i.e. only normalize a non-empty `api_base_url`.
+*Edge:* a non-empty but whitespace-only `api_url` normalizes to `DEFAULT_LLAMACPP_BASE_URL` (`:9099`) instead of the previous raw-string failure — an acceptable, marginally-better fallback for a garbage config value; noted, not specially handled.
 
 ### 4. Align the Settings placeholder form (`settings_screen.py:341-342`)
 Change the `llama_cpp` and `local_llamacpp` placeholders from `http://127.0.0.1:9099/v1` to the server-root form `http://127.0.0.1:9099` so the hint matches the "server root" the default now uses (both forms work post-fix; this is form-consistency for AC#2). Port left at 9099 — the config-default-vs-gateway-default port difference (8080 vs 9099) is pre-existing and out of scope.
 
 ## Testing
 
-- **Normalizer (`console_provider_gateway`):** the public `normalize_llamacpp_base_url` returns the server root for `/completion`, `/v1`, `/v1/chat/completions`, bare root, and `host:port` (no scheme); this pins the reused contract. (Extend the existing gateway tests if present; else add focused unit tests.)
-- **Legacy caller build (`LLM_API_Calls_Local`):** with a stubbed HTTP layer / captured request URL, `chat_with_llama` given `api_url="http://localhost:8080/completion"` (and `/v1`, root) posts to exactly `http://localhost:8080/v1/chat/completions` — never `.../completion/...` or `.../v1/v1/...`. Mirror the existing local-LLM caller tests' mocking approach.
-- **Config default:** the generated `CONFIG_TOML_CONTENT` (or the parsed default) for `[api_settings.llama_cpp].api_url` equals `http://localhost:8080` and contains no `/completion`.
-- **Regression:** existing `LLM_API_Calls_Local` / provider-gateway / config tests stay green; other providers' URL construction is unchanged (assert kobold/ooba unaffected if covered).
+- **Normalizer contract (`normalize_llamacpp_base_url`):** direct unit tests that it returns the server root for `/completion`, `/v1`, `/v1/chat/completions`, bare root, and `host:port` (no scheme), and leaves a reverse-proxy-prefixed `/proxy/v1/chat/completions` unchanged. (Add to `Tests/Chat/test_console_provider_gateway.py` if no direct test exists.)
+- **Legacy caller build (`LLM_API_Calls_Local`):** mirror the established URL-capture pattern in `Tests/Chat/test_chat_functions.py` (the `captured["url"] == "..."` assertions) — with the HTTP post mocked, `chat_with_llama` given `api_url="http://localhost:8080/completion"` (and `/v1`, and bare root) posts to exactly `http://localhost:8080/v1/chat/completions`, never `.../completion/...` or `.../v1/v1/...`. (settings-dict patch pattern: see `Tests/LLM_Management/test_mlx_lm.py`.)
+- **Config default:** the parsed `CONFIG_TOML_CONTENT` for `[api_settings.llama_cpp].api_url` equals `http://localhost:8080` and contains no `/completion`.
+- **Regression:** existing `LLM_API_Calls_Local` / `test_console_provider_gateway` / config tests stay green; other providers' URL construction is unchanged (kobold/ooba/vllm/mlx callers unaffected — they don't go through `chat_with_llama`).
 
 ## Risks / mitigations
 
-- **Reusing a renamed function:** keep a private alias if any in-repo caller still uses `_normalize_llamacpp_base_url`; grep confirms call sites before renaming.
-- **Behavior change scope:** normalization applied only in `chat_with_llama`, so non-llama providers on the shared caller are unaffected (verified by keeping their tests green).
-- **Existing saved values:** users who saved `http://localhost:8080/completion` now succeed (normalized), so the fix is retroactive without a migration.
+- **Import weight / cycles:** a deferred local import in `chat_with_llama` keeps `console_provider_gateway`'s heavy deps out of app-startup and avoids any cycle (verified: `console_provider_gateway` does not import `LLM_Calls`).
+- **Behavior change scope:** normalization applied only in `chat_with_llama`, so non-llama providers on the shared caller are unaffected (kept green by their existing tests).
+- **Existing saved values:** users who saved `http://localhost:8080/completion` (or `/v1`) now succeed (normalized), so the fix is retroactive without a migration.
+- **Duplication:** reusing the `console_provider_gateway` copy adds a third consumer of a function duplicated in `console_session_settings`; deduping is a noted follow-up, not done here.
 
 ## Non-goals
 
