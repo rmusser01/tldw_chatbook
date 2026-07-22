@@ -161,8 +161,24 @@ single text-token estimator, tiered:
   gate, and the divergent chars branch) are **removed** — all custom/tiktoken/
   chars logic now lives once, inside `estimate_tokens`, so there is exactly one
   estimator and no double custom-counting.
+- **`chat_screen._estimate_tokens`** (`UI/Screens/chat_screen.py`) — the
+  Console draft token estimate shown in `ConsoleContextModal` — currently does
+  `count_tokens_tiktoken(text)` with an `except` fallback of
+  `int(len(text.split()) * 1.3)` (a `.split()` token estimate, AC#1 violation;
+  a UI count, AC#2 scope). Replace its body with
+  `estimate_tokens(text, model, provider)` using the active session's model/
+  provider when readily available, else `""` (generic ratio) — removing the
+  last `.split()` token estimate and unifying it onto the one estimator.
 - Delete the dead `approximate_token_count` (`Chat_Functions.py`; zero callers
   dev-wide).
+
+**AC#1 completeness.** A dev-wide sweep for `.split()` token estimates found
+exactly these three in-scope sites (`count_tokens_messages`,
+`approximate_token_count`, `chat_screen._estimate_tokens`). The remaining
+`.split()` uses are intentionally **out of scope**: `local_writing_service.
+_word_count` (a literal word count), the Evals `metrics_calculator` /
+`DEVELOPER_GUIDE` (BLEU/ROUGE/F1 token-overlap scoring, not context budgeting),
+and dictation/STTS/wizard display word counts.
 
 `console_history_budget` (322) is untouched: its `count_tokens_messages(
 flattened, model)` call keeps working and now routes through `estimate_tokens`.
