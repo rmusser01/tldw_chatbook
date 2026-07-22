@@ -203,6 +203,12 @@ PERSONAS_AVATAR_MAX_SIZE_COPY = "5 MB"
 PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 
+# Character editor avatar thumbnail box, in character cells. Must stay in
+# sync with #personas-char-editor-avatar-thumb's CSS max-width/max-height in
+# personas_character_editor_widget.py - change one, change both.
+AVATAR_THUMB_COLS = 24
+AVATAR_THUMB_LINES = 10
+
 # 80-column terminals need a tighter three-pane split than the default
 # 2:4:2 workbench minimums. Keep this screen-owned so a later rail-collapse
 # task can replace it without changing pane widgets.
@@ -3966,14 +3972,87 @@ class PersonasScreen(BaseAppScreen):
                         # to a transient 0-width/height region - which PIL's
                         # resize() raises on. A fixed size is resolvable
                         # without waiting on parent layout, so it sidesteps
-                        # the race outright.
-                        renderable.styles.width = 24
-                        renderable.styles.height = 10
+                        # the race outright. Both dims must stay explicit
+                        # ints (not "auto") to avoid reintroducing that
+                        # crash, so the fit below is computed in cells
+                        # rather than left to the renderer.
+                        w_cells, h_cells = self._fit_avatar_cell_size(
+                            pil.width, pil.height
+                        )
+                        renderable.styles.width = w_cells
+                        renderable.styles.height = h_cells
                 except Exception:
-                    renderable = cache.get_pixels(cache_key)
+                    renderable = self._build_avatar_pixels(cache, cache_key)
             else:
-                renderable = cache.get_pixels(cache_key)
+                renderable = self._build_avatar_pixels(cache, cache_key)
         editor.set_avatar_thumbnail(renderable)
+
+    @staticmethod
+    def _fit_avatar_cell_size(pixel_width: int, pixel_height: int) -> tuple[int, int]:
+        """Fit a PIL image's pixel size into the avatar thumb box, in cells.
+
+        Terminal cells are roughly twice as tall (in pixels) as they are
+        wide, so the image's aspect ratio is first converted from pixels to
+        "cell units" (halving the height) before fitting it into the
+        ``AVATAR_THUMB_COLS`` x ``AVATAR_THUMB_LINES`` box. Both returned
+        dimensions are explicit ints >= 1 - leaving either as "auto" is what
+        reintroduced the 0-size ``ValueError`` this rendering path already
+        works around (see the caller's comment).
+
+        Args:
+            pixel_width: Source image width in pixels.
+            pixel_height: Source image height in pixels.
+
+        Returns:
+            ``(width_cells, height_cells)``, each clamped to
+            ``[1, AVATAR_THUMB_COLS]`` / ``[1, AVATAR_THUMB_LINES]``.
+        """
+        if pixel_width <= 0 or pixel_height <= 0:
+            return AVATAR_THUMB_COLS, AVATAR_THUMB_LINES
+        # Aspect ratio expressed in cell units (width-cells : height-cells).
+        cell_aspect = pixel_width / (pixel_height / 2)
+        box_aspect = AVATAR_THUMB_COLS / AVATAR_THUMB_LINES
+        if cell_aspect >= box_aspect:
+            # Image is relatively wider than the box - fit to width.
+            w_cells = AVATAR_THUMB_COLS
+            h_cells = max(1, round(AVATAR_THUMB_COLS / cell_aspect))
+        else:
+            # Image is relatively taller than the box - fit to height.
+            h_cells = AVATAR_THUMB_LINES
+            w_cells = max(1, round(AVATAR_THUMB_LINES * cell_aspect))
+        w_cells = max(1, min(AVATAR_THUMB_COLS, w_cells))
+        h_cells = max(1, min(AVATAR_THUMB_LINES, h_cells))
+        return w_cells, h_cells
+
+    @staticmethod
+    def _build_avatar_pixels(cache: "ConsoleImageRenderCache", cache_key: str):
+        """Build a ``rich_pixels.Pixels`` sized to the avatar thumb box.
+
+        ``cache.get_pixels`` thumbnails to the 80x40 chat-transcript box,
+        which is far larger than the character editor's compact avatar
+        preview; reusing it produces an oversized Pixels grid that Rich does
+        not reflow, so the small thumb container just crops it to a
+        top-left sliver. This instead pulls the cached full-size PIL image
+        and thumbnails a private copy to the avatar box (in half-block
+        "pixel" units: one character column is ~1px wide, one character
+        line is ~2px tall).
+
+        Args:
+            cache: The render cache holding the decoded avatar image.
+            cache_key: The per-session cache key ``prepare`` was called with.
+
+        Returns:
+            A ``Pixels`` renderable fitted to the avatar box, or ``None``
+            when the image is not (or no longer) cached.
+        """
+        import rich_pixels
+
+        pil = cache.get_pil(cache_key)
+        if pil is None:
+            return None
+        thumb = pil.copy()
+        thumb.thumbnail((AVATAR_THUMB_COLS, AVATAR_THUMB_LINES * 2))
+        return rich_pixels.Pixels.from_image(thumb)
 
     @on(CharacterImageRemoveRequested)
     def _handle_character_image_remove(
