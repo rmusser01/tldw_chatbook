@@ -30,6 +30,10 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
+from tldw_chatbook.Chat.console_history_budget import (
+    DEFAULT_RESPONSE_RESERVATION,
+    bound_messages_to_window,
+)
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_skill_resolver import (
     SKILL_UNTRUSTED_REFUSE,
@@ -2053,6 +2057,21 @@ class ConsoleChatController:
             # still carries the failure for the control surfaces.
             pass
 
+    def _append_history_trimmed_note(self, session_id: str, dropped: int) -> None:
+        """Append a transcript-only system row noting history was trimmed."""
+        try:
+            self.store.append_message(
+                session_id,
+                role=ConsoleMessageRole.SYSTEM,
+                content=(
+                    "Earlier messages were trimmed to fit the model's context "
+                    f"window ({dropped} dropped)."
+                ),
+            )
+        except KeyError:
+            # Session vanished mid-send; the dispatched payload was still bounded.
+            pass
+
     async def _stream_assistant_response(
         self,
         *,
@@ -2077,6 +2096,25 @@ class ConsoleChatController:
         # not the controller's active session) so a session switch racing
         # this send can't flip which branch a still-in-flight message uses.
         force_plain = owner is not None and owner.character_id is not None
+        # task-322: bound the dispatched history by real tokens before the
+        # agent-vs-direct branch below, so both paths send a windowed payload.
+        # Budget against the captured `resolution` -- the same model/provider/
+        # max_tokens the dispatch below actually sends -- not the controller's
+        # mutable self.* fields, which a provider/model switch racing the awaits
+        # between resolve_for_send and here could have changed underneath us.
+        bound = bound_messages_to_window(
+            provider_messages,
+            model=getattr(resolution, "model", None) or "",
+            provider=getattr(resolution, "provider", "") or "",
+            response_reservation=(
+                getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
+            ),
+        )
+        provider_messages = bound.messages
+        if bound.dropped_count:
+            # Reuse the guarded owner_id resolved above; the note helper
+            # swallows a store-close race that happens during the append.
+            self._append_history_trimmed_note(owner_id, bound.dropped_count)
         if (
             self._agent_runtime_enabled
             and self._agent_bridge is not None
