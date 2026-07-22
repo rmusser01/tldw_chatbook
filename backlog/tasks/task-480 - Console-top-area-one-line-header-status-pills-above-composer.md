@@ -1,5 +1,5 @@
 ---
-id: TASK-456
+id: TASK-480
 title: 'Console top area: one-line header + status pills above composer'
 status: Done
 assignee: []
