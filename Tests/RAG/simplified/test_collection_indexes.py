@@ -103,6 +103,47 @@ def test_target_exists_is_noop(chroma_persist_dir):
 
 
 @pytest.mark.requires_chromadb
+def test_create_rag_service_adopts_legacy_collection_e2e(chroma_persist_dir):
+    """Regression lock for the client-Settings-collision landmine.
+
+    ``maybe_adopt_legacy_collection``'s own Chroma client
+    (``collection_indexes._client``) and the real service's lazily-built
+    Chroma client (``ChromaVectorStore.client``) run sequentially in one
+    process against the *same* ``persist_directory``. chromadb (1.5.8)
+    caches one client instance per persist path (``SharedSystemClient``) for
+    the whole process and raises ``ValueError`` if a later
+    ``PersistentClient(...)`` call at that path uses ``Settings`` that
+    aren't ``==`` the first-registered ones. The two tests above only
+    exercise the migration function in isolation; this drives the real
+    ``create_rag_service`` entry point end-to-end so the second, real-service
+    client construction actually happens in-process and the collision would
+    surface if the Settings ever drifted apart.
+    """
+    N = 3
+    _seed_legacy(chroma_persist_dir, n=N)
+    cfg = _cfg(chroma_persist_dir)
+    target = fingerprinted_collection_name(cfg)
+
+    from tldw_chatbook.RAG_Search.simplified.rag_factory import create_rag_service
+
+    svc = create_rag_service("hybrid_basic", config=cfg)
+
+    # Force the real service's own lazy Chroma client + collection at the
+    # same persist_directory -- this is the Settings-collision path. Must
+    # not raise.
+    collection = svc.vector_store.collection
+    assert collection is not None
+
+    import chromadb
+    from chromadb.config import Settings
+    client = chromadb.PersistentClient(path=str(chroma_persist_dir),
+                                       settings=Settings(anonymized_telemetry=False, allow_reset=True))
+    names = [c.name for c in client.list_collections()]
+    assert target in names and "default" not in names
+    assert client.get_collection(target).count() == N
+
+
+@pytest.mark.requires_chromadb
 def test_adopt_preserves_legacy_distance_metric(chroma_persist_dir):
     """The legacy collection's actual hnsw:space (index distance metric) must
     survive adoption unchanged, even when the config we're adopting under
