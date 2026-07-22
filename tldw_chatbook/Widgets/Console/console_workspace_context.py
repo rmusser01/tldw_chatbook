@@ -74,6 +74,15 @@ def truncate_console_row_cells(text: str, budget: int) -> str:
     Cell-aware (CJK/emoji safe). Appends an ellipsis only when truncation
     actually occurred. Operates on raw text -- markup escaping happens later
     in ``format_console_conversation_row_label``.
+
+    Args:
+        text: Raw (unescaped) row text to fit.
+        budget: Maximum width in terminal cells; clamped to a floor of 1.
+
+    Returns:
+        The text unchanged when it already fits, otherwise the longest
+        cell-measured prefix that leaves room for a trailing ellipsis, with
+        the ellipsis appended.
     """
     budget = max(1, int(budget))
     text = str(text)
@@ -92,6 +101,16 @@ def wrap_console_conversation_title(title: str, budget: int) -> tuple[str, ...]:
     ``_MIN_TITLE_WRAP_BUDGET`` to avoid degenerate wraps on absurdly narrow
     rails. Blank titles normalize to "Untitled conversation" (keep in sync
     with ``ConsoleWorkspaceContextTray._conversation_title``).
+
+    Args:
+        title: Raw (unescaped) conversation title to wrap.
+        budget: Target line width in terminal cells; clamped up to a floor of
+            ``_MIN_TITLE_WRAP_BUDGET``.
+
+    Returns:
+        A tuple of one or two raw text lines, each at most ``budget`` cells
+        wide; the second line carries a trailing ellipsis when the title
+        still overflows two lines.
     """
     budget = max(_MIN_TITLE_WRAP_BUDGET, int(budget))
     remaining = str(title).strip() or "Untitled conversation"
