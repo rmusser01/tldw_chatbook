@@ -266,7 +266,10 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
-from ...Widgets.Console.console_control_bar import ConsoleScopeChip
+from ...Widgets.Console.console_status_chips import (
+    ConsoleScopeChip,
+    ConsoleStatusChips,
+)
 from ...Widgets.Console.console_retrieval_scope_row import (
     ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
 )
@@ -3399,10 +3402,10 @@ class ChatScreen(BaseAppScreen):
         else:
             row.sync_state(state)
         try:
-            control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
+            status_chips = self.query_one("#console-status-chips", ConsoleStatusChips)
         except QueryError:
             return
-        control_bar.sync_scope_chip(state)
+        status_chips.sync_scope_chip(state)
 
     async def _resolve_console_effective_scope_state(
         self, session: "ConsoleChatSession"
@@ -4165,7 +4168,7 @@ class ChatScreen(BaseAppScreen):
         # task-10 review finding 2: warming the cache above is not enough
         # by itself -- neither `_sync_native_console_chat_ui()` below nor
         # its own `_sync_console_control_bar()` call ever touches the
-        # retrieval-scope row or `ConsoleControlBar.sync_scope_chip`
+        # retrieval-scope row or `ConsoleStatusChips.sync_scope_chip`
         # (`sync_scope_chip` is deliberately its own method, kept off the
         # general control-bar sync tick -- see its docstring). Without this
         # explicit call the MOUNTED row/chip stayed on whatever state they
@@ -8280,12 +8283,11 @@ class ChatScreen(BaseAppScreen):
                     control_state,
                     self.app_instance,
                     actions=workbench_state.actions,
-                    scope_state=retrieval_scope_state,
                     on_sidebar_toggle_requested=self._toggle_console_chat_sidebar,
                     id="console-control-bar",
                     classes="console-control-bar",
                 ),
-                height=2,
+                height=1,
             )
             workspace_grid = self._frame_console_region(
                 Horizontal(
@@ -8715,6 +8717,12 @@ class ChatScreen(BaseAppScreen):
                 if rail_state.right_open:
                     right_handle.styles.display = "none"
                 yield self._frame_console_region(right_handle, variant="quiet")
+            yield ConsoleStatusChips(
+                control_state,
+                scope_state=retrieval_scope_state,
+                id="console-status-chips",
+                classes="ds-panel",
+            )
             yield self._frame_console_region(
                 ConsoleComposerBar(
                     id="console-native-composer",
@@ -12415,6 +12423,14 @@ class ChatScreen(BaseAppScreen):
                 control_bar = None
             if control_bar is not None:
                 control_bar.sync_state(control_state, actions=workbench_state.actions)
+            try:
+                status_chips = self.query_one(
+                    "#console-status-chips", ConsoleStatusChips
+                )
+            except QueryError:
+                status_chips = None
+            if status_chips is not None:
+                status_chips.sync_state(control_state)
             self._sync_console_workbench_state(
                 control_state, workbench_state=workbench_state
             )

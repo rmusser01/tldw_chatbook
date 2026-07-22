@@ -20,8 +20,13 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     ConsoleControlState,
+    ConsoleRetrievalScopeState,
 )
+from tldw_chatbook.Chat.rag_scope import SCOPE_EMPTY_NOTICE_TEMPLATE, SCOPE_REASON_EMPTY
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+from tldw_chatbook.Widgets.Console.console_retrieval_scope_row import (
+    UNSCOPED_LABEL as SCOPE_ROW_UNSCOPED_LABEL,
+)
 
 
 class ConsoleChip(Static):
@@ -58,6 +63,31 @@ class ConsoleApprovalsChip(ConsoleChip):
         self.post_message(self.ReviewRequested())
 
 
+class ConsoleScopeChip(ConsoleChip):
+    """Retrieval-scope chip that opens the scope picker when activated.
+
+    Mirrors ``ConsoleApprovalsChip`` exactly: Enter/Space while focused, or
+    a click, opens the same RAG retrieval-scope picker modal the Inspector
+    row's Edit/Narrow… button opens
+    (``ChatScreen._open_console_retrieval_scope_picker``, task-9) -- the
+    same handler seam, task-10 just adds a second entry point into it.
+    """
+
+    BINDINGS = [
+        Binding("enter", "open_scope_picker", "Open retrieval scope picker", show=False),
+        Binding("space", "open_scope_picker", "Open retrieval scope picker", show=False),
+    ]
+
+    class OpenRequested(Message):
+        """Posted when the scope chip is activated from keyboard or mouse."""
+
+    def action_open_scope_picker(self) -> None:
+        self.post_message(self.OpenRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.OpenRequested())
+
+
 class ConsoleStatusChips(Horizontal):
     """Full-width strip of the seven Console readiness pills.
 
@@ -65,11 +95,21 @@ class ConsoleStatusChips(Horizontal):
     counter emphasis after provider/model/source/tool/approval state changes.
     """
 
-    def __init__(self, state: ConsoleControlState, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        state: ConsoleControlState,
+        *,
+        scope_state: ConsoleRetrievalScopeState | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Initialize the strip.
 
         Args:
             state: Display-state snapshot for the readiness labels.
+            scope_state: Display-state snapshot for the "Scope" chip
+                (task-10) -- the same ``ConsoleRetrievalScopeState`` the
+                Inspector's retrieval-scope row renders from. ``None``
+                renders as unscoped (hidden).
             **kwargs: Additional Textual widget arguments (id/classes).
         """
         classes = kwargs.pop("classes", "")
@@ -79,6 +119,7 @@ class ConsoleStatusChips(Horizontal):
             **kwargs,
         )
         self.state = state
+        self.scope_state = scope_state
         self.styles.height = 1
         self.styles.min_height = 1
         self.styles.max_height = 1
@@ -122,6 +163,91 @@ class ConsoleStatusChips(Horizontal):
             emphasis=self.state.approvals_active,
             chip_class=ConsoleApprovalsChip,
         )
+        # task-10: the retrieval-scope chip -- unlike the chips above,
+        # hidden entirely when unscoped rather than showing a
+        # "Scope: everything" default (see ``_scope_chip_render``).
+        yield self._scope_chip()
+
+    def _scope_chip(self) -> ConsoleScopeChip:
+        label, tooltip, hidden, alert = self._scope_chip_render(self.scope_state)
+        chip = self._chip(
+            label,
+            id="console-scope-chip",
+            emphasis=True if alert else None,
+            chip_class=ConsoleScopeChip,
+        )
+        chip.tooltip = tooltip
+        chip.display = not hidden
+        return chip
+
+    @staticmethod
+    def _scope_chip_render(
+        state: ConsoleRetrievalScopeState | None,
+    ) -> tuple[str, str, bool, bool]:
+        """Pure ``(label, tooltip, hidden, alert)`` render for the scope chip.
+
+        ``state`` is conversation-scope-only until Phase 3 of the
+        rag-scope-narrowing program wires workspace-level scoping through
+        this same seam: ``item_count`` is simply the conversation scope's
+        own (already zero-item-normalized -- see
+        ``ConsoleRetrievalScopeState``) item count, and the scoped tooltip
+        below will widen from "conversation N items" to the intersection
+        breakdown ("conversation A ∩ workspace B → N") once that lands.
+
+        Args:
+            state: Display-state snapshot, or ``None`` (renders unscoped).
+
+        Returns:
+            ``label``: chip text. ``tooltip``: hover/focus text (the
+            EMPTY branch folds the cause in). ``hidden``: ``True`` when
+            unscoped (chip carries no useful information -- hidden rather
+            than shown as "everything", matching the brief). ``alert``:
+            ``True`` only for EMPTY, reusing the same
+            ``console-chip-alert`` action-required styling the
+            sources/tools/approvals chips use when their own count is
+            active.
+        """
+        if state is None or (not state.is_scoped and not state.is_empty):
+            return SCOPE_ROW_UNSCOPED_LABEL, "", True, False
+        if state.is_empty:
+            cause = state.cause or SCOPE_REASON_EMPTY
+            return (
+                "Scope: empty",
+                SCOPE_EMPTY_NOTICE_TEMPLATE.format(cause=cause),
+                False,
+                True,
+            )
+        label = f"Scope: {state.item_count}"
+        tooltip = f"conversation {state.item_count} items"
+        return label, tooltip, False, False
+
+    def sync_scope_chip(self, scope_state: ConsoleRetrievalScopeState | None) -> None:
+        """Refresh the "Scope" chip from a new snapshot (task-10).
+
+        Deliberately NOT folded into ``sync_state`` above: this is pushed
+        directly from ``ChatScreen._sync_console_retrieval_scope_row`` with
+        the exact same ``ConsoleRetrievalScopeState`` instance passed to the
+        Inspector row's own ``sync_state`` in the same call -- one state,
+        two renderers, computed once. Keeping it a separate method also
+        keeps the chip's refresh triggers identical to the row's: the
+        general ``sync_state`` refresh (called far more often, e.g. every
+        control-bar sync tick) never touches this chip at all.
+
+        Args:
+            scope_state: Updated display-state snapshot to render.
+        """
+        if scope_state == self.scope_state:
+            return
+        self.scope_state = scope_state
+        try:
+            chip = self.query_one("#console-scope-chip", ConsoleScopeChip)
+        except NoMatches:
+            return
+        label, tooltip, hidden, alert = self._scope_chip_render(scope_state)
+        chip.update(label)
+        chip.tooltip = tooltip
+        chip.display = not hidden
+        chip.set_class(alert, "console-chip-alert")
 
     def sync_state(self, state: ConsoleControlState) -> None:
         """Refresh pill labels and counter emphasis from a new snapshot."""

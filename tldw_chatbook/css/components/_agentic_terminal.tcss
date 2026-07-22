@@ -1972,6 +1972,16 @@ ConsoleSystemPromptModal {
     align: left middle;
 }
 
+#console-status-chips {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    layout: horizontal;
+    border: none;
+    padding: 0 1;
+}
+
 .console-control-chip {
     width: auto;
     min-width: 7;

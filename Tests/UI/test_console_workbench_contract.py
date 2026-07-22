@@ -221,15 +221,40 @@ async def test_console_has_one_canonical_visible_state_action_strip():
         control_bar = console.query_one("#console-control-bar")
         assert _is_displayed(control_bar)
 
-        visible_text = " ".join(
+        action_text = " ".join(
             _widget_text(child)
             for child in control_bar.walk_children()
             if _is_displayed(child)
         )
-        assert visible_text.count("Provider:") == 1
-        assert visible_text.count("Model:") == 1
-        assert visible_text.count("Settings") == 1
-        assert visible_text.count("Library RAG") == 1
+        assert action_text.count("Settings") == 1
+        assert action_text.count("Library RAG") == 1
+        # Pills moved out of the control bar into their own strip.
+        assert "Provider:" not in action_text
+        chips = console.query_one("#console-status-chips")
+        chip_text = " ".join(
+            _widget_text(child)
+            for child in chips.walk_children()
+            if _is_displayed(child)
+        )
+        assert chip_text.count("Provider:") == 1
+        assert chip_text.count("Model:") == 1
+
+
+@pytest.mark.asyncio
+async def test_console_status_chips_sit_above_composer():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(150, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-status-chips")
+        chips = console.query_one("#console-status-chips")
+        grid = console.query_one("#console-workspace-grid")
+        composer = console.query_one("#console-native-composer")
+        # Below the chat/rail grid, above the composer.
+        assert chips.region.y >= grid.region.y + grid.region.height
+        assert chips.region.y + chips.region.height <= composer.region.y
+        assert _is_displayed(chips)
 
 
 @pytest.mark.asyncio
