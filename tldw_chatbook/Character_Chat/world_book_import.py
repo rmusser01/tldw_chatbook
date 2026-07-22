@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from loguru import logger
+
 from tldw_chatbook.Character_Chat.world_info_regex import validate_regex_pattern
 
 _VALID_POSITIONS = {"before_char", "after_char", "at_start", "at_end"}
@@ -159,3 +161,52 @@ def normalize_world_book_import(data: Any) -> Dict[str, Any]:
         raise ValueError("'entries' must be a list or an object.")
     normalized = [_normalize_entry(entry, i) for i, entry in enumerate(entries_list)]
     return {**data, "entries": normalized}
+
+
+def character_book_to_world_book_block(
+    book: Any, fallback_name: str
+) -> tuple["dict | None", int, int]:
+    """Convert a V2 card ``character_book`` into one embedded
+    ``character_world_books`` snapshot block (task-429).
+
+    Salvage-and-count: entries that ``_normalize_entry`` rejects (not a dict,
+    no keys, no content, or an invalid regex pattern) are skipped and counted,
+    so one bad entry never sinks the book. Never raises.
+
+    Returns:
+        ``(block_or_None, imported_count, skipped_count)``. ``None`` only when
+        ``book`` is not a dict.
+    """
+    if not isinstance(book, dict):
+        return None, 0, 0
+    raw_name = book.get("name")
+    name = (
+        raw_name.strip()
+        if isinstance(raw_name, str) and raw_name.strip()
+        else fallback_name
+    )
+    raw_entries = book.get("entries")
+    if isinstance(raw_entries, dict):
+        entries_list = list(raw_entries.values())
+    elif isinstance(raw_entries, list):
+        entries_list = raw_entries
+    else:
+        entries_list = []
+    normalized: List[Dict[str, Any]] = []
+    skipped = 0
+    for i, entry in enumerate(entries_list):
+        try:
+            normalized.append(_normalize_entry(entry, i))
+        except ValueError as exc:
+            skipped += 1
+            logger.warning(f"character_book entry skipped on import: {exc}")
+    block = {
+        "name": name,
+        "description": str(book.get("description") or ""),
+        "scan_depth": _coerce_int(book.get("scan_depth"), 3),
+        "token_budget": _coerce_int(book.get("token_budget"), 500),
+        "recursive_scanning": _coerce_bool(book.get("recursive_scanning"), False),
+        "enabled": _coerce_bool(book.get("enabled"), True),
+        "entries": normalized,
+    }
+    return block, len(normalized), skipped

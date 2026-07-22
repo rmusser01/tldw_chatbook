@@ -1,6 +1,9 @@
 import pytest
 
-from tldw_chatbook.Character_Chat.world_book_import import normalize_world_book_import
+from tldw_chatbook.Character_Chat.world_book_import import (
+    normalize_world_book_import,
+    character_book_to_world_book_block,
+)
 
 
 def _tldw_entry(**kw):
@@ -248,3 +251,60 @@ def test_bad_pattern_ignored_when_not_regex():
     # A would-be-bad "pattern" in a non-regex entry is a literal keyword — never validated.
     e = normalize_world_book_import({"entries": [{"keys": ["(a+)+"], "content": "c"}]})["entries"][0]
     assert e["keys"] == ["(a+)+"] and e["regex"] is False
+
+
+# --- character_book_to_world_book_block (task-429) ---
+
+
+def test_character_book_to_block_basic():
+    book = {
+        "name": "Second Chance Lore",
+        "description": "ship lore",
+        "scan_depth": 5,
+        "token_budget": 300,
+        "recursive_scanning": True,
+        "entries": [
+            {"keys": ["coffee"], "content": "The machine explodes.",
+             "enabled": True, "insertion_order": 1, "position": 0},
+            {"keys": ["airlock"], "content": "It sticks.",
+             "enabled": True, "insertion_order": 2},
+        ],
+    }
+    block, imported, skipped = character_book_to_world_book_block(book, "X Lorebook")
+    assert imported == 2 and skipped == 0
+    assert block["name"] == "Second Chance Lore"
+    assert block["scan_depth"] == 5 and block["token_budget"] == 300
+    assert block["recursive_scanning"] is True and block["enabled"] is True
+    # int position (0) normalized to the string enum
+    assert block["entries"][0]["position"] == "before_char"
+    assert block["entries"][0]["keys"] == ["coffee"]
+    assert block["entries"][0]["regex"] is False
+
+
+def test_character_book_to_block_skips_unsalvageable_and_counts():
+    book = {"name": "B", "entries": [
+        {"keys": ["ok"], "content": "good", "enabled": True, "insertion_order": 1},
+        {"content": "no keys", "enabled": True, "insertion_order": 2},   # no keys -> skip
+        {"keys": ["x"], "enabled": True, "insertion_order": 3},          # no content -> skip
+    ]}
+    block, imported, skipped = character_book_to_world_book_block(book, "X Lorebook")
+    assert imported == 1 and skipped == 2
+    assert len(block["entries"]) == 1
+
+
+def test_character_book_to_block_empty_name_uses_fallback():
+    block, _, _ = character_book_to_world_book_block(
+        {"name": "", "entries": []}, "Elara Lorebook")
+    assert block["name"] == "Elara Lorebook"
+
+
+def test_character_book_to_block_non_dict_returns_none():
+    assert character_book_to_world_book_block(None, "X") == (None, 0, 0)
+    assert character_book_to_world_book_block([1, 2], "X") == (None, 0, 0)
+
+
+def test_character_book_to_block_entries_as_object_form():
+    book = {"name": "B", "entries": {"0": {"keys": ["k"], "content": "c",
+            "enabled": True, "insertion_order": 1}}}
+    block, imported, skipped = character_book_to_world_book_block(book, "X")
+    assert imported == 1 and block["entries"][0]["keys"] == ["k"]
