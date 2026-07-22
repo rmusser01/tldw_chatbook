@@ -1588,6 +1588,70 @@ async def test_console_streaming_chunks_render_after_slow_provider_validation():
         await _wait_for_text(console, pilot, "partial done")
 
 
+class _HoldingStreamGateway(_ReadyResolutionGateway):
+    """Resolves ready immediately, then holds the stream open emitting NOTHING
+    until released — so the only thing that can surface the user's own message
+    in the transcript is an acceptance-time echo, never streamed content."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def stream_chat(self, resolution, messages):
+        self.started.set()
+        await self.release.wait()
+        if False:  # pragma: no cover - async generator that yields no chunks
+            yield ""
+
+
+@pytest.mark.asyncio
+async def test_console_send_echoes_user_message_before_transcript_poll(monkeypatch):
+    """A sent message must appear the instant the submit is accepted, not only on
+    the next coarse 0.2s transcript poll.
+
+    Regression guard for task-351(a): the composer clears at ~acceptance while
+    the transcript still read "No messages yet" for ~600ms, reading as
+    "not sent". The poll is disabled here so the echo has to stand on its own.
+    """
+    gateway = _HoldingStreamGateway()
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        # Neutralise the 0.2s transcript poll: with no timer to eventually
+        # surface the message, only an acceptance-time echo can.
+        monkeypatch.setattr(
+            console, "_start_console_transcript_sync_timer", lambda: None
+        )
+        console._stop_console_transcript_sync_timer()
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("ECHONOW")
+        console.query_one("#console-send-message", Button).press()
+
+        # Stream reached => the USER row was appended and the submit accepted.
+        await asyncio.wait_for(gateway.started.wait(), timeout=2)
+        try:
+            surfaced = False
+            for _ in range(10):
+                await pilot.pause()
+                if "ECHONOW" in _visible_text(console):
+                    surfaced = True
+                    break
+            assert surfaced, (
+                "sent message did not echo without the transcript poll: "
+                f"{_visible_text(console)!r}"
+            )
+        finally:
+            gateway.release.set()
+
+
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_sends_full_payload_not_visible_token():
     long_text = "x" * 80

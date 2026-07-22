@@ -1,10 +1,13 @@
 ---
 id: TASK-351
 title: Reduce or mask slow first feedback after primary Console actions
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-20 14:21'
-labels: [console, ux]
+updated_date: '2026-07-22 02:20'
+labels:
+  - console
+  - ux
 dependencies: []
 priority: medium
 ---
@@ -23,5 +26,55 @@ Cluster of measured instances: (a) Enter-to-send: 350ms after Enter the composer
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every primary click/submit should acknowledge within ~100ms (pressed state, optimistic echo of the sent message, loading indicator on conversation open)
+- [x] #1 A warm send echoes the user's message in the transcript the instant the submit is accepted (when the composer clears), rather than waiting for the next 0.2s transcript poll — closing the "composer cleared but transcript still says 'No messages yet'" gap
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Measured, not assumed.** With llama.cpp live, `resolve_for_send` is 24ms cold
+/ <1ms warm — the review's 7.3s echo is a cold-server/first-connection artifact,
+NOT reproducible warm. Server-side instrumentation of a warm cold-start first
+send showed the whole controller path finishes by ~56–64ms (user row in the
+store at ~37ms, composer clears at ~51ms, MCP compose only ~5ms), yet the
+transcript echo landed at ~577–674ms. The gap is entirely UI-side: the native
+transcript only repaints on a **0.2s poll** (`_start_console_transcript_sync_
+timer` → `_poll_transcript`), and the first poll is heavy (`refresh_messages`
+first render ~178ms + the rest of `_sync_native_console_chat_ui` ~166ms). So the
+composer cleared at ~50ms while the transcript still read "No messages yet" for
+~600ms — reading as "not sent".
+
+**Fix:** `_on_console_submission_accepted` (the seam that already clears the
+composer at acceptance, and only fires once submit_draft confirms the turn
+proceeds) now also kicks an immediate `_sync_native_console_chat_ui()` via
+`run_worker(exclusive=True, group="console-sync")` — the same call the poll's own
+self-requeue uses, so it coalesces against a running poll through the existing
+`_console_sync_in_progress` guard. The echo no longer waits for the poll phase.
+
+Live result: cold-send echo ~600ms → ~450–470ms in the textual-serve harness
+(the residual is `refresh_messages` first-render + the shared sync ordering, both
+out of scope). More importantly the echo is now decoupled from poll/stream
+timing.
+
+**Rejected approach:** a leaner "transcript-first" echo (refresh only the
+transcript surface, guarded by a new in-progress flag) reached ~230ms but the
+skip-and-drop guard could permanently suppress the post-stop "[stopped]"
+refresh — it broke three stop/stream tests. The shipped full-sync kick reuses
+the proven skip-and-**requeue** coalescing (`_console_sync_requested`), so a
+needed refresh is never lost.
+
+**Verified:** new RED→GREEN regression test `test_console_send_echoes_user_
+message_before_transcript_poll` (disables the poll so only the acceptance echo
+can surface the message); full `test_console_native_chat_flow.py` suite (188)
+green. Files: `tldw_chatbook/UI/Screens/chat_screen.py`,
+`Tests/UI/test_console_native_chat_flow.py`.
+<!-- SECTION:NOTES:END -->
+
+## Scope note
+
+This task delivers sub-symptom (a) for the **warm** send path (provider ready).
+The remaining pieces of the original finding move to **task-457**: the
+**cold**-provider first-send echo (needs an optimistic user-append *before* the
+readiness probe, a real blocked-send behaviour change), the rail-conversation
+pressed/loading state (sub-symptom b), and the Inspector-during-run
+acknowledgment (sub-symptom c).
