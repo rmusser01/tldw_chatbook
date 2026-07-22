@@ -2,23 +2,30 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, get_args
 
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.timer import Timer
-from textual.widgets import Button, Input, Label, Static, TextArea
+from textual.widgets import Button, Input, Label, Select, Static, Switch, TextArea
 
+from ...tldw_api.character_persona_schemas import PersonaMode
 from .personas_pane_messages import (
     EditorContentChanged,
     PersonaProfileEditCancelled,
     PersonaProfileSaveRequested,
 )
 
+#: The `PersonaMode` literal's values, for the editor's mode `Select` options.
+PERSONA_MODES: tuple[str, ...] = get_args(PersonaMode)
+#: Default mode for a persona with none set, matching `PersonaProfileCreate`.
+_DEFAULT_MODE = "session_scoped"
+
 
 class PersonaProfileEditorWidget(Container):
-    """ds-field-row form: name, description, system prompt."""
+    """ds-field-row form: name, description, system prompt, personality
+    traits, mode, and enabled toggle."""
 
     DEFAULT_CSS = """
     PersonaProfileEditorWidget {
@@ -93,6 +100,20 @@ class PersonaProfileEditorWidget(Container):
             with Vertical(classes="ds-field-row"):
                 yield Label("System prompt")
                 yield TextArea(id="personas-editor-system-prompt")
+            with Vertical(classes="ds-field-row"):
+                yield Label("Personality traits")
+                yield TextArea(id="personas-editor-personality-traits")
+            with Vertical(classes="ds-field-row"):
+                yield Label("Mode")
+                yield Select(
+                    [(m, m) for m in PERSONA_MODES],
+                    id="personas-editor-mode",
+                    allow_blank=False,
+                    value=_DEFAULT_MODE,
+                )
+            with Horizontal(classes="ds-field-row"):
+                yield Label("Enabled")
+                yield Switch(id="personas-editor-enabled", value=True)
         # Validation stays outside the scroll body so it is always visible
         # next to Save (anchored-footer principle, same as the character editor).
         yield Static("", id="personas-editor-validation")
@@ -120,6 +141,16 @@ class PersonaProfileEditorWidget(Container):
             )
             self.query_one("#personas-editor-system-prompt", TextArea).text = str(
                 data.get("system_prompt", "")
+            )
+            self.query_one(
+                "#personas-editor-personality-traits", TextArea
+            ).text = str(data.get("personality_traits", "") or "")
+            mode = data.get("mode") or _DEFAULT_MODE
+            self.query_one("#personas-editor-mode", Select).value = (
+                mode if mode in PERSONA_MODES else _DEFAULT_MODE
+            )
+            self.query_one("#personas-editor-enabled", Switch).value = bool(
+                data.get("is_active", True)
             )
             self.query_one("#personas-editor-validation", Static).update("")
         finally:
@@ -165,6 +196,11 @@ class PersonaProfileEditorWidget(Container):
             "system_prompt": self.query_one(
                 "#personas-editor-system-prompt", TextArea
             ).text,
+            "personality_traits": self.query_one(
+                "#personas-editor-personality-traits", TextArea
+            ).text,
+            "mode": self.query_one("#personas-editor-mode", Select).value,
+            "is_active": self.query_one("#personas-editor-enabled", Switch).value,
         }
         if self._persona_id is not None:
             data["id"] = self._persona_id
@@ -178,15 +214,26 @@ class PersonaProfileEditorWidget(Container):
             self.query_one("#personas-editor-name", Input).value,
             self.query_one("#personas-editor-description", TextArea).text,
             self.query_one("#personas-editor-system-prompt", TextArea).text,
+            self.query_one("#personas-editor-personality-traits", TextArea).text,
+            self.query_one("#personas-editor-mode", Select).value,
+            self.query_one("#personas-editor-enabled", Switch).value,
         )
 
     @on(Input.Changed)
     @on(TextArea.Changed)
-    def _field_changed(self, event: Input.Changed | TextArea.Changed) -> None:
+    @on(Select.Changed)
+    @on(Switch.Changed)
+    def _field_changed(
+        self,
+        event: Input.Changed | TextArea.Changed | Select.Changed | Switch.Changed,
+    ) -> None:
         """Announce the first real user modification of the session.
 
         See PersonasCharacterEditorWidget._field_changed for the suppression
-        mechanism (loading flag + loaded-snapshot comparison).
+        mechanism (loading flag + loaded-snapshot comparison). ``Select`` and
+        ``Switch`` (the mode/enabled fields) route through the same handler
+        as ``Input``/``TextArea`` so a mode change or an Enabled toggle
+        participates in dirty tracking identically to a text edit.
         """
         # Same condition the dirty-post below ultimately gates on (minus
         # _dirty_posted, which only suppresses the once-per-session

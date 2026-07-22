@@ -215,6 +215,12 @@ class PersonasCharacterEditorWidget(Container):
                 classes="console-action-subdued",
             )
             with Vertical(id="personas-char-editor-advanced"):
+                # Long-form content fields first (grouped with the alternate-
+                # greetings list editor, itself content), then the short
+                # single-line bookkeeping inputs (Creator/Version/Tags) as a
+                # trailing cluster - keeps similar-weight widgets together
+                # rather than sandwiching the DataTable+toolbar list editor
+                # between unrelated one-line Inputs (Roleplay P3b Task 5).
                 with Vertical(classes="ds-field-row"):
                     yield Label("Scenario")
                     yield TextArea(id="personas-char-editor-scenario")
@@ -224,19 +230,6 @@ class PersonasCharacterEditorWidget(Container):
                 with Vertical(classes="ds-field-row"):
                     yield Label("Creator notes")
                     yield TextArea(id="personas-char-editor-creator-notes")
-                with Vertical(classes="ds-field-row"):
-                    yield Label("Creator")
-                    yield Input(
-                        id="personas-char-editor-creator", placeholder="Creator name"
-                    )
-                with Vertical(classes="ds-field-row"):
-                    yield Label("Version")
-                    yield Input(id="personas-char-editor-version", value="1.0")
-                with Vertical(classes="ds-field-row"):
-                    yield Label("Tags (comma-separated)")
-                    yield Input(
-                        id="personas-char-editor-tags", placeholder="tag, another tag"
-                    )
                 with Vertical(classes="ds-field-row"):
                     yield Label("Alternate greetings")
                     yield DataTable(
@@ -269,6 +262,19 @@ class PersonasCharacterEditorWidget(Container):
                             id="personas-char-editor-greeting-move-down",
                             classes="console-action-subdued",
                         )
+                with Vertical(classes="ds-field-row"):
+                    yield Label("Creator")
+                    yield Input(
+                        id="personas-char-editor-creator", placeholder="Creator name"
+                    )
+                with Vertical(classes="ds-field-row"):
+                    yield Label("Version")
+                    yield Input(id="personas-char-editor-version", value="1.0")
+                with Vertical(classes="ds-field-row"):
+                    yield Label("Tags (comma-separated)")
+                    yield Input(
+                        id="personas-char-editor-tags", placeholder="tag, another tag"
+                    )
             with Horizontal(id="personas-char-editor-avatar-row"):
                 yield Static("Avatar: none", id="personas-char-editor-avatar-status")
                 yield Button(

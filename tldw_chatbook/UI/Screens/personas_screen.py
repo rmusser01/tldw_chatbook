@@ -5119,6 +5119,8 @@ class PersonasScreen(BaseAppScreen):
                     description=data.get("description"),
                     mode=data.get("mode") or "session_scoped",
                     system_prompt=data.get("system_prompt"),
+                    is_active=bool(data.get("is_active", True)),
+                    personality_traits=str(data.get("personality_traits") or ""),
                 )
                 result = await service.create_persona_profile(request, mode=mode)
             else:
@@ -5127,6 +5129,8 @@ class PersonasScreen(BaseAppScreen):
                     description=data.get("description"),
                     mode=data.get("mode"),
                     system_prompt=data.get("system_prompt"),
+                    is_active=data.get("is_active"),
+                    personality_traits=data.get("personality_traits"),
                 )
                 result = await service.update_persona_profile(
                     persona_id,
