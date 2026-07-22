@@ -35,6 +35,13 @@ def _client(persist_directory) -> Any:
 
 
 def _is_persistent_chroma(config: RAGConfig) -> bool:
+    # NOTE (SP1 scope, spec §4): only the canonical "default" legacy
+    # collection is eligible for auto-adoption. A user who set a custom
+    # [rag.vector_store].collection_name never had a "default" collection to
+    # adopt from, so their existing data is left alone on disk under its old
+    # name and they get a fresh, empty, fingerprinted collection instead --
+    # they must re-index. Generalizing adoption to arbitrary legacy names is
+    # out of scope here.
     return (
         str(config.vector_store.type) == "chroma"
         and config.vector_store.persist_directory is not None
@@ -110,6 +117,13 @@ def maybe_adopt_legacy_collection(config: RAGConfig) -> None:
     canonical ``default`` base. Adopts under the CONFIG ACTIVE AT FIRST
     PERSISTENT CONSTRUCTION (marked provenance ``legacy-adopted`` /
     ``verified=False``), never the shipping default — see spec §4.
+
+    LIMITATION (out of scope for SP1, see spec §4): a user who had already
+    set a custom ``collection_name`` before this migration existed is not
+    covered -- ``_is_persistent_chroma`` only matches the literal
+    ``"default"`` base, so their pre-existing collection is left on disk
+    untouched and they get a fresh, empty, fingerprinted collection under
+    their custom name instead. They must re-index.
     """
     if not _is_persistent_chroma(config):
         return

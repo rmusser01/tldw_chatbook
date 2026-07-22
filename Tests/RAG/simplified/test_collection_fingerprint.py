@@ -39,6 +39,7 @@ def test_index_field_diffs_change_fingerprint():
     base = fingerprint_collection(_cfg())
     m = _cfg(); m.embedding.model = "modelB"
     ch = _cfg(); ch.chunking.chunk_size = 401
+    co = _cfg(); co.chunking.chunk_overlap = 101
     mx = _cfg(); mx.chunking.max_chunk_size = 1001
     metric = _cfg(); metric.vector_store.distance_metric = "l2"
     ml = _cfg(); ml.embedding.max_length = 256
@@ -49,7 +50,7 @@ def test_index_field_diffs_change_fingerprint():
     pst = _cfg(); pst.chunking.preserve_structure = not pst.chunking.preserve_structure
     cla = _cfg(); cla.chunking.clean_artifacts = not cla.chunking.clean_artifacts
     ptb = _cfg(); ptb.chunking.preserve_tables = not ptb.chunking.preserve_tables
-    for c in (m, ch, mx, metric, ml, method, minc, epr, psm, pst, cla, ptb):
+    for c in (m, ch, co, mx, metric, ml, method, minc, epr, psm, pst, cla, ptb):
         assert fingerprint_collection(c) != base
 
 def test_query_time_field_diffs_do_not_change_fingerprint():
