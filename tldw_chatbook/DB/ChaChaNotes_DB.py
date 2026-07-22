@@ -9174,6 +9174,55 @@ UPDATE db_schema_version
         cursor = self.execute_query(query, (note_id,))
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_keywords_for_notes_batch(
+        self, note_ids: List[str]
+    ) -> Dict[str, List[str]]:
+        """
+        Batch-fetch active keyword strings for multiple notes in one query.
+
+        Mirrors ``Client_Media_DB_v2.fetch_keywords_for_media_batch`` --
+        avoids an N+1 loop of per-note ``get_keywords_for_note`` calls when
+        a caller needs tags for a whole window of notes at once (e.g. the
+        RAG retrieval-scope picker's tag filter, PR #747 review).
+
+        Args:
+            note_ids: List of note IDs (UUID strings) to fetch keywords for.
+
+        Returns:
+            A dictionary mapping each note id (as given) to its list of
+            active keyword strings, ordered case-insensitively. Note ids
+            with no active keywords are omitted from the result.
+
+        Raises:
+            CharactersRAGDBError: If a database error occurs.
+        """
+        if not note_ids:
+            return {}
+
+        placeholders = ",".join("?" * len(note_ids))
+        query = f"""
+                SELECT nk.note_id, k.keyword
+                FROM note_keywords nk
+                JOIN keywords k ON nk.keyword_id = k.id
+                WHERE nk.note_id IN ({placeholders}) AND k.deleted = 0
+                ORDER BY nk.note_id, k.keyword COLLATE NOCASE
+                """
+        try:
+            cursor = self.execute_query(query, tuple(note_ids))
+            results = cursor.fetchall()
+
+            keywords_by_note: Dict[str, List[str]] = {}
+            for note_id, keyword in results:
+                keywords_by_note.setdefault(note_id, []).append(keyword)
+            return keywords_by_note
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                f"Error fetching keywords for notes batch: {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Failed to fetch keywords for notes batch: {e}"
+            ) from e
+
     def get_notes_for_keyword(
         self, keyword_id: int, limit: int = 50, offset: int = 0
     ) -> List[Dict[str, Any]]:

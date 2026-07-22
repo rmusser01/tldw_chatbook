@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, Protocol, Sequence
+from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 from uuid import uuid4
 
 from loguru import logger
@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder
 
 #: Maximum number of attachments a Console session may stage before send.
 MAX_PENDING_ATTACHMENTS = 5
@@ -44,6 +45,18 @@ class _VariantStreamBase:
 
 class ConsoleChatPersistence(Protocol):
     """Persistence surface used by Console without importing DB dependencies."""
+
+    #: Raw DB handle backing this persistence adapter, or ``None`` when the
+    #: adapter has none (e.g. a test fake, or a future persistence shape
+    #: with no single underlying database). ``persist_session_if_needed``
+    #: reaches through this seam -- rather than an undeclared ``getattr``
+    #: probe -- to flush a session-held RAG retrieval scope
+    #: (``SessionScopeHolder``) at first persistence (PR #747 review: a
+    #: conforming adapter that structurally satisfied this Protocol without
+    #: declaring ``.db`` made the flush silently no-op, losing the user's
+    #: pre-persistence scope selection with no diagnostic). Declaring it
+    #: here makes the seam an explicit, checkable part of the contract.
+    db: Any | None
 
     def create_conversation(self, **kwargs) -> str:
         """Create a persisted conversation and return its ID."""
@@ -158,6 +171,10 @@ class ConsoleChatSession:
     updated_at: str = field(default_factory=_utc_now_iso)
     pending_attachments: list[PendingAttachment] = field(default_factory=list)
     one_shot_prefill: str | None = None
+    #: RAG retrieval scope (task-9) for a not-yet-persisted session -- see
+    #: ``SessionScopeHolder``. ``persist_session_if_needed`` flushes it
+    #: through to durable storage exactly once, at first persistence.
+    rag_scope_holder: SessionScopeHolder = field(default_factory=SessionScopeHolder)
 
 
 class ConsoleChatStore:
@@ -172,6 +189,7 @@ class ConsoleChatStore:
         sync_v2_server_profile_id: str | None = None,
         sync_v2_authenticated_principal_id: str | None = None,
         sync_v2_workspace_scope: str | None = None,
+        on_scope_flushed: Callable[[str, "RagScope | None"], None] | None = None,
     ) -> None:
         """Initialize the Console chat store.
 
@@ -185,6 +203,20 @@ class ConsoleChatStore:
             sync_v2_authenticated_principal_id: Optional authenticated principal scope
                 for Chat outbox entries.
             sync_v2_workspace_scope: Optional workspace scope for Chat outbox entries.
+            on_scope_flushed: Optional callback invoked with
+                ``(conversation_id, scope)`` immediately after
+                ``persist_session_if_needed`` successfully flushes a
+                session-held RAG retrieval scope (``SessionScopeHolder``)
+                through to durable storage at first persistence (task-9
+                review finding 1). This is the ONLY moment a session
+                transitions from "scope held in memory" to "scope persisted
+                under a new conversation id" without going through any of
+                the UI's other read triggers (resume, modal-open,
+                after-save) -- callers that keep a display-side cache keyed
+                by conversation id (e.g. the Console Inspector's retrieval-
+                scope row) use this hook to stay in sync instead of reading
+                stale/absent cache state. Never called when nothing was
+                held, or when the flush itself raised.
         """
         self.persistence = persistence
         self.workspace_context = workspace_context or ConsoleWorkspaceContext()
@@ -192,6 +224,7 @@ class ConsoleChatStore:
         self.sync_v2_server_profile_id = sync_v2_server_profile_id
         self.sync_v2_authenticated_principal_id = sync_v2_authenticated_principal_id
         self.sync_v2_workspace_scope = sync_v2_workspace_scope
+        self.on_scope_flushed = on_scope_flushed
         self.active_session_id: str | None = None
         self._sessions: dict[str, ConsoleChatSession] = {}
         self._messages_by_session: dict[str, list[ConsoleChatMessage]] = {}
@@ -981,6 +1014,65 @@ class ConsoleChatStore:
                         session_id=session_id,
                         conversation_id=session.persisted_conversation_id,
                     ).exception("Failed to flush pinned prefill on first persist.")
+        # task-9: flush a session-held RAG retrieval scope (unpersisted-
+        # session lifecycle, ``SessionScopeHolder``) through to durable
+        # storage now that the conversation row exists. ``flush_to`` itself
+        # no-ops when nothing was held, so this is safe to call
+        # unconditionally. Requires the underlying ``CharactersRAGDB`` --
+        # ``self.persistence`` is the ``ChatPersistenceService`` wrapper, so
+        # the raw DB is reached via its ``db`` attribute, now a declared
+        # (not merely probed) member of ``ConsoleChatPersistence`` (PR #747
+        # review); persistence adapters without one (e.g. test fakes) still
+        # simply skip the flush, matching every other durable write in this
+        # method degrading gracefully when the seam it needs is absent --
+        # but that skip must be OBSERVABLE (see the ``else`` branch below)
+        # rather than a silent loss of the user's scope selection.
+        persistence_db = getattr(self.persistence, "db", None)
+        # Captured BEFORE the flush -- `flush_to` empties the holder on
+        # success, so this is the only chance to learn what was actually
+        # held (task-9 review finding 1; PR #747 review).
+        held_scope = session.rag_scope_holder.scope
+        if persistence_db is not None:
+            flushed_scope = held_scope
+            try:
+                session.rag_scope_holder.flush_to(
+                    persistence_db, session.persisted_conversation_id
+                )
+            except Exception:
+                logger.bind(
+                    session_id=session_id,
+                    conversation_id=session.persisted_conversation_id,
+                ).exception("Failed to flush RAG retrieval scope on first persist.")
+            else:
+                if flushed_scope is not None and self.on_scope_flushed is not None:
+                    try:
+                        self.on_scope_flushed(
+                            session.persisted_conversation_id, flushed_scope
+                        )
+                    except Exception:
+                        logger.bind(
+                            session_id=session_id,
+                            conversation_id=session.persisted_conversation_id,
+                        ).exception(
+                            "on_scope_flushed callback raised after a "
+                            "successful RAG retrieval scope flush."
+                        )
+        elif held_scope is not None:
+            # A scope WAS held but the persistence adapter exposes no raw
+            # `db` seam to flush it through -- the holder is left untouched
+            # (not emptied) so a later flush attempt could still succeed,
+            # but the loss must not be silent: warn, naming the
+            # conversation, so it is observable.
+            logger.bind(
+                session_id=session_id,
+                conversation_id=session.persisted_conversation_id,
+            ).warning(
+                "Skipped RAG retrieval scope flush for conversation {} on "
+                "first persist: persistence adapter exposes no `db` seam. "
+                "The scope remains held in-memory only and was not "
+                "written to durable storage.",
+                session.persisted_conversation_id,
+            )
         return session.persisted_conversation_id
 
     def set_session_system_prompt(

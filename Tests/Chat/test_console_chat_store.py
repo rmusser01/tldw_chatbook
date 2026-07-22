@@ -9,6 +9,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, read_conversation_scope
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistryService
@@ -1812,3 +1813,157 @@ def test_set_session_pinned_prefill_settings_none_reports_not_applied():
     assert persisted is False
     assert updated.settings is None
     assert persistence.updated_pinned_prefills == []
+
+
+# --- task-9: SessionScopeHolder + persist_session_if_needed flush -----------
+
+
+def test_console_chat_session_gets_its_own_rag_scope_holder():
+    """Each session's `rag_scope_holder` starts empty and unshared (mutable
+    default-factory sanity check -- a shared instance would leak one
+    session's scope into every other session)."""
+    first = ConsoleChatSession(title="Chat 1")
+    second = ConsoleChatSession(title="Chat 2")
+
+    assert first.rag_scope_holder.scope is None
+    assert second.rag_scope_holder.scope is None
+    assert first.rag_scope_holder is not second.rag_scope_holder
+
+    first.rag_scope_holder.set(
+        RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
+    )
+    assert first.rag_scope_holder.scope is not None
+    assert second.rag_scope_holder.scope is None
+
+
+def test_persist_session_if_needed_flushes_held_rag_scope_through_real_db():
+    """Drives the REAL `persist_session_if_needed` seam (real in-memory
+    `CharactersRAGDB` behind `ChatPersistenceService`, not a hand-rolled
+    fake) end to end: a scope held on an unpersisted session's
+    `rag_scope_holder` must land in the newly created conversation's
+    `metadata["rag_scope"]` at the exact moment first persistence happens."""
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Chat 1")
+        scope = RagScope(
+            items=(ScopeItem("media", "m1"), ScopeItem("note", "n1")),
+            updated_at="2026-01-01T00:00:00Z",
+        )
+        session.rag_scope_holder.set(scope)
+
+        conversation_id = store.persist_session_if_needed(session.id)
+
+        assert conversation_id is not None
+        assert session.rag_scope_holder.scope is None  # emptied by flush_to
+        stored = read_conversation_scope(db, conversation_id)
+        assert stored == scope
+    finally:
+        db.close_connection()
+
+
+def test_persist_session_if_needed_flushes_rag_scope_exactly_once():
+    """A second `persist_session_if_needed` call (the conversation is
+    already persisted) must not re-flush -- `flush_to`'s own empties-after-
+    flush contract, exercised through the store's real early-return guard."""
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Chat 1")
+        scope = RagScope(
+            items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z"
+        )
+        session.rag_scope_holder.set(scope)
+
+        first_id = store.persist_session_if_needed(session.id)
+        second_id = store.persist_session_if_needed(session.id)
+
+        assert first_id == second_id
+        assert read_conversation_scope(db, first_id) == scope
+        # A later, unrelated holder mutation must never retroactively
+        # apply -- the holder is inert after its one-time flush.
+        session.rag_scope_holder.set(
+            RagScope(
+                items=(ScopeItem("media", "m2"),), updated_at="2026-01-02T00:00:00Z"
+            )
+        )
+        store.persist_session_if_needed(session.id)
+        assert read_conversation_scope(db, first_id) == scope
+    finally:
+        db.close_connection()
+
+
+def test_persist_session_if_needed_without_scope_held_leaves_conversation_unscoped():
+    """No scope held -> no `rag_scope` metadata key at all (byte-identical
+    to pre-task-9 behavior for the overwhelming common case)."""
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Chat 1")
+
+        conversation_id = store.persist_session_if_needed(session.id)
+
+        assert read_conversation_scope(db, conversation_id) is None
+    finally:
+        db.close_connection()
+
+
+def test_persist_session_if_needed_skips_scope_flush_without_db_seam():
+    """A persistence adapter with no `.db` attribute (e.g. the test-only
+    `FakePersistence` used throughout this module) must not raise even when
+    a scope is held -- the flush is skipped, matching every other durable
+    write in this method degrading gracefully when its seam is absent.
+
+    PR #747 review: the loss must also be OBSERVABLE (a warning naming the
+    conversation), not merely non-fatal -- silently skipping is exactly how
+    a user's pre-persistence scope selection disappears without a trace.
+    caplog does not intercept loguru (this project's logger); attach a
+    temporary loguru sink instead (mirrors
+    ``Tests/Chat/test_attachment_policy.py``'s pattern).
+    """
+    from loguru import logger as loguru_logger
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Chat 1")
+    session.rag_scope_holder.set(
+        RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
+    )
+
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        conversation_id = store.persist_session_if_needed(session.id)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert conversation_id == "conv-1"
+    # The flush was skipped (no seam to write through), so the holder still
+    # carries the scope -- nothing was silently lost, it just never landed.
+    assert session.rag_scope_holder.scope is not None
+    assert any(
+        "conv-1" in message and "scope" in message.lower() for message in messages
+    ), messages
+
+
+def test_persist_session_if_needed_no_warning_when_nothing_held_and_no_db_seam():
+    """The observability warning is only about LOSS -- a session with no
+    scope held must not spuriously warn just because the persistence
+    adapter lacks a `.db` seam (nothing was going to be flushed anyway)."""
+    from loguru import logger as loguru_logger
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Chat 1")
+
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        store.persist_session_if_needed(session.id)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert not any("scope" in message.lower() for message in messages), messages

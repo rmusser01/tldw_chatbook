@@ -13,6 +13,8 @@ from tldw_chatbook.Chat.rag_scope import (
     SCOPE_REASON_CONVERSATIONS_EXCLUDED,
     SCOPE_REASON_PROMPTS_EXCLUDED,
     SCOPE_STATUS_EXCLUDED,
+    SOURCE_TYPE_MEDIA,
+    SOURCE_TYPE_NOTE,
     build_semantic_allowlists,
     media_id_params,
     note_id_params,
@@ -202,11 +204,16 @@ class LibraryLocalRagSearchService:
                 # D5): any active scope excludes this seam entirely rather
                 # than searching unrestricted or guessing at an allowlist.
                 # Mirrors pipeline_functions_simple's
-                # _record_scope_conversations_excluded shape.
-                diagnostics[SCOPE_DIAGNOSTICS_KEY] = {
-                    "status": SCOPE_STATUS_EXCLUDED,
-                    "reason": SCOPE_REASON_CONVERSATIONS_EXCLUDED,
-                }
+                # _record_scope_conversations_excluded shape. Appended (not
+                # assigned) so a conversations-AND-prompts exclusion under
+                # the same scoped call doesn't silently overwrite this one
+                # (task-9 review finding).
+                diagnostics.setdefault(SCOPE_DIAGNOSTICS_KEY, []).append(
+                    {
+                        "status": SCOPE_STATUS_EXCLUDED,
+                        "reason": SCOPE_REASON_CONVERSATIONS_EXCLUDED,
+                    }
+                )
             else:
                 coroutines["conversations"] = self._search_conversations(query, top_k)
         if "prompts" in source_types:
@@ -214,10 +221,13 @@ class LibraryLocalRagSearchService:
                 # Prompts are not part of the scope vocabulary either (spec
                 # D5): mirror the conversations exclusion exactly rather
                 # than searching unrestricted or guessing at an allowlist.
-                diagnostics[SCOPE_DIAGNOSTICS_KEY] = {
-                    "status": SCOPE_STATUS_EXCLUDED,
-                    "reason": SCOPE_REASON_PROMPTS_EXCLUDED,
-                }
+                # See the conversations branch above for why this appends.
+                diagnostics.setdefault(SCOPE_DIAGNOSTICS_KEY, []).append(
+                    {
+                        "status": SCOPE_STATUS_EXCLUDED,
+                        "reason": SCOPE_REASON_PROMPTS_EXCLUDED,
+                    }
+                )
             else:
                 coroutines["prompts"] = self._search_prompts(query, top_k)
 
@@ -244,7 +254,7 @@ class LibraryLocalRagSearchService:
                 rows.extend(outcomes[source_type][1])
 
         if is_scoped and not rows:
-            item_count = _scope_item_count(scope)
+            item_count = _scope_item_count(scope, source_types)
             return LibraryRagSearchOutcome(
                 status="empty",
                 recovery_state=_scope_zero_results_recovery_state(item_count),
@@ -471,7 +481,7 @@ class LibraryLocalRagSearchService:
                 runtime_backend=_RAG_RUNTIME_BACKEND,
             )
         if scope is not None and scope.state == "scoped" and not rows:
-            item_count = _scope_item_count(scope)
+            item_count = _scope_item_count(scope, source_types)
             return LibraryRagSearchOutcome(
                 status="empty",
                 recovery_state=_scope_zero_results_recovery_state(item_count),
@@ -728,9 +738,46 @@ async def _empty_scoped_seam() -> tuple[bool, list[dict[str, Any]]]:
     return True, []
 
 
-def _scope_item_count(scope: EffectiveScope) -> int:
-    """Total items across every source type in a scoped allowlist."""
-    return sum(len(ids) for ids in scope.allowlist.values())
+#: This service's own keyword-source-type vocabulary ("media", "notes", ...)
+#: mapped to ``rag_scope``'s scope-vocabulary keys. "conversations" and
+#: "prompts" are deliberately absent -- an active scope always excludes
+#: those seams entirely rather than restricting them (spec D5), so they
+#: never contribute to a "items searched" count.
+_SCOPE_ELIGIBLE_KEYWORD_TYPES = {"media": SOURCE_TYPE_MEDIA, "notes": SOURCE_TYPE_NOTE}
+
+
+def _scope_item_count(
+    scope: EffectiveScope, searched_source_types: Sequence[str]
+) -> int:
+    """Total scope items across only the source types actually searched.
+
+    Counting every allowlisted source type regardless of what was actually
+    queried overstates "items searched" whenever a caller narrows
+    ``source_types`` to a subset (e.g. media only) -- the previous
+    implementation summed the WHOLE scoped allowlist unconditionally,
+    including source types the caller never asked to search (task-9 review
+    finding).
+
+    Args:
+        scope: The resolved (scoped) effective scope.
+        searched_source_types: This service's own source-type identifiers
+            (``"media"``, ``"notes"``, ...) that were actually queried
+            under this scope. Types outside
+            ``_SCOPE_ELIGIBLE_KEYWORD_TYPES`` (conversations, prompts) are
+            ignored automatically -- callers may pass their full
+            ``source_types`` tuple unfiltered.
+
+    Returns:
+        The sum of allowlisted item counts for only the eligible, searched
+        source types.
+    """
+    total = 0
+    for source_type in searched_source_types:
+        scope_key = _SCOPE_ELIGIBLE_KEYWORD_TYPES.get(source_type)
+        if scope_key is None:
+            continue
+        total += len(scope.allowlist.get(scope_key, ()))
+    return total
 
 
 def _no_backend_recovery_state() -> DestinationRecoveryState:

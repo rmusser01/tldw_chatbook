@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape as html_escape
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
 
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.rag_scope import RagScope
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
@@ -393,6 +394,60 @@ class ConsoleStagedContextState:
 
 
 @dataclass(frozen=True)
+class ConsoleRetrievalScopeState:
+    """Display state for the Inspector's "Retrieval scope" row (task-9) and
+    the header's "Scope" chip (task-10) -- both render from this SAME
+    snapshot, never a second state source.
+
+    Pure snapshot -- built from session-held state only (a persisted
+    conversation's cached last-read scope, or an unpersisted session's
+    ``SessionScopeHolder``), never a DB read at render/recompose time. A
+    scope with zero items is never represented here as "scoped": both
+    storage-layer entry points (``read_conversation_scope``,
+    ``SessionScopeHolder.set``) already normalize a zero-item scope to
+    ``None`` (unscoped) before this state is ever built from it.
+
+    ``is_empty``/``cause`` mirror ``EffectiveScope``'s ``"empty"`` state
+    (rag_scope.py) -- the configured scope(s) leave nothing to retrieve
+    from (either every item in an active scope has since been deleted, or,
+    once Phase 3 of the rag-scope-narrowing program lands workspace-level
+    scoping, a conversation/workspace intersection with no overlap). Not
+    reachable from ``ChatScreen._build_console_retrieval_scope_state``
+    today: that builder is zero-DB by contract, and detecting either cause
+    needs a DB existence check. ``empty()`` exists so the chip's renderer
+    can be exercised ahead of that wiring.
+    """
+
+    is_scoped: bool
+    item_count: int = 0
+    is_empty: bool = False
+    cause: Optional[str] = None
+
+    @classmethod
+    def unscoped(cls) -> "ConsoleRetrievalScopeState":
+        """Return the "everything" (no active scope) display state."""
+        return cls(is_scoped=False, item_count=0)
+
+    @classmethod
+    def from_scope(cls, scope: "RagScope | None") -> "ConsoleRetrievalScopeState":
+        """Build the row's display state from a resolved scope, or ``None``."""
+        if scope is None or not scope.items:
+            return cls.unscoped()
+        return cls(is_scoped=True, item_count=len(scope.items))
+
+    @classmethod
+    def empty(cls, cause: Optional[str] = None) -> "ConsoleRetrievalScopeState":
+        """Return the EMPTY (action-required) display state.
+
+        Args:
+            cause: Short machine-readable reason (e.g. ``"deleted-items"``
+                or ``"no-workspace-overlap"``, mirroring
+                ``EffectiveScope.cause``); surfaced in the chip's tooltip.
+        """
+        return cls(is_scoped=False, item_count=0, is_empty=True, cause=cause)
+
+
+@dataclass(frozen=True)
 class ConsoleInspectorState:
     """Display state for Console run/readiness inspection."""
 
@@ -425,6 +480,7 @@ class ConsoleInspectorState:
         mcp_tool_count: int | None = None,
         mcp_not_connected_count: int = 0,
         can_save_chatbook: bool = False,
+        scope_item_count: int | None = None,
     ) -> "ConsoleInspectorState":
         provider_status = "ready" if provider_ready else "blocked"
         normalized_tool_count = coerce_non_negative_int(tool_count)
@@ -437,6 +493,12 @@ class ConsoleInspectorState:
             f"{provider_value} / {model_value} / sources {source_summary} / "
             f"tools {normalized_tool_count} / approvals {normalized_approval_count}"
         )
+        # task-9: an active conversation RAG retrieval scope surfaces on the
+        # run recipe line ("... / scope N items"). ``None`` (unscoped, the
+        # overwhelming common case) leaves the line unchanged; a scope with
+        # zero items never reaches here (see ``ConsoleRetrievalScopeState``).
+        if scope_item_count is not None and scope_item_count > 0:
+            run_recipe = f"{run_recipe} / scope {scope_item_count} items"
         rows = [
             ConsoleDisplayRow("Run recipe", run_recipe),
             ConsoleDisplayRow("Live work", _clean(live_work_title, "No active work")),

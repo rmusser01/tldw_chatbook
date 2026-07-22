@@ -40,7 +40,12 @@ def _record_scope_conversations_excluded(diagnostics: Optional[Dict[str, Any]]) 
     """Record that an active scope excluded the conversations leg.
 
     Mirrors ``semantic_availability.record_semantic_unavailable``'s
-    None-diagnostics no-op contract.
+    None-diagnostics no-op contract. Appended (not assigned) to a list
+    under ``SCOPE_DIAGNOSTICS_KEY`` -- mirrors ``library_local_rag_search_
+    service``'s convention (task-9 review finding 2) -- so a call whose
+    other legs also record a scope-diagnostics entry (e.g. an EMPTY scope
+    reaching several parallel legs) never has one entry silently overwrite
+    another.
 
     Args:
         diagnostics: The pipeline diagnostics dict, or ``None`` for legacy
@@ -48,10 +53,12 @@ def _record_scope_conversations_excluded(diagnostics: Optional[Dict[str, Any]]) 
     """
     if diagnostics is None:
         return
-    diagnostics[SCOPE_DIAGNOSTICS_KEY] = {
-        "status": SCOPE_STATUS_EXCLUDED,
-        "reason": SCOPE_REASON_CONVERSATIONS_EXCLUDED,
-    }
+    diagnostics.setdefault(SCOPE_DIAGNOSTICS_KEY, []).append(
+        {
+            "status": SCOPE_STATUS_EXCLUDED,
+            "reason": SCOPE_REASON_CONVERSATIONS_EXCLUDED,
+        }
+    )
 
 
 def _record_scope_empty(
@@ -71,6 +78,12 @@ def _record_scope_empty(
     a caller inspecting ``diagnostics[SCOPE_DIAGNOSTICS_KEY]`` sees the same
     shape regardless of which layer caught the EMPTY scope.
 
+    Appended (not assigned) to a list under ``SCOPE_DIAGNOSTICS_KEY`` --
+    mirrors ``library_local_rag_search_service``'s convention (task-9
+    review finding 2) -- so a parallel pipeline whose several legs each
+    independently fail closed on the same EMPTY scope all get recorded
+    instead of the last one clobbering the rest.
+
     Args:
         diagnostics: The pipeline diagnostics dict, or ``None`` for legacy
             callers that did not thread one through (a no-op then).
@@ -79,11 +92,13 @@ def _record_scope_empty(
     """
     if diagnostics is None:
         return
-    diagnostics[SCOPE_DIAGNOSTICS_KEY] = {
-        "status": SCOPE_STATUS_EMPTY,
-        "reason": SCOPE_REASON_EMPTY,
-        "cause": cause,
-    }
+    diagnostics.setdefault(SCOPE_DIAGNOSTICS_KEY, []).append(
+        {
+            "status": SCOPE_STATUS_EMPTY,
+            "reason": SCOPE_REASON_EMPTY,
+            "cause": cause,
+        }
+    )
 
 
 # ==============================================================================
