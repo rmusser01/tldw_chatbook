@@ -129,6 +129,58 @@ class SkillTrustService:
                 return status.trust_status
         return TRUST_STATUS_TRUSTED
 
+    def reset_trust(self) -> None:
+        """Clear all local trust state, returning the profile to first-run.
+
+        Destructive: drops the trusted baseline (every skill returns to
+        "needs review"). Skills themselves are untouched. Best-effort and
+        non-raising so a partially-available keyring never blocks recovery.
+        """
+        try:
+            self.trust_store.delete_manifest()
+        except Exception:
+            pass
+        for target in (self.trust_store.marker_store, self.key_cache):
+            clear = getattr(target, "clear", None)
+            if callable(clear):
+                try:
+                    clear()
+                except Exception:
+                    pass
+        self._keys = None
+        self._salt = None
+        self.keyring_convenience_enabled = False
+
+    def _safe_load_marker(self) -> tuple[dict[str, Any] | None, bool]:
+        """Return (marker, available). available=False iff the marker store raised."""
+        try:
+            return self.trust_store.marker_store.load_marker(), True
+        except SkillTrustMarkerUnavailable:
+            return None, False
+        except Exception:
+            return None, False
+
+    def trust_posture(self) -> str:
+        """Structured global trust posture for the Skills list header.
+
+        See the plan's Task 3 interface contract for the exact mapping.
+        """
+        has_manifest = self.trust_store.has_manifest()
+        marker, available = self._safe_load_marker()
+        if not has_manifest:
+            return "needs_resetup" if marker else "needs_setup"
+        if not available:
+            return "unavailable"
+        if marker is None:
+            return "needs_resetup"  # orphaned manifest (upgrade case)
+        if self._keys is None:
+            return "locked"
+        try:
+            self._load_valid_manifest()
+        except (SkillTrustMarkerUnavailable, ValueError):
+            return "error"
+        return "ready"
+
     def bootstrap_trust(
         self, passphrase: str | None = None, *, salt: bytes | None = None
     ) -> None:
