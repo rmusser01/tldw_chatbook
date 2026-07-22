@@ -195,12 +195,20 @@ async def test_test_provider_button_click_runs_the_check():
 
 @pytest.mark.asyncio
 async def test_test_provider_button_runs_with_provider_input_focused():
-    """AC#3: the button still runs the check with a provider Input focused.
+    """AC#3: a real mouse click on the button still runs the check, starting
+    from an Input-focused state.
 
-    ``action_settings_test_category`` no-ops for the 't' hotkey while a text
-    entry widget has focus (``_settings_text_entry_has_focus``); the button's
-    handler (``handle_test_provider``) passes ``allow_text_entry_focus=True``
-    explicitly, so it must run regardless of what has focus.
+    This proves the button is a working non-hotkey path: even when a text
+    entry widget starts out focused, clicking ``#settings-test-provider``
+    runs the readiness check and reads the current widget values.
+
+    Note: by the time ``Button.Pressed`` dispatches, Textual has already
+    moved keyboard focus onto the Button itself, so this test does not by
+    itself pin the ``allow_text_entry_focus=True`` bypass in
+    ``handle_test_provider`` -- see
+    ``test_t_hotkey_does_not_run_test_while_input_focused`` below, which
+    pins the actual rationale (the 't' hotkey no-ops while an input has
+    focus, which is why a clickable button is needed).
     """
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
@@ -221,6 +229,63 @@ async def test_test_provider_button_runs_with_provider_input_focused():
         await _wait_for_settings_text(screen, pilot, "Provider test")
 
         assert "Provider test" in _provider_test_result_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_t_hotkey_does_not_run_test_while_input_focused():
+    """AC#3 rationale: the 't' hotkey does not run the test while a text
+    entry has focus -- this is why the clickable button is needed.
+
+    Two things are pinned here:
+
+    1. The observable behavior a real keypress produces: pressing 't' while
+       the model Input is focused types "t" into the input rather than
+       running the readiness check. (Textual's own Input widget consumes
+       printable keys before the Screen's ``("t", "settings_test_category",
+       ...)`` binding is even considered -- see
+       ``Input.check_consume_key``/``Screen._binding_chain`` -- so this
+       part alone would hold even if ``action_settings_test_category``'s
+       internal guard were removed.)
+    2. The actual guard: ``action_settings_test_category`` (the method the
+       't' binding invokes, with no arguments -- i.e.
+       ``allow_text_entry_focus=False``) is a no-op while
+       ``_settings_text_entry_has_focus()`` is true. Calling it directly,
+       the same way the binding dispatch would, is what makes this test
+       fail if that guard is ever removed -- part 1 alone would not catch
+       that regression, since Textual's own key consumption already
+       prevents the keypress from reaching the binding either way.
+    """
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        model_input = screen.query_one("#settings-model-value", Input)
+        model_input.focus()
+        await pilot.pause()
+        # Sanity: this is exactly the state that would make the 't' hotkey no-op.
+        assert screen._settings_text_entry_has_focus() is True
+
+        before = _provider_test_result_text(screen)
+        assert before == "Provider test has not run."
+
+        # 1. Real keypress: consumed by the focused Input, never reaches the
+        # 't' binding at all.
+        await pilot.press("t")
+        await pilot.pause()
+        assert _provider_test_result_text(screen) == before
+        assert "t" in model_input.value
+
+        # 2. Direct action-level check -- the same call Textual's binding
+        # dispatch makes for the 't' hotkey (no arguments). This is the part
+        # that actually exercises `_settings_text_entry_has_focus()`.
+        screen.action_settings_test_category()
+        await pilot.pause()
+        assert _provider_test_result_text(screen) == before
 
 
 @pytest.mark.asyncio
