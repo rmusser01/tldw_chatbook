@@ -1027,9 +1027,16 @@ class LocalSkillsService:
             MAX_SUPPORTING_FILES_TOTAL_BYTES,
         )
         skill_name = self._derive_name_from_filename(filename)
-        members: list[tuple[str, bytes, bool]] = []
+        # Compute the (not-yet-created) destination dir up front so every member
+        # can be fully validated -- caps, zip-slip containment, decodability --
+        # BEFORE import_skill creates SKILL.md + an index entry. A rejection then
+        # leaves no partial trust-pending skill behind (atomicity).
+        skill_dir = self._skill_dir(skill_name)
+        base = skill_dir.resolve()
+        members: list[tuple[Path, bytes, bool]] = []
         skill_content: str | None = None
         total = 0
+        count = 0
         seen_lower: set[str] = set()
         with zipfile.ZipFile(io.BytesIO(file_content), "r") as archive:
             for member in archive.infolist():
@@ -1046,32 +1053,47 @@ class LocalSkillsService:
                 if lower in seen_lower:             # case-fold collision on a case-insensitive FS
                     raise ValueError(f"local_skill_invalid_archive:case_collision:{member_name}")
                 seen_lower.add(lower)
-                data = archive.read(member)
-                if len(data) > MAX_SUPPORTING_FILE_BYTES:
+                # DoS guard: reject by the DECLARED uncompressed size (free from
+                # the zip header) BEFORE inflating. A crafted DEFLATE member can
+                # carry multiple GB from a few-MB upload and OOM the process if we
+                # read first and check after.
+                if member.file_size > MAX_SUPPORTING_FILE_BYTES:
                     raise ValueError(f"local_skill_file_too_large:{member_name}")
-                total += len(data)
+                total += member.file_size
+                if total > MAX_SUPPORTING_FILES_TOTAL_BYTES:     # early exit before more reads
+                    raise ValueError("local_skill_bundle_too_large")
                 if member_name == _SKILL_FILENAME:
-                    skill_content = data.decode("utf-8")
-                else:
-                    members.append((member_name, data, bool(mode & 0o111)))
+                    data = archive.read(member)
+                    if len(data) > MAX_SUPPORTING_FILE_BYTES:    # lying-header guard
+                        raise ValueError(f"local_skill_file_too_large:{member_name}")
+                    try:
+                        skill_content = data.decode("utf-8")
+                    except UnicodeDecodeError as exc:
+                        raise ValueError(
+                            f"local_skill_invalid_archive:non_utf8_body:{member_name}"
+                        ) from exc
+                    continue
+                count += 1
+                if count > MAX_SUPPORTING_FILES_COUNT:           # early exit before more reads
+                    raise ValueError("local_skill_too_many_files")
+                # Zip-slip containment resolved against the computed dest BEFORE
+                # anything is created on disk.
+                dest = skill_dir / PurePosixPath(member_name)
+                if base not in dest.resolve().parents:
+                    raise ValueError(f"local_skill_invalid_archive:{member_name}")
+                data = archive.read(member)
+                if len(data) > MAX_SUPPORTING_FILE_BYTES:        # lying-header guard
+                    raise ValueError(f"local_skill_file_too_large:{member_name}")
+                members.append((dest, data, bool(mode & 0o111)))
         if skill_content is None:
             raise ValueError("local_skill_invalid_archive:missing_skill_md")
-        if len(members) > MAX_SUPPORTING_FILES_COUNT:
-            raise ValueError("local_skill_too_many_files")
-        if total > MAX_SUPPORTING_FILES_TOTAL_BYTES:
-            raise ValueError("local_skill_bundle_too_large")
-        result = await self.import_skill(
+        await self.import_skill(
             name=skill_name, content=skill_content, overwrite=overwrite,
             trust_approved=False,   # re-trusted below only if approved
         )
-        skill_dir = self._skill_dir(skill_name)
-        base = skill_dir.resolve()
         import os as _os
-        from pathlib import PurePosixPath as _PP
-        for member_name, data, executable in members:
-            dest = skill_dir / _PP(member_name)
-            if base not in dest.resolve().parents:
-                raise ValueError(f"local_skill_invalid_archive:{member_name}")
+        for dest, data, executable in members:
+            # Every dest was contained-checked during collection; write only now.
             self._write_bytes_atomic(dest, data)
             if executable:
                 _os.chmod(dest, dest.stat().st_mode | 0o755)
