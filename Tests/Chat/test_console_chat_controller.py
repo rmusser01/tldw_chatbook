@@ -12,6 +12,7 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat import console_chat_controller as controller_module
+from tldw_chatbook.Chat import console_history_budget
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
@@ -1511,6 +1512,15 @@ def test_submit_stages_all_pendings_and_clears(monkeypatch):
 def test_image_budget_counts_images_newest_first(monkeypatch):
     monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
     monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 3)
+    # This test's subject is the image-count budget in
+    # `_provider_message_payloads`, not the token-window trim added in
+    # task 3. The default (unmocked) token window for an unrecognized
+    # model/provider pair is small enough that 4 images at 1024 tokens
+    # each would trip the trim and drop the "older" turn entirely --
+    # stub a large window so the trim stays a no-op here.
+    monkeypatch.setattr(
+        console_history_budget, "get_model_token_limit", lambda model, provider: 100000
+    )
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
     controller = ConsoleChatController(
@@ -2754,3 +2764,71 @@ async def test_build_context_snapshot_unchanged_when_no_prefill_armed():
 
     assert "response_prefill" not in snapshot.next_send_payload
     assert snapshot.next_send_payload["messages"][-1]["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_send_trims_history_and_appends_note(monkeypatch):
+    # Force a tiny window so a short history trims.
+    monkeypatch.setattr(
+        console_history_budget, "get_model_token_limit", lambda model, provider: 520
+    )
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller.update_provider_selection(
+        ConsoleProviderSelection(
+            provider="llama_cpp",
+            explicit_model="test-model",
+            configured_model="test-model",
+            max_tokens=0,
+        )
+    )
+    session = controller.new_session(title="Chat 1")  # creates + activates
+    # Seed an over-budget history before the current turn.
+    for i in range(6):
+        store.append_message(session.id, role=ConsoleMessageRole.USER, content=f"old user {i} aa bb cc dd")
+        store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content=f"old asst {i} aa bb cc dd")
+
+    await controller.submit_draft("current question here")
+
+    # The gateway saw a trimmed list (fewer than the full seeded history + turn).
+    assert gateway.messages_seen is not None
+    assert len(gateway.messages_seen) < 13
+    # The latest user turn survived.
+    assert any(
+        m.get("role") == "user" and "current question here" in str(m.get("content", ""))
+        for m in gateway.messages_seen
+    )
+    # A display-only SYSTEM trim note was appended to the transcript.
+    rows = store.messages_for_session(session.id)
+    assert any(
+        r.role == ConsoleMessageRole.SYSTEM and "trimmed" in r.content.lower()
+        for r in rows
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_that_fits_does_not_trim_or_note(monkeypatch):
+    monkeypatch.setattr(
+        console_history_budget, "get_model_token_limit", lambda model, provider: 100000
+    )
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller.update_provider_selection(
+        ConsoleProviderSelection(
+            provider="llama_cpp", explicit_model="test-model", configured_model="test-model"
+        )
+    )
+    session = controller.new_session(title="Chat 1")
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="one small turn")
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="ok")
+
+    await controller.submit_draft("next question")
+
+    assert gateway.messages_seen is not None
+    rows = store.messages_for_session(session.id)
+    assert not any(
+        r.role == ConsoleMessageRole.SYSTEM and "trimmed" in r.content.lower()
+        for r in rows
+    )
