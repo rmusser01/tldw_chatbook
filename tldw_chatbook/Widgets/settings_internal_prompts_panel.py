@@ -1,11 +1,13 @@
 """Settings "Internal Prompts" panel: browse the registry prompts grouped by
 subsystem with customized / default-changed badges, filter by search, and
-(Task 4) open the editor modal to save/reset overrides.
+open the editor modal to save/reset overrides.
 
 Self-contained editor pattern (mirrors SettingsThemeEditor): owns its state,
 posts a Modified message the screen watches for the sidebar dirty-marker."""
 
 from __future__ import annotations
+
+import asyncio
 
 from textual import on
 from textual.app import ComposeResult
@@ -16,6 +18,9 @@ from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Internal_Prompts import authoring
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
+from tldw_chatbook.Widgets.settings_internal_prompts_editor_modal import (
+    InternalPromptEditorModal,
+)
 
 
 def _row_id(prompt_id: str) -> str:
@@ -58,7 +63,7 @@ class InternalPromptsPanel(Vertical):
             row.add_class("row-customized")
         if st.default_changed:
             row.add_class("row-default-changed")
-        # carry the prompt id for Task 4's activation handler
+        # carry the prompt id for the row-activation handler below
         row.prompt_id = spec.id  # type: ignore[attr-defined]
         return row
 
@@ -79,6 +84,51 @@ class InternalPromptsPanel(Vertical):
                 self.query_one("#group-header-" + subsystem, Static).display = any_visible
             except (NoMatches, QueryError):
                 pass
+
+    @on(Button.Pressed, ".internal-prompt-row")
+    def _open_editor(self, event: Button.Pressed) -> None:
+        event.stop()
+        prompt_id = getattr(event.button, "prompt_id", None)
+        if prompt_id is None:
+            return
+        spec = CATALOG[prompt_id]
+        st = authoring.override_state(prompt_id)
+        self.app.push_screen(
+            InternalPromptEditorModal(spec=spec, active_text=st.active_text),
+            lambda result, pid=prompt_id: self._on_editor_closed(pid, result),
+        )
+
+    def _on_editor_closed(self, prompt_id: str, result) -> None:
+        if result is None:
+            return
+        # schedule the async apply (worker + refresh)
+        self.run_worker(self._apply_editor_result(prompt_id, result), exclusive=False)
+
+    async def _apply_editor_result(self, prompt_id: str, result: dict) -> None:
+        action = result.get("action")
+        if action == "save":
+            ok = await self._persist(prompt_id, result.get("text", ""), reset=False)
+        elif action == "reset":
+            ok = await self._persist(prompt_id, "", reset=True)
+        else:
+            return
+        if ok:
+            self._refresh_row(prompt_id)
+            self.post_message(self.Modified(authoring.customized_count()))
+        else:
+            self.app.notify("Could not save the prompt override.", severity="error")
+
+    async def _persist(self, prompt_id: str, text: str, reset: bool) -> bool:
+        def _io() -> bool:
+            try:
+                return (
+                    authoring.reset_override(prompt_id)
+                    if reset
+                    else authoring.save_override(prompt_id, text)
+                )
+            except Exception:  # never let the worker crash the app
+                return False
+        return await asyncio.to_thread(_io)
 
     def _refresh_row(self, prompt_id: str) -> None:
         """Targeted in-place badge refresh for one row (no recompose)."""
