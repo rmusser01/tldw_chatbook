@@ -1638,16 +1638,11 @@ async def test_console_send_echoes_user_message_before_transcript_poll(monkeypat
         # Stream reached => the USER row was appended and the submit accepted.
         await asyncio.wait_for(gateway.started.wait(), timeout=2)
         try:
-            surfaced = False
-            for _ in range(10):
-                await pilot.pause()
-                if "ECHONOW" in _visible_text(console):
-                    surfaced = True
-                    break
-            assert surfaced, (
-                "sent message did not echo without the transcript poll: "
-                f"{_visible_text(console)!r}"
-            )
+            # With the poll disabled and no stream content, the sent message can
+            # only reach the transcript via the acceptance-time echo. Use the
+            # file's stable wait helper (bounded pilot.pause loop) rather than a
+            # hand-rolled fixed budget so this stays deterministic under CI load.
+            await _wait_for_text(console, pilot, "ECHONOW")
         finally:
             gateway.release.set()
 

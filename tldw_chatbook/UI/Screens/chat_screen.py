@@ -9736,18 +9736,22 @@ class ChatScreen(BaseAppScreen):
         # after the text vanished — reading as "not sent". This hook only fires
         # once submit_draft has confirmed the turn actually proceeds (never for
         # a blocked/refused send), so the USER row is already in the store.
-        # `_sync_native_console_chat_ui` coalesces against the running poll via
-        # its own `_console_sync_in_progress` guard, so this is safe to kick
-        # concurrently — the same call the poll's own self-requeue uses.
-        # `exit_on_error=False`: this is a best-effort acknowledgment. If the
-        # screen is tearing down (or a send races a navigation away), the sync
-        # can hit a removed widget and raise `NoMatches`; the poll runs the same
-        # coroutine from a timer whose exceptions Textual already absorbs, so a
-        # transient failure here must likewise never crash the app (default
+        # `_sync_native_console_chat_ui` coalesces against a running sync via
+        # its own `_console_sync_in_progress`/`_console_sync_requested` guard
+        # (a concurrent call sets "requested" and the in-progress run re-fires
+        # from its `finally`), so the echo still lands. NOT `exclusive=True`:
+        # that would CANCEL a console-sync worker mid-flight, and a sync
+        # cancelled after it advanced a scope sentinel but before its awaited
+        # refresh completed would leave inspector/summary caches stale until the
+        # scope next changes (Qodo #2). Coalescing gives the echo without that
+        # cancellation. `exit_on_error=False`: best-effort acknowledgment — if
+        # the screen is tearing down (or a send races a navigation away) the
+        # sync can hit a removed widget and raise `NoMatches`; the poll runs the
+        # same coroutine from a timer whose exceptions Textual already absorbs,
+        # so a transient failure here must likewise never crash the app (default
         # `exit_on_error=True` would) — the next poll re-renders regardless.
         self.run_worker(
             self._sync_native_console_chat_ui(),
-            exclusive=True,
             group="console-sync",
             exit_on_error=False,
         )
