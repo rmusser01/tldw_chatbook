@@ -100,6 +100,31 @@ def _two_row_state(*, sort: str = "name") -> SkillsListState:
     )
 
 
+def _two_row_state_no_blocked(*, sort: str = "name") -> SkillsListState:
+    """Like ``_two_row_state`` but with NO blocked rows (Task 4): used to
+    prove the trust header's "ready + clean" quiet state, since
+    ``_two_row_state`` itself always has one blocked row (which would make
+    posture "ready" render the "review" header instead)."""
+    return SkillsListState(
+        rows=(
+            SkillListRow(
+                name="code-review",
+                secondary="user · agent · Reviews a diff",
+                trust_glyph="✓",
+                blocked=False,
+            ),
+            SkillListRow(
+                name="summarize",
+                secondary="user · agent · Summarizes text",
+                trust_glyph="✓",
+                blocked=False,
+            ),
+        ),
+        count=2,
+        sort=sort,
+    )
+
+
 class _CanvasHost(App):
     def __init__(self, state: SkillsListState | None, **kwargs: Any) -> None:  # type: ignore[valid-type]
         super().__init__()
@@ -221,6 +246,57 @@ async def test_skills_canvas_empty_state_with_filter_shows_filter_copy():
     async with app.run_test() as pilot:
         empty = pilot.app.query_one("#library-skills-empty")
         assert "match your filter" in str(empty.renderable)
+
+
+# ---------------------------------------------------------------------------
+# Adaptive trust header tests (Task 4): the list canvas's
+# ``#library-skills-trust-header``/``#library-skills-trust-action``, driven
+# by ``skill_trust_header_line`` (``library_skills_state.py``).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_skills_list_renders_trust_header_setup():
+    app = _CanvasHost(_two_row_state(), trust_posture="needs_setup")
+    async with app.run_test() as pilot:
+        header = pilot.app.query_one("#library-skills-trust-header", Static)
+        assert "isn't set up" in str(header.renderable)
+        action = pilot.app.query_one("#library-skills-trust-action", Button)
+        assert action.trust_action == "setup"
+
+
+@pytest.mark.asyncio
+async def test_skills_list_trust_header_hidden_when_ready_and_clean():
+    """``_two_row_state`` has a blocked row (posture "ready" on it would
+    render "review"), so this uses ``_two_row_state_no_blocked`` instead --
+    the true "ready + clean" case: a quiet header with NO action button."""
+    app = _CanvasHost(_two_row_state_no_blocked(), trust_posture="ready")
+    async with app.run_test() as pilot:
+        header = pilot.app.query_one("#library-skills-trust-header", Static)
+        assert str(header.renderable) == "Skill trust: ready."
+        assert not pilot.app.query("#library-skills-trust-action")
+
+
+@pytest.mark.asyncio
+async def test_skills_list_trust_header_shows_review_when_ready_with_blocked():
+    """Companion to the clean case above: ``_two_row_state`` has one
+    blocked row, so posture "ready" on it renders the "review" header with
+    its action button -- proving ``blocked_count`` is actually threaded
+    through from ``state.rows``, not hardcoded."""
+    app = _CanvasHost(_two_row_state(), trust_posture="ready")
+    async with app.run_test() as pilot:
+        header = pilot.app.query_one("#library-skills-trust-header", Static)
+        assert "1 skill" in str(header.renderable)
+        action = pilot.app.query_one("#library-skills-trust-action", Button)
+        assert action.trust_action == "review"
+
+
+@pytest.mark.asyncio
+async def test_skills_list_trust_header_hidden_when_posture_absent():
+    app = _CanvasHost(_two_row_state(), trust_posture="")
+    async with app.run_test() as pilot:
+        assert not pilot.app.query("#library-skills-trust-header")
+        assert not pilot.app.query("#library-skills-trust-action")
 
 
 # ---------------------------------------------------------------------------

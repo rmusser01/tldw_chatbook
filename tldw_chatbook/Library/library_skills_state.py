@@ -228,6 +228,44 @@ def save_marks_needs_review(trust_status: str, trust_blocked: bool) -> bool:
     return trust_status == "trusted" and not trust_blocked
 
 
+def skill_trust_header_line(
+    posture: str, blocked_count: int
+) -> tuple[str, str] | None:
+    """Return (copy, action_id) for the Skills-list trust header, or None to hide.
+
+    Args:
+        posture: The trust service's ``trust_posture()`` value -- one of
+            ``"needs_setup"``, ``"needs_resetup"``, ``"unavailable"``,
+            ``"locked"``, ``"error"``, ``"ready"`` (Task 3). ``"error"`` and
+            any other unrecognized/empty value hide the header (``None``) --
+            the list canvas already degrades gracefully with no header, and
+            surfacing raw trust-service errors here would be noise the user
+            can't act on from this screen.
+        blocked_count: Number of rows in the current list state that are
+            currently trust-blocked (``row.blocked``).
+
+    Returns:
+        ``(copy, action_id)`` where ``action_id`` is one of ``"setup"``,
+        ``"resetup"``, ``"retry"``, ``"unlock"``, ``"review"``, or ``""``
+        (posture is ``"ready"`` with nothing blocked -- shown but with no
+        action), or ``None`` to hide the header entirely.
+    """
+    if posture == "needs_setup":
+        return ("Skill trust isn't set up — set it up to review and use skills.", "setup")
+    if posture == "needs_resetup":
+        return ("Skill trust needs to be set up again after an update.", "resetup")
+    if posture == "unavailable":
+        return ("Skill trust is temporarily unavailable — try again.", "retry")
+    if posture == "locked":
+        return ("Skill trust is locked for this session.", "unlock")
+    if posture == "ready":
+        if blocked_count > 0:
+            noun = "skill needs" if blocked_count == 1 else "skills need"
+            return (f"{blocked_count} {noun} review before use.", "review")
+        return ("Skill trust: ready.", "")
+    return None
+
+
 def _matches_query(record: Mapping[str, Any], query_lower: str) -> bool:
     if not query_lower:
         return True

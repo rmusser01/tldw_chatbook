@@ -40,6 +40,7 @@ from tldw_chatbook.Library.library_skills_state import (
     SkillsListState,
     save_marks_needs_review,
     skill_name_shadows_builtin,
+    skill_trust_header_line,
 )
 
 _SORT_LABELS = {"name": "Name", "status": "Status"}
@@ -100,6 +101,18 @@ _TRUST_SETUP_EXPLANATION_COPY = (
     "start reviewing and approving local skills — current local skill "
     "files become the trusted baseline."
 )
+
+# Task 4: labels for the Skills-list adaptive trust header's single inline
+# action Button. Keyed by ``skill_trust_header_line``'s ``action_id``
+# (``library_skills_state.py``); the "" key never renders a button (see
+# ``_compose_list``).
+_TRUST_HEADER_ACTION_LABELS = {
+    "setup": "Set up skill trust",
+    "resetup": "Set up skill trust",
+    "retry": "Retry",
+    "unlock": "Unlock",
+    "review": "Review",
+}
 
 
 def skill_trust_needs_setup(trust_status: str) -> bool:
@@ -402,6 +415,12 @@ class LibrarySkillsListCanvas(VerticalScroll):
         import_status: Muted outcome line shown below the Import row
             (e.g. ``'Imported "executing-plans" · re-review it in the trust panel'``), or
             ``""`` when idle/not yet run.
+        trust_posture: List-view only (Task 4). The Skills trust service's
+            current posture (``SkillTrustService.trust_posture()``'s
+            return value -- Task 3), used to render the adaptive trust
+            header above the toolbar via ``skill_trust_header_line``.
+            ``""`` (the default) hides the header -- the screen (Task 5)
+            supplies the real posture.
     """
 
     def __init__(
@@ -411,6 +430,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
         sort_mode: str = "name",
         filter_value: str = "",
         mode: str = "list",
+        trust_posture: str = "",
         editor_state: SkillEditorState | None = None,
         warnings: str = "",
         status: str = "",
@@ -432,6 +452,7 @@ class LibrarySkillsListCanvas(VerticalScroll):
         self.sort_mode = sort_mode
         self.filter_value = filter_value
         self.mode = mode
+        self.trust_posture = trust_posture
         self.editor_state = editor_state
         self.warnings = warnings
         self.status = status
@@ -496,6 +517,24 @@ class LibrarySkillsListCanvas(VerticalScroll):
             classes="destination-section",
             markup=False,
         )
+        # Task 4: adaptive trust header -- posture-driven copy plus an
+        # optional single inline action, computed from THIS state's own
+        # blocked-row count (not a screen-supplied total) so it always
+        # matches what's actually rendered below.
+        blocked_count = sum(1 for row in state.rows if getattr(row, "blocked", False))
+        header = skill_trust_header_line(self.trust_posture, blocked_count)
+        if header is not None:
+            copy, action_id = header
+            yield Static(copy, id="library-skills-trust-header", markup=False)
+            if action_id:
+                button = Button(
+                    _TRUST_HEADER_ACTION_LABELS[action_id],
+                    id="library-skills-trust-action",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                button.trust_action = action_id  # read by the screen handler
+                yield button
         yield Input(
             placeholder="Filter skills… (Enter)",
             id="library-skills-filter",
