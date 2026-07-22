@@ -1018,8 +1018,17 @@ class LocalSkillsService:
             skill_dir.mkdir(parents=True, exist_ok=True)
             existing = records.get(skill_name) if overwrite else None
             self._write_text_atomic(skill_dir / _SKILL_FILENAME, content)
+            # Belt-and-braces containment, mirroring the zip-import path's own
+            # resolve-and-contain check (~:1127): every relative_path here was
+            # already collected via _iter_bundle_files + validate_supporting_
+            # file_path above, so this should never actually trip -- but a
+            # filesystem write is cheap insurance to assert against, not a
+            # place to trust a single upstream validation layer.
+            base = skill_dir.resolve()
             for relative_path, abs_path in files:
                 dest = skill_dir / PurePosixPath(relative_path)
+                if base not in dest.resolve().parents:
+                    raise ValueError(f"local_skill_invalid_bundle_path:{relative_path}")
                 self._write_bytes_atomic(dest, abs_path.read_bytes())
                 if abs_path.stat().st_mode & stat.S_IXUSR:
                     # Trust only the owner-exec fingerprint; adding 0o755 would
@@ -1161,6 +1170,14 @@ class LocalSkillsService:
             archive_buffer, "w", compression=zipfile.ZIP_DEFLATED
         ) as archive:
             body = skill_dir / _SKILL_FILENAME
+            # Same guard every other body read in this service already has
+            # (e.g. import_skill_directory's own check): a corrupted store
+            # (index entry present, on-disk body missing) must fail with a
+            # domain error, not a raw FileNotFoundError -- and a symlinked
+            # body must be rejected, not followed, to avoid archiving
+            # content from outside the bundle.
+            if body.is_symlink() or not body.is_file():
+                raise ValueError(f"local_skill_missing_skill_md:{normalized}")
             archive.writestr(_SKILL_FILENAME, body.read_bytes())
             for relative_path, path in sorted(
                 self._iter_bundle_files(skill_dir), key=lambda x: x[0]

@@ -7203,10 +7203,11 @@ class LibraryScreen(BaseAppScreen):
         "Review changes" action -- see ``skill_trust_review_enabled``).
 
         Two path shapes are accepted, both resolving to the SAME skill
-        name (the directory's own name) -- this matters because every
-        real skill package (e.g. the ``superpowers`` skillset) is a
-        directory named after the skill containing a file LITERALLY named
-        ``SKILL.md``, so deriving the name from the file's own basename
+        name (the directory's own name) AND the SAME faithful import --
+        this matters because every real skill package (e.g. the
+        ``superpowers`` skillset) is a directory named after the skill
+        containing a file LITERALLY named ``SKILL.md``, so deriving the
+        name from the file's own basename
         (``local_skills_service._derive_name_from_filename``, which is
         what a plain ``import_skill_file(..., filename="SKILL.md")`` call
         would do) would incorrectly produce ``"skill"`` for every import
@@ -7214,20 +7215,20 @@ class LibraryScreen(BaseAppScreen):
 
         - A file path whose basename is ``SKILL.md`` (case-insensitive):
           treated as that file's PARENT directory's skill (the common
-          case for a real skillset laid out one-directory-per-skill).
-          Calls ``import_skill(name=<directory name>, content=..., ...)``
-          directly (the name is already known, so no filename-derivation
-          guesswork is needed) and threads any FLAT sibling files in
-          that same directory through as ``supporting_files`` (nested
-          subdirectories are NOT recursed into for this shape --
-          ``import_skill``'s own supporting-file model has no
-          nested-path support).
-        - A directory path containing a top-level ``SKILL.md``: calls
-          ``import_skill_directory(source_dir, name=<directory name>,
-          ...)`` instead, which copies the WHOLE tree faithfully --
-          nested subdirectories, binary files, and the executable bit
-          are all preserved (junk pruned, symlinks skipped, size/count
-          caps enforced).
+          case for a real skillset laid out one-directory-per-skill) --
+          the parent directory IS the skill directory.
+        - A directory path containing a top-level ``SKILL.md``: the
+          directory itself is the skill directory.
+
+        Both shapes call ``import_skill_directory(skill_dir,
+        name=<directory name>, ...)``, which copies the WHOLE tree
+        faithfully -- nested subdirectories, binary files, and the
+        executable bit are all preserved (junk pruned, symlinks skipped,
+        size/count caps enforced). A flat, text-only read here would
+        silently drop all of that for the SKILL.md-file shape even though
+        the directory-path shape (pointed at the very same directory)
+        would have preserved it -- the two shapes must behave identically
+        since they resolve to the same skill directory.
 
         Any OTHER file path (e.g. a standalone ``some-skill.md`` not named
         ``SKILL.md``, or a ``.zip`` export) is imported via
@@ -7258,83 +7259,45 @@ class LibraryScreen(BaseAppScreen):
             return
 
         service = getattr(self.app_instance, "skills_scope_service", None)
-        import_skill = getattr(service, "import_skill", None)
         import_skill_file = getattr(service, "import_skill_file", None)
-        if not callable(import_skill) or not callable(import_skill_file):
+        import_skill_directory = getattr(service, "import_skill_directory", None)
+        if not callable(import_skill_directory) or not callable(import_skill_file):
             self._apply_library_skills_import_status("Skill import is unavailable.")
             return
 
         if validated_path.is_dir():
             skill_dir = validated_path
-            if self._find_skill_md_in_dir(skill_dir) is None:
-                self._apply_library_skills_import_status(
-                    "No SKILL.md found in that folder."
-                )
-                return
-            import_skill_directory = getattr(
-                service, "import_skill_directory", None
-            )
-            if not callable(import_skill_directory):
-                self._apply_library_skills_import_status(
-                    "Skill import is unavailable."
-                )
-                return
-            skill_name = skill_dir.name
-            try:
-                await self._run_library_service_call(
-                    import_skill_directory,
-                    skill_dir,
-                    mode="local",
-                    name=skill_name,
-                    trust_approved=False,
-                    isolate_in_worker=True,
-                )
-            except Exception as exc:
-                self._apply_library_skills_import_outcome_from_exception(
-                    skill_name, exc
-                )
-                return
-            self._apply_library_skills_import_success(skill_name)
-            return
         elif validated_path.name.lower() == _SKILL_MD_FILENAME.lower():
+            # The SKILL.md file's PARENT directory IS the skill directory --
+            # same faithful import as the folder-path shape below.
             skill_dir = validated_path.parent
-            skill_md_path = validated_path
         else:
             await self._import_library_skill_from_loose_file(
                 validated_path, import_skill_file
             )
             return
 
-        try:
-            content = await asyncio.to_thread(
-                skill_md_path.read_text, encoding="utf-8", errors="strict"
+        if self._find_skill_md_in_dir(skill_dir) is None:
+            self._apply_library_skills_import_status(
+                "No SKILL.md found in that folder."
             )
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Could not read Library skill import file '{skill_md_path}'."
-            )
-            self._apply_library_skills_import_status("Could not read that file.")
             return
 
-        supporting_files = self._read_library_skill_import_supporting_files(
-            skill_dir, skill_md_path
-        )
         skill_name = skill_dir.name
-
         try:
             await self._run_library_service_call(
-                import_skill,
+                import_skill_directory,
+                skill_dir,
                 mode="local",
                 name=skill_name,
-                content=content,
-                supporting_files=supporting_files or None,
                 trust_approved=False,
                 isolate_in_worker=True,
             )
         except Exception as exc:
-            self._apply_library_skills_import_outcome_from_exception(skill_name, exc)
+            self._apply_library_skills_import_outcome_from_exception(
+                skill_name, exc
+            )
             return
-
         self._apply_library_skills_import_success(skill_name)
 
     async def _import_library_skill_from_loose_file(
@@ -7475,50 +7438,6 @@ class LibraryScreen(BaseAppScreen):
             if child.is_file() and child.name.lower() == _SKILL_MD_FILENAME.lower():
                 return child
         return None
-
-    @staticmethod
-    def _read_library_skill_import_supporting_files(
-        skill_dir: Path,
-        skill_md_path: Path,
-    ) -> dict[str, str]:
-        """Read the skill directory's FLAT sibling files as supporting files.
-
-        Only immediate-child FILES are read (mirrors
-        ``local_skills_service._read_supporting_files``'s own flat-only
-        model) -- nested subdirectories (e.g. a real skill's own
-        ``references/`` folder) are skipped entirely rather than
-        recursed into or flattened, since the service's supporting-file
-        name pattern has no path-separator support. A sibling that fails
-        to decode as UTF-8 text (e.g. a binary asset) is skipped
-        individually rather than failing the whole import.
-
-        Args:
-            skill_dir: The skill's own directory.
-            skill_md_path: The directory's ``SKILL.md`` file (excluded
-                from the result).
-
-        Returns:
-            A ``{filename: content}`` mapping of every readable flat
-            sibling file, excluding ``SKILL.md`` itself.
-        """
-        supporting_files: dict[str, str] = {}
-        try:
-            children = sorted(skill_dir.iterdir(), key=lambda item: item.name)
-        except Exception:
-            return supporting_files
-        for child in children:
-            if not child.is_file() or child.resolve() == skill_md_path.resolve():
-                continue
-            try:
-                supporting_files[child.name] = child.read_text(
-                    encoding="utf-8", errors="strict"
-                )
-            except Exception:
-                logger.debug(
-                    f"Skipping unreadable Library skill supporting file '{child}'."
-                )
-                continue
-        return supporting_files
 
     @on(Button.Pressed, ".library-skill-row")
     async def handle_library_skill_row(self, event: Button.Pressed) -> None:

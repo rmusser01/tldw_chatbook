@@ -1,6 +1,7 @@
 import os, stat, pytest
 from pathlib import Path
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+import tldw_chatbook.tldw_api.skills_schemas as skills_schemas_mod
 
 
 @pytest.mark.asyncio
@@ -106,3 +107,49 @@ async def test_import_skill_directory_enforces_per_file_cap(tmp_path):
     with pytest.raises(ValueError):
         await svc.import_skill_directory(src, name="demo")
     assert not svc._skill_dir("demo").exists()  # no partial write
+
+
+@pytest.mark.asyncio
+async def test_import_skill_directory_write_loop_rejects_escaping_destination(
+    tmp_path, monkeypatch
+):
+    """Merge-gate review (PR #784, MINOR finding): the per-file WRITE loop
+    must independently refuse to write outside the resolved ``skill_dir``,
+    mirroring the belt-and-braces containment assert the zip-import path
+    already has (local_skills_service.py ~:1127) -- never trust a single
+    upstream validation layer (``validate_supporting_file_path``) for a
+    filesystem write.
+
+    ``validate_supporting_file_path`` already rejects a literal ``..``
+    relative-path segment earlier in the pipeline, so this exercises the
+    write loop's OWN check in isolation by simulating that earlier guard
+    being bypassed (patched to a no-op) with a crafted escaping
+    ``relative_path`` fed in via a stubbed ``_iter_bundle_files`` -- the
+    exact class of defense-in-depth the containment assert exists for.
+    """
+    src = tmp_path / "src" / "demo"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("---\nname: demo\n---\nbody\n", encoding="utf-8")
+    payload = src / "payload.txt"
+    payload.write_text("escape me", encoding="utf-8")
+
+    monkeypatch.setattr(
+        skills_schemas_mod, "validate_supporting_file_path", lambda p: p
+    )
+
+    def fake_iter_bundle_files(source_dir):
+        yield "../escape.txt", payload
+
+    monkeypatch.setattr(
+        LocalSkillsService,
+        "_iter_bundle_files",
+        staticmethod(fake_iter_bundle_files),
+    )
+
+    store_dir = tmp_path / "store"
+    svc = LocalSkillsService(store_dir=store_dir)
+    with pytest.raises(ValueError):
+        await svc.import_skill_directory(src, name="demo")
+    # The escaping write must never land OUTSIDE the skill's own directory,
+    # even one level up in the shared "skills/" parent.
+    assert not (store_dir / "skills" / "escape.txt").exists()
