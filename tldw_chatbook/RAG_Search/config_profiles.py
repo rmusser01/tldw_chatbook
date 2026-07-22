@@ -175,7 +175,13 @@ class ProfileConfig:
 
 
 class ConfigProfileManager:
-    """Manages configuration profiles and experiments."""
+    """Manages RAG configuration profiles.
+
+    Builtins are read-only clone-seeds; user profiles are stored one JSON file
+    per profile under ``rag_profiles/`` keyed by a stable ``id`` (rename-safe).
+    NOTE: the active-profile pointer and config-resolution wiring live in SP2b,
+    not here — this class is storage + CRUD only.
+    """
 
     def __init__(self, profiles_dir: Optional[Path] = None):
         self.profiles_dir = profiles_dir or (get_user_data_dir() / "rag_profiles")
