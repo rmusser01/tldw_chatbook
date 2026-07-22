@@ -1,10 +1,16 @@
 ---
 id: TASK-354
-title: Fix rail Chats list silently capping at 11 conversations with no overflow affordance
-status: To Do
-assignee: []
+title: >-
+  Fix rail Chats list silently capping at 11 conversations with no overflow
+  affordance
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
-labels: [console, ux]
+updated_date: '2026-07-22 05:18'
+labels:
+  - console
+  - ux
 dependencies: []
 priority: medium
 ---
@@ -23,5 +29,38 @@ With 12 seeded conversations, the rail's Chats section listed 11 (Websocket...De
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Either list all conversations (scrollable), or show an explicit 'N more — search with Ctrl+K / Show all' disclosure row at the section end
+- [x] #1 Either list all conversations (scrollable), or show an explicit 'N more — search with Ctrl+K / Show all' disclosure row at the section end
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Root cause (code-verified): the grouped browser caps each group at
+`CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT` (12); `_visible_rows` drops the
+overflow and computes `hidden_count`, but `_build_status_copy` returned `""`
+unless a search query was active, so the default no-query view had ZERO
+disclosure — the oldest conversation was simply gone with no hint (only Ctrl+K
+fuzzy-search could still reach it). task-138 covered the OLD rail's searchable
+subsection; the newer grouped browser's no-query view was uncovered.
+
+Fix (chose the AC's "explicit disclosure" option, not "list all"): compute the
+silently-capped count and surface it as the existing `status_copy` line (which
+the tray already renders unconditionally, right under the always-present search
+box). `_build_status_copy` now, when no query is active and rows were capped,
+returns `"{n} more conversation(s) — search with Ctrl+K"`. The count comes from
+a new `_capped_hidden_count(sections)` = `sum(section.hidden_count for
+non-collapsed sections)`: `_visible_rows` reports `hidden_count=0` for collapsed
+groups, so a non-collapsed section's `hidden_count` is PURE cap overflow —
+user-collapsed sections (which show their own header count) are correctly
+excluded and never inflate the disclosure. The search-mode "Showing X of Y" copy
+is unchanged.
+
+Verified: 3 state unit tests (discloses when capped; no disclosure when nothing
+capped; excludes user-collapsed sections) + 1 tray render test mounting the real
+`ConsoleWorkspaceContextTray` with 15 conversations and asserting the
+`#console-workspace-conversation-search-status` static shows "3 more … Ctrl+K"
+in the no-query view. Files:
+`tldw_chatbook/Workspaces/conversation_browser_state.py`,
+`Tests/Workspaces/test_console_conversation_browser_state.py`,
+`Tests/UI/test_console_rail_sections.py`.
+<!-- SECTION:NOTES:END -->
