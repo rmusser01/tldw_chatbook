@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_glyphs import (
     GLYPH_EXPANDED,
 )
 from tldw_chatbook.Workspaces.conversation_browser_state import (
+    console_conversation_status_detail,
     ConsoleConversationBrowserGroup,
     ConsoleConversationBrowserRow,
     ConsoleConversationBrowserSection,
@@ -42,13 +43,10 @@ _STATUS_LABELS = {
     "active": "active",
     "open": "open",
 }
-_STATUS_DETAIL_LABELS = {
-    "workspace-thread": "saved chat",
-    "workspace": "saved chat",
-    "in-progress": "saved chat",
-    "active": "active session",
-    "open": "open session",
-}
+# TASK-356: the "saved chat"/"active session"/"open session" detail vocabulary
+# now lives once in conversation_browser_state.console_conversation_status_detail
+# (which `_conversation_detail_status` below delegates to); the former local
+# `_STATUS_DETAIL_LABELS` copy was removed to keep a single source of truth.
 _CONVERSATION_BROWSER_HEADER_HEIGHT = 1
 _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT = 1
 
@@ -737,6 +735,36 @@ class ConsoleWorkspaceContextTray(Vertical):
                 disabled=not self.state.new_workspace_enabled,
             )
 
+        # task-13: workspace-level RAG retrieval scope entry point.
+        # Named "RAG Scope" (not "Scope") to avoid colliding with the
+        # unrelated "Scope" status pair below, which shows the active
+        # conversation's identity, not a RAG retrieval scope. Enabled
+        # only for a real registry workspace (`rag_scope_enabled`) --
+        # never for the "Local Default"/error/no-registry sentinel
+        # states, which have no real workspace_id to scope against.
+        #
+        # This lives on its OWN row (task-14) rather than sharing the
+        # Switch/New row: the narrow Console left rail body is only wide
+        # enough for ~2 compact buttons (Textual's default Button
+        # min-width is 16 columns each). A third button packed into the
+        # same Horizontal overflowed the rail's clipped width, so the
+        # button's clickable region extended past the rail body -- real
+        # clicks (and `pilot.click`) landed on the rail backdrop instead
+        # of the button.
+        with Horizontal(
+            id="console-workspace-rag-scope-row",
+            classes="console-workspace-action-row",
+        ):
+            scope_button = Button(
+                "RAG Scope",
+                id="console-workspace-rag-scope-open",
+                classes="console-workspace-action",
+                compact=True,
+                disabled=not self.state.rag_scope_enabled,
+            )
+            scope_button.tooltip = "Narrow RAG retrieval to items in this workspace"
+            yield scope_button
+
         if (
             not self.state.change_workspace_enabled
             and self.state.change_workspace_recovery
@@ -1186,8 +1214,9 @@ class ConsoleWorkspaceContextTray(Vertical):
 
     @staticmethod
     def _conversation_detail_status(status: str) -> str:
-        """Return second-line row metadata for row disambiguation."""
-        normalized = str(status or "").strip().lower()
-        if not normalized:
-            return ""
-        return _STATUS_DETAIL_LABELS.get(normalized, normalized.replace("-", " "))
+        """Return second-line row metadata for row disambiguation.
+
+        TASK-356: delegates to the shared vocabulary so the rail and the
+        Ctrl+K switcher never disagree on the same conversation's state.
+        """
+        return console_conversation_status_detail(status)

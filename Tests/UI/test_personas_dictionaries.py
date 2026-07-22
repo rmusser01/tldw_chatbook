@@ -23,6 +23,82 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
 pytestmark = pytest.mark.asyncio
 
 
+def patch_character_paging(monkeypatch, records=None):
+    """Route the screen's paged character loader over the stubbed character list.
+
+    P3a Task 4 made the character library page from the DB seam
+    (``get_character_page_for_ui``/``count_character_page``/``list_character_tags``,
+    imported into ``personas_screen``). Screen tests that stub ``fetch_all_characters``
+    (rather than seed a real ``CharactersRAGDB``) must also route these three so the
+    library renders their stub rows.
+
+    The source is read LIVE from ``fetch_all_characters()`` each call (unless an
+    explicit ``records`` list is given), so tests that swap ``fetch_all_characters``
+    mid-run (create/delete) stay consistent for free. Mirrors real search (name
+    substring on the FTS-unwrapped term), tag membership, and name_asc sort;
+    ignores the ``db`` arg.
+    """
+    import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as chm
+    import tldw_chatbook.UI.Screens.personas_screen as ps
+
+    def _source():
+        if records is not None:
+            return list(records)
+        try:
+            return list(chm.fetch_all_characters() or [])
+        except Exception:
+            return []
+
+    def _norm(record):
+        return {
+            "id": record.get("id"),
+            "name": record.get("name"),
+            "last_modified": record.get("last_modified"),
+            "created_at": record.get("created_at"),
+            "tags": list(record.get("tags") or []),
+        }
+
+    def _unwrap(search_term):
+        # Reverse _fts_match_query: '"term"*' -> 'term' (trailing * first, then
+        # the surrounding quotes, then unescape doubled quotes).
+        term = str(search_term).strip()
+        if term.endswith("*"):
+            term = term[:-1]
+        return term.strip('"').replace('""', '"').lower()
+
+    def _filtered(search_term, tag):
+        rows = [_norm(r) for r in _source()]
+        if search_term:
+            term = _unwrap(search_term)
+            rows = [r for r in rows if term in str(r["name"] or "").lower()]
+        if tag is not None:
+            rows = [r for r in rows if tag in (r["tags"] or [])]
+        return rows
+
+    def _page(db, *, limit, offset, order_by="name_asc", search_term=None, tag=None):
+        rows = _filtered(search_term, tag)
+        rows.sort(key=lambda r: str(r["name"] or "").lower())
+        return rows[offset : offset + limit]
+
+    def _count(db, *, search_term=None, tag=None):
+        return len(_filtered(search_term, tag))
+
+    def _tags(db):
+        seen: list[str] = []
+        for record in _source():
+            for tag in record.get("tags") or []:
+                if tag not in seen:
+                    seen.append(tag)
+        return sorted(seen, key=str.lower)
+
+    monkeypatch.setattr(ps, "get_character_page_for_ui", _page)
+    monkeypatch.setattr(ps, "count_character_page", _count)
+    monkeypatch.setattr(ps, "list_character_tags", _tags)
+    # Keep the paged loader off the real lazy DB entirely (the patched functions
+    # ignore the db arg, so any non-None sentinel is fine).
+    monkeypatch.setattr(chm, "_default_character_db", lambda: object())
+
+
 def _entry_response(dictionary_id: int, index: int, entry: dict) -> dict:
     """Shape one entry exactly like local _entry_to_response (API naming)."""
     return {
@@ -605,6 +681,7 @@ def stub_characters(monkeypatch):
     monkeypatch.setattr(
         character_handler_module, "fetch_character_by_id", lambda character_id: None
     )
+    patch_character_paging(monkeypatch)
 
 
 class PersonasTestApp(App):

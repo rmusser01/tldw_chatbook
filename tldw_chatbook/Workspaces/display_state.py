@@ -214,6 +214,13 @@ class ConsoleWorkspaceContextState:
     workspace_name: str = ""
     scope_label: str = ""
     new_workspace_enabled: bool = False
+    #: Whether the workspace-level RAG retrieval-scope affordance (task-13)
+    #: should be enabled. ``True`` only when the active workspace is a real
+    #: registry row (``registry_service.get_active_workspace()`` returned a
+    #: concrete ``WorkspaceRecord``, including the real built-in Default
+    #: workspace) -- never for the "Local Default"/error/no-registry
+    #: sentinel states below, which have no real ``workspace_id`` to scope.
+    rag_scope_enabled: bool = False
     server_readiness_label: str = "Server: local fallback"
     server_readiness_detail: str = (
         "Local registry is authoritative. No background sync is running."
@@ -407,6 +414,7 @@ def build_console_workspace_state(
         workspace_name=active_workspace.name,
         scope_label=scope_label,
         new_workspace_enabled=True,
+        rag_scope_enabled=True,
         authority_label=f"Authority: {active_workspace.authority.value}",
         sync_label=_workspace_sync_label(active_workspace),
         runtime_label=(

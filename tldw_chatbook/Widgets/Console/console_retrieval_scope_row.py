@@ -51,17 +51,16 @@ class ConsoleRetrievalScopeRow(Horizontal):
     - Scoped: "Scope: N items" + "Edit" (reopens the picker, seeded with
       the current selection) and "Clear" (clears the scope) buttons.
     - Empty (``is_empty``): the configured scope resolves to nothing to
-      retrieve from (e.g. every item in it has since been deleted, or --
-      once Phase 3 of the rag-scope-narrowing program lands workspace-
-      level scoping -- a conversation/workspace intersection with no
-      overlap). Renders "Scope: empty" with the cause folded into the
+      retrieve from -- every item in an active scope has since been
+      deleted, OR (task-13, Phase 3) a conversation/workspace intersection
+      has no overlap. Renders "Scope: empty" with the cause folded into the
       label's tooltip via ``SCOPE_EMPTY_NOTICE_TEMPLATE``, same wording the
       chip's tooltip uses, plus the "Narrow…" button (an empty scope still
-      lets the user pick something that actually resolves). Not reachable
-      from the real ``ChatScreen._build_console_retrieval_scope_state``
-      today -- that builder is zero-DB by contract, and detecting either
-      cause needs a DB existence check -- until Phase 3 wires intersection
-      into the display path.
+      lets the user pick something that actually resolves). Reached from
+      the real ``ChatScreen._build_console_retrieval_scope_state`` via the
+      off-loop-resolved ``self._console_effective_scope_cache`` (Phase 3
+      wired the conversation/workspace intersection into the display path;
+      the builder itself stays zero-DB, reading only that cache).
     """
 
     def __init__(self, state: ConsoleRetrievalScopeState, **kwargs: Any) -> None:

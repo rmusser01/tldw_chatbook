@@ -27,6 +27,44 @@ def _parse_browser_timestamp(value: str) -> datetime | None:
     return parsed
 
 
+# TASK-356: ONE state vocabulary for persisted-but-not-archived chats across
+# the rail AND the Ctrl+K switcher. Rows reach here with a workspace-
+# membership role ("workspace-thread"/"workspace") or the "in-progress"
+# state normalize_conversation_row assigns — all meaning "a chat saved
+# locally, not open in a tab". The switcher used the raw status
+# ("in-progress"), contradicting the rail's "saved chat"; both now call this.
+_CONSOLE_CONVERSATION_STATUS_DETAIL = {
+    "workspace-thread": "saved chat",
+    "workspace": "saved chat",
+    "in-progress": "saved chat",
+    "active": "active session",
+    "open": "open session",
+}
+
+
+def console_conversation_status_detail(status: str) -> str:
+    """Return the shared friendly state label for a conversation row status.
+
+    The one vocabulary used by both the rail conversation browser and the
+    Ctrl+K switcher (TASK-356) so the two surfaces never contradict each other:
+    ``saved chat`` / ``active session`` / ``open session``.
+
+    Args:
+        status: Raw persisted/internal status (e.g. ``in-progress``,
+            ``workspace-thread``, ``active``); ``None`` is tolerated.
+
+    Returns:
+        The friendly label, an empty string for a blank status, or the status
+        with dashes spaced out when it is not a known state.
+    """
+    normalized = str(status or "").strip().lower()
+    if not normalized:
+        return ""
+    return _CONSOLE_CONVERSATION_STATUS_DETAIL.get(
+        normalized, normalized.replace("-", " ")
+    )
+
+
 def format_console_relative_age(value: str, *, now: datetime) -> str:
     """Return a compact age label such as ``2m``, ``1h``, ``3d`` for a timestamp.
 

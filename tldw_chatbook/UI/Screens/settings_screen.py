@@ -109,6 +109,8 @@ from .settings_config_models import (
 )
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor
+from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel
+from ...Internal_Prompts import authoring as internal_prompts_authoring
 from .settings_appearance_defaults import (
     SettingsAppearanceDefaults,
     build_appearance_save_sections,
@@ -741,6 +743,20 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         ("Boundary", "changes are saved immediately; no shared Settings draft state"),
     ),
+    SettingsCategoryId.INTERNAL_PROMPTS: (
+        (
+            "Affected config",
+            "config.toml [internal_prompts] overrides for built-in system prompts",
+        ),
+        (
+            "Recovery",
+            "use each prompt's own Save/Reset buttons to restore the packaged default",
+        ),
+        (
+            "Boundary",
+            "edits apply to internal tooling prompts only; no shared Settings draft state",
+        ),
+    ),
 }
 # Generic guidance for a category with no explicit entry. Kept as a runtime
 # safety net only; test_inspector_guidance_covers_every_settings_category fails
@@ -961,6 +977,21 @@ class SettingsScreen(BaseAppScreen):
         self._advanced_config_result = "Advanced config validation: not run"
         self._advanced_config_validated_text: str | None = None
         self._ownership_by_category_cache = self._build_ownership_by_category()
+        # Lazily-memoized cache, NOT a recompose=True reactive (P3 whole-branch
+        # review Fix 1 + Fix 2): InternalPromptsPanel.Modified fires on every
+        # prompt Save/Reset, and authoring.customized_count() iterates all
+        # CATALOG entries with a config read each (~2.5ms). A recompose=True
+        # reactive here would (a) unmount/remount the whole detail pane on
+        # every save, wiping the panel's search text and scroll -- defeating
+        # its own targeted _refresh_row design -- and (b) get recomputed live
+        # on every Settings sidebar category-search keystroke via
+        # _category_summaries(). Initialized to None and computed on first
+        # DISPLAY (never in __init__): the count reads config, and reading
+        # config during construction can force a config-file load/creation
+        # before the app is ready (breaking storage-readiness checks). Kept
+        # fresh afterward by _on_internal_prompts_modified via the panel's own
+        # computed count (no extra live call).
+        self._internal_prompts_customized_count: int | None = None
         # set_reactive, NOT plain assignment: assigning a recompose=True
         # reactive here fires refresh(recompose=True) on the not-yet-mounted
         # screen; the flag survives into mount and forces a full recompose of
@@ -1195,7 +1226,39 @@ class SettingsScreen(BaseAppScreen):
                 "Raw TOML view and expert configuration editing.",
                 "Advanced",
             ),
+            SettingsCategorySummary(
+                SettingsCategoryId.INTERNAL_PROMPTS,
+                "Internal Prompts",
+                "View and edit the system prompts tldw_chatbook uses internally "
+                "(RAG, web search, agents, summarization, more).",
+                self._internal_prompts_status(),
+            ),
         )
+
+    def _get_internal_prompts_customized_count(self) -> int:
+        """Memoized customized-prompt count for display.
+
+        Computes the live count (authoring.customized_count(), ~2.5ms over all
+        CATALOG entries with a config read each) only on the FIRST call, then
+        caches it. Deferred to first display (never __init__) so it never
+        forces a config load/creation during construction; recomputed at most
+        once per screen since _on_internal_prompts_modified refreshes the cache
+        directly from the panel's own event. Safe on a per-keystroke path
+        (_category_summaries()) because every call after the first is a plain
+        attribute read (task-P3 review Fix 2).
+        """
+        if self._internal_prompts_customized_count is None:
+            try:
+                self._internal_prompts_customized_count = (
+                    internal_prompts_authoring.customized_count()
+                )
+            except Exception:
+                self._internal_prompts_customized_count = 0
+        return self._internal_prompts_customized_count
+
+    def _internal_prompts_status(self) -> str:
+        n = self._get_internal_prompts_customized_count()
+        return f"{n} customized" if n else "Defaults"
 
     def _category_groups(
         self,
@@ -1225,7 +1288,13 @@ class SettingsScreen(BaseAppScreen):
                 ),
             ),
             ("Troubleshooting", (SettingsCategoryId.DIAGNOSTICS,)),
-            ("Expert", (SettingsCategoryId.ADVANCED_CONFIG,)),
+            (
+                "Expert",
+                (
+                    SettingsCategoryId.INTERNAL_PROMPTS,
+                    SettingsCategoryId.ADVANCED_CONFIG,
+                ),
+            ),
             (
                 "Domain Defaults",
                 (
@@ -1491,6 +1560,20 @@ class SettingsScreen(BaseAppScreen):
                 runtime_owner="Settings advanced editor",
                 boundary_copy="Advanced Config bypasses guided category controls.",
                 recovery_copy="Validate exact current TOML before save; restore from backup if needed.",
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.INTERNAL_PROMPTS,
+                owns_config_sections=("internal_prompts.<prompt id>",),
+                reads_runtime_state_from=("packaged internal prompt registry",),
+                writes_allowed=True,
+                runtime_owner="Internal Prompts panel",
+                boundary_copy=(
+                    "Settings Internal Prompts panel owns internal-tooling prompt overrides; "
+                    "use each prompt's own Save/Reset buttons."
+                ),
+                recovery_copy=(
+                    "Reset a prompt from its editor to restore the packaged default text."
+                ),
             ),
             *self._domain_category_ownership_records(),
         )
@@ -1965,6 +2048,8 @@ class SettingsScreen(BaseAppScreen):
             return "Use the editor's Apply/Save/Reset buttons to manage themes."
         if category == SettingsCategoryId.SPLASH_SCREEN:
             return "Splash defaults are saved automatically."
+        if category == SettingsCategoryId.INTERNAL_PROMPTS:
+            return "Use each prompt's Save / Reset buttons in the editor to manage overrides."
         if category is SettingsCategoryId.STORAGE:
             if self._category_has_unsaved_changes(category):
                 validation = self._storage_validation_result()
@@ -7245,6 +7330,9 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.SPLASH_SCREEN:
             yield Static("Splash Screen", classes="destination-section settings-column-title")
             yield SettingsSplashScreenViewer(id="settings-splash-screen-viewer")
+        elif category is SettingsCategoryId.INTERNAL_PROMPTS:
+            yield Static("Internal Prompts", classes="destination-section settings-column-title")
+            yield InternalPromptsPanel(id="settings-internal-prompts-panel")
         elif category is SettingsCategoryId.STORAGE:
             values = self._storage_setting_values()
             try:
@@ -7555,7 +7643,11 @@ class SettingsScreen(BaseAppScreen):
             id="settings-guided-action-state",
             classes="settings-status-row",
         )
-        if summary.category not in (SettingsCategoryId.THEME, SettingsCategoryId.SPLASH_SCREEN):
+        if summary.category not in (
+            SettingsCategoryId.THEME,
+            SettingsCategoryId.SPLASH_SCREEN,
+            SettingsCategoryId.INTERNAL_PROMPTS,
+        ):
             save_button = Button(
                 "Save",
                 id="settings-save-category",
@@ -7706,6 +7798,15 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Focused field guide", classes="destination-section")
             yield self._detail_row("Config section", "splash_screen")
             yield self._detail_row("Note", "Splash defaults are saved automatically.")
+        elif summary.category is SettingsCategoryId.INTERNAL_PROMPTS:
+            yield Static("Edit the prompts used by internal tooling.", classes="destination-section")
+            yield self._detail_row("Save target", "~/.config/tldw_cli/config.toml  [internal_prompts]")
+            yield self._detail_row("Note", "Use each prompt's own Save / Reset buttons.")
+            yield self._detail_row(
+                "Customized prompts",
+                str(self._get_internal_prompts_customized_count()),
+                identifier="settings-internal-prompts-customized-count",
+            )
         elif summary.category is SettingsCategoryId.STORAGE:
             yield Static(
                 "Affects local database path defaults after restart.",
@@ -8101,6 +8202,32 @@ class SettingsScreen(BaseAppScreen):
         self, event: SettingsThemeEditor.ThemeModifiedStatus
     ) -> None:
         self.theme_editor_modified = event.is_modified
+
+    @on(InternalPromptsPanel.Modified)
+    def _on_internal_prompts_modified(self, event: InternalPromptsPanel.Modified) -> None:
+        # Deliberately NOT a recompose=True reactive assignment (P3
+        # whole-branch review Fix 1): the panel already computed this count
+        # for us, so we just cache it and push a TARGETED refresh into
+        # whichever widgets currently show it. A recompose here would
+        # unmount/remount the panel on every save/reset, wiping its search
+        # text and scroll position.
+        self._internal_prompts_customized_count = event.customized_count
+        self._refresh_internal_prompts_customized_widgets()
+
+    def _refresh_internal_prompts_customized_widgets(self) -> None:
+        """In-place refresh of every Internal Prompts customized-count display.
+
+        Safe to call whether or not the sidebar status row / impact-pane row
+        are currently mounted (different active category, or impact pane not
+        yet composed) -- each query is independently guarded.
+        """
+        self._update_draft_status_widgets(SettingsCategoryId.INTERNAL_PROMPTS)
+        try:
+            row = self.query_one("#settings-internal-prompts-customized-count", Static)
+        except QueryError:
+            pass
+        else:
+            row.update(f"Customized prompts: {self._internal_prompts_customized_count}")
 
     @on(Select.Changed, "#settings-appearance-theme")
     def handle_appearance_theme_changed(self, event: Select.Changed) -> None:
@@ -9682,7 +9809,11 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
-        if category in (SettingsCategoryId.THEME, SettingsCategoryId.SPLASH_SCREEN):
+        if category in (
+            SettingsCategoryId.THEME,
+            SettingsCategoryId.SPLASH_SCREEN,
+            SettingsCategoryId.INTERNAL_PROMPTS,
+        ):
             self.app.notify(
                 "Use the editor's own buttons for this category", severity="information"
             )

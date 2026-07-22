@@ -293,13 +293,12 @@ class ConsoleControlBar(Vertical):
     ) -> tuple[str, str, bool, bool]:
         """Pure ``(label, tooltip, hidden, alert)`` render for the scope chip.
 
-        ``state`` is conversation-scope-only until Phase 3 of the
-        rag-scope-narrowing program wires workspace-level scoping through
-        this same seam: ``item_count`` is simply the conversation scope's
-        own (already zero-item-normalized -- see
-        ``ConsoleRetrievalScopeState``) item count, and the scoped tooltip
-        below will widen from "conversation N items" to the intersection
-        breakdown ("conversation A ∩ workspace B → N") once that lands.
+        ``item_count`` is always the EFFECTIVE (post-intersection) count
+        (task-13). The tooltip's breakdown widens with how many scope
+        levels are active: a single active level (conversation-only, or
+        workspace-only) reads as "conversation N items"/"workspace N
+        items"; both active levels read as the full intersection breakdown
+        ("conversation A ∩ workspace B → N").
 
         Args:
             state: Display-state snapshot, or ``None`` (renders unscoped).
@@ -325,7 +324,15 @@ class ConsoleControlBar(Vertical):
                 True,
             )
         label = f"Scope: {state.item_count}"
-        tooltip = f"conversation {state.item_count} items"
+        if state.conv_item_count is not None and state.ws_item_count is not None:
+            tooltip = (
+                f"conversation {state.conv_item_count} ∩ workspace "
+                f"{state.ws_item_count} → {state.item_count}"
+            )
+        elif state.ws_item_count is not None:
+            tooltip = f"workspace {state.ws_item_count} items"
+        else:
+            tooltip = f"conversation {state.item_count} items"
         return label, tooltip, False, False
 
     def _scope_chip(self) -> ConsoleScopeChip:
