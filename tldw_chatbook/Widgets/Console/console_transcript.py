@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.console_image_view import (
     PIXELS_MAX_COLS,
     PIXELS_MAX_LINES,
     ConsoleImageRowSpec,
+    fit_image_cell_size,
 )
 from tldw_chatbook.Chat.console_message_actions import (
     ConsoleMessageAction,
@@ -975,6 +976,18 @@ class ConsoleTranscript(VerticalScroll):
                 from textual_image.widget import Image as _GraphicsImage
 
                 widget = _GraphicsImage(spec.pil, id=f"console-image-{spec.message_id}")
+                # Explicit fitted cell size, not just max-width/max-height:
+                # textual_image's "auto" sizing resolves its render region
+                # from the parent's settled layout, and mounting a tick before
+                # that settles can ask the renderer to scale into a transient
+                # 0-width/height region - which PIL's resize() raises on. Fixed
+                # ints resolve without waiting on layout, sidestepping the race
+                # (the personas avatar preview uses the same guard).
+                w_cells, h_cells = fit_image_cell_size(
+                    spec.pil.width, spec.pil.height, PIXELS_MAX_COLS, PIXELS_MAX_LINES
+                )
+                widget.styles.width = w_cells
+                widget.styles.height = h_cells
             except Exception:
                 logger.opt(exception=True).warning(
                     "textual-image unavailable; falling back to pixels row."
@@ -996,9 +1009,11 @@ class ConsoleTranscript(VerticalScroll):
                 pixels if pixels is not None else "",
                 id=f"console-image-{spec.message_id}",
             )
+            # Pixels render at their baked half-block size; a max cap is safe
+            # here (no textual_image auto-sizing race).
+            widget.styles.max_width = PIXELS_MAX_COLS
+            widget.styles.max_height = PIXELS_MAX_LINES
         widget.add_class("console-transcript-image")
-        widget.styles.max_width = 80
-        widget.styles.max_height = 40
         return widget
 
     def _update_row_widget(self, widget: Widget, row: _TranscriptRow) -> Widget:

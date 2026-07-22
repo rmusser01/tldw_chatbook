@@ -983,8 +983,12 @@ def test_image_row_widget_builds_for_both_modes():
     graphics_row = next(r for r in transcript._transcript_rows() if r.kind == "image")
     graphics_widget = transcript._build_row_widget(graphics_row, track=False)
     assert graphics_widget.id == f"console-image-{message.id}"
-    assert graphics_widget.styles.max_width.value == 80
-    assert graphics_widget.styles.max_height.value == 40
+    # Graphics images now carry an EXPLICIT fitted cell size (not just
+    # max-width/max-height): textual_image's "auto" sizing could resolve to a
+    # transient 0-region mid-mount and crash PIL.resize(). A 16x16 square fits
+    # the 80x40 box exactly at (80, 40).
+    assert graphics_widget.styles.width.value == 80
+    assert graphics_widget.styles.height.value == 40
 
 
 def test_image_row_rebuild_tracked_on_mode_change():

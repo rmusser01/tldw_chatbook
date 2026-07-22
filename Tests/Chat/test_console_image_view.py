@@ -7,6 +7,7 @@ from tldw_chatbook.Chat.console_image_view import (
     IMAGE_DECODE_MAX_DIMENSION,
     ConsoleImageRenderCache,
     ConsoleImageViewState,
+    fit_image_cell_size,
     next_view_mode,
     resolve_default_mode,
 )
@@ -214,3 +215,45 @@ def test_resolve_default_mode_live_shape_terminal_override(monkeypatch):
         }
     }
     assert resolve_default_mode(live_shape) == "graphics"
+
+
+# --- fit_image_cell_size (P3b avatar guard, generalized for the transcript) ---
+
+
+def test_fit_image_cell_size_returns_explicit_positive_ints_within_box():
+    # The whole point: never "auto" (0-size crash) - always explicit >=1 ints
+    # clamped to the box, for any realistic image.
+    for w, h in [(512, 512), (1024, 256), (100, 900), (7, 3), (1, 1)]:
+        cw, ch = fit_image_cell_size(w, h, 80, 40)
+        assert isinstance(cw, int) and isinstance(ch, int)
+        assert 1 <= cw <= 80 and 1 <= ch <= 40
+
+
+def test_fit_image_cell_size_wide_image_fits_width():
+    # A very wide image is width-bound: full 80 cols, fewer lines.
+    cw, ch = fit_image_cell_size(1600, 200, 80, 40)
+    assert cw == 80 and ch < 40
+
+
+def test_fit_image_cell_size_tall_image_fits_height():
+    # A very tall image is height-bound: full 40 lines, fewer cols.
+    cw, ch = fit_image_cell_size(100, 1600, 80, 40)
+    assert ch == 40 and cw < 80
+
+
+def test_fit_image_cell_size_preserves_aspect_within_box():
+    # Square pixels -> ~2:1 cell aspect (cells are ~2x taller than wide);
+    # fitting into 80x40 should be width-bound at 80 with height ~ 80/2 = 40.
+    cw, ch = fit_image_cell_size(400, 400, 80, 40)
+    assert cw == 80 and ch == 40
+
+
+def test_fit_image_cell_size_degenerate_returns_full_box():
+    assert fit_image_cell_size(0, 100, 80, 40) == (80, 40)
+    assert fit_image_cell_size(100, 0, 24, 10) == (24, 10)
+
+
+def test_fit_image_cell_size_respects_arbitrary_box():
+    # The avatar box (24x10) still works through the same helper.
+    cw, ch = fit_image_cell_size(1000, 1000, 24, 10)
+    assert 1 <= cw <= 24 and 1 <= ch <= 10
