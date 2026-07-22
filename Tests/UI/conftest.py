@@ -41,6 +41,12 @@ from Tests.textual_test_harness import (  # noqa: E402
     isolated_widget_pilot,
 )
 
+# Re-export the canonical scratch_config fixture from Tests/Internal_Prompts.conftest.
+# See Tests/RAG/conftest.py for the collision rationale (plain import, not
+# pytest_plugins, sidesteps a duplicate-plugin-registration error when both
+# test directories are collected in the same session).
+from Tests.Internal_Prompts.conftest import scratch_config  # noqa: F401,E402
+
 # Type variables
 W = TypeVar("W", bound=Widget)
 A = TypeVar("A", bound=App)
