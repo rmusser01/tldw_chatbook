@@ -36,7 +36,7 @@ from tldw_chatbook.Chat.rag_scope import (
     write_conversation_scope,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
-from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleScopeChip
+from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleScopeChip
 from tldw_chatbook.Widgets.Console.console_retrieval_scope_row import (
     CLEAR_BTN_ID,
     EDIT_BTN_ID,
@@ -658,8 +658,8 @@ async def test_resume_console_workspace_conversation_refreshes_row_and_chip():
     ``_sync_console_control_bar()`` only pushes into
     ``#console-control-bar``/``#console-run-inspector-state`` -- never the
     sibling retrieval-scope row, and never
-    ``ConsoleControlBar.sync_scope_chip`` (deliberately a separate method
-    from the control bar's general ``sync_state``, per its own docstring).
+    ``ConsoleStatusChips.sync_scope_chip`` (deliberately a separate method
+    from the strip's general ``sync_state``, per its own docstring).
     Drives the real production coroutine directly (the same pattern the
     save/clear tests above already use for
     ``_apply_console_retrieval_scope_save``), not a UI pixel-click, so this
@@ -820,13 +820,13 @@ async def test_initial_mount_of_restored_persisted_scoped_session_warms_row_and_
         db.close_connection()
 
 
-# --- task-10: header "Scope" chip -------------------------------------
+# --- task-10: "Scope" chip --------------------------------------------
 #
-# The chip lives in the Console header's chip row (``#console-scope-chip``,
-# a sibling of "Sources: 0 staged" / "RAG: off") and renders from the exact
-# same ``ConsoleRetrievalScopeState`` snapshot as the Inspector row above --
-# see ``ChatScreen._sync_console_retrieval_scope_row`` and
-# ``ConsoleControlBar.sync_scope_chip``/``_scope_chip_render``.
+# The chip lives in the Console status-pill strip above the composer
+# (``#console-scope-chip``, a sibling of "Sources: 0 staged" / "RAG: off")
+# and renders from the exact same ``ConsoleRetrievalScopeState`` snapshot as
+# the Inspector row above -- see ``ChatScreen._sync_console_retrieval_scope_row``
+# and ``ConsoleStatusChips.sync_scope_chip``/``_scope_chip_render``.
 
 
 @pytest.mark.asyncio

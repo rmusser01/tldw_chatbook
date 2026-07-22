@@ -1,10 +1,12 @@
 import pytest
+from pathlib import Path
 from unittest.mock import Mock
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
@@ -28,6 +30,9 @@ from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_workbench_state import (
     build_console_workbench_state,
 )
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
 
 
 class ConsoleHarness(App):
@@ -217,15 +222,40 @@ async def test_console_has_one_canonical_visible_state_action_strip():
         control_bar = console.query_one("#console-control-bar")
         assert _is_displayed(control_bar)
 
-        visible_text = " ".join(
+        action_text = " ".join(
             _widget_text(child)
             for child in control_bar.walk_children()
             if _is_displayed(child)
         )
-        assert visible_text.count("Provider:") == 1
-        assert visible_text.count("Model:") == 1
-        assert visible_text.count("Settings") == 1
-        assert visible_text.count("Library RAG") == 1
+        assert action_text.count("Settings") == 1
+        assert action_text.count("Library RAG") == 1
+        # Pills moved out of the control bar into their own strip.
+        assert "Provider:" not in action_text
+        chips = console.query_one("#console-status-chips")
+        chip_text = " ".join(
+            _widget_text(child)
+            for child in chips.walk_children()
+            if _is_displayed(child)
+        )
+        assert chip_text.count("Provider:") == 1
+        assert chip_text.count("Model:") == 1
+
+
+@pytest.mark.asyncio
+async def test_console_status_chips_sit_above_composer():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(150, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-status-chips")
+        chips = console.query_one("#console-status-chips")
+        grid = console.query_one("#console-workspace-grid")
+        composer = console.query_one("#console-native-composer")
+        # Below the chat/rail grid, above the composer.
+        assert chips.region.y >= grid.region.y + grid.region.height
+        assert chips.region.y + chips.region.height <= composer.region.y
+        assert _is_displayed(chips)
 
 
 @pytest.mark.asyncio
@@ -250,6 +280,8 @@ async def test_console_control_bar_renders_visible_state_chips():
             "#console-tools-chip",
             "#console-approvals-chip",
         )
+        # Chips now live in the #console-status-chips strip above the composer,
+        # not inside #console-control-bar; query them by global id.
         visible_chip_text = []
         for selector in expected_selectors:
             chip = console.query_one(selector)
@@ -1381,3 +1413,126 @@ async def test_console_shell_invalid_workbench_density_falls_back_to_normal():
         shell = console.query_one("#console-shell")
         assert shell.has_class("density-normal")
         assert not shell.has_class("density-compact")
+
+
+@pytest.mark.asyncio
+async def test_console_header_carries_inline_class_and_dash_subtitle():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workbench-header")
+        header = console.query_one("#console-workbench-header")
+        assert header.has_class("console-header-inline")
+        assert _widget_text(console.query_one("#workbench-header-title")).strip() == "Console"
+        subtitle = _widget_text(console.query_one("#workbench-header-subtitle"))
+        assert subtitle.lstrip().startswith("—")
+        assert "source handoffs" in subtitle
+
+
+@pytest.mark.asyncio
+async def test_console_header_inline_css_renders_single_row():
+    from textual.app import App, ComposeResult
+    from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
+    from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
+
+    class _HeaderApp(App[None]):
+        CSS_PATH = str(_BUNDLED_STYLESHEET)
+        def compose(self) -> ComposeResult:
+            yield DestinationHeader(
+                WorkbenchHeaderState(
+                    title="Console",
+                    subtitle="— Chat, source handoffs, live runs, and control actions.",
+                    status="ready",
+                ),
+                id="console-workbench-header",
+                classes="workbench-header console-header-inline",
+            )
+
+    app = _HeaderApp()
+    async with app.run_test(size=(120, 10)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        header = app.query_one("#console-workbench-header")
+        assert header.region.height == 1
+        subtitle = app.query_one("#workbench-header-subtitle")
+        status = app.query_one("#workbench-header-status")
+        assert status.region.y == subtitle.region.y
+        assert status.region.x >= subtitle.region.x + subtitle.region.width
+
+
+@pytest.mark.asyncio
+async def test_console_header_inline_subtitle_ellipsizes_when_narrow():
+    from textual.app import App, ComposeResult
+    from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
+    from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
+
+    class _NarrowHeaderApp(App[None]):
+        CSS_PATH = str(_BUNDLED_STYLESHEET)
+        def compose(self) -> ComposeResult:
+            yield DestinationHeader(
+                WorkbenchHeaderState(
+                    title="Console",
+                    subtitle="— Chat, source handoffs, live runs, and control actions.",
+                    status="ready",
+                ),
+                id="console-workbench-header",
+                classes="workbench-header console-header-inline",
+            )
+
+    widths = {}
+    for label, cols in (("wide", 120), ("narrow", 60)):
+        app = _NarrowHeaderApp()
+        async with app.run_test(size=(cols, 10)) as pilot:
+            await pilot.pause(); await pilot.pause()
+            header = app.query_one("#console-workbench-header")
+            subtitle = app.query_one("#workbench-header-subtitle")
+            status = app.query_one("#workbench-header-status")
+            assert header.region.height == 1, label
+            widths[label] = subtitle.region.width
+            # Ready badge stays flush to the header's right padding edge
+            # (padding: 0 1) at every width.
+            assert status.region.x + status.region.width == cols - 1, label
+    # The subtitle genuinely shrinks as the terminal narrows.
+    assert widths["narrow"] < widths["wide"]
+
+
+@pytest.mark.asyncio
+async def test_console_header_inline_subtitle_visible_in_compact_density():
+    """The inline header stays one row at any density AND keeps the subtitle:
+    the shared `.density-compact .workbench-header-subtitle { display: none }`
+    hid it to save a row in the old stacked header, but the inline header is a
+    single row regardless, so the id+class rule restores the subtitle to use
+    the horizontal space."""
+    from textual.app import App, ComposeResult
+    from textual.containers import Vertical
+    from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
+    from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
+
+    class _CompactHeaderApp(App[None]):
+        CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+        def compose(self) -> ComposeResult:
+            # The density class is applied to an ancestor (#console-shell); mirror
+            # that so `.density-compact .workbench-header-subtitle` would match.
+            with Vertical(classes="density-compact"):
+                yield DestinationHeader(
+                    WorkbenchHeaderState(
+                        title="Console",
+                        subtitle="— Chat, source handoffs, live runs, and control actions.",
+                        status="ready",
+                    ),
+                    id="console-workbench-header",
+                    classes="workbench-header console-header-inline",
+                )
+
+    app = _CompactHeaderApp()
+    async with app.run_test(size=(120, 10)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        header = app.query_one("#console-workbench-header")
+        subtitle = app.query_one("#workbench-header-subtitle")
+        assert header.region.height == 1
+        assert subtitle.display is True
+        assert subtitle.region.width > 0
