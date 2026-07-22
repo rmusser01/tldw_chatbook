@@ -170,7 +170,7 @@ from ...Sync_Interop.sync_readiness import (
     DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
     build_sync_readiness_report,
 )
-from ...Third_Party.textual_fspicker import FileOpen, FileSave
+from ...Third_Party.textual_fspicker import FileOpen, FileSave, SelectDirectory
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import (
@@ -206,7 +206,9 @@ from ...Widgets.Library import (
     skill_context_toggle_label,
     skill_disable_model_label,
     skill_editor_warning_lines,
+    skill_trust_remediation_copy,
     skill_trust_review_enabled,
+    skill_trust_review_preview,
     skill_trust_state_line,
     skill_trust_unlock_enabled,
     skill_user_invocable_label,
@@ -309,11 +311,24 @@ LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
 # keyed by ``classify_skill_save_error``'s return value. "version-conflict"
 # is deliberately absent -- it routes into the conflict banner instead (see
 # ``_save_library_skill``), never this status line.
+# task-449: toast shown whenever a dirty skill edit vetoes an exit (Back,
+# skill-row switch, rail-row switch) -- the veto itself is silent widget
+# state, so without this the blocked click looks like a dead button.
+LIBRARY_SKILL_DIRTY_VETO_COPY = (
+    "Unsaved skill changes — Save or Discard changes first."
+)
+# task-414: specific approve-failure copy for the service's
+# ``ValueError("snapshot_mismatch")`` -- the files changed between capture
+# and approve, and the service has already discarded the review.
+LIBRARY_SKILL_TRUST_MISMATCH_COPY = (
+    "Skill files changed after the review was captured, so it was discarded. "
+    "Press Review changes again, then Approve."
+)
 LIBRARY_SKILL_SAVE_STATUS_COPY = {
     "ok": "Saved.",
     "exists": "A skill with this name already exists.",
     "invalid-name": "Skill name must use lowercase letters, numbers, and hyphens.",
-    "trust-blocked": "This skill is trust-blocked; resolve trust before saving.",
+    "trust-blocked": "This skill is blocked by trust review — approve it in the trust panel before saving.",
     "error": "Couldn't save this skill. Try again.",
 }
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
@@ -781,6 +796,11 @@ class LibraryScreen(BaseAppScreen):
 
     BINDINGS = [
         ("u", "library_rag_use_in_console", "Use Library context in Console"),
+        # task-424: skill-editor accelerators. ``check_action`` gates both
+        # to the open skill editor, so the keys pass through untouched
+        # everywhere else on the screen.
+        ("ctrl+s", "library_skill_save", "Save skill"),
+        ("escape", "library_skill_back", "Back to skills list"),
     ]
 
     #: Footer hint set — mirrors the show=True bindings the retired Textual
@@ -1039,6 +1059,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_import_open: bool = False
         self._library_skills_import_path: str = ""
         self._library_skills_import_status: str = ""
+        # task-422: the last successful import's skill name -- backs the
+        # "Review …" button that jumps straight to its trust panel.
+        self._library_skills_import_review_name: str = ""
         # Skill detail/trust editor (Task 4 of the Skills sub-project).
         # Mirrors the prompts editor's own state shape
         # (``_library_prompts_view``/``_library_prompt_detail``/etc.) --
@@ -1068,6 +1091,14 @@ class LibraryScreen(BaseAppScreen):
         # staleness reconciliation), this editor always starts a fresh
         # session per open, so no extra staleness check is needed.
         self._library_skill_active_review: dict[str, Any] | None = None
+        # task-415: inline two-step delete (mirrors
+        # ``_library_media_confirming_delete``): the first Delete press
+        # arms this; only the recomposed confirm button actually deletes.
+        self._library_skill_confirming_delete: bool = False
+        # task-417: one-shot flag armed by a create-save; the next editor
+        # recompose scrolls the action row (Save + status) back into view
+        # instead of landing at the top away from what the user pressed.
+        self._library_skill_scroll_pending: bool = False
         self._library_note_detail: Mapping[str, Any] | None = None
         self._selected_note_id: str = ""
         self._library_note_version: int | None = None
@@ -1174,9 +1205,17 @@ class LibraryScreen(BaseAppScreen):
         ``screen.refresh(recompose=True)``, which replaces the footer widget;
         the registration must survive that.
         """
-        self.register_footer_shortcuts(
-            source="library", shortcuts=self.LIBRARY_SHORTCUTS
+        # task-420: the "u" action hard-gates on the Search/RAG row, so
+        # advertising it screen-wide made it a dead shortcut everywhere
+        # else -- register it only where it works, re-registered on every
+        # rail-row switch (the personas-style dynamic-context use of this
+        # API).
+        shortcuts = (
+            self.LIBRARY_SHORTCUTS
+            if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+            else ()
         )
+        self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
 
     def on_mount(self) -> None:
         """Populate the Library on entry, rendering instantly from cache.
@@ -1524,6 +1563,13 @@ class LibraryScreen(BaseAppScreen):
         await self._flush_library_note_save()
         prompt_flush_allowed = await self._flush_library_prompt_save()
         skill_flush_allowed = await self._flush_library_skill_save()
+        if not skill_flush_allowed:
+            # task-449: the app-level navigation veto only logs, so tell
+            # the user why the tab switch was refused -- same toast as the
+            # in-screen Back / row-switch / rail-switch vetoes. Notes show
+            # their own conflict banner and prompts predate this pattern,
+            # so only the skill veto reports here.
+            self._notify_skill_dirty_veto()
         return (
             not self._library_note_dirty
             and prompt_flush_allowed
@@ -3657,6 +3703,10 @@ class LibraryScreen(BaseAppScreen):
                             # (``_enter_library_skill_create_editor`` leaves
                             # ``_selected_skill_name`` empty).
                             is_create=not self._selected_skill_name,
+                            dirty=self._library_skill_dirty,
+                            confirming_delete=self._library_skill_confirming_delete,
+                            scroll_to_actions=self._consume_library_skill_scroll_pending(),
+                            skill_path=self._library_skill_on_disk_path(),
                             id="library-skills-canvas",
                         )
                 elif shell.canvas_kind == "skills":
@@ -3667,6 +3717,7 @@ class LibraryScreen(BaseAppScreen):
                         import_open=self._library_skills_import_open,
                         import_path=self._library_skills_import_path,
                         import_status=self._library_skills_import_status,
+                        import_review_name=self._library_skills_import_review_name,
                         id="library-skills-canvas",
                     )
                 elif shell.canvas_kind == "search":
@@ -6384,16 +6435,24 @@ class LibraryScreen(BaseAppScreen):
 
         A dirty note edit is flushed first (awaited) so leaving via the rail
         never silently discards unsaved text; any unsaved edit surviving the
-        flush aborts the row switch entirely. A dirty prompt edit is vetoed
-        the same way (see ``_flush_library_prompt_save`` -- explicit-Save-
-        only, so there is nothing to flush, only to veto on).
+        flush aborts the row switch entirely. Dirty prompt and skill edits
+        are vetoed the same way (see ``_flush_library_prompt_save`` /
+        ``_flush_library_skill_save`` -- both explicit-Save-only, so there
+        is nothing to flush, only to veto on). task-448: the skill guard was
+        originally omitted here, so a rail switch silently discarded dirty
+        skill edits while Back/row-switch exits vetoed them.
         """
         await self._flush_library_note_save()
         if self._library_note_dirty:
             return
         if not await self._flush_library_prompt_save():
             return
+        if not await self._flush_library_skill_save():
+            self._notify_skill_dirty_veto()
+            return
         self._library_selected_row_id = row_id
+        # task-420: keep the footer's "u" hint in sync with the row gate.
+        self._register_footer_shortcuts()
         # A rail-row press is always a fresh entry into a content type, so
         # the media canvas must never resume a previously opened viewer
         # (e.g. Browse Media -> open item -> Browse Conversations -> Browse
@@ -6410,6 +6469,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_filter_records = None
         self._reset_library_note_editor_state()
         self._reset_library_prompt_editor_state()
+        self._reset_library_skills_import_state()
         self._reset_library_notes_sync_transient_state()
         self._reset_library_ingest_transient_state()
         # Always resets to the Everything scope (a plain rail-row press,
@@ -6447,6 +6507,9 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(self._arm_library_prompt_editor)
         if row_id == LIBRARY_ROW_CREATE_SKILL and self.is_mounted:
             self.call_after_refresh(self._arm_library_skill_editor)
+            # task-424: first action in a blank create editor is always
+            # naming it -- put the caret there.
+            self.call_after_refresh(self._focus_library_skill_name)
 
     @on(Button.Pressed, ".console-rail-section-toggle")
     def handle_library_rail_section_toggle(self, event: Button.Pressed) -> None:
@@ -6875,6 +6938,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_import_open = False
         self._library_skills_import_path = ""
         self._library_skills_import_status = ""
+        self._library_skills_import_review_name = ""
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-skills-import-browse")
@@ -6896,12 +6960,76 @@ class LibraryScreen(BaseAppScreen):
             if selected_path is None:
                 return
             self._library_skills_import_path = str(selected_path)
+            # Clear a prior import's success status + "Review …" button so
+            # they don't hang against the newly-picked, not-yet-imported
+            # path (review finding).
+            self._library_skills_import_status = ""
+            self._library_skills_import_review_name = ""
             self.refresh(recompose=True)
 
         self.app.push_screen(
             FileOpen(title="Import Skill (SKILL.md)"),
             browse_callback,
         )
+
+    @on(Button.Pressed, "#library-skills-import-browse-folder")
+    def handle_library_skills_import_browse_folder(self, event: Button.Pressed) -> None:
+        """Push a ``SelectDirectory`` dialog to pick a skill's own folder.
+
+        task-422: a real skill package is a directory named after the
+        skill containing ``SKILL.md`` -- the file-only Browse forced that
+        common shape to be typed by hand.
+
+        Args:
+            event: Button press event emitted by the "Browse folder…"
+                action.
+        """
+        event.stop()
+
+        async def browse_callback(selected_path: Path | None) -> None:
+            if selected_path is None:
+                return
+            self._library_skills_import_path = str(selected_path)
+            # Clear a prior import's success status + "Review …" button so
+            # they don't hang against the newly-picked, not-yet-imported
+            # path (review finding).
+            self._library_skills_import_status = ""
+            self._library_skills_import_review_name = ""
+            self.refresh(recompose=True)
+
+        self.app.push_screen(
+            SelectDirectory(title="Import Skill Folder"),
+            browse_callback,
+        )
+
+    @on(Button.Pressed, "#library-skills-import-review")
+    async def handle_library_skills_import_review(self, event: Button.Pressed) -> None:
+        """Open the just-imported skill's editor (its trust panel included).
+
+        task-422: the import success copy tells the user to "re-review it
+        in the trust panel" -- this is the direct path, reusing the exact
+        row-press open flow.
+
+        Args:
+            event: Button press event emitted by the import row's
+                "Review …" action.
+        """
+        event.stop()
+        name = self._library_skills_import_review_name
+        if not name:
+            return
+        if not await self._flush_library_skill_save():
+            return
+        self._reset_library_skill_editor_state()
+        self._selected_skill_name = name
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
+        self._library_skills_view = "editor"
+        self.run_worker(
+            self._refresh_library_skill_detail(name),
+            exclusive=True,
+            group="library_skill_detail",
+        )
+        self.refresh(recompose=True)
 
     @on(Input.Changed, "#library-skills-import-path")
     def handle_library_skills_import_path_changed(self, event: Input.Changed) -> None:
@@ -6947,6 +7075,7 @@ class LibraryScreen(BaseAppScreen):
         """
         if self._library_skills_view != "list":
             return
+        self._library_skills_import_review_name = ""
         raw_path = self._library_skills_import_path.strip()
         if not raw_path:
             self._apply_library_skills_import_status(
@@ -7173,6 +7302,7 @@ class LibraryScreen(BaseAppScreen):
         exactly like a fresh one.
         """
         self._library_skills_import_path = ""
+        self._library_skills_import_review_name = skill_name
         self._apply_library_skills_import_status(
             f'Imported "{skill_name}" · re-review it in the trust panel'
         )
@@ -7293,6 +7423,7 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         if not await self._flush_library_skill_save():
+            self._notify_skill_dirty_veto()
             return
         skill_name = getattr(event.button, "skill_name", None)
         self._reset_library_skill_editor_state()
@@ -7428,7 +7559,22 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_status = ""
         self._library_skill_conflict = False
         self._library_skill_active_review = None
+        self._library_skill_confirming_delete = False
+        self._library_skill_scroll_pending = False
         self._library_skill_editor_armed = False
+
+    def _reset_library_skills_import_state(self) -> None:
+        """Close the inline Import row and drop its path/outcome (task-422).
+
+        Called on every list re-entry (editor exits via
+        ``_reset_library_skill_editor_state``, fresh rail-row entries via
+        ``_select_library_rail_row``) so a stale import error can't
+        resurface minutes later (verified live in the UX review).
+        """
+        self._library_skills_import_open = False
+        self._library_skills_import_path = ""
+        self._library_skills_import_status = ""
+        self._library_skills_import_review_name = ""
 
     def _reset_library_skill_editor_state(self) -> None:
         """Clear all in-canvas Library skill editor/save/trust state.
@@ -7437,6 +7583,7 @@ class LibraryScreen(BaseAppScreen):
         so every exit from the editor leaves save/conflict/trust-review
         tracking clean for the next skill.
         """
+        self._reset_library_skills_import_state()
         self._library_skills_view = "list"
         self._library_skill_detail = None
         self._library_skill_original_name = ""
@@ -7445,18 +7592,93 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_status = ""
         self._library_skill_conflict = False
         self._library_skill_active_review = None
+        self._library_skill_confirming_delete = False
+        self._library_skill_scroll_pending = False
         self._library_skill_editor_armed = False
 
-    def _mark_library_skill_dirty(self) -> None:
+    def _consume_library_skill_scroll_pending(self) -> bool:
+        """One-shot read of the create-save scroll-back flag (task-417).
+
+        Returns:
+            ``True`` exactly once per arm -- the first recompose after a
+            create-save scrolls the action row into view, later ones don't.
+        """
+        pending = self._library_skill_scroll_pending
+        self._library_skill_scroll_pending = False
+        return pending
+
+    def _library_skill_text_fields_match_state(self) -> bool:
+        """True when every live text field equals the editor state's value.
+
+        task-417: a recompose (e.g. the post-create snapshot refresh)
+        remounts the editor's Inputs/TextArea, whose spurious mount-time
+        ``Changed`` events can arrive AFTER any ``call_after_refresh``
+        re-arm -- the armed-flag dance alone cannot win that race. A mount
+        echo always carries the state's own values, so value equality is
+        the reliable spurious-vs-real discriminator.
+        """
+        state = self._library_skill_editor_state
+        if state is None:
+            return False
+        fields = self._read_library_skill_editor_fields()
+        if fields is None:
+            return False
+        (
+            raw_name,
+            raw_description,
+            raw_argument_hint,
+            raw_allowed_tools_csv,
+            raw_model,
+            raw_body,
+        ) = fields
+        return (
+            raw_name == (state.name or "")
+            and raw_description == (state.description or "")
+            and raw_argument_hint == (state.argument_hint or "")
+            and raw_allowed_tools_csv == (state.allowed_tools_csv or "")
+            and raw_model == (state.model or "")
+            and raw_body == (state.body or "")
+        )
+
+    def _library_skill_on_disk_path(self) -> str:
+        """The selected skill's on-disk directory, for remediation copy.
+
+        Empty when the service or selection is unavailable (the copy
+        helper falls back to generic wording).
+        """
+        service = getattr(self.app_instance, "local_skills_service", None)
+        skills_dir = getattr(service, "skills_dir", None)
+        name = self._selected_skill_name
+        if skills_dir is None or not name:
+            return ""
+        try:
+            return str(Path(skills_dir) / name)
+        except Exception:
+            return ""
+
+    def _mark_library_skill_dirty(self, *, force: bool = False) -> None:
         """Record an in-progress skill edit.
 
         Ignored until ``_library_skill_editor_armed`` is set (see that
-        flag's docstring). Unlike the notes editor, this never arms an
-        autosave timer -- the skill editor is explicit-Save-only.
+        flag's docstring), and -- unless ``force`` -- ignored when the live
+        text fields still equal the editor state (a mount-time ``Changed``
+        echo, task-417). The toggle/cycle buttons mutate the state BEFORE
+        marking, so they pass ``force=True``. Unlike the notes editor,
+        this never arms an autosave timer -- the skill editor is
+        explicit-Save-only.
         """
         if not self._library_skill_editor_armed:
             return
+        if not force and self._library_skill_text_fields_match_state():
+            return
         self._library_skill_dirty = True
+        # task-449: dirty-marking never recomposes, so the Discard button's
+        # initial disabled render is patched live here.
+        self._set_library_skill_discard_enabled(True)
+        # task-417: a lingering "Saved." is stale the moment new edits
+        # exist -- clear it alongside the dirty mark.
+        if self._library_skill_status:
+            self._update_library_skill_status_static("")
 
     def _read_library_skill_live_name(self) -> str:
         """Read the Name Input's current (possibly unsaved) value.
@@ -7525,6 +7747,14 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
         try:
+            self.query_one("#library-skill-trust-remediation", Static).update(
+                skill_trust_remediation_copy(
+                    state.trust_status, self._library_skill_on_disk_path()
+                )
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
             self.query_one("#library-skill-trust-review-files", Static).update(
                 ", ".join(
                     str(item)
@@ -7533,6 +7763,12 @@ class LibraryScreen(BaseAppScreen):
                         or []
                     )
                 )
+            )
+        except (NoMatches, QueryError):
+            pass
+        try:
+            self.query_one("#library-skill-trust-review-content", Static).update(
+                skill_trust_review_preview(self._library_skill_active_review)
             )
         except (NoMatches, QueryError):
             pass
@@ -7569,10 +7805,8 @@ class LibraryScreen(BaseAppScreen):
         self._mark_library_skill_dirty()
         self._update_library_skill_warnings_static(name=event.value)
 
-    @on(Input.Changed, "#library-skill-description")
     @on(Input.Changed, "#library-skill-argument-hint")
     @on(Input.Changed, "#library-skill-allowed-tools")
-    @on(Input.Changed, "#library-skill-model")
     def handle_library_skill_input_changed(self, event: Input.Changed) -> None:
         """Mark the open skill dirty on a field edit.
 
@@ -7581,6 +7815,32 @@ class LibraryScreen(BaseAppScreen):
                 single-line fields.
         """
         self._mark_library_skill_dirty()
+
+    @on(Input.Changed, "#library-skill-description")
+    def handle_library_skill_description_changed(self, event: Input.Changed) -> None:
+        """Mark dirty on a Description edit and sync the derived-hint (review
+        finding).
+
+        The "No description set" hint (rendered only when the skill's
+        description was auto-derived from its body) is compose-time-only, so
+        without this it would linger beneath a now-populated field. It is
+        meaningful only while the field is still empty.
+
+        Args:
+            event: Input change event emitted by the Description field.
+        """
+        self._mark_library_skill_dirty()
+        self._sync_library_skill_description_hint(event.value)
+
+    def _sync_library_skill_description_hint(self, live_value: str) -> None:
+        """Show the derived-description hint only while the field is empty."""
+        state = self._library_skill_editor_state
+        should_show = bool(
+            state is not None and state.description_derived and not live_value.strip()
+        )
+        for hint in self.query("#library-skill-description-hint"):
+            if isinstance(hint, Static):
+                hint.display = should_show
 
     @on(TextArea.Changed, "#library-skill-body")
     def handle_library_skill_body_changed(self, event: TextArea.Changed) -> None:
@@ -7630,7 +7890,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_editor_state = dataclasses.replace(
             state, user_invocable=not state.user_invocable
         )
-        self._mark_library_skill_dirty()
+        self._mark_library_skill_dirty(force=True)
         self._update_library_skill_toggle_buttons()
 
     @on(Button.Pressed, "#library-skill-disable-model")
@@ -7647,7 +7907,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_editor_state = dataclasses.replace(
             state, disable_model_invocation=not state.disable_model_invocation
         )
-        self._mark_library_skill_dirty()
+        self._mark_library_skill_dirty(force=True)
         self._update_library_skill_toggle_buttons()
 
     @on(Button.Pressed, "#library-skill-context")
@@ -7664,7 +7924,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_editor_state = dataclasses.replace(
             state, context=next_skill_context(state.context)
         )
-        self._mark_library_skill_dirty()
+        self._mark_library_skill_dirty(force=True)
         self._update_library_skill_toggle_buttons()
 
     def _read_library_skill_editor_fields(
@@ -7879,8 +8139,15 @@ class LibraryScreen(BaseAppScreen):
         )
         self._library_skill_original_name = self._library_skill_editor_state.name
         self._library_skill_dirty = False
+        # task-449: this success tail deliberately never recomposes, so the
+        # Discard button is re-disabled in place alongside the dirty clear.
+        self._set_library_skill_discard_enabled(False)
         if is_create:
             self._selected_skill_name = self._library_skill_editor_state.name
+            # task-417: the snapshot refresh below lands a recompose that
+            # would reset the canvas scroll to the top, away from the Save
+            # button the user just pressed -- arm the one-shot scroll-back.
+            self._library_skill_scroll_pending = True
             # A brand-new skill changes the list's membership/count, so the
             # Skills rail badge and list must pick up the new row now --
             # fire-and-forget, mirrors ``_save_library_prompt``'s equivalent
@@ -7938,6 +8205,90 @@ class LibraryScreen(BaseAppScreen):
         """
         return not self._library_skill_dirty
 
+    def _notify_skill_dirty_veto(self) -> None:
+        """Tell the user WHY a skill-editor exit was just vetoed (task-449).
+
+        Every ``_flush_library_skill_save`` veto site calls this so a
+        blocked Back / skill-row / rail-row click never reads as a dead
+        button. Warning severity matches the trust-action toasts.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(LIBRARY_SKILL_DIRTY_VETO_COPY, severity="warning")
+
+    def _set_library_skill_discard_enabled(self, enabled: bool) -> None:
+        """Patch the Discard button's disabled state in place (task-449).
+
+        Dirty-marking and the save-success tail both deliberately avoid a
+        recompose (see ``_apply_library_skill_save_success``), so the
+        Discard button's initial ``disabled=not dirty`` render must be
+        kept current by hand at those two transitions.
+        """
+        for button in self.query("#library-skill-discard"):
+            if isinstance(button, Button):
+                button.disabled = not enabled
+
+    def _library_skill_editor_active(self) -> bool:
+        """True while the in-canvas skill editor is the live view (task-424)."""
+        return (
+            self._library_selected_row_id
+            in (LIBRARY_ROW_BROWSE_SKILLS, LIBRARY_ROW_CREATE_SKILL)
+            and self._library_skills_view == "editor"
+        )
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Gate the skill-editor key bindings to the open editor (task-424).
+
+        Returning ``False`` deactivates the binding entirely, so Escape /
+        Ctrl+S behave as if unbound anywhere else on the Library screen.
+        """
+        if action in ("library_skill_save", "library_skill_back"):
+            return self._library_skill_editor_active()
+        return True
+
+    def action_library_skill_save(self) -> None:
+        """Ctrl+S: save the open skill from anywhere in the editor (task-424)."""
+        if not self._library_skill_editor_active():
+            return
+        # No save during the conflict banner or the delete confirmation --
+        # in both states the Save button is gone, so the accelerator must
+        # not fire an action the visible chrome no longer offers (review
+        # finding for the delete-confirm case).
+        if self._library_skill_conflict or self._library_skill_confirming_delete:
+            return
+        self.run_worker(
+            self._save_library_skill(),
+            exclusive=True,
+            group="library_skill_save",
+        )
+
+    async def action_library_skill_back(self) -> None:
+        """Escape: leave the editor, honoring the unsaved-changes guard (task-424)."""
+        if not self._library_skill_editor_active():
+            return
+        await self._exit_library_skill_editor_guarded()
+
+    async def _exit_library_skill_editor_guarded(self) -> bool:
+        """Shared Back exit: veto (with toast) while dirty, else reset to list.
+
+        Returns:
+            ``True`` when the editor was exited; ``False`` on a dirty veto.
+        """
+        if not await self._flush_library_skill_save():
+            self._notify_skill_dirty_veto()
+            return False
+        self._reset_library_skill_editor_state()
+        self._refresh_local_source_snapshot()
+        self.refresh(recompose=True)
+        return True
+
+    def _focus_library_skill_name(self) -> None:
+        """Focus the create editor's Name field (task-424)."""
+        try:
+            self.query_one("#library-skill-name", Input).focus()
+        except (NoMatches, QueryError):
+            pass
+
     @on(Button.Pressed, "#library-skill-back")
     async def handle_library_skill_back(self, event: Button.Pressed) -> None:
         """Return the Library skills canvas from the editor to its list view.
@@ -7949,7 +8300,25 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the "‹ Back to list" action.
         """
         event.stop()
-        if not await self._flush_library_skill_save():
+        await self._exit_library_skill_editor_guarded()
+
+    @on(Button.Pressed, "#library-skill-discard")
+    def handle_library_skill_discard(self, event: Button.Pressed) -> None:
+        """Leave the skill editor WITHOUT saving the dirty edit (task-449).
+
+        The explicit counterpart to the dirty vetoes: Back and every row
+        switch refuse to move while ``_library_skill_dirty`` is set, so
+        this button is the one deliberate way out that drops the edit.
+        Same exit tail as a clean Back (reset + snapshot + recompose); the
+        button renders disabled until the editor is actually dirty, so a
+        stray click on a clean editor can't discard anything.
+
+        Args:
+            event: Button press event emitted by the "Discard changes"
+                action.
+        """
+        event.stop()
+        if not self._library_skill_dirty:
             return
         self._reset_library_skill_editor_state()
         self._refresh_local_source_snapshot()
@@ -7957,14 +8326,80 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-skill-delete")
     def handle_library_skill_delete(self, event: Button.Pressed) -> None:
-        """Delete the open skill and return to the list view.
+        """Arm the inline delete confirmation (task-415).
 
-        Confirm-free by design (a single press deletes) -- matches the
-        notes/prompts delete affordance's "dim button, single press
-        acceptable" posture.
+        First press no longer deletes: it snapshots any live field edits
+        into the editor state (so the confirm recompose can't lose typed
+        text), then recomposes into the confirm-copy + Delete/Cancel row
+        -- the notes/media confirming-delete pattern. Only
+        ``handle_library_skill_delete_confirm`` actually deletes.
 
         Args:
             event: Button press event emitted by the editor's "Delete" action.
+        """
+        event.stop()
+        if self._library_skills_view != "editor" or not self._selected_skill_name:
+            return
+        self._snapshot_library_skill_live_fields()
+        self._library_skill_confirming_delete = True
+        if self.is_mounted:
+            # Disarm across the recompose (mirrors the bootstrap-trust
+            # tail): remounting Inputs fires their initial ``Changed``,
+            # which still-armed dirty-tracking would misread as an edit.
+            # The dirty flag itself is deliberately left untouched.
+            self._library_skill_editor_armed = False
+            # The confirm copy + Delete/Cancel row render at the very bottom
+            # of a tall editor; without the scroll-back the arm recompose
+            # (a fresh VerticalScroll at y=0) leaves them below the fold and
+            # the Delete press reads as a no-op (review finding).
+            self._library_skill_scroll_pending = True
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_skill_editor)
+
+    def _snapshot_library_skill_live_fields(self) -> None:
+        """Fold the editor's live (possibly unsaved) field values back into
+        ``_library_skill_editor_state`` so a state-driven recompose renders
+        exactly what the user had typed (task-415's confirm step).
+        """
+        state = self._library_skill_editor_state
+        if state is None:
+            return
+        fields = self._read_library_skill_editor_fields()
+        if fields is None:
+            return
+        (
+            raw_name,
+            raw_description,
+            raw_argument_hint,
+            raw_allowed_tools_csv,
+            raw_model,
+            raw_body,
+        ) = fields
+        self._library_skill_editor_state = dataclasses.replace(
+            state,
+            # Rename is unsupported; existing skills keep their name (the
+            # Name Input is disabled there anyway), create mode keeps the
+            # typed name.
+            name=raw_name if not self._selected_skill_name else state.name,
+            description=raw_description,
+            # A typed description is no longer "derived from the body", so a
+            # state-driven recompose must not re-show the "No description
+            # set" hint next to the populated field (review finding). Stays
+            # derived only while the field is still empty.
+            description_derived=state.description_derived and not raw_description.strip(),
+            argument_hint=raw_argument_hint,
+            allowed_tools_csv=raw_allowed_tools_csv,
+            model=raw_model,
+            body=raw_body,
+        )
+
+    @on(Button.Pressed, "#library-skill-delete-confirm")
+    def handle_library_skill_delete_confirm(self, event: Button.Pressed) -> None:
+        """Run the confirmed delete (task-415's second step).
+
+        Args:
+            event: Button press event emitted by the confirm row's
+                "Delete" action.
         """
         event.stop()
         if self._library_skills_view != "editor" or not self._selected_skill_name:
@@ -7974,6 +8409,30 @@ class LibraryScreen(BaseAppScreen):
             exclusive=True,
             group="library_skill_delete",
         )
+
+    @on(Button.Pressed, "#library-skill-delete-cancel")
+    def handle_library_skill_delete_cancel(self, event: Button.Pressed) -> None:
+        """Leave the delete confirmation without deleting (task-415).
+
+        Args:
+            event: Button press event emitted by the confirm row's
+                "Cancel" action.
+        """
+        event.stop()
+        # Fields stay editable during the confirmation, so fold any edit
+        # typed there back into state before the state-driven recompose --
+        # otherwise the recompose reverts it while _library_skill_dirty
+        # stays True, and a later Save would persist the reverted value
+        # (review finding). Mirrors the arm path's snapshot.
+        self._snapshot_library_skill_live_fields()
+        self._library_skill_confirming_delete = False
+        if self.is_mounted:
+            self._library_skill_editor_armed = False
+            # Return the viewport to the action row the user was at, matching
+            # the arm recompose's scroll-back.
+            self._library_skill_scroll_pending = True
+            self.refresh(recompose=True)
+            self.call_after_refresh(self._arm_library_skill_editor)
 
     async def _delete_library_skill(self, skill_name: str) -> None:
         """Delete the selected Library skill, then return to the list view.
@@ -8031,12 +8490,19 @@ class LibraryScreen(BaseAppScreen):
         if self.is_mounted:
             self.refresh(recompose=True)
 
-    async def _request_library_skill_trust_passphrase(self) -> str | None:
+    async def _request_library_skill_trust_passphrase(
+        self,
+        *,
+        title: str | None = None,
+        message: str | None = None,
+    ) -> str | None:
         """Push the shared ``SkillTrustPassphraseModal`` and await a passphrase.
 
         Mirrors ``skills_screen.SkillsScreen._request_skill_trust_passphrase``
         (reused, not forked): never bootstraps from this editor, so
-        ``confirm_bootstrap`` is always ``False``.
+        ``confirm_bootstrap`` is always ``False``. task-418: ``title``/
+        ``message`` let a caller present its real purpose (the approve
+        flow) instead of "Unlock Local Skill Trust".
         """
         push_screen_wait = getattr(self.app, "push_screen_wait", None)
         if not callable(push_screen_wait):
@@ -8048,7 +8514,9 @@ class LibraryScreen(BaseAppScreen):
                 )
             return None
         result = await push_screen_wait(
-            SkillTrustPassphraseModal(confirm_bootstrap=False)
+            SkillTrustPassphraseModal(
+                confirm_bootstrap=False, title=title, message=message
+            )
         )
         if isinstance(result, str) and result:
             return result
@@ -8058,6 +8526,7 @@ class LibraryScreen(BaseAppScreen):
         self,
         method_name: str,
         *args: Any,
+        failure_copy: Mapping[str, str] | None = None,
     ) -> tuple[Any, bool]:
         """Call a ``local_skill_trust_service`` method off the UI loop.
 
@@ -8065,6 +8534,13 @@ class LibraryScreen(BaseAppScreen):
         (reused pattern, not forked): every ``SkillTrustService`` method
         this editor calls is a plain sync method, offloaded via
         ``asyncio.to_thread``.
+
+        Args:
+            method_name: Trust-service method to invoke.
+            *args: Positional arguments forwarded to the method.
+            failure_copy: Optional map of exception message -> specific
+                toast copy (task-414: e.g. ``snapshot_mismatch``); falls
+                back to the generic failure toast for unmapped errors.
 
         Returns:
             ``(result, True)`` on success, or ``(None, False)`` on any
@@ -8090,12 +8566,12 @@ class LibraryScreen(BaseAppScreen):
                 action=method_name,
                 error_type=type(exc).__name__,
             )
+            copy = "Local skill trust action could not be completed."
+            if failure_copy:
+                copy = failure_copy.get(str(exc), copy)
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
-                notify(
-                    "Local skill trust action could not be completed.",
-                    severity="warning",
-                )
+                notify(copy, severity="warning")
             return None, False
         return result, True
 
@@ -8162,6 +8638,8 @@ class LibraryScreen(BaseAppScreen):
                 skill trust" action.
         """
         event.stop()
+        # task-417: any trust action supersedes a lingering "Saved.".
+        self._update_library_skill_status_static("")
         self.run_worker(
             self._bootstrap_library_skill_trust(),
             exclusive=True,
@@ -8237,6 +8715,8 @@ class LibraryScreen(BaseAppScreen):
                 action.
         """
         event.stop()
+        # task-417: any trust action supersedes a lingering "Saved.".
+        self._update_library_skill_status_static("")
         self.run_worker(
             self._unlock_library_skill_trust(),
             exclusive=True,
@@ -8264,6 +8744,8 @@ class LibraryScreen(BaseAppScreen):
                 changes" action.
         """
         event.stop()
+        # task-417: any trust action supersedes a lingering "Saved.".
+        self._update_library_skill_status_static("")
         self.run_worker(
             self._review_library_skill_trust(),
             exclusive=True,
@@ -8293,6 +8775,8 @@ class LibraryScreen(BaseAppScreen):
                 "Approve" action.
         """
         event.stop()
+        # task-417: any trust action supersedes a lingering "Saved.".
+        self._update_library_skill_status_static("")
         self.run_worker(
             self._approve_library_skill_trust(),
             exclusive=True,
@@ -8309,7 +8793,15 @@ class LibraryScreen(BaseAppScreen):
         review_id = self._library_skill_active_review.get("review_id")
         if not review_id:
             return
-        passphrase = await self._request_library_skill_trust_passphrase()
+        passphrase = await self._request_library_skill_trust_passphrase(
+            # task-418: the user pressed Approve -- say so, instead of the
+            # modal's default "Unlock Local Skill Trust" purpose.
+            title="Approve Reviewed Skill Version",
+            message=(
+                "Enter the local skill trust passphrase to make the "
+                "reviewed files the new trusted baseline."
+            ),
+        )
         if passphrase is None:
             return
         _, unlock_ok = await self._call_library_skill_trust_service(
@@ -8318,9 +8810,23 @@ class LibraryScreen(BaseAppScreen):
         if not unlock_ok:
             return
         _, ok = await self._call_library_skill_trust_service(
-            "trust_reviewed_snapshot", review_id
+            "trust_reviewed_snapshot",
+            review_id,
+            failure_copy={"snapshot_mismatch": LIBRARY_SKILL_TRUST_MISMATCH_COPY},
         )
         if not ok:
+            # task-414: the service discards the review on EVERY
+            # ``trust_reviewed_snapshot`` raise path, so keeping the
+            # captured review here would leave Approve armed against a
+            # dead review id. Drop it and re-sync the panel so the user
+            # is cleanly back at the Review changes step.
+            if (
+                name == self._selected_skill_name
+                and self._library_skills_view == "editor"
+            ):
+                self._library_skill_active_review = None
+                self._render_library_skill_trust_panel()
+                await self._refresh_library_skill_trust_status()
             return
         if name != self._selected_skill_name or self._library_skills_view != "editor":
             return

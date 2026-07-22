@@ -74,9 +74,11 @@ def test_query_matches_name_and_description():
 
 
 def test_flags_line_variants():
-    assert skill_flags_line(True, False) == "user · agent"
-    assert skill_flags_line(True, True) == "user"
-    assert skill_flags_line(False, False) == "agent"
+    # task-418 copy pass: spell the invocability out instead of the bare
+    # "user · agent" tokens (no legend existed anywhere in the UI).
+    assert skill_flags_line(True, False) == "invocable: user & agent"
+    assert skill_flags_line(True, True) == "invocable: user only"
+    assert skill_flags_line(False, False) == "invocable: agent only"
     assert skill_flags_line(False, True) == "not invocable"
 
 
@@ -201,3 +203,35 @@ def test_shadow_name_set_stays_in_sync_with_real_sources():
     assert command_names <= _SHADOWED_BUILTIN_NAMES, (
         f"ConsoleCommandRegistry names not covered: {command_names - _SHADOWED_BUILTIN_NAMES}"
     )
+
+
+def test_build_editor_state_marks_derived_description_and_keeps_field_empty():
+    """task-419: when the SKILL.md frontmatter has NO description, the
+    service derives one from the first body line for list display -- the
+    editor must not echo that into the Description field as if the user
+    had written it (a later save would ratchet it into the frontmatter)."""
+    from tldw_chatbook.Library.library_skills_state import build_skill_editor_state
+
+    state = build_skill_editor_state(
+        {
+            "name": "demo",
+            "description": "First body line.",
+            "content": "---\nname: demo\n---\nFirst body line.\nMore.",
+        }
+    )
+    assert state.description == ""
+    assert state.description_derived is True
+
+
+def test_build_editor_state_keeps_real_frontmatter_description():
+    from tldw_chatbook.Library.library_skills_state import build_skill_editor_state
+
+    state = build_skill_editor_state(
+        {
+            "name": "demo",
+            "description": "Real description.",
+            "content": "---\nname: demo\ndescription: Real description.\n---\nBody.",
+        }
+    )
+    assert state.description == "Real description."
+    assert state.description_derived is False

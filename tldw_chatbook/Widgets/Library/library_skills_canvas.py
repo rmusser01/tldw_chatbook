@@ -32,6 +32,7 @@ from typing import Any, Mapping
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_skills_state import (
@@ -42,7 +43,11 @@ from tldw_chatbook.Library.library_skills_state import (
 )
 
 _SORT_LABELS = {"name": "Name", "status": "Status"}
-_EMPTY_SKILLS_COPY = "No skills yet — create them in Library ▸ Skills."
+# task-418: the old copy ("create them in Library ▸ Skills") pointed at
+# the exact list the user was already looking at; name the real paths.
+_EMPTY_SKILLS_COPY = (
+    "No skills yet — use Create ▸ New skill in the rail, or Import… above."
+)
 _EMPTY_SKILLS_FILTER_COPY = "No skills match your filter."
 
 # Trust panel copy/gating (Task 4). Mirrors ``skills_screen.py``'s own
@@ -80,7 +85,7 @@ _NEEDS_REVIEW_WARNING = (
     'Saving marks this skill "needs review" — re-approve it in the trust '
     "panel after saving."
 )
-MODEL_HINT_COPY = "Not applied in v1."
+MODEL_HINT_COPY = "Not applied in v1 — shown for SKILL.md round-tripping only."
 
 # Fix wave (Skills Phase-1 gate, FIX 2): a brand-new install has no trust
 # manifest at all (``trust_status == "trust_uninitialized"``) -- the Library
@@ -127,9 +132,135 @@ def skill_trust_unlock_enabled(trust_status: str) -> bool:
     return trust_status == "trust_locked"
 
 
+def skill_trust_remediation_copy(trust_status: str, skill_path: str) -> str:
+    """Guidance for the two blocked-but-non-reviewable trust states (task-421).
+
+    ``quarantined_manifest_error``/``quarantined_unsupported_path`` are
+    ``trust_blocked`` yet excluded from review eligibility and not
+    unlockable -- without this, the panel offered no way forward at all.
+
+    Args:
+        trust_status: The skill's current trust status.
+        skill_path: The skill's on-disk directory, for external repair.
+
+    Returns:
+        State-specific next-step guidance naming the on-disk location, or
+        ``""`` for every state that has in-panel remediation already.
+    """
+    where = skill_path or "the local skills directory"
+    if trust_status == "quarantined_manifest_error":
+        return (
+            "The local skill trust manifest can't be verified, so this "
+            f"skill stays blocked. Inspect the files under {where} and the "
+            "trust store next to it; if the manifest is beyond repair, "
+            "remove the trust store to start over with Set up skill trust."
+        )
+    if trust_status == "quarantined_unsupported_path":
+        return (
+            "This skill contains files at unsupported paths (for example "
+            f"nested folders or links). Open {where} and remove or flatten "
+            "them, then reopen this skill to re-check."
+        )
+    return ""
+
+
+# task-414: per-file preview cap. Generous enough for any realistic
+# SKILL.md, small enough that a pathological file can't wedge the panel.
+_TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP = 4000
+# PR #750 review (Qodo): aggregate caps so a review with many changed files
+# can't build/render an unbounded string during trust-panel refreshes. The
+# per-file cap alone bounds one file, not the total.
+_TRUST_REVIEW_PREVIEW_MAX_FILES = 20
+_TRUST_REVIEW_PREVIEW_TOTAL_CHAR_CAP = 20000
+
+
+def skill_trust_review_preview(active_review: Mapping[str, Any] | None) -> str:
+    """Render the captured review's changed-file CONTENT for human review.
+
+    task-414: ``capture_review`` has always returned ``current_files``
+    (filename -> full text), but the panel only ever showed the filename
+    list -- Approve was blind sign-off. This renders one labelled block
+    per changed file so the user can actually read what they are about to
+    trust. The trust store keeps fingerprints, not baseline text, so this
+    is an as-is content preview rather than a before/after diff.
+
+    Args:
+        active_review: The captured review mapping (or ``None`` while no
+            review is active).
+
+    Returns:
+        Labelled per-file content blocks, ``(deleted)`` markers for
+        changed files with no on-disk content, each file capped at
+        ``_TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP`` chars; empty string while
+        no review is active. Rendering is bounded to
+        ``_TRUST_REVIEW_PREVIEW_MAX_FILES`` files and
+        ``_TRUST_REVIEW_PREVIEW_TOTAL_CHAR_CAP`` total chars -- any
+        remaining files are summarized in a trailing "N more files
+        omitted" line.
+    """
+    if not active_review:
+        return ""
+    changed_files = [str(item) for item in (active_review.get("changed_files") or [])]
+    if not changed_files:
+        return ""
+    raw_files = active_review.get("current_files")
+    current_files = dict(raw_files) if isinstance(raw_files, Mapping) else {}
+    blocks: list[str] = []
+    total_chars = 0
+    rendered = 0
+    for file_name in changed_files:
+        # Stop once either aggregate budget is reached; the remaining files
+        # are accounted for in the trailing omission notice below.
+        if (
+            rendered >= _TRUST_REVIEW_PREVIEW_MAX_FILES
+            or total_chars >= _TRUST_REVIEW_PREVIEW_TOTAL_CHAR_CAP
+        ):
+            break
+        content = current_files.get(file_name)
+        if content is None:
+            block = f"── {file_name} ──\n(deleted — no longer on disk)"
+        else:
+            text = str(content)
+            if len(text) > _TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP:
+                text = (
+                    text[:_TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP]
+                    + f"\n… truncated ({len(text)} chars total) — open the file on disk to read the rest."
+                )
+            block = f"── {file_name} ──\n{text}"
+        blocks.append(block)
+        total_chars += len(block)
+        rendered += 1
+    omitted = len(changed_files) - rendered
+    if omitted > 0:
+        blocks.append(
+            f"… {omitted} more file{'s' if omitted != 1 else ''} omitted "
+            "— open on disk to review."
+        )
+    return "\n\n".join(blocks)
+
+
 def skill_trust_review_enabled(trust_status: str, trust_blocked: bool) -> bool:
     """Return whether the trust panel's Review changes action should be enabled."""
     return bool(trust_blocked) and trust_status in _TRUST_REVIEWABLE_STATUSES
+
+
+def skill_delete_confirm_copy(name: str, supporting_count: int) -> str:
+    """Build the inline delete-confirmation line (task-415).
+
+    Args:
+        name: The skill's name.
+        supporting_count: Number of supporting files that would be removed
+            along with ``SKILL.md``.
+
+    Returns:
+        One line naming exactly what a confirmed delete removes.
+    """
+    scope = "the skill's directory"
+    if supporting_count == 1:
+        scope += " and 1 supporting file"
+    elif supporting_count > 1:
+        scope += f" and {supporting_count} supporting files"
+    return f'Delete "{name}"? This removes {scope} and cannot be undone.'
 
 
 def skill_editor_warning_lines(
@@ -160,18 +291,49 @@ def skill_editor_warning_lines(
 
 
 def skill_user_invocable_label(value: bool) -> str:
-    """Render the user-invocable toggle Button's label."""
-    return f"user invocable: {'yes' if value else 'no'} ▸"
+    """Render the user-invocable toggle Button's label (task-418 copy).
+
+    Args:
+        value: Whether a user can invoke the skill directly.
+
+    Returns:
+        The toggle Button's label text.
+    """
+    return f"User can invoke: {'yes' if value else 'no'} ▸"
 
 
 def skill_disable_model_label(value: bool) -> str:
-    """Render the disable-model-invocation toggle Button's label."""
-    return f"disable model invocation: {'yes' if value else 'no'} ▸"
+    """Render the disable-model-invocation toggle Button's label.
+
+    task-418: display polarity is inverted -- the stored field stays
+    ``disable_model_invocation``, but the label answers the question the
+    user actually has ("can the agent invoke this?") instead of the
+    double-negative "disable model invocation: no".
+
+    Args:
+        value: The stored ``disable_model_invocation`` flag (``True`` means
+            the agent is barred from invoking the skill).
+
+    Returns:
+        The toggle Button's label text, phrased as "Agent can invoke".
+    """
+    return f"Agent can invoke: {'no' if value else 'yes'} ▸"
 
 
 def skill_context_toggle_label(context: str) -> str:
-    """Render the context-cycling Button's label."""
-    return f"context: {context} ▸"
+    """Render the context-cycling Button's label.
+
+    task-418: keeps the SKILL.md spec value (``inline``/``fork``) visible
+    for round-tripping, framed in plain language.
+
+    Args:
+        context: The skill's execution context (``"inline"`` or ``"fork"``).
+
+    Returns:
+        The cycle Button's label text.
+    """
+    hint = "this conversation" if context == "inline" else "sub-agent"
+    return f"Runs in: {context} ({hint}) ▸"
 
 
 def next_skill_context(context: str) -> str:
@@ -255,9 +417,14 @@ class LibrarySkillsListCanvas(VerticalScroll):
         conflict: bool = False,
         active_review: Mapping[str, Any] | None = None,
         is_create: bool = False,
+        dirty: bool = False,
+        confirming_delete: bool = False,
+        scroll_to_actions: bool = False,
+        skill_path: str = "",
         import_open: bool = False,
         import_path: str = "",
         import_status: str = "",
+        import_review_name: str = "",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -271,9 +438,14 @@ class LibrarySkillsListCanvas(VerticalScroll):
         self.conflict = conflict
         self.active_review = active_review
         self.is_create = is_create
+        self.dirty = dirty
+        self.confirming_delete = confirming_delete
+        self.scroll_to_actions = scroll_to_actions
+        self.skill_path = skill_path
         self.import_open = import_open
         self.import_path = import_path
         self.import_status = import_status
+        self.import_review_name = import_review_name
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -282,6 +454,37 @@ class LibrarySkillsListCanvas(VerticalScroll):
             yield from self._compose_editor()
             return
         yield from self._compose_list()
+
+    def on_mount(self) -> None:
+        """task-417: a recompose lands a fresh canvas scrolled to the top.
+
+        When the screen armed ``scroll_to_actions`` (the create-save
+        snapshot recompose), bring the action row back into view so the
+        user still sees the Save button and its status line they just
+        acted on.
+        """
+        if not (self.scroll_to_actions and self.mode == "editor"):
+            return
+
+        def _scroll_to_action_row() -> None:
+            # During the delete confirmation the Save button is replaced by
+            # the Delete/Cancel row, so anchor on the confirm copy that is
+            # actually present; otherwise the Save row (review finding).
+            for selector in (
+                "#library-skill-delete-confirm-copy",
+                "#library-skill-save",
+            ):
+                # Narrow to the query miss (PR #750 review): a missing anchor
+                # is expected (the Save button is absent in confirm mode), but
+                # any other error should surface rather than be swallowed.
+                try:
+                    target = self.query_one(selector)
+                except (NoMatches, QueryError):
+                    continue
+                target.scroll_visible(animate=False)
+                return
+
+        self.call_after_refresh(_scroll_to_action_row)
 
     def _compose_list(self) -> ComposeResult:
         state = self.state
@@ -386,13 +589,19 @@ class LibrarySkillsListCanvas(VerticalScroll):
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
         with toolbar:
-            # Browse… picks a FILE via the same FileOpen dialog the
-            # prompts/media-ingest Browse actions use -- that dialog has no
-            # directory-selection mode, so importing a skill BY ITS FOLDER
-            # path still has to be typed by hand into the path Input above.
+            # Browse… picks a FILE via the shared FileOpen dialog;
+            # task-422 adds the folder variant beside it (SelectDirectory)
+            # since a real skill package is a directory named after the
+            # skill -- the common shape no longer has to be typed by hand.
             yield Button(
                 "Browse…",
                 id="library-skills-import-browse",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Button(
+                "Browse folder…",
+                id="library-skills-import-browse-folder",
                 classes="library-canvas-action",
                 compact=True,
             )
@@ -413,6 +622,15 @@ class LibrarySkillsListCanvas(VerticalScroll):
             id="library-skills-import-status",
             markup=False,
         )
+        if self.import_review_name:
+            # task-422: the success copy says "re-review it in the trust
+            # panel" -- this is the direct path there.
+            yield Button(
+                f'Review "{self.import_review_name}"…',
+                id="library-skills-import-review",
+                classes="library-canvas-action",
+                compact=True,
+            )
 
     def _compose_editor(self) -> ComposeResult:
         """Render the SKILL.md editor: Back, fields, warnings, trust panel, actions.
@@ -436,6 +654,13 @@ class LibrarySkillsListCanvas(VerticalScroll):
             value=editor_state.name,
             id="library-skill-name",
             disabled=not self.is_create,
+            # task-424: the format rule is known upfront -- say it before
+            # the save-time error can fire.
+            placeholder=(
+                "lowercase letters, numbers, hyphens (e.g. code-review)"
+                if self.is_create
+                else ""
+            ),
         )
         if not self.is_create:
             yield Static(
@@ -446,6 +671,17 @@ class LibrarySkillsListCanvas(VerticalScroll):
             )
         yield Static("Description", classes="library-prompt-field-label", markup=False)
         yield Input(value=editor_state.description, id="library-skill-description")
+        if editor_state.description_derived:
+            # task-419: the record's description was auto-derived (no
+            # frontmatter description on disk); say so instead of quietly
+            # pre-filling the field with text the user never wrote.
+            yield Static(
+                "No description set — lists show the skill's first body line "
+                "automatically. Type here to set your own.",
+                id="library-skill-description-hint",
+                classes="library-skill-field-hint",
+                markup=False,
+            )
         yield Static(
             "Argument hint", classes="library-prompt-field-label", markup=False
         )
@@ -481,7 +717,14 @@ class LibrarySkillsListCanvas(VerticalScroll):
         yield Static(
             "Model override", classes="library-prompt-field-label", markup=False
         )
-        yield Input(value=editor_state.model or "", id="library-skill-model")
+        # task-420: the field has no runtime effect in v1 -- render it
+        # read-only (still visible for SKILL.md round-tripping of an
+        # imported skill's value) instead of live-and-inert.
+        yield Input(
+            value=editor_state.model or "",
+            id="library-skill-model",
+            disabled=True,
+        )
         yield Static(
             MODEL_HINT_COPY,
             id="library-skill-model-hint",
@@ -508,7 +751,29 @@ class LibrarySkillsListCanvas(VerticalScroll):
             )
         else:
             yield Static(self.status, id="library-skill-save-status", markup=False)
-        yield from self._compose_trust_panel(editor_state)
+        # task-416: no trust panel in create mode -- a never-saved skill
+        # has no on-disk files, so the panel could only show a false state
+        # ("Trust: trusted") with dead buttons. The post-create snapshot
+        # refresh recomposes with is_create=False, which renders the real
+        # panel for the just-saved skill.
+        if not self.is_create:
+            yield from self._compose_trust_panel(editor_state)
+        # task-415: inline two-step delete, mirroring the notes/media
+        # confirming-delete pattern. The confirm copy is a full-width
+        # Static ABOVE the toolbar (mixing a Static into the toolbar's
+        # Buttons is the known non-rendering failure mode the media
+        # viewer documents).
+        confirming_delete = (
+            self.confirming_delete and not self.conflict and not self.is_create
+        )
+        if confirming_delete:
+            yield Static(
+                skill_delete_confirm_copy(
+                    editor_state.name, len(editor_state.supporting_files)
+                ),
+                id="library-skill-delete-confirm-copy",
+                markup=False,
+            )
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
         with toolbar:
@@ -519,6 +784,19 @@ class LibrarySkillsListCanvas(VerticalScroll):
                     classes="library-canvas-action",
                     compact=True,
                 )
+            elif confirming_delete:
+                yield Button(
+                    "Delete",
+                    id="library-skill-delete-confirm",
+                    classes="library-canvas-action library-media-action-danger",
+                    compact=True,
+                )
+                yield Button(
+                    "Cancel",
+                    id="library-skill-delete-cancel",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
             else:
                 yield Button(
                     "Save",
@@ -526,12 +804,29 @@ class LibrarySkillsListCanvas(VerticalScroll):
                     classes="library-canvas-action",
                     compact=True,
                 )
+                # task-449: explicit leave-without-saving path. Disabled
+                # until the editor is actually dirty (live-enabled by
+                # ``_mark_library_skill_dirty`` without a recompose, and
+                # re-disabled by the save-success patcher) so a clean
+                # editor can't lose an edit to a stray click.
                 yield Button(
-                    "Delete",
-                    id="library-skill-delete",
-                    classes="library-canvas-action library-media-action-danger",
+                    "Discard changes",
+                    id="library-skill-discard",
+                    classes="library-canvas-action",
                     compact=True,
+                    disabled=not self.dirty,
+                    tooltip="Leave the editor without saving the current changes.",
                 )
+                # task-415: no Delete in create mode -- a never-saved
+                # skill has nothing on disk to delete, and the old
+                # always-rendered button was a silent no-op there.
+                if not self.is_create:
+                    yield Button(
+                        "Delete",
+                        id="library-skill-delete",
+                        classes="library-canvas-action library-media-action-danger",
+                        compact=True,
+                    )
 
     def _compose_trust_panel(self, editor_state: SkillEditorState) -> ComposeResult:
         """Render the trust panel: state line, changed-files, Unlock/Review/Approve.
@@ -566,6 +861,16 @@ class LibrarySkillsListCanvas(VerticalScroll):
                 classes=state_classes,
                 markup=False,
             )
+            # task-421: always present (empty for states with in-panel
+            # remediation) so the screen's no-recompose panel patch can
+            # keep it current, same contract as the review-files line.
+            yield Static(
+                skill_trust_remediation_copy(
+                    editor_state.trust_status, self.skill_path
+                ),
+                id="library-skill-trust-remediation",
+                markup=False,
+            )
             if skill_trust_needs_setup(editor_state.trust_status):
                 yield Static(
                     _TRUST_SETUP_EXPLANATION_COPY,
@@ -585,6 +890,16 @@ class LibrarySkillsListCanvas(VerticalScroll):
             yield Static(
                 ", ".join(str(item) for item in changed_files),
                 id="library-skill-trust-review-files",
+                markup=False,
+            )
+            # task-414: the content actually under review. Always present
+            # (empty when no review is active) so the screen's no-recompose
+            # trust-panel patch can fill it in place, same contract as the
+            # changed-files line above. Without this, Approve was blind
+            # sign-off on a filename list.
+            yield Static(
+                skill_trust_review_preview(self.active_review),
+                id="library-skill-trust-review-content",
                 markup=False,
             )
             toolbar = Horizontal(classes="ds-toolbar")

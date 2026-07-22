@@ -143,3 +143,19 @@ def test_tab_navigation_provider_copy_uses_shell_vocabulary():
     assert "global preferences" in TabNavigationProvider.TAB_HELP_TEXT[TAB_SETTINGS]
     assert "MCP" in TabNavigationProvider.TAB_HELP_TEXT[TAB_MCP]
     assert "MCP" in TabNavigationProvider.TAB_HELP_TEXT[TAB_TOOLS_SETTINGS]
+
+
+def test_palette_offers_library_skills_deeplink_command():
+    """task-423: typing "skills" only fuzzy-matched the generic Library
+    command, which lands on generic Library. A labeled deep-link command
+    posts the legacy "skills" route, which
+    ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT`` already lands on the Skills rail
+    row (covered by ``test_screen_navigation``'s deep-link test)."""
+    commands = TabNavigationProvider.LIBRARY_SUBROUTE_COMMANDS
+    routes = [route for route, _, _ in commands]
+    assert "skills" in routes
+    skills_command = next(item for item in commands if item[0] == "skills")
+    assert "Skills" in skills_command[1]
+    # The route must pass through unaliased so the legacy deep-link map
+    # (and not a generic Library navigation) handles it.
+    assert TabNavigationProvider.route_for_tab("skills") == "skills"
