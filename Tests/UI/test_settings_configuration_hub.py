@@ -126,7 +126,7 @@ def test_theme_and_splash_appear_in_settings_sidebar():
     assert "splash_screen" in values
 
 
-def test_theme_and_splash_not_in_guided_mutation_categories():
+def test_self_contained_editor_categories_not_in_guided_mutation():
     assert SettingsCategoryId.THEME not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
     assert SettingsCategoryId.SPLASH_SCREEN not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
     # Internal Prompts is a third self-contained editor (mirrors Theme): it owns

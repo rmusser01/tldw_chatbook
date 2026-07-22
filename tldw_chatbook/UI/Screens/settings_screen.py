@@ -2016,6 +2016,8 @@ class SettingsScreen(BaseAppScreen):
             return "Use the editor's Apply/Save/Reset buttons to manage themes."
         if category == SettingsCategoryId.SPLASH_SCREEN:
             return "Splash defaults are saved automatically."
+        if category == SettingsCategoryId.INTERNAL_PROMPTS:
+            return "Use each prompt's Save / Reset buttons in the editor to manage overrides."
         if category is SettingsCategoryId.STORAGE:
             if self._category_has_unsaved_changes(category):
                 validation = self._storage_validation_result()
