@@ -3460,6 +3460,10 @@ class PersonasScreen(BaseAppScreen):
     async def _begin_create_profile(self) -> None:
         self._edit_mode = "create"
         self.state.clear_selection()
+        # A new session starts unclaimed - re-arms the save-in-place dedup
+        # guard (see _handle_profile_save_requested) even if the previous
+        # session ended on a successful save.
+        self._profile_save_inflight = False
         # Change-based dirty tracking: the session starts clean (see
         # _begin_create_character).
         self.query_one(PersonaProfileEditorWidget).new_persona()
@@ -3715,6 +3719,8 @@ class PersonasScreen(BaseAppScreen):
             return
         record = await self._fetch_profile_record(str(message.persona_id))
         self._edit_mode = "edit"
+        # A new session starts unclaimed (see _begin_create_profile).
+        self._profile_save_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
         self.query_one(PersonaProfileEditorWidget).load_persona(record)
@@ -3760,6 +3766,10 @@ class PersonasScreen(BaseAppScreen):
             # A stray Changed outside an editing session (e.g. racing a
             # save/cancel finisher) must not resurrect the dirty flag.
             return
+        # A genuinely new edit re-arms the save-in-place dedup guard (see
+        # _handle_profile_save_requested) - harmless no-op for a character
+        # edit, which does not use this flag.
+        self._profile_save_inflight = False
         if self.state.has_unsaved_changes:
             return
         self.state.has_unsaved_changes = True
@@ -4816,14 +4826,39 @@ class PersonasScreen(BaseAppScreen):
                 )
             return
         self._character_editor_generation += 1
-        self._edit_mode = "view"
         self._set_active_row_unsaved(False)
         await self.character_handler.refresh_character_list()
+        # Re-read the just-persisted record (authoritative version - carries
+        # the incremented optimistic-lock version) directly off the UI
+        # thread. character_handler.load_character() below only SCHEDULES a
+        # background worker and cannot be awaited for completion (see
+        # _select_character's note on the same pattern), so a direct
+        # to_thread fetch is required here to reliably decide whether the
+        # editor can stay open before the rest of this method proceeds.
+        try:
+            saved_record = await asyncio.to_thread(
+                ccp_character_handler.fetch_character_by_id, saved_id
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not re-read saved character {saved_id!r}; falling back "
+                "to the card view."
+            )
+            saved_record = None
+        if saved_record:
+            # Keep the handler's cache in sync so other _full_character_record
+            # readers (Edit-again, world-book/dictionary refreshes) see the
+            # fresh record too, ahead of load_character's own async refresh.
+            self.character_handler.current_character_id = saved_id
+            self.character_handler.current_character_data = dict(saved_record)
+        else:
+            saved_record = None
         # ``saved_id`` was just persisted, so it is authoritative; resolve the
-        # name by id (handler-loaded card) or the submitted name rather than
-        # scanning the now-page-only cache, and always load the saved card.
-        loaded = self._full_character_record(saved_id)
-        name = str((loaded or {}).get("name") or submitted_name or "Saved character")
+        # name by the re-read record or the submitted name rather than
+        # scanning the now-page-only cache.
+        name = str(
+            (saved_record or {}).get("name") or submitted_name or "Saved character"
+        )
         self.state.select_entity(
             entity_kind="character", entity_id=saved_id, entity_name=name
         )
@@ -4835,9 +4870,18 @@ class PersonasScreen(BaseAppScreen):
         self._sync_inspector_console_actions()
         self.query_one(PersonasLibraryPane).mark_active_row("character", saved_id)
         await self.character_handler.load_character(saved_id)
-        self._show_center("#ccp-character-card-view")
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        if saved_record is None:
+            # Could not re-read -> fall back to today's flip-to-card so we
+            # never leave the editor holding a stale version.
+            self._edit_mode = "view"
+            self._show_center("#ccp-character-card-view")
+            self.call_after_refresh(self._focus_library_list)
+        else:
+            self._edit_mode = "edit"  # create -> edit stays in the editor
+            editor.mark_saved(saved_record)
+            self._show_center("#ccp-character-editor-view")
         self._sync_title_and_console_actions()
-        self.call_after_refresh(self._focus_library_list)
         self._notify("Character saved.", severity="information")
 
     @on(PersonaProfileSaveRequested)
@@ -4852,12 +4896,21 @@ class PersonasScreen(BaseAppScreen):
         """
         message.stop()
         if self._profile_save_inflight:
-            logger.debug("Persona save already in flight; ignoring duplicate request.")
+            # Save-in-place keeps ``_edit_mode`` at "edit" after a successful
+            # save (it no longer flips back to "view"), so this flag is now
+            # the sole guard against a stale duplicate: it is claimed here
+            # and, on success, stays claimed until a genuinely NEW edit
+            # (_handle_editor_content_changed) or a new session
+            # (_begin_create_profile / edit-load) re-arms it. A failed save
+            # clears it immediately below so the user can retry at once.
+            logger.debug(
+                "Persona save already in flight or already fulfilled for this "
+                "baseline; ignoring duplicate request."
+            )
             return
         if self._edit_mode not in ("create", "edit"):
-            # Message dispatch is serial, so a double-posted Save arrives after
-            # the first save already finished and returned to view mode; a save
-            # without an open edit session is a stale duplicate.
+            # A save without an open edit session (e.g. arriving after the
+            # user cancelled or left the screen) is stale.
             logger.debug("Persona save without an open edit session; ignoring.")
             return
         data = dict(message.data or {})
@@ -4869,46 +4922,46 @@ class PersonasScreen(BaseAppScreen):
             self._notify("Save failed: persona profiles are unavailable.", "error")
             return
         self._profile_save_inflight = True
+        mode = self.persona_handler.current_mode()
+        persona_id = str(data.get("id") or "")
         try:
-            mode = self.persona_handler.current_mode()
-            persona_id = str(data.get("id") or "")
-            try:
-                if self._edit_mode == "create" or not persona_id:
-                    request = PersonaProfileCreate(
-                        id=data.get("id") or None,
-                        name=str(data.get("name") or ""),
-                        description=data.get("description"),
-                        mode=data.get("mode") or "session_scoped",
-                        system_prompt=data.get("system_prompt"),
-                    )
-                    result = await service.create_persona_profile(request, mode=mode)
-                else:
-                    request = PersonaProfileUpdate(
-                        name=str(data.get("name") or ""),
-                        description=data.get("description"),
-                        mode=data.get("mode"),
-                        system_prompt=data.get("system_prompt"),
-                    )
-                    result = await service.update_persona_profile(
-                        persona_id,
-                        request,
-                        expected_version=data.get("version"),
-                        mode=mode,
-                    )
-            except Exception as exc:
-                logger.opt(exception=True).error(f"Error saving persona profile: {exc}")
-                self._notify(f"Save failed: {exc}", "error")
-                return
-            if hasattr(result, "model_dump"):
-                result = result.model_dump(mode="json")
-            if not isinstance(result, dict):
-                # Tolerate backends that return ids/None: keep the submitted data.
-                result = dict(data)
-            saved = dict(result)
-            saved.setdefault("id", persona_id)
-            await self._after_profile_save(saved)
-        finally:
+            if self._edit_mode == "create" or not persona_id:
+                request = PersonaProfileCreate(
+                    id=data.get("id") or None,
+                    name=str(data.get("name") or ""),
+                    description=data.get("description"),
+                    mode=data.get("mode") or "session_scoped",
+                    system_prompt=data.get("system_prompt"),
+                )
+                result = await service.create_persona_profile(request, mode=mode)
+            else:
+                request = PersonaProfileUpdate(
+                    name=str(data.get("name") or ""),
+                    description=data.get("description"),
+                    mode=data.get("mode"),
+                    system_prompt=data.get("system_prompt"),
+                )
+                result = await service.update_persona_profile(
+                    persona_id,
+                    request,
+                    expected_version=data.get("version"),
+                    mode=mode,
+                )
+        except Exception as exc:
+            logger.opt(exception=True).error(f"Error saving persona profile: {exc}")
+            self._notify(f"Save failed: {exc}", "error")
+            # Allow an immediate retry - only a real DB round trip (or a
+            # fresh edit) may claim this flag again.
             self._profile_save_inflight = False
+            return
+        if hasattr(result, "model_dump"):
+            result = result.model_dump(mode="json")
+        if not isinstance(result, dict):
+            # Tolerate backends that return ids/None: keep the submitted data.
+            result = dict(data)
+        saved = dict(result)
+        saved.setdefault("id", persona_id)
+        await self._after_profile_save(saved)
 
     async def _after_profile_save(self, saved: dict) -> None:
         # Refresh the cached profile list tolerantly even when the user has
@@ -4930,7 +4983,7 @@ class PersonasScreen(BaseAppScreen):
         if not self.is_mounted or self.state.active_mode != "personas":
             # Leave the selection, inspector, and center pane alone.
             return
-        self._edit_mode = "view"
+        self._edit_mode = "edit"  # create -> edit stays in the editor
         self.state.has_unsaved_changes = False
         self._set_active_row_unsaved(False)
         saved_id = str(saved.get("id") or "")
@@ -4944,10 +4997,15 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_validation(())
         self._sync_inspector_console_actions()
         await self._render_profile_rows()
-        self.query_one(PersonaProfileCardWidget).show_persona(saved)
-        self._show_center("#ccp-persona-card-view")
+        # Save-in-place: the returned ``saved`` dict already carries the
+        # incremented optimistic-lock version, so the editor (which stays
+        # open) re-baselines dirty tracking straight from it - no re-read
+        # needed (unlike the character finisher, which reads a stale handler
+        # cache and must go back to the DB).
+        editor = self.query_one(PersonaProfileEditorWidget)
+        editor.mark_saved(saved)
+        self._show_center("#ccp-persona-editor-view")
         self._sync_title_and_console_actions()
-        self.call_after_refresh(self._focus_library_list)
         self._notify("Persona saved.", "information")
 
     # ===== Cancel =====

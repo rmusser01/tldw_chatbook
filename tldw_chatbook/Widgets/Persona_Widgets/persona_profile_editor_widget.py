@@ -108,6 +108,25 @@ class PersonaProfileEditorWidget(Container):
         """Clear the form for a new (unsaved) persona."""
         self.load_persona({})
 
+    def mark_saved(self, record: Dict[str, Any]) -> None:
+        """Re-baseline dirty state to a just-persisted persona (save-in-place).
+
+        Adopts the saved ``id``/``version`` as the new base (so the next Save
+        carries the incremented optimistic-lock version) and resets the dirty
+        snapshot from the CURRENT form (which already shows the saved
+        values). Does NOT repopulate the form - the user's saved edits stay
+        on screen.
+
+        Args:
+            record: The just-persisted persona record (carries the
+                incremented optimistic-lock ``version``).
+        """
+        self._persona_id = str(record.get("id", "")) or self._persona_id
+        self._version = record.get("version", self._version)
+        self._loaded_snapshot = self._form_snapshot()
+        self._dirty_posted = False
+        self.query_one("#personas-editor-validation", Static).update("")
+
     def collect(self) -> Dict[str, Any]:
         """Return the current form values as a dict.
 

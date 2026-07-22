@@ -937,7 +937,10 @@ class TestPersonasMode:
             await app.workers.wait_for_complete()
             await pilot.pause()
             stub_scope_service.create_persona_profile.assert_awaited_once()
-            assert screen._edit_mode == "view"
+            # Save-in-place: create -> edit, the editor stays open (not the
+            # read-only card).
+            assert screen._edit_mode == "edit"
+            assert screen.query_one("#ccp-persona-editor-view").display is True
 
     async def test_profile_save_refresh_failure_updates_status_row_and_recovery(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -985,7 +988,9 @@ class TestPersonasMode:
             await pilot.pause()
             stub_scope_service.update_persona_profile.assert_awaited_once()
             assert stub_scope_service.update_persona_profile.await_args.args[0] == "p-1"
-            assert screen._edit_mode == "view"
+            # Save-in-place: the editor stays open after an edit save too.
+            assert screen._edit_mode == "edit"
+            assert screen.query_one("#ccp-persona-editor-view").display is True
 
     async def test_profile_save_failure_keeps_editor_open(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -4220,9 +4225,10 @@ class TestDirtyTracking:
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            # Back to the purpose line; "Local" stays out of the header (the
-            # status row already carries "Source: Local").
-            assert str(subtitle.renderable) == "Author the pieces that shape a chat"
+            # Save-in-place: the editor stays open, so the header keeps
+            # showing "Editing <name>" (just without the "- unsaved" suffix
+            # now that the save cleared it).
+            assert str(subtitle.renderable) == "Editing Detective Sam"
             title = screen.query_one("#personas-header #workbench-header-title", Static)
             assert str(title.renderable) == "Roleplay"
 

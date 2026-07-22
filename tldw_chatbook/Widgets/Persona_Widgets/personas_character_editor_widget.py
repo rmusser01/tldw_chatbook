@@ -239,6 +239,28 @@ class PersonasCharacterEditorWidget(Container):
         self._loaded_snapshot = self._form_snapshot()
         self._dirty_posted = False
 
+    def mark_saved(self, record: Dict[str, Any]) -> None:
+        """Re-baseline dirty state to a just-persisted record (save-in-place).
+
+        Adopts the saved record as the new base (so the next Save carries the
+        new ``version`` and any DB-normalized keys), rebaselines the greeting
+        fidelity anchors, resets the dirty snapshot from the CURRENT form
+        (which already shows the saved values), and clears validation. Does
+        NOT repopulate the form - the user's saved edits stay on screen.
+
+        Args:
+            record: The just-persisted character record (carries the
+                incremented optimistic-lock ``version``).
+        """
+        self._character_data = dict(record or {})
+        self._loaded_greetings = [
+            str(g) for g in (self._character_data.get("alternate_greetings") or [])
+        ]
+        self._loaded_greetings_text = "\n".join(self._loaded_greetings)
+        self._loaded_snapshot = self._form_snapshot()
+        self._dirty_posted = False
+        self.query_one("#personas-char-editor-validation", Static).update("")
+
     def _populate_form(self, data: Dict[str, Any]) -> None:
         self._character_data = dict(data or {})
         record = self._character_data
