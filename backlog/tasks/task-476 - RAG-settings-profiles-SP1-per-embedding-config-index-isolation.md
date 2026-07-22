@@ -2,7 +2,7 @@
 id: TASK-476
 title: >-
   RAG settings + profiles SP1: per-embedding-config index isolation
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-21 16:30'
 updated_date: '2026-07-21 16:30'
