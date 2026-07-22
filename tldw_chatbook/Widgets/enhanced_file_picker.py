@@ -1505,9 +1505,13 @@ class EnhancedFileDialog(BaseFileDialog):
 
         # Only even try and process this if there's some input.
         if not file_name.value:
-            # No filename typed: if a directory is highlighted, treat Go/Select
-            # like "open" and descend into it (task-430 AC#2) instead of
-            # erroring or no-op'ing.
+            # No filename typed: if an entry is highlighted, treat Go/Select
+            # like "open" (task-430 AC#2) -- descend a highlighted directory,
+            # or confirm/return a highlighted file -- instead of erroring or
+            # no-op'ing. ``action_open_highlighted`` already routes a file
+            # through ``OpenFile`` -> ``_on_open_file`` -> this method again
+            # (this time with the filename filled in), so both cases are
+            # handled without duplicating the must_exist/filter checks here.
             try:
                 nav = self.query_one(SearchableDirectoryNavigation)
                 highlighted = nav.highlighted
@@ -1518,10 +1522,7 @@ class EnhancedFileDialog(BaseFileDialog):
                 )
             except Exception:
                 option = None
-            if (
-                isinstance(option, DirectoryEntry)
-                and is_dir(option.location)
-            ):
+            if isinstance(option, DirectoryEntry):
                 nav.action_open_highlighted()
                 return
             self._set_error(self.ERROR_A_FILE_MUST_BE_CHOSEN)

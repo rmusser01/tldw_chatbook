@@ -868,6 +868,51 @@ async def test_go_button_descends_highlighted_dir_without_filename(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_go_button_opens_highlighted_file_without_filename(tmp_path):
+    """Pressing the Go/Select button (a real ``Button.Pressed`` message, via
+    ``Button.press()``) with no filename typed and a *file* highlighted --
+    e.g. the user arrow-key-navigated onto it, which only posts
+    ``Highlighted`` and leaves the filename input empty -- must open/confirm
+    that file instead of falling through to the "a file must be chosen"
+    error (task-430 AC#2)."""
+    test_file = tmp_path / "go_button_open_me.txt"
+    test_file.write_text("hello")
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Go Button File",
+        context="test_go_button_file",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        await _wait_for_options(dir_nav, pilot)
+
+        file_index = _index_of(dir_nav, test_file)
+        assert file_index is not None, "test file should appear in the directory list"
+
+        dir_nav.highlighted = file_index
+        await pilot.pause()
+
+        filename_input = dialog.query_one("#filename-input", Input)
+        assert filename_input.value == "", "no filename should be typed for this scenario"
+
+        dialog.query_one("#select").press()
+
+        for _ in range(20):
+            if app._result is not None:
+                break
+            await pilot.pause()
+
+        assert app._result == test_file, (
+            "Go/Select with no filename typed must open/confirm the highlighted file"
+        )
+
+
+@pytest.mark.asyncio
 async def test_real_double_click_opens_highlighted_dir(tmp_path):
     """A double-click delivered through Textual's pilot (``times=2``) opens
     the highlighted directory, exercising the real
