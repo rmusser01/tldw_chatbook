@@ -111,6 +111,15 @@ class WorkspaceDB(BaseDB):
                         REFERENCES workspace_records(workspace_id)
                         ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS workspace_rag_scopes (
+                    workspace_id TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(workspace_id)
+                        REFERENCES workspace_records(workspace_id)
+                        ON DELETE CASCADE
+                );
                 """
             )
             conn.commit()
