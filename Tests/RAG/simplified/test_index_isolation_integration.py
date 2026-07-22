@@ -112,3 +112,22 @@ def test_get_collection_stats_on_populated_collection(chroma_persist_dir):
     assert isinstance(stats["count"], int) and not isinstance(stats["count"], bool)
     assert stats["count"] > 0
     assert not stats.get("error")
+
+
+@pytest.mark.requires_chromadb
+def test_collection_metadata_cannot_override_hnsw_space(chroma_persist_dir):
+    """A stray 'hnsw:space' key in collection_metadata must NOT override the
+    real distance metric. hnsw:space is index-determining, so the merge keeps
+    it LAST (Qodo #771 review) -- provenance never emits it today, but this
+    locks the invariant structurally against future callers."""
+    from tldw_chatbook.RAG_Search.simplified.vector_store import ChromaVectorStore
+
+    store = ChromaVectorStore(
+        persist_directory=chroma_persist_dir,
+        collection_name="metric_guard__test",
+        distance_metric="cosine",
+        collection_metadata={"hnsw:space": "l2", "fp": "bogus"},
+    )
+    col = store.collection  # forces get_or_create with the merged metadata
+    # The real metric (cosine) must win over the injected l2.
+    assert col.configuration_json["hnsw"]["space"] == "cosine"
