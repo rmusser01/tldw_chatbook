@@ -184,6 +184,7 @@ class ChromaVectorStore:
         persist_directory: Union[str, Path],
         collection_name: str = "default",
         distance_metric: str = "cosine",
+        collection_metadata: Optional[dict] = None,
     ):
         """
         Initialize ChromaDB vector store.
@@ -192,10 +193,13 @@ class ChromaVectorStore:
             persist_directory: Directory to persist the database
             collection_name: Name of the collection to use
             distance_metric: Distance metric for similarity (cosine, l2, ip)
+            collection_metadata: Extra metadata merged into the collection's
+                metadata at creation time (alongside ``hnsw:space``)
         """
         self.persist_directory = Path(persist_directory)
         self.collection_name = collection_name
         self.distance_metric = distance_metric
+        self.collection_metadata = dict(collection_metadata or {})
         self._client = None
         self._collection = None
 
@@ -291,7 +295,10 @@ class ChromaVectorStore:
 
             self._collection = self.client.get_or_create_collection(
                 name=self.collection_name,
-                metadata={"hnsw:space": metric_map.get(self.distance_metric, "cosine")},
+                metadata={
+                    "hnsw:space": metric_map.get(self.distance_metric, "cosine"),
+                    **self.collection_metadata,
+                },
             )
             logger.info(f"Using collection: {self.collection_name}")
         return self._collection
@@ -797,6 +804,7 @@ class InMemoryVectorStore:
         max_documents: int = 10000,
         max_collections: int = 10,
         memory_threshold_mb: float = 1024.0,
+        collection_metadata: Optional[dict] = None,
     ):
         """
         Initialize in-memory vector store with memory limits.
@@ -806,6 +814,9 @@ class InMemoryVectorStore:
             max_documents: Maximum number of documents to store (default: 10000)
             max_collections: Maximum number of collections to keep (default: 10)
             memory_threshold_mb: Memory threshold in MB for triggering eviction (default: 1024MB)
+            collection_metadata: Accepted for interface parity with
+                ChromaVectorStore; unused (in-memory store has no persisted
+                collection metadata)
         """
         self.distance_metric = distance_metric
         self.max_documents = max_documents
@@ -1504,6 +1515,7 @@ def create_vector_store(
     persist_directory: Optional[Union[str, Path]] = None,
     collection_name: str = "default",
     distance_metric: str = "cosine",
+    collection_metadata: Optional[dict] = None,
     **kwargs,
 ) -> VectorStore:
     """
@@ -1514,6 +1526,9 @@ def create_vector_store(
         persist_directory: Directory for persistent stores (required for chroma)
         collection_name: Name of the collection
         distance_metric: Distance metric to use
+        collection_metadata: Extra metadata to stamp on a newly created
+            collection (e.g. fingerprint provenance); forwarded to both
+            store implementations
         **kwargs: Additional arguments passed to the store constructor
 
     Returns:
@@ -1531,13 +1546,17 @@ def create_vector_store(
             persist_directory=persist_directory,
             collection_name=collection_name,
             distance_metric=distance_metric,
+            collection_metadata=collection_metadata,
             **kwargs,
         )
 
     elif store_type == "memory" or store_type == "inmemory":
         max_documents = kwargs.pop("max_documents", 10000)
         return InMemoryVectorStore(
-            distance_metric=distance_metric, max_documents=max_documents, **kwargs
+            distance_metric=distance_metric,
+            max_documents=max_documents,
+            collection_metadata=collection_metadata,
+            **kwargs,
         )
 
     else:
@@ -1547,5 +1566,8 @@ def create_vector_store(
         )
         max_documents = kwargs.pop("max_documents", 10000)
         return InMemoryVectorStore(
-            distance_metric=distance_metric, max_documents=max_documents, **kwargs
+            distance_metric=distance_metric,
+            max_documents=max_documents,
+            collection_metadata=collection_metadata,
+            **kwargs,
         )

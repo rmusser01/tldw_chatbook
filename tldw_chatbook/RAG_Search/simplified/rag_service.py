@@ -36,6 +36,7 @@ from .embeddings_wrapper import EmbeddingsServiceWrapper
 from .vector_store import create_vector_store, SearchResult, SearchResultWithCitations
 from .citations import Citation, CitationType, merge_citations
 from .config import RAGConfig
+from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
 from ..fusion import reciprocal_rank_fusion, resolve_hybrid_alpha, DEFAULT_RRF_K
 from ..chunking_service import ChunkingService
 from .simple_cache import get_rag_cache
@@ -139,8 +140,9 @@ class RAGService:
         self.vector_store = create_vector_store(
             store_type=self.config.vector_store_type,
             persist_directory=self.config.persist_directory,
-            collection_name=self.config.collection_name,
+            collection_name=fingerprinted_collection_name(self.config),
             distance_metric=self.config.distance_metric,
+            collection_metadata=collection_provenance(self.config),
         )
 
         # Initialize chunking service
