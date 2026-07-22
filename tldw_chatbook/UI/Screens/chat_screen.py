@@ -4069,6 +4069,31 @@ class ChatScreen(BaseAppScreen):
             settings, system_prompt=system_prompt, pinned_prefill=pinned_prefill
         )
 
+    async def _resolve_resumed_character_name(self, character_id: int) -> str:
+        """Return a resumed character's display name from its card, or ``""``.
+
+        Args:
+            character_id: The persisted conversation's character id.
+
+        Returns:
+            The character card's name, or an empty string when the DB is
+            unavailable, the card is missing, or the fetch fails (best-effort:
+            the caller keeps ``character_id`` set regardless).
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return ""
+        try:
+            card = await asyncio.to_thread(db.get_character_card_by_id, character_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Resume: character card fetch failed; identity row falls back."
+            )
+            return ""
+        if not card:
+            return ""
+        return str(card.get("name") or "").strip()
+
     async def _resume_console_workspace_conversation(
         self,
         conversation_id: str,
@@ -4162,9 +4187,31 @@ class ChatScreen(BaseAppScreen):
         raw_character_id = conversation.get("character_id")
         if raw_character_id is not None:
             try:
-                session.character_id = int(raw_character_id)
+                character_id = int(raw_character_id)
             except (TypeError, ValueError):
-                session.character_id = None
+                character_id = None
+            session.character_id = character_id
+            if character_id is not None:
+                # The persisted conversation row carries only the id, so
+                # rehydrate the character name/label from the card. This keeps
+                # the settings identity row reading "Character: <name>" after
+                # resume instead of the Persona fallback. Best-effort: a
+                # missing/failed card leaves ``character_id`` (and the routing
+                # gate) intact.
+                character_name = await self._resolve_resumed_character_name(
+                    character_id
+                )
+                if character_name:
+                    session.character_name = character_name
+                # Always (re)set the label on a character resume -- to the
+                # resolved name, or clear it when unresolved. ``settings`` are
+                # otherwise inherited from the currently active session, so
+                # leaving an inherited ``character_label`` in place would make
+                # a card-less resume show a *different* character's name.
+                if session.settings is not None:
+                    session.settings = replace(
+                        session.settings, character_label=character_name
+                    )
         self._set_active_workspace_for_console_session(session.id)
         # task-9/task-13: warm the EFFECTIVE (conversation ∩ workspace)
         # scope cache for this session now (off-loop) so the Inspector row
@@ -9075,6 +9122,11 @@ class ChatScreen(BaseAppScreen):
                     "draft": session.draft,
                     "settings": self._serialize_console_settings(session.settings),
                     "updated_at": session.updated_at,
+                    # task-427: round-trip the character binding so a screen-
+                    # state restore keeps a character session on the plain-
+                    # provider gate instead of reverting it to a generic one.
+                    "character_id": session.character_id,
+                    "character_name": session.character_name,
                 }
                 for session in store.sessions()
             ],
@@ -9129,6 +9181,18 @@ class ChatScreen(BaseAppScreen):
             raw_updated_at = raw_session.get("updated_at")
             if raw_updated_at:
                 session_kwargs["updated_at"] = str(raw_updated_at)
+            # task-427: restore the character binding when present. Legacy
+            # payloads (saved before these keys existed) simply omit them and
+            # keep the ConsoleChatSession ``None`` defaults.
+            raw_character_id = raw_session.get("character_id")
+            if raw_character_id is not None:
+                try:
+                    session_kwargs["character_id"] = int(raw_character_id)
+                except (TypeError, ValueError):
+                    pass
+            raw_character_name = raw_session.get("character_name")
+            if raw_character_name is not None:
+                session_kwargs["character_name"] = str(raw_character_name)
             session = ConsoleChatSession(**session_kwargs)
             restored_sessions.append(session)
             restored_messages_by_session[session.id] = []
@@ -9587,8 +9651,14 @@ class ChatScreen(BaseAppScreen):
     async def _start_character_console_session(self, payload: ChatHandoffPayload) -> bool:
         """Build a dedicated character conversation from a Start-Chat handoff.
 
-        Returns True when a character session was created; False to let the
-        caller fall back to the staged-context path (task-427).
+        Args:
+            payload: The Personas Start-Chat handoff staged into the native
+                Console (its metadata carries the character identity).
+
+        Returns:
+            ``True`` when a character session was created (the caller then
+            marks the handoff consumed); ``False`` to let the caller fall back
+            to the staged-context path (task-427).
         """
         identity = _character_session_identity_from_handoff(payload)
         if identity is None:

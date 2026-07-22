@@ -6654,6 +6654,43 @@ def test_native_console_state_round_trip_preserves_session_system_prompt():
     assert restored_session.settings.system_prompt == "Be terse and cite sources."
 
 
+def test_native_console_state_round_trip_preserves_character_identity():
+    """A character-bound session must keep ``character_id``/``character_name``
+    across a native Console screen-state save/restore (task-427).
+
+    Without round-tripping these fields, a screen-state restore silently
+    flips a character session back to a generic one (``character_id=None``),
+    disabling the plain-provider gate and losing the character identity that
+    ``_serialize_native_console_state`` is supposed to preserve.
+    """
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(
+        id="session-a",
+        title="Chat with Elara",
+        character_id=7,
+        character_name="Elara",
+    )
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    screen = _bare_console_screen(store)
+
+    payload = screen._serialize_native_console_state()
+    assert payload is not None
+    assert payload["sessions"][0]["character_id"] == 7
+    assert payload["sessions"][0]["character_name"] == "Elara"
+
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+    restored_screen._restore_native_console_state(payload)
+
+    restored_session = restored_store.sessions()[0]
+    assert restored_session.character_id == 7
+    assert restored_session.character_name == "Elara"
+
+
 def test_native_console_state_restore_tolerates_legacy_payload_without_updated_at():
     """Verify legacy saved states (no ``updated_at`` key) still restore.
 

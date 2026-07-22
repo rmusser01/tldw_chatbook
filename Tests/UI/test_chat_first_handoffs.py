@@ -506,6 +506,113 @@ async def test_resume_restores_character_identity():
 
 
 @pytest.mark.asyncio
+async def test_resume_restores_character_label_for_identity_row():
+    """Resuming a character conversation must rehydrate the character name and
+    ``settings.character_label`` from the card so the settings identity row
+    reads "Character: <name>" instead of the Persona fallback (task-427).
+
+    The persisted conversation row carries only ``character_id``; the label is
+    resolved best-effort from the character card.
+    """
+    from Tests.UI.test_console_native_chat_flow import StaticConversationTreeService
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    tree = {
+        "conversation": {
+            "conversation_id": "conv-elara-1",
+            "title": "Chat with Elara",
+            "character_id": 7,
+            "workspace_id": None,
+            "system_prompt": None,
+            "metadata": None,
+        },
+        "root_threads": [],
+        "pagination": {"total_root_threads": 0},
+    }
+    app = _build_test_app()
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {"conv-elara-1": tree}
+    )
+    app.chachanotes_db = _StubCharacterCardDB({"name": "Elara"})
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+
+        resumed = await screen._resume_console_workspace_conversation("conv-elara-1")
+        await pilot.pause()
+
+        assert resumed is True
+        store = screen._ensure_console_chat_store()
+        session = store._sessions[store.active_session_id]
+        assert session.character_id == 7
+        assert session.character_name == "Elara"
+        assert session.settings is not None
+        assert session.settings.character_label == "Elara"
+
+
+@pytest.mark.asyncio
+async def test_resume_clears_inherited_label_when_card_unresolved():
+    """A character resume whose card cannot be resolved must clear any
+    inherited ``character_label`` rather than display a *different* active
+    character's name (settings are inherited from the active session)."""
+    from dataclasses import replace
+
+    from Tests.UI.test_console_native_chat_flow import StaticConversationTreeService
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+
+    tree = {
+        "conversation": {
+            "conversation_id": "conv-missing-card",
+            "title": "Chat with Ghost",
+            "character_id": 99,
+            "workspace_id": None,
+            "system_prompt": None,
+            "metadata": None,
+        },
+        "root_threads": [],
+        "pagination": {"total_root_threads": 0},
+    }
+    app = _build_test_app()
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {"conv-missing-card": tree}
+    )
+    # Card 99 does not exist -> name resolves to "".
+    app.chachanotes_db = _StubCharacterCardDB(None)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+        store = screen._ensure_console_chat_store()
+        # Simulate a *different* character session being active first, whose
+        # label would otherwise be inherited by the resumed session.
+        active = store.ensure_session()
+        if active.settings is not None:
+            active.settings = replace(active.settings, character_label="Someone Else")
+        else:
+            active.settings = ConsoleSessionSettings(character_label="Someone Else")
+
+        resumed = await screen._resume_console_workspace_conversation(
+            "conv-missing-card"
+        )
+        await pilot.pause()
+
+        assert resumed is True
+        session = store._sessions[store.active_session_id]
+        assert session.character_id == 99
+        assert (session.settings.character_label or "") == ""
+
+
+@pytest.mark.asyncio
 async def test_chat_screen_pending_handoff_consumer_is_reentrant_safe():
     payload = ChatHandoffPayload(
         source="notes",
