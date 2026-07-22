@@ -941,7 +941,9 @@ class LocalSkillsService:
         skill_name = _normalize_skill_name(name)
         source_dir = Path(source_dir)
         body = source_dir / _SKILL_FILENAME
-        if not body.is_file():
+        # A symlinked SKILL.md would read its (out-of-bundle) target into the
+        # skill body -- reject it as an invalid body, not follow it.
+        if body.is_symlink() or not body.is_file():
             raise ValueError("local_skill_missing_skill_md")
         content = body.read_text(encoding="utf-8", errors="strict")
         # Enforce the same body-length bounds ``import_skill`` gets for free from
@@ -952,7 +954,11 @@ class LocalSkillsService:
         files: list[tuple[str, Path]] = []
         total = 0
         for relative_path, abs_path in self._iter_bundle_files(source_dir):
-            if abs_path.is_symlink():
+            # Skip symlinks and non-regular files (FIFOs/sockets/device nodes):
+            # opening a FIFO with no writer would block read_bytes() forever --
+            # and this runs under self._lock, so it would wedge the whole store.
+            # Mirrors the guard in _read_supporting_files/_read_bundle_manifest.
+            if abs_path.is_symlink() or not abs_path.is_file():
                 continue  # skip-not-fail
             try:
                 validate_supporting_file_path(relative_path)
