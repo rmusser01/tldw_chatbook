@@ -1,5 +1,5 @@
 ---
-id: TASK-452
+id: TASK-455
 title: 'RAG scope narrowing Phase 2: conversation-level picker UI'
 status: Done
 assignee: []
