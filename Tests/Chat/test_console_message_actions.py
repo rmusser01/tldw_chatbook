@@ -25,6 +25,27 @@ def test_assistant_message_actions_include_required_order():
     ]
 
 
+def test_failed_user_row_offers_no_retry_action():
+    """TASK-457(a): retry regenerates a failed ASSISTANT response; a failed USER
+    row (the send-blocked optimistic echo) has nothing to regenerate, so it must
+    not offer 'retry' — a failed ASSISTANT row still does."""
+    service = ConsoleMessageActionService()
+
+    failed_user = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="hello", status="failed"
+    )
+    assert "retry" not in [
+        action.action_id for action in service.available_actions(failed_user)
+    ]
+
+    failed_assistant = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="", status="failed"
+    )
+    assert "retry" in [
+        action.action_id for action in service.available_actions(failed_assistant)
+    ]
+
+
 def test_streaming_assistant_message_shows_completed_actions_disabled_with_reasons():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(

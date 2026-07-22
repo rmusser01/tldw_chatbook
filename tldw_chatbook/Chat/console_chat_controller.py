@@ -391,18 +391,22 @@ class ConsoleChatController:
         if self.store.workspace_context.has_policy_blocks:
             return self._block(session.id, self.store.workspace_context.recovery_copy)
 
-        self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
-        )
-        resolution = await self.provider_gateway.resolve_for_send(
-            self._provider_selection()
-        )
-        if not getattr(resolution, "ready", False):
-            visible_copy = self._blocked_visible_copy(
-                getattr(resolution, "visible_copy", "")
-            )
-            return self._block(session.id, visible_copy)
-
+        # TASK-457(a): echo the USER message BEFORE resolving the provider, so a
+        # slow/cold readiness probe no longer leaves the transcript blank while
+        # the composer clears — the message reads as "sent", not lost. On a
+        # not-ready provider the row persists next to the honest block-row below
+        # (the message is no longer silently dropped) and the draft is kept (the
+        # composer clears only on the accepted path via
+        # `_notify_submission_accepted`), so the user can re-attempt. Staged
+        # attachments are embedded on the row here but only CLEARED on the
+        # success path below, so a blocked attempt leaves them staged for retry.
+        #
+        # Auto-title BEFORE the append: a persisting append creates the durable
+        # conversation from `session.title` (persist_session_if_needed) and sets
+        # `persisted_conversation_id`, after which `_maybe_auto_title_session`
+        # early-returns. Titling first means the conversation is created as the
+        # derived title (e.g. "hello") instead of the default "Chat 1", so the
+        # workspace rail shows it immediately after persistence.
         self._maybe_auto_title_session(session, clean_draft)
         staged_attachments = tuple(
             MessageAttachment(
@@ -413,13 +417,31 @@ class ConsoleChatController:
             )
             for index, pending in enumerate(attachment_mode_pendings)
         )
-        self.store.append_message(
+        echoed_user = self.store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
             content=clean_draft,
             attachments=staged_attachments,
             persist=self.store.persistence is not None,
         )
+
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+        )
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection()
+        )
+        if not getattr(resolution, "ready", False):
+            visible_copy = self._blocked_visible_copy(
+                getattr(resolution, "visible_copy", "")
+            )
+            # The echoed row stays visible but never reached a provider — fail it
+            # so it is excluded from the NEXT send's provider context
+            # (`skip_failed`) and reads honestly as unsent rather than polluting
+            # the history.
+            self.store.mark_message_send_blocked(echoed_user.id)
+            return self._block(session.id, visible_copy)
+
         if pendings:
             self.store.clear_pending_attachments(session.id)
         provider_messages = self._provider_messages_for_session(session.id)

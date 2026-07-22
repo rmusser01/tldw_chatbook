@@ -789,6 +789,17 @@ def test_console_streaming_assistant_row_shows_generating_placeholder_until_firs
     )
     assert _message_body(failed) == "[failed]"
 
+    # TASK-457(a): a USER row only carries "failed" via the send-blocked echo;
+    # the SYSTEM block-row explains it, so the user's text stays clean (no
+    # "[failed]" suffix, which is an assistant-response state).
+    blocked_user = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER,
+        content="hello",
+        id="m-blocked",
+        status="failed",
+    )
+    assert _message_body(blocked_user) == "hello"
+
 
 def test_image_message_row_renders_chip_line():
     from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text

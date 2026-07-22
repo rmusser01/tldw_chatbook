@@ -112,7 +112,11 @@ class ConsoleMessageActionService:
                 + list(self._IMAGE_VIEW_ACTIONS)
                 + list(self._SAVE_IMAGE_ACTIONS)
             )
-        if message.status == "failed":
+        if message.status == "failed" and self._is_assistant_message(message):
+            # Retry regenerates a failed ASSISTANT response. A failed USER row —
+            # e.g. the TASK-457(a) optimistic echo rejected before any provider
+            # send — has nothing to regenerate, so it must not offer retry (the
+            # user re-sends from the composer instead).
             return [
                 ConsoleMessageAction(action_id, label)
                 for action_id, label in self._base_actions_with(

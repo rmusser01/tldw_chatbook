@@ -3,9 +3,11 @@ id: TASK-457
 title: >-
   Console first-feedback cluster follow-ups: cold-send optimistic echo, rail
   pressed state, inspector-during-run
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-22 02:20'
+updated_date: '2026-07-22 14:35'
 labels:
   - console
   - ux
@@ -21,7 +23,7 @@ Remaining pieces of the task-351 first-feedback finding (Console UX review j4-fi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 (a) Cold-provider first send echoes the user's message before the readiness probe resolves; a not-ready provider shows an honest block/error row instead of a silently-dropped message
+- [x] #1 (a) Cold-provider first send echoes the user's message before the readiness probe resolves; a not-ready provider shows an honest block/error row instead of a silently-dropped message
 - [ ] #2 (b) Rail conversation rows show a pressed/loading acknowledgment on click
 - [x] #3 (c) Inspector toggle acknowledges immediately (within ~100ms) even during an active run
 <!-- AC:END -->
@@ -45,17 +47,63 @@ test (kept on one line so it copies cleanly):
 Tests/UI/test_console_tick_gating.py::test_console_workspace_context_fresh_tray_still_synced_mid_run
 ```
 
-(a) COLD ECHO — remaining, a real behaviour change: append the USER message in
-`submit_draft` after validation but BEFORE `resolve_for_send`. On a not-ready
-provider the USER row + SYSTEM block-row both persist. Open UX decision (needs
-sign-off): the draft is currently kept on block (`should_clear_draft=False`,
-task-340 draft-preservation), so echoing before resolve would make each blocked
-retry echo a NEW duplicate USER row — the coherent model is clear-draft-on-block
-+ retry-by-retype, which changes task-340 behaviour and every "blocked send →
-no user message" test. Verify cold latency with a genuinely slow/cold provider.
+(a) COLD ECHO — remaining. PROTOTYPED + reverted 2026-07-22 after finding a
+core-model blocker; scoped precisely for a focused follow-up. Approach: append
+the USER row in `submit_draft` after validation but BEFORE `resolve_for_send`,
+keep the draft on block (retry model = keep-draft, echoed row persists next to
+the block-row, retry re-attempts — an honest attempt history, minimal churn:
+only `test_blocked_provider_wip_copy` needs its message-list expectation
+updated). BLOCKER (empirically confirmed): the echoed-but-blocked USER row would
+pollute the NEXT successful send's provider context, because
+`_provider_messages_for_session` includes all USER rows and only drops
+`status=="failed"` ones (`skip_failed`, controller ~2725). Excluding the blocked
+row therefore needs it marked failed — but `store.mark_message_failed` is
+assistant-stream-only (`_validate_can_mark_terminal` → `ValueError: Only
+assistant messages can enter terminal stream states`), and `append_message`
+returns a `_snapshot`, not the live object, so direct `.status` mutation is a
+no-op. So (a) needs a NEW store method (e.g. `mark_message_send_blocked(id)`)
+that sets `status="failed"` on a non-streaming row without the terminal-guard,
+plus wiring in submit_draft's resolve-block path (`try/except` must catch the
+right error). Trade-off: a `"failed"` USER row renders `hello [failed]` in the
+transcript (honest, but consider a distinct `"blocked"` status if that reads
+oddly). Value is marginal (resolve is 24ms warm; only a genuinely cold/slow
+provider startup exposes the gap), so this touches the core send path for a
+narrow win — do it as its own reviewed change, and verify cold latency against a
+genuinely cold provider.
 
 (b) RAIL LOADING FEEDBACK — remaining: on a conversation-row click, mark the row
 loading (spinner/dim) until `_resume_console_workspace_conversation` completes or
 errors, so a slow/failed open no longer reads as a dead click. Needs load-state
 tracking on the row + served-app verification.
 <!-- SECTION:PLAN:END -->
+
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+(a) DONE (the fuller reviewed change the plan called for; the earlier prototype's
+core-model blocker is resolved). `submit_draft` now appends the USER row AFTER
+validation but BEFORE `resolve_for_send`, so a slow/cold readiness probe no
+longer leaves the transcript blank while the composer clears. On a not-ready
+provider the row persists next to the honest SYSTEM block-row (no longer silently
+dropped) and the draft is kept (composer clears only on the accepted path), so
+the user re-attempts. Staged attachments embed on the echoed row but only CLEAR
+on the success path (a blocked attempt keeps them staged).
+
+Core-model piece (the plan's blocker): the echoed-but-blocked row must NOT enter
+the next send's provider context. New `ConsoleChatStore.mark_message_send_blocked`
+flips a NEVER-STREAMED row to `status="failed"` without the assistant-stream
+terminal guard (`mark_message_failed` raises for non-assistants, and
+`append_message` returns a snapshot so direct mutation is a no-op); the resolve-
+block path calls it, and `_provider_messages_for_session(skip_failed=True)`
+already drops it. Two correctness gates so a `failed` USER row reads right: the
+transcript stream-state suffix (`[failed]`) and the "retry" message action are
+both now assistant-only (a USER row has no assistant response to regenerate).
+
+Verified RED→GREEN: store-method test; controller `test_not_ready_provider_still_
+echoes_the_user_message` (roles == [user, system], row failed, draft kept) +
+existing `..._exclude_visible_recovery...` proves context exclusion; message-body
++ message-action tests for the clean rendering; 274 Chat-suite + full native-flow
+(188) green. Value note: resolve is 24ms warm, so this mainly helps a genuinely
+cold provider startup. (b) rail loading feedback remains.
+<!-- SECTION:NOTES:END -->

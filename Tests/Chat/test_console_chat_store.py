@@ -916,6 +916,26 @@ def test_mark_message_failed_without_variant_base_still_marks_failed():
     assert failed.content == "partial"
 
 
+def test_mark_message_send_blocked_fails_a_user_row_for_context_exclusion():
+    """TASK-457(a): a USER row echoed before the readiness probe but rejected by
+    the provider must be excludable from the next send's provider context. Unlike
+    ``mark_message_failed`` (assistant-stream-only), this marks a never-streamed
+    row failed with no terminal guard, and the flip lands on the stored row."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    user = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="hello"
+    )
+
+    blocked = store.mark_message_send_blocked(user.id)
+
+    assert blocked.status == "failed"
+    assert blocked.content == "hello"
+    assert blocked.role is ConsoleMessageRole.USER
+    stored = store.messages_for_session(session.id)[0]
+    assert stored.status == "failed"
+
+
 def test_store_persists_chat_when_sync_enqueue_fails():
     persistence = FakePersistence()
     store = ConsoleChatStore(

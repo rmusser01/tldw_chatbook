@@ -872,6 +872,30 @@ class ConsoleChatStore:
         self._persist_existing_message(message)
         return self._snapshot(message)
 
+    def mark_message_send_blocked(self, message_id: str) -> ConsoleChatMessage:
+        """Fail a never-streamed row so provider context (``skip_failed``) drops it.
+
+        TASK-457(a): the optimistic USER echo appends the user's message BEFORE
+        the provider readiness probe; if the provider is not ready the row stays
+        visible in the transcript (the send is not silently dropped) but must NOT
+        enter the NEXT send's provider context. Unlike ``mark_message_failed`` --
+        the assistant stream state machine's terminal, which guards
+        ``_validate_can_mark_terminal`` and restores a variant-regenerate base --
+        this row never streamed, so it is a plain status flip to ``"failed"`` with
+        no terminal guard or base handling. Callers use it only for such
+        never-streamed rows (a USER echo rejected before any provider send).
+
+        Args:
+            message_id: Id of the never-streamed row to fail.
+
+        Returns:
+            A snapshot of the failed message.
+        """
+        message = self._message_or_raise(message_id)
+        message.status = "failed"
+        self._persist_existing_message(message)
+        return self._snapshot(message)
+
     def prepare_message_retry(self, message_id: str) -> ConsoleChatMessage:
         """Prepare a failed assistant message to receive replacement stream content."""
         message = self._message_or_raise(message_id)
