@@ -115,7 +115,7 @@ class ProfileConfig:
     def from_dict(cls, data: Dict[str, Any]) -> "ProfileConfig":
         """Create profile from dictionary."""
         rag_config = (
-            RAGConfig(**data["rag_config"])
+            RAGConfig.from_dict(data["rag_config"])
             if isinstance(data["rag_config"], dict)
             else data["rag_config"]
         )
