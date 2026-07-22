@@ -129,6 +129,35 @@ def test_theme_and_splash_appear_in_settings_sidebar():
 def test_theme_and_splash_not_in_guided_mutation_categories():
     assert SettingsCategoryId.THEME not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
     assert SettingsCategoryId.SPLASH_SCREEN not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+    # Internal Prompts is a third self-contained editor (mirrors Theme): it owns
+    # its own persistence via the InternalPromptsPanel Save/Reset buttons and
+    # must never be added to the guided-mutation set.
+    assert SettingsCategoryId.INTERNAL_PROMPTS not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+
+
+def test_internal_prompts_appears_in_settings_sidebar_expert_group():
+    screen = SettingsScreen(_build_test_app())
+    summaries = screen._category_summaries()
+    values = {s.category.value for s in summaries}
+    assert "internal-prompts" in values
+
+    groups = dict(screen._category_groups())
+    assert SettingsCategoryId.INTERNAL_PROMPTS in groups["Expert"]
+    assert SettingsCategoryId.ADVANCED_CONFIG in groups["Expert"]
+
+
+def test_settings_category_summaries_cover_every_category_id_exactly_once():
+    """Guards the total sidebar category count.
+
+    Adding Internal Prompts brought the total from 19 to 20 categories. This
+    pins the literal count so the next addition must touch this assertion
+    deliberately, and cross-checks that summaries neither miss nor duplicate
+    an enum member.
+    """
+    screen = SettingsScreen(_build_test_app())
+    summaries = screen._category_summaries()
+    assert len(summaries) == len(list(SettingsCategoryId)) == 20
+    assert {s.category for s in summaries} == set(SettingsCategoryId)
 
 
 def test_inspector_guidance_covers_every_settings_category():

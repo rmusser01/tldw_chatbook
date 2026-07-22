@@ -29,6 +29,7 @@ class SettingsCategoryId(StrEnum):
     ACP_DEFAULTS = "acp-defaults"
     DIAGNOSTICS = "diagnostics"
     ADVANCED_CONFIG = "advanced-config"
+    INTERNAL_PROMPTS = "internal-prompts"
 
 
 class SettingsValidationState(StrEnum):

@@ -109,6 +109,8 @@ from .settings_config_models import (
 )
 from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor
+from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel
+from ...Internal_Prompts import authoring as internal_prompts_authoring
 from .settings_appearance_defaults import (
     SettingsAppearanceDefaults,
     build_appearance_save_sections,
@@ -741,6 +743,20 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         ("Boundary", "changes are saved immediately; no shared Settings draft state"),
     ),
+    SettingsCategoryId.INTERNAL_PROMPTS: (
+        (
+            "Affected config",
+            "config.toml [internal_prompts] overrides for built-in system prompts",
+        ),
+        (
+            "Recovery",
+            "use each prompt's own Save/Reset buttons to restore the packaged default",
+        ),
+        (
+            "Boundary",
+            "edits apply to internal tooling prompts only; no shared Settings draft state",
+        ),
+    ),
 }
 # Generic guidance for a category with no explicit entry. Kept as a runtime
 # safety net only; test_inspector_guidance_covers_every_settings_category fails
@@ -900,6 +916,7 @@ class SettingsScreen(BaseAppScreen):
     server_sync_workspace_handoff_rows = reactive((), recompose=True)
     manual_sync_rows = reactive((), recompose=True)
     theme_editor_modified = reactive(False, recompose=True)
+    internal_prompts_dirty = reactive(0, recompose=True)
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "settings", **kwargs)
@@ -1195,7 +1212,21 @@ class SettingsScreen(BaseAppScreen):
                 "Raw TOML view and expert configuration editing.",
                 "Advanced",
             ),
+            SettingsCategorySummary(
+                SettingsCategoryId.INTERNAL_PROMPTS,
+                "Internal Prompts",
+                "View and edit the system prompts tldw_chatbook uses internally "
+                "(RAG, web search, agents, summarization, more).",
+                self._internal_prompts_status(),
+            ),
         )
+
+    def _internal_prompts_status(self) -> str:
+        try:
+            n = internal_prompts_authoring.customized_count()
+        except Exception:
+            return ""
+        return f"{n} customized" if n else "Defaults"
 
     def _category_groups(
         self,
@@ -1225,7 +1256,13 @@ class SettingsScreen(BaseAppScreen):
                 ),
             ),
             ("Troubleshooting", (SettingsCategoryId.DIAGNOSTICS,)),
-            ("Expert", (SettingsCategoryId.ADVANCED_CONFIG,)),
+            (
+                "Expert",
+                (
+                    SettingsCategoryId.INTERNAL_PROMPTS,
+                    SettingsCategoryId.ADVANCED_CONFIG,
+                ),
+            ),
             (
                 "Domain Defaults",
                 (
@@ -1491,6 +1528,20 @@ class SettingsScreen(BaseAppScreen):
                 runtime_owner="Settings advanced editor",
                 boundary_copy="Advanced Config bypasses guided category controls.",
                 recovery_copy="Validate exact current TOML before save; restore from backup if needed.",
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.INTERNAL_PROMPTS,
+                owns_config_sections=("internal_prompts.<prompt id>",),
+                reads_runtime_state_from=("packaged internal prompt registry",),
+                writes_allowed=True,
+                runtime_owner="Internal Prompts panel",
+                boundary_copy=(
+                    "Settings Internal Prompts panel owns internal-tooling prompt overrides; "
+                    "use each prompt's own Save/Reset buttons."
+                ),
+                recovery_copy=(
+                    "Reset a prompt from its editor to restore the packaged default text."
+                ),
             ),
             *self._domain_category_ownership_records(),
         )
@@ -7245,6 +7296,9 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.SPLASH_SCREEN:
             yield Static("Splash Screen", classes="destination-section settings-column-title")
             yield SettingsSplashScreenViewer(id="settings-splash-screen-viewer")
+        elif category is SettingsCategoryId.INTERNAL_PROMPTS:
+            yield Static("Internal Prompts", classes="destination-section settings-column-title")
+            yield InternalPromptsPanel(id="settings-internal-prompts-panel")
         elif category is SettingsCategoryId.STORAGE:
             values = self._storage_setting_values()
             try:
@@ -7555,7 +7609,11 @@ class SettingsScreen(BaseAppScreen):
             id="settings-guided-action-state",
             classes="settings-status-row",
         )
-        if summary.category not in (SettingsCategoryId.THEME, SettingsCategoryId.SPLASH_SCREEN):
+        if summary.category not in (
+            SettingsCategoryId.THEME,
+            SettingsCategoryId.SPLASH_SCREEN,
+            SettingsCategoryId.INTERNAL_PROMPTS,
+        ):
             save_button = Button(
                 "Save",
                 id="settings-save-category",
@@ -7706,6 +7764,15 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Focused field guide", classes="destination-section")
             yield self._detail_row("Config section", "splash_screen")
             yield self._detail_row("Note", "Splash defaults are saved automatically.")
+        elif summary.category is SettingsCategoryId.INTERNAL_PROMPTS:
+            yield Static("Edit the prompts used by internal tooling.", classes="destination-section")
+            yield self._detail_row("Save target", "~/.config/tldw_cli/config.toml  [internal_prompts]")
+            yield self._detail_row("Note", "Use each prompt's own Save / Reset buttons.")
+            try:
+                n = internal_prompts_authoring.customized_count()
+            except Exception:
+                n = 0
+            yield self._detail_row("Customized prompts", str(n))
         elif summary.category is SettingsCategoryId.STORAGE:
             yield Static(
                 "Affects local database path defaults after restart.",
@@ -8101,6 +8168,10 @@ class SettingsScreen(BaseAppScreen):
         self, event: SettingsThemeEditor.ThemeModifiedStatus
     ) -> None:
         self.theme_editor_modified = event.is_modified
+
+    @on(InternalPromptsPanel.Modified)
+    def _on_internal_prompts_modified(self, event: InternalPromptsPanel.Modified) -> None:
+        self.internal_prompts_dirty = event.customized_count
 
     @on(Select.Changed, "#settings-appearance-theme")
     def handle_appearance_theme_changed(self, event: Select.Changed) -> None:
