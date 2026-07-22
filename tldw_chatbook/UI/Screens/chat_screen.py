@@ -10325,6 +10325,13 @@ class ChatScreen(BaseAppScreen):
             # stale frame behind.
             await self._refresh_active_dictionaries_summary_if_scope_changed()
             await self._refresh_active_world_books_summary_if_scope_changed()
+            # P3c Task 4: mirrors the dictionary/world-book scope-guarded
+            # refresh pattern immediately above -- safe to call unconditionally
+            # on every sync tick because the refresh is itself scope-guarded
+            # (no-op when the active character hasn't changed) and never
+            # raises (see `_refresh_active_character_avatar_if_scope_changed`
+            # docstring, T3).
+            await self._refresh_active_character_avatar_if_scope_changed()
             # task-280: hand the control bar a pre-await snapshot (its own
             # pre-existing timing). The rail-VISIBILITY call below must NOT
             # reuse this snapshot: `_sync_console_native_session_tabs` can

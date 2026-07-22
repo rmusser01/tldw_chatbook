@@ -292,3 +292,29 @@ async def test_refresh_never_raises_on_bad_image(console_screen_with_db):
     await screen._refresh_active_character_avatar_if_scope_changed()  # must not raise
     # decode failed -> empty/text spec, name still set
     assert screen._active_character_avatar_name == "Bad"
+
+
+# --- P3c Task 4: wire the refresh into the Console sync tick -----------------
+#
+# Unlike `test_refresh_populates_avatar_cache_and_mounts` above (which calls
+# `_refresh_active_character_avatar_if_scope_changed` directly), this proves
+# the wire: the real Console sync entrypoint `_sync_native_console_chat_ui`
+# -- the same tick that already refreshes the dictionary/world-book "what's
+# in play" summaries -- also refreshes the character avatar.
+
+
+@pytest.mark.asyncio
+async def test_sync_tick_refreshes_avatar(console_screen_with_db):
+    app, screen, db = console_screen_with_db
+    from PIL import Image as PILImage
+    from io import BytesIO
+    buf = BytesIO(); PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buf, format="PNG")
+    char_id = db.add_character_card({"name": "Ada", "image": buf.getvalue()})
+    _set_active_console_character(screen, char_id, "Ada")
+
+    await screen._sync_native_console_chat_ui()  # the real sync entrypoint, not the refresh directly
+
+    assert screen._active_character_avatar is not None
+    assert screen._active_character_avatar_name == "Ada"
+    name = screen.query_one("#console-character-name")
+    assert "Ada" in str(name.renderable)
