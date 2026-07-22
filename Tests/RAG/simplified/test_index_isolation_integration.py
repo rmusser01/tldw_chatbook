@@ -1,4 +1,6 @@
 # Tests/RAG/simplified/test_index_isolation_integration.py
+import asyncio
+
 import pytest
 from tldw_chatbook.RAG_Search.simplified.config import (
     RAGConfig, EmbeddingConfig, ChunkingConfig, VectorStoreConfig, SearchConfig,
@@ -57,3 +59,26 @@ def test_created_collection_carries_provenance(chroma_persist_dir):
     assert meta.get("fp") is not None
     assert meta.get("embedding_model") == "mock"
     assert meta.get("hnsw:space") == "cosine"  # existing key preserved
+
+
+@pytest.mark.requires_chromadb
+def test_fresh_fingerprinted_collection_reads_as_empty(chroma_persist_dir):
+    """A freshly created fingerprinted collection (no docs) must trip the
+    existing honest-empty probe -- locks the Task-2 contract, not new
+    behavior."""
+    from tldw_chatbook.RAG_Search.semantic_availability import semantic_index_is_empty
+
+    cfg = _chroma_cfg(chroma_persist_dir)
+    svc = RAGService(cfg)
+    svc.vector_store.collection  # create, no docs
+    assert asyncio.run(semantic_index_is_empty(svc)) is True
+
+
+@pytest.mark.requires_chromadb
+def test_ingest_and_query_resolve_same_collection(chroma_persist_dir):
+    # Two services built from the SAME config must open the SAME collection --
+    # the embed/query parity guard against divergent-model index misses.
+    cfg = _chroma_cfg(chroma_persist_dir)
+    ingest_side = RAGService(cfg).vector_store.collection_name
+    query_side = RAGService(cfg).vector_store.collection_name
+    assert ingest_side == query_side == fingerprinted_collection_name(cfg)
