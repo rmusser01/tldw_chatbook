@@ -6004,6 +6004,17 @@ class ChatScreen(BaseAppScreen):
             else:
                 await workspace_context.mount(new_button)
 
+    @on(ConsoleWorkspaceContextTray.Relabeled)
+    def _on_console_workspace_context_relabeled(self) -> None:
+        """Re-mount out-of-band tray controls after a width-driven relabel."""
+        self.call_after_refresh(
+            lambda: self.run_worker(
+                self._sync_console_legacy_workspace_context_aliases,
+                group="console-workspace-context-legacy-aliases",
+                exclusive=True,
+            )
+        )
+
     @staticmethod
     def _launch_targets_chatbook_artifact(
         pending_launch: Optional[ConsoleLiveWorkLaunch],

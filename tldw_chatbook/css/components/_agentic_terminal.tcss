@@ -2161,6 +2161,7 @@ ConsoleSystemPromptModal {
 .console-conversation-browser-row-line {
     width: 100%;
     min-width: 0;
+    height: auto;
     layout: horizontal;
 }
 
@@ -2193,6 +2194,7 @@ ConsoleSystemPromptModal {
     padding: 0;
     overflow-y: auto;
     overflow-x: hidden;
+    scrollbar-gutter: stable;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
     scrollbar-color: $ds-grid-line;

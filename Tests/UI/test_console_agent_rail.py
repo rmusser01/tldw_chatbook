@@ -95,67 +95,81 @@ def test_badge_renders_on_its_own_line_regardless_of_secondary_length():
     assert "Sub-Agents" not in "\n".join(lines[:-1])
 
 
-def test_ellipsized_title_still_pairs_with_full_badge():
-    """Long titles keep degrading via ellipsis (existing behavior); that
-    truncation must never interact with -- or swallow -- the badge, which
-    now lives on an entirely separate line."""
+def test_wrapped_title_still_pairs_with_full_badge():
+    """Long titles now wrap to two budget-width lines; that wrapping must
+    never interact with -- or swallow -- the badge, which lives on an
+    entirely separate line."""
+    from rich.cells import cell_len
+
     from tldw_chatbook.Widgets.Console.console_workspace_context import (
-        ConsoleWorkspaceContextTray,
         format_console_conversation_row_label,
+        wrap_console_conversation_title,
     )
 
-    long_title = "A" * 40
-    visible_title = ConsoleWorkspaceContextTray._conversation_visible_title(long_title)
-    assert visible_title.endswith("...")
-    assert len(visible_title) == 20
+    name_lines = wrap_console_conversation_title("A" * 50, 20)
+    assert name_lines == ("A" * 20, "A" * 19 + "…")
+    assert all(cell_len(line) <= 20 for line in name_lines)
 
-    composed = f"  {visible_title}\n  saved chat - 2m"
+    composed = "\n".join((*name_lines, "saved chat - 2m"))
     label = format_console_conversation_row_label(composed, subagent_count=5)
     lines = label.splitlines()
-    assert lines[0] == f"  {visible_title}"
+    assert lines[0] == name_lines[0]
     assert lines[-1] == "[dim]\\[5 Sub-Agents][/dim]"
+    assert "Sub-Agents" not in "\n".join(lines[:-1])
 
 
 def test_short_title_without_badge_is_unchanged():
     """Badge-less rows and short titles get no extra lines or ellipsis."""
     from tldw_chatbook.Widgets.Console.console_workspace_context import (
-        ConsoleWorkspaceContextTray,
         format_console_conversation_row_label,
+        wrap_console_conversation_title,
     )
 
-    short_title = "Short title"
-    assert (
-        ConsoleWorkspaceContextTray._conversation_visible_title(short_title)
-        == short_title
-    )
+    assert wrap_console_conversation_title("Short title", 20) == ("Short title",)
 
-    composed = f"  {short_title}\n  saved chat - 2m"
+    composed = "Short title\nsaved chat - 2m"
     label = format_console_conversation_row_label(composed, subagent_count=0)
     assert label == composed
     assert label.count("\n") == 1
 
 
-def test_conversation_row_height_grows_only_when_badge_present():
-    """The row button gains a third line (for the badge) only when a badge
-    will actually render; badge-less rows keep the original two-line height."""
+def test_conversation_row_height_tracks_name_lines_and_badge():
+    """Row height = name lines + metadata line, plus one line only when a
+    badge will actually render."""
     from tldw_chatbook.Widgets.Console.console_workspace_context import (
         ConsoleWorkspaceContextTray,
     )
 
     badge_button = ConsoleWorkspaceContextTray._conversation_button(
-        "  Title\n  secondary",
+        "Title\nsecondary",
         id="row-badge",
         conversation_id="c1",
         subagent_count=2,
     )
     plain_button = ConsoleWorkspaceContextTray._conversation_button(
-        "  Title\n  secondary",
+        "Title\nsecondary",
         id="row-plain",
         conversation_id="c2",
         subagent_count=0,
     )
+    wrapped_button = ConsoleWorkspaceContextTray._conversation_button(
+        "Title line one\nline two\nsecondary",
+        id="row-wrapped",
+        conversation_id="c3",
+        subagent_count=0,
+        name_line_count=2,
+    )
+    wrapped_badge_button = ConsoleWorkspaceContextTray._conversation_button(
+        "Title line one\nline two\nsecondary",
+        id="row-wrapped-badge",
+        conversation_id="c4",
+        subagent_count=1,
+        name_line_count=2,
+    )
     assert int(badge_button.styles.height.value) == 3
     assert int(plain_button.styles.height.value) == 2
+    assert int(wrapped_button.styles.height.value) == 3
+    assert int(wrapped_badge_button.styles.height.value) == 4
 
 
 @pytest.mark.asyncio

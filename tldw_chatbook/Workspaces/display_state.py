@@ -53,6 +53,13 @@ class ConsoleWorkspaceConversationRow:
 CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT = 50
 CONSOLE_WORKSPACE_CONVERSATION_MIN_VISIBLE_ROWS = 4
 CONSOLE_WORKSPACE_CONVERSATION_MAX_VISIBLE_ROWS = 12
+# Nominal (minimum) rail conversation-row height: one name line + the
+# metadata line + the row's bottom margin. Rows whose names wrap to two
+# lines render one line taller. This constant intentionally stays at the
+# minimum: it only feeds the visible-row-count heuristic below, where a
+# slight overestimate merely loads a row or two more than fits (the list
+# scrolls); it must NOT be used for layout math (the tray derives real
+# heights from the wrap result -- see console_workspace_context.py).
 CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT = 3
 CONSOLE_WORKSPACE_CONVERSATION_HEIGHT_RATIO = 0.45
 

@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import pytest
+from rich.cells import cell_len
 from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -15,7 +16,6 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_models import ChatSessionData
-from tldw_chatbook.Chat.console_glyphs import GLYPH_ACTIVE
 from tldw_chatbook.Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
@@ -570,6 +570,20 @@ def test_console_workspace_context_grouped_browser_styles_are_declared() -> None
         assert "scrollbar-size:" not in list_block
         assert "#console-workspace-conversations:focus {" in css
 
+        # Row lines must size to their explicitly-heighted buttons; Textual's
+        # Horizontal defaults to `height: 1fr`, which divides the list height
+        # equally and breaks mixed wrapped/badge row heights.
+        row_line_block = css.split(
+            ".console-conversation-browser-row-line {", 1
+        )[1].split("}", 1)[0]
+        assert "height: auto" in row_line_block
+        # Reserve the scrollbar cell permanently so row-wrap width does not
+        # depend on scroll state (scrollbar toggle <-> rewrap feedback loop).
+        rail_body_block = css.split("#console-left-rail-body {", 1)[1].split(
+            "}", 1
+        )[0]
+        assert "scrollbar-gutter: stable" in rail_body_block
+
 
 def test_console_workspace_conversation_visible_rows_are_clamped() -> None:
     assert console_workspace_conversation_visible_rows(None) == 4
@@ -978,14 +992,18 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
             is False
         )
         assert len(console.query("#console-workspace-conversations-toggle")) == 0
+        # Row names wrap at the rail budget, so match against the
+        # whitespace-normalized label rather than a single raw line.
         assert any(
-            "Collapse Chat A" in text for text in _conversation_row_texts(console)
+            "Collapse Chat A" in " ".join(text.split())
+            for text in _conversation_row_texts(console)
         )
 
         _browser_group_toggle(console, "section:chats").press()
         await pilot.pause(0.1)
         assert all(
-            "Collapse Chat A" not in text for text in _conversation_row_texts(console)
+            "Collapse Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
         )
         collapsed_groups = app.app_config["console"]["conversation_browser"][
             "collapsed_groups"
@@ -997,7 +1015,8 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversations")) == 1
         assert all(
-            "Collapse Chat A" not in text for text in _conversation_row_texts(console)
+            "Collapse Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
         )
 
         service.set_active_workspace(default_workspace.workspace_id)
@@ -1005,7 +1024,8 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversations")) == 1
         assert all(
-            "Collapse Chat A" not in text for text in _conversation_row_texts(console)
+            "Collapse Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
         )
 
 
@@ -1405,6 +1425,11 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
     ``test_console_send_after_workspace_switch_persists_to_selected_workspace``
     (Tests/UI/test_console_native_chat_flow.py, the "shared-open-chat"
     case) already locks in. This test now drives the marker the same way.
+
+    Since the flush-left row rework, rows no longer carry a textual
+    ``GLYPH_ACTIVE`` prefix; the active row is marked solely by the
+    ``console-workspace-conversation-row-selected`` class, which is what
+    this test asserts on.
     """
     app = _build_test_app()
     service = app.workspace_registry_service
@@ -1436,9 +1461,11 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
         )
         await pilot.pause()
 
-        row_texts = _conversation_row_texts(console)
         active_row_texts = [
-            text for text in row_texts if text.startswith(f"{GLYPH_ACTIVE} ")
+            " ".join(str(row.label).split())
+            for row in console.query(".console-workspace-conversation-row")
+            if row.display
+            and row.has_class("console-workspace-conversation-row-selected")
         ]
         assert active_row_texts == [
             text for text in active_row_texts if "Planning thread" in text
@@ -1571,8 +1598,9 @@ def test_console_workspace_aggregate_height_pins_badge_row_cost() -> None:
         ConsoleConversationBrowserRow,
     )
 
-    # Plain row (no subagent_count): costs 3px (base 3 + delta 0).
-    # Badge row (subagent_count > 0): costs 4px (base 3 + delta 1).
+    # At budget 20 every title here is a single name line, so:
+    # Plain row (no subagent_count): costs 3px (1 name + 1 metadata + 1 margin).
+    # Badge row (subagent_count > 0): costs 4px (plus a dedicated badge line).
     plain_rows = tuple(
         ConsoleConversationBrowserRow(
             row_key=f"plain-{i}",
@@ -1614,12 +1642,149 @@ def test_console_workspace_aggregate_height_pins_badge_row_cost() -> None:
     # Expected sum: 3 plain rows * 3px/row + 2 badge rows * 4px/row = 17px.
     expected_height = 3 * 3 + 2 * 4
     actual_height = ConsoleWorkspaceContextTray._conversation_browser_rows_height(
-        mixed_rows
+        mixed_rows, 20
     )
 
     assert actual_height == expected_height == 17
     assert (
         actual_height
-        == ConsoleWorkspaceContextTray._conversation_browser_rows_height(plain_rows)
-        + ConsoleWorkspaceContextTray._conversation_browser_rows_height(badge_rows)
+        == ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+            plain_rows, 20
+        )
+        + ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+            badge_rows, 20
+        )
     )
+
+
+_LONG_ROW_TITLE = (
+    "A very long conversation title that overflows the rail width easily"
+)
+
+
+def _long_title_grouped_state():
+    return _base_grouped_workspace_state(
+        rows=(
+            _browser_row(
+                "conv-long",
+                _LONG_ROW_TITLE,
+                selected=True,
+                updated_sort="2026-06-27T09:00:00",
+            ),
+        )
+    )
+
+
+def _first_row_name_lines(console) -> list[str]:
+    row_button = console.query_one("#console-workspace-conversation-0", Button)
+    lines = str(row_button.label).splitlines()
+    # Last line is the metadata line; badge rows are not used in this fixture.
+    return lines[:-1]
+
+
+@pytest.mark.asyncio
+async def test_console_rail_titles_wrap_at_measured_width() -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_long_title_grouped_state())
+        await pilot.pause()
+        await pilot.pause()
+
+        # The fit pass replaced the pre-measurement fallback with the real
+        # measured width.
+        assert tray._row_content_width == tray.content_region.width
+        budget = tray._browser_title_budget()
+        name_lines = _first_row_name_lines(console)
+        assert 1 <= len(name_lines) <= 2
+        assert all(cell_len(line) <= budget for line in name_lines)
+        # Flush left: no marker prefix on the name.
+        assert not name_lines[0].startswith(" ")
+
+        # Stability: further fit passes must not flap the labels (guarded
+        # relabel -- no recompose oscillation).
+        settled = str(
+            console.query_one("#console-workspace-conversation-0", Button).label
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert (
+            str(
+                console.query_one(
+                    "#console-workspace-conversation-0", Button
+                ).label
+            )
+            == settled
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_rail_list_height_matches_rendered_rows() -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_long_title_grouped_state())
+        await pilot.pause()
+        await pilot.pause()
+
+        conversation_list = console.query_one("#console-workspace-conversations")
+        # Scope every query to the list: `console-workspace-empty-copy` is
+        # also used by status statics OUTSIDE the conversation list, which
+        # would overcount the expected height.
+        row_buttons = list(
+            conversation_list.query(
+                ".console-workspace-conversation-row"
+            ).results(Button)
+        )
+        assert row_buttons
+        rows_height = sum(
+            int(button.styles.height.value) + 1 for button in row_buttons
+        )
+        header_count = len(
+            conversation_list.query(".console-conversation-browser-section-header")
+        ) + len(
+            conversation_list.query(".console-conversation-browser-group-header")
+        )
+        empty_copies = len(
+            conversation_list.query(".console-workspace-empty-copy")
+        )
+        assert (
+            int(conversation_list.styles.height.value)
+            == rows_height + header_count + empty_copies
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_rail_wrap_budget_tracks_terminal_width() -> None:
+    """Spec: the same long title must wrap at different budgets at different
+    terminal widths (the rail is 3fr, not fixed)."""
+    budgets: dict[str, int] = {}
+    for label, size in (("wide", (200, 44)), ("narrow", (100, 44))):
+        app = _build_test_app()
+        host = ConsoleHarness(app)
+        async with host.run_test(size=size) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-workspace-context")
+            tray = console.query_one(
+                "#console-workspace-context", ConsoleWorkspaceContextTray
+            )
+            tray.sync_state(_long_title_grouped_state())
+            await pilot.pause()
+            await pilot.pause()
+            budget = tray._browser_title_budget()
+            budgets[label] = budget
+            name_lines = _first_row_name_lines(console)
+            assert all(cell_len(line) <= budget for line in name_lines)
+    assert budgets["narrow"] < budgets["wide"]
