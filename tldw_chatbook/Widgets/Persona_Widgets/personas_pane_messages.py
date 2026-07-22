@@ -52,6 +52,10 @@ class CharacterImageUploadRequested(Message):
     """User requested to choose an image for the active character editor."""
 
 
+class CharacterImageRemoveRequested(Message):
+    """User requested to remove the avatar image from the active character editor."""
+
+
 class EditPersonaRequested(Message):
     """Edit was requested for the displayed persona profile."""
 

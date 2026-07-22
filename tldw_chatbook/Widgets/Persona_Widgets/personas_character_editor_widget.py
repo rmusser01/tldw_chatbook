@@ -21,6 +21,7 @@ from textual.widgets import Button, Input, Label, Static, TextArea
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from .personas_pane_messages import (
     CharacterEditorCancelled,
+    CharacterImageRemoveRequested,
     CharacterImageUploadRequested,
     CharacterSaveRequested,
     EditorContentChanged,
@@ -87,7 +88,7 @@ class PersonasCharacterEditorWidget(Container):
     }
 
     PersonasCharacterEditorWidget #personas-char-editor-avatar-row {
-        height: 1;
+        height: auto;
         min-height: 1;
         padding: 0 1;
     }
@@ -97,13 +98,24 @@ class PersonasCharacterEditorWidget(Container):
         margin-right: 2;
     }
 
-    PersonasCharacterEditorWidget #personas-char-editor-avatar-upload {
+    PersonasCharacterEditorWidget #personas-char-editor-avatar-upload,
+    PersonasCharacterEditorWidget #personas-char-editor-avatar-remove {
         width: auto;
         min-width: 0;
         height: 1;
         min-height: 1;
         padding: 0 1;
         border: none;
+    }
+
+    /* A compact editor thumbnail box - smaller than the 80x40 chat
+       transcript image box, since this is a single always-visible avatar
+       preview rather than a scrolling message history. */
+    PersonasCharacterEditorWidget #personas-char-editor-avatar-thumb {
+        height: 10;
+        max-width: 24;
+        max-height: 10;
+        padding: 0 1;
     }
 
     PersonasCharacterEditorWidget .ds-toolbar {
@@ -204,6 +216,12 @@ class PersonasCharacterEditorWidget(Container):
                     id="personas-char-editor-avatar-upload",
                     classes="console-action-subdued",
                 )
+                yield Button(
+                    "Remove",
+                    id="personas-char-editor-avatar-remove",
+                    classes="console-action-subdued",
+                )
+            yield Container(id="personas-char-editor-avatar-thumb")
         yield Static("", id="personas-char-editor-validation")
         with Horizontal(classes="ds-toolbar"):
             yield Button(
@@ -312,6 +330,40 @@ class PersonasCharacterEditorWidget(Container):
         self._character_data["image"] = image_data
         self._set_avatar_status_from_record()
         self._mark_dirty()
+
+    def current_avatar_bytes(self) -> bytes | None:
+        """Return the loaded record's embedded avatar bytes, if any.
+
+        Returns:
+            The ``image`` key's bytes, or ``None`` when absent or not a
+            bytes-like value (e.g. the legacy ``avatar`` URL/path string,
+            which this editor does not decode as an image).
+        """
+        data = self._character_data.get("image")
+        return data if isinstance(data, (bytes, bytearray)) else None
+
+    def set_avatar_thumbnail(self, renderable: object | None) -> None:
+        """Mount a prepared avatar renderable, or clear to the text status.
+
+        The screen owns decoding (off-thread, via ``ConsoleImageRenderCache``)
+        and passes the finished renderable here; this method only mounts it -
+        a rich renderable (e.g. ``rich_pixels.Pixels``) mounts inside a
+        ``Static``, while a Textual widget (e.g. a ``textual_image`` graphics
+        ``Image``) mounts directly.
+
+        Args:
+            renderable: The prepared renderable to display, or ``None`` to
+                clear the thumbnail (leaving the text status as the sole
+                avatar indicator).
+        """
+        holder = self.query_one("#personas-char-editor-avatar-thumb", Container)
+        holder.remove_children()
+        if renderable is None:
+            return
+        from textual.widget import Widget as _W
+        from textual.widgets import Static as _S
+
+        holder.mount(renderable if isinstance(renderable, _W) else _S(renderable))
 
     def show_validation(self, errors: tuple[str, ...]) -> None:
         """Render screen-side validation errors in the editor footer.
@@ -482,6 +534,11 @@ class PersonasCharacterEditorWidget(Container):
     def _upload_avatar_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(CharacterImageUploadRequested())
+
+    @on(Button.Pressed, "#personas-char-editor-avatar-remove")
+    def _remove_avatar_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(CharacterImageRemoveRequested())
 
     @on(Button.Pressed, "#personas-char-editor-save")
     def _save_pressed(self, event: Button.Pressed) -> None:

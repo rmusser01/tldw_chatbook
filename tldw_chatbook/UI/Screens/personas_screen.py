@@ -80,6 +80,7 @@ from ...Widgets.Persona_Widgets.personas_messages import (
 from ...Widgets.Persona_Widgets.tag_filter_picker import TagFilterPicker
 from ...Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterEditorCancelled,
+    CharacterImageRemoveRequested,
     CharacterImageUploadRequested,
     CharacterSaveRequested,
     ConversationRowSelected,
@@ -3446,6 +3447,9 @@ class PersonasScreen(BaseAppScreen):
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
         self.query_one(PersonasCharacterEditorWidget).new_character()
+        # A new character never has an avatar, but a stale thumbnail from
+        # the previous editor session must not linger under the new one.
+        await self._render_character_editor_avatar()
         self._show_center("#ccp-character-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         # Create mode: the previous selection's identity (and conversation
@@ -3746,6 +3750,13 @@ class PersonasScreen(BaseAppScreen):
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
         self.query_one(PersonasCharacterEditorWidget).load_character(record)
+        # Sync handler: dispatch the (async, off-thread-decoding) thumbnail
+        # render as a worker rather than awaiting it inline.
+        self.run_worker(
+            self._render_character_editor_avatar(),
+            group="personas-avatar-render",
+            exit_on_error=False,
+        )
         self._show_center("#ccp-character-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         inspector.set_unsaved(False)
@@ -3887,6 +3898,99 @@ class PersonasScreen(BaseAppScreen):
             self._notify(f"Avatar upload failed: {exc}", "error")
             return
         self._notify("Avatar staged. Save the character to persist it.", "information")
+        await self._render_character_editor_avatar()
+
+    async def _render_character_editor_avatar(self) -> None:
+        """Decode and mount the character editor's avatar thumbnail off-thread.
+
+        Also re-syncs the editor's text status Static (``_set_avatar_status_
+        from_record``), since the Remove path clears ``image`` directly
+        without going through ``set_avatar_image``. A session-token guard
+        drops a late render if a different editor session (a new
+        create/edit, a save-in-place, or a cancel) started while the decode
+        was in flight.
+        """
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        editor._set_avatar_status_from_record()
+        data = editor.current_avatar_bytes()
+        if not data:
+            editor.set_avatar_thumbnail(None)
+            return
+        token = self._character_editor_generation
+        from ...Chat.console_image_view import (
+            ConsoleImageRenderCache,
+            resolve_default_mode,
+        )
+
+        if getattr(self, "_avatar_render_cache", None) is None:
+            self._avatar_render_cache = ConsoleImageRenderCache()
+        cache = self._avatar_render_cache
+        # Accessor confirmed against chat_screen.py's own
+        # resolve_default_mode call site and this file's existing
+        # app_config reads (e.g. _provider_readiness_app_config): screen
+        # instances always carry a real app_instance (set in
+        # BaseAppScreen.__init__), so a plain getattr default is enough.
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        mode = resolve_default_mode(app_config)
+        # Per-session cache key: avoids one character's decode racing
+        # another's under the same slot if a second editor session opens
+        # before the first's off-thread decode finishes (the fixed-key
+        # alternative would let a slower A-session overwrite a faster
+        # B-session's cache entry after B's own token check already passed).
+        cache_key = f"char-editor-avatar-{token}"
+        try:
+            ok = await asyncio.to_thread(cache.prepare, cache_key, bytes(data))
+        except Exception:
+            logger.opt(exception=True).debug("Character avatar decode failed.")
+            ok = False
+        if token != self._character_editor_generation or not self.is_mounted:
+            return  # a different editor session started while decoding
+        renderable = None
+        if ok:
+            if mode == "graphics":
+                try:
+                    from textual_image.widget import Image as _GraphicsImage
+
+                    pil = cache.get_pil(cache_key)
+                    if pil is not None:
+                        renderable = _GraphicsImage(pil)
+                        # Fixed cell size (matches the thumb box CSS), not
+                        # just max-width/max-height: textual_image's "auto"
+                        # sizing resolves its render region from the parent
+                        # container's settled layout, and mounting a widget
+                        # at runtime (vs. compose-time) can paint one tick
+                        # before that settles, asking the renderer to scale
+                        # to a transient 0-width/height region - which PIL's
+                        # resize() raises on. A fixed size is resolvable
+                        # without waiting on parent layout, so it sidesteps
+                        # the race outright.
+                        renderable.styles.width = 24
+                        renderable.styles.height = 10
+                except Exception:
+                    renderable = cache.get_pixels(cache_key)
+            else:
+                renderable = cache.get_pixels(cache_key)
+        editor.set_avatar_thumbnail(renderable)
+
+    @on(CharacterImageRemoveRequested)
+    def _handle_character_image_remove(
+        self, message: CharacterImageRemoveRequested
+    ) -> None:
+        message.stop()
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        editor._character_data.pop("image", None)
+        editor._mark_dirty()
+        self.run_worker(
+            self._render_character_editor_avatar(),
+            group="personas-avatar-render",
+            exit_on_error=False,
+        )
 
     # ===== Import / export =====
     #
