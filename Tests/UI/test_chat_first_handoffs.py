@@ -289,6 +289,129 @@ def test_chat_screen_start_chat_handoff_preserves_numeric_zero_character_id():
     assert session_data.discovery_owner == "ccp_character"
 
 
+def _character_start_chat_payload(
+    *, character_id: int, name: str, first_message: str
+) -> ChatHandoffPayload:
+    """Build a Personas Start-Chat handoff payload for a character (task-427)."""
+    return ChatHandoffPayload(
+        source="personas",
+        item_type="character-card",
+        title=f"{name} (character)",
+        body=f"Name: {name}",
+        source_id=str(character_id),
+        metadata={
+            "intent": "start_chat",
+            "selected_kind": "character",
+            "selected_record_id": str(character_id),
+            "selected_name": name,
+        },
+    )
+
+
+class _StubCharacterCardDB:
+    """Minimal ``chachanotes_db`` double exposing only the character-card read
+    the native handoff consumer needs (task-427). Deliberately narrow: it has
+    no ``add_conversation``/``client_id`` surface, so any attempted
+    persistence during the seeded-greeting write fails and is swallowed by
+    the consumer's own try/except -- the in-memory session/message state is
+    what these tests assert on.
+    """
+
+    def __init__(self, card: dict) -> None:
+        self._card = card
+
+    def get_character_card_by_id(self, character_id):
+        return self._card
+
+
+@pytest.mark.asyncio
+async def test_native_start_chat_builds_character_session_with_greeting():
+    """Start Chat on the native Console handoff branch should create a
+    dedicated character-bound session with the greeting seeded (task-427)."""
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.Chat.console_chat_models import (
+        CONSOLE_GLOBAL_WORKSPACE_ID,
+        ConsoleMessageRole,
+    )
+
+    app = _build_test_app()
+    app.chachanotes_db = _StubCharacterCardDB(
+        {
+            "name": "Elara",
+            "first_message": "Greetings, {{user}}.",
+            "system_prompt": "You are Elara, a forest guide.",
+            "personality": "Warm and curious",
+            "description": "An elven ranger",
+            "scenario": "A quiet forest clearing",
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+
+        app.pending_chat_handoff = _character_start_chat_payload(
+            character_id=7, name="Elara", first_message="Greetings, {{user}}."
+        )
+
+        await screen._consume_pending_chat_handoff()
+        await pilot.pause()
+
+        store = screen._ensure_console_chat_store()
+        session = store._sessions[store.active_session_id]
+        assert session.character_id == 7
+        assert session.character_name == "Elara"
+        assert session.title == "Chat with Elara"
+        assert session.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
+        msgs = store.messages_for_session(session.id)
+        assert msgs[0].role is ConsoleMessageRole.ASSISTANT
+        assert msgs[0].content == "Greetings, User."  # {{user}} substituted
+        assert "Stay in character." not in (session.settings.system_prompt or "")
+        assert app.pending_chat_handoff is None
+
+
+@pytest.mark.asyncio
+async def test_native_start_chat_falls_back_when_card_fetch_fails():
+    """A character-card fetch failure must not raise; the handoff should
+    fall back to the staged-context lane with no character session
+    created (task-427)."""
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    app = _build_test_app()
+    app.chachanotes_db = _StubCharacterCardDB({"name": "Elara"})
+    app.chachanotes_db.get_character_card_by_id = lambda *_a, **_k: (
+        _ for _ in ()
+    ).throw(RuntimeError("boom"))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+
+        app.pending_chat_handoff = _character_start_chat_payload(
+            character_id=7, name="Elara", first_message="Hi"
+        )
+
+        await screen._consume_pending_chat_handoff()  # must not raise
+        await pilot.pause()
+
+        store = screen._ensure_console_chat_store()
+        active = (
+            store._sessions.get(store.active_session_id)
+            if store.active_session_id
+            else None
+        )
+        assert active is None or active.character_id is None
+        assert app.pending_chat_handoff is None
+
+
 @pytest.mark.asyncio
 async def test_chat_screen_pending_handoff_consumer_is_reentrant_safe():
     payload = ChatHandoffPayload(

@@ -9574,6 +9574,71 @@ class ChatScreen(BaseAppScreen):
             handoff_payload=payload,
         )
 
+    async def _start_character_console_session(self, payload: ChatHandoffPayload) -> bool:
+        """Build a dedicated character conversation from a Start-Chat handoff.
+
+        Returns True when a character session was created; False to let the
+        caller fall back to the staged-context path (task-427).
+        """
+        identity = _character_session_identity_from_handoff(payload)
+        if identity is None:
+            return False
+        character_id, _name_hint, _assistant_id = identity
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return False
+        try:
+            card = await asyncio.to_thread(db.get_character_card_by_id, character_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Start Chat: character card fetch failed; staging context instead."
+            )
+            return False
+        if not card:
+            return False
+
+        # Local import matches this module's existing convention of
+        # deferring Character_Chat submodule imports (they pull in Pillow
+        # and CharactersRAGDB) rather than importing them at module scope.
+        from ...Character_Chat.Character_Chat_Lib import replace_placeholders
+
+        name = str(card.get("name") or _name_hint or "").strip() or "Character"
+        parts = [
+            str(card.get(key) or "").strip()
+            for key in ("system_prompt", "personality", "description", "scenario")
+        ]
+        system_prompt = "\n".join(p for p in parts if p) or "Stay in character."
+        greeting = replace_placeholders(str(card.get("first_message") or ""), name, "User")
+
+        store = self._ensure_console_chat_store()
+        settings = replace(
+            self._default_console_session_settings(),
+            system_prompt=system_prompt,
+            character_label=name,
+        )
+        session = store.create_session(
+            title=f"Chat with {name}",
+            workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
+            settings=settings,
+        )
+        session.character_id = int(character_id)
+        session.character_name = name
+        if greeting:
+            try:
+                store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content=greeting,
+                    persist=True,
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Start Chat: greeting seed/persist failed; continuing."
+                )
+        await self._sync_native_console_chat_ui()
+        self._focus_console_composer_if_needed(force=True)
+        return True
+
     async def _consume_pending_chat_handoff(self) -> None:
         payload = getattr(self.app_instance, "pending_chat_handoff", None)
         if payload is None:
@@ -9590,9 +9655,16 @@ class ChatScreen(BaseAppScreen):
 
             tab_container = self._get_tab_container()
             if tab_container is None:
-                # The native Console composes no legacy tab surface; stage the
-                # handoff into the Console live-work lane so the context lands
-                # in Staged Context instead of being dropped with a warning.
+                # The native Console composes no legacy tab surface. A
+                # Personas Start-Chat character handoff gets a dedicated
+                # character-bound session with its greeting seeded
+                # (task-427); anything else -- or a character session that
+                # failed to build -- stages into the Console live-work lane
+                # so the context lands in Staged Context instead of being
+                # dropped with a warning.
+                if await self._start_character_console_session(payload):
+                    self.app_instance.pending_chat_handoff = None
+                    return
                 self._stage_handoff_as_console_live_work(payload)
                 self.app_instance.pending_chat_handoff = None
                 return
