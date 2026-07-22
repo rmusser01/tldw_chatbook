@@ -51,6 +51,12 @@ Behavior:
 
 `get_provider_readiness` checks the `api_key` slot before the env var and defaults, so overlaying a non-empty draft key makes `readiness.ready`/`api_key_source` reflect the draft key.
 
+**Testability structure (improvement):** the existing settings tests are heavyweight full-pilot (they settle a mount storm and scroll to controls), so the provenance permutations must not depend on a full mount. Factor the value logic into pure, resolved-input helpers:
+- a module-level pure `overlay_provider_draft_config(app_config, *, provider_save_key, endpoint_key, draft_endpoint, draft_env_var, draft_api_key, dirty) -> dict` that does the deep-copy + targeted override (no `self`, no widgets);
+- the findings/provenance assembly takes **resolved** inputs (`provider`, `provider_key`, `model`, `readiness`, `draft_endpoint`, `dirty`, the env value) rather than reading widgets, so it can be exercised on a bare screen instance (`SettingsScreen.__new__(SettingsScreen)` with `app_instance.app_config` set) — the same bare-instance pattern used elsewhere in the suite.
+
+The thin `_provider_test_staged_config` / `_provider_readiness_test_report` wrappers read the widgets (and `_provider_draft().dirty_keys()`) and delegate to these pure pieces.
+
 ### 2. Provenance-tagged evidence in `_provider_readiness_test_report`
 
 Compute a provenance set once: `dirty = self._provider_draft().dirty_keys()` (empty set when no draft). Then:
@@ -74,25 +80,28 @@ No production change needed; add regression tests so the behavior can't silently
 
 ## Testing
 
-Unit tests on the report/staged-config helpers (mock the provider widgets / app_config, inject `environ`):
+Unit tests on the **pure** helpers (`overlay_provider_draft_config` + the resolved-input findings builder on a bare `SettingsScreen` instance; construct `app_config` directly, inject `environ` / patch `os.environ`):
 - **Endpoint honesty:** draft endpoint (`:9099`) ≠ saved (`:8080`) → the endpoint finding shows the draft value + `(draft)`, never the saved value.
 - **Draft key honesty:** dirty non-empty draft `api_key`, no saved key → `readiness.ready` true via the draft key; finding reads `api_key_source=draft api_key (unsaved)`; the key value never appears in `detail`/`summary`.
 - **Draft env-var:** dirty `credential_env_var` with the env value present → `env_var` finding tagged `(draft env var)`.
 - **No draft (saved-only):** no dirty keys → `_provider_test_staged_config` returns the config unchanged and the evidence shows the saved values with **no** `(draft)` tags (today's behavior preserved).
 - **staged-config isolation:** overlay does not mutate the real `app_config` (deep copy) and preserves other providers' settings.
 
-Pilot tests (mirroring the existing settings-screen test harness):
+Pilot tests (mirroring the existing settings-screen harness, kept minimal):
 - AC#2: `#settings-test-provider` `Button.press()` populates `#settings-provider-test-result`.
-- AC#3: the button runs the test with a provider `Input` focused (no `t` key pressed).
+- AC#3: the button runs the test with a provider `Input` focused (no `t` key pressed) — proving the non-hotkey path.
+- One end-to-end wiring test: set the endpoint `Input` to a draft value, press Test, assert the result row shows the draft value + `(draft)` (guards the widget→pure-helper wiring).
 
-Cross-check: the existing provider-test / readiness tests (`Tests/UI` settings-screen suites) stay green.
+Cross-check: the existing provider-test / readiness tests (`Tests/UI/test_settings_configuration_hub.py`) stay green.
 
 ## Risks / mitigations
 
 - **Leaking a draft secret:** the api-key value is never placed in a finding — only the source label — and `redact_secret_text` wraps the whole line. Tests assert the key value is absent.
 - **Mutating shared `app_config`:** the staged config is a deep copy; tested explicitly.
 - **Provider/model draft edge:** provider/model already come from the draft widgets; the overlay keys off the draft provider's config section (`_provider_config_entry`), so switching provider without saving still tests the right section.
-- **Blast radius:** `get_provider_readiness` is unchanged (only fed a different config), so Chat-side readiness is unaffected; the change is contained to the settings screen's Test path.
+- **Blast radius:** `get_provider_readiness` is unchanged (only fed a different config), so Chat-side readiness is unaffected; the change is contained to the settings screen's Test path. It performs no logging of the config or key (verified).
+- **`None` vs `""` dirty edge:** `dirty_keys()` compares with `!=`, so clearing a field that had no saved value (`"" != None`) reads as dirty. The only visible effect is a `(draft)` tag on an empty endpoint/env-var — harmless and arguably accurate (the user did edit the field); no special handling.
+- **Provider/model provenance:** `model` is a discrete finding and is tagged when dirty. The provider name is not a discrete finding (it lives in `readiness.user_message` / the toast display name), so there is no separate provider tag — testing a draft provider still reads that provider's (draft-overlaid) section correctly.
 
 ## Non-goals
 
