@@ -6,7 +6,7 @@ from tldw_chatbook.RAG_Search.simplified.config import (
 )
 
 
-def _profile(**over):
+def _profile():
     rag = RAGConfig(
         embedding=EmbeddingConfig(model="round-trip-model"),
         chunking=ChunkingConfig(chunk_size=333, chunk_overlap=77),
@@ -248,3 +248,127 @@ def test_clone_tags_are_independent_of_source(tmp_path):
     clone = m.clone_profile("high_accuracy", "My Accuracy")
     clone.tags.append("X")
     assert "X" not in m.get_profile("high_accuracy").tags
+
+
+def test_legacy_blob_migration_does_not_shadow_readonly_builtin(tmp_path):
+    # Review finding (Important): _migrate_legacy_blob wrote
+    # self._profiles[profile.id] = profile directly, bypassing
+    # save_profile's read-only collision guard. A legacy custom_profiles.json
+    # blob containing a user profile named "High Accuracy" migrates to
+    # high_accuracy.json and would overwrite the read-only builtin -- making
+    # it deletable and persisting the overwrite on every future boot.
+    pdir = tmp_path / "profiles"
+    pdir.mkdir(parents=True)
+    from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+    legacy_user_profile = ProfileConfig(
+        name="High Accuracy", description="user's own", profile_type="custom",
+        rag_config=RAGConfig(),
+    )
+    (pdir / "custom_profiles.json").write_text(
+        _json.dumps({"profiles": [legacy_user_profile.to_dict()]}, default=str))
+
+    m = _mgr(tmp_path)  # construction triggers load+migrate
+
+    builtin = m.get_profile("high_accuracy")
+    assert builtin.read_only is True
+    # Real builtin config, not the migrated user profile's defaults:
+    assert builtin.rag_config.embedding.model == "BAAI/bge-large-en-v1.5"
+
+    with pytest.raises(ValueError):
+        m.delete_profile("high_accuracy")
+
+    # The migrated user profile must be present under a DIFFERENT, writable id.
+    others = [p for pid, p in m._profiles.items()
+              if pid != "high_accuracy" and p.name == "High Accuracy"]
+    assert len(others) == 1
+    assert others[0].read_only is False
+    assert others[0].id != "high_accuracy"
+    assert (pdir / f"{others[0].id}.json").exists()
+
+
+def test_hand_placed_file_named_like_builtin_id_is_self_healed(tmp_path):
+    # Companion path for the same review finding: a hand-placed (or
+    # otherwise stray) <builtin_id>.json file loaded directly via
+    # _load_custom_profiles must not shadow the builtin either -- it must be
+    # reassigned to a unique id and the colliding file removed from disk.
+    pdir = tmp_path / "profiles"
+    pdir.mkdir(parents=True)
+    from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+    colliding = ProfileConfig(
+        id="high_accuracy", name="High Accuracy", description="hand placed",
+        profile_type="custom", rag_config=RAGConfig(), read_only=False,
+    )
+    (pdir / "high_accuracy.json").write_text(
+        _json.dumps(colliding.to_dict(), default=str))
+
+    m = _mgr(tmp_path)
+
+    builtin = m.get_profile("high_accuracy")
+    assert builtin.read_only is True
+    assert builtin.rag_config.embedding.model == "BAAI/bge-large-en-v1.5"
+
+    with pytest.raises(ValueError):
+        m.delete_profile("high_accuracy")
+
+    others = [p for pid, p in m._profiles.items()
+              if pid != "high_accuracy" and p.name == "High Accuracy"]
+    assert len(others) == 1
+    assert others[0].read_only is False
+    new_id = others[0].id
+    assert new_id != "high_accuracy"
+    assert (pdir / f"{new_id}.json").exists()
+    assert not (pdir / "high_accuracy.json").exists()
+
+
+def test_create_custom_profile_returns_fully_built_rag_config(tmp_path):
+    # Review finding (Important): create_custom_profile built rag_config via
+    # RAGConfig(**asdict(base.rag_config)) -- the RAGConfig(**dict)
+    # anti-pattern that leaves sub-configs (chunking, embedding, ...) as raw
+    # dicts instead of dataclass instances, so
+    # .rag_config.chunking.chunk_size raised AttributeError.
+    m = _mgr(tmp_path)
+    created = m.create_custom_profile("X", base_profile="balanced")
+    assert isinstance(created.rag_config.chunking.chunk_size, int)
+    assert (created.rag_config.chunking.chunk_size
+            == m.get_profile("balanced").rag_config.chunking.chunk_size)
+
+
+def test_save_reload_round_trips_explicit_persist_directory(tmp_path):
+    # Exercises the Path/default=str save+reload branch for
+    # persist_directory regardless of whether the embeddings_rag optional
+    # deps are installed, by pinning vector_store explicitly instead of
+    # relying on auto-resolution.
+    from pathlib import Path
+    m = _mgr(tmp_path)
+    from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig, VectorStoreConfig
+    persist_dir = tmp_path / "chroma_store"
+    p = ProfileConfig(
+        name="Chroma Explicit", description="d", profile_type="custom",
+        rag_config=RAGConfig(
+            vector_store=VectorStoreConfig(type="chroma", persist_directory=persist_dir)
+        ),
+    )
+    m.save_profile(p)
+
+    m2 = _mgr(tmp_path)
+    reloaded = m2.get_profile(p.id)
+    assert isinstance(reloaded.rag_config.vector_store.persist_directory, Path)
+    assert reloaded.rag_config.vector_store.persist_directory == persist_dir
+
+
+def test_save_profile_allows_user_over_user_same_id(tmp_path):
+    # Only READ-ONLY collisions are rejected; two distinct user profiles that
+    # happen to share an id may overwrite one another via save_profile.
+    m = _mgr(tmp_path)
+    from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+    first = ProfileConfig(id="shared_id", name="First", description="d",
+                          profile_type="custom", rag_config=RAGConfig(), read_only=False)
+    second = ProfileConfig(id="shared_id", name="Second", description="d",
+                           profile_type="custom", rag_config=RAGConfig(), read_only=False)
+    m.save_profile(first)
+    m.save_profile(second)  # must not raise
+    assert m.get_profile("shared_id").name == "Second"

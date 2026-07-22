@@ -204,7 +204,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             # Temporarily use experiment profile settings
             if experiment_profile and experiment_profile.rag_config:
                 # Override search parameters from experiment profile
-                top_k = top_k or experiment_profile.rag_config.search.top_k
+                top_k = top_k or experiment_profile.rag_config.search.default_top_k
                 include_citations = (
                     include_citations
                     if include_citations is not None
