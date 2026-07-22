@@ -1,11 +1,50 @@
 """Unit tests for the Console rail title wrap/truncate helpers."""
 
+from types import SimpleNamespace
+
 from rich.cells import cell_len
 
 from tldw_chatbook.Widgets.Console.console_workspace_context import (
+    ConsoleWorkspaceContextTray,
     truncate_console_row_cells,
     wrap_console_conversation_title,
 )
+
+
+def _relabel_decision(measured, *, current, measured_before):
+    """Evaluate the width-relabel decision without building a widget."""
+    stub = SimpleNamespace(
+        _row_content_width=current,
+        _row_width_measured=measured_before,
+    )
+    return ConsoleWorkspaceContextTray._should_relabel_at_width(stub, measured)
+
+
+def test_first_measurement_adopts_real_width_over_fallback() -> None:
+    # Even a one-cell difference from the pre-measurement fallback must
+    # relabel the very first time, so rows leave the fallback budget behind.
+    assert _relabel_decision(21, current=20, measured_before=False) is True
+
+
+def test_first_measurement_noop_when_width_already_matches() -> None:
+    assert _relabel_decision(20, current=20, measured_before=False) is False
+
+
+def test_one_cell_scrollbar_toggle_is_ignored_after_first_measure() -> None:
+    # A collapse removes rows -> the 1-cell rail scrollbar disappears ->
+    # width shifts by one. That must NOT trigger a recompose.
+    assert _relabel_decision(24, current=23, measured_before=True) is False
+    assert _relabel_decision(22, current=23, measured_before=True) is False
+
+
+def test_unchanged_width_is_a_noop_after_first_measure() -> None:
+    assert _relabel_decision(23, current=23, measured_before=True) is False
+
+
+def test_multi_cell_resize_relabels_after_first_measure() -> None:
+    assert _relabel_decision(25, current=23, measured_before=True) is True
+    assert _relabel_decision(40, current=23, measured_before=True) is True
+    assert _relabel_decision(10, current=23, measured_before=True) is True
 
 
 def test_short_title_is_single_line() -> None:

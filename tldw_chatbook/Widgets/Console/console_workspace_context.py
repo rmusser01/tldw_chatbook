@@ -152,6 +152,16 @@ _BROWSER_ROW_CHROME_WIDTH = 6
 _LEGACY_ROW_CHROME_WIDTH = 2
 # Every row button carries a 1-line bottom margin (see the row CSS).
 _ROW_BOTTOM_MARGIN = 1
+# Minimum measured-width change (in cells) that triggers a relabel recompose
+# after the first measurement. The rail body scrollbar is one cell wide
+# (`scrollbar-size: 1 1`), so adding or removing rows -- e.g. collapsing a
+# browser section -- toggles the scrollbar and shifts `content_region.width`
+# by exactly one cell. `scrollbar-gutter: stable` reserves that cell in the
+# real app, but a one-cell change never alters two-line wrapping and must not
+# provoke a recompose regardless: recomposing on it would race an in-progress
+# state-change recompose (observed as a collapse failing to render) and, in
+# any environment where the gutter CSS is absent, oscillate the relabel.
+_RELABEL_MIN_WIDTH_DELTA = 2
 
 
 def _conversation_row_render_height(
@@ -284,6 +294,10 @@ class ConsoleWorkspaceContextTray(Vertical):
         self.state = state
         self.show_heading = show_heading
         self._row_content_width = _FALLBACK_ROW_CONTENT_WIDTH
+        # False until the first real content-width measurement is adopted.
+        # The first measurement always relabels (to replace the pre-measure
+        # fallback budget); later ones apply the hysteresis threshold.
+        self._row_width_measured = False
         self.styles.height = "auto"
         self.styles.min_height = 0
 
@@ -403,23 +417,45 @@ class ConsoleWorkspaceContextTray(Vertical):
         if callable(scroll_to):
             scroll_to(y=max(0, scroll_y), animate=False)
 
+    def _should_relabel_at_width(self, measured: int) -> bool:
+        """Return whether a measured content width warrants a rewrap recompose.
+
+        The first measurement always relabels, replacing the pre-measurement
+        fallback budget. Afterwards a change is honored only when it moves at
+        least ``_RELABEL_MIN_WIDTH_DELTA`` cells, so a one-cell scrollbar
+        toggle (from rows being added or removed) neither races a concurrent
+        state-change recompose nor oscillates the relabel.
+
+        Args:
+            measured: Freshly measured content-region width in cells.
+
+        Returns:
+            True when the tray should recompose to rewrap at ``measured``.
+        """
+        if not self._row_width_measured:
+            return measured != self._row_content_width
+        return abs(measured - self._row_content_width) >= _RELABEL_MIN_WIDTH_DELTA
+
     def _maybe_relabel_for_width(self) -> bool:
         """Rewrap row labels when the measured content width has changed.
 
         The check lives in the fit pass rather than ``on_resize`` because the
         tray's frame variant (solid <-> none) changes the *content* width
         without changing the outer size, so no resize event fires for it.
-        The equality guard is what prevents recompose feedback loops --
-        steady-state passes are free. Returns True when a relabel recompose
-        was scheduled (the caller should skip fitting; the scheduled passes
-        re-fit after the recompose).
+        ``_should_relabel_at_width`` is what prevents recompose feedback loops:
+        steady-state passes and one-cell scrollbar-toggle flaps are free, so a
+        section collapse (which toggles the scrollbar) never spawns a recompose
+        that would race its own state-change recompose. Returns True when a
+        relabel recompose was scheduled (the caller should skip fitting; the
+        scheduled passes re-fit after the recompose).
         """
         region = getattr(self, "content_region", None)
         if region is None or region.width <= 0:
             return False
         measured = int(region.width)
-        if measured == self._row_content_width:
+        if not self._should_relabel_at_width(measured):
             return False
+        self._row_width_measured = True
         self._row_content_width = measured
         scroll_parent = self._nearest_scroll_parent()
         parent_scroll_y = getattr(scroll_parent, "scroll_y", None)
