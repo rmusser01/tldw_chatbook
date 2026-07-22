@@ -218,8 +218,6 @@ class SkillTrustService:
 
         for normalized_name, skill_dir in self._iter_skill_dirs():
             snapshot = scan_skill_directory(normalized_name, skill_dir)
-            if snapshot.unsupported_paths:
-                raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
             snapshot_id = self._snapshot_id(normalized_name, generation)
             self.trust_store.save_snapshot(
                 snapshot_id,
@@ -515,8 +513,6 @@ class SkillTrustService:
         manifest = self._load_valid_manifest()
         generation = int(manifest["generation"]) + 1
         current = snapshot or self._scan_skill(normalized_name)
-        if current.unsupported_paths:
-            raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
         if not current.fingerprints:
             raise ValueError(TRUST_REASON_SKILL_DELETED)
 
