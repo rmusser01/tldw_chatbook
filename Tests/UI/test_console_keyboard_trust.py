@@ -200,3 +200,40 @@ async def test_f6_rail_stop_paints_accent_frame_and_restores_on_leave():
         console._focus_console_workbench_target("console-native-composer")
         await pilot.pause()
         assert rail.styles.border_top[1] == Color.parse(CONSOLE_FRAME_BORDER[1])
+
+
+@pytest.mark.asyncio
+async def test_console_shell_drops_header_at_small_height():
+    """TASK-346: below the minimum viable height the header banner is
+    dropped (-console-compact) so the transcript+composer core loop stays
+    on screen instead of the composer being silently clipped off the
+    bottom. The class toggle is testable in-harness; the pixel clip it
+    prevents needs the real app CSS (verified live)."""
+    from textual.events import Resize
+    from textual.geometry import Size
+
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+        shell = console.query_one("#console-shell")
+
+        console._adapt_console_shell_to_height(
+            Resize(Size(97, 30), Size(97, 30))
+        )
+        await pilot.pause()
+        assert shell.has_class("-console-compact"), (
+            "small height must drop the header banner to preserve the composer"
+        )
+
+        console._adapt_console_shell_to_height(
+            Resize(Size(125, 38), Size(125, 38))
+        )
+        await pilot.pause()
+        assert not shell.has_class("-console-compact"), (
+            "ample height must restore the header banner"
+        )

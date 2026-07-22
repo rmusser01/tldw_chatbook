@@ -23,7 +23,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.color import Color
-from textual.events import Click, DescendantFocus, Key, MouseUp, Paste
+from textual.events import Click, DescendantFocus, Key, MouseUp, Paste, Resize
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
@@ -314,6 +314,13 @@ CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
 CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE = (
     "Type a Library RAG query before running retrieval."
 )
+# TASK-346: below this terminal height the composer row was clipped out of
+# existence at 97x30 (no input box, no warning). The visible header banner
+# (title + purpose + Ready, ~5 rows) is pure chrome; dropping it below the
+# threshold reclaims the rows the transcript+composer core loop needs.
+# Measured live: composer clips at <=34 rows, fits at 35; the freed header
+# lets it fit down to ~29-30 rows.
+CONSOLE_COMPACT_HEIGHT_ROWS = 35
 CONSOLE_FRAME_COLOR = "#6f7782"
 CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
 CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
@@ -5552,15 +5559,50 @@ class ChatScreen(BaseAppScreen):
             # construction time, so comparing against it here stays safe
             # across recomposes too.
             state_changed = state != workspace_context.state
-            workspace_context.sync_state(state)
-            try:
-                details_tray = self.query_one(
-                    "#console-workspace-details", ConsoleWorkspaceDetailsTray
-                )
-            except (NoMatches, QueryError):
-                pass
-            else:
-                details_tray.sync_state(state)
+            # TASK-344/349: the tray recomposes unconditionally in its own
+            # sync_state (a widget-level equality guard is forbidden -- it
+            # breaks grouped-browser click targeting, see
+            # test_console_workspace_context_tray_sync_state_always_recomposes).
+            # That unconditional recompose ALSO self-heals a real DOM/state
+            # desync: a full-screen recompose constructs a fresh tray whose
+            # `.state` is set but whose rows can be superseded before they
+            # settle, so `.state` says X while the DOM shows nothing -- the
+            # next tick's recompose repaints it. So an equality guard is
+            # unsafe in general. It IS safe on the ~5x/second run tick: the
+            # workspace state is unchanged and recomposing the browser that
+            # often tore it visibly down mid-run (the list vanished / showed
+            # a half-composed frame and displaced clicks).
+            #
+            # Two guards keep the self-heal intact (PR #745 review):
+            #  - gate on the SEMANTIC run-active status, not the transcript
+            #    timer (which is still non-None on the final post-run poll,
+            #    Qodo #2);
+            #  - force at least ONE push per tray instance via a per-widget
+            #    marker, so a fresh tray from ANY mid-run full-screen
+            #    recompose still gets its healing recompose even under the
+            #    skip; only unchanged ticks on an already-synced instance are
+            #    skipped, where the DOM is known-consistent (Qodo #3). A
+            #    concurrent in-run search changes the state, so it recomposes
+            #    via `state_changed` regardless.
+            controller = self._console_chat_controller
+            run_active = (
+                controller is not None
+                and controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
+            )
+            already_synced = getattr(
+                workspace_context, "_console_workspace_context_synced", False
+            )
+            if state_changed or not run_active or not already_synced:
+                workspace_context.sync_state(state)
+                workspace_context._console_workspace_context_synced = True
+                try:
+                    details_tray = self.query_one(
+                        "#console-workspace-details", ConsoleWorkspaceDetailsTray
+                    )
+                except (NoMatches, QueryError):
+                    pass
+                else:
+                    details_tray.sync_state(state)
             # PR #660 review: a full-screen recompose constructs a FRESH tray
             # already carrying the current state, so `state_changed` alone
             # would never re-kick the legacy-alias worker after a recompose —
@@ -11786,6 +11828,23 @@ class ChatScreen(BaseAppScreen):
             focused,
             composer,
         ) or self._is_legacy_chat_input_focus(focused)
+
+    @on(Resize)
+    def _adapt_console_shell_to_height(self, event: Resize) -> None:
+        """Drop the header banner at small heights to preserve the composer.
+
+        TASK-346: at <=34 rows the composer was pushed off the bottom with
+        no warning (a silently broken core loop at 97x30, larger than the
+        80x24 default terminal). Toggling `-console-compact` hides the ~5-row
+        header banner (title/purpose/Ready) so transcript+composer stay
+        visible; the setup-card/onboarding overlay is unaffected.
+        """
+        try:
+            shell = self.query_one("#console-shell")
+        except QueryError:
+            return
+        compact = event.size.height < CONSOLE_COMPACT_HEIGHT_ROWS
+        shell.set_class(compact, "-console-compact")
 
     @on(DescendantFocus)
     def _paint_console_rail_focus_frame(self, event: DescendantFocus) -> None:
