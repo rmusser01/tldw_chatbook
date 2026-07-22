@@ -450,9 +450,11 @@ class FakePersistence:
         self.updated_messages = []
         self.updated_system_prompts = []
         self.updated_pinned_prefills = []
+        self.last_create_kwargs = None
 
     def create_conversation(self, **kwargs):
         self.created_conversations.append(kwargs)
+        self.last_create_kwargs = kwargs
         return "conv-1"
 
     def update_conversation_system_prompt(self, *, conversation_id, system_prompt):
@@ -580,6 +582,36 @@ def test_persist_session_if_needed_passes_none_system_prompt_without_settings():
     store.persist_session_if_needed(session.id)
 
     assert persistence.created_conversations[0]["system_prompt"] is None
+
+
+def test_persist_session_if_needed_passes_character_identity():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Chat with Elara")
+    session.character_id = 7
+    session.character_name = "Elara"
+
+    conv_id = store.persist_session_if_needed(session.id)
+
+    assert conv_id is not None
+    kwargs = persistence.last_create_kwargs
+    assert kwargs["character_id"] == 7
+    assert kwargs["character_name"] == "Elara"
+    assert kwargs["assistant_kind"] == "character"
+    assert kwargs["assistant_id"] == "7"
+
+
+def test_persist_session_if_needed_non_character_stays_generic():
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Chat 1")
+
+    store.persist_session_if_needed(session.id)
+
+    kwargs = persistence.last_create_kwargs
+    assert kwargs["assistant_kind"] == "generic"
+    assert kwargs["assistant_id"] == "console"
+    assert kwargs.get("character_id") is None
 
 
 def test_set_session_system_prompt_updates_settings_without_persisting_when_unsaved():

@@ -175,6 +175,11 @@ class ConsoleChatSession:
     #: ``SessionScopeHolder``. ``persist_session_if_needed`` flushes it
     #: through to durable storage exactly once, at first persistence.
     rag_scope_holder: SessionScopeHolder = field(default_factory=SessionScopeHolder)
+    #: When set, this is a character-bound session: it persists with the
+    #: character's id, forces the plain-provider path, and restores as a
+    #: character session (task-427). ``None`` = a normal Console session.
+    character_id: int | None = None
+    character_name: str | None = None
 
 
 class ConsoleChatStore:
@@ -986,15 +991,26 @@ class ConsoleChatStore:
         if self.persistence is None:
             return None
         scope_type, persisted_workspace_id = self._persistence_scope(session)
+        if session.character_id is not None:
+            identity_kwargs = {
+                "assistant_kind": "character",
+                "assistant_id": str(session.character_id),
+                "character_id": session.character_id,
+                "character_name": session.character_name,
+            }
+        else:
+            identity_kwargs = {
+                "assistant_kind": "generic",
+                "assistant_id": "console",
+            }
         session.persisted_conversation_id = self.persistence.create_conversation(
-            assistant_kind="generic",
-            assistant_id="console",
             conversation_title=session.title,
             workspace_id=persisted_workspace_id,
             scope_type=scope_type,
             system_prompt=session.settings.system_prompt
             if session.settings is not None
             else None,
+            **identity_kwargs,
         )
         pinned_prefill = (
             session.settings.pinned_prefill if session.settings is not None else None
