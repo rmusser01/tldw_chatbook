@@ -1871,3 +1871,39 @@ async def test_console_conversation_row_click_shows_loading_until_resume_finishe
             console.query_one("#console-workspace-conversation-0", Button).loading
             is False
         )
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_row_loading_cleared_when_resume_raises() -> None:
+    """task-457(b): if the inline resume RAISES, the `finally` must still clear
+    the row's loading spinner so a failed open never leaves it stuck (the error
+    itself still propagates out of the handler)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(rows=(_browser_row("conv-z", "Saved chat"),))
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert getattr(row, "conversation_id", "") == "conv-z"
+
+        async def _raising_resume(conversation_id, **kwargs):
+            raise RuntimeError("resume boom")
+
+        console._resume_console_workspace_conversation = _raising_resume
+
+        with pytest.raises(RuntimeError):
+            await console.on_button_pressed(Button.Pressed(row))
+
+        assert (
+            console.query_one("#console-workspace-conversation-0", Button).loading
+            is False
+        )
