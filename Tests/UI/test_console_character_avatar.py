@@ -18,6 +18,7 @@ import pytest
 import pytest_asyncio
 
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -173,3 +174,82 @@ async def test_character_section_empty_state_for_generic_session(
     screen = console_screen_generic
     name = screen.query_one("#console-character-name")
     assert "No character" in str(name.renderable)  # empty-state copy
+
+
+# --- P3c Task 3: avatar cache + scope-guarded off-thread refresh + render ---
+#
+# Real screen + real ``CharactersRAGDB``: only a real DB round-trip proves
+# `_refresh_active_character_avatar_if_scope_changed` genuinely decodes the
+# stored character-card image bytes into the cache (a fake DB can't catch a
+# broken `get_character_card_by_id(...)["image"]` read, and a fake cache
+# can't catch a broken `ConsoleImageRenderCache.prepare` call).
+
+
+@pytest.fixture
+def avatar_db(tmp_path):
+    db = CharactersRAGDB(tmp_path / "console_character_avatar.db", "test-client")
+    yield db
+    db.close_connection()
+
+
+@pytest_asyncio.fixture
+async def console_screen_with_db(avatar_db):
+    """Mounted Console screen wired to a real ``CharactersRAGDB``."""
+    app = _build_test_app()
+    app.chachanotes_db = avatar_db
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(
+            screen, pilot, "#console-rail-section-header-details"
+        )
+        yield app, screen, avatar_db
+
+
+def _set_active_console_character(screen, character_id, character_name) -> None:
+    """Bind the active native Console session to a character (or clear it)."""
+    session = screen._active_native_console_session()
+    assert session is not None, "no active native Console session"
+    session.character_id = character_id
+    session.character_name = character_name
+
+
+@pytest.mark.asyncio
+async def test_refresh_populates_avatar_cache_and_mounts(console_screen_with_db):
+    app, screen, db = console_screen_with_db
+    from PIL import Image as PILImage
+    from io import BytesIO
+    buf = BytesIO(); PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buf, format="PNG")
+    char_id = db.add_character_card({"name": "Ada", "image": buf.getvalue()})
+    _set_active_console_character(screen, char_id, "Ada")
+
+    await screen._refresh_active_character_avatar_if_scope_changed()
+    assert screen._active_character_avatar is not None
+    assert screen._active_character_avatar.get("character_id") == char_id
+    assert screen._active_character_avatar.get("pil") is not None or \
+           screen._active_character_avatar.get("pixels") is not None
+
+    # unchanged scope -> no re-fetch (spy the DB fetch)
+    calls = []
+    orig = screen._fetch_character_card_for_avatar   # the off-thread fetch wrapper
+    screen._fetch_character_card_for_avatar = lambda cid: (calls.append(cid), orig(cid))[1]
+    await screen._refresh_active_character_avatar_if_scope_changed()
+    assert calls == []   # scope guard short-circuits before any fetch
+
+
+@pytest.mark.asyncio
+async def test_refresh_clears_avatar_for_generic_session(console_screen_with_db):
+    app, screen, db = console_screen_with_db
+    _set_active_console_character(screen, None, None)
+    await screen._refresh_active_character_avatar_if_scope_changed()
+    assert screen._active_character_avatar is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_never_raises_on_bad_image(console_screen_with_db):
+    app, screen, db = console_screen_with_db
+    char_id = db.add_character_card({"name": "Bad", "image": b"not-an-image"})
+    _set_active_console_character(screen, char_id, "Bad")
+    await screen._refresh_active_character_avatar_if_scope_changed()  # must not raise
+    # decode failed -> empty/text spec, name still set
+    assert screen._active_character_avatar_name == "Bad"

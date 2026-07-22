@@ -186,6 +186,7 @@ from ...Chat.console_image_view import (
     ConsoleImageRenderCache,
     ConsoleImageRowSpec,
     ConsoleImageViewState,
+    fit_image_cell_size,
     next_view_mode,
     resolve_default_mode,
     resolve_show_character_avatar,
@@ -423,6 +424,11 @@ CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS = 2.0
 # bound, same "explicit invalidation is a nice-to-have, the TTL is the
 # correctness backstop" philosophy).
 CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
+# P3c Task 3: the "Character" rail avatar box's fitted cell size (mirrors
+# the transcript inline-image row's `fit_image_cell_size` usage, sized
+# smaller for the rail's narrower column).
+CHARACTER_AVATAR_COLS = 16
+CHARACTER_AVATAR_LINES = 8
 CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
     (
         "console-left-rail",
@@ -3910,19 +3916,118 @@ class ChatScreen(BaseAppScreen):
         name = getattr(native_session, "character_name", None)
         return str(name) if name else None
 
+    def _fetch_character_card_for_avatar(self, character_id: int) -> dict | None:
+        """Synchronous character-card fetch for the avatar refresh (off-thread).
+
+        Canonical DB accessor used throughout `chat_screen.py` (e.g. the
+        resume path `_resolve_resumed_character_name`); there is no
+        `self.chachanotes_db`.
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return None
+        try:
+            return db.get_character_card_by_id(int(character_id))
+        except Exception:
+            logger.opt(exception=True).debug("avatar: character fetch failed")
+            return None
+
+    async def _refresh_active_character_avatar_if_scope_changed(self) -> None:
+        """Refresh the cached character avatar only when the active character changed."""
+        character_id = self._current_console_rail_character_id()
+        scope = (character_id,)
+        if scope == self._last_console_avatar_scope:
+            return
+        self._last_console_avatar_scope = scope
+        name = self._current_console_rail_character_name()
+        self._active_character_avatar_name = name
+        if character_id is None:
+            self._active_character_avatar = None
+            await self._render_character_avatar_into_section()
+            return
+        _, cache = self._ensure_console_image_view()
+        mode = getattr(self, "_console_image_default_mode", "pixels")
+        key = f"character:{character_id}"
+        spec = {"character_id": character_id, "name": name, "mode": mode, "pil": None, "pixels": None}
+        try:
+            card = await asyncio.to_thread(self._fetch_character_card_for_avatar, character_id)
+            image = (card or {}).get("image")
+            if isinstance(image, (bytes, bytearray)) and image:
+                ok = await asyncio.to_thread(cache.prepare, key, bytes(image))
+                if ok:
+                    if mode == "graphics":
+                        spec["pil"] = cache.get_pil(key)
+                    else:
+                        spec["pixels"] = cache.get_pixels(key)
+        except Exception:
+            logger.opt(exception=True).debug("avatar: refresh failed")
+        # Drop a stale render if the active character changed during decode.
+        if (self._current_console_rail_character_id(),) != scope or not self.is_mounted:
+            return
+        self._active_character_avatar = spec
+        await self._render_character_avatar_into_section()
+
+    async def _render_character_avatar_into_section(self) -> None:
+        """Re-mount the avatar widget + name into the (already-composed) section.
+
+        Async because Textual `Widget.mount()` returns an `AwaitMount` that
+        must be awaited so the widget is present before the caller returns
+        (the integration test asserts the mounted state right after the tick).
+        """
+        try:
+            holder = self.query_one("#console-character-avatar", Container)
+        except QueryError:
+            return  # section not composed (config off / not mounted)
+        await holder.remove_children()
+        await holder.mount(self._build_character_avatar_widget(self._active_character_avatar))
+        try:
+            self.query_one("#console-character-name", Static).update(
+                self._active_character_avatar_name or "No character in this chat"
+            )
+        except QueryError:
+            pass
+
     def _build_character_avatar_widget(self, spec: dict | None) -> Widget:
         """Build a fresh avatar widget from the cached spec (data, not a widget).
 
-        T3 fills `spec` with {character_id, name, mode, pil, pixels}. With no
-        spec / no image, render a compact text placeholder.
+        `spec` is `{character_id, name, mode, pil, pixels}` (T3 fills it via
+        `_refresh_active_character_avatar_if_scope_changed`). With no spec,
+        or a spec whose image decode failed/is pending, render a compact
+        text placeholder. The cache holds this spec (data), not a live
+        widget -- every (re)mount builds a fresh widget from it.
         """
         from textual.widgets import Static as _S
         if not spec or (spec.get("pil") is None and spec.get("pixels") is None):
-            hint = "no avatar" if spec else "No character in this chat"
+            hint = "no avatar" if (spec and spec.get("character_id") is not None) else "No character in this chat"
             return _S(hint, id="console-character-avatar-empty")
-        # T3 extends: graphics -> textual_image Image(pil) with fit dims;
-        # pixels -> Static(Pixels). Placeholder until then:
-        return _S("", id="console-character-avatar-empty")
+        if spec.get("mode") == "graphics" and spec.get("pil") is not None:
+            try:
+                from textual_image.widget import Image as _GraphicsImage
+                widget = _GraphicsImage(spec["pil"], id="console-character-avatar-image")
+                # Explicit fitted cell size, not just max-width/max-height --
+                # see `console_transcript._image_row_widget`'s identical
+                # guard: textual_image's "auto" sizing resolves its render
+                # region from the parent's settled layout, and mounting a
+                # tick before that settles can ask the renderer to scale
+                # into a transient 0-width/height region, which PIL's
+                # resize() raises on.
+                w, h = fit_image_cell_size(spec["pil"].width, spec["pil"].height,
+                                           CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES)
+                widget.styles.width = w
+                widget.styles.height = h
+                return widget
+            except Exception:
+                logger.opt(exception=True).debug("avatar: graphics mount failed")
+        pixels = spec.get("pixels")
+        if pixels is None and spec.get("pil") is not None:
+            scaled = spec["pil"].copy()
+            scaled.thumbnail((CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES * 2))
+            from rich_pixels import Pixels
+            pixels = Pixels.from_image(scaled)
+        widget = Static(pixels if pixels is not None else "", id="console-character-avatar-image")
+        widget.styles.max_width = CHARACTER_AVATAR_COLS
+        widget.styles.max_height = CHARACTER_AVATAR_LINES
+        return widget
 
     def _console_session_id_for_workspace_conversation(
         self,
