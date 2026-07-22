@@ -39,7 +39,7 @@ AC#2/AC#3: no production change (already wired). Pilot tests pin the real Button
 
 Tests (Tests/UI/test_settings_provider_test_draft.py): 13 total — 5 pure overlay, 4 bare-instance findings (incl. draft-key-value-never-printed), 4 pilot (AC#2, AC#3-from-focus, AC#3-hotkey-no-op, draft-endpoint wiring). All RED→GREEN; mutation-checked. No-draft path byte-identical (20 existing hub provider tests green).
 
-Follow-up filed TASK-483 (pre-existing: env-var VALUES redacted only by name-pattern; harden to present/missing or positional redaction).
+Follow-up filed TASK-486 (pre-existing: a custom-named credential query param, e.g. ?mycred=SEKRET, in a provider endpoint still prints unredacted in the Test evidence — same name-based-redaction gap class, for query strings).
 
 Files: tldw_chatbook/UI/Screens/settings_screen.py, Tests/UI/test_settings_provider_test_draft.py.
 <!-- SECTION:NOTES:END -->
