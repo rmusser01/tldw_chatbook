@@ -163,9 +163,10 @@ class BaseReranker(ABC):
             messages_payload.append(
                 {
                     "role": "system",
-                    "content": system_prompt
-                    or self.config.system_prompt
-                    or "You are a search result relevance evaluator.",
+                    # The enclosing `if` guarantees one of these is truthy, so
+                    # no literal fallback is needed (each reranker's __init__
+                    # already populates config.system_prompt from the registry).
+                    "content": system_prompt or self.config.system_prompt,
                 }
             )
         messages_payload.append({"role": "user", "content": prompt})

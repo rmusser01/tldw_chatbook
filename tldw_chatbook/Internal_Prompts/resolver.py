@@ -62,13 +62,24 @@ def get_internal_prompt(prompt_id: str) -> str:
     """
     spec = CATALOG[prompt_id]
 
-    override = _extract_text(_config_value("internal_prompts." + prompt_id))
+    raw_override = _config_value("internal_prompts." + prompt_id)
+    override = _extract_text(raw_override)
     if override is not None:
         if _has_required_placeholders(override, spec):
             return override
         _warn_once(
             prompt_id,
             f"override for {prompt_id} is missing a required placeholder; "
+            "falling back",
+        )
+    elif raw_override is not None and not isinstance(raw_override, (str, dict)):
+        # A present override that is neither text nor a {text, ...} table
+        # (e.g. a hand-edited int or array) is silently unusable; surface it
+        # once so the misconfiguration is visible instead of vanishing.
+        _warn_once(
+            prompt_id + ":type",
+            f"override for {prompt_id} is not text or a table "
+            f"(got {type(raw_override).__name__}); ignoring it and "
             "falling back",
         )
 

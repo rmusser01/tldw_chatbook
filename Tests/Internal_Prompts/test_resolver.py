@@ -158,3 +158,39 @@ def test_render_missing_required_value_warns_once_never_raises(
         and "demo.greeting" in r.getMessage()
     ]
     assert len(warnings) == 1
+
+
+def test_wrong_typed_override_warns_once_never_raises(
+    demo_spec, scratch_config, caplog
+):
+    # A present override that is neither text nor a {text,...} table (an int
+    # from a hand-edit) is ignored with exactly one warning, and resolution
+    # falls back to the shipped default rather than raising.
+    scratch_config("[internal_prompts.demo]\ngreeting = 5\n")
+    assert get_internal_prompt("demo.greeting") == demo_spec.default
+    get_internal_prompt("demo.greeting")  # second call must not re-warn
+    type_warnings = [
+        r for r in caplog.records if "is not text or a table" in r.getMessage()
+    ]
+    assert len(type_warnings) == 1
+
+
+def test_wrong_typed_override_array_also_warns(demo_spec, scratch_config, caplog):
+    scratch_config("[internal_prompts.demo]\ngreeting = [1, 2]\n")
+    assert get_internal_prompt("demo.greeting") == demo_spec.default
+    assert any(
+        "is not text or a table" in r.getMessage() for r in caplog.records
+    )
+
+
+def test_valid_and_absent_overrides_produce_no_type_warning(
+    demo_spec, scratch_config, caplog
+):
+    # A valid string override and a genuinely-absent override both stay silent.
+    scratch_config('[internal_prompts.demo]\ngreeting = "Hello {name}"\n')
+    get_internal_prompt("demo.greeting")
+    scratch_config("")
+    get_internal_prompt("demo.greeting")
+    assert not [
+        r for r in caplog.records if "is not text or a table" in r.getMessage()
+    ]
