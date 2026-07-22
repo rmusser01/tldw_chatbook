@@ -289,6 +289,329 @@ def test_chat_screen_start_chat_handoff_preserves_numeric_zero_character_id():
     assert session_data.discovery_owner == "ccp_character"
 
 
+def _character_start_chat_payload(
+    *, character_id: int, name: str, first_message: str
+) -> ChatHandoffPayload:
+    """Build a Personas Start-Chat handoff payload for a character (task-427)."""
+    return ChatHandoffPayload(
+        source="personas",
+        item_type="character-card",
+        title=f"{name} (character)",
+        body=f"Name: {name}",
+        source_id=str(character_id),
+        metadata={
+            "intent": "start_chat",
+            "selected_kind": "character",
+            "selected_record_id": str(character_id),
+            "selected_name": name,
+        },
+    )
+
+
+class _StubCharacterCardDB:
+    """Minimal ``chachanotes_db`` double exposing only the character-card read
+    the native handoff consumer needs (task-427). Deliberately narrow: it has
+    no ``add_conversation``/``client_id`` surface, so any attempted
+    persistence during the seeded-greeting write fails and is swallowed by
+    the consumer's own try/except -- the in-memory session/message state is
+    what these tests assert on.
+    """
+
+    def __init__(self, card: dict) -> None:
+        self._card = card
+
+    def get_character_card_by_id(self, character_id):
+        return self._card
+
+
+@pytest.mark.asyncio
+async def test_native_start_chat_builds_character_session_with_greeting():
+    """Start Chat on the native Console handoff branch should create a
+    dedicated character-bound session with the greeting seeded (task-427)."""
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.Chat.console_chat_models import (
+        CONSOLE_GLOBAL_WORKSPACE_ID,
+        ConsoleMessageRole,
+    )
+
+    app = _build_test_app()
+    app.chachanotes_db = _StubCharacterCardDB(
+        {
+            "name": "Elara",
+            "first_message": "Greetings, {{user}}.",
+            "system_prompt": "You are Elara, a forest guide.",
+            "personality": "Warm and curious",
+            "description": "An elven ranger",
+            "scenario": "A quiet forest clearing",
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+
+        app.pending_chat_handoff = _character_start_chat_payload(
+            character_id=7, name="Elara", first_message="Greetings, {{user}}."
+        )
+
+        await screen._consume_pending_chat_handoff()
+        await pilot.pause()
+
+        store = screen._ensure_console_chat_store()
+        session = store._sessions[store.active_session_id]
+        assert session.character_id == 7
+        assert session.character_name == "Elara"
+        assert session.title == "Chat with Elara"
+        assert session.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
+        msgs = store.messages_for_session(session.id)
+        assert msgs[0].role is ConsoleMessageRole.ASSISTANT
+        assert msgs[0].content == "Greetings, User."  # {{user}} substituted
+        assert "Stay in character." not in (session.settings.system_prompt or "")
+        assert app.pending_chat_handoff is None
+
+
+@pytest.mark.asyncio
+async def test_native_start_chat_falls_back_when_card_fetch_fails():
+    """A character-card fetch failure must not raise; the handoff should
+    fall back to the staged-context lane with no character session
+    created (task-427)."""
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    app = _build_test_app()
+    app.chachanotes_db = _StubCharacterCardDB({"name": "Elara"})
+    app.chachanotes_db.get_character_card_by_id = lambda *_a, **_k: (
+        _ for _ in ()
+    ).throw(RuntimeError("boom"))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+
+        app.pending_chat_handoff = _character_start_chat_payload(
+            character_id=7, name="Elara", first_message="Hi"
+        )
+
+        await screen._consume_pending_chat_handoff()  # must not raise
+        await pilot.pause()
+
+        store = screen._ensure_console_chat_store()
+        active = (
+            store._sessions.get(store.active_session_id)
+            if store.active_session_id
+            else None
+        )
+        assert active is None or active.character_id is None
+        assert app.pending_chat_handoff is None
+
+
+@pytest.mark.asyncio
+async def test_native_start_chat_survives_post_seed_sync_failure():
+    """A post-seed UI sync/focus failure must not leave the handoff
+    unconsumed. The character session (and its greeting) is already
+    durably created by the time ``_sync_native_console_chat_ui`` runs, so a
+    raise there must not propagate out of
+    ``_start_character_console_session`` -- otherwise the caller would
+    never clear ``pending_chat_handoff`` and a later re-consume (e.g. a
+    screen re-mount timer) would build a SECOND durable character session
+    (task-427 polish finding 1)."""
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    app = _build_test_app()
+    app.chachanotes_db = _StubCharacterCardDB(
+        {
+            "name": "Elara",
+            "first_message": "Greetings, {{user}}.",
+            "system_prompt": "You are Elara, a forest guide.",
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+
+        async def _boom():
+            raise RuntimeError("sync boom")
+
+        screen._sync_native_console_chat_ui = _boom
+
+        payload = _character_start_chat_payload(
+            character_id=7, name="Elara", first_message="Greetings, {{user}}."
+        )
+
+        result = await screen._start_character_console_session(payload)
+
+        assert result is True
+        store = screen._ensure_console_chat_store()
+        character_sessions = [
+            s for s in store._sessions.values() if s.character_id == 7
+        ]
+        assert len(character_sessions) == 1
+
+
+@pytest.mark.asyncio
+async def test_resume_restores_character_identity():
+    """Resuming a saved character conversation after an app restart must
+    restore ``session.character_id`` so the plain-provider gate (task-3)
+    keeps routing the resumed conversation's sends off the agent loop
+    (task-427, task-5)."""
+    from Tests.UI.test_console_native_chat_flow import StaticConversationTreeService
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    tree = {
+        "conversation": {
+            "conversation_id": "conv-elara-1",
+            "title": "Chat with Elara",
+            "character_id": 7,
+            "workspace_id": None,
+            "system_prompt": None,
+            "metadata": None,
+        },
+        "root_threads": [],
+        "pagination": {"total_root_threads": 0},
+    }
+    app = _build_test_app()
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {"conv-elara-1": tree}
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+
+        resumed = await screen._resume_console_workspace_conversation(
+            "conv-elara-1"
+        )
+        await pilot.pause()
+
+        assert resumed is True
+        store = screen._ensure_console_chat_store()
+        session = store._sessions[store.active_session_id]
+        assert session.character_id == 7
+
+
+@pytest.mark.asyncio
+async def test_resume_restores_character_label_for_identity_row():
+    """Resuming a character conversation must rehydrate the character name and
+    ``settings.character_label`` from the card so the settings identity row
+    reads "Character: <name>" instead of the Persona fallback (task-427).
+
+    The persisted conversation row carries only ``character_id``; the label is
+    resolved best-effort from the character card.
+    """
+    from Tests.UI.test_console_native_chat_flow import StaticConversationTreeService
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    tree = {
+        "conversation": {
+            "conversation_id": "conv-elara-1",
+            "title": "Chat with Elara",
+            "character_id": 7,
+            "workspace_id": None,
+            "system_prompt": None,
+            "metadata": None,
+        },
+        "root_threads": [],
+        "pagination": {"total_root_threads": 0},
+    }
+    app = _build_test_app()
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {"conv-elara-1": tree}
+    )
+    app.chachanotes_db = _StubCharacterCardDB({"name": "Elara"})
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+
+        resumed = await screen._resume_console_workspace_conversation("conv-elara-1")
+        await pilot.pause()
+
+        assert resumed is True
+        store = screen._ensure_console_chat_store()
+        session = store._sessions[store.active_session_id]
+        assert session.character_id == 7
+        assert session.character_name == "Elara"
+        assert session.settings is not None
+        assert session.settings.character_label == "Elara"
+
+
+@pytest.mark.asyncio
+async def test_resume_clears_inherited_label_when_card_unresolved():
+    """A character resume whose card cannot be resolved must clear any
+    inherited ``character_label`` rather than display a *different* active
+    character's name (settings are inherited from the active session)."""
+    from dataclasses import replace
+
+    from Tests.UI.test_console_native_chat_flow import StaticConversationTreeService
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+
+    tree = {
+        "conversation": {
+            "conversation_id": "conv-missing-card",
+            "title": "Chat with Ghost",
+            "character_id": 99,
+            "workspace_id": None,
+            "system_prompt": None,
+            "metadata": None,
+        },
+        "root_threads": [],
+        "pagination": {"total_root_threads": 0},
+    }
+    app = _build_test_app()
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {"conv-missing-card": tree}
+    )
+    # Card 99 does not exist -> name resolves to "".
+    app.chachanotes_db = _StubCharacterCardDB(None)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+        store = screen._ensure_console_chat_store()
+        # Simulate a *different* character session being active first, whose
+        # label would otherwise be inherited by the resumed session.
+        active = store.ensure_session()
+        if active.settings is not None:
+            active.settings = replace(active.settings, character_label="Someone Else")
+        else:
+            active.settings = ConsoleSessionSettings(character_label="Someone Else")
+
+        resumed = await screen._resume_console_workspace_conversation(
+            "conv-missing-card"
+        )
+        await pilot.pause()
+
+        assert resumed is True
+        session = store._sessions[store.active_session_id]
+        assert session.character_id == 99
+        assert (session.settings.character_label or "") == ""
+
+
 @pytest.mark.asyncio
 async def test_chat_screen_pending_handoff_consumer_is_reentrant_safe():
     payload = ChatHandoffPayload(

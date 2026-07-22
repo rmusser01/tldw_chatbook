@@ -1017,6 +1017,11 @@ async def test_continue_from_message_streams_new_assistant_turn_after_selected_m
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Hi",
+    )
     source = store.append_message(
         session.id,
         role=ConsoleMessageRole.ASSISTANT,
@@ -1087,6 +1092,11 @@ async def test_regenerate_message_streams_new_selected_variant():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Hi",
+    )
     source = store.append_message(
         session.id,
         role=ConsoleMessageRole.ASSISTANT,
@@ -1136,6 +1146,75 @@ async def test_regenerate_continuation_message_ends_provider_payload_with_user_i
         {"role": "assistant", "content": "Seed"},
         {"role": "user", "content": "Continue and extend the selected message."},
     ]
+
+
+@pytest.mark.asyncio
+async def test_leading_greeting_excluded_from_provider_payload():
+    """A seeded character greeting (persisted ASSISTANT message before any
+    user turn) must never reach the provider payload -- strict providers
+    (Anthropic, Gemini) reject an assistant-first message array (task-427)."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.create_session(title="Chat with Elara")
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Greetings, traveler.",
+        persist=False,
+    )
+
+    result = await controller.submit_draft("Hi")
+
+    assert result.accepted is True
+    sent = gateway.messages_seen
+    roles = [m["role"] for m in sent]
+    # No leading assistant: the first role sent is the user's turn.
+    assert roles[0] == "user"
+    # The greeting text is not in the outbound payload at all.
+    assert all("Greetings, traveler." not in (m.get("content") or "") for m in sent)
+
+
+@pytest.mark.asyncio
+async def test_regenerate_on_leading_greeting_is_blocked():
+    """Regenerating the seeded greeting before any user turn exists must be
+    blocked rather than sending a payload with no user message."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.create_session(title="Chat with Elara")
+    greeting = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Greetings.",
+        persist=False,
+    )
+
+    result = await controller.regenerate_message(greeting.id)
+
+    assert result.accepted is False
+    assert gateway.messages_seen is None
+
+
+@pytest.mark.asyncio
+async def test_continue_from_leading_greeting_is_blocked():
+    """Continuing from the seeded greeting before any user turn exists must
+    be blocked rather than sending a payload with no user message."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.create_session(title="Chat with Elara")
+    greeting = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Greetings.",
+        persist=False,
+    )
+
+    result = await controller.continue_from_message(greeting.id)
+
+    assert result.accepted is False
+    assert gateway.messages_seen is None
 
 
 class _AutoTitleReadyGateway:
@@ -2516,6 +2595,112 @@ async def test_prefilled_send_bypasses_agent_loop():
     await controller.submit_draft("with prefill")
     assert len(bridge_calls) == 1  # unchanged
     assert gateway.messages_seen[-1] == {"role": "assistant", "content": "PRE"}
+
+
+class _SpyAgentBridge:
+    """Records calls and refuses to be used -- for asserting the agent
+    bridge is never invoked on a character session's send (task-427)."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def run_reply(self, **kwargs):
+        self.calls += 1
+        raise AssertionError("agent bridge should not be called for a character session")
+
+
+@pytest.mark.asyncio
+async def test_character_session_forces_plain_provider():
+    """task-427: a session with character_id set always takes the plain
+    provider branch, even with the global agent runtime enabled and a
+    bridge present."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, agent_runtime_enabled=True
+    )
+    bridge = _SpyAgentBridge()
+    controller._agent_bridge = bridge
+    session = _arm_session(store)
+    session.character_id = 7
+
+    result = await controller.submit_draft("Hi")
+
+    assert bridge.calls == 0
+    assert result.accepted
+    assert gateway.messages_seen is not None  # plain provider path ran
+
+
+@pytest.mark.asyncio
+async def test_normal_session_still_uses_agent_when_enabled():
+    """Control for test_character_session_forces_plain_provider: a session
+    with no character_id keeps using the agent bridge as before."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, agent_runtime_enabled=True
+    )
+    bridge_calls = []
+
+    def run_reply(**kwargs):
+        bridge_calls.append(kwargs)
+        return RunOutcome(status=RUN_DONE, steps=[], final_text="agent says")
+
+    controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+    session = _arm_session(store)
+    assert session.character_id is None
+
+    await controller.submit_draft("Hi")
+
+    assert len(bridge_calls) == 1
+    assert gateway.messages_seen is None  # agent path handled it, not the gateway
+
+
+@pytest.mark.asyncio
+async def test_stream_assistant_response_owner_lookup_survives_closed_session():
+    """task-427 review fix: the force_plain owner-lookup added at the top of
+    ``_stream_assistant_response`` calls ``store.session_id_for_message``,
+    which raises ``KeyError`` for an unknown message id. ``retry_message`` /
+    ``continue_from_message`` / ``regenerate_message`` resolve the message id
+    and then ``await`` several times (resolve_for_send / skill substitution /
+    chat dictionaries / world info) before reaching this method -- a
+    ``close_session`` racing one of those awaits purges
+    ``_message_session_index`` for that message, so the id is unknown by the
+    time the gate runs. This must be treated exactly like every other
+    "session vanished mid-flight" race in this method: swallowed and turned
+    into the session-closed result, not an uncaught KeyError."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = _arm_session(store)
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+
+    # Simulate the session closing while a caller (e.g. retry_message) was
+    # still awaiting earlier stages of the pipeline: this purges
+    # `_message_session_index` for `assistant.id` before the gate runs.
+    controller.close_session(session.id)
+
+    resolution = type(
+        "Resolution",
+        (),
+        {
+            "ready": True,
+            "provider": "llama_cpp",
+            "model": "test-model",
+            "base_url": "http://127.0.0.1:9099",
+            "visible_copy": "",
+        },
+    )()
+
+    result = await controller._stream_assistant_response(
+        resolution=resolution,
+        provider_messages=[],
+        assistant_message_id=assistant.id,
+    )
+
+    assert result.accepted is True
+    assert result.visible_copy == "Session closed."
 
 
 @pytest.mark.asyncio
