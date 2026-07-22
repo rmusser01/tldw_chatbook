@@ -126,9 +126,11 @@ This module imports only `token_counter` — the seam 320/321 sharpen.
   self._stream_assistant_response(...)`, whose first action is the
   agent-vs-direct branch (`if self._agent_runtime_enabled and
   self._agent_bridge: return await self._run_agent_reply(...)`), and **both
-  branches receive `provider_messages`**. Trim at the **top of
+  branches receive `provider_messages`** — the agent branch immediately copies
+  it (`agent_messages = list(provider_messages)`), so a trim applied before the
+  branch flows into the agent path too. Trim at the **top of
   `_stream_assistant_response`, before that branch**, so the direct provider
-  path and the agent/tool path are both bounded (AC#1, AC#4):
+  path and the agent/tool path are both bounded at dispatch (AC#1, AC#4):
   ```python
   bound = bound_messages_to_window(
       provider_messages,
@@ -148,6 +150,9 @@ This module imports only `token_counter` — the seam 320/321 sharpen.
 `_append_history_trimmed_note(session_id, dropped)` appends a **display-only**
 `ConsoleMessageRole.SYSTEM` row (mirroring `_append_failure_system_row`) with
 "Earlier messages were trimmed to fit the model's context window (N dropped)."
+The `session_id` is resolved inside `_stream_assistant_response` from its
+`assistant_message_id` parameter via `self.store.session_id_for_message(
+assistant_message_id)` — the same accessor `_run_agent_reply` already uses.
 `_provider_message_payloads` filters `SYSTEM` out of the dispatched payload,
 so the note renders in the transcript but is never resent (and never itself
 counts toward a future budget). Shown once per trimming send.
@@ -197,3 +202,11 @@ later refinement if it proves noisy.
 - The deprecated enhanced/legacy chat path (being replaced by the Console).
 - Server-side/local front-truncation behavior (only the dispatched payload is
   bounded here).
+- **Intra-agent-loop growth.** This bounds the conversation history at the
+  *initial* dispatch (direct path, and the messages entering the agent/tool
+  loop). The agent loop's own multi-iteration growth — tool-call/result
+  messages accumulating across iterations within a single turn — is bounded by
+  **task-326 (agent RunBudget)**, not here. 322 bounds history-into-the-loop;
+  326 bounds the-loop-itself. A very long tool-calling loop could still
+  approach the window on a later iteration until 326 lands; that is an
+  intentional, documented boundary.
