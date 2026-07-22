@@ -149,3 +149,14 @@ To migrate from base to v2:
 
 Late chunking, standalone context assembly, and LLM query expansion modules
 were removed as dead code (task-252); no profile or service ever invoked them.
+
+### Collection fingerprinting (index isolation)
+
+Each vector collection is named `<base>__<fingerprint>` where the fingerprint
+is a versioned hash of the index-determining config (embedding model +
+max_length, all chunking fields, distance metric). Ingestion and search
+resolve to the same fingerprinted collection, so changing an index-determining
+setting points at a fresh (empty-until-backfilled) collection rather than
+mixing incompatible vectors. Admin helpers: `collection_indexes.list_indexes`,
+`delete_index`, `index_status`. Legacy pre-fingerprint `default` collections
+are adopted on first run (`maybe_adopt_legacy_collection`).

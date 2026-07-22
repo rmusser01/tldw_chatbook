@@ -53,8 +53,8 @@ frequency_penalty = 0.0
 presence_penalty = 0.0
 
 # System prompt for RAG responses
-system_prompt = """You are a helpful assistant with access to a knowledge base. 
-Use the provided context to answer questions accurately. If the context doesn't 
+system_prompt = """You are a helpful assistant with access to a knowledge base.
+Use the provided context to answer questions accurately. If the context doesn't
 contain relevant information, say so clearly."""
 
 # Citation style
@@ -68,6 +68,13 @@ cache_ttl = 3600  # 1 hour
 max_cache_size = 1000  # Maximum number of cached queries
 cache_search_results = true
 cache_embeddings = true
+
+# NOTE: embedding model, max_length, every chunking setting, and the vector
+# store distance_metric are "index-determining": changing any of them makes
+# the RAG engine use a SEPARATE vector collection (fingerprinted), which is
+# empty until re-indexed. Query-time settings (top_k, hybrid_alpha,
+# reranking, citations) share one index. See
+# Docs/superpowers/specs/2026-07-21-rag-index-isolation-design.md
 
 [rag.embeddings]
 # Embeddings configuration
