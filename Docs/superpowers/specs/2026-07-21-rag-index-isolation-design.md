@@ -14,7 +14,8 @@ A single pure function, `fingerprint_collection(config) -> str`, hashing only **
 
 - **Embedding identity:** `embedding.model` (its dimension is derived only after load — `embeddings_wrapper.py:253` caches `factory.dimension` on first use — so the model *name* is the proxy; two models that happen to share a dimension still get separate collections, which is correct). Any additional embedding field that alters the produced vector for a given model (e.g. an instruction/query prefix, normalization) is included; `batch_size` is **excluded** (throughput, not output).
 - **Chunking identity:** *every* `ChunkingConfig` field that alters chunk output — `chunk_size`, `chunk_overlap`, `chunking_method`, `min_chunk_size`, `max_chunk_size`, `parent_size_multiplier`, and structural-chunking settings — enumerated explicitly from the dataclass at plan time. Cherry-picking a subset creates the surprise "I changed max_chunk_size and my index didn't rebuild."
-- **Excluded (query-time, must NOT fork the index):** `top_k`, `hybrid_alpha`, `score_threshold`, reranking config, citation settings. Two profiles differing only in `top_k` share one index; two differing in `chunk_size` get separate indexes.
+- **Vector-store identity:** `vector_store.distance_metric`. Chroma bakes the distance function into the collection at creation — `vector_store.py:294` sets `metadata={"hnsw:space": metric_map.get(distance_metric)}` — so a profile switching cosine→l2 while reusing a collection silently returns **wrong rankings with no error** (the metric mismatch is not a dimension mismatch, so nothing raises). Any other `VectorStoreConfig` field fixed at collection creation is included; the `type` (chroma/memory) selector and `persist_directory` are **not** — they choose *where* the index lives, not its content or geometry, and the memory store has no persistent collection to fork.
+- **Excluded (query-time, must NOT fork the index):** `top_k`, `hybrid_alpha`, `score_threshold`, reranking config, citation settings. Two profiles differing only in `top_k` share one index; two differing in `chunk_size` or `distance_metric` get separate indexes.
 
 **Output:** `f"{base}__{short_hash}"`, e.g. `default__a3f1c9`. Constraints the function guarantees: a valid Chroma collection name (3–63 chars, charset `[a-zA-Z0-9._-]`, no consecutive dots, not an IPv4), and **input normalization before hashing** — TOML `"400"` (str) and int `400` must fingerprint identically (the same boundary-coercion discipline as the RAG-scope program).
 
@@ -56,7 +57,7 @@ Every distinct (model, chunking) combination leaves a full persistent copy of th
 
 ## 8. Plan-time verifications
 
-1. Enumerate the exact `EmbeddingConfig`/`ChunkingConfig` fields that affect produced output (the fingerprint input set) from the real dataclasses.
+1. Enumerate the exact `EmbeddingConfig`/`ChunkingConfig` fields that affect produced output, **plus which `VectorStoreConfig` fields are fixed at Chroma collection creation** (confirmed: `distance_metric` → `hnsw:space`; check for others), from the real dataclasses — this is the complete fingerprint input set.
 2. Confirm `collection_name` has no other assignment site than `self.config.collection_name` (grep showed only `rag_service.py:142`).
 3. Confirm Chroma's rename/adopt path is available and atomic-enough for the idempotent migration; if rename is unavailable, fall back to a stable alias map.
 4. Confirm `backfill_semantic_index` writes through the resolved collection with no independent collection-name derivation.

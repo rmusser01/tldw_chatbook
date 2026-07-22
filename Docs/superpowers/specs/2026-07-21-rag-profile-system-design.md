@@ -42,7 +42,7 @@ Two config paths exist today and read different sources:
 
 ## 6. First-run import (no lost hand-tuning)
 
-Unifying onto the profile means an upgrader's existing hand-tuned `AppRAGSearchConfig`/env values stop being the live source. On first run after SP2 ships, snapshot the currently-resolved config into an **"Imported settings" user profile** and set it active. Its embedding/chunk fields come from the existing resolution, so its fingerprint **must equal** SP1's adopted legacy-collection fingerprint (overview §4.1) — the upgraded user keeps both their settings and their index.
+Unifying onto the profile means an upgrader's existing hand-tuned `AppRAGSearchConfig`/env values stop being the live source. On first run after SP2 ships, snapshot the currently-resolved config into an **"Imported settings" user profile** and set it active. The snapshot uses the **same `config.py` loader** that reads every `AppRAGSearchConfig.rag.*` / `embedding_config` / `[rag.*]` key today, so no hand-set config.toml value is dropped on import — whatever the engine resolves right now is exactly what the imported profile captures. Its embedding/chunk fields come from the existing resolution, so its fingerprint **must equal** SP1's adopted legacy-collection fingerprint (overview §4.1) — the upgraded user keeps both their settings and their index.
 
 ## 7. Switch mechanics (set-active)
 
@@ -50,7 +50,7 @@ Set-active is a deliberate action, not a live keystroke:
 
 1. Write the pointer (`[rag.service].profile`).
 2. Recompute the SP1 fingerprint; if it differs from the current index's, mark the target index built / empty-needs-backfill for SP3 to surface.
-3. **Reset the shared RAG service singleton** so the next resolution rebuilds on the new config and SP1's fingerprinted collection.
+3. **Reset the shared RAG service singleton** so the next resolution rebuilds on the new config and SP1's fingerprinted collection. This reset seam **does not exist today** — `get_shared_rag_service` caches `_shared_service` under `_shared_service_lock` (`ingestion_indexing.py:121–122`) with no way to clear it. SP2 adds `reset_shared_rag_service()` (clear the global under the lock; the next call rebuilds). Set-active cannot work without it.
 4. The embedding-model reload runs **off-thread** (a model load is expensive); the singleton reset must not yank the service out from under an in-flight ingestion/search worker (running ops keep their reference; new ops get the new service).
 
 Deleting the active profile falls back to a builtin default (and offers to delete its fingerprinted index via SP1's `delete_index`). Note `get_profile_manager()` currently re-instantiates per call (`:769`, not a singleton) — acceptable for stateless reads since active state lives in config, not memory; SP2 need not change that, but must not assume in-memory caching of the active profile.
@@ -62,6 +62,7 @@ Deleting the active profile falls back to a builtin default (and offers to delet
 - `resolve_active_rag_config` consumed by both paths; **parity test** (embed-config == query-config for the active profile); env-override layer still wins where documented.
 - Set-active: pointer written, service reset, fingerprint-change detected, off-thread reload does not block, in-flight worker unaffected; delete-active fallback.
 - First-run import: existing config captured into a profile, set active, fingerprint == SP1 adopted legacy fingerprint (the upgrade invariant).
+- **Singleton reset must be test-isolated.** `reset_shared_rag_service()` mutates a module global, and there is a documented cross-file RAG cache-singleton test-pollution issue (backlog task-408). Every test that resets or builds the shared service resets it again in teardown (fixture), or the pollution leaks into unrelated suites.
 - Real in-memory SQLite + mock embeddings; temp profiles dir.
 
 ## 9. Plan-time verifications

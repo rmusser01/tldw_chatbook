@@ -28,7 +28,8 @@ So the screen's "Save" is a profile write, not a config-section write.
 
 **Region 2 — Config editor.** The full `ProfileConfig` in collapsible groups (search · embeddings · chunking · vector store · retriever · reranking · indexing), editing the **active** profile.
 - If the active profile is a builtin, the form is **read-only** with a prominent "Clone to edit" affordance.
-- **Index-determining fields** (embedding model + every chunk-output-affecting field, per SP1's fingerprint) carry a visual marker; changing one shows the "re-points to a new (empty) index; backfill needed" warning — the SP1↔SP3 seam.
+- **Index-determining fields** (embedding model + every chunk-output-affecting field + `distance_metric`, per SP1's fingerprint) carry a visual marker; changing one shows the "re-points to a new (empty) index; backfill needed" warning — the SP1↔SP3 seam.
+- **Two triggers, one consequence.** An index re-point (new fingerprint → empty collection) happens on *both* set-active to a differently-fingerprinted profile (Region 1) *and* editing+saving an index-determining field on the active profile (here). Both fire the same warning + Backfill affordance and both go through SP2's service reset — the implementation must not handle only set-active.
 - **Reranking group** presents `enable_reranking` together with `reranking_config`, even though they live in different parts of the object tree (`enable_reranking` is `rag_config.search.enable_reranking` at `config.py:267`; `reranking_config` is a top-level `ProfileConfig` field). SP3 must set the field that `create_rag_service` actually threads to `self.enable_reranking` (also a service kwarg with a fallback, `enhanced_rag_service_v2.py:50/152`) — verified at plan time, or the toggle is inert.
 
 ## 4. Draft model (the trickiest detail)
@@ -36,6 +37,8 @@ So the screen's "Save" is a profile write, not a config-section write.
 The settings framework keys drafts by *category* (`_settings_drafts[category]`), assuming one stable object per category. SP3's editor's object is the *active profile*, which changes via set-active within the same category. Unsaved edits to profile A + set-active to B would otherwise leak A's edits onto B or lose them silently. SP3:
 - keys the editor draft by **`(category, profile-id)`**, and
 - on set-active with a dirty editor, **prompts save/discard** and clears the draft on switch.
+
+Fallback (plan-time verification #4): if the framework's category-keyed draft map cannot take a composite key without a deeper refactor, keep per-profile editor drafts in the screen's own state (outside the framework map) and hand the framework only the active profile's draft — the switch-prompt behavior is unchanged.
 
 ## 5. Validation
 
