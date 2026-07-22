@@ -716,10 +716,22 @@ class ChromaVectorStore:
                 "last_operation": self._last_operation_time,
             }
 
-            # Try to get embedding dimension
-            if sample_data["embeddings"] and sample_data["embeddings"][0]:
-                stats["embedding_dimension"] = len(sample_data["embeddings"][0])
-                self._embedding_dim = stats["embedding_dimension"]
+            # Try to get embedding dimension. ChromaDB returns "embeddings"
+            # as a numpy array (chromadb 1.5.8+); a bare truthiness check
+            # on it (or on a multi-value row within it) raises
+            # "truth value of an array ... is ambiguous" for both the
+            # empty-collection and populated-collection cases, which was
+            # silently swallowed by the except below and made every
+            # collection -- fresh or not -- report a masked "error" stats
+            # payload instead of a trustworthy count. Use explicit length
+            # checks instead of truthiness so numpy arrays behave the same
+            # as plain lists here.
+            sample_embeddings = sample_data.get("embeddings")
+            if sample_embeddings is not None and len(sample_embeddings) > 0:
+                first_embedding = sample_embeddings[0]
+                if first_embedding is not None and len(first_embedding) > 0:
+                    stats["embedding_dimension"] = len(first_embedding)
+                    self._embedding_dim = stats["embedding_dimension"]
 
             # Log comprehensive stats
             logger.info(
