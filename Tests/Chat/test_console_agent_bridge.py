@@ -593,6 +593,17 @@ def test_step_truncation_cuts_on_word_boundary_with_ellipsis():
     assert all(tok in text.split() for tok in preview.split())
 
 
+def test_step_truncation_cuts_on_newline_and_tab_boundaries():
+    """Qodo #3: markdown/structured results split on newlines/tabs, not just
+    spaces — the boundary search must treat any whitespace as a token break so a
+    fenced/heading result is not clipped mid-token."""
+    from tldw_chatbook.Chat.console_agent_bridge import _truncate_step_text
+
+    text = "### Heading\n\nsome body text that keeps going well past the limit here"
+    out = _truncate_step_text(text, limit=15)
+    assert out.split("\u2026", 1)[0] == "### Heading"  # cut at the newline, not "so"
+
+
 def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
     tmp_path,
 ):

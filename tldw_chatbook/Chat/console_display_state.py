@@ -311,6 +311,24 @@ class ConsoleControlState:
         mcp_tool_count: int | None = None,
         approval_count: int = 0,
     ) -> "ConsoleControlState":
+        """Build the Console control-bar chip state from raw run values.
+
+        Args:
+            provider: Active provider name, or falsy for "not selected".
+            model: Active model name, or falsy for "not selected".
+            persona: Persona/assistant label; falsy falls back to "General".
+            rag_enabled: Whether RAG is on for this send.
+            staged_source_count: Number of staged context sources.
+            tool_count: Built-in tools that can run.
+            mcp_tool_count: MCP catalog size that can run, or ``None`` when no MCP
+                seam is wired (chip then reflects built-in tools only).
+            approval_count: Pending MCP approvals.
+
+        Returns:
+            A ``ConsoleControlState`` whose ``tools_label`` counts the tools that
+            can actually run (built-in + MCP) and whose ``*_active`` flags drive
+            chip emphasis.
+        """
         persona_text = _clean(persona, "")
         persona_label = (
             f"Persona: {persona_text}" if persona_text else "Assistant: General"

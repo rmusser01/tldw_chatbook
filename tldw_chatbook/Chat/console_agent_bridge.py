@@ -142,7 +142,10 @@ def _truncate_step_text(text: str, *, limit: int) -> str:
     if len(text) <= limit:
         return text
     cut = text[:limit].rstrip()
-    boundary = cut.rfind(" ")
+    # Cut on any whitespace boundary (space/newline/tab/CR), not just a literal
+    # space — markdown and structured tool output split on newlines/tabs, so a
+    # space-only search would still clip those mid-token (Qodo #3).
+    boundary = max(cut.rfind(ws) for ws in (" ", "\n", "\t", "\r"))
     if boundary >= limit // 2:
         cut = cut[:boundary].rstrip()
     hidden = len(text) - len(cut)
