@@ -1,4 +1,5 @@
 import json
+import pytest
 from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager, ProfileConfig
 from tldw_chatbook.RAG_Search.simplified.config import (
     RAGConfig, EmbeddingConfig, ChunkingConfig, VectorStoreConfig,
@@ -141,3 +142,57 @@ def test_legacy_blob_migrated_to_per_file(tmp_path):
     assert not (pdir / "custom_profiles.json").exists()
     # Idempotent: a second manager doesn't choke on the already-migrated blob.
     _mgr(tmp_path)
+
+
+def test_cannot_mutate_builtins(tmp_path):
+    m = _mgr(tmp_path)
+    with pytest.raises(ValueError):
+        m.delete_profile("hybrid_basic")
+    with pytest.raises(ValueError):
+        m.rename_profile("hybrid_basic", "Nope")
+    with pytest.raises(ValueError):
+        m.save_profile(m.get_profile("hybrid_basic"))  # read_only
+
+
+def test_clone_builtin_creates_writable_copy(tmp_path):
+    m = _mgr(tmp_path)
+    clone = m.clone_profile("high_accuracy", "My Accuracy")
+    assert clone.read_only is False
+    assert clone.id != "high_accuracy"
+    assert clone.rag_config.chunking.chunk_size == m.get_profile("high_accuracy").rag_config.chunking.chunk_size
+    assert (tmp_path / "profiles" / f"{clone.id}.json").exists()
+    # Editing the clone does not touch the builtin:
+    clone.rag_config.chunking.chunk_size = 111
+    m.save_profile(clone)
+    assert m.get_profile("high_accuracy").rag_config.chunking.chunk_size != 111
+
+
+def test_rename_keeps_id_and_file(tmp_path):
+    m = _mgr(tmp_path)
+    c = m.clone_profile("hybrid_basic", "Before")
+    old_id = c.id
+    renamed = m.rename_profile(c.id, "After")
+    assert renamed.id == old_id                 # id stable across rename
+    assert renamed.name == "After"
+    assert (tmp_path / "profiles" / f"{old_id}.json").exists()
+
+
+def test_delete_removes_file_and_entry(tmp_path):
+    m = _mgr(tmp_path)
+    c = m.clone_profile("hybrid_basic", "Temp")
+    assert m.delete_profile(c.id) is True
+    assert m.get_profile(c.id) is None
+    assert not (tmp_path / "profiles" / f"{c.id}.json").exists()
+
+
+def test_create_custom_profile_is_id_consistent(tmp_path):
+    # Carry-forward fix from Task 4 review: create_custom_profile used to key
+    # _profiles by name.lower().replace(" ", "_") while profile.id is
+    # _slugify(name) (which collapses ALL non-alnum, not just spaces), so the
+    # in-memory key could diverge from the id-based filename. It must now go
+    # through save_profile() so the same key (profile.id) is used both in
+    # memory and on disk.
+    m = _mgr(tmp_path)
+    created = m.create_custom_profile("My Custom! Profile", base_profile="balanced")
+    assert m.get_profile(created.id) is created
+    assert (tmp_path / "profiles" / f"{created.id}.json").exists()

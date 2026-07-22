@@ -545,6 +545,57 @@ class ConfigProfileManager:
         """List all available profile names."""
         return list(self._profiles.keys())
 
+    def _unique_id(self, base_slug: str) -> str:
+        candidate, n = base_slug, 2
+        while candidate in self._profiles:
+            candidate = f"{base_slug}_{n}"
+            n += 1
+        return candidate
+
+    def save_profile(self, profile: "ProfileConfig") -> "ProfileConfig":
+        """Persist a user profile (refuses read-only builtins)."""
+        if profile.read_only:
+            raise ValueError(f"Profile '{profile.id}' is read-only")
+        self._profiles[profile.id] = profile
+        self._save_one(profile)
+        return profile
+
+    def delete_profile(self, profile_id: str) -> bool:
+        prof = self._profiles.get(profile_id)
+        if prof is None:
+            return False
+        if prof.read_only:
+            raise ValueError(f"Builtin profile '{profile_id}' cannot be deleted")
+        self._profiles.pop(profile_id, None)
+        path = self._profile_path(profile_id)
+        if path.exists():
+            path.unlink()
+        return True
+
+    def rename_profile(self, profile_id: str, new_name: str) -> "ProfileConfig":
+        prof = self._profiles.get(profile_id)
+        if prof is None:
+            raise ValueError(f"Profile '{profile_id}' not found")
+        if prof.read_only:
+            raise ValueError(f"Builtin profile '{profile_id}' cannot be renamed")
+        prof.name = new_name  # id + filename stay the same (rename-safe)
+        self._save_one(prof)
+        return prof
+
+    def clone_profile(self, source_id: str, new_name: str) -> "ProfileConfig":
+        src = self._profiles.get(source_id)
+        if src is None:
+            raise ValueError(f"Source profile '{source_id}' not found")
+        new_id = self._unique_id(_slugify(new_name))
+        clone = ProfileConfig.from_dict({
+            **src.to_dict(),
+            "id": new_id,
+            "name": new_name,
+            "read_only": False,
+            "profile_type": "custom",
+        })
+        return self.save_profile(clone)
+
     def create_custom_profile(
         self, name: str, base_profile: str = "balanced", **overrides
     ) -> ProfileConfig:
@@ -586,10 +637,9 @@ class ConfigProfileManager:
                 setattr(custom_config.rag_config, key, value)
             # Add more override logic as needed
 
-        # Save the custom profile
-        profile_key = name.lower().replace(" ", "_")
-        self._profiles[profile_key] = custom_config
-        self._save_one(custom_config)
+        # Save the custom profile (keyed by profile.id, same as its filename,
+        # so it's reachable by the same key before and after a restart)
+        self.save_profile(custom_config)
 
         logger.info(f"Created custom profile: {name}")
 
