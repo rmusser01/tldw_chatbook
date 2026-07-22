@@ -239,3 +239,50 @@ def test_local_summarizer_template_call_sites_use_registry():
 
     # The oobabooga local shadow (a different prompt) must remain untouched.
     assert '"Please summarize the following text:"' in source
+
+
+def test_rolling_summarize_skips_resolver_when_caller_option_set(
+    scratch_config, monkeypatch
+):
+    """`Chunker._get_option(key, default_override)` only uses
+    `default_override` when `self.options[key]` is None, but Python
+    evaluates arguments eagerly — so a bare
+    `get_internal_prompt("summarization.rolling_summarize_system")` passed
+    positionally as that default runs on *every* rolling_summarize call
+    regardless of whether `self.options["summarize_system_prompt"]` is
+    already populated (the common case per
+    test_rolling_summarize_default_channel_is_frozen_at_import: the
+    module-level DEFAULT_CHUNK_OPTIONS entry is virtually never None).
+    That's a wasted config lookup on a hot path, and it can trip the
+    resolver's warn-once path for a value that's immediately discarded.
+    The resolver must not be called at all when the caller option already
+    supplies a value."""
+    from tldw_chatbook.Chunking import Chunk_Lib
+
+    calls = []
+    original = Chunk_Lib.get_internal_prompt
+
+    def spy(prompt_id):
+        calls.append(prompt_id)
+        return original(prompt_id)
+
+    monkeypatch.setattr(Chunk_Lib, "get_internal_prompt", spy)
+
+    captured = []
+
+    def fake_llm(payload):
+        captured.append(payload)
+        return "summary"
+
+    chunker = Chunk_Lib.Chunker(options={"summarize_system_prompt": "CALLER SET"})
+    chunker.chunk_text(
+        "Sentence one. Sentence two. Sentence three. " * 20,
+        method="rolling_summarize",
+        llm_call_function=fake_llm,
+        llm_api_config={},
+    )
+    assert captured, "fake_llm was never invoked"
+    assert calls == [], (
+        "get_internal_prompt('summarization.rolling_summarize_system') "
+        f"was called even though summarize_system_prompt was already set: {calls}"
+    )

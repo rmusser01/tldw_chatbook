@@ -61,6 +61,13 @@ from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedErr
 # the live (possibly overridden) value at call time via get_internal_prompt.
 CONSOLE_AGENT_OPERATING_PROMPT = CATALOG["agents.console_agent_operating"].default
 
+# Every `agents.subagent_system` value ever resolved by `_is_subagent`
+# (below) this process, seeded with the shipped default. Grows by at most
+# one entry per distinct override text a user configures -- see
+# `_StreamingModelAdapter._is_subagent` for why a single current-value
+# check is not enough.
+_KNOWN_SUBAGENT_PREFIXES: set[str] = {SUBAGENT_SYSTEM_PROMPT}
+
 # Skills Phase-2 gate finding 1 (Task-14 report, scenario 5: "Find a skill
 # that can shout, load it, and use it on: hello"): a discovery-heavy run --
 # find_tools -> load_tools -> a tool/skill call -> the final wrap-up reply --
@@ -421,14 +428,22 @@ class _StreamingModelAdapter:
         if first.get("role") != "system":
             return False
         content = str(first.get("content", ""))
-        # Dual-prefix match: the CURRENT registry-resolved prompt (an
-        # override may have been applied between spawn and detection) OR
-        # the shipped default (SUBAGENT_SYSTEM_PROMPT) -- covers an
-        # override applied in either direction so detection never flips
-        # false just because config changed mid-run.
+        # Multi-prefix match: a sub-agent's system prompt is baked into its
+        # messages_payload once, at spawn time (agent_service.py:411's own
+        # get_internal_prompt call), then stays fixed for the rest of that
+        # sub-agent's multi-step tool loop. Comparing only against the
+        # CURRENTLY resolved override (plus the shipped default) can flip
+        # false if `agents.subagent_system` is edited live -- e.g. from
+        # Settings, on the UI thread, mid-run -- to a *different* override
+        # rather than reverted to the default: an already-spawned
+        # sub-agent's later turns would then match neither and leak into
+        # the primary transcript. Accumulating every value resolved so far
+        # this process (starting from the shipped default) keeps detection
+        # stable no matter when the override changed.
         resolved = get_internal_prompt("agents.subagent_system")
-        return content.startswith(resolved) or content.startswith(
-            SUBAGENT_SYSTEM_PROMPT
+        _KNOWN_SUBAGENT_PREFIXES.add(resolved)
+        return any(
+            content.startswith(prefix) for prefix in _KNOWN_SUBAGENT_PREFIXES
         )
 
 

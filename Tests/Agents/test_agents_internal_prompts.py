@@ -91,3 +91,35 @@ def test_is_subagent_false_for_ordinary_system_turn_under_active_override(
         bridge._StreamingModelAdapter._is_subagent(_history_with_system(ordinary))
         is False
     )
+
+
+def test_is_subagent_stable_across_mid_run_override_change(scratch_config):
+    """A sub-agent's system prompt is baked into its messages_payload once,
+    at spawn time (Agents/agent_service.py:411's own ``get_internal_prompt``
+    call), and then stays fixed across that sub-agent's own multi-step
+    tool loop. If ``agents.subagent_system`` is edited live (e.g. from
+    Settings, on the UI thread, while a run is in flight on a worker
+    thread) to a *different* override -- not reverted to the shipped
+    default -- a detector that only compares against the CURRENTLY
+    resolved value plus the shipped default stops recognizing that
+    already-spawned sub-agent's later turns, and its streamed output
+    leaks into the primary transcript. Detection must stay stable for any
+    ``agents.subagent_system`` value resolved earlier in the same
+    process, not just the one active right now."""
+    from tldw_chatbook.Chat import console_agent_bridge as bridge
+
+    scratch_config('[internal_prompts.agents]\nsubagent_system = "OVERRIDE A"\n')
+    spawn_time_resolved = get_internal_prompt("agents.subagent_system")
+    assert spawn_time_resolved == "OVERRIDE A"
+    # This is the sub-agent's system message, fixed at spawn time.
+    payload = _history_with_system(spawn_time_resolved + "\n\nRun the tool loop.")
+    # Turn 1 (spawn turn): the currently active override matches directly.
+    assert bridge._StreamingModelAdapter._is_subagent(payload) is True
+
+    # Config is edited mid-run to a *different* override (not removed).
+    scratch_config('[internal_prompts.agents]\nsubagent_system = "OVERRIDE B"\n')
+    assert get_internal_prompt("agents.subagent_system") == "OVERRIDE B"
+
+    # Turn 2: same sub-agent, same (unchanged) spawn-time system content --
+    # must still be classified as a sub-agent turn.
+    assert bridge._StreamingModelAdapter._is_subagent(payload) is True
