@@ -1,6 +1,12 @@
 """Console feedback toasts must not sit over the composer action cluster (task-352)."""
 
 import pytest
+
+# Textual does not export ToastRack publicly (it is not in `textual.widgets`),
+# and the headless notification system does not mount one, so the test reaches
+# into the private module to construct one directly and assert the Console
+# screen's CSS docks it. Mirrors the existing `textual.widgets._markdown`
+# private import already used under Tests/.
 from textual.widgets._toast import ToastRack
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -10,7 +16,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 
 
 @pytest.mark.asyncio
-async def test_console_toast_rack_docks_top_not_over_composer():
+async def test_console_toast_rack_docks_top_not_over_composer() -> None:
     """Textual docks notification toasts bottom-right by default — directly over
     the Console composer's Send/Attach/Save cluster and staged-chip strip — and
     toasts capture clicks, so a click aimed at those controls during a toast
