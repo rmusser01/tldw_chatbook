@@ -82,3 +82,33 @@ def test_ingest_and_query_resolve_same_collection(chroma_persist_dir):
     ingest_side = RAGService(cfg).vector_store.collection_name
     query_side = RAGService(cfg).vector_store.collection_name
     assert ingest_side == query_side == fingerprinted_collection_name(cfg)
+
+
+@pytest.mark.requires_chromadb
+def test_get_collection_stats_on_populated_collection(chroma_persist_dir):
+    """Locks the numpy peek()["embeddings"] fix in
+    ChromaVectorStore.get_collection_stats.
+
+    Before the fix, a bare truthiness check on chromadb's numpy embeddings
+    array (returned by collection.peek()) raised "the truth value of an
+    array with more than one element is ambiguous", which was silently
+    swallowed by get_collection_stats()'s broad except and made it report a
+    masked error payload (count=0, "error": ...) for ANY collection --
+    including a populated one -- degrading health_check()/get_chunk_count()
+    downstream. This test seeds real documents so count > 0 and asserts the
+    stats payload is trustworthy, not just that construction doesn't raise.
+    """
+    cfg = _chroma_cfg(chroma_persist_dir)
+    svc = RAGService(cfg)
+    svc.vector_store.add(
+        ids=["id0", "id1"],
+        embeddings=[[0.1] * 8, [0.2] * 8],
+        documents=["doc 0", "doc 1"],
+        metadata=[{"doc_id": "d0"}, {"doc_id": "d1"}],
+    )
+
+    stats = svc.vector_store.get_collection_stats()
+
+    assert isinstance(stats["count"], int) and not isinstance(stats["count"], bool)
+    assert stats["count"] > 0
+    assert not stats.get("error")

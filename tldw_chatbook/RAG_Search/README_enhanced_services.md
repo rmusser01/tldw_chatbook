@@ -159,4 +159,8 @@ resolve to the same fingerprinted collection, so changing an index-determining
 setting points at a fresh (empty-until-backfilled) collection rather than
 mixing incompatible vectors. Admin helpers: `collection_indexes.list_indexes`,
 `delete_index`, `index_status`. Legacy pre-fingerprint `default` collections
-are adopted on first run (`maybe_adopt_legacy_collection`).
+are adopted on first run (`maybe_adopt_legacy_collection`). This auto-adoption
+only recognizes the canonical `default` collection name: if you had already
+set a custom `[rag.vector_store].collection_name`, that data is left on disk
+under its old name and you'll need to re-index into the new fingerprinted
+collection.

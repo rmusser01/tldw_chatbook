@@ -198,10 +198,21 @@ def test_list_and_delete_indexes(chroma_persist_dir):
 
 
 @pytest.mark.requires_chromadb
-def test_index_status_absent_then_built(chroma_persist_dir):
+def test_index_status_absent_then_empty_then_built(chroma_persist_dir):
     from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
     from tldw_chatbook.RAG_Search.simplified.collection_indexes import index_status
     cfg = _cfg(chroma_persist_dir)
     assert index_status(cfg)["state"] == "absent"
-    RAGService(cfg).vector_store.collection           # create, still empty
+    svc = RAGService(cfg)
+    svc.vector_store.collection                       # create, still empty
     assert index_status(cfg)["state"] == "empty"
+
+    svc.vector_store.add(
+        ids=["id0", "id1"],
+        embeddings=[[0.1] * 8, [0.2] * 8],
+        documents=["doc 0", "doc 1"],
+        metadata=[{"doc_id": "d0"}, {"doc_id": "d1"}],
+    )
+    status = index_status(cfg)
+    assert status["state"] == "built"
+    assert status["count"] > 0
