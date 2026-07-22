@@ -31,9 +31,15 @@ non-destructively — which is the behavior we ultimately want. So branching is 
 
 **What the native Console actually does:**
 
-1. **Never creates branches.** Every new message is persisted with its parent set to the previous
-   persisted message — a strictly linear chain (`Chat/console_chat_store.py`,
-   `_previous_persisted_message_id`, used at persist time). That helper also feeds sync sequencing.
+1. **Never creates branches — and the local DB has *no* parent links at all.** Console's local
+   persistence writes `parent_message_id=None` for every message (`_persist_new_message` /
+   `_persist_existing_message` hardcode `None`, even though the `ConsoleChatPersistence`
+   contract already accepts `parent_message_id`). The only place a linear parent is *computed*,
+   `_previous_persisted_message_id`, feeds **solely the Sync v2 outbox envelope** (parent +
+   sequence), never the local row. So existing Console conversations round-trip as a **flat set of
+   rootless messages** — which is exactly why resume's `children[-1]` walk has been harmless so far.
+   Introducing branching means we start writing real `parent_message_id` to the local DB for the
+   first time; existing flat conversations become the resume-fallback case.
 2. **"Swipe" is not the tree.** Regenerate builds an in-memory `ConsoleVariantSet` — a flat list of
    alternate texts for one assistant turn (`Chat/console_chat_models.py:224`). `<` / `>` navigates
    that in-memory list only; nothing is persisted as tree siblings.
@@ -86,6 +92,23 @@ client-side pointer. We adopt exactly that model, held in memory and mirrored to
 - **Tree / branch browser** to visualize the whole tree and jump to any node — C.
 - **`/rewind` menu** (undo restore + summarize / free-context) — sub-project 2.
 - Any change to *conversation-level* forking (`forked_from_message_id`) — untouched.
+
+## Phasing (three independently-shippable plans)
+
+The foundation is too large for one implementation plan. It splits into three phases, each a
+complete, testable, independently-reviewable deliverable with its own plan document:
+
+- **Phase A — Persisted assistant branching + active-path resume.** The ChaChaNotes v22→v23
+  active-leaf column; the in-memory tree + real `parent_message_id` writes; regenerate creating a
+  persisted sibling assistant node; swipe navigating siblings; the active-leaf pointer; resume
+  reconstruction (active-leaf ancestry, fallback to `children[-1]`); sync-sequencing rework.
+  *Ships:* "regenerate alternates persist as real branches and survive resume." This is the first
+  plan written.
+- **Phase B — User-message branching via "Edit & resend."** Widen the edit modal's return
+  contract; user-side branch creation under the shared parent; user-row swipe UI. Builds on A.
+- **Phase C — Agent-marker anchoring under branching.** The `agent_runs` v1→v2 migration + threading
+  `assistant_message_id` + rewriting marker placement to anchor on the active path. Only matters for
+  agent-runtime conversations that also branch; A/B keep ordinal placement until this lands.
 
 ## Model
 
@@ -149,12 +172,18 @@ Resume re-derives non-persisted TOOL markers from `AgentRunsDB` and interleaves 
 Nth assistant message — which is *wrong once branches exist*, because off-path branches also
 produced runs.
 
-Fix: **anchor each run's marker block to the `assistant_message_id` it produced.** The bridge
-already tracks `assistant_message_id` per run at runtime; the plan must confirm `AgentRunsDB`
-persists that id (and add it if not). On reconstruction, a marker block is placed **immediately
-after its anchor message when that anchor is on the active path, and hidden otherwise.** The rail's
-per-conversation agent summary (`historical_snapshot`) is unchanged — it is a conversation-wide
-rollup, not a per-path view.
+Fix: **anchor each run's marker block to the `assistant_message_id` it produced.** Concretely,
+`AgentRunsDB` does **not** store a message id today (`agent_runs` is at schema v1 with no message
+column) and `run_reply` receives `assistant_message_id` but drops it before `create_run`. So the
+fix requires: an **`agent_runs` v1→v2 migration** adding an `assistant_message_id` column;
+threading that id through `run_turn` → `AgentService._run_one` → `create_run`;
+`resume_marker_messages` returning `(assistant_message_id, block)` pairs; and rewriting
+`inject_resume_agent_markers` to place each block after the transcript message whose
+`persisted_message_id == assistant_message_id`, hiding blocks whose anchor is off the active path.
+The rail's per-conversation agent summary (`historical_snapshot`) is unchanged — it is a
+conversation-wide rollup, not a per-path view. Because this is a self-contained surface that only
+affects agent-runtime conversations that also have branches, it is deferred to **Phase C** (see
+Phasing); Phases A/B keep the existing ordinal placement.
 
 ### Resume
 
@@ -173,18 +202,40 @@ batched `get_conversation_tree` fetch — no per-ancestor N+1), then:
 
 ## Persistence & schema
 
-- **New column:** `conversations.active_leaf_message_id TEXT` — a **plain nullable pointer**. Add
-  it to **both** the canonical `conversations` CREATE TABLE (fresh installs) **and** a v21 → v22
-  migration under `DB/migrations/` (existing DBs), and bump `_CURRENT_SCHEMA_VERSION` to 22.
+- **New column:** `conversations.active_leaf_message_id TEXT` — a **plain nullable pointer**. This
+  codebase's canonical `conversations` CREATE TABLE is **frozen at the v4 schema**; every later
+  column is added *only* by running migrations, and a fresh DB runs 4→N on first open. So this is
+  **migration-only — do not edit the CREATE TABLE.** Add a **v22 → v23** migration
+  (`_CURRENT_SCHEMA_VERSION` is already **22** on `origin/dev`): a guarded `_migrate_from_v22_to_v23`
+  method (PRAGMA-check then `ALTER TABLE conversations ADD COLUMN active_leaf_message_id TEXT`) that
+  `executescript`s a `_MIGRATE_V22_TO_V23_SQL` constant containing **only the
+  `db_schema_version` bump** (no trigger DDL — see the next bullet), a
+  `DB/migrations/chachanotes_v22_to_v23_*.sql` reference file, registering
+  `22: self._migrate_from_v22_to_v23` in the `migration_steps` dict, and bumping
+  `_CURRENT_SCHEMA_VERSION` to 23.
+- **No trigger redefinition; the pointer is local-only and never syncs.** The active-leaf pointer
+  is chatbook-local UX state — the server derives active-path and has no column to receive it, so
+  syncing it is pointless. Therefore the column is written by a **dedicated setter,
+  `set_conversation_active_leaf(conversation_id, message_id)`, that does a bare
+  `UPDATE conversations SET active_leaf_message_id = ? WHERE id = ? AND deleted = 0`** — crucially
+  **not** bumping `version`/`last_modified` and **not** touching any column named in the
+  `conversations_sync_update` trigger's `WHEN` clause. Because that `WHEN` only fires on
+  `version`/`last_modified`/other tracked-field changes, the setter produces **no `sync_log` row**
+  and swipes cause no sync churn. Consequences: the migration does **not** redefine the
+  `conversations_sync_*` triggers (they never carry the column), and the pointer is **not** routed
+  through the optimistic-lock `update_conversation` path (which would bump `version` and sync). A
+  matching reader `get_conversation_active_leaf(conversation_id) -> str | None` does a plain
+  `SELECT`. This deliberately trades optimistic-lock safety (last-write-wins is fine for a
+  per-client view pointer) for zero sync/version churn.
 - **Do not rely on FK cascade for correctness.** The DB uses **soft-delete**, so an
   `ON DELETE SET NULL` FK would never fire on a soft-deleted leaf, and FK enforcement
   (`PRAGMA foreign_keys`) is not guaranteed on. Correctness comes from the **resume fallback +
   pointer validation** above (treat missing / soft-deleted / foreign leaves as dangling). A FK
   clause, if added, is belt-and-suspenders only.
-- **Branch messages** persist through the existing message path, but the persisted
-  `parent_message_id` must be the **tree anchor's** child position, not the linear "previous
-  message." `_previous_persisted_message_id` (which returns the previous message in insertion
-  order) is replaced for parent-selection by the in-memory node's actual parent.
+- **Branch messages** persist through the existing message path, now passing a **real
+  `parent_message_id`** (the in-memory node's actual tree parent) into `create_message` /
+  `update_message_content` — which the persistence contract already accepts but the store has always
+  passed as `None`. This is net-new local parent-linking, not a change to existing linear parents.
 - **Sync sequencing must be revisited.** `_previous_persisted_message_id` also feeds sync sequence
   numbers, which today assume linearity. The plan must re-derive sequence/parent from the tree so
   siblings sync coherently; branch messages otherwise sync as ordinary messages (the sync layer
@@ -257,7 +308,9 @@ pipeline.
 - **Tool markers:** a run on an off-path branch is hidden; an on-path run renders after its anchor;
   mixed branches don't cross-place markers.
 - **Fallbacks:** missing pointer, dangling pointer, externally-authored tree, multiple roots.
-- **Migration:** fresh install has the column; an existing v21 DB migrates to v22.
+- **Migration:** a fresh DB (runs 4→23) has the column; an existing v22 DB migrates to v23; the
+  guarded ALTER is idempotent on replay; the redefined `conversations_sync_*` triggers emit the new
+  column in their payloads.
 - Real in-memory SQLite for DB tests (house convention).
 
 ## Rollout / risk
