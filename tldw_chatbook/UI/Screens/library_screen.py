@@ -9029,8 +9029,14 @@ class LibraryScreen(BaseAppScreen):
         gets the original no-recompose targeted panel patch
         (``_refresh_library_skill_trust_status``) so an in-progress unsaved
         edit elsewhere in the editor is never discarded by a full rebuild;
-        list mode instead refreshes the header's posture -- a real
-        recompose, but the list view has no unsaved-edit state to lose.
+        list mode instead refreshes the header's posture AND the shared
+        local-source snapshot -- the list rows' trust glyphs and the
+        header's blocked-count both derive from that snapshot
+        (``_build_library_skills_state``), so refreshing posture alone
+        would leave every row's ``⚠``/``✓`` and the "N need review" count
+        stale until some later snapshot refresh (matches the sibling
+        ``_setup_library_skill_trust``/``_do_library_skill_trust_reset``
+        handlers). The list view has no unsaved-edit state to lose.
         """
         passphrase = await self._request_library_skill_trust_passphrase()
         if passphrase is None:
@@ -9044,6 +9050,7 @@ class LibraryScreen(BaseAppScreen):
             await self._refresh_library_skill_trust_status()
         else:
             self._refresh_library_skills_trust_posture()
+            self._refresh_local_source_snapshot()
 
     @on(Button.Pressed, "#library-skill-trust-review")
     def handle_library_skill_trust_review(self, event: Button.Pressed) -> None:

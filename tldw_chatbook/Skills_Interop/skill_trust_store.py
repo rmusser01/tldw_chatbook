@@ -45,6 +45,15 @@ def skill_trust_account_scope(store_dir: Path) -> str:
     Isolates each profile's trust marker + key cache in the shared OS keyring
     so profiles/users on one machine cannot read each other's entries. Moving
     the data dir changes the scope (a one-time re-setup, by design).
+
+    Args:
+        store_dir: The profile's trust store directory. Resolved to an
+            absolute path before hashing, so relative or symlinked spellings
+            of the same location yield the same scope.
+
+    Returns:
+        A 16-character hex suffix (a truncated SHA-256 of the resolved path)
+        appended to the keyring account names to scope them per profile.
     """
     resolved = str(Path(store_dir).resolve())
     return hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:16]

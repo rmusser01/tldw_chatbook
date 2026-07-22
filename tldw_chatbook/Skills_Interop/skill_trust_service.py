@@ -164,13 +164,34 @@ class SkillTrustService:
         """Structured global trust posture for the Skills list header.
 
         See the plan's Task 3 interface contract for the exact mapping.
+
+        Returns:
+            One of six posture strings:
+
+            - ``"unavailable"`` -- the marker store *raised* (e.g. a locked
+              OS keyring), so trust cannot be read or written right now and
+              neither setup nor unlock could succeed. Checked FIRST so a
+              transiently-broken keyring is never mistaken for a fresh
+              install or an orphaned manifest; recoverable by Retry, never
+              destructively.
+            - ``"needs_setup"`` -- no manifest and no marker: a genuine
+              first run.
+            - ``"needs_resetup"`` -- either no manifest but a marker is
+              present (a foreign/inherited marker), or a manifest exists
+              with its marker cleanly absent (the orphaned-manifest upgrade
+              case). Recover via reset-then-setup.
+            - ``"locked"`` -- manifest and marker both present but this
+              session has not unlocked the trust keys.
+            - ``"error"`` -- keys are loaded but the manifest fails to
+              validate.
+            - ``"ready"`` -- trust is set up, unlocked, and valid.
         """
         has_manifest = self.trust_store.has_manifest()
         marker, available = self._safe_load_marker()
-        if not has_manifest:
-            return "needs_resetup" if marker else "needs_setup"
         if not available:
             return "unavailable"
+        if not has_manifest:
+            return "needs_resetup" if marker else "needs_setup"
         if marker is None:
             return "needs_resetup"  # orphaned manifest (upgrade case)
         if self._keys is None:

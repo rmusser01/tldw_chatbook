@@ -49,6 +49,29 @@ def test_posture_unavailable_when_marker_load_raises(tmp_path):
     assert svc.trust_posture() == "unavailable"
 
 
+def test_posture_unavailable_beats_needs_setup_when_no_manifest_and_marker_raises(
+    tmp_path,
+):
+    # THE ordering guarantee (Qodo review): an unreadable marker store (e.g. a
+    # locked OS keyring) must surface as "unavailable" (Retry, non-destructive)
+    # even with NO manifest -- never "needs_setup", whose bootstrap would fail
+    # trying to persist a marker to the very store that just raised. The
+    # `not available` check therefore precedes the `not has_manifest` branch.
+    class _Raising:
+        def load_marker(self):
+            raise SkillTrustMarkerUnavailable("locked keychain")
+
+        def save_marker(self, **k):
+            pass
+
+        def clear(self):
+            pass
+
+    svc = _service(tmp_path, marker=_Raising())
+    assert svc.trust_store.has_manifest() is False
+    assert svc.trust_posture() == "unavailable"
+
+
 def test_reset_then_bootstrap_recovers_from_poison(tmp_path):
     marker = FileSkillTrustGenerationMarkerStore(tmp_path / "trust" / "marker.json")
     (tmp_path / "trust").mkdir(parents=True, exist_ok=True)
