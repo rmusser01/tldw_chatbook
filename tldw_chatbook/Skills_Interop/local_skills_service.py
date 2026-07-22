@@ -154,6 +154,14 @@ class LocalSkillsService:
         temp_path.replace(path)
 
     @staticmethod
+    def _write_bytes_atomic(path: Path, data: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = path.with_name(f"{path.name}.tmp")
+        with temp_path.open("wb") as handle:
+            handle.write(data)
+        temp_path.replace(path)
+
+    @staticmethod
     def _parse_front_matter(content: str) -> tuple[dict[str, Any], str]:
         match = _FRONT_MATTER_PATTERN.match(content)
         if match is None:
@@ -389,20 +397,93 @@ class LocalSkillsService:
         return base
 
     @staticmethod
-    def _read_supporting_files(skill_dir: Path) -> dict[str, str] | None:
+    def _iter_bundle_files(skill_dir: Path):
+        """Yield (relative_posix, abs_path) for every non-junk file, junk dirs pruned.
+
+        Skips the top-level ``SKILL.md`` body by comparing the POSIX relative
+        path to exactly ``"SKILL.md"`` -- not by a fragile ``Path(root) ==
+        skill_dir`` comparison. A nested file literally named ``SKILL.md``
+        (e.g. ``references/SKILL.md``) is therefore NOT skipped here; it is
+        later rejected by ``validate_supporting_file_path``, which is the
+        correct handling for a shadow body file.
+        """
+        from .skill_trust_scanner import SUPPORTING_JUNK_DIRS, _is_junk  # reuse
+        import os
+        from pathlib import PurePosixPath
+
         if not skill_dir.exists():
-            return None
-        supporting_files: dict[str, str] = {}
-        for path in sorted(skill_dir.iterdir(), key=lambda item: item.name):
-            if not path.is_file() or path.name == _SKILL_FILENAME:
-                continue
-            supporting_files[path.name] = (
-                LocalSkillsService._read_text_preserving_newlines(
-                    path,
-                    base_dir=skill_dir,
+            return
+        for root, dirs, files in os.walk(skill_dir, followlinks=False):
+            dirs[:] = [d for d in dirs if d not in SUPPORTING_JUNK_DIRS]
+            for name in files:
+                if _is_junk(name):
+                    continue
+                abs_path = Path(root) / name
+                relative_path = str(
+                    PurePosixPath(abs_path.relative_to(skill_dir).as_posix())
                 )
-            )
+                if relative_path == _SKILL_FILENAME:
+                    continue
+                yield relative_path, abs_path
+
+    @staticmethod
+    def _read_supporting_files(skill_dir: Path) -> dict[str, str] | None:
+        from ..tldw_api.skills_schemas import validate_supporting_file_path
+
+        supporting_files: dict[str, str] = {}
+        for relative_path, path in sorted(
+            LocalSkillsService._iter_bundle_files(skill_dir), key=lambda x: x[0]
+        ):
+            if path.is_symlink():
+                continue
+            try:
+                validate_supporting_file_path(relative_path)
+            except ValueError:
+                continue
+            try:
+                raw = path.read_bytes()
+            except OSError:
+                continue
+            if b"\x00" in raw:
+                continue
+            try:
+                supporting_files[relative_path] = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                continue  # binary — excluded from the text view, never raises
         return supporting_files or None
+
+    @staticmethod
+    def _read_bundle_manifest(skill_dir: Path) -> list[dict[str, Any]] | None:
+        import stat
+
+        from ..tldw_api.skills_schemas import validate_supporting_file_path
+
+        manifest: list[dict[str, Any]] = []
+        for relative_path, path in sorted(
+            LocalSkillsService._iter_bundle_files(skill_dir), key=lambda x: x[0]
+        ):
+            if path.is_symlink() or not path.is_file():
+                continue
+            try:
+                validate_supporting_file_path(relative_path)
+                raw = path.read_bytes()
+            except (ValueError, OSError):
+                continue
+            is_text = b"\x00" not in raw
+            if is_text:
+                try:
+                    raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    is_text = False
+            manifest.append(
+                {
+                    "path": relative_path,
+                    "size": len(raw),
+                    "executable": bool(path.stat().st_mode & stat.S_IXUSR),
+                    "is_text": is_text,
+                }
+            )
+        return manifest or None
 
     @staticmethod
     def _read_text_preserving_newlines(
@@ -432,6 +513,7 @@ class LocalSkillsService:
             **record,
             content=content,
             supporting_files=self._read_supporting_files(skill_dir),
+            bundle_files=self._read_bundle_manifest(skill_dir),
         )
         payload = self._dump(response)
         payload.update(self._trust_fields_for_record(record))
@@ -560,10 +642,16 @@ class LocalSkillsService:
     def _apply_supporting_files(
         skill_dir: Path, supporting_files: dict[str, str | None] | None
     ) -> None:
+        from ..tldw_api.skills_schemas import validate_supporting_file_path
+
         if supporting_files is None:
             return
+        base = skill_dir.resolve()
         for filename, content in supporting_files.items():
+            validate_supporting_file_path(filename)  # raises on traversal/bad name
             path = skill_dir / filename
+            if base not in path.resolve().parents and path.resolve() != base:
+                raise ValueError(f"unsafe supporting file path: {filename}")
             if content is None:
                 if path.exists():
                     path.unlink()
