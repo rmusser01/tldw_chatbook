@@ -46,6 +46,42 @@ Two design notes that shape every task:
 1. **Sibling identity = separate message nodes.** Phase A drops the "N variants on one message" model in favor of "N sibling message nodes, one active." `ConsoleVariantSet` is *not* used to represent regenerations anymore; the transcript shows the active sibling and the action row exposes `<`/`>` when the active message's parent has more than one child. (The `ConsoleVariantSet` dataclass may remain in the file, unused by regenerate, until Phase B/cleanup — do not delete it in Phase A to avoid churn in unrelated sync-metadata code.)
 2. **Active path = `_messages_by_session[session_id]`.** Keep this list as the materialized active path so the ~dozen existing readers (`messages_for_session`, `_provider_messages_for_session`, persistence, sync) keep working unchanged. A new `_nodes_by_session` + `_children_by_parent` + `_active_leaf_by_session` hold the full tree and off-path branches.
 
+## Invariants (hold after every task)
+
+These are the rules the tree refactor must not violate. Several tasks below reference them.
+
+- **Full tree vs. view.** The full tree — **all** branches, on- and off-path — lives in
+  `_nodes_by_session` (native id → live `ConsoleChatMessage` object), `_children_by_parent`
+  (session → {native parent id | `None` → ordered child native ids}), and
+  `_native_parent_by_message` (native id → native parent id | `None`). `_messages_by_session` is a
+  **derived view** = the current active path only.
+- **Single writer for the view.** `_messages_by_session[sid]` is written **only** by
+  `_recompute_active_path(sid)`, which walks `_active_leaf_by_session[sid]` up via
+  `_native_parent_by_message` to the root, reverses, and materializes the list from the **live node
+  objects in `_nodes_by_session`** (never copies — streaming mutates content in place and the view
+  must see it). Every mutation (append, create_sibling, set_active_leaf, delete) ends by calling it.
+- **Id lookups use the full tree.** `_message_or_raise`, `get_message`, `siblings_at`,
+  `set_active_leaf`, `_leaf_under`, etc. resolve nodes from `_nodes_by_session` /
+  `_message_session_index` — **never** by scanning `_messages_by_session` (which omits off-path
+  nodes). This is a direct change to `_message_or_raise` (currently scans the active-path list).
+- **Every node is registered everywhere.** `append_message`, `create_sibling`, and
+  `restore_persisted_session` each register a node in **all** of `_nodes_by_session`,
+  `_children_by_parent`, `_native_parent_by_message`, and `_message_session_index`. `close_session`
+  purges from all of them (iterate `_nodes_by_session`, not the view).
+- **`parent_message_id` (message field) is the persisted parent id; native parent lives in
+  `_native_parent_by_message`.** They differ pre-persist (`parent_message_id` is `None` until the
+  parent has a persisted id) and are equal-in-meaning post-persist.
+- **TOOL markers are display-only, never tree nodes.** Live agent markers arrive via
+  `append_message(role=TOOL, persist=False)` (`ConsoleAgentBridge._append_marker`). A TOOL row must
+  **not** register in `_nodes_by_session`/`_children_by_parent`/`_native_parent_by_message`, must
+  **not** become the active leaf, and must **not** be parented — otherwise the next real message
+  would parent at a marker and corrupt the chain (this would break even linear agent chats). It is
+  appended to the active-path view for display only. Consequence: `_recompute_active_path` rebuilds
+  the view from real tree nodes and therefore drops TOOL markers on a swipe — an accepted Phase A
+  limitation (agent markers are re-derived correctly on resume today and fully reworked in Phase C;
+  swipe is blocked during a live run, so this only affects re-viewing a completed agent run's
+  markers after swiping, a niche case).
+
 ---
 
 ### Task 1: ChaChaNotes v22→v23 migration + active-leaf accessors
@@ -113,7 +149,7 @@ def test_active_leaf_write_does_not_bump_version_or_emit_sync(tmp_path):
     assert sync_after == sync_before, "active-leaf write must not emit a sync_log row"
 ```
 
-> Note: confirm the real `add_conversation` signature/required fields against `ChaChaNotes_DB.py` before running (it may require `root_id`/`client_id` defaults it fills in). Adjust the constructor/`add_conversation` call to match; the assertions are the contract.
+> Note: the real API is `CharactersRAGDB.add_conversation(conv_data: dict) -> str | None` (`ChaChaNotes_DB.py:5492`). Read its docstring for required keys (it fills `id`/`root_id`/`client_id` defaults; it typically needs at least `title` and may accept `character_id=None`). Adjust the `add_conversation(...)` calls to match; the assertions are the contract. If `add_conversation` is awkward for a bare column test, insert a minimal `conversations` row directly via `db.get_connection()` instead.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -252,7 +288,7 @@ git commit -m "feat(db): add local-only conversations.active_leaf_message_id (v2
 - Test: `Tests/Chat/test_console_chat_models.py` (add to existing, or create)
 
 **Interfaces:**
-- Produces: `ConsoleChatMessage.parent_message_id: str | None = None` (the persisted parent id of this node's parent, i.e. the *persisted* id, mirroring `persisted_message_id`).
+- Produces: `ConsoleChatMessage.parent_message_id: str | None = None` (the persisted parent id of this node's parent, i.e. the *persisted* id, mirroring `persisted_message_id`); plus transient render fields `sibling_index: int = 0` and `sibling_count: int = 1` (populated by the store on active-path snapshots; not persisted).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -278,6 +314,17 @@ Expected: FAIL — `TypeError: __init__() got an unexpected keyword argument 'pa
     #: root / not-yet-known parent). Distinct from ``persisted_message_id``
     #: (this node's own persisted id). Used to reconstruct the active path.
     parent_message_id: str | None = None
+    #: Transient (non-persisted) sibling-navigation hints the store fills in on
+    #: active-path snapshots so the renderer can show `<`/`>` + an `n/m` counter
+    #: without reaching into store internals. Default 0/1 = "no siblings".
+    sibling_index: int = 0
+    sibling_count: int = 1
+```
+
+Update the Step 1 test to also assert the sibling defaults:
+
+```python
+    assert (msg.sibling_index, msg.sibling_count) == (0, 1)
 ```
 
 - [ ] **Step 4: Run to verify it passes**
@@ -358,15 +405,32 @@ Expected: FAIL — `AttributeError` on `active_leaf` / `active_path_message_ids`
 
 - [ ] **Step 3: Add the structures + maintain them**
 
-Implementation notes (follow existing idioms; exact bodies are the implementer's, tests are the contract):
+Implementation notes (follow existing idioms + the **Invariants** section above; exact bodies are the implementer's, tests are the contract):
 
-1. In `__init__` add the three dicts (empty).
+1. In `__init__` add the four dicts (empty): `_nodes_by_session`, `_children_by_parent`, `_native_parent_by_message`, `_active_leaf_by_session`.
 2. In `create_session`, initialize `_nodes_by_session[id] = {}`, `_children_by_parent[id] = {}`, `_active_leaf_by_session[id] = None` alongside `_messages_by_session[id] = []`.
-3. In `append_message`, after building `message`: set `message.parent_message_id` to the **persisted** id of the current active leaf when known (else `None`); register the node in `_nodes_by_session`; append its native id to `_children_by_parent[sid].setdefault(<active-leaf native id or None>, [])`; set `_active_leaf_by_session[sid] = message.id`; then append to `_messages_by_session[sid]` (unchanged). This keeps the active path == transcript for linear use.
-4. Add `active_leaf`, `set_active_leaf`, `active_path_message_ids`, `siblings_at`, and a private `_recompute_active_path(session_id)` that walks `_active_leaf_by_session[sid]` up via each node's *native* parent (track a native-parent map, e.g. store the native parent id on the node set or in `_children_by_parent` reverse) to the root, reverses, and rebuilds `_messages_by_session[sid]` from the node objects. Persist the pointer in `set_active_leaf` when a persisted conversation id and a `db` seam exist (mirror the `persistence_db = getattr(self.persistence, "db", None)` pattern already in `persist_session_if_needed`), calling `db.set_conversation_active_leaf(conversation_id, <persisted id of the leaf, or None>)`.
-5. In `restore_state` and `close_session`, clear/rebuild the three new dicts alongside the existing ones (and fix the pre-existing `_variant_stream_bases` non-clear in `restore_state` while here).
+3. In `append_message`:
+   - **If `role == TOOL`** (display-only marker; see Invariants): register in `_message_session_index` only, append to `_messages_by_session[sid]` for display, and return — do **not** touch tree structures or the active leaf.
+   - **Otherwise** (real message): capture `old_leaf = _active_leaf_by_session[sid]`; register the node in `_nodes_by_session[sid]`; set `_native_parent_by_message[message.id] = old_leaf`; append its native id to `_children_by_parent[sid].setdefault(old_leaf, [])`; set `_active_leaf_by_session[sid] = message.id`; then call `_recompute_active_path(sid)` (the single writer of `_messages_by_session`). Leave `message.parent_message_id` as `None` here — it is set from the parent's *persisted* id at persist time (Task 4).
+4. `_recompute_active_path(session_id)`: walk `_active_leaf_by_session[sid]` up via `_native_parent_by_message` to the root, reverse, and rebuild `_messages_by_session[sid]` **from the live node objects in `_nodes_by_session` (not copies)**; also fill each visited node's transient `sibling_index`/`sibling_count` from `_children_by_parent[sid][<that node's native parent>]`. (TOOL markers, being display-only, are re-appended by the marker system, not by recompute — accepted Phase A limitation.)
+5. `active_leaf`, `set_active_leaf`, `active_path_message_ids`, `siblings_at`, `_leaf_under(node_id)` (walk `_children_by_parent` picking the last child at each step). `set_active_leaf` sets the pointer, calls `_recompute_active_path`, and — when a persisted conversation id and a `db` seam exist (mirror `persistence_db = getattr(self.persistence, "db", None)` from `persist_session_if_needed`) — write-throughs `db.set_conversation_active_leaf(conversation_id, <persisted id of the leaf, or None>)`.
+6. **Change `_message_or_raise`** to resolve from `_nodes_by_session[session_id][message_id]` (per Invariants) so off-path nodes are findable; keep the `_message_session_index` guard for the session lookup.
+7. In `restore_state` and `close_session`, clear/rebuild the four new dicts alongside the existing ones (iterate `_nodes_by_session` to purge in `close_session`), and fix the pre-existing `_variant_stream_bases` non-clear in `restore_state` while here.
+8. **Update `delete_message`** (`console_chat_store.py:709-726`): today it only filters `_messages_by_session` + pops `_message_session_index`. Under the tree it must also remove the node (and its subtree) from `_nodes_by_session`/`_children_by_parent`/`_native_parent_by_message`, and — if the deleted node was on the active path — move `_active_leaf_by_session[sid]` to the deleted node's **parent** (then `_recompute_active_path`). Add a test: deleting the active leaf leaves the parent as the new leaf; deleting an off-path node doesn't change the active path. Keep the existing "can't delete pending/streaming" guard.
 
-> Keep a native-parent lookup: because `parent_message_id` on the message is the *persisted* parent id (may be `None` pre-persist), the in-memory tree must key children by **native** id. Store a `_native_parent_by_message: dict[str, str | None]` (session-scoped or global keyed by message id) so ancestry walks work before persistence assigns ids.
+Add a test asserting a TOOL marker does **not** change the active leaf or become a parent:
+
+```python
+def test_tool_marker_is_display_only():
+    st, sid = _s()  # helper from this test module
+    u = st.append_message(sid, role=ConsoleMessageRole.USER, content="q")
+    a = st.append_message(sid, role=ConsoleMessageRole.ASSISTANT, content="a")
+    st.append_message(sid, role=ConsoleMessageRole.TOOL, content="⚙ tool → ok")
+    assert st.active_leaf(sid) == a.id            # marker did NOT become the leaf
+    nxt = st.append_message(sid, role=ConsoleMessageRole.USER, content="q2")
+    # q2 parents at the assistant answer, NOT the marker
+    assert st._native_parent_by_message[nxt.id] == a.id
+```
 
 - [ ] **Step 4: Run to verify they pass**
 
@@ -631,10 +695,12 @@ def test_no_counter_for_single_child(...):
 
 - [ ] **Step 3: Implement.**
 - `_select_console_message_variant(message_id, direction)`: get `(sibs, idx, count)`; compute target sibling by `idx-1`/`idx+1` (clamp/no-op at ends); `store.set_active_leaf(sid, <target sibling's leaf native id>)`. The store should expose a helper to resolve a sibling's most-recent-descendant leaf (add `_leaf_under(node_id)` walking `children[-1]` in-memory). Then `await self._sync_native_console_chat_ui()`.
-- `console_message_actions.available_actions`: the service is pure and has no store; pass sibling info in. Simplest: add optional `sibling_count`/`sibling_index` params to `available_actions`/`dispatch` OR compute the row in the transcript where the store is reachable. **Recommended:** have the transcript (which builds the action row and can query the store) decide whether to include `<`/`>` and the counter, rather than threading store state into the pure service. Keep the pure service's `variant-*` ids and copy; gate their inclusion at row-build time on `count > 1`.
-- Counter: in the transcript row builder, when `count > 1`, append `f" ({idx+1}/{count})"` to the role label or body per the existing label style.
+- **Sibling info reaches the renderer via the snapshot fields** `sibling_index`/`sibling_count` (Task 2), which `_recompute_active_path` fills in (Task 3). No store threading into the pure `ConsoleMessageActionService` and no store reference in the transcript needed.
+- `console_message_actions.available_actions`: gate the `_VARIANT_NAV_ACTIONS` (`<`/`>`) on `message.sibling_count > 1` (replacing the `message.variants is not None` gate); `_variant_action_enabled` returns `sibling_index > 0` for `variant-previous` and `sibling_index < sibling_count - 1` for `variant-next`.
+- Counter: in the transcript row builder (`_message_render_text` :170-197), when `message.sibling_count > 1`, append `f" ({message.sibling_index + 1}/{message.sibling_count})"` per the existing label style.
+- `_select_console_message_variant`: use `store.siblings_at(message_id)` to find the target sibling by direction, then `store.set_active_leaf(sid, store._leaf_under(<target sibling native id>))`; then `await self._sync_native_console_chat_ui()`.
 
-> `message.variants` is no longer populated by regenerate (Task 6), so the old `if message.variants is not None` gate in `available_actions` will never add `<`/`>`. The new gate is sibling-count-based at row build. Leave the `variants`-based branch in place (harmless, unused) for Phase A.
+> `message.variants` is no longer populated by regenerate (Task 6), so the old `variants`-based gate is dead; the new gate is `sibling_count`-based. Leave the `ConsoleVariantSet` dataclass and its (now-unused) `_sync_variant_metadata` path in place for Phase A to avoid churn in the sync module.
 
 - [ ] **Step 4: Run to verify they pass** + transcript suite.
 
@@ -650,30 +716,43 @@ git commit -m "feat(console): <>/counter navigate persisted sibling branches"
 
 ---
 
-### Task 8: Resume — reconstruct the active path from the active-leaf pointer
+### Task 8: Resume — load the full tree + reconstruct the active path from the pointer
 
-Replace the `children[-1]` flatten with an active-leaf ancestry walk, carrying `parent_message_id` through and repairing a missing/dangling pointer.
+**Critical:** resume must load the **entire tree (all branches)** into the store, not just the
+active path — otherwise off-path siblings aren't in memory and swipe-after-resume silently breaks
+(everything shows `1/1`). `get_conversation_tree` already returns every branch, so this is plumbing,
+not extra queries. The store builds the full tree and derives the active-path *view* from the leaf
+pointer.
 
 **Files:**
-- Modify: `tldw_chatbook/UI/Screens/chat_screen.py` (`_iter_console_tree_messages` :3899-3915; `_console_messages_from_conversation_tree` :3933-3981; `_resume_console_workspace_conversation` :4122-4273 — read the pointer via the db seam)
-- Modify: `tldw_chatbook/Chat/console_chat_store.py` (`restore_persisted_session` :275-309 — rebuild tree structures + active leaf from restored messages' `parent_message_id`)
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py` (`_console_messages_from_conversation_tree` :3933-3981 → return **all** nodes; the `_iter_console_tree_messages` `children[-1]` walk :3899-3915 is no longer the resume path — keep it only as the fallback leaf-resolver; `_resume_console_workspace_conversation` :4122-4273 — read the pointer + raise `depth_cap`)
+- Modify: `tldw_chatbook/Chat/console_chat_store.py` (`restore_persisted_session` :275-309 → ingest the full node set + build the tree + compute the active-path view)
 - Test: `Tests/UI/test_console_resume_active_path.py` (real DB round-trip)
 
 **Interfaces:**
-- Consumes: `db.get_conversation_active_leaf(conversation_id)`, tree node dicts (each carries `id`, `parent_message_id`, `role`/`sender`, `content`, `timestamp`).
-- Produces: a resumed transcript equal to the active-leaf's ancestry (root→leaf); fallback = current most-recent-child path with the pointer repaired.
+- Consumes: `db.get_conversation_active_leaf(conversation_id)`; tree node dicts (each carries `id`, `parent_message_id`, `role`/`sender`, `content`, `timestamp` — Agent D confirmed).
+- Produces: `restore_persisted_session(*, title, workspace_id, persisted_conversation_id, all_nodes: list[ConsoleChatMessage], active_leaf_persisted_id: str | None, settings=None) -> ConsoleChatSession` (signature change: `messages` → `all_nodes` + `active_leaf_persisted_id`). It builds the full in-memory tree from `all_nodes` and sets `_messages_by_session` to the active-path view.
 
-- [ ] **Step 1: Write the failing test** (persist a branched conversation via the store against a real in-memory DB, then resume and assert the active branch is restored — not `children[-1]`). Build it end-to-end using `ConsoleChatStore(persistence=<real chat_persistence_service over CharactersRAGDB(":memory:")>)`, regenerate to create a sibling, set the active leaf to the *older* sibling, then run the resume path and assert the transcript matches the older branch.
+- [ ] **Step 1: Write failing tests** (real in-memory DB round-trip). Build with `ConsoleChatStore(persistence=<real chat_persistence_service over CharactersRAGDB(":memory:")>)`:
+  1. Persist U1→A1, regenerate A1 → A1' (two assistant siblings), set the active leaf to the **older** sibling A1.
+  2. Tear down the store; resume the conversation through the resume path.
+  3. Assert the restored transcript matches the **A1** branch (not `children[-1]`=A1').
+  4. **Assert swipe-after-resume works:** `siblings_at(<restored A1 id>)` reports `count == 2`, and `set_active_leaf` to the other sibling swaps the visible transcript — proving the off-path sibling was loaded into memory.
 
-- [ ] **Step 2: Run to verify it fails** (current resume returns the newest branch via `children[-1]`).
+- [ ] **Step 2: Run to verify they fail** (current resume returns A1' via `children[-1]` and never loads A1' as a navigable sibling).
 
 - [ ] **Step 3: Implement.**
-- Add `parent_message_id=row.get("parent_message_id")` when building each `ConsoleChatMessage` in `_console_messages_from_conversation_tree` (the node dict already carries it — Agent D confirmed).
-- Replace `_iter_console_tree_messages` with an active-path builder: index all nodes by `id` and by parent; given `active_leaf_id`, walk `parent_message_id` from leaf→root using the index, reverse. If `active_leaf_id` is `None`/absent/points at a soft-deleted or unknown node, fall back to the existing most-recent-child walk and then call `db.set_conversation_active_leaf(conversation_id, <resolved leaf id>)` to repair.
-- In `_resume_console_workspace_conversation`, read `active_leaf_id = getattr(db, "get_conversation_active_leaf", lambda _c: None)(target)` (db via `getattr(self.app_instance, "chachanotes_db", None)`), and pass it into the reconstruction.
-- In `restore_persisted_session`, rebuild `_nodes_by_session`, `_children_by_parent`, `_native_parent_by_message`, and `_active_leaf_by_session[session.id]` from the restored messages (map persisted parent ids → native ids; the restored list is already a single active path, so the last message is the active leaf and each message's `parent_message_id` links the chain).
+- `_console_messages_from_conversation_tree` → **flatten the *entire* tree** (walk every node, all children) into a `list[ConsoleChatMessage]`, each carrying `persisted_message_id=row["id"]` and `parent_message_id=row.get("parent_message_id")`. Do **not** collapse to one path here.
+- `_resume_console_workspace_conversation`: read `active_leaf_id = getattr(db, "get_conversation_active_leaf", lambda _c: None)(target)` (db via `getattr(self.app_instance, "chachanotes_db", None)`); call `get_conversation_tree` with a **raised `depth_cap`** (e.g. `depth_cap=10_000`, `root_limit` high) via the scope-service seam so a long/branchy conversation isn't truncated; pass `all_nodes` + `active_leaf_id` into `restore_persisted_session`.
+- Marker injection stays as today but now targets the **active-path view**: after `restore_persisted_session`, inject `_inject_resume_agent_markers(store.messages_for_session(session.id), target)` into the rendered transcript (display-only overlay; not stored as tree nodes — see the TOOL-marker invariant).
+- `restore_persisted_session(all_nodes, active_leaf_persisted_id, ...)`:
+  1. Give each node a fresh native id (default) and its `persisted_message_id`. Build `persisted_id → native_id`.
+  2. Register every node in `_nodes_by_session`, `_message_session_index`.
+  3. Set `_native_parent_by_message[native] = persisted_to_native.get(node.parent_message_id)` (`None` for roots / unknown parents); build `_children_by_parent` from those links (children ordered by the DB's timestamp order, which the tree already provides).
+  4. Resolve the active leaf: `native = persisted_to_native.get(active_leaf_persisted_id)`; if `active_leaf_persisted_id` is `None`/missing/points at an unknown or `deleted` node, **fall back** to the `children[-1]` most-recent-child leaf and then `db.set_conversation_active_leaf(conversation_id, <that leaf's persisted id>)` to repair.
+  5. Set `_active_leaf_by_session[session.id]` and call `_recompute_active_path(session.id)`.
 
-> Respect `get_conversation_tree`'s `depth_cap`/`root_limit` (default 50). An active path longer than 50 would be truncated by the tree fetch; note this as a known limitation for Phase A (raise the cap for the Console resume call if needed — pass `depth_cap` through the scope-service seam).
+> Handle multiple `root_threads` (Agent D: the tree can have >1 root): the active leaf's ancestry selects exactly one root; other roots stay off-path (loaded but not shown), consistent with the tree model.
 
 - [ ] **Step 4: Run to verify it passes** + the console resume suite.
 
@@ -738,6 +817,8 @@ git commit -m "test(console): end-to-end branching persistence + resume + swipe"
 
 **Placeholder scan:** the deep store/controller tasks (3, 5, 6, 8) intentionally give exact interfaces + test contracts + key code rather than a full pasted method body, because those bodies are large refactors of code quoted inline and the tests are the precise contract. This is a deliberate altitude choice, not a TBD — each step names the exact method, file:line, and the observable behavior. Tasks 1, 2, 4, 7 carry complete code.
 
-**Type consistency:** `active_leaf(session_id) -> str | None`, `set_active_leaf(session_id, message_id)`, `siblings_at(message_id) -> (list, int, int)`, `create_sibling(anchor_message_id, *, role, content="", persist=False) -> ConsoleChatMessage`, `get_conversation_active_leaf(conversation_id) -> str | None`, `set_conversation_active_leaf(conversation_id, message_id)` — used consistently across Tasks 3/5/6/7/8. `parent_message_id` is always the **persisted** parent id on the message; **native** parent links live in `_native_parent_by_message`/`_children_by_parent` — this distinction is called out wherever both appear.
+**Type consistency:** `active_leaf(session_id) -> str | None`, `set_active_leaf(session_id, message_id)`, `siblings_at(message_id) -> (list, int, int)`, `_leaf_under(node_id) -> str`, `create_sibling(anchor_message_id, *, role, content="", persist=False) -> ConsoleChatMessage`, `get_conversation_active_leaf(conversation_id) -> str | None`, `set_conversation_active_leaf(conversation_id, message_id)`, and the changed `restore_persisted_session(*, title, workspace_id, persisted_conversation_id, all_nodes, active_leaf_persisted_id, settings=None)` — used consistently across Tasks 3/5/6/7/8. `parent_message_id` (message field) = **persisted** parent id; **native** parent links live in `_native_parent_by_message`/`_children_by_parent`; the full tree lives in `_nodes_by_session` and `_messages_by_session` is the derived active-path view (Invariants).
 
-**Known limitations recorded in-plan:** ordinal agent-marker placement stays wrong for agent+branched convos until Phase C; `get_conversation_tree` depth/root caps (50) bound a resumable active path unless raised; failed regenerate leaves a retryable failed sibling rather than restoring the prior reply.
+**Review corrections folded in (2026-07-22, post-plan review):** (1) resume loads the **full tree**, not just the active path, so siblings are navigable after resume (Task 8 rewritten; `restore_persisted_session` signature changed). (2) All id-lookups (`_message_or_raise` et al.) resolve from `_nodes_by_session`, not the active-path view (Task 3). (3) `_native_parent_by_message` elevated to a first-class structure + the Invariants section. (4) `_recompute_active_path` is the single writer of the view, over live node objects. (5) sibling counts flow via transient `sibling_index`/`sibling_count` snapshot fields (Tasks 2/3/7). (6) resume raises `depth_cap`. (7) `delete_message` rewritten for the tree (Task 3, note 8). (8) `add_conversation(dict)` API confirmed (Task 1). (9) **TOOL markers are display-only, never tree nodes** (Invariants + Task 3) — otherwise they corrupt the parent chain even in linear agent chats.
+
+**Known limitations recorded in-plan:** ordinal agent-marker placement stays wrong for agent+branched convos, and TOOL markers drop from the view on swipe, until Phase C; failed regenerate leaves a retryable failed sibling rather than restoring the prior reply.
