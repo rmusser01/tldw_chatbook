@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_glyphs import (
     GLYPH_EXPANDED,
 )
 from tldw_chatbook.Workspaces.conversation_browser_state import (
+    console_conversation_status_detail,
     ConsoleConversationBrowserGroup,
     ConsoleConversationBrowserRow,
     ConsoleConversationBrowserSection,
@@ -42,13 +43,10 @@ _STATUS_LABELS = {
     "active": "active",
     "open": "open",
 }
-_STATUS_DETAIL_LABELS = {
-    "workspace-thread": "saved chat",
-    "workspace": "saved chat",
-    "in-progress": "saved chat",
-    "active": "active session",
-    "open": "open session",
-}
+# TASK-356: the "saved chat"/"active session"/"open session" detail vocabulary
+# now lives once in conversation_browser_state.console_conversation_status_detail
+# (which `_conversation_detail_status` below delegates to); the former local
+# `_STATUS_DETAIL_LABELS` copy was removed to keep a single source of truth.
 _CONVERSATION_BROWSER_HEADER_HEIGHT = 1
 _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT = 1
 
@@ -1186,8 +1184,9 @@ class ConsoleWorkspaceContextTray(Vertical):
 
     @staticmethod
     def _conversation_detail_status(status: str) -> str:
-        """Return second-line row metadata for row disambiguation."""
-        normalized = str(status or "").strip().lower()
-        if not normalized:
-            return ""
-        return _STATUS_DETAIL_LABELS.get(normalized, normalized.replace("-", " "))
+        """Return second-line row metadata for row disambiguation.
+
+        TASK-356: delegates to the shared vocabulary so the rail and the
+        Ctrl+K switcher never disagree on the same conversation's state.
+        """
+        return console_conversation_status_detail(status)

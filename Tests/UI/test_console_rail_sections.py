@@ -843,3 +843,33 @@ async def test_popover_model_search_inserts_transient_option():
         option_values = [value for _, value in model_select._options]
         assert "anthropic/claude-x" in option_values
         assert model_select.value == "anthropic/claude-x"
+
+
+@pytest.mark.asyncio
+async def test_switcher_result_shows_saved_chat_vocabulary_not_in_progress():
+    """TASK-356 end-to-end: a saved conversation with a membership role
+    renders in the switcher as 'saved chat' (the rail's vocabulary), never
+    the raw 'in-progress', with a recency label derived from updated_sort."""
+
+    class _App(App):
+        async def on_mount(self) -> None:
+            row = ConsoleConversationBrowserInputRow(
+                row_key="conv-9",
+                conversation_id="conv-9",
+                native_session_id=None,
+                title="Websocket reconnect strategy",
+                scope_type="workspace",
+                workspace_id="ws-1",
+                workspace_label="Chats",
+                status="in-progress",
+                updated_sort="2026-07-04T10:00:00+00:00",
+            )
+            await self.push_screen(ConsoleSessionSwitcherModal(rows=(row,)))
+
+    app = _App()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.pause()
+        result = app.screen.query_one("#console-switcher-result-0", Button)
+        label = str(result.label)
+        assert "saved chat" in label
+        assert "in-progress" not in label
