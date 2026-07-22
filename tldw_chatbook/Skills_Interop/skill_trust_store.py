@@ -67,6 +67,10 @@ class SkillTrustGenerationMarkerStore(Protocol):
         """Persist the latest accepted manifest generation and canonical digest."""
         ...
 
+    def clear(self) -> None:
+        """Remove the persisted marker, if any (idempotent, non-raising)."""
+        ...
+
 
 @dataclass(slots=True)
 class FileSkillTrustGenerationMarkerStore:
@@ -97,6 +101,13 @@ class FileSkillTrustGenerationMarkerStore:
         }
         _atomic_write_json(self.marker_path, payload, base_dir=self.marker_path.parent)
 
+    def clear(self) -> None:
+        """Remove the on-disk marker file (missing-ok, no raise)."""
+        try:
+            self.marker_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
 
 class UnavailableSkillTrustGenerationMarkerStore:
     """Marker store used when no secure OS-backed marker backend is available."""
@@ -119,6 +130,10 @@ class UnavailableSkillTrustGenerationMarkerStore:
         """Raise because rollback marker storage is unavailable."""
 
         self._raise_unavailable()
+
+    def clear(self) -> None:
+        """No-op: there is no persisted marker to remove."""
+        return None
 
 
 @dataclass(slots=True, repr=False)
@@ -166,6 +181,15 @@ class KeyringSkillTrustGenerationMarkerStore:
             sort_keys=True,
         )
         self.keyring_backend.set_password(self.service_name, self._account, payload)
+
+    def clear(self) -> None:
+        """Delete the scoped keyring marker entry (best-effort)."""
+        deleter = getattr(self.keyring_backend, "delete_password", None)
+        if callable(deleter):
+            try:
+                deleter(self.service_name, self._account)
+            except Exception:
+                pass
 
 
 def build_default_skill_trust_marker_store(
@@ -252,6 +276,15 @@ class KeyringSkillTrustKeyCache:
             return None
         keys = {field: _decode_32_byte_key(data, field) for field in _KEY_CACHE_FIELDS}
         return SkillTrustKeys(**keys)
+
+    def clear(self) -> None:
+        """Delete the scoped keyring key cache entry (best-effort)."""
+        deleter = getattr(self.keyring_backend, "delete_password", None)
+        if callable(deleter):
+            try:
+                deleter(self.service_name, self._account)
+            except Exception:
+                pass
 
 
 def build_default_skill_trust_key_cache(
@@ -435,6 +468,19 @@ class SkillTrustStore:
             keys.snapshot_key,
             associated_data=_snapshot_associated_data(snapshot_id, generation),
         )
+
+    def delete_manifest(self) -> None:
+        """Remove the manifest payload and all snapshots (missing-ok)."""
+        import shutil
+
+        try:
+            self.manifest_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            shutil.rmtree(self.snapshots_dir, ignore_errors=True)
+        except OSError:
+            pass
 
     def _snapshot_path(self, snapshot_id: str) -> Path:
         if not snapshot_id or snapshot_id in {".", ".."}:
