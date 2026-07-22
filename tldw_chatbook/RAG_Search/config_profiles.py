@@ -173,12 +173,12 @@ class ConfigProfileManager:
 
         # BM25 Only Profile (Pure keyword search)
         bm25_rag = RAGConfig()
-        bm25_rag.vector_store.type = "in_memory"  # No vector DB needed
+        bm25_rag.vector_store.type = "memory"  # No vector DB needed
         bm25_rag.embedding.model = "all-MiniLM-L6-v2"  # Still needed for interface
-        bm25_rag.chunking.size = 512
-        bm25_rag.chunking.overlap = 64
-        bm25_rag.search.default_type = "keyword"
-        bm25_rag.search.top_k = 20
+        bm25_rag.chunking.chunk_size = 512
+        bm25_rag.chunking.chunk_overlap = 64
+        bm25_rag.search.default_search_mode = "plain"
+        bm25_rag.search.default_top_k = 20
         bm25_rag.search.include_citations = True
 
         self._profiles["bm25_only"] = ProfileConfig(
@@ -195,10 +195,10 @@ class ConfigProfileManager:
         vector_rag = RAGConfig()
         vector_rag.embedding.model = "sentence-transformers/all-mpnet-base-v2"
         vector_rag.embedding.batch_size = 32
-        vector_rag.chunking.size = 384
-        vector_rag.chunking.overlap = 64
-        vector_rag.search.default_type = "semantic"
-        vector_rag.search.top_k = 10
+        vector_rag.chunking.chunk_size = 384
+        vector_rag.chunking.chunk_overlap = 64
+        vector_rag.search.default_search_mode = "semantic"
+        vector_rag.search.default_top_k = 10
         vector_rag.search.include_citations = True
 
         self._profiles["vector_only"] = ProfileConfig(
@@ -215,10 +215,10 @@ class ConfigProfileManager:
         hybrid_basic_rag = RAGConfig()
         hybrid_basic_rag.embedding.model = "all-MiniLM-L6-v2"
         hybrid_basic_rag.embedding.batch_size = 32
-        hybrid_basic_rag.chunking.size = 384
-        hybrid_basic_rag.chunking.overlap = 64
-        hybrid_basic_rag.search.default_type = "hybrid"
-        hybrid_basic_rag.search.top_k = 15
+        hybrid_basic_rag.chunking.chunk_size = 384
+        hybrid_basic_rag.chunking.chunk_overlap = 64
+        hybrid_basic_rag.search.default_search_mode = "hybrid"
+        hybrid_basic_rag.search.default_top_k = 15
         hybrid_basic_rag.search.include_citations = True
 
         self._profiles["hybrid_basic"] = ProfileConfig(
@@ -295,9 +295,9 @@ class ConfigProfileManager:
         fast_rag = RAGConfig()
         fast_rag.embedding.model = "all-MiniLM-L6-v2"
         fast_rag.embedding.batch_size = 64
-        fast_rag.chunking.size = 256
-        fast_rag.chunking.overlap = 32
-        fast_rag.search.top_k = 5
+        fast_rag.chunking.chunk_size = 256
+        fast_rag.chunking.chunk_overlap = 32
+        fast_rag.search.default_top_k = 5
         fast_rag.search.enable_cache = True
         fast_rag.search.cache_size = 200
 
@@ -316,10 +316,10 @@ class ConfigProfileManager:
         accurate_rag = RAGConfig()
         accurate_rag.embedding.model = "BAAI/bge-large-en-v1.5"  # Larger, more accurate
         accurate_rag.embedding.batch_size = 16
-        accurate_rag.chunking.size = 512
-        accurate_rag.chunking.overlap = 128
+        accurate_rag.chunking.chunk_size = 512
+        accurate_rag.chunking.chunk_overlap = 128
         accurate_rag.chunking.method = "hierarchical"
-        accurate_rag.search.top_k = 20
+        accurate_rag.search.default_top_k = 20
         accurate_rag.search.include_citations = True
         accurate_rag.search.score_threshold = 0.7
 
@@ -346,9 +346,9 @@ class ConfigProfileManager:
         # Balanced Profile
         balanced_rag = RAGConfig()
         balanced_rag.embedding.model = "sentence-transformers/all-mpnet-base-v2"
-        balanced_rag.chunking.size = 384
-        balanced_rag.chunking.overlap = 64
-        balanced_rag.search.top_k = 10
+        balanced_rag.chunking.chunk_size = 384
+        balanced_rag.chunking.chunk_overlap = 64
+        balanced_rag.search.default_top_k = 10
 
         self._profiles["balanced"] = ProfileConfig(
             name="Balanced",
@@ -364,11 +364,11 @@ class ConfigProfileManager:
         # Long Context Profile
         long_context_rag = RAGConfig()
         long_context_rag.embedding.model = "BAAI/bge-base-en-v1.5"
-        long_context_rag.chunking.size = 1024  # Larger chunks
-        long_context_rag.chunking.overlap = 256
+        long_context_rag.chunking.chunk_size = 1024  # Larger chunks
+        long_context_rag.chunking.chunk_overlap = 256
         long_context_rag.chunking.enable_parent_retrieval = True
         long_context_rag.chunking.parent_size_multiplier = 3
-        long_context_rag.search.top_k = 5  # Fewer but larger chunks
+        long_context_rag.search.default_top_k = 5  # Fewer but larger chunks
 
         self._profiles["long_context"] = ProfileConfig(
             name="Long Context",
@@ -728,14 +728,14 @@ class ConfigProfileManager:
             )
 
         # Check chunk size vs overlap
-        if profile.rag_config.chunking.overlap >= profile.rag_config.chunking.size:
+        if profile.rag_config.chunking.chunk_overlap >= profile.rag_config.chunking.chunk_size:
             warnings.append("Chunk overlap should be less than chunk size")
 
         # Check reranking configuration
         if profile.reranking_config:
             if (
                 profile.reranking_config.top_k_to_rerank
-                > profile.rag_config.search.top_k
+                > profile.rag_config.search.default_top_k
             ):
                 warnings.append("Reranking top_k should not exceed search top_k")
 
