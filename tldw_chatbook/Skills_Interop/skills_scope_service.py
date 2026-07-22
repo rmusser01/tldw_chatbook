@@ -276,6 +276,21 @@ class SkillsScopeService:
             kwargs=kwargs,
         )
 
+    async def import_skill_directory(
+        self,
+        source_dir: Any,
+        *,
+        mode: SkillsBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._call(
+            mode=mode,
+            action_id="skills.import.launch.server",
+            method_name="import_skill_directory",
+            args=(source_dir,),
+            kwargs=kwargs,
+        )
+
     async def export_skill(
         self, skill_name: str, *, mode: SkillsBackend | str | None = None
     ) -> Any:

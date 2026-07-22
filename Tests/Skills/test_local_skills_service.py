@@ -313,7 +313,7 @@ async def test_local_skills_service_serializes_concurrent_updates(tmp_path):
 async def test_local_skills_service_rejects_unsafe_supporting_file_names(tmp_path):
     service = _compat_local_service(tmp_path)
 
-    with pytest.raises(ValueError, match="Invalid supporting file name"):
+    with pytest.raises(ValueError, match="Invalid path segment"):
         await service.create_skill(
             name="unsafe-skill",
             content="# Unsafe",
