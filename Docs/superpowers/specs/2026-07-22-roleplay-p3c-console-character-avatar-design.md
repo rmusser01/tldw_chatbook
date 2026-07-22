@@ -58,7 +58,7 @@ Show the active character's profile image persistently in the native Console cha
 1. **Panel form:** a **collapsible "Character" section** (a 5th rail section, matching Session/Model/Agent/Details).
 2. **Config default:** `show_character_avatar` **on** by default.
 3. **Characters-only** (no persona image).
-4. **Include the adjacent fix:** source the real `character_id` in `_active_console_dictionary_scope_ids` (closes the leftover `None` hole so the dictionary/world-book scope becomes character-aware).
+4. **Do NOT touch `_active_console_dictionary_scope_ids`** (reversed after review). Verification showed the `None` there is **not an inert hole**: that tuple flows into `refresh_active_dictionaries_summary` → `_run_dictionary_summary_off_thread(service, conversation_id, character_id)` → `Chat_Dictionary_Lib._resolve_active_dictionaries(db, conversation_id, char_data)`, which **uses the character id to include character-embedded dictionaries** in the "what's in play" summary (same for world-books). Sourcing the real id would change what those inspectors show and could **break the "shown=applied" invariant** if the native send does not apply character dicts (character-dicts-on-native-send was deferred pre-#754; whether #754 changed that needs its own analysis). So the `None` is arguably the *correct* current behavior, and this is a separate feature question — **deferred to its own follow-up**, out of P3c scope. P3c adds only its OWN independent `_current_console_rail_character_id()` accessor for the avatar; it does not read or change `_active_console_dictionary_scope_ids`.
 
 ---
 
@@ -66,8 +66,8 @@ Show the active character's profile image persistently in the native Console cha
 
 ### A. Resolution accessor + adjacent scope fix (`chat_screen.py`)
 
-- Add `_current_console_rail_character_id() -> int | None` and `_current_console_rail_character_name() -> str | None`, mirroring `_current_console_rail_conversation_id`: read the live session via `_active_native_console_session()` and return `session.character_id` / `session.character_name` (or `None`).
-- **Adjacent fix:** change `_active_console_dictionary_scope_ids()` to return `(self._current_console_rail_conversation_id(), self._current_console_rail_character_id())` instead of `(..., None)`, and drop the stale "once it lands" comment. This makes the existing dictionary/world-book "what's in play" scope guard character-aware (a latent correctness improvement; no behavior regression since character was previously always `None`).
+- Add `_current_console_rail_character_id() -> int | None` and `_current_console_rail_character_name() -> str | None`, mirroring `_current_console_rail_conversation_id`: read the live session via `_active_native_console_session()` and return `session.character_id` / `session.character_name` (or `None`). This accessor is **used only by the avatar** (§C–E); it is independent of `_active_console_dictionary_scope_ids`.
+- **Do NOT modify `_active_console_dictionary_scope_ids`** — see design decision 4: sourcing the real id there changes the dictionary/world-book "what's in play" content (character-embedded dicts) and touches the shown=applied invariant; it's a separate feature question, deferred.
 
 ### B. Config helper (`console_image_view.py`)
 
@@ -109,7 +109,7 @@ Mirror the dictionary "what's in play" machinery:
 ### Testing strategy
 
 - **Config helper:** `resolve_show_character_avatar` default True; explicit False/True; live-config-shape (COMPREHENSIVE_CONFIG_RAW).
-- **Accessor:** `_current_console_rail_character_id`/`_name` return the active session's fields; `None` when no session/character. `_active_console_dictionary_scope_ids` now returns the real character id (regression pin: the dictionary scope tuple includes it).
+- **Accessor:** `_current_console_rail_character_id`/`_name` return the active session's fields; `None` when no session/character. (A pin that P3c leaves `_active_console_dictionary_scope_ids` unchanged — still `(conversation_id, None)` — so the dictionary/world-book summaries are unaffected.)
 - **Refresh scope-guard (real screen + real DB):** seed a character with an image; set the active session's `character_id`; run the sync tick → the panel mounts the avatar + name; unchanged scope → the DB fetch does NOT run again (spy the fetch); change `character_id` → it re-fetches and updates; set `character_id=None` → empty state; character with no image → name + placeholder. Assert off-thread (the fetch runs off the event loop) and that a stale post-await render is dropped when the scope changed during decode.
 - **Rail section:** the "Character" section composes when config on, absent when off; the `character_open` toggle collapses/expands it like the others; empty state renders for a generic session.
 - **Integration:** Start-Chat with a character → avatar shows; resume a persisted character conversation → avatar shows; generic session → empty state.
@@ -118,7 +118,7 @@ Mirror the dictionary "what's in play" machinery:
 
 ## Task decomposition (for writing-plans → subagent-driven-development)
 
-1. **Config helper + resolution accessors + adjacent scope fix** — `resolve_show_character_avatar` (console_image_view.py) + `_current_console_rail_character_id`/`_name` + fix `_active_console_dictionary_scope_ids` to source the real id (chat_screen.py). Unit + a dictionary-scope regression test. *(Foundational, isolated.)*
+1. **Config helper + resolution accessors** — `resolve_show_character_avatar` (console_image_view.py) + `_current_console_rail_character_id`/`_name` (chat_screen.py). Unit tests. *(Foundational, isolated; does NOT touch `_active_console_dictionary_scope_ids`.)*
 2. **The "Character" rail section** — `ConsoleRailState.character_open` + compose the 5th `ConsoleRailSectionHeader` + body (config-gated) + empty state + toggle wiring. Rail widget tests.
 3. **Avatar cache + scope-guarded off-thread refresh + render** — the cache fields, `_refresh_active_character_avatar_if_scope_changed` (reuse `_console_image_cache` + `resolve_default_mode` + `fit_image_cell_size`, compact rail box), mount into the section, never-raise. Real-screen + real-DB refresh tests.
 4. **Wire into `_sync_native_console_chat_ui` + integration** — call the refresh from the sync tick; Start-Chat / resume / generic / character-change integration tests.
@@ -144,5 +144,6 @@ Four focused tasks → one PR.
 ## Deferred / follow-ups
 
 - **P3d — reaction/expression image system** (own future program): a net-new image-set data model + authoring + trigger + swap, ported from the tldw_server webui/browser extension (needs the external `../tldw_server` repo). Renders into P3c's panel.
+- **Character-aware "what's in play" (separate concern, pulled out of P3c):** decide whether the native Console dictionary/world-book summaries should include character-embedded dicts/books now that #754 gives sessions a real `character_id` — i.e. whether `_active_console_dictionary_scope_ids` (and its world-book twin) should source `session.character_id`. This requires verifying the native **send** path applies character dicts/books post-#754 first (to preserve "shown=applied"); if it doesn't, either wire that too or leave the summary conversation-only. File as its own task.
 - Migrate the personas editor's `_fit_avatar_cell_size`/`_build_avatar_pixels` to the shared `fit_image_cell_size` (partly done by #775 for the transcript; the personas editor still has its own copy).
 - A live config-toggle recompose (if `show_character_avatar` is toggled mid-session) — P3c composes on the config at compose time; a mid-session toggle picks up on the next natural recompose.
