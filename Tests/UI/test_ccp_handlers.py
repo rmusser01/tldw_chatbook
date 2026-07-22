@@ -231,6 +231,34 @@ class TestCCPCharacterHandler:
         )
         assert payload["current_selection"] == 0
 
+    @pytest.mark.asyncio
+    async def test_handle_import_character_cards_filter_accepts_webp_not_md(
+        self, mock_window
+    ):
+        """Legacy CCP import route (task-431 AC#1): stay in sync with the
+        destination-native Personas import filter - accept .webp cards, and
+        never treat .md as a "Character Cards" match here either (this route
+        never included .md, so this pins the no-regression side)."""
+        from pathlib import Path
+
+        mock_window.app.push_screen = AsyncMock(return_value=None)
+        handler = CCPCharacterHandler(mock_window)
+
+        await handler.handle_import()
+
+        mock_window.app.push_screen.assert_awaited_once()
+        picker = mock_window.app.push_screen.call_args[0][0]
+        filter_by_name = {
+            name: picker.filters[filter_id]
+            for name, filter_id in picker.filters.selections
+        }
+        character_cards = filter_by_name["Character Cards"]
+
+        assert character_cards(Path("x.webp")) is True
+        assert character_cards(Path("x.png")) is True
+        assert character_cards(Path("x.json")) is True
+        assert character_cards(Path("README.md")) is False
+
 
 class TestCCPPersonaHandler:
     """Persona handler coverage."""
