@@ -894,6 +894,46 @@ class SettingsURLInput(Input):
         return strip.apply_style(self.rich_style)
 
 
+def overlay_provider_draft_config(
+    app_config,
+    *,
+    provider_save_key: str,
+    endpoint_key: str,
+    draft_endpoint: str | None,
+    draft_env_var: str | None,
+    draft_api_key: str | None,
+) -> dict:
+    """Return a deep copy of ``app_config`` with unsaved draft provider fields overlaid.
+
+    Args:
+        app_config: The loaded application configuration.
+        provider_save_key: The ``api_settings`` section key to overlay onto.
+        endpoint_key: The endpoint setting key for this provider (e.g. ``api_url``).
+        draft_endpoint: Draft endpoint, or ``None`` to leave the saved endpoint.
+        draft_env_var: Draft credential env-var name, or ``None`` to leave saved.
+        draft_api_key: Draft API key (``""`` models an explicit clear), or ``None``.
+
+    Returns:
+        A new config dict; ``app_config`` is never mutated.
+    """
+    merged = copy.deepcopy(dict(app_config)) if isinstance(app_config, Mapping) else {}
+    api_settings = merged.get("api_settings")
+    if not isinstance(api_settings, dict):
+        api_settings = {}
+        merged["api_settings"] = api_settings
+    section = api_settings.get(provider_save_key)
+    if not isinstance(section, dict):
+        section = {}
+        api_settings[provider_save_key] = section
+    if draft_endpoint is not None:
+        section[endpoint_key] = draft_endpoint
+    if draft_env_var is not None:
+        section["api_key_env_var"] = draft_env_var
+    if draft_api_key is not None:
+        section["api_key"] = draft_api_key
+    return merged
+
+
 class SettingsScreen(BaseAppScreen):
     """Global preferences, appearance, accounts, storage, and app behavior."""
 
@@ -5132,6 +5172,45 @@ class SettingsScreen(BaseAppScreen):
                 None,
             )
             is not None
+        )
+
+    def _provider_test_staged_config(self, provider: str) -> Mapping[str, object]:
+        """Return app_config with the unsaved draft provider fields overlaid.
+
+        Only dirty fields are overlaid, so a provider with no unsaved edits tests
+        exactly the saved config (task-432).
+
+        Args:
+            provider: The provider whose Test is running (the draft widget value).
+
+        Returns:
+            A config mapping the Test's readiness check can evaluate.
+        """
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        draft = self._provider_draft()
+        dirty = draft.dirty_keys if draft is not None else set()
+        if not ({"endpoint", "credential_env_var", "api_key"} & dirty):
+            return app_config
+        provider_save_key, _config = self._provider_config_entry(provider)
+        provider_save_key = provider_save_key or provider_config_key(provider)
+        if not provider_save_key:
+            return app_config
+        try:
+            endpoint = self.query_one("#settings-provider-endpoint-value", Input).value.strip()
+            env_var = self.query_one("#settings-provider-credential-env-var", Input).value.strip()
+            api_key = self.query_one("#settings-provider-api-key", Input).value.strip()
+        except QueryError:
+            values = self._provider_setting_values_mapping()
+            endpoint = str(values.get("endpoint") or "").strip()
+            env_var = str(values.get("credential_env_var") or "").strip()
+            api_key = str(values.get("api_key") or "").strip()
+        return overlay_provider_draft_config(
+            app_config,
+            provider_save_key=provider_save_key,
+            endpoint_key=self._provider_endpoint_setting_key(provider),
+            draft_endpoint=endpoint if "endpoint" in dirty else None,
+            draft_env_var=env_var if "credential_env_var" in dirty else None,
+            draft_api_key=api_key if "api_key" in dirty else None,
         )
 
     def _provider_discovery_staged_settings(self, provider: str) -> dict[str, object]:
