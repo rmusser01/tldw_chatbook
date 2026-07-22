@@ -359,6 +359,84 @@ def test_save_reload_round_trips_explicit_persist_directory(tmp_path):
     assert reloaded.rag_config.vector_store.persist_directory == persist_dir
 
 
+def test_load_does_not_clobber_unrelated_profile_on_disk_during_self_heal(tmp_path, monkeypatch):
+    # Regression test (SP2a review): _load_custom_profiles's self-heal branch
+    # reassigns a builtin-colliding profile's id via _unique_id, which only
+    # checks self._profiles -- the in-memory dict being built INCREMENTALLY
+    # during the glob loop. It does not check on-disk files. So if the glob
+    # visits the collider file (high_accuracy.json, shadowing the read-only
+    # builtin) BEFORE an unrelated, legitimate high_accuracy_2.json is loaded,
+    # _unique_id returns "high_accuracy_2" (not yet in _profiles) and
+    # _save_one overwrites the unrelated profile's file, silently destroying
+    # it. Path.glob order is filesystem-dependent, so we force the
+    # collider-first order here to make the failure deterministic; the fix
+    # (_unique_id_reserving_disk) must be safe under either order.
+    from pathlib import Path
+    from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig, EmbeddingConfig
+
+    pdir = tmp_path / "profiles"
+    pdir.mkdir(parents=True)
+
+    collider = ProfileConfig(
+        id="high_accuracy", name="Collider", description="hand placed",
+        profile_type="custom", read_only=False,
+        rag_config=RAGConfig(embedding=EmbeddingConfig(model="collider-marker-model")),
+    )
+    (pdir / "high_accuracy.json").write_text(
+        _json.dumps(collider.to_dict(), default=str))
+
+    legit = ProfileConfig(
+        id="high_accuracy_2", name="Legit Other Profile", description="unrelated",
+        profile_type="custom", read_only=False,
+        rag_config=RAGConfig(embedding=EmbeddingConfig(model="legit-other-marker-model")),
+    )
+    (pdir / "high_accuracy_2.json").write_text(
+        _json.dumps(legit.to_dict(), default=str))
+
+    # Force the collider-first glob order (the order under which the bug
+    # manifests) so this test doesn't depend on filesystem-specific readdir
+    # ordering. The fix must be safe regardless of order.
+    real_glob = Path.glob
+
+    def ordered_glob(self, pattern):
+        results = list(real_glob(self, pattern))
+        results.sort(key=lambda p: (p.name != "high_accuracy.json", p.name))
+        return iter(results)
+
+    monkeypatch.setattr(Path, "glob", ordered_glob)
+
+    m = _mgr(tmp_path)
+
+    # The read-only builtin is untouched.
+    builtin = m.get_profile("high_accuracy")
+    assert builtin.read_only is True
+    assert builtin.rag_config.embedding.model == "BAAI/bge-large-en-v1.5"
+
+    # The collider must be reassigned off BOTH "high_accuracy" (the builtin)
+    # and "high_accuracy_2" (already claimed on disk by the unrelated
+    # profile) -- landing on a third id.
+    reassigned = [
+        p for p in m._profiles.values()
+        if p.rag_config.embedding.model == "collider-marker-model"
+    ]
+    assert len(reassigned) == 1
+    assert reassigned[0].id == "high_accuracy_3"
+    assert (pdir / "high_accuracy_3.json").exists()
+    assert not (pdir / "high_accuracy.json").exists()
+
+    # The unrelated legit profile must survive intact -- in memory...
+    legit_loaded = m.get_profile("high_accuracy_2")
+    assert legit_loaded is not None
+    assert legit_loaded.name == "Legit Other Profile"
+    assert legit_loaded.rag_config.embedding.model == "legit-other-marker-model"
+
+    # ...and on disk (never overwritten by the collider's content).
+    on_disk = json.loads((pdir / "high_accuracy_2.json").read_text())
+    assert on_disk["name"] == "Legit Other Profile"
+    assert on_disk["rag_config"]["embedding"]["model"] == "legit-other-marker-model"
+
+
 def test_save_profile_allows_user_over_user_same_id(tmp_path):
     # Only READ-ONLY collisions are rejected; two distinct user profiles that
     # happen to share an id may overwrite one another via save_profile.
