@@ -4324,6 +4324,12 @@ class ChatScreen(BaseAppScreen):
         (the caller clears it in a ``finally``). Matches on the row's
         ``conversation_id`` attribute and no-ops when the row is no longer
         mounted, e.g. a recompose already replaced it.
+
+        Args:
+            conversation_id: The row's ``conversation_id`` attribute to match;
+                a blank value is a no-op.
+            loading: ``True`` to show the row's loading spinner, ``False`` to
+                clear it.
         """
         target = str(conversation_id or "").strip()
         if not target:
