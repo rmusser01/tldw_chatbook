@@ -434,7 +434,10 @@ class LocalSkillsService:
         for relative_path, path in sorted(
             LocalSkillsService._iter_bundle_files(skill_dir), key=lambda x: x[0]
         ):
-            if path.is_symlink():
+            # Skip symlinks and non-regular files (FIFOs/sockets/device nodes):
+            # opening a FIFO with no writer would block read_bytes() forever.
+            # Mirrors the guard in _read_bundle_manifest.
+            if path.is_symlink() or not path.is_file():
                 continue
             try:
                 validate_supporting_file_path(relative_path)
