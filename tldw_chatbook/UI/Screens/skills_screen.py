@@ -104,9 +104,16 @@ class SkillTrustPassphraseModal(ModalScreen[str | None]):
         title: str | None = None,
         message: str | None = None,
     ) -> None:
-        """task-418: ``title``/``message`` let a caller state its actual
-        purpose (e.g. the Library approve flow) instead of every purpose
-        presenting as "Unlock Local Skill Trust"."""
+        """Prompt for the local skill trust passphrase.
+
+        Args:
+            confirm_bootstrap: Whether this prompt confirms a first-run
+                trust bootstrap (drives the default title/message copy).
+            title: Optional title override so a caller can state its actual
+                purpose (task-418: e.g. the Library approve flow) instead of
+                every purpose presenting as "Unlock Local Skill Trust".
+            message: Optional message-body override, paired with ``title``.
+        """
         super().__init__()
         self._confirm_bootstrap = confirm_bootstrap
         self._title_override = title

@@ -2164,3 +2164,67 @@ async def test_import_browse_file_clears_stale_status_and_review():
     await pushed["cb"](Path("/new/file/SKILL.md"))
     assert fake._library_skills_import_status == ""
     assert fake._library_skills_import_review_name == ""
+
+
+# ---------------------------------------------------------------------------
+# PR #750 review (Qodo): aggregate cap on the trust preview so many changed
+# files can't build/render an unbounded string.
+# ---------------------------------------------------------------------------
+
+
+def test_trust_review_preview_caps_file_count():
+    from tldw_chatbook.Widgets.Library.library_skills_canvas import (
+        _TRUST_REVIEW_PREVIEW_MAX_FILES,
+        skill_trust_review_preview,
+    )
+
+    n = _TRUST_REVIEW_PREVIEW_MAX_FILES + 5
+    review = {
+        "changed_files": [f"f{i}.md" for i in range(n)],
+        "current_files": {f"f{i}.md": "body" for i in range(n)},
+    }
+    preview = skill_trust_review_preview(review)
+    rendered = preview.count("── f")
+    assert rendered == _TRUST_REVIEW_PREVIEW_MAX_FILES
+    assert "5 more file" in preview
+    assert "omitted" in preview
+
+
+def test_trust_review_preview_caps_total_size():
+    from tldw_chatbook.Widgets.Library.library_skills_canvas import (
+        _TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP,
+        _TRUST_REVIEW_PREVIEW_TOTAL_CHAR_CAP,
+        skill_trust_review_preview,
+    )
+
+    # A handful of near-max-per-file blocks that together blow the total
+    # budget: rendering must stop and note the omission. The budget is soft
+    # (checked before each file), so output can exceed it by at most one
+    # capped file -- but growth is bounded, not proportional to file count.
+    review = {
+        "changed_files": [f"big{i}.md" for i in range(10)],
+        "current_files": {f"big{i}.md": "x" * 3900 for i in range(10)},
+    }
+    preview = skill_trust_review_preview(review)
+    assert len(preview) <= (
+        _TRUST_REVIEW_PREVIEW_TOTAL_CHAR_CAP
+        + _TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP
+        + 500
+    )
+    assert "omitted" in preview
+    assert preview.count("── big") < 10
+
+
+def test_trust_review_preview_within_caps_unchanged():
+    from tldw_chatbook.Widgets.Library.library_skills_canvas import (
+        skill_trust_review_preview,
+    )
+
+    review = {
+        "changed_files": ["SKILL.md", "notes.md"],
+        "current_files": {"SKILL.md": "body text", "notes.md": "notes"},
+    }
+    preview = skill_trust_review_preview(review)
+    assert "body text" in preview
+    assert "notes" in preview
+    assert "omitted" not in preview

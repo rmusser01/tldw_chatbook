@@ -32,6 +32,7 @@ from typing import Any, Mapping
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_skills_state import (
@@ -166,6 +167,11 @@ def skill_trust_remediation_copy(trust_status: str, skill_path: str) -> str:
 # task-414: per-file preview cap. Generous enough for any realistic
 # SKILL.md, small enough that a pathological file can't wedge the panel.
 _TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP = 4000
+# PR #750 review (Qodo): aggregate caps so a review with many changed files
+# can't build/render an unbounded string during trust-panel refreshes. The
+# per-file cap alone bounds one file, not the total.
+_TRUST_REVIEW_PREVIEW_MAX_FILES = 20
+_TRUST_REVIEW_PREVIEW_TOTAL_CHAR_CAP = 20000
 
 
 def skill_trust_review_preview(active_review: Mapping[str, Any] | None) -> str:
@@ -186,7 +192,11 @@ def skill_trust_review_preview(active_review: Mapping[str, Any] | None) -> str:
         Labelled per-file content blocks, ``(deleted)`` markers for
         changed files with no on-disk content, each file capped at
         ``_TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP`` chars; empty string while
-        no review is active.
+        no review is active. Rendering is bounded to
+        ``_TRUST_REVIEW_PREVIEW_MAX_FILES`` files and
+        ``_TRUST_REVIEW_PREVIEW_TOTAL_CHAR_CAP`` total chars -- any
+        remaining files are summarized in a trailing "N more files
+        omitted" line.
     """
     if not active_review:
         return ""
@@ -196,18 +206,36 @@ def skill_trust_review_preview(active_review: Mapping[str, Any] | None) -> str:
     raw_files = active_review.get("current_files")
     current_files = dict(raw_files) if isinstance(raw_files, Mapping) else {}
     blocks: list[str] = []
+    total_chars = 0
+    rendered = 0
     for file_name in changed_files:
+        # Stop once either aggregate budget is reached; the remaining files
+        # are accounted for in the trailing omission notice below.
+        if (
+            rendered >= _TRUST_REVIEW_PREVIEW_MAX_FILES
+            or total_chars >= _TRUST_REVIEW_PREVIEW_TOTAL_CHAR_CAP
+        ):
+            break
         content = current_files.get(file_name)
         if content is None:
-            blocks.append(f"── {file_name} ──\n(deleted — no longer on disk)")
-            continue
-        text = str(content)
-        if len(text) > _TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP:
-            text = (
-                text[:_TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP]
-                + f"\n… truncated ({len(text)} chars total) — open the file on disk to read the rest."
-            )
-        blocks.append(f"── {file_name} ──\n{text}")
+            block = f"── {file_name} ──\n(deleted — no longer on disk)"
+        else:
+            text = str(content)
+            if len(text) > _TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP:
+                text = (
+                    text[:_TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP]
+                    + f"\n… truncated ({len(text)} chars total) — open the file on disk to read the rest."
+                )
+            block = f"── {file_name} ──\n{text}"
+        blocks.append(block)
+        total_chars += len(block)
+        rendered += 1
+    omitted = len(changed_files) - rendered
+    if omitted > 0:
+        blocks.append(
+            f"… {omitted} more file{'s' if omitted != 1 else ''} omitted "
+            "— open on disk to review."
+        )
     return "\n\n".join(blocks)
 
 
@@ -263,7 +291,14 @@ def skill_editor_warning_lines(
 
 
 def skill_user_invocable_label(value: bool) -> str:
-    """Render the user-invocable toggle Button's label (task-418 copy)."""
+    """Render the user-invocable toggle Button's label (task-418 copy).
+
+    Args:
+        value: Whether a user can invoke the skill directly.
+
+    Returns:
+        The toggle Button's label text.
+    """
     return f"User can invoke: {'yes' if value else 'no'} ▸"
 
 
@@ -274,6 +309,13 @@ def skill_disable_model_label(value: bool) -> str:
     ``disable_model_invocation``, but the label answers the question the
     user actually has ("can the agent invoke this?") instead of the
     double-negative "disable model invocation: no".
+
+    Args:
+        value: The stored ``disable_model_invocation`` flag (``True`` means
+            the agent is barred from invoking the skill).
+
+    Returns:
+        The toggle Button's label text, phrased as "Agent can invoke".
     """
     return f"Agent can invoke: {'no' if value else 'yes'} ▸"
 
@@ -283,6 +325,12 @@ def skill_context_toggle_label(context: str) -> str:
 
     task-418: keeps the SKILL.md spec value (``inline``/``fork``) visible
     for round-tripping, framed in plain language.
+
+    Args:
+        context: The skill's execution context (``"inline"`` or ``"fork"``).
+
+    Returns:
+        The cycle Button's label text.
     """
     hint = "this conversation" if context == "inline" else "sub-agent"
     return f"Runs in: {context} ({hint}) ▸"
@@ -426,9 +474,12 @@ class LibrarySkillsListCanvas(VerticalScroll):
                 "#library-skill-delete-confirm-copy",
                 "#library-skill-save",
             ):
+                # Narrow to the query miss (PR #750 review): a missing anchor
+                # is expected (the Save button is absent in confirm mode), but
+                # any other error should surface rather than be swallowed.
                 try:
                     target = self.query_one(selector)
-                except Exception:
+                except (NoMatches, QueryError):
                     continue
                 target.scroll_visible(animate=False)
                 return
