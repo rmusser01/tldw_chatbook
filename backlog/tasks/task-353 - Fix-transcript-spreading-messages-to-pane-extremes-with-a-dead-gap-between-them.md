@@ -3,11 +3,11 @@ id: TASK-353
 title: >-
   Fix transcript spreading messages to pane extremes with a dead gap between
   them
-status: To Do
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-20 14:21'
-updated_date: '2026-07-22 05:34'
+updated_date: '2026-07-22 14:30'
 labels:
   - console
   - ux
@@ -29,9 +29,8 @@ After the first send, the user message renders at the very top of the transcript
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Messages should stack contiguously (top-anchored or bottom-anchored), so the conversation reads as a chronological flow
+- [x] #1 Messages should stack contiguously (top-anchored or bottom-anchored), so the conversation reads as a chronological flow
 <!-- AC:END -->
-
 
 ## Implementation Plan
 
@@ -60,3 +59,24 @@ a product decision. Pixels mode already correct, so the target is graphics-mode
 height. Repro needs the textual-serve harness with a real image (graphics
 protocol) — pilots fall back to synthetic sizing.
 <!-- SECTION:PLAN:END -->
+
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+RESOLVED ON DEV by commit cf8d69c63 ("fix(console): explicit-fit graphics image
+size in transcript") — landed concurrently while this task was being worked. It
+added `fit_image_cell_size(pixel_w, pixel_h, box_cols, box_lines)` in
+console_image_view and wired it into `_image_row_widget`, setting BOTH
+`widget.styles.width` and `.height` to the aspect-fitted cell box for the
+graphics widget (primarily to dodge textual_image's transient 0-size
+`ValueError`, but it fixes THIS void too: the widget is now sized to the image's
+aspect instead of filling max_height=40 and letterboxing). Verified on dev via a
+pilot: wide 1024x256 → region.height=10 (was 40), very-wide 1600x200 → 5, square
+→ 40 — the ~36-40 row void is gone, so messages stack contiguously.
+
+(A parallel fix in PR #776 — `console_image_row_rows` — was a duplicate of the
+same solution and was closed in favour of dev's more complete
+`fit_image_cell_size`, which also handles the width dimension and the 0-size
+race.)
+<!-- SECTION:NOTES:END -->
