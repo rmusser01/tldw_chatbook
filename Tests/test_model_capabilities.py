@@ -543,14 +543,22 @@ def test_get_context_window_unknown_is_none():
     assert caps.get_context_window("OpenAI", "totally-unknown-model") is None
     # Generic gpt-4 variant must NOT match a pattern (so the table's gpt-4 wins later).
     assert caps.get_context_window("OpenAI", "gpt-4-some-variant") is None
+    # Bare gpt-4 / gpt-4-32k must match no pattern (so the table's gpt-4->8192 wins later).
+    assert caps.get_context_window("OpenAI", "gpt-4") is None
+    assert caps.get_context_window("OpenAI", "gpt-4-32k") is None
 
 
 def test_provider_lookup_is_case_insensitive():
     caps = ModelCapabilities({})
-    assert caps.is_vision_capable("openai", "gpt-4o") is True
-    assert caps.is_vision_capable("OpenAI", "gpt-4o") is True
-    assert caps.get_context_window("anthropic", "claude-3-opus-20240229") == \
-        caps.get_context_window("Anthropic", "claude-3-opus-20240229") == 200000
+    # Use a PATTERN-only model (NOT in DEFAULT_MODEL_CAPABILITIES direct maps) so the
+    # provider-keyed pattern branch is actually exercised — direct mappings ignore provider.
+    assert caps.is_vision_capable("openai", "gpt-4o-2099-12-31") is True
+    assert caps.is_vision_capable("OpenAI", "gpt-4o-2099-12-31") is True
+    assert (
+        caps.get_context_window("openai", "gpt-4o-2099-12-31")
+        == caps.get_context_window("OpenAI", "gpt-4o-2099-12-31")
+        == 128000
+    )
 
 
 #
