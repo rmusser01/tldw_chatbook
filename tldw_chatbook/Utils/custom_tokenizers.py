@@ -429,12 +429,14 @@ def custom_tokenizers_available() -> bool:
     """Report whether a custom tokenizer could actually resolve a model.
 
     Cheap gate for the token estimator: avoids invoking the metrics-logging
-    count path when no tokenizer mappings are installed.
+    count path unless BOTH the ``tokenizers`` library is importable AND tokenizer
+    mappings are installed. Either one missing means the custom tier can only
+    return ``None``, so it is skipped.
 
     Returns:
-        ``True`` only when tokenizer mappings are loaded, else ``False``.
+        ``True`` only when the library is present and mappings are loaded.
     """
-    return get_tokenizer_manager().has_tokenizers()
+    return TOKENIZERS_AVAILABLE and get_tokenizer_manager().has_tokenizers()
 
 
 def count_tokens_with_custom(text: str, model: str, provider: str) -> Optional[int]:
