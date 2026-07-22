@@ -1945,6 +1945,37 @@ def test_reset_skill_editor_state_clears_import_row():
     assert fake._library_skills_import_review_name == ""
 
 
+def test_reset_skill_editor_state_clears_trust_reset_confirm_flag():
+    """Review finding (Spec 1 T5): arming the trust-reset confirm (from the
+    editor's manifest_error panel or the list header) and then leaving the
+    editor left ``_library_skill_trust_confirming_reset`` armed -- the
+    confirm-gated Reset row could then reappear unprompted in another view.
+    Mirrors ``test_reset_skill_editor_state_clears_import_row`` above."""
+    fake = SimpleNamespace(
+        _library_skills_view="editor",
+        _library_skill_detail={},
+        _library_skill_original_name="",
+        _library_skill_editor_state=None,
+        _library_skill_dirty=True,
+        _library_skill_status="x",
+        _library_skill_conflict=False,
+        _library_skill_active_review=None,
+        _library_skill_confirming_delete=False,
+        _library_skill_scroll_pending=False,
+        _library_skill_editor_armed=True,
+        _library_skill_trust_confirming_reset=True,
+        _library_skills_import_open=False,
+        _library_skills_import_path="",
+        _library_skills_import_status="",
+        _library_skills_import_review_name="",
+    )
+    fake._reset_library_skills_import_state = (
+        lambda: LibraryScreen._reset_library_skills_import_state(fake)
+    )
+    LibraryScreen._reset_library_skill_editor_state(fake)
+    assert fake._library_skill_trust_confirming_reset is False
+
+
 @pytest.mark.asyncio
 async def test_skills_import_success_offers_review_button():
     app = _CanvasHost(

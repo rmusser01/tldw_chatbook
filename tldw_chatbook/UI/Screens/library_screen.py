@@ -6551,6 +6551,14 @@ class LibraryScreen(BaseAppScreen):
         self._reset_library_note_editor_state()
         self._reset_library_prompt_editor_state()
         self._reset_library_skills_import_state()
+        # Review finding (Spec 1 T5): this rail-switch reset block does NOT
+        # route through _reset_library_skill_editor_state() (skill-editor
+        # exits handle their own reset there), so the trust-reset confirm
+        # gate needs its own explicit clear here too -- otherwise arming it
+        # (editor manifest_error panel or the list header) and then
+        # switching rail rows away leaves it armed, and it can reappear
+        # unprompted on a later, unrelated entry into the skills view.
+        self._library_skill_trust_confirming_reset = False
         self._reset_library_notes_sync_transient_state()
         self._reset_library_ingest_transient_state()
         # Always resets to the Everything scope (a plain rail-row press,
@@ -7681,6 +7689,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_skill_conflict = False
         self._library_skill_active_review = None
         self._library_skill_confirming_delete = False
+        self._library_skill_trust_confirming_reset = False
         self._library_skill_scroll_pending = False
         self._library_skill_editor_armed = False
 
