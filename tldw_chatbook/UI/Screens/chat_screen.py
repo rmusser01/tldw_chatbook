@@ -6149,6 +6149,7 @@ class ChatScreen(BaseAppScreen):
         evidence_state = build_console_evidence_display_state(pending_launch)
         inspector_state = ConsoleInspectorState.from_values(
             live_work_title=pending_launch.title if pending_launch else None,
+            run_active=self._console_run_active(),
             provider_label=provider_display,
             model_label=model,
             provider_ready=provider_ready,
@@ -6974,6 +6975,18 @@ class ChatScreen(BaseAppScreen):
             f" | Approvals {readiness_count(control_state.approvals_label)}"
         )
 
+    def _console_run_active(self) -> bool:
+        """Return whether a native Console generation is actively running.
+
+        TASK-347: the header chip and Inspector status/live-work surfaces
+        read this so they stop claiming "Ready"/"No active work" mid-run.
+        """
+        controller = self._console_chat_controller
+        return (
+            controller is not None
+            and controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
+        )
+
     def _build_console_workbench_state(self, control_state: ConsoleControlState):
         blocker_copy = self._console_provider_blocker_copy()
         action_label, _action_target, _action_tooltip = (
@@ -7000,6 +7013,7 @@ class ChatScreen(BaseAppScreen):
             can_stop=can_stop,
             can_save_chatbook=self._console_chatbook_action_available(),
             density=self._console_workbench_density(),
+            run_active=self._console_run_active(),
         )
 
     def _console_provider_blocker_copy(self) -> str:

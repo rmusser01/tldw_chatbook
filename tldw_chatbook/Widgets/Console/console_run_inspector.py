@@ -361,6 +361,10 @@ class ConsoleRunInspector(Vertical):
             return "Status: Needs approval"
         if rag_source is not None and rag_source.status == "blocked":
             return "Status: Source blocked"
+        # TASK-347: a live generation must not read "Ready" — but a mid-run
+        # block / pending approval above is still the more important signal.
+        if getattr(state or self.state, "run_active", False):
+            return "Status: Generating…"
         return "Status: Ready"
 
     def compose(self) -> ComposeResult:
