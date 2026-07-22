@@ -188,6 +188,68 @@ class TestCharacterSaveInPlace:
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
 
+    async def test_twice_save_preserves_greeting_and_bumps_version(
+        self, mock_app_instance, route_character_db
+    ):
+        """Edit greeting -> Save -> edit again -> Save, both in the SAME
+        open editor session (save-in-place). Regression coverage for the
+        ``_character_save_inflight`` re-entrant-save guard added alongside
+        this test: a flag left stuck ``True`` after the first save would
+        silently swallow the second Save, so this proves both round trips
+        actually land (distinct greeting text + an advancing optimistic-lock
+        ``version``), not just the first."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.press("ctrl+n")
+            await pilot.pause()
+            assert screen._edit_mode == "create"
+
+            screen.query_one("#personas-char-editor-name", Input).value = "Twice Saved"
+            screen.query_one(
+                "#personas-char-editor-first-message", TextArea
+            ).text = "Hello there."
+            await pilot.pause()
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert screen._edit_mode == "edit"
+            assert screen.state.has_unsaved_changes is False
+            saved_id = screen.state.selected_entity_id
+            assert saved_id is not None
+            record = route_character_db.get_character_card_by_id(int(saved_id))
+            assert record is not None
+            assert record["version"] == 1
+            assert record["first_message"] == "Hello there."
+
+            # Second edit + save, in the SAME open session (still id
+            # ``saved_id`` - save-in-place never flips to the read-only card
+            # between the two saves).
+            screen.query_one(
+                "#personas-char-editor-first-message", TextArea
+            ).text = "Hello again."
+            await pilot.pause()
+            assert screen.state.has_unsaved_changes is True
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert screen.query_one("#ccp-character-editor-view").display is True
+            assert screen.query_one("#ccp-character-card-view").display is False
+            assert screen.state.has_unsaved_changes is False
+            assert screen._edit_mode == "edit"
+            assert screen.state.selected_entity_id == saved_id
+
+            record2 = route_character_db.get_character_card_by_id(int(saved_id))
+            assert record2 is not None
+            # The version advanced (proves the second Save genuinely ran a
+            # persist, not a no-op swallowed by a stuck inflight guard).
+            assert record2["version"] == 2
+            assert record2["first_message"] == "Hello again."
+
 
 # ===================================================================
 # Screen-level (Roleplay P3b Task 5): persona Save threads is_active/mode/

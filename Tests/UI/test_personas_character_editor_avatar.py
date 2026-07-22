@@ -314,6 +314,63 @@ class TestCharacterEditorAvatarThumbnailScreen:
 
 
 # ===================================================================
+# Screen-level regression (P3b PR fix - Qodo #3): Remove must not be
+# visually undone by a stale in-flight render.
+#
+# ``_render_character_editor_avatar`` drops its result when its captured
+# ``token`` no longer matches ``_character_editor_generation``. Remove used
+# to leave the generation untouched, so an earlier in-flight render (queued
+# before Remove was clicked, same token) could complete AFTER Remove and
+# re-mount the old avatar bytes. The fix bumps the generation in
+# ``_handle_character_image_remove`` before dispatching its own render, so
+# any prior-token render in flight is dropped instead of winning the race.
+#
+# The exact interleaving (an in-flight decode finishing after Remove) is not
+# reliably forceable in a unit test without invasively faking the asyncio
+# scheduler, so this instead asserts the mechanism the fix relies on: the
+# generation token strictly increases across Remove, which is sufficient to
+# guarantee any earlier-token render is dropped by the guard in
+# ``_render_character_editor_avatar`` regardless of completion order.
+# ===================================================================
+
+
+class TestCharacterEditorAvatarRemoveGenerationBump:
+    @pytest.mark.asyncio
+    async def test_remove_bumps_generation_past_open_time_token(
+        self,
+        mock_app_instance,
+        avatar_db,
+        seeded_character_with_avatar,
+        stub_character_with_avatar,
+    ):
+        mock_app_instance.chachanotes_db = avatar_db
+        mock_app_instance.chat_dictionary_scope_service = None
+        char_id = seeded_character_with_avatar["char_id"]
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _select_character(pilot, char_id)
+            await _open_editor_for(pilot, screen, char_id)
+
+            generation_at_open = screen._character_editor_generation
+
+            editor = screen.query_one(PersonasCharacterEditorWidget)
+            editor.query_one("#personas-char-editor-avatar-remove", Button).press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # The generation strictly advanced past the open-time token, so
+            # a render still carrying that older token (queued before Remove
+            # was clicked) is dropped by _render_character_editor_avatar's
+            # token check even if it completes after Remove's own render.
+            assert screen._character_editor_generation > generation_at_open
+            # And Remove's own effect actually landed: no stale re-mount.
+            assert editor.current_avatar_bytes() is None
+            assert len(editor.query("#personas-char-editor-avatar-thumb > *")) == 0
+
+
+# ===================================================================
 # Screen-level regression: pixels-mode thumbnail fits the avatar box
 # instead of clipping.
 #

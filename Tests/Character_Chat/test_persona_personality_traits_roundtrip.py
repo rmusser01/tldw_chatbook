@@ -59,3 +59,34 @@ def test_personality_traits_updates_and_reloads(tmp_path):
     svc2 = LocalCharacterPersonaService(None, persona_store_path=store_path)
     got = svc2.get_persona_profile("guide")
     assert got["personality_traits"] == "fierce, loyal"
+
+
+def test_personality_traits_update_to_empty_string_clears_and_reloads(tmp_path):
+    """An explicit ``personality_traits=""`` update must persist the empty
+    string, not silently preserve the old value.
+
+    ``update_persona_profile`` builds its patch via
+    ``PersonaProfileUpdate.model_dump(exclude_none=True)`` - which excludes
+    only ``None`` fields, not falsy-but-set ones like ``""`` - so a real
+    clear-to-empty edit round-trips correctly. This pins that behavior.
+    """
+    store_path = tmp_path / "personas.json"
+    svc = LocalCharacterPersonaService(None, persona_store_path=store_path)
+    created = svc.create_persona_profile(
+        PersonaProfileCreate(id="guide", name="Guide", personality_traits="x")
+    )
+    assert created["personality_traits"] == "x"
+
+    updated = svc.update_persona_profile(
+        "guide",
+        PersonaProfileUpdate(personality_traits=""),
+        expected_version=created["version"],
+    )
+    assert updated["personality_traits"] == ""
+
+    # Reload from a FRESH service instance backed by the same JSON store -
+    # proves the cleared value genuinely persisted, not just that the
+    # in-memory record returned by update_persona_profile looks right.
+    svc2 = LocalCharacterPersonaService(None, persona_store_path=store_path)
+    got = svc2.get_persona_profile("guide")
+    assert got["personality_traits"] == ""

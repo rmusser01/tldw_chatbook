@@ -492,6 +492,10 @@ class PersonasScreen(BaseAppScreen):
         self._delete_dialog_active: bool = False
         self._character_editor_generation: int = 0
         self._profile_save_inflight: bool = False
+        # Mirrors _profile_save_inflight for the character editor: guards
+        # against a re-entrant Save (double-click/Ctrl+S) while an earlier
+        # save for this session is still persisting.
+        self._character_save_inflight: bool = False
         # ``_characters`` now holds only the CURRENT page of the library, not
         # the whole (capped) list; ``_character_total`` is the full-library
         # count for the active (search, tag) filter, cached under
@@ -3450,6 +3454,10 @@ class PersonasScreen(BaseAppScreen):
         self._character_editor_generation += 1
         self._edit_mode = "create"
         self.state.clear_selection()
+        # A new session starts unclaimed - re-arms the save-in-place dedup
+        # guard (see _handle_save_requested) even if the previous session
+        # ended on a successful save.
+        self._character_save_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
         self.query_one(PersonasCharacterEditorWidget).new_character()
@@ -3753,6 +3761,8 @@ class PersonasScreen(BaseAppScreen):
             return
         self._character_editor_generation += 1
         self._edit_mode = "edit"
+        # A new session starts unclaimed (see _begin_create_character).
+        self._character_save_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
         self.query_one(PersonasCharacterEditorWidget).load_character(record)
@@ -4069,6 +4079,15 @@ class PersonasScreen(BaseAppScreen):
         # debounce, so an avatar-oversize error clears at once on removal.
         editor._user_touched = True
         editor._run_validation()
+        # Bump the generation BEFORE dispatching this render (rather than
+        # relying on the render below to be the last word): an earlier
+        # in-flight render from before Remove was clicked shares this
+        # session's token and would otherwise complete afterwards and
+        # re-mount the just-removed image, visually undoing Remove. Bumping
+        # first makes that stale render's token mismatch (dropped), while
+        # this dispatch below captures the NEW token and correctly clears
+        # the thumbnail (image is now None).
+        self._character_editor_generation += 1
         self.run_worker(
             self._render_character_editor_avatar(),
             group="personas-avatar-render",
@@ -4957,6 +4976,14 @@ class PersonasScreen(BaseAppScreen):
     @on(CharacterSaveRequested)
     def _handle_save_requested(self, message: CharacterSaveRequested) -> None:
         message.stop()
+        if self._character_save_inflight:
+            # A save for this session is already persisting (re-entrant
+            # Save click / Ctrl+S); ignore the duplicate rather than firing
+            # a second redundant persist (mirrors _profile_save_inflight).
+            logger.debug(
+                "Character save already in flight; ignoring duplicate request."
+            )
+            return
         data = dict(message.character_data or {})
         errors = self._validate_character(data)
         # The editor footer is the single in-editor validation surface: the
@@ -4968,6 +4995,7 @@ class PersonasScreen(BaseAppScreen):
             # editing state instead of duplicating the error detail.
             self.query_one(PersonasInspectorPane).show_validation_editing()
             return
+        self._character_save_inflight = True
         # Snapshot UI-thread state here; the background persistence call must
         # not read mutable screen state.
         self._save_character_worker(
@@ -4995,6 +5023,9 @@ class PersonasScreen(BaseAppScreen):
         except Exception as exc:
             logger.opt(exception=True).error(f"Error saving character: {exc}")
             self._notify(f"Save failed: {exc}", "error")
+            # Allow an immediate retry - _after_character_save (the success
+            # path) resets this same flag itself.
+            self._character_save_inflight = False
             return
         await self._after_character_save(saved_id, str(data.get("name") or ""))
 
@@ -5004,7 +5035,11 @@ class PersonasScreen(BaseAppScreen):
         if not self.is_mounted or self.state.active_mode != "characters":
             # The save completed after the user left the screen or switched
             # modes; refresh the cached list but leave the selection,
-            # inspector, and center pane alone.
+            # inspector, and center pane alone. The persist itself finished,
+            # so release the guard here too - a later new session
+            # (_begin_create_character / _handle_edit_requested) would also
+            # re-arm it, but there is no reason to leave it latched.
+            self._character_save_inflight = False
             try:
                 await self.character_handler.refresh_character_list()
             except Exception:
@@ -5068,6 +5103,13 @@ class PersonasScreen(BaseAppScreen):
             self._edit_mode = "edit"  # create -> edit stays in the editor
             editor.mark_saved(saved_record)
             self._show_center("#ccp-character-editor-view")
+            # This method already bumped _character_editor_generation above,
+            # which invalidates (drops) any render still in flight from
+            # before the save - so re-render now with the new token or the
+            # thumbnail can be left blank/stale until the next unrelated
+            # avatar action.
+            await self._render_character_editor_avatar()
+        self._character_save_inflight = False
         self._sync_title_and_console_actions()
         self._notify("Character saved.", severity="information")
 
@@ -5109,9 +5151,18 @@ class PersonasScreen(BaseAppScreen):
             self._notify("Save failed: persona profiles are unavailable.", "error")
             return
         self._profile_save_inflight = True
-        mode = self.persona_handler.current_mode()
-        persona_id = str(data.get("id") or "")
+        # mode/persona_id are read INSIDE the try (rather than before it) so
+        # a raise from either (e.g. current_mode()) is caught below, which
+        # resets the inflight flag; reading them ahead of the try would let
+        # such a raise propagate uncaught, latching the flag True forever
+        # and silently no-opping every future save via the guard above.
+        # Placeholder defaults keep both names bound for the except block's
+        # log line even if the raise happens before either assignment runs.
+        mode: str | None = None
+        persona_id: str = ""
         try:
+            mode = self.persona_handler.current_mode()
+            persona_id = str(data.get("id") or "")
             if self._edit_mode == "create" or not persona_id:
                 request = PersonaProfileCreate(
                     id=data.get("id") or None,
@@ -5139,7 +5190,10 @@ class PersonasScreen(BaseAppScreen):
                     mode=mode,
                 )
         except Exception as exc:
-            logger.opt(exception=True).error(f"Error saving persona profile: {exc}")
+            logger.opt(exception=True).error(
+                f"Error saving persona profile: persona_id={persona_id!r}, "
+                f"mode={mode!r}, expected_version={data.get('version')!r}: {exc}"
+            )
             self._notify(f"Save failed: {exc}", "error")
             # Allow an immediate retry - only a real DB round trip (or a
             # fresh edit) may claim this flag again.
