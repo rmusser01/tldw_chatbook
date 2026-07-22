@@ -6,6 +6,7 @@ along with utilities for experiment tracking and A/B testing.
 """
 
 import json
+import re
 import time
 from typing import Dict, Any, Optional, List, Literal, Tuple
 from dataclasses import dataclass, field, asdict
@@ -19,6 +20,12 @@ from .reranker import RerankingConfig
 from .parallel_processor import ProcessingConfig
 from ..config import get_user_data_dir
 from ..Metrics.metrics_logger import log_counter, log_histogram
+
+
+def _slugify(name: str) -> str:
+    """Filename-safe stable slug for a profile display name."""
+    slug = re.sub(r"[^a-z0-9]+", "_", str(name).strip().lower()).strip("_")
+    return slug or "profile"
 
 
 # Profile types
@@ -91,9 +98,19 @@ class ProfileConfig:
     expected_latency_ms: Optional[float] = None
     expected_accuracy: Optional[float] = None
 
+    # Stable identity / mutability marker
+    id: Optional[str] = None
+    read_only: bool = False
+
+    def __post_init__(self):
+        if not self.id:
+            self.id = _slugify(self.name)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert profile to dictionary."""
         return {
+            "id": self.id,
+            "read_only": self.read_only,
             "name": self.name,
             "description": self.description,
             "profile_type": self.profile_type,
@@ -148,6 +165,8 @@ class ProfileConfig:
             tags=data.get("tags", []),
             expected_latency_ms=data.get("expected_latency_ms"),
             expected_accuracy=data.get("expected_accuracy"),
+            id=data.get("id"),
+            read_only=data.get("read_only", False),
         )
 
 
@@ -182,6 +201,8 @@ class ConfigProfileManager:
         bm25_rag.search.include_citations = True
 
         self._profiles["bm25_only"] = ProfileConfig(
+            id="bm25_only",
+            read_only=True,
             name="BM25 Only",
             description="Pure keyword/BM25 search without semantic vectors",
             profile_type="fast_search",
@@ -202,6 +223,8 @@ class ConfigProfileManager:
         vector_rag.search.include_citations = True
 
         self._profiles["vector_only"] = ProfileConfig(
+            id="vector_only",
+            read_only=True,
             name="Vector Only",
             description="Pure semantic/vector search without keyword matching",
             profile_type="fast_search",
@@ -222,6 +245,8 @@ class ConfigProfileManager:
         hybrid_basic_rag.search.include_citations = True
 
         self._profiles["hybrid_basic"] = ProfileConfig(
+            id="hybrid_basic",
+            read_only=True,
             name="Hybrid Basic",
             description="Combined keyword and semantic search without enhancements",
             profile_type="balanced",
@@ -247,6 +272,8 @@ class ConfigProfileManager:
         hybrid_enhanced_rag.search.parent_inclusion_strategy = "size_based"
 
         self._profiles["hybrid_enhanced"] = ProfileConfig(
+            id="hybrid_enhanced",
+            read_only=True,
             name="Hybrid Enhanced",
             description="Hybrid search with parent document retrieval",
             profile_type="balanced",
@@ -280,6 +307,8 @@ class ConfigProfileManager:
         )
 
         self._profiles["hybrid_full"] = ProfileConfig(
+            id="hybrid_full",
+            read_only=True,
             name="Hybrid Full",
             description="All features enabled for maximum accuracy",
             profile_type="high_accuracy",
@@ -302,6 +331,8 @@ class ConfigProfileManager:
         fast_rag.search.cache_size = 200
 
         self._profiles["fast_search"] = ProfileConfig(
+            id="fast_search",
+            read_only=True,
             name="Fast Search",
             description="Optimized for low latency with acceptable accuracy",
             profile_type="fast_search",
@@ -331,6 +362,8 @@ class ConfigProfileManager:
         )
 
         self._profiles["high_accuracy"] = ProfileConfig(
+            id="high_accuracy",
+            read_only=True,
             name="High Accuracy",
             description="Optimized for maximum retrieval accuracy",
             profile_type="high_accuracy",
@@ -350,6 +383,8 @@ class ConfigProfileManager:
         balanced_rag.search.default_top_k = 10
 
         self._profiles["balanced"] = ProfileConfig(
+            id="balanced",
+            read_only=True,
             name="Balanced",
             description="Balance between speed and accuracy",
             profile_type="balanced",
@@ -370,6 +405,8 @@ class ConfigProfileManager:
         long_context_rag.search.default_top_k = 5  # Fewer but larger chunks
 
         self._profiles["long_context"] = ProfileConfig(
+            id="long_context",
+            read_only=True,
             name="Long Context",
             description="For documents requiring extended context",
             profile_type="long_context",
@@ -390,6 +427,8 @@ class ConfigProfileManager:
         tech_rag.search.include_citations = True
 
         self._profiles["technical_docs"] = ProfileConfig(
+            id="technical_docs",
+            read_only=True,
             name="Technical Documentation",
             description="Optimized for technical content with tables and code",
             profile_type="technical_docs",
@@ -418,6 +457,8 @@ class ConfigProfileManager:
         )
 
         self._profiles["research_papers"] = ProfileConfig(
+            id="research_papers",
+            read_only=True,
             name="Research Papers",
             description="Optimized for academic papers and citations",
             profile_type="research_papers",
@@ -435,6 +476,8 @@ class ConfigProfileManager:
         code_rag.search.default_top_k = 20  # More results for code search
 
         self._profiles["code_search"] = ProfileConfig(
+            id="code_search",
+            read_only=True,
             name="Code Search",
             description="Optimized for searching code repositories",
             profile_type="code_search",
