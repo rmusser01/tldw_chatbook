@@ -734,6 +734,22 @@ class ConsoleWorkspaceContextTray(Vertical):
                 compact=True,
                 disabled=not self.state.new_workspace_enabled,
             )
+            # task-13: workspace-level RAG retrieval scope entry point.
+            # Named "RAG Scope" (not "Scope") to avoid colliding with the
+            # unrelated "Scope" status pair below, which shows the active
+            # conversation's identity, not a RAG retrieval scope. Enabled
+            # only for a real registry workspace (`rag_scope_enabled`) --
+            # never for the "Local Default"/error/no-registry sentinel
+            # states, which have no real workspace_id to scope against.
+            scope_button = Button(
+                "RAG Scope",
+                id="console-workspace-rag-scope-open",
+                classes="console-workspace-action",
+                compact=True,
+                disabled=not self.state.rag_scope_enabled,
+            )
+            scope_button.tooltip = "Narrow RAG retrieval to items in this workspace"
+            yield scope_button
 
         if (
             not self.state.change_workspace_enabled

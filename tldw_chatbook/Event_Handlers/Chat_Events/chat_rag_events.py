@@ -5,6 +5,7 @@
 import asyncio
 import copy
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from loguru import logger
@@ -18,6 +19,7 @@ from ...Chat.rag_scope import (
     SCOPE_STATUS_EMPTY,
     SOURCE_TYPE_MEDIA,
     SOURCE_TYPE_NOTE,
+    ScopeCache,
     SessionScopeHolder,
     read_conversation_scope,
     resolve_effective_scope,
@@ -560,48 +562,119 @@ def _existing_ids_sync(
         return frozenset()
 
 
-async def resolve_effective_scope_for_chat(app: "TldwCli") -> EffectiveScope:
-    """Resolve the RAG retrieval scope for the message about to be sent.
+@dataclass(frozen=True)
+class ScopeResolution:
+    """The three pieces produced by resolving a session's RAG retrieval scope.
 
-    Conversation identity comes from the active native-Console session's
-    ``persisted_conversation_id`` (see ``_active_console_session``). When the
-    conversation is persisted, its scope is read from storage
+    Shared by the enforcement entry point (``resolve_effective_scope_for_
+    chat``, used to gate/filter the actual retrieval) and the Console
+    display layer (``ChatScreen``'s Inspector "Retrieval scope" row and
+    header chip, task-13), which additionally needs the two raw,
+    un-intersected scopes' item counts for the chip's intersection-
+    breakdown tooltip ("conversation A ∩ workspace B → N") -- information
+    ``effective.allowlist`` alone cannot reconstruct once dangling ids have
+    been dropped.
+
+    Attributes:
+        conv_scope: The conversation's own stored/held scope, or ``None``.
+        ws_scope: The linked workspace's stored scope, or ``None``.
+        effective: The resolved intersection (see ``resolve_effective_
+            scope``).
+    """
+
+    conv_scope: Optional[RagScope]
+    ws_scope: Optional[RagScope]
+    effective: EffectiveScope
+
+
+def _scope_cache_for(app: "TldwCli") -> ScopeCache:
+    """Return (creating if needed) the per-app ``ScopeCache`` instance.
+
+    Attached directly to ``app`` rather than a module-level singleton: a
+    module-level cache would persist for the lifetime of the test process
+    and risk a stale hit leaking between unrelated tests that happen to
+    reuse the same conversation/workspace id and stamp literals. Attaching
+    it to ``app`` gives each running app (and each test's app double) its
+    own cache, matching the design spec's "cached per session" contract.
+    Falls back to a fresh, unattached cache (no persistence across calls,
+    but never raises) if ``app`` refuses the attribute assignment.
+
+    Args:
+        app: The running app instance (or a test double).
+
+    Returns:
+        A ``ScopeCache`` instance to consult/populate for this ``app``.
+    """
+    cache = getattr(app, "_console_rag_scope_cache", None)
+    if isinstance(cache, ScopeCache):
+        return cache
+    cache = ScopeCache()
+    try:
+        app._console_rag_scope_cache = cache
+    except Exception:
+        pass
+    return cache
+
+
+async def resolve_scope_for_session(
+    app: "TldwCli", session: Optional[Any]
+) -> ScopeResolution:
+    """Resolve conversation + workspace RAG retrieval scope for ``session``.
+
+    Shared resolution core for both ``resolve_effective_scope_for_chat``
+    (the enforcement entry point, which derives ``session`` itself via
+    ``_active_console_session``) and ``ChatScreen``'s display layer
+    (task-13), which already holds the exact session object it wants to
+    resolve for (e.g. a just-restored resume target) and needs the raw
+    conversation/workspace scopes alongside the resolved intersection.
+
+    Conversation identity comes from ``session.persisted_conversation_id``.
+    When the conversation is persisted, its scope is read from storage
     (``read_conversation_scope``). When the session has not been persisted
     yet, an in-session ``SessionScopeHolder`` attached to the session object
-    (``session.rag_scope_holder``, duck-typed) is consulted instead -- this
-    holder is live in production (task-9): the Console's RAG retrieval-scope
-    picker populates it when a user narrows an unpersisted session's scope
-    before its first send, and ``ConsoleChatStore.persist_session_if_needed``
-    flushes it through to durable storage exactly once, at first
-    persistence.
+    (``session.rag_scope_holder``, duck-typed) is consulted instead (task-9).
 
-    Workspace scope resolution is out of scope for this task (Phase 3 of the
-    rag-scope-narrowing program wires it); always passed as ``None`` here.
+    Workspace identity comes from ``session.workspace_id`` (the Console
+    session's linked local-workspace-registry id, duck-typed via
+    ``getattr`` so callers/tests that pass a session double without this
+    attribute degrade to "no workspace scope" rather than raising -- task-13
+    Phase 3 of the rag-scope-narrowing program). The workspace's stored
+    scope is read via ``app.workspace_registry_service.get_workspace_scope``,
+    guarded end to end: a missing service, a missing/empty ``workspace_id``,
+    or a storage read failure all degrade to ``ws_scope=None`` (unscoped at
+    that level) rather than raising or widening enforcement.
+
+    Both DB reads apply the same in-memory-connection guard (PR #747
+    review, extended here to the workspace registry's own DB): in-memory
+    SQLite connections are thread-local/per-call, so offloading to
+    ``asyncio.to_thread`` would hit a blank connection and silently read a
+    genuinely scoped conversation/workspace back as unscoped. Each read is
+    offloaded only when its own backing DB is file-backed.
+
+    Once at least one of ``conv_scope``/``ws_scope`` is set, a per-app
+    ``ScopeCache`` (see ``_scope_cache_for``) is consulted, keyed on the
+    ``(conversation_id_or_session_id, workspace_id, conv_stamp, ws_stamp)``
+    4-tuple, before re-running the (conv ∩ ws) intersection and the
+    per-item dangling-drop existence check -- both stamps come from each
+    scope's own ``updated_at``, so any edit at either level (a changed
+    stamp) or a conversation re-linked to a different workspace (a changed
+    workspace_id, same stamps) misses the cache and re-resolves.
 
     Args:
         app: The running app instance.
+        session: The Console session to resolve scope for, or ``None`` (no
+            active session -- resolves fully unscoped with zero DB work).
 
     Returns:
-        The resolved ``EffectiveScope`` -- ``state == "unscoped"`` (with no
-        DB work at all) whenever there is no active Console session, no
-        conversation scope, and no workspace scope, matching
-        ``resolve_effective_scope``'s own both-``None`` contract.
+        A ``ScopeResolution`` carrying the raw conversation scope, the raw
+        workspace scope, and the resolved ``EffectiveScope``.
     """
-    session = _active_console_session(app)
     conversation_id = (
         getattr(session, "persisted_conversation_id", None)
         if session is not None
         else None
     )
 
-    # In-memory SQLite connections are thread-local (`CharactersRAGDB.
-    # get_connection` opens a brand-new, unmigrated `:memory:` connection
-    # per thread) -- offloading the reads below to `asyncio.to_thread`
-    # would hit a blank connection and silently read a genuinely scoped
-    # conversation back as unscoped (PR #747 review). Mirrors the guard
-    # `Library.library_local_rag_search_service._search_conversations`
-    # already applies: run the DB work inline on the calling thread instead
-    # of a worker thread whenever either DB is memory-backed.
     db = getattr(app, "chachanotes_db", None)
     media_db = getattr(app, "media_db", None)
     is_memory_db = bool(getattr(db, "is_memory_db", False)) or bool(
@@ -621,23 +694,79 @@ async def resolve_effective_scope_for_chat(app: "TldwCli") -> EffectiveScope:
         if isinstance(holder, SessionScopeHolder):
             conv_scope = holder.scope
 
-    # Workspace scope resolution lands in Phase 3 of the rag-scope-narrowing
-    # program; explicitly unset here.
+    workspace_id = (
+        getattr(session, "workspace_id", None) if session is not None else None
+    )
     ws_scope: Optional[RagScope] = None
+    registry_service = getattr(app, "workspace_registry_service", None)
+    if workspace_id and registry_service is not None:
+        registry_db = getattr(registry_service, "db", None)
+        registry_is_memory = bool(getattr(registry_db, "is_memory_db", False))
+        try:
+            if registry_is_memory:
+                ws_scope = registry_service.get_workspace_scope(workspace_id)
+            else:
+                ws_scope = await asyncio.to_thread(
+                    registry_service.get_workspace_scope, workspace_id
+                )
+        except Exception as e:
+            logger.warning(
+                f"workspace rag_scope read failed for {workspace_id}: {e}"
+            )
+            ws_scope = None
 
     if conv_scope is None and ws_scope is None:
         # No DB-backed existence check needed for the both-unset case --
-        # resolve_effective_scope's own early return covers it synchronously.
-        return resolve_effective_scope(conv_scope, ws_scope, lambda st, ids: ids)
+        # resolve_effective_scope's own early return covers it
+        # synchronously; nothing to cache either (trivially cheap already).
+        effective = resolve_effective_scope(conv_scope, ws_scope, lambda st, ids: ids)
+        return ScopeResolution(conv_scope, ws_scope, effective)
+
+    cache_key_id = conversation_id or (
+        getattr(session, "id", None) if session is not None else None
+    )
+    conv_stamp = conv_scope.updated_at if conv_scope is not None else None
+    ws_stamp = ws_scope.updated_at if ws_scope is not None else None
+    cache = _scope_cache_for(app)
+    cached = cache.get(cache_key_id, workspace_id, conv_stamp, ws_stamp)
+    if cached is not None:
+        return ScopeResolution(conv_scope, ws_scope, cached)
 
     def _existing_ids(source_type: str, ids: "frozenset[str]") -> "frozenset[str]":
         return _existing_ids_sync(app, source_type, ids)
 
     if is_memory_db:
-        return resolve_effective_scope(conv_scope, ws_scope, _existing_ids)
-    return await asyncio.to_thread(
-        resolve_effective_scope, conv_scope, ws_scope, _existing_ids
-    )
+        effective = resolve_effective_scope(conv_scope, ws_scope, _existing_ids)
+    else:
+        effective = await asyncio.to_thread(
+            resolve_effective_scope, conv_scope, ws_scope, _existing_ids
+        )
+    cache.put(cache_key_id, workspace_id, conv_stamp, ws_stamp, effective)
+    return ScopeResolution(conv_scope, ws_scope, effective)
+
+
+async def resolve_effective_scope_for_chat(app: "TldwCli") -> EffectiveScope:
+    """Resolve the RAG retrieval scope for the message about to be sent.
+
+    Conversation identity comes from the active native-Console session's
+    ``persisted_conversation_id`` (see ``_active_console_session``).
+    Workspace identity comes from that same session's ``workspace_id``
+    (task-13, Phase 3 of the rag-scope-narrowing program -- previously
+    always unset here). See ``resolve_scope_for_session`` for the full
+    resolution contract (in-memory-DB guards, ``ScopeCache`` consultation).
+
+    Args:
+        app: The running app instance.
+
+    Returns:
+        The resolved ``EffectiveScope`` -- ``state == "unscoped"`` (with no
+        DB work at all) whenever there is no active Console session, no
+        conversation scope, and no workspace scope, matching
+        ``resolve_effective_scope``'s own both-``None`` contract.
+    """
+    session = _active_console_session(app)
+    resolution = await resolve_scope_for_session(app, session)
+    return resolution.effective
 
 
 # Deprecated: kept as a module-level alias to the public name above so any

@@ -52,6 +52,7 @@ from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
 # unpersisted sessions, `EffectiveScope` state.
 from ...Event_Handlers.Chat_Events.chat_rag_events import (
     resolve_effective_scope_for_chat,
+    resolve_scope_for_session,
 )
 from ...Chat.rag_scope import (
     RagScope,
@@ -302,6 +303,7 @@ from ...Workspaces.display_state import (
     console_workspace_conversation_result_copy,
 )
 from ...Workspaces.registry_service import (
+    WorkspaceNotFound,
     WorkspaceRegistryServiceError,
     next_local_workspace_identity,
 )
@@ -1548,6 +1550,145 @@ class ChatScreen(BaseAppScreen):
             self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
         )
 
+    @on(Button.Pressed, "#console-workspace-rag-scope-open")
+    def on_console_workspace_rag_scope_open(self, event: Button.Pressed) -> None:
+        """Open the workspace-level RAG retrieval-scope picker (task-13)."""
+        event.stop()
+        self.run_worker(
+            self._open_console_workspace_scope_picker(),
+            exclusive=True,
+            group="console-workspace-scope-open",
+        )
+
+    async def _open_console_workspace_scope_picker(self) -> None:
+        """Open the RAG retrieval-scope picker for the ACTIVE workspace.
+
+        Task-13 workspace entry point (design spec section 4, "Workspace
+        entry: Scope button beside the workspace row in the Session area").
+        ``universe=None`` -- the workspace picker offers the full library,
+        unlike the conversation-target picker, which restricts to the
+        workspace's own items once one is set (D3, see
+        ``_open_console_retrieval_scope_picker``).
+
+        Only a REAL registry workspace can be scoped -- gated the same way
+        the mounted button itself is gated
+        (``ConsoleWorkspaceContextState.rag_scope_enabled``): the built-in
+        Default workspace has a real ``workspace_id`` row
+        (``DEFAULT_WORKSPACE_ID``) once ``ensure_default_workspace`` has
+        run, so it IS scopable; only the "Local Default"/error/no-registry
+        sentinel states (no real workspace row at all) are refused here.
+        """
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        if registry_service is None:
+            self.app_instance.notify(
+                "Workspace service is not ready.", severity="warning"
+            )
+            return
+        try:
+            active_workspace = registry_service.get_active_workspace()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Unable to read active workspace for the scope picker"
+            )
+            self.app_instance.notify(
+                "Workspace registry could not be read.", severity="error"
+            )
+            return
+        if active_workspace is None:
+            self.app_instance.notify(
+                "Create or select a workspace before setting a RAG scope.",
+                severity="warning",
+            )
+            return
+        workspace_id = active_workspace.workspace_id
+
+        try:
+            initial = await self._read_console_workspace_scope(
+                registry_service, workspace_id
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Unable to read workspace scope for {}", workspace_id
+            )
+            initial = None
+
+        target_label = f"workspace '{active_workspace.name}'"
+        media_lister, notes_lister, tag_lister = self._console_scope_picker_listers()
+
+        def _on_save(scope: Optional[RagScope]) -> None:
+            self.run_worker(
+                self._apply_console_workspace_scope_save(workspace_id, scope),
+                exclusive=True,
+                group="console-workspace-scope-save",
+            )
+
+        self.app.push_screen(
+            ConsoleScopePickerModal(
+                target_label,
+                None,
+                initial,
+                _on_save,
+                media_lister=media_lister,
+                notes_lister=notes_lister,
+                tag_lister=tag_lister,
+            )
+        )
+
+    async def _apply_console_workspace_scope_save(
+        self,
+        workspace_id: str,
+        scope: Optional[RagScope],
+    ) -> None:
+        """Persist (or clear) a workspace's RAG retrieval scope (task-13).
+
+        ``WorkspaceNotFound`` is caught deliberately -- the workspace may
+        have been archived/deleted (e.g. from Library > Workspaces) between
+        opening the picker and saving. Refreshes the ACTIVE Console
+        session's effective-scope display afterward: a workspace-scope
+        change can widen or narrow retrieval for every conversation linked
+        to it, but only the currently active session's row/chip are
+        mounted to refresh.
+
+        Args:
+            workspace_id: The workspace whose scope was just chosen.
+            scope: The new scope, or ``None`` to clear it.
+        """
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        if registry_service is None:
+            self.app_instance.notify(
+                "Couldn't save scope: workspace service is not ready.",
+                severity="error",
+            )
+            return
+        try:
+            await self._write_console_workspace_scope(
+                registry_service, workspace_id, scope
+            )
+        except WorkspaceNotFound:
+            logger.opt(exception=True).warning(
+                "Workspace scope save target missing: {}", workspace_id
+            )
+            self.app_instance.notify(
+                "Couldn't save scope: this workspace no longer exists.",
+                severity="error",
+            )
+            return
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to write workspace scope for {}", workspace_id
+            )
+            self.app_instance.notify(
+                "Couldn't save workspace scope.", severity="error"
+            )
+            return
+        session = self._active_native_console_session()
+        if session is not None:
+            await self._refresh_console_effective_scope_and_sync(session)
+
     # Reactive property for sidebar state persistence
     sidebar_state = reactive({}, layout=False)
 
@@ -1575,6 +1716,15 @@ class ChatScreen(BaseAppScreen):
         # compose/recompose), so the Inspector's retrieval-scope row and
         # run-recipe line render from pure session state.
         self._console_retrieval_scope_cache: Dict[str, Optional[RagScope]] = {}
+        # task-13: cache of resolved EFFECTIVE (conversation ∩ workspace)
+        # retrieval-scope display state, keyed the same way as the cache
+        # above (persisted conversation id, or the session id while
+        # unpersisted) -- populated off-loop at the same three trigger
+        # points (scope-picker save on either target, resume, and the
+        # first-persist flush hook), never during compose/recompose, so
+        # the Inspector row and header chip can render the intersection
+        # with zero DB work.
+        self._console_effective_scope_cache: Dict[str, ConsoleRetrievalScopeState] = {}
         # TASK-340: keyboard-send draft stashes — keypress->handler handoff,
         # then the queued submit's accept/refuse consumption slot.
         self._console_pending_send_stash: ConsoleDraftStash | None = None
@@ -3143,28 +3293,36 @@ class ChatScreen(BaseAppScreen):
     def _build_console_retrieval_scope_state(self) -> ConsoleRetrievalScopeState:
         """Pure display state for the Inspector's "Retrieval scope" row.
 
-        Reads only in-memory session state -- the active session's
-        unpersisted-scope holder (``ConsoleChatSession.rag_scope_holder``),
-        or the persisted-scope cache populated at resume time and by the
-        scope picker's modal-open/after-save reads
-        (``self._console_retrieval_scope_cache``) -- never the DB directly.
-        Safe to call on every compose/recompose (task-9's
+        Reads only in-memory session state -- the EFFECTIVE
+        (conversation ∩ workspace, task-13) scope cache
+        (``self._console_effective_scope_cache``), populated off-loop by
+        ``_resolve_console_effective_scope_state`` at the scope-picker
+        save/resume/first-persist-flush trigger points -- never the DB
+        directly. Safe to call on every compose/recompose (task-9's
         zero-DB-on-recompose contract).
+
+        Falls back to the conversation-only ``SessionScopeHolder`` (still
+        zero-DB, purely in-memory) for an UNPERSISTED session whose
+        effective state has not been resolved yet, so a scope narrowed via
+        the picker still reflects immediately even before the off-loop
+        workspace-intersection resolve lands.
 
         Returns:
             "Everything" (unscoped) when there is no active session, an
-            unpersisted session with no held scope, or a persisted session
-            whose conversation id has not yet been read into the cache.
+            unpersisted session with no held scope and no resolved
+            effective state yet, or a persisted session whose conversation
+            id has not yet been resolved into the cache.
         """
         session = self._active_native_console_session()
         if session is None:
             return ConsoleRetrievalScopeState.unscoped()
+        cache_key = session.persisted_conversation_id or session.id
+        cached = self._console_effective_scope_cache.get(cache_key)
+        if cached is not None:
+            return cached
         if session.persisted_conversation_id is None:
             return ConsoleRetrievalScopeState.from_scope(session.rag_scope_holder.scope)
-        scope = self._console_retrieval_scope_cache.get(
-            session.persisted_conversation_id
-        )
-        return ConsoleRetrievalScopeState.from_scope(scope)
+        return ConsoleRetrievalScopeState.unscoped()
 
     def _console_retrieval_scope_run_recipe_count(self) -> Optional[int]:
         """Item count for the Inspector run-recipe's "/ scope N items" suffix.
@@ -3202,6 +3360,83 @@ class ChatScreen(BaseAppScreen):
             return
         control_bar.sync_scope_chip(state)
 
+    async def _resolve_console_effective_scope_state(
+        self, session: "ConsoleChatSession"
+    ) -> ConsoleRetrievalScopeState:
+        """Resolve+cache the EFFECTIVE (conversation ∩ workspace) scope
+        display state for ``session``, off-loop (task-13).
+
+        Delegates to ``chat_rag_events.resolve_scope_for_session`` -- the
+        SAME resolution core ``resolve_effective_scope_for_chat`` uses to
+        enforce retrieval -- so the Inspector row/header chip and actual
+        enforcement never diverge. The returned ``ScopeResolution`` also
+        carries the raw conversation/workspace scopes, used here only for
+        the chip's intersection-breakdown tooltip counts.
+
+        Refreshes ``self._console_retrieval_scope_cache`` (the
+        conversation-only cache the picker's ``initial`` seed reads) from
+        the SAME resolved conversation scope -- one DB read serves both
+        caches -- and caches the built ``ConsoleRetrievalScopeState`` in
+        ``self._console_effective_scope_cache``, keyed by the persisted
+        conversation id or the session id while unpersisted, so
+        ``_build_console_retrieval_scope_state`` can read it back with
+        zero DB work on compose/recompose.
+
+        Call sites: the scope-picker save handlers (either the
+        conversation or the workspace target), resume
+        (``_resume_console_workspace_conversation``), and the first-persist
+        flush hook (``_on_console_scope_flushed``) -- never
+        compose/recompose.
+
+        Args:
+            session: The Console session to resolve scope for.
+
+        Returns:
+            The resolved, cached ``ConsoleRetrievalScopeState``.
+        """
+        resolution = await resolve_scope_for_session(self.app_instance, session)
+        if session.persisted_conversation_id is not None:
+            self._console_retrieval_scope_cache[
+                session.persisted_conversation_id
+            ] = resolution.conv_scope
+        conv_item_count = (
+            len(resolution.conv_scope.items)
+            if resolution.conv_scope is not None
+            else None
+        )
+        ws_item_count = (
+            len(resolution.ws_scope.items)
+            if resolution.ws_scope is not None
+            else None
+        )
+        state = ConsoleRetrievalScopeState.from_effective(
+            resolution.effective,
+            conv_item_count=conv_item_count,
+            ws_item_count=ws_item_count,
+        )
+        cache_key = session.persisted_conversation_id or session.id
+        self._console_effective_scope_cache[cache_key] = state
+        return state
+
+    async def _refresh_console_effective_scope_and_sync(
+        self, session: "ConsoleChatSession"
+    ) -> None:
+        """Resolve the effective scope for ``session`` and refresh the row/chip.
+
+        Thin convenience wrapper around ``_resolve_console_effective_scope_
+        state`` for the (common) case where the caller wants the resolved
+        state pushed straight into the mounted Inspector row and header
+        chip afterward. A no-op refresh when the screen is not mounted
+        (mirrors every other post-save sync call site in this file).
+
+        Args:
+            session: The Console session to resolve scope for.
+        """
+        await self._resolve_console_effective_scope_state(session)
+        if self.is_mounted:
+            self._sync_console_retrieval_scope_row()
+            self._sync_console_control_bar()
+
     @staticmethod
     async def _read_console_retrieval_scope(db: Any, conversation_id: str) -> Optional[RagScope]:
         """Read a conversation's stored scope, off-loop for file-backed DBs.
@@ -3231,6 +3466,41 @@ class ChatScreen(BaseAppScreen):
         else:
             await asyncio.to_thread(write_conversation_scope, db, conversation_id, scope)
 
+    @staticmethod
+    async def _read_console_workspace_scope(
+        registry_service: Any, workspace_id: str
+    ) -> Optional[RagScope]:
+        """Read a workspace's stored scope, off-loop for a file-backed registry.
+
+        Mirrors ``_read_console_retrieval_scope``'s in-memory-DB guard
+        (task-13): ``LocalWorkspaceRegistryService.db`` is never actually
+        ``:memory:``-backed in production (``WorkspaceDB`` opens a brand-new
+        connection per call, incompatible with SQLite's ``:memory:``
+        semantics beyond a single call), but the guard is applied anyway
+        for the same defensive discipline the conversation-scope read uses.
+        """
+        db = getattr(registry_service, "db", None)
+        if getattr(db, "is_memory_db", False):
+            return registry_service.get_workspace_scope(workspace_id)
+        return await asyncio.to_thread(
+            registry_service.get_workspace_scope, workspace_id
+        )
+
+    @staticmethod
+    async def _write_console_workspace_scope(
+        registry_service: Any, workspace_id: str, scope: Optional[RagScope]
+    ) -> None:
+        """Write (or clear) a workspace's stored scope; see the read twin's
+        in-memory-registry-DB guard docstring for why this isn't
+        unconditionally ``asyncio.to_thread``."""
+        db = getattr(registry_service, "db", None)
+        if getattr(db, "is_memory_db", False):
+            registry_service.set_workspace_scope(workspace_id, scope)
+        else:
+            await asyncio.to_thread(
+                registry_service.set_workspace_scope, workspace_id, scope
+            )
+
     def _console_scope_picker_listers(
         self,
     ) -> tuple[Any, Any, Any]:
@@ -3249,8 +3519,15 @@ class ChatScreen(BaseAppScreen):
         modal (so the modal's ``initial`` selection is accurate) -- a
         persisted session's stored scope via ``read_conversation_scope``,
         an unpersisted session's held ``SessionScopeHolder`` value (already
-        in memory, no I/O). No ``universe`` restriction yet (workspace-level
-        scoping is Phase 3).
+        in memory, no I/O).
+
+        Also reads the linked workspace's scope (task-13, spec decision D3:
+        "conversation narrows within workspace"): when the workspace has an
+        active scope, the modal's ``universe`` is restricted to exactly
+        that scope's items, so the conversation picker only ever offers
+        (and lets "Select all matching" select) content already in the
+        workspace's scope. No workspace scope set -> ``universe=None``
+        (today's full-library behavior, byte-identical).
         """
         session = self._active_native_console_session()
         if session is None:
@@ -3266,6 +3543,29 @@ class ChatScreen(BaseAppScreen):
             self._console_retrieval_scope_cache[conversation_id] = initial
         else:
             initial = session.rag_scope_holder.scope
+
+        universe: Optional[frozenset[tuple[str, str]]] = None
+        workspace_id = getattr(session, "workspace_id", None)
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        if workspace_id and registry_service is not None:
+            try:
+                ws_scope = await self._read_console_workspace_scope(
+                    registry_service, workspace_id
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Unable to read workspace scope for {} while opening the "
+                    "conversation scope picker",
+                    workspace_id,
+                )
+                ws_scope = None
+            if ws_scope is not None:
+                universe = frozenset(
+                    (item.source_type, item.source_id) for item in ws_scope.items
+                )
+
         title = session.title.strip() if session.title else ""
         target_label = title or "this conversation"
         media_lister, notes_lister, tag_lister = self._console_scope_picker_listers()
@@ -3280,7 +3580,7 @@ class ChatScreen(BaseAppScreen):
         self.app.push_screen(
             ConsoleScopePickerModal(
                 target_label,
-                None,
+                universe,
                 initial,
                 _on_save,
                 media_lister=media_lister,
@@ -3382,9 +3682,11 @@ class ChatScreen(BaseAppScreen):
             self._console_retrieval_scope_cache[conversation_id] = after
         else:
             session.rag_scope_holder.set(scope)
-        if self.is_mounted:
-            self._sync_console_retrieval_scope_row()
-            self._sync_console_control_bar()
+        # task-13: resolve the EFFECTIVE (conversation ∩ workspace) state
+        # for the row/chip, not just the conversation-only scope just
+        # saved -- a workspace scope may already be narrowing this
+        # conversation's retrieval too.
+        await self._refresh_console_effective_scope_and_sync(session)
 
     @on(Button.Pressed, ".console-retrieval-scope-open-btn")
     async def _console_retrieval_scope_open_pressed(self, event: Button.Pressed) -> None:
@@ -3771,12 +4073,17 @@ class ChatScreen(BaseAppScreen):
             settings=self._console_session_settings_for_resume(conversation),
         )
         self._set_active_workspace_for_console_session(session.id)
-        # task-9: warm the retrieval-scope cache for this conversation now
-        # (off-loop) so the Inspector row reflects reality immediately on
-        # resume, rather than defaulting to "everything" until the user
-        # opens Edit or saves a change (the picker's other two read
-        # triggers).
-        await self._warm_console_retrieval_scope_cache(target)
+        # task-9/task-13: warm the EFFECTIVE (conversation ∩ workspace)
+        # scope cache for this session now (off-loop) so the Inspector row
+        # reflects reality immediately on resume, rather than defaulting to
+        # "everything" until the user opens Edit or saves a change (the
+        # picker's other two read triggers).
+        try:
+            await self._resolve_console_effective_scope_state(session)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to resolve retrieval scope for conversation {}", target
+            )
         # task-10 review finding 2: warming the cache above is not enough
         # by itself -- neither `_sync_native_console_chat_ui()` below nor
         # its own `_sync_console_control_bar()` call ever touches the
@@ -3800,26 +4107,6 @@ class ChatScreen(BaseAppScreen):
         self._focus_console_composer_if_needed(force=True)
         return True
 
-    async def _warm_console_retrieval_scope_cache(self, conversation_id: str) -> None:
-        """Populate the retrieval-scope cache for `conversation_id`, off-loop.
-
-        Args:
-            conversation_id: Persisted Chat conversation id to read the
-                stored RAG retrieval scope for.
-        """
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if db is None:
-            self._console_retrieval_scope_cache[conversation_id] = None
-            return
-        try:
-            scope = await self._read_console_retrieval_scope(db, conversation_id)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Failed to read retrieval scope for conversation {}", conversation_id
-            )
-            scope = None
-        self._console_retrieval_scope_cache[conversation_id] = scope
-
     def _on_console_scope_flushed(
         self, conversation_id: str, scope: Optional[RagScope]
     ) -> None:
@@ -3836,11 +4123,33 @@ class ChatScreen(BaseAppScreen):
         rendering "everything" for the newly persisted conversation id
         until the user reopened Edit or saved a change, even though the
         scope was written correctly.
+
+        This callback is itself synchronous (``ConsoleChatStore``'s
+        ``on_scope_flushed`` contract), so it cannot ``await`` the
+        off-loop workspace-intersection resolve (task-13) directly. It
+        instead caches the immediate conversation-only approximation
+        (byte-identical to pre-task-13 behavior, so the row/chip update in
+        the same tick as the flush) and schedules a worker to resolve the
+        full effective (conversation ∩ workspace) state and refresh again
+        once that lands -- a workspace scope only ever NARROWS an already-
+        correct conversation-only display, so this is never a regression,
+        only an eventually-more-precise follow-up.
         """
         self._console_retrieval_scope_cache[conversation_id] = scope
-        if self.is_mounted:
-            self._sync_console_retrieval_scope_row()
-            self._sync_console_control_bar()
+        self._console_effective_scope_cache[conversation_id] = (
+            ConsoleRetrievalScopeState.from_scope(scope)
+        )
+        if not self.is_mounted:
+            return
+        self._sync_console_retrieval_scope_row()
+        self._sync_console_control_bar()
+        session = self._active_native_console_session()
+        if session is not None and session.persisted_conversation_id == conversation_id:
+            self.run_worker(
+                self._refresh_console_effective_scope_and_sync(session),
+                exclusive=True,
+                group="console-effective-scope-refresh",
+            )
 
     def _build_console_workspace_context_state(
         self,
