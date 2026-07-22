@@ -2832,3 +2832,60 @@ async def test_send_that_fits_does_not_trim_or_note(monkeypatch):
         r.role == ConsoleMessageRole.SYSTEM and "trimmed" in r.content.lower()
         for r in rows
     )
+
+
+@pytest.mark.asyncio
+async def test_trim_budgets_against_resolution_model_not_controller_state(monkeypatch):
+    # Selection Race (Qodo review): the trim must budget against the model
+    # captured in `resolution` -- the one the dispatch below actually sends --
+    # not the controller's mutable self.model, which a provider/model switch
+    # racing the pre-dispatch awaits could have changed. Give `resolution` a
+    # tiny-window model and the controller a huge-window model; the trim must
+    # fire on the small window, proving it reads resolution.*, not self.*.
+    def _limit(model, provider):
+        return 520 if model == "small-window" else 1_000_000
+
+    monkeypatch.setattr(console_history_budget, "get_model_token_limit", _limit)
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    # Controller's mutable state points at a huge-window model...
+    controller.update_provider_selection(
+        ConsoleProviderSelection(
+            provider="openai",
+            explicit_model="huge-window",
+            configured_model="huge-window",
+            max_tokens=0,
+        )
+    )
+    session = _arm_session(store)
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    provider_messages = []
+    for i in range(6):
+        provider_messages.append({"role": "user", "content": f"old user {i} aa bb cc dd"})
+        provider_messages.append({"role": "assistant", "content": f"old asst {i} aa bb cc dd"})
+    provider_messages.append({"role": "user", "content": "current question here"})
+
+    # ...but the captured resolution (what actually dispatches) is the tiny model.
+    resolution = SimpleNamespace(
+        ready=True,
+        provider="llama_cpp",
+        base_url="http://127.0.0.1:9099",
+        model="small-window",
+        max_tokens=0,
+        visible_copy="",
+    )
+
+    await controller._stream_assistant_response(
+        resolution=resolution,
+        provider_messages=provider_messages,
+        assistant_message_id=assistant.id,
+    )
+
+    # Budgeted against the 520-token resolution window (not the 1M self.model),
+    # so the 13-message history collapsed to just the current turn.
+    assert gateway.messages_seen is not None
+    assert len(gateway.messages_seen) < 13
+    assert gateway.messages_seen[-1]["content"] == "current question here"

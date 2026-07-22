@@ -2098,11 +2098,17 @@ class ConsoleChatController:
         force_plain = owner is not None and owner.character_id is not None
         # task-322: bound the dispatched history by real tokens before the
         # agent-vs-direct branch below, so both paths send a windowed payload.
+        # Budget against the captured `resolution` -- the same model/provider/
+        # max_tokens the dispatch below actually sends -- not the controller's
+        # mutable self.* fields, which a provider/model switch racing the awaits
+        # between resolve_for_send and here could have changed underneath us.
         bound = bound_messages_to_window(
             provider_messages,
-            model=self.model or self.configured_model or "",
-            provider=self.provider,
-            response_reservation=self.max_tokens or DEFAULT_RESPONSE_RESERVATION,
+            model=getattr(resolution, "model", None) or "",
+            provider=getattr(resolution, "provider", "") or "",
+            response_reservation=(
+                getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
+            ),
         )
         provider_messages = bound.messages
         if bound.dropped_count:
