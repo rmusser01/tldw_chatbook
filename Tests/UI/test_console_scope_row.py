@@ -960,6 +960,19 @@ async def test_workspace_rag_scope_button_opens_modal_with_universe_none():
         active = registry.get_active_workspace()
         assert active is not None
 
+        # task-14 regression guard: the button must be FULLY inside the
+        # rail body's clipped width, or a real/`pilot.click` at its
+        # center lands on the rail backdrop instead of the button (the
+        # narrow ~38-column Console left rail only fits a couple of
+        # compact buttons per row -- see console_workspace_context.py).
+        button = console.query_one(f"#{WORKSPACE_SCOPE_BTN_ID}", Button)
+        rail_body = console.query_one("#console-rail-section-body-session")
+        assert button.region.right <= rail_body.region.right, (
+            f"RAG Scope button region {button.region} extends past the "
+            f"rail body's clipped width {rail_body.region} -- it would be "
+            "unreachable by a real click"
+        )
+
         await pilot.click(f"#{WORKSPACE_SCOPE_BTN_ID}")
         await pilot.pause()
         for _ in range(20):

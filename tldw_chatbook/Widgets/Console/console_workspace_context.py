@@ -734,13 +734,27 @@ class ConsoleWorkspaceContextTray(Vertical):
                 compact=True,
                 disabled=not self.state.new_workspace_enabled,
             )
-            # task-13: workspace-level RAG retrieval scope entry point.
-            # Named "RAG Scope" (not "Scope") to avoid colliding with the
-            # unrelated "Scope" status pair below, which shows the active
-            # conversation's identity, not a RAG retrieval scope. Enabled
-            # only for a real registry workspace (`rag_scope_enabled`) --
-            # never for the "Local Default"/error/no-registry sentinel
-            # states, which have no real workspace_id to scope against.
+
+        # task-13: workspace-level RAG retrieval scope entry point.
+        # Named "RAG Scope" (not "Scope") to avoid colliding with the
+        # unrelated "Scope" status pair below, which shows the active
+        # conversation's identity, not a RAG retrieval scope. Enabled
+        # only for a real registry workspace (`rag_scope_enabled`) --
+        # never for the "Local Default"/error/no-registry sentinel
+        # states, which have no real workspace_id to scope against.
+        #
+        # This lives on its OWN row (task-14) rather than sharing the
+        # Switch/New row: the narrow Console left rail body is only wide
+        # enough for ~2 compact buttons (Textual's default Button
+        # min-width is 16 columns each). A third button packed into the
+        # same Horizontal overflowed the rail's clipped width, so the
+        # button's clickable region extended past the rail body -- real
+        # clicks (and `pilot.click`) landed on the rail backdrop instead
+        # of the button.
+        with Horizontal(
+            id="console-workspace-rag-scope-row",
+            classes="console-workspace-action-row",
+        ):
             scope_button = Button(
                 "RAG Scope",
                 id="console-workspace-rag-scope-open",
