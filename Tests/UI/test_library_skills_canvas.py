@@ -100,6 +100,31 @@ def _two_row_state(*, sort: str = "name") -> SkillsListState:
     )
 
 
+def _two_row_state_no_blocked(*, sort: str = "name") -> SkillsListState:
+    """Like ``_two_row_state`` but with NO blocked rows (Task 4): used to
+    prove the trust header's "ready + clean" quiet state, since
+    ``_two_row_state`` itself always has one blocked row (which would make
+    posture "ready" render the "review" header instead)."""
+    return SkillsListState(
+        rows=(
+            SkillListRow(
+                name="code-review",
+                secondary="user · agent · Reviews a diff",
+                trust_glyph="✓",
+                blocked=False,
+            ),
+            SkillListRow(
+                name="summarize",
+                secondary="user · agent · Summarizes text",
+                trust_glyph="✓",
+                blocked=False,
+            ),
+        ),
+        count=2,
+        sort=sort,
+    )
+
+
 class _CanvasHost(App):
     def __init__(self, state: SkillsListState | None, **kwargs: Any) -> None:  # type: ignore[valid-type]
         super().__init__()
@@ -221,6 +246,69 @@ async def test_skills_canvas_empty_state_with_filter_shows_filter_copy():
     async with app.run_test() as pilot:
         empty = pilot.app.query_one("#library-skills-empty")
         assert "match your filter" in str(empty.renderable)
+
+
+# ---------------------------------------------------------------------------
+# Adaptive trust header tests (Task 4): the list canvas's
+# ``#library-skills-trust-header``/``#library-skills-trust-action``, driven
+# by ``skill_trust_header_line`` (``library_skills_state.py``).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_skills_list_renders_trust_header_setup():
+    app = _CanvasHost(_two_row_state(), trust_posture="needs_setup")
+    async with app.run_test() as pilot:
+        header = pilot.app.query_one("#library-skills-trust-header", Static)
+        assert "isn't set up" in str(header.renderable)
+        action = pilot.app.query_one("#library-skills-trust-action", Button)
+        assert action.trust_action == "setup"
+
+
+@pytest.mark.asyncio
+async def test_skills_list_trust_header_hidden_when_ready_and_clean():
+    """``_two_row_state`` has a blocked row (posture "ready" on it would
+    render "review"), so this uses ``_two_row_state_no_blocked`` instead --
+    the true "ready + clean" case: a quiet header with NO action button."""
+    app = _CanvasHost(_two_row_state_no_blocked(), trust_posture="ready")
+    async with app.run_test() as pilot:
+        header = pilot.app.query_one("#library-skills-trust-header", Static)
+        assert str(header.renderable) == "Skill trust: ready."
+        assert not pilot.app.query("#library-skills-trust-action")
+
+
+@pytest.mark.asyncio
+async def test_skills_list_trust_header_shows_review_when_ready_with_blocked():
+    """Companion to the clean case above: ``_two_row_state`` has one
+    blocked row, so posture "ready" on it renders the "review" header with
+    its action button -- proving ``blocked_count`` is actually threaded
+    through from ``state.rows``, not hardcoded."""
+    app = _CanvasHost(_two_row_state(), trust_posture="ready")
+    async with app.run_test() as pilot:
+        header = pilot.app.query_one("#library-skills-trust-header", Static)
+        assert "1 skill" in str(header.renderable)
+        action = pilot.app.query_one("#library-skills-trust-action", Button)
+        assert action.trust_action == "review"
+
+
+@pytest.mark.asyncio
+async def test_skills_list_trust_header_hidden_when_posture_absent():
+    app = _CanvasHost(_two_row_state(), trust_posture="")
+    async with app.run_test() as pilot:
+        assert not pilot.app.query("#library-skills-trust-header")
+        assert not pilot.app.query("#library-skills-trust-action")
+
+
+@pytest.mark.asyncio
+async def test_skills_list_trust_header_hidden_when_zero_skills():
+    """Spec's "don't nag" rule: with zero skills installed, the trust
+    header (and its action button) stays hidden even for a posture that
+    would otherwise render one -- there's nothing to review/trust yet."""
+    empty_state = SkillsListState(rows=(), count=0, sort="name")
+    app = _CanvasHost(empty_state, trust_posture="needs_setup")
+    async with app.run_test() as pilot:
+        assert not pilot.app.query("#library-skills-trust-header")
+        assert not pilot.app.query("#library-skills-trust-action")
 
 
 # ---------------------------------------------------------------------------
@@ -1804,6 +1892,13 @@ def test_skill_trust_remediation_copy_covers_no_exit_states():
 
 @pytest.mark.asyncio
 async def test_skill_editor_trust_panel_renders_remediation_for_manifest_error():
+    """Task 5: ``quarantined_manifest_error`` now has a real in-panel
+    recovery (Reset), so the remediation line is a short "reset to start
+    over" pointer instead of task-421's "go inspect the files by hand /
+    maybe delete the trust store" guidance -- the Reset button itself
+    drives the actual recovery, reusing the same
+    ``#library-skills-trust-reset`` id the list header's standalone Reset
+    action uses (only one view is ever mounted at a time)."""
     state = _editor_state(
         trust_status="quarantined_manifest_error", trust_blocked=True
     )
@@ -1813,7 +1908,10 @@ async def test_skill_editor_trust_panel_renders_remediation_for_manifest_error()
     async with app.run_test() as pilot:
         remediation = pilot.app.query_one("#library-skill-trust-remediation", Static)
         text = str(remediation.renderable)
-        assert "/tmp/store/skills/demo" in text
+        assert "manifest" in text.lower()
+        assert "reset" in text.lower()
+        reset_button = pilot.app.query_one("#library-skills-trust-reset", Button)
+        assert reset_button is not None
 
 
 # ---------------------------------------------------------------------------
@@ -1857,6 +1955,37 @@ def test_reset_skill_editor_state_clears_import_row():
     assert fake._library_skills_import_path == ""
     assert fake._library_skills_import_status == ""
     assert fake._library_skills_import_review_name == ""
+
+
+def test_reset_skill_editor_state_clears_trust_reset_confirm_flag():
+    """Review finding (Spec 1 T5): arming the trust-reset confirm (from the
+    editor's manifest_error panel or the list header) and then leaving the
+    editor left ``_library_skill_trust_confirming_reset`` armed -- the
+    confirm-gated Reset row could then reappear unprompted in another view.
+    Mirrors ``test_reset_skill_editor_state_clears_import_row`` above."""
+    fake = SimpleNamespace(
+        _library_skills_view="editor",
+        _library_skill_detail={},
+        _library_skill_original_name="",
+        _library_skill_editor_state=None,
+        _library_skill_dirty=True,
+        _library_skill_status="x",
+        _library_skill_conflict=False,
+        _library_skill_active_review=None,
+        _library_skill_confirming_delete=False,
+        _library_skill_scroll_pending=False,
+        _library_skill_editor_armed=True,
+        _library_skill_trust_confirming_reset=True,
+        _library_skills_import_open=False,
+        _library_skills_import_path="",
+        _library_skills_import_status="",
+        _library_skills_import_review_name="",
+    )
+    fake._reset_library_skills_import_state = (
+        lambda: LibraryScreen._reset_library_skills_import_state(fake)
+    )
+    LibraryScreen._reset_library_skill_editor_state(fake)
+    assert fake._library_skill_trust_confirming_reset is False
 
 
 @pytest.mark.asyncio
@@ -2228,3 +2357,39 @@ def test_trust_review_preview_within_caps_unchanged():
     assert "body text" in preview
     assert "notes" in preview
     assert "omitted" not in preview
+
+
+# ---------------------------------------------------------------------------
+# Task 5 (skills-foundation): list-header trust action dispatch and the
+# confirm-gated Reset, tested direct-method style against a SimpleNamespace
+# stand-in for ``self`` (mirrors ``test_action_library_skill_save_kicks_save_worker``
+# above).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_trust_action_setup_dispatches_bootstrap():
+    calls = []
+    fake = SimpleNamespace(
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
+        _begin_library_skill_trust_setup=lambda: calls.append("setup"),
+        _unlock_library_skill_trust=lambda: None,
+        run_worker=lambda coro, **k: None,
+    )
+    button = SimpleNamespace(trust_action="setup")
+    LibraryScreen.handle_library_skills_trust_action(
+        fake, SimpleNamespace(stop=lambda: None, button=button)
+    )
+    assert calls == ["setup"]
+
+
+def test_reset_requires_confirmation():
+    fake = SimpleNamespace(
+        _library_skill_trust_confirming_reset=False,
+        refresh=lambda recompose=False: None,
+        is_mounted=True,
+    )
+    LibraryScreen.handle_library_skills_trust_reset_request(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+    assert fake._library_skill_trust_confirming_reset is True

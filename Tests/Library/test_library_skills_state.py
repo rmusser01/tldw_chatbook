@@ -235,3 +235,24 @@ def test_build_editor_state_keeps_real_frontmatter_description():
     )
     assert state.description == "Real description."
     assert state.description_derived is False
+
+
+def test_skill_trust_header_line_maps_postures():
+    from tldw_chatbook.Library.library_skills_state import skill_trust_header_line
+
+    assert skill_trust_header_line("needs_setup", 0)[1] == "setup"
+    assert "isn't set up" in skill_trust_header_line("needs_setup", 0)[0]
+    assert skill_trust_header_line("needs_resetup", 0)[1] == "resetup"
+    assert "again after an update" in skill_trust_header_line("needs_resetup", 0)[0]
+    assert skill_trust_header_line("unavailable", 0)[1] == "retry"
+    assert skill_trust_header_line("locked", 0)[1] == "unlock"
+    # ready + blocked skills -> review; ready + none -> quiet 'ready'
+    assert skill_trust_header_line("ready", 3)[1] == "review"
+    assert "3 skill" in skill_trust_header_line("ready", 3)[0]
+    assert skill_trust_header_line("ready", 0)[1] == ""
+    # error posture (corrupt/tampered manifest) -> still a header, with a
+    # list-level recovery action (reuses "resetup" -- reset-then-bootstrap).
+    assert skill_trust_header_line("error", 0)[1] == "resetup"
+    assert "can't be verified" in skill_trust_header_line("error", 0)[0]
+    # disabled/empty posture -> hidden
+    assert skill_trust_header_line("", 0) is None

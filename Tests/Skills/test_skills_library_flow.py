@@ -14,7 +14,7 @@ of regression this suite guards against).
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from textual.widgets import Button, Input, Static, TextArea
@@ -1145,3 +1145,81 @@ async def test_derived_flag_cleared_when_snapshotting_populated_description(tmp_
 
         assert screen._library_skill_editor_state.description_derived is False
         assert len(screen.query("#library-skill-description-hint")) == 0
+
+
+# ---------------------------------------------------------------------------
+# Task 5 (skills-foundation): list-header trust actions wired into the
+# screen -- posture computed off-thread and passed to the list canvas, so a
+# real orphaned-manifest (upgrade) scenario offers a single one-click
+# resetup instead of stranding the user in the locked/unlock/error detour.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_orphaned_manifest_is_one_click_resetup(tmp_path):
+    """Manifest present but scoped marker cleanly absent -> header offers a single
+    Set-up that reset-then-bootstraps, never the locked/unlock/error detour."""
+    trust = _real_uninitialized_trust_service(tmp_path)
+    local_service, service = _real_skills_scope_service(tmp_path, trust_service=trust)
+    await local_service.create_skill(
+        name="demo", content=_skill_content(title="D", description="d"),
+    )
+    # Bootstrap, then simulate the upgrade: clear ONLY the marker, leaving the manifest.
+    trust.bootstrap_trust("pw", salt=b"7" * 32)
+    trust.trust_store.marker_store.clear()
+    trust._keys = None  # fresh session
+    assert trust.trust_posture() == "needs_resetup"
+
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    app.local_skill_trust_service = trust
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        await pilot.pause(); await pilot.pause()
+        header = screen.query_one("#library-skills-trust-header", Static)
+        assert "again after an update" in str(header.renderable)
+        action = screen.query_one("#library-skills-trust-action", Button)
+        assert action.trust_action == "resetup"
+
+
+@pytest.mark.asyncio
+async def test_list_mode_unlock_refreshes_snapshot_not_just_posture(tmp_path):
+    """Qodo review: a list-header Unlock refreshed only the trust posture, but
+    the list rows' trust glyphs and the header's blocked-count derive from the
+    cached local-source snapshot -- so they stayed stale until some later
+    snapshot refresh. A successful list-mode unlock must refresh the snapshot
+    too (matching the sibling reset/setup handlers)."""
+    trust = _real_uninitialized_trust_service(tmp_path)
+    local_service, service = _real_skills_scope_service(tmp_path, trust_service=trust)
+    await local_service.create_skill(
+        name="demo", content=_skill_content(title="D", description="d"),
+    )
+    trust.bootstrap_trust("pw", salt=b"7" * 32)
+    trust._keys = None  # fresh session -> locked posture, offers Unlock
+    assert trust.trust_posture() == "locked"
+
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    app.local_skill_trust_service = trust
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        await pilot.pause(); await pilot.pause()
+        assert screen._library_skills_view != "editor"
+
+        # Spy the snapshot refresh (a @work-decorated method the production
+        # code calls bare) and drive a real, successful unlock.
+        snapshot_spy = MagicMock()
+        screen._refresh_local_source_snapshot = snapshot_spy
+        pilot.app.push_screen_wait = AsyncMock(return_value="pw")
+        await screen._unlock_library_skill_trust()
+
+        assert trust.trust_posture() == "ready"  # unlock genuinely succeeded
+        snapshot_spy.assert_called_once()

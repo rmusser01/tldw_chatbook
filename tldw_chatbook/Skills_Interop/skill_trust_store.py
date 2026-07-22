@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import math
 from collections.abc import Mapping, Sequence
@@ -38,6 +39,26 @@ _KEY_CACHE_FIELDS = (
 )
 
 
+def skill_trust_account_scope(store_dir: Path) -> str:
+    """Per-profile keyring account suffix derived from the resolved store dir.
+
+    Isolates each profile's trust marker + key cache in the shared OS keyring
+    so profiles/users on one machine cannot read each other's entries. Moving
+    the data dir changes the scope (a one-time re-setup, by design).
+
+    Args:
+        store_dir: The profile's trust store directory. Resolved to an
+            absolute path before hashing, so relative or symlinked spellings
+            of the same location yield the same scope.
+
+    Returns:
+        A 16-character hex suffix (a truncated SHA-256 of the resolved path)
+        appended to the keyring account names to scope them per profile.
+    """
+    resolved = str(Path(store_dir).resolve())
+    return hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:16]
+
+
 class SkillTrustMarkerUnavailable(RuntimeError):
     """Raised when rollback marker storage cannot provide full protection."""
 
@@ -53,6 +74,10 @@ class SkillTrustGenerationMarkerStore(Protocol):
 
     def save_marker(self, *, generation: int, manifest_digest: str) -> None:
         """Persist the latest accepted manifest generation and canonical digest."""
+        ...
+
+    def clear(self) -> None:
+        """Remove the persisted marker, if any (idempotent, non-raising)."""
         ...
 
 
@@ -85,6 +110,13 @@ class FileSkillTrustGenerationMarkerStore:
         }
         _atomic_write_json(self.marker_path, payload, base_dir=self.marker_path.parent)
 
+    def clear(self) -> None:
+        """Remove the on-disk marker file (missing-ok, no raise)."""
+        try:
+            self.marker_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
 
 class UnavailableSkillTrustGenerationMarkerStore:
     """Marker store used when no secure OS-backed marker backend is available."""
@@ -108,6 +140,10 @@ class UnavailableSkillTrustGenerationMarkerStore:
 
         self._raise_unavailable()
 
+    def clear(self) -> None:
+        """No-op: there is no persisted marker to remove."""
+        return None
+
 
 @dataclass(slots=True, repr=False)
 class KeyringSkillTrustGenerationMarkerStore:
@@ -115,6 +151,7 @@ class KeyringSkillTrustGenerationMarkerStore:
 
     service_name: str = _DEFAULT_MARKER_SERVICE_NAME
     keyring_backend: Any | None = None
+    account_scope: str = ""
 
     def __post_init__(self) -> None:
         keyring_backend = _resolve_keyring_backend(self.keyring_backend)
@@ -127,10 +164,14 @@ class KeyringSkillTrustGenerationMarkerStore:
     def __repr__(self) -> str:
         return "KeyringSkillTrustGenerationMarkerStore(keyring_backend=<redacted>)"
 
+    @property
+    def _account(self) -> str:
+        return f"{_MARKER_USERNAME}:{self.account_scope}" if self.account_scope else _MARKER_USERNAME
+
     def load_marker(self) -> dict[str, Any] | None:
         """Load the marker from secure keyring storage."""
 
-        payload = self.keyring_backend.get_password(self.service_name, _MARKER_USERNAME)
+        payload = self.keyring_backend.get_password(self.service_name, self._account)
         if not payload:
             return None
         marker = json.loads(payload)
@@ -148,30 +189,29 @@ class KeyringSkillTrustGenerationMarkerStore:
             },
             sort_keys=True,
         )
-        self.keyring_backend.set_password(self.service_name, _MARKER_USERNAME, payload)
+        self.keyring_backend.set_password(self.service_name, self._account, payload)
 
-
-def build_default_skill_trust_marker_store(
-    keyring_backend: Any | None = None,
-) -> SkillTrustGenerationMarkerStore:
-    """Return a secure default marker store or a fail-closed unavailable store."""
-
-    try:
-        return KeyringSkillTrustGenerationMarkerStore(keyring_backend=keyring_backend)
-    except Exception as exc:
-        return UnavailableSkillTrustGenerationMarkerStore(str(exc))
+    def clear(self) -> None:
+        """Delete the scoped keyring marker entry (best-effort)."""
+        deleter = getattr(self.keyring_backend, "delete_password", None)
+        if callable(deleter):
+            try:
+                deleter(self.service_name, self._account)
+            except Exception:
+                pass
 
 
 def build_skill_trust_marker_store_with_fallback(
     *,
     fallback_marker_path: Path,
     keyring_backend: Any | None = None,
+    account_scope: str = "",
 ) -> tuple[SkillTrustGenerationMarkerStore, bool]:
     """Return a marker store and whether reduced rollback protection is active."""
 
     try:
         return KeyringSkillTrustGenerationMarkerStore(
-            keyring_backend=keyring_backend
+            keyring_backend=keyring_backend, account_scope=account_scope
         ), False
     except Exception:
         return FileSkillTrustGenerationMarkerStore(fallback_marker_path), True
@@ -183,6 +223,7 @@ class KeyringSkillTrustKeyCache:
 
     service_name: str = _DEFAULT_KEY_CACHE_SERVICE_NAME
     keyring_backend: Any | None = None
+    account_scope: str = ""
 
     def __post_init__(self) -> None:
         keyring_backend = _resolve_keyring_backend(self.keyring_backend)
@@ -194,6 +235,10 @@ class KeyringSkillTrustKeyCache:
 
     def __repr__(self) -> str:
         return "KeyringSkillTrustKeyCache(keyring_backend=<redacted>)"
+
+    @property
+    def _account(self) -> str:
+        return f"{_KEY_CACHE_USERNAME}:{self.account_scope}" if self.account_scope else _KEY_CACHE_USERNAME
 
     def save_keys(self, keys: SkillTrustKeys, *, salt: bytes) -> None:
         """Store derived key material in a secure keyring, never the passphrase."""
@@ -209,7 +254,7 @@ class KeyringSkillTrustKeyCache:
         }
         self.keyring_backend.set_password(
             self.service_name,
-            _KEY_CACHE_USERNAME,
+            self._account,
             json.dumps(payload, sort_keys=True),
         )
 
@@ -218,7 +263,7 @@ class KeyringSkillTrustKeyCache:
 
         expected_salt_digest = _salt_digest(expected_salt)
         payload = self.keyring_backend.get_password(
-            self.service_name, _KEY_CACHE_USERNAME
+            self.service_name, self._account
         )
         if not payload:
             return None
@@ -230,14 +275,26 @@ class KeyringSkillTrustKeyCache:
         keys = {field: _decode_32_byte_key(data, field) for field in _KEY_CACHE_FIELDS}
         return SkillTrustKeys(**keys)
 
+    def clear(self) -> None:
+        """Delete the scoped keyring key cache entry (best-effort)."""
+        deleter = getattr(self.keyring_backend, "delete_password", None)
+        if callable(deleter):
+            try:
+                deleter(self.service_name, self._account)
+            except Exception:
+                pass
+
 
 def build_default_skill_trust_key_cache(
     keyring_backend: Any | None = None,
+    account_scope: str = "",
 ) -> KeyringSkillTrustKeyCache | None:
     """Return a secure key cache, or ``None`` when unavailable."""
 
     try:
-        return KeyringSkillTrustKeyCache(keyring_backend=keyring_backend)
+        return KeyringSkillTrustKeyCache(
+            keyring_backend=keyring_backend, account_scope=account_scope
+        )
     except Exception:
         return None
 
@@ -409,6 +466,19 @@ class SkillTrustStore:
             keys.snapshot_key,
             associated_data=_snapshot_associated_data(snapshot_id, generation),
         )
+
+    def delete_manifest(self) -> None:
+        """Remove the manifest payload and all snapshots (missing-ok)."""
+        import shutil
+
+        try:
+            self.manifest_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            shutil.rmtree(self.snapshots_dir, ignore_errors=True)
+        except OSError:
+            pass
 
     def _snapshot_path(self, snapshot_id: str) -> Path:
         if not snapshot_id or snapshot_id in {".", ".."}:

@@ -40,6 +40,7 @@ from tldw_chatbook.Library.library_skills_state import (
     SkillsListState,
     save_marks_needs_review,
     skill_name_shadows_builtin,
+    skill_trust_header_line,
 )
 
 _SORT_LABELS = {"name": "Name", "status": "Status"}
@@ -100,6 +101,27 @@ _TRUST_SETUP_EXPLANATION_COPY = (
     "start reviewing and approving local skills — current local skill "
     "files become the trusted baseline."
 )
+
+# Task 4: labels for the Skills-list adaptive trust header's single inline
+# action Button. Keyed by ``skill_trust_header_line``'s ``action_id``
+# (``library_skills_state.py``); the "" key never renders a button (see
+# ``_compose_list``).
+_TRUST_HEADER_ACTION_LABELS = {
+    "setup": "Set up skill trust",
+    "resetup": "Set up skill trust",
+    "retry": "Retry",
+    "unlock": "Unlock",
+    "review": "Review",
+}
+# Task 5: the standalone destructive Reset action -- distinct from the
+# header's own single action button above (``setup``/``resetup`` already
+# resets internally before it bootstraps; this is the explicit escape hatch
+# for ``needs_resetup``/``locked`` postures, and the editor's
+# ``quarantined_manifest_error`` trust panel, which has no header at all).
+_RESET_TRUST_BUTTON_LABEL = "Reset skill trust…"
+# Postures (Task 3's ``trust_posture()`` values) that surface the standalone
+# Reset action in the Skills-list header, alongside its own action button.
+_TRUST_POSTURES_WITH_RESET = frozenset(("needs_resetup", "locked"))
 
 
 def skill_trust_needs_setup(trust_status: str) -> bool:
@@ -162,6 +184,49 @@ def skill_trust_remediation_copy(trust_status: str, skill_path: str) -> str:
             "them, then reopen this skill to re-check."
         )
     return ""
+
+
+# Task 5 (skills-foundation): ``quarantined_manifest_error`` now has a real
+# in-panel recovery -- the Reset action below -- so the long "go inspect
+# files, maybe delete the trust store by hand" guidance
+# ``skill_trust_remediation_copy`` still returns (kept there verbatim, and
+# still directly tested, since it is reused as-is for
+# ``quarantined_unsupported_path``, which has no Reset path) is replaced by
+# a short line pointing at the button that actually fixes it.
+_TRUST_MANIFEST_ERROR_SHORT_COPY = (
+    "The local skill trust manifest can't be verified, so this skill stays "
+    "blocked. Reset skill trust to start over -- your skills themselves "
+    "are not touched."
+)
+# Exact copy pinned by the Task 5 brief for the destructive Reset action's
+# inline confirm row (mirrors ``skill_delete_confirm_copy``'s two-step
+# pattern): every skill drops back to needs-review, but nothing on disk is
+# deleted.
+_TRUST_RESET_CONFIRM_COPY = (
+    "Reset skill trust? Every skill will need re-approval. Your skills are "
+    "not deleted."
+)
+
+
+def skill_trust_panel_remediation_copy(trust_status: str, skill_path: str) -> str:
+    """Guidance text for the trust panel's remediation line (Task 5).
+
+    Same contract as ``skill_trust_remediation_copy`` for every state
+    except ``quarantined_manifest_error``, which now renders a short line
+    naming the in-panel Reset action instead of that function's longer
+    "inspect the files / remove the trust store by hand" guidance.
+
+    Args:
+        trust_status: The skill's current trust status.
+        skill_path: The skill's on-disk directory, for external repair.
+
+    Returns:
+        ``_TRUST_MANIFEST_ERROR_SHORT_COPY`` for ``quarantined_manifest_error``,
+        else ``skill_trust_remediation_copy``'s own return value.
+    """
+    if trust_status == "quarantined_manifest_error":
+        return _TRUST_MANIFEST_ERROR_SHORT_COPY
+    return skill_trust_remediation_copy(trust_status, skill_path)
 
 
 # task-414: per-file preview cap. Generous enough for any realistic
@@ -402,6 +467,18 @@ class LibrarySkillsListCanvas(VerticalScroll):
         import_status: Muted outcome line shown below the Import row
             (e.g. ``'Imported "executing-plans" · re-review it in the trust panel'``), or
             ``""`` when idle/not yet run.
+        trust_posture: List-view only (Task 4). The Skills trust service's
+            current posture (``SkillTrustService.trust_posture()``'s
+            return value -- Task 3), used to render the adaptive trust
+            header above the toolbar via ``skill_trust_header_line``.
+            ``""`` (the default) hides the header -- the screen (Task 5)
+            supplies the real posture.
+        confirming_reset: ``True`` while the destructive Reset action is
+            armed and awaiting its own confirm/cancel (Task 5) -- renders
+            the inline confirm row (``_compose_trust_reset_confirm_row``)
+            below whichever Reset button is showing, in either the
+            list-view header (posture ``needs_resetup``/``locked``) or the
+            editor's ``quarantined_manifest_error`` trust panel.
     """
 
     def __init__(
@@ -411,6 +488,8 @@ class LibrarySkillsListCanvas(VerticalScroll):
         sort_mode: str = "name",
         filter_value: str = "",
         mode: str = "list",
+        trust_posture: str = "",
+        confirming_reset: bool = False,
         editor_state: SkillEditorState | None = None,
         warnings: str = "",
         status: str = "",
@@ -432,6 +511,8 @@ class LibrarySkillsListCanvas(VerticalScroll):
         self.sort_mode = sort_mode
         self.filter_value = filter_value
         self.mode = mode
+        self.trust_posture = trust_posture
+        self.confirming_reset = confirming_reset
         self.editor_state = editor_state
         self.warnings = warnings
         self.status = status
@@ -496,6 +577,45 @@ class LibrarySkillsListCanvas(VerticalScroll):
             classes="destination-section",
             markup=False,
         )
+        # Task 4: adaptive trust header -- posture-driven copy plus an
+        # optional single inline action, computed from THIS state's own
+        # blocked-row count (not a screen-supplied total) so it always
+        # matches what's actually rendered below. Spec's "don't nag" rule:
+        # with zero skills installed there is nothing to review/trust yet,
+        # so the header (and its escape-hatch reset button) stays hidden
+        # entirely rather than greeting an empty list with a trust prompt.
+        if state.rows:
+            blocked_count = sum(
+                1 for row in state.rows if getattr(row, "blocked", False)
+            )
+            header = skill_trust_header_line(self.trust_posture, blocked_count)
+            if header is not None:
+                copy, action_id = header
+                yield Static(copy, id="library-skills-trust-header", markup=False)
+                if action_id:
+                    button = Button(
+                        _TRUST_HEADER_ACTION_LABELS[action_id],
+                        id="library-skills-trust-action",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    button.trust_action = action_id  # read by the screen handler
+                    yield button
+                # Task 5: a SEPARATE, always-destructive escape hatch for the
+                # two postures where the header's own action button doesn't
+                # cover "start over from nothing" -- "resetup" already
+                # reset-then-bootstraps behind a NEW passphrase, and "unlock"
+                # assumes you still remember the OLD one. Neither is a way
+                # out if the manifest itself is the problem.
+                if self.trust_posture in _TRUST_POSTURES_WITH_RESET:
+                    yield Button(
+                        _RESET_TRUST_BUTTON_LABEL,
+                        id="library-skills-trust-reset",
+                        classes="library-canvas-action library-media-action-danger",
+                        compact=True,
+                    )
+                    if self.confirming_reset:
+                        yield from self._compose_trust_reset_confirm_row()
         yield Input(
             placeholder="Filter skills… (Enter)",
             id="library-skills-filter",
@@ -560,6 +680,37 @@ class LibrarySkillsListCanvas(VerticalScroll):
                         escape_markup(row.secondary),
                         classes="library-skill-row-secondary",
                     )
+
+    def _compose_trust_reset_confirm_row(self) -> ComposeResult:
+        """Inline confirm row for the destructive Reset action (Task 5).
+
+        Shared by both places the Reset button can render -- the
+        list-view header (``needs_resetup``/``locked`` postures) and the
+        editor's ``quarantined_manifest_error`` trust panel -- so the two
+        never drift. Same render-safe shape as ``_compose_editor``'s own
+        delete-confirm row: the copy is a full-width ``Static`` ABOVE the
+        toolbar, never mixed into the same ``Horizontal`` as the Buttons.
+        """
+        yield Static(
+            _TRUST_RESET_CONFIRM_COPY,
+            id="library-skills-trust-reset-confirm-copy",
+            markup=False,
+        )
+        toolbar = Horizontal(classes="ds-toolbar")
+        toolbar.styles.height = "auto"
+        with toolbar:
+            yield Button(
+                "Reset",
+                id="library-skills-trust-reset-confirm",
+                classes="library-canvas-action library-media-action-danger",
+                compact=True,
+            )
+            yield Button(
+                "Cancel",
+                id="library-skills-trust-reset-cancel",
+                classes="library-canvas-action",
+                compact=True,
+            )
 
     def _compose_import_row(self) -> ComposeResult:
         """Render the inline Import row: a path Input, then a Run/Cancel
@@ -864,13 +1015,34 @@ class LibrarySkillsListCanvas(VerticalScroll):
             # task-421: always present (empty for states with in-panel
             # remediation) so the screen's no-recompose panel patch can
             # keep it current, same contract as the review-files line.
+            # Task 5: ``skill_trust_panel_remediation_copy`` (not the plain
+            # ``skill_trust_remediation_copy``) so ``quarantined_manifest_error``
+            # gets the short line pointing at the Reset button below,
+            # instead of the old "go inspect files by hand" guidance.
             yield Static(
-                skill_trust_remediation_copy(
+                skill_trust_panel_remediation_copy(
                     editor_state.trust_status, self.skill_path
                 ),
                 id="library-skill-trust-remediation",
                 markup=False,
             )
+            if editor_state.trust_status == "quarantined_manifest_error":
+                # Task 5: the manifest itself can't be verified, so nothing
+                # in the normal Unlock/Review/Approve row below can ever
+                # apply to this skill -- Reset is the only real way
+                # forward, rendered here since this state has no list
+                # header to surface it from.
+                reset_toolbar = Horizontal(classes="ds-toolbar")
+                reset_toolbar.styles.height = "auto"
+                with reset_toolbar:
+                    yield Button(
+                        _RESET_TRUST_BUTTON_LABEL,
+                        id="library-skills-trust-reset",
+                        classes="library-canvas-action library-media-action-danger",
+                        compact=True,
+                    )
+                if self.confirming_reset:
+                    yield from self._compose_trust_reset_confirm_row()
             if skill_trust_needs_setup(editor_state.trust_status):
                 yield Static(
                     _TRUST_SETUP_EXPLANATION_COPY,
