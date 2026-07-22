@@ -3,11 +3,11 @@ id: TASK-457
 title: >-
   Console first-feedback cluster follow-ups: cold-send optimistic echo, rail
   pressed state, inspector-during-run
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-22 02:20'
-updated_date: '2026-07-22 14:35'
+updated_date: '2026-07-22 19:30'
 labels:
   - console
   - ux
