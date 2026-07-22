@@ -24,7 +24,7 @@ Remaining pieces of the task-351 first-feedback finding (Console UX review j4-fi
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 (a) Cold-provider first send echoes the user's message before the readiness probe resolves; a not-ready provider shows an honest block/error row instead of a silently-dropped message
-- [ ] #2 (b) Rail conversation rows show a pressed/loading acknowledgment on click
+- [x] #2 (b) Rail conversation rows show a pressed/loading acknowledgment on click
 - [x] #3 (c) Inspector toggle acknowledges immediately (within ~100ms) even during an active run
 <!-- AC:END -->
 
@@ -116,4 +116,26 @@ assistant/system row to `"failed"` and bypass the assistant terminal guards.
 Both covered by new RED→GREEN tests (`..._rejects_non_user_rows`,
 `test_probe_exception_after_optimistic_echo_marks_row_blocked`); 276 Chat-suite
 green.
+
+(b) DONE. A rail conversation-row click that opens a not-yet-loaded persisted
+conversation awaits `_resume_console_workspace_conversation` inline; a slow or
+failing open used to read as a dead click. The pressed row is now flagged
+`loading` (Textual's built-in spinner overlay) for the duration of the resume
+and always cleared afterwards. New screen helper
+`_set_console_conversation_row_loading(conversation_id, loading)` matches the row
+by its `conversation_id` attribute and no-ops when the row is gone (a successful
+resume recomposes the rail, which already drops the flag; the `finally` covers
+the not-resumable/error return so the row never stays stuck spinning). Only the
+slow `session_id is None` resume branch is wrapped — the already-open
+`switch_session` path is instant and needs no spinner.
+
+Verified RED->GREEN in `Tests/UI/test_console_workspace_context_rail.py`:
+`test_console_conversation_row_loading_toggles_on_matching_row` (helper toggles
+`.loading` on the matching row; unknown id is a no-op) and
+`test_console_conversation_row_click_shows_loading_until_resume_finishes` (a row
+press flags the row loading before the awaited resume runs and clears it once the
+resume settles). Full rail + scope-row + handoffs suites green.
+
+PR map: (c) shipped via PR #745; (a) cold-send optimistic echo via PR #777;
+(b) rail loading feedback via PR #779 — all three ACs met.
 <!-- SECTION:NOTES:END -->
