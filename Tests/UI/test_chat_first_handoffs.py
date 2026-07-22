@@ -413,6 +413,51 @@ async def test_native_start_chat_falls_back_when_card_fetch_fails():
 
 
 @pytest.mark.asyncio
+async def test_resume_restores_character_identity():
+    """Resuming a saved character conversation after an app restart must
+    restore ``session.character_id`` so the plain-provider gate (task-3)
+    keeps routing the resumed conversation's sends off the agent loop
+    (task-427, task-5)."""
+    from Tests.UI.test_console_native_chat_flow import StaticConversationTreeService
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    tree = {
+        "conversation": {
+            "conversation_id": "conv-elara-1",
+            "title": "Chat with Elara",
+            "character_id": 7,
+            "workspace_id": None,
+            "system_prompt": None,
+            "metadata": None,
+        },
+        "root_threads": [],
+        "pagination": {"total_root_threads": 0},
+    }
+    app = _build_test_app()
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {"conv-elara-1": tree}
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+
+        resumed = await screen._resume_console_workspace_conversation(
+            "conv-elara-1"
+        )
+        await pilot.pause()
+
+        assert resumed is True
+        store = screen._ensure_console_chat_store()
+        session = store._sessions[store.active_session_id]
+        assert session.character_id == 7
+
+
+@pytest.mark.asyncio
 async def test_chat_screen_pending_handoff_consumer_is_reentrant_safe():
     payload = ChatHandoffPayload(
         source="notes",

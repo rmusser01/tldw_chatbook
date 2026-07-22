@@ -4155,6 +4155,16 @@ class ChatScreen(BaseAppScreen):
             messages=messages,
             settings=self._console_session_settings_for_resume(conversation),
         )
+        # TASK-427: the plain-provider gate (task-3) keys off the active
+        # session's ``character_id`` -- restore it from the persisted
+        # conversation row so a character conversation resumed after an
+        # app restart keeps routing sends off the agent loop.
+        raw_character_id = conversation.get("character_id")
+        if raw_character_id is not None:
+            try:
+                session.character_id = int(raw_character_id)
+            except (TypeError, ValueError):
+                session.character_id = None
         self._set_active_workspace_for_console_session(session.id)
         # task-9/task-13: warm the EFFECTIVE (conversation ∩ workspace)
         # scope cache for this session now (off-loop) so the Inspector row
