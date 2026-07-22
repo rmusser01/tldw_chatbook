@@ -65,17 +65,28 @@ ConsoleSetupModal
 - At the Console compose site, add `console-header-inline` to the
   `DestinationHeader` classes (`classes="workbench-header console-header-inline"`).
   No change to `DestinationHeader`'s Python or to any other screen.
-- New CSS in `_agentic_terminal.tcss`, scoped to `#console-workbench-header`
-  / `.console-header-inline`:
-  - container: `layout: horizontal; height: 1; min-height: 1;` (overrides the
-    `.workbench-header` `min-height: 2` vertical stack).
-  - `.workbench-header-title`: `width: auto;` (bold already).
-  - `.workbench-header-subtitle`: `width: 1fr; text-wrap: nowrap;
+- New CSS in `_agentic_terminal.tcss`. **Every rule is prefixed with the id +
+  class** (`#console-workbench-header.console-header-inline …`) so it wins
+  deterministically over both `#console-workbench-header` (id, specificity
+  1,0,0) and the shared `.density-compact .workbench-header-subtitle` (0,2,0)
+  — a bare `.console-header-inline .workbench-header-subtitle` (0,2,0) only
+  *ties* the density rule and would depend on bundle source order. Rules:
+  - container `#console-workbench-header.console-header-inline`:
+    `layout: horizontal; height: 1; min-height: 1; border: none;`. The
+    `border: none` matters — `.workbench-header` carries `border: solid`, and
+    a solid border on a one-row box renders as an artifact (top/bottom border
+    can't fit); dropping it gives a clean single line.
+  - `… .workbench-header-title`: `width: auto;` (bold already).
+  - `… .workbench-header-subtitle`: `width: 1fr; text-wrap: nowrap;
     text-overflow: ellipsis;` so it fills and truncates with `…`.
-  - `.workbench-header-status`: `width: auto;` right-aligned (the horizontal
-    container places it last; the `1fr` subtitle pushes it right). Keeps its
-    `ds-status-badge` styling and the state-driven color classes that
-    `sync_state`/`_sync_status_classes` manage.
+  - `… .workbench-header-status`: `width: auto;` — the horizontal container
+    places it last and the `1fr` subtitle pushes it flush to the right edge.
+    Keeps its `ds-status-badge` styling and the state-driven color classes
+    that `sync_state`/`_sync_status_classes` manage.
+- **Runtime-verified** (Textual 8.2.7, minimal `run_test` reproduction of the
+  three-child horizontal layout): at 90 and 50 columns the row is exactly 1
+  cell tall, the subtitle shrinks (76 → 36 cells) and the status badge's right
+  edge equals the terminal width (flush right). The approach holds at width.
 - **Em-dash**: `DestinationHeader.compose` has a fixed three children, so the
   separator can't be a new element. Prepend `"— "` to the subtitle in
   `console_workbench_state.py` (Console-only state — `subtitle="— Chat,
@@ -95,7 +106,10 @@ ConsoleSetupModal
     sync **move here** from `ConsoleControlBar`.
   - Chip ids are **unchanged** (`#console-provider-chip` … `#console-approvals-chip`),
     so existing global `console.query_one("#console-…-chip")` lookups and
-    tests keep resolving.
+    tests keep resolving. The widget also keeps the `console-control-chip-row`
+    **class** so the existing chip-row CSS continues to apply (the old
+    container id `#console-control-chip-row` is referenced only by the widget
+    itself — no test queries it — so it's free to move).
   - Root id `#console-status-chips`; height 1; full width.
 - **`ConsoleControlBar`** keeps: `#console-control-action-row`, the hidden
   `-label` compatibility statics, and the summary line. Its chip row
