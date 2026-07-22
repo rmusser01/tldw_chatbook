@@ -290,3 +290,86 @@ class TestCharacterWithoutImage:
         assert extracted_json is not None
         char_data = json.loads(extracted_json)
         assert char_data["data"]["name"] == "No Image Character"
+
+
+def _v2_card_with_book(top_level_book=True):
+    """Build a minimal-but-valid V2 character card dict with a character_book.
+
+    Includes the fields required by ``validate_v2_card``/``parse_v2_card``
+    (personality, scenario, mes_example) so the card is not rejected before
+    the character_book conversion logic under test ever runs.
+    """
+    book = {
+        "name": "Second Chance Lore",
+        "description": "d",
+        "entries": [
+            {
+                "keys": ["coffee"],
+                "content": "explodes",
+                "enabled": True,
+                "insertion_order": 1,
+            }
+        ],
+    }
+    data = {
+        "name": "Elara",
+        "description": "cap",
+        "personality": "curious",
+        "scenario": "a cafe",
+        "first_mes": "hi",
+        "mes_example": "<START>\n{{user}}: Hi\n{{char}}: Hello!",
+        "extensions": {},
+    }
+    if top_level_book:
+        data["character_book"] = book
+    else:
+        data["extensions"]["character_book"] = book  # legacy nested shape
+    return {"spec": "chara_card_v2", "spec_version": "2.0", "data": data}
+
+
+class TestCharacterBookImportConversion:
+    """TASK-429: importing a card with an embedded character_book converts it
+    into a managed character_world_books snapshot instead of double-injecting
+    lore via the legacy extensions['character_book'] key."""
+
+    def test_import_converts_top_level_character_book(self, db_instance, tmp_path):
+        p = tmp_path / "elara.json"
+        p.write_text(json.dumps(_v2_card_with_book(top_level_book=True)))
+        cid = import_and_save_character_from_file(db_instance, str(p))
+        assert cid is not None
+        rec = db_instance.get_character_card_by_id(cid)
+        ext = rec["extensions"]
+        ext = json.loads(ext) if isinstance(ext, str) else ext
+        assert "character_book" not in ext  # no double-inject
+        books = ext["character_world_books"]
+        assert len(books) == 1 and books[0]["name"] == "Second Chance Lore"
+        assert books[0]["entries"][0]["keys"] == ["coffee"]
+
+    def test_import_converts_nested_legacy_character_book(self, db_instance, tmp_path):
+        p = tmp_path / "legacy.json"
+        p.write_text(json.dumps(_v2_card_with_book(top_level_book=False)))
+        cid = import_and_save_character_from_file(db_instance, str(p))
+        assert cid is not None
+        rec = db_instance.get_character_card_by_id(cid)
+        ext = rec["extensions"]
+        ext = json.loads(ext) if isinstance(ext, str) else ext
+        assert "character_book" not in ext
+        assert ext["character_world_books"][0]["name"] == "Second Chance Lore"
+
+    def test_import_book_with_no_salvageable_entries_keeps_legacy_key(
+        self, db_instance, tmp_path
+    ):
+        card = _v2_card_with_book(top_level_book=False)
+        card["data"]["extensions"]["character_book"]["entries"] = [
+            {"content": "no keys", "enabled": True, "insertion_order": 1}
+        ]
+        p = tmp_path / "bad.json"
+        p.write_text(json.dumps(card))
+        cid = import_and_save_character_from_file(db_instance, str(p))
+        assert cid is not None
+        rec = db_instance.get_character_card_by_id(cid)
+        ext = rec["extensions"]
+        ext = json.loads(ext) if isinstance(ext, str) else ext
+        # nothing salvaged -> legacy key untouched, no empty block written
+        assert "character_world_books" not in ext
+        assert "character_book" in ext
