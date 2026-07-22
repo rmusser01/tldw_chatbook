@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import string
 from typing import Any, List, Tuple
 
 from .config import RAGConfig
@@ -25,6 +27,10 @@ FINGERPRINT_VERSION: int = 1
 _MAX_CHROMA_NAME = 63
 _MIN_CHROMA_NAME = 3
 _FP_LEN = 12  # hex chars of the digest kept
+
+#: Chroma collection names must be ASCII-only [a-zA-Z0-9._-].
+_ALLOWED_NAME_CHARS = set(string.ascii_letters + string.digits + "._-")
+_RUN_OF_DOTS = re.compile(r"\.{2,}")
 
 
 def _index_fields(config: RAGConfig) -> List[Tuple[str, Any]]:
@@ -67,7 +73,7 @@ def _normalize(value: Any) -> Any:
         return None
     s = str(value).strip()
     # numeric strings ("400") normalize to int so they match int configs
-    if s.lstrip("-").isdigit():
+    if re.fullmatch(r"-?\d+", s):
         return int(s)
     return s
 
@@ -84,7 +90,12 @@ def fingerprint_collection(config: RAGConfig) -> str:
 
 def _safe_base(name: str, reserved: int) -> str:
     """A Chroma-safe base name leaving ``reserved`` chars for the suffix."""
-    cleaned = "".join(ch if (ch.isalnum() or ch in "._-") else "-" for ch in str(name))
+    # ASCII-only [a-zA-Z0-9._-]; anything else (including non-ASCII
+    # "alnum" chars like 'é' or '北') is replaced so Chroma never rejects it.
+    cleaned = "".join(ch if ch in _ALLOWED_NAME_CHARS else "-" for ch in str(name))
+    # Collapse runs of dots BEFORE stripping/truncating so slicing can never
+    # leave (or re-create) a ".." anywhere in the final name.
+    cleaned = _RUN_OF_DOTS.sub(".", cleaned)
     cleaned = cleaned.strip("._-") or "rag"
     budget = max(1, _MAX_CHROMA_NAME - reserved)
     cleaned = cleaned[:budget].strip("._-") or "rag"
@@ -109,8 +120,10 @@ def collection_provenance(
         "fp_version": FINGERPRINT_VERSION,
         "fp": fingerprint_collection(config),
         "embedding_model": str(config.embedding.model),
-        "chunk_size": int(config.chunking.chunk_size),
-        "chunk_overlap": int(config.chunking.chunk_overlap),
+        # Reuse the same tolerant coercion fingerprinting uses so provenance
+        # never raises on inputs that fingerprint_collection() accepts.
+        "chunk_size": _normalize(config.chunking.chunk_size),
+        "chunk_overlap": _normalize(config.chunking.chunk_overlap),
         "chunking_method": str(config.chunking.chunking_method),
         "distance_metric": str(config.vector_store.distance_metric),
         "source": source,
