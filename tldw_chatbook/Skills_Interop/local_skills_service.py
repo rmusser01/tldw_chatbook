@@ -685,6 +685,46 @@ class LocalSkillsService:
             return _SKILL_FILENAME
         return validate_supporting_file_path(str(posix))
 
+    @staticmethod
+    def _read_zip_member_bounded(
+        archive: "zipfile.ZipFile",
+        member: "zipfile.ZipInfo",
+        member_name: str,
+        max_bytes: int,
+    ) -> bytes:
+        """Read a zip member with a bounded, streaming decompress.
+
+        Pulls fixed-size chunks via ``archive.open(member)`` so the transient
+        decompressor allocation is capped at ~one chunk regardless of the
+        member's (possibly forged/understated) declared ``file_size`` -- unlike
+        ``archive.read(member)``, which decompresses the whole member into RAM
+        before truncating output, letting a high-ratio DEFLATE bomb spike memory
+        to hundreds of MB from a few-hundred-KB upload. Aborts the moment
+        cumulative bytes exceed ``max_bytes``; a corrupt/forged member (CRC
+        mismatch, bad deflate stream) surfaces as the standard ``ValueError``
+        contract, never a raw ``zipfile.BadZipFile``.
+        """
+        import zlib
+
+        chunk_size = 65536
+        buffer = bytearray()
+        try:
+            with archive.open(member) as handle:
+                while True:
+                    chunk = handle.read(chunk_size)
+                    if not chunk:
+                        break
+                    buffer.extend(chunk)
+                    if len(buffer) > max_bytes:
+                        raise ValueError(
+                            f"local_skill_file_too_large:{member_name}"
+                        )
+        except (zipfile.BadZipFile, zlib.error, OSError) as exc:
+            raise ValueError(
+                f"local_skill_invalid_archive:corrupt_member:{member_name}"
+            ) from exc
+        return bytes(buffer)
+
     async def list_skills(
         self,
         *,
@@ -1053,19 +1093,20 @@ class LocalSkillsService:
                 if lower in seen_lower:             # case-fold collision on a case-insensitive FS
                     raise ValueError(f"local_skill_invalid_archive:case_collision:{member_name}")
                 seen_lower.add(lower)
-                # DoS guard: reject by the DECLARED uncompressed size (free from
-                # the zip header) BEFORE inflating. A crafted DEFLATE member can
-                # carry multiple GB from a few-MB upload and OOM the process if we
-                # read first and check after.
+                # DoS guard, fast path: reject an obviously-oversized DECLARED
+                # size (free from the zip header) without even opening the
+                # member. The real defense is the bounded streaming read below
+                # -- a forged/understated header cannot slip past it because it
+                # aborts on CUMULATIVE bytes actually read, not the declared size.
                 if member.file_size > MAX_SUPPORTING_FILE_BYTES:
                     raise ValueError(f"local_skill_file_too_large:{member_name}")
                 total += member.file_size
                 if total > MAX_SUPPORTING_FILES_TOTAL_BYTES:     # early exit before more reads
                     raise ValueError("local_skill_bundle_too_large")
                 if member_name == _SKILL_FILENAME:
-                    data = archive.read(member)
-                    if len(data) > MAX_SUPPORTING_FILE_BYTES:    # lying-header guard
-                        raise ValueError(f"local_skill_file_too_large:{member_name}")
+                    data = self._read_zip_member_bounded(
+                        archive, member, member_name, MAX_SUPPORTING_FILE_BYTES
+                    )
                     try:
                         skill_content = data.decode("utf-8")
                     except UnicodeDecodeError as exc:
@@ -1081,9 +1122,9 @@ class LocalSkillsService:
                 dest = skill_dir / PurePosixPath(member_name)
                 if base not in dest.resolve().parents:
                     raise ValueError(f"local_skill_invalid_archive:{member_name}")
-                data = archive.read(member)
-                if len(data) > MAX_SUPPORTING_FILE_BYTES:        # lying-header guard
-                    raise ValueError(f"local_skill_file_too_large:{member_name}")
+                data = self._read_zip_member_bounded(
+                    archive, member, member_name, MAX_SUPPORTING_FILE_BYTES
+                )
                 members.append((dest, data, bool(mode & 0o111)))
         if skill_content is None:
             raise ValueError("local_skill_invalid_archive:missing_skill_md")

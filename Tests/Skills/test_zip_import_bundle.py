@@ -70,28 +70,42 @@ async def test_zip_import_rejects_case_fold_collision(tmp_path):
 
 @pytest.mark.asyncio
 async def test_zip_import_prunes_junk_members(tmp_path):
-    """VCS/build junk (``.git/…``, ``__pycache__/*.pyc``) is pruned; real files land."""
+    """Junk pruning is ISOLATED from the name-pattern reject.
+
+    Both members here have names the supporting-file NAME PATTERN would
+    otherwise ACCEPT, so their absence proves ``_is_junk`` /
+    ``SUPPORTING_JUNK_DIRS`` specifically (not the path validator):
+      * ``notes.pyc`` -- top-level, pattern-valid, dropped by ``_is_junk``
+        (``.pyc`` suffix).
+      * ``node_modules/lib.js`` -- pattern-valid path, dropped because
+        ``node_modules`` is in ``SUPPORTING_JUNK_DIRS``.
+    """
     svc = LocalSkillsService(store_dir=tmp_path)
     data = _zip([
         ("SKILL.md", b"---\nname: junk\n---\nbody\n", 0),
-        (".git/config", b"[core]", 0),
-        ("__pycache__/x.pyc", b"\x00", 0),
+        ("notes.pyc", b"\x00", 0),
+        ("node_modules/lib.js", b"x=1", 0),
         ("keep.txt", b"keep", 0),
     ])
     await svc.import_skill_file(data, filename="junk.zip", content_type="application/zip")
     d = svc._skill_dir("junk")
-    assert not (d / ".git").exists()
-    assert not (d / "__pycache__").exists()
+    assert not (d / "notes.pyc").exists()
+    assert not (d / "node_modules").exists()
     assert (d / "keep.txt").read_bytes() == b"keep"
 
 
 @pytest.mark.asyncio
-async def test_zip_import_rejects_oversized_member_leaving_no_skill_dir(tmp_path):
-    """A member over the 5MB per-file cap is rejected BEFORE any skill dir exists.
+async def test_zip_import_streams_and_rejects_member_whose_actual_content_exceeds_cap(
+    tmp_path,
+):
+    """A member whose ACTUAL content exceeds the 5MB per-file cap is rejected
+    BEFORE any skill dir exists.
 
     Uses a ~5MB+1 highly-compressible member (single repeated byte) so the zip
-    stays tiny and the test is fast -- it exercises the ``member.file_size``
-    per-file guard, not a decompression-ratio bomb.
+    stays tiny and the test is fast/CI-safe -- honest oversize content, no
+    decompression-ratio bomb. The rejection surfaces as the standard
+    ``ValueError`` contract (the ``file_size`` fast-path or the streaming
+    cumulative abort) and leaves no partial skill on disk.
     """
     svc = LocalSkillsService(store_dir=tmp_path)
     big = b"x" * (5 * 1024 * 1024 + 1)
@@ -99,9 +113,43 @@ async def test_zip_import_rejects_oversized_member_leaving_no_skill_dir(tmp_path
         ("SKILL.md", b"---\nname: big\n---\nbody\n", 0),
         ("big.bin", big, 0),
     ])
-    with pytest.raises(ValueError, match="too_large"):
+    with pytest.raises(ValueError, match="local_skill_file_too_large|corrupt_member"):
         await svc.import_skill_file(data, filename="big.zip", content_type="application/zip")
     assert not svc._skill_dir("big").exists()
+
+
+def _zip_with_understated_file_size(*, declared: int = 5) -> bytes:
+    """Build a zip whose ``big.bin`` central-directory ``file_size`` LIES.
+
+    The member is written with real (larger) content, then its ZipInfo's
+    ``file_size`` is mutated smaller before ``close()`` writes the central
+    directory -- so ``infolist()`` reports the understated size (defeating a
+    naive ``member.file_size`` pre-check) while the actual DEFLATE payload is
+    bigger. Reading such a member trips a CRC mismatch (``BadZipFile``); the
+    service must surface that as a ``ValueError``, never a raw ``BadZipFile``.
+    """
+    buf = io.BytesIO()
+    z = zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED)
+    z.writestr("SKILL.md", b"---\nname: forged\n---\nbody\n")
+    info = zipfile.ZipInfo("big.bin")
+    z.writestr(info, b"y" * 4096)   # local header + data written with real size
+    info.file_size = declared        # mutate BEFORE close -> central dir lies
+    z.close()
+    return buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_zip_import_wraps_forged_understated_member_as_valueerror(tmp_path):
+    """A member with a forged/understated ``file_size`` header (a lying zip that
+    a pre-check cannot catch) surfaces as the standard ``ValueError`` contract,
+    not a raw ``zipfile.BadZipFile``, and leaves no skill dir behind."""
+    svc = LocalSkillsService(store_dir=tmp_path)
+    data = _zip_with_understated_file_size()
+    with pytest.raises(ValueError, match="corrupt_member|local_skill_file_too_large"):
+        await svc.import_skill_file(
+            data, filename="forged.zip", content_type="application/zip"
+        )
+    assert not svc._skill_dir("forged").exists()
 
 
 @pytest.mark.asyncio
