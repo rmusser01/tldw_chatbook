@@ -915,6 +915,88 @@ class LocalSkillsService:
             )
             return self._response_for_record(record)
 
+    async def import_skill_directory(
+        self,
+        source_dir: Path,
+        *,
+        name: str,
+        overwrite: bool = False,
+        trust_approved: bool = False,
+    ) -> dict[str, Any]:
+        import os
+        import stat
+        from pathlib import PurePosixPath
+
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillImportRequest
+        from ..tldw_api.skills_schemas import (
+            MAX_SUPPORTING_FILE_BYTES,
+            MAX_SUPPORTING_FILES_COUNT,
+            MAX_SUPPORTING_FILES_TOTAL_BYTES,
+            _normalize_skill_name,
+            validate_supporting_file_path,
+        )
+
+        self._enforce("skills.import.launch.local")
+        skill_name = _normalize_skill_name(name)
+        source_dir = Path(source_dir)
+        body = source_dir / _SKILL_FILENAME
+        if not body.is_file():
+            raise ValueError("local_skill_missing_skill_md")
+        content = body.read_text(encoding="utf-8", errors="strict")
+        # Enforce the same body-length bounds ``import_skill`` gets for free from
+        # ``SkillImportRequest`` -- this path builds the record directly rather
+        # than routing content through that model, so the check is explicit here.
+        SkillImportRequest(name=skill_name, content=content)
+        # Collect the faithful file set (junk pruned, symlinks skipped, caps enforced).
+        files: list[tuple[str, Path]] = []
+        total = 0
+        for relative_path, abs_path in self._iter_bundle_files(source_dir):
+            if abs_path.is_symlink():
+                continue  # skip-not-fail
+            try:
+                validate_supporting_file_path(relative_path)
+            except ValueError:
+                continue
+            size = abs_path.stat().st_size
+            if size > MAX_SUPPORTING_FILE_BYTES:
+                raise ValueError(f"local_skill_file_too_large:{relative_path}")
+            total += size
+            files.append((relative_path, abs_path))
+        if len(files) > MAX_SUPPORTING_FILES_COUNT:
+            raise ValueError("local_skill_too_many_files")
+        if total > MAX_SUPPORTING_FILES_TOTAL_BYTES:
+            raise ValueError("local_skill_bundle_too_large")
+        async with self._lock:
+            records = self._load_index()
+            if skill_name in records and not overwrite:
+                raise ValueError(f"local_skill_exists:{skill_name}")
+            skill_dir = self._skill_dir(skill_name)
+            if overwrite and skill_dir.exists():
+                shutil.rmtree(skill_dir)
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            existing = records.get(skill_name) if overwrite else None
+            self._write_text_atomic(skill_dir / _SKILL_FILENAME, content)
+            for relative_path, abs_path in files:
+                dest = skill_dir / PurePosixPath(relative_path)
+                self._write_bytes_atomic(dest, abs_path.read_bytes())
+                if abs_path.stat().st_mode & stat.S_IXUSR:
+                    os.chmod(dest, dest.stat().st_mode | 0o755)
+            record = self._metadata_from_content(
+                name=skill_name,
+                content=content,
+                skill_dir=skill_dir,
+                existing=existing,
+            )
+            if existing is not None:
+                record["version"] = int(existing.get("version", 0)) + 1
+            records[skill_name] = record
+            self._save_index(records)
+            self._trust_after_approved_mutation(
+                skill_name, trust_approved=trust_approved
+            )
+            return self._response_for_record(record)
+
     async def import_skill_file(
         self,
         file_content: bytes,

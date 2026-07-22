@@ -7215,19 +7215,19 @@ class LibraryScreen(BaseAppScreen):
         - A file path whose basename is ``SKILL.md`` (case-insensitive):
           treated as that file's PARENT directory's skill (the common
           case for a real skillset laid out one-directory-per-skill).
-        - A directory path containing a top-level ``SKILL.md``: same
-          shape, just already pointing at the directory.
-
-        Both call ``import_skill(name=<directory name>, content=..., ...)``
-        directly (the name is already known, so no filename-derivation
-        guesswork is needed) and thread any FLAT sibling files in that
-        same directory through as ``supporting_files`` (nested
-        subdirectories -- e.g. a ``references/`` folder -- are NOT
-        recursed into: ``local_skills_service``'s own supporting-file
-        model has no nested-path support, so those would either be
-        silently dropped or rejected by the service's own filename
-        pattern; skipping them here keeps this import path's own failure
-        mode explicit rather than surprising).
+          Calls ``import_skill(name=<directory name>, content=..., ...)``
+          directly (the name is already known, so no filename-derivation
+          guesswork is needed) and threads any FLAT sibling files in
+          that same directory through as ``supporting_files`` (nested
+          subdirectories are NOT recursed into for this shape --
+          ``import_skill``'s own supporting-file model has no
+          nested-path support).
+        - A directory path containing a top-level ``SKILL.md``: calls
+          ``import_skill_directory(source_dir, name=<directory name>,
+          ...)`` instead, which copies the WHOLE tree faithfully --
+          nested subdirectories, binary files, and the executable bit
+          are all preserved (junk pruned, symlinks skipped, size/count
+          caps enforced).
 
         Any OTHER file path (e.g. a standalone ``some-skill.md`` not named
         ``SKILL.md``, or a ``.zip`` export) is imported via
@@ -7266,12 +7266,36 @@ class LibraryScreen(BaseAppScreen):
 
         if validated_path.is_dir():
             skill_dir = validated_path
-            skill_md_path = self._find_skill_md_in_dir(skill_dir)
-            if skill_md_path is None:
+            if self._find_skill_md_in_dir(skill_dir) is None:
                 self._apply_library_skills_import_status(
                     "No SKILL.md found in that folder."
                 )
                 return
+            import_skill_directory = getattr(
+                service, "import_skill_directory", None
+            )
+            if not callable(import_skill_directory):
+                self._apply_library_skills_import_status(
+                    "Skill import is unavailable."
+                )
+                return
+            skill_name = skill_dir.name
+            try:
+                await self._run_library_service_call(
+                    import_skill_directory,
+                    skill_dir,
+                    mode="local",
+                    name=skill_name,
+                    trust_approved=False,
+                    isolate_in_worker=True,
+                )
+            except Exception as exc:
+                self._apply_library_skills_import_outcome_from_exception(
+                    skill_name, exc
+                )
+                return
+            self._apply_library_skills_import_success(skill_name)
+            return
         elif validated_path.name.lower() == _SKILL_MD_FILENAME.lower():
             skill_dir = validated_path.parent
             skill_md_path = validated_path
