@@ -106,6 +106,12 @@ Mirror the dictionary "what's in play" machinery:
 - **Deleted character:** `get_character_card_by_id` returns None (`deleted = 0` filter) → empty state.
 - **Zero-DB-on-recompose:** rail recompose reads only `_active_character_avatar`/`_name`; the DB fetch happens only in the scope-changed refresh.
 
+### Risks & plan-time considerations (from spec review)
+
+- **Rail machinery is clean (verified):** `ConsoleRailState` uses per-section `*_open` fields; the section toggle (`changes[f"{section_id}_open"]`) and requery (`#console-rail-section-body-{section_id}`) are string-driven with no hardcoded section list/count anywhere. Adding `character_open` + a 5th compose block is minimal — no other enumeration site to update.
+- **Narrow-rail avatar box:** the left rail is a fraction of screen width, far narrower than the transcript's 80×40 image box. `CHARACTER_AVATAR_COLS`/`CHARACTER_AVATAR_LINES` must be sized to fit the rail (e.g. ~16 cols) so a graphics/pixels avatar doesn't overflow or clip; `fit_image_cell_size` then fits within that. Pick the constants against the actual rail width at plan time.
+- **Graphics image in a scrolling rail:** `textual_image` graphics images can have redraw/artifact quirks inside a `VerticalScroll` that recomposes often. Verify the graphics path renders cleanly in the rail (P3b proved it in the editor's scroll); the pixels fallback is the safer default. Do NOT rebuild the graphics widget on every sync tick — the scope-guard means the refresh only re-mounts on a character change, and a full rail recompose rebuilds the widget from the cached PIL (no re-decode); confirm the 0.2s streaming poll does not force a rail recompose (it drives the transcript, not the rail).
+
 ### Testing strategy
 
 - **Config helper:** `resolve_show_character_avatar` default True; explicit False/True; live-config-shape (COMPREHENSIVE_CONFIG_RAW).
