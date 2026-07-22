@@ -105,3 +105,39 @@ def test_profileconfig_id_backfilled_and_round_trips():
     legacy_restored = ProfileConfig.from_dict(legacy)
     assert legacy_restored.id == _slugify("My Cool Profile")
     assert legacy_restored.read_only is False
+
+
+import json as _json
+
+
+def test_user_profile_saved_as_own_file(tmp_path):
+    m = _mgr(tmp_path)
+    from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+    p = ProfileConfig(name="Sales RAG", description="d", profile_type="custom",
+                      rag_config=RAGConfig())
+    m._save_one(p)  # (Task 5 adds save_profile; Task 4 uses _save_one directly)
+    assert (tmp_path / "profiles" / f"{p.id}.json").exists()
+    # A fresh manager over the same dir loads it back, correctly:
+    m2 = _mgr(tmp_path)
+    loaded = m2.get_profile(p.id)
+    assert loaded is not None and loaded.read_only is False
+    assert isinstance(loaded.rag_config, RAGConfig)
+
+
+def test_legacy_blob_migrated_to_per_file(tmp_path):
+    pdir = tmp_path / "profiles"
+    pdir.mkdir(parents=True)
+    from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+    legacy = ProfileConfig(name="Legacy One", description="d",
+                           profile_type="custom", rag_config=RAGConfig())
+    (pdir / "custom_profiles.json").write_text(
+        _json.dumps({"profiles": [legacy.to_dict()]}, default=str))
+    m = _mgr(tmp_path)  # construction triggers load+migrate
+    assert m.get_profile(legacy.id) is not None
+    assert (pdir / f"{legacy.id}.json").exists()
+    assert (pdir / "custom_profiles.json.migrated").exists()
+    assert not (pdir / "custom_profiles.json").exists()
+    # Idempotent: a second manager doesn't choke on the already-migrated blob.
+    _mgr(tmp_path)
