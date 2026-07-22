@@ -210,6 +210,14 @@ so the residual unsupported set shrinks to symlinks + dotfile/bad-name junk.
 - Both land **trust-pending** (`trust_approved=False`); the trust scan runs on the
   stored directory.
 
+**Import-surface coherence.** `import_skill(name, content, supporting_files)`
+remains the text/API entry point (used internally by `import_skill_file` for
+loose files and by the remote proxy) and gains nested-key support; the new
+`import_skill_directory` is **additive** (the faithful local tree copy); the zip
+path becomes directory-native for binary support. No existing caller is removed.
+**Symlinks are skip-not-fail**: an encountered symlink is skipped (never copied,
+never followed), and the import continues — it does not abort the whole bundle.
+
 ### 6. Export — `export_skill`
 
 Walk `skill_dir` recursively; write each file at its POSIX relative path into the
@@ -332,6 +340,10 @@ No trust-data migration and no config change. The backward-identical canonical f
 (§3) keeps existing trusted skills undisturbed. The `executable` fingerprint field
 and `bundle_files` listing are additive; the raised caps and loosened key pattern
 are backward-compatible (they only *accept* more).
+
+Two existing behaviours already tolerate nesting and need no change: `delete_skill`
+uses `shutil.rmtree` (recursive), and `get_skill`'s response already carries
+`directory_path` (the deferred skill-runtime-reachability layer can build on it).
 
 **Release note:** skills may now contain nested directories, binary assets, and
 executable scripts, imported/exported faithfully with per-file tamper-evidence.
