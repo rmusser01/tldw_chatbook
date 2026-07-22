@@ -67,10 +67,28 @@ class TestTokenCounter:
         used, limit, remaining = estimate_remaining_tokens(
             history, model="gpt-3.5-turbo", max_tokens_response=1000
         )
-
         assert used > 0
-        assert limit == 4096  # GPT-3.5 default
-        assert remaining < limit - 1000  # Less than limit minus response reservation
+        assert limit == 16385  # gpt-3.5-turbo refreshed input window
+        assert remaining < limit - 1000
+
+    def test_get_model_token_limit_current_models(self):
+        assert get_model_token_limit("gpt-4o", "openai") == 128000
+        assert get_model_token_limit("claude-3-5-sonnet-20241022", "anthropic") == 200000
+        assert get_model_token_limit("gemini-1.5-pro", "google") == 2097152
+        assert get_model_token_limit("mistral-large", "mistral") == 128000
+
+    def test_get_model_token_limit_prefers_capabilities_over_table(self):
+        # A novel dated gpt-4o variant is not a table key; capabilities resolves it.
+        assert get_model_token_limit("gpt-4o-2099-12-31", "openai") == 128000
+
+    def test_get_model_token_limit_longest_prefix_wins(self):
+        # "gpt-4" (8192) must not shadow a more specific match; a bare gpt-4 variant
+        # with no capability pattern falls to the gpt-4 table prefix.
+        assert get_model_token_limit("gpt-4-some-variant", "openai") == 8192
+
+    def test_get_model_token_limit_anthropic_default_bumped(self):
+        # Unknown modern Claude falls back to the 200k floor, not the stale 100k.
+        assert get_model_token_limit("claude-99-future", "anthropic") == 200000
 
     def test_format_token_display_green(self):
         """Test token display formatting - green indicator"""

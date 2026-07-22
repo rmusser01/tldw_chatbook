@@ -87,20 +87,33 @@ MODEL_TOKEN_LIMITS = {
     "gpt-4-32k": 32768,
     "gpt-4-turbo": 128000,
     "gpt-4-turbo-preview": 128000,
-    "gpt-3.5-turbo": 4096,
+    "gpt-4o": 128000,
+    "gpt-4o-mini": 128000,
+    "gpt-4.1": 1047576,
+    "gpt-3.5-turbo": 16385,
     "gpt-3.5-turbo-16k": 16384,
+    "o1": 200000,
+    "o1-mini": 128000,
+    "o3": 200000,
+    "o3-mini": 200000,
+    "o4-mini": 200000,
     # Anthropic
     "claude-3-opus-20240229": 200000,
     "claude-3-sonnet-20240229": 200000,
     "claude-3-haiku-20240307": 200000,
+    "claude-3-5-sonnet-20240620": 200000,
+    "claude-3-5-sonnet-20241022": 200000,
     "claude-2.1": 200000,
     "claude-2": 100000,
     "claude-instant-1.2": 100000,
     # Google
+    "gemini-1.5-pro": 2097152,
+    "gemini-1.5-flash": 1048576,
+    "gemini-2.0-flash": 1048576,
     "gemini-pro": 30720,
     "gemini-pro-vision": 12288,
     # Others
-    "mistral-large": 32000,
+    "mistral-large": 128000,
     "mistral-medium": 32000,
     "mistral-small": 32000,
     "mixtral-8x7b": 32000,
@@ -275,32 +288,47 @@ def count_tokens_chat_history(
 
 def get_model_token_limit(model: str, provider: str = "openai") -> int:
     """
-    Get the token limit for a specific model.
+    Get the input context-window token limit for a specific model.
 
-    Args:
-        model: The model name
-        provider: The LLM provider
-
-    Returns:
-        Maximum token limit for the model
+    Resolves in priority order: the per-model capability `context_window`
+    (config-overridable), an exact table entry, the longest matching table
+    prefix, then a conservative provider default. Fallbacks lean conservative
+    on purpose: under-estimating the window degrades gracefully (more trimming),
+    while over-estimating is the only way to overflow the model on dispatch.
     """
-    # Check specific model limits
+    # 1. Per-model capability context window (authoritative, config-overridable).
+    try:
+        from tldw_chatbook.model_capabilities import get_context_window
+
+        window = get_context_window(provider, model)
+        if window is not None:
+            return window
+    except Exception as e:  # never let capability resolution break token limits
+        logger.debug(f"context_window lookup failed for {provider}/{model}: {e}")
+
+    # 2. Exact table match.
     if model in MODEL_TOKEN_LIMITS:
         return MODEL_TOKEN_LIMITS[model]
 
-    # Check by model prefix
+    # 3. Longest matching table prefix (so "gpt-4" can't shadow "gpt-4-turbo").
+    best_limit = None
+    best_len = -1
     for model_prefix, limit in MODEL_TOKEN_LIMITS.items():
-        if model.startswith(model_prefix):
-            return limit
+        if model_prefix == "default":
+            continue
+        if model.startswith(model_prefix) and len(model_prefix) > best_len:
+            best_limit = limit
+            best_len = len(model_prefix)
+    if best_limit is not None:
+        return best_limit
 
-    # Provider-specific defaults
+    # 4. Conservative provider default.
     provider_defaults = {
-        "anthropic": 100000,  # Conservative for Claude
-        "google": 30720,  # Gemini default
-        "openai": 4096,  # GPT-3.5 default
-        "mistral": 32000,  # Mistral default
+        "anthropic": 200000,  # every modern Claude is >= 200k; safe floor
+        "google": 30720,
+        "openai": 4096,
+        "mistral": 32000,
     }
-
     return provider_defaults.get(provider, MODEL_TOKEN_LIMITS["default"])
 
 
