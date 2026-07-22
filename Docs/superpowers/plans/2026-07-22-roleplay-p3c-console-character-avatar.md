@@ -378,7 +378,9 @@ Fetch wrapper (synchronous, run off-thread; a seam the test can spy):
 
 ```python
     def _fetch_character_card_for_avatar(self, character_id: int):
-        db = getattr(self, "chachanotes_db", None) or getattr(self.app_instance, "chachanotes_db", None)
+        # Canonical DB accessor used throughout chat_screen.py (e.g. the resume
+        # path `_resolve_resumed_character_name`); there is no `self.chachanotes_db`.
+        db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
             return None
         try:
@@ -388,7 +390,7 @@ Fetch wrapper (synchronous, run off-thread; a seam the test can spy):
             return None
 ```
 
-(Confirm the DB accessor the Console uses — grep chat_screen for `chachanotes_db` / `get_character_card_by_id` and match it.)
+(Verified: `getattr(self.app_instance, "chachanotes_db", None)` is the accessor used everywhere in `chat_screen.py`; the resume path mirrors this exact off-thread fetch.)
 
 The refresh (mirror `_refresh_active_dictionaries_summary_if_scope_changed`, but decode off-thread and build a spec):
 
@@ -404,7 +406,7 @@ The refresh (mirror `_refresh_active_dictionaries_summary_if_scope_changed`, but
         self._active_character_avatar_name = name
         if character_id is None:
             self._active_character_avatar = None
-            self._render_character_avatar_into_section()
+            await self._render_character_avatar_into_section()
             return
         _, cache = self._ensure_console_image_view()
         mode = getattr(self, "_console_image_default_mode", "pixels")
@@ -426,16 +428,21 @@ The refresh (mirror `_refresh_active_dictionaries_summary_if_scope_changed`, but
         if (self._current_console_rail_character_id(),) != scope or not self.is_mounted:
             return
         self._active_character_avatar = spec
-        self._render_character_avatar_into_section()
+        await self._render_character_avatar_into_section()
 
-    def _render_character_avatar_into_section(self) -> None:
-        """Re-mount the avatar widget + name into the (already-composed) section."""
+    async def _render_character_avatar_into_section(self) -> None:
+        """Re-mount the avatar widget + name into the (already-composed) section.
+
+        Async because Textual `Widget.mount()` returns an `AwaitMount` that
+        must be awaited so the widget is present before the caller returns
+        (the integration test asserts the mounted state right after the tick).
+        """
         try:
             holder = self.query_one("#console-character-avatar", Container)
         except QueryError:
             return  # section not composed (config off / not mounted)
-        holder.remove_children()
-        holder.mount(self._build_character_avatar_widget(self._active_character_avatar))
+        await holder.remove_children()
+        await holder.mount(self._build_character_avatar_widget(self._active_character_avatar))
         try:
             self.query_one("#console-character-name", Static).update(
                 self._active_character_avatar_name or "No character in this chat"
