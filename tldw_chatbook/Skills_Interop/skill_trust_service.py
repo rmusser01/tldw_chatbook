@@ -400,11 +400,22 @@ class SkillTrustService:
             skill_content=skill_content,
             supporting_files=supporting_files,
         )
-        missing = set(trusted_files) - set(current_files)
+        # The in-memory reconstruction is text-only and mode-blind. Binary and
+        # executable files cannot be represented here, so scope the in-memory
+        # comparison to reconstructable (text, non-executable) trusted files;
+        # ensure_skill_trusted() above already verified the full on-disk bundle
+        # (binaries + exec bits) against the manifest via a recursive scan.
+        reconstructable = {
+            path
+            for path, entry in trusted_files.items()
+            if entry.get("file_type") != "supporting_binary"
+            and not entry.get("executable")
+        }
+        missing = reconstructable - set(current_files)
         added = set(current_files) - set(trusted_files)
         modified = {
             path
-            for path in trusted_files.keys() & current_files.keys()
+            for path in reconstructable & current_files.keys()
             if trusted_files[path] != current_files[path]
         }
         changed = tuple(sorted(missing | added | modified))
