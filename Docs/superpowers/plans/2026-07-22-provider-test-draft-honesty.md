@@ -200,7 +200,7 @@ def _provider_test_staged_config(self, provider: str) -> Mapping[str, object]:
     """
     app_config = getattr(self.app_instance, "app_config", {}) or {}
     draft = self._provider_draft()
-    dirty = draft.dirty_keys() if draft is not None else set()
+    dirty = draft.dirty_keys if draft is not None else set()  # dirty_keys is a @property
     if not ({"endpoint", "credential_env_var", "api_key"} & dirty):
         return app_config
     provider_save_key, _config = self._provider_config_entry(provider)
@@ -335,7 +335,7 @@ def _provider_readiness_test_report(self) -> tuple[str, str, bool]:
         model = str(values.get("model") or "").strip()
         draft_endpoint = str(values.get("endpoint") or "").strip()
     draft = self._provider_draft()
-    dirty = draft.dirty_keys() if draft is not None else set()
+    dirty = draft.dirty_keys if draft is not None else set()  # dirty_keys is a @property
     readiness = get_provider_readiness(
         provider, self._provider_test_staged_config(provider)
     )
