@@ -678,17 +678,12 @@ class LocalSkillsService:
 
     @staticmethod
     def _validate_archive_member(name: str) -> str:
-        posix_path = PurePosixPath(name)
-        if (
-            posix_path.is_absolute()
-            or ".." in posix_path.parts
-            or len(posix_path.parts) != 1
-        ):
-            raise ValueError(f"local_skill_invalid_archive:{name}")
-        filename = posix_path.name
-        if not filename:
-            raise ValueError(f"local_skill_invalid_archive:{name}")
-        return filename
+        from ..tldw_api.skills_schemas import validate_supporting_file_path
+
+        posix = PurePosixPath(name)
+        if str(posix) == _SKILL_FILENAME:
+            return _SKILL_FILENAME
+        return validate_supporting_file_path(str(posix))
 
     async def list_skills(
         self,
@@ -1025,27 +1020,64 @@ class LocalSkillsService:
                 trust_approved=trust_approved,
             )
 
-        supporting_files: dict[str, str] = {}
+        import stat as _stat
+        from .skill_trust_scanner import SUPPORTING_JUNK_DIRS, _is_junk
+        from ..tldw_api.skills_schemas import (
+            MAX_SUPPORTING_FILES_COUNT, MAX_SUPPORTING_FILE_BYTES,
+            MAX_SUPPORTING_FILES_TOTAL_BYTES,
+        )
+        skill_name = self._derive_name_from_filename(filename)
+        members: list[tuple[str, bytes, bool]] = []
         skill_content: str | None = None
+        total = 0
+        seen_lower: set[str] = set()
         with zipfile.ZipFile(io.BytesIO(file_content), "r") as archive:
             for member in archive.infolist():
                 if member.is_dir():
                     continue
-                member_name = self._validate_archive_member(member.filename)
-                data = archive.read(member).decode("utf-8")
+                mode = (member.external_attr >> 16) & 0xFFFF
+                if _stat.S_ISLNK(mode):
+                    continue                       # symlink member: skip-not-fail
+                parts = PurePosixPath(member.filename).parts
+                if any(p in SUPPORTING_JUNK_DIRS for p in parts) or _is_junk(parts[-1]):
+                    continue                       # junk pruned
+                member_name = self._validate_archive_member(member.filename)  # raises on zip-slip
+                lower = member_name.lower()
+                if lower in seen_lower:             # case-fold collision on a case-insensitive FS
+                    raise ValueError(f"local_skill_invalid_archive:case_collision:{member_name}")
+                seen_lower.add(lower)
+                data = archive.read(member)
+                if len(data) > MAX_SUPPORTING_FILE_BYTES:
+                    raise ValueError(f"local_skill_file_too_large:{member_name}")
+                total += len(data)
                 if member_name == _SKILL_FILENAME:
-                    skill_content = data
+                    skill_content = data.decode("utf-8")
                 else:
-                    supporting_files[member_name] = data
+                    members.append((member_name, data, bool(mode & 0o111)))
         if skill_content is None:
             raise ValueError("local_skill_invalid_archive:missing_skill_md")
-        return await self.import_skill(
-            name=self._derive_name_from_filename(filename),
-            content=skill_content,
-            supporting_files=supporting_files or None,
-            overwrite=overwrite,
-            trust_approved=trust_approved,
+        if len(members) > MAX_SUPPORTING_FILES_COUNT:
+            raise ValueError("local_skill_too_many_files")
+        if total > MAX_SUPPORTING_FILES_TOTAL_BYTES:
+            raise ValueError("local_skill_bundle_too_large")
+        result = await self.import_skill(
+            name=skill_name, content=skill_content, overwrite=overwrite,
+            trust_approved=False,   # re-trusted below only if approved
         )
+        skill_dir = self._skill_dir(skill_name)
+        base = skill_dir.resolve()
+        import os as _os
+        from pathlib import PurePosixPath as _PP
+        for member_name, data, executable in members:
+            dest = skill_dir / _PP(member_name)
+            if base not in dest.resolve().parents:
+                raise ValueError(f"local_skill_invalid_archive:{member_name}")
+            self._write_bytes_atomic(dest, data)
+            if executable:
+                _os.chmod(dest, dest.stat().st_mode | 0o755)
+        # Re-derive trust state now that the full bundle is on disk.
+        self._trust_after_approved_mutation(skill_name, trust_approved=trust_approved)
+        return self._response_for_record(self._load_index()[skill_name])
 
     async def export_skill(self, skill_name: str) -> Any:
         self._enforce("skills.export.launch.local")
