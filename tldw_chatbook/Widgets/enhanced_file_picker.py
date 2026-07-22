@@ -26,7 +26,7 @@ from ..Third_Party.textual_fspicker.file_dialog import BaseFileDialog
 from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
 from ..Third_Party.textual_fspicker.parts.directory_navigation import DirectoryEntry
 from ..Third_Party.textual_fspicker.path_maker import MakePath
-from ..Third_Party.textual_fspicker.safe_tests import is_dir
+from ..Third_Party.textual_fspicker.safe_tests import is_dir, is_file
 from ..Utils.path_validation import validate_path_simple
 from ..config import get_cli_setting, save_setting_to_cli_config
 
@@ -526,6 +526,17 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
             self.query = query
             super().__init__()
 
+    class FilterHiddenCountChanged(Message):
+        """Posted when the number of entries excluded by the active
+        ``file_filter`` (task-431 AC#2) changes. This is distinct from
+        entries hidden by the dotfile/show-hidden rule -- see the counting
+        logic in ``_repopulate_display``.
+        """
+        def __init__(self, navigation: DirectoryNavigation, count: int) -> None:
+            self.navigation = navigation
+            self.count = count
+            super().__init__()
+
     class ToggleSelection(Message):
         """Posted when the user asks to toggle the highlighted entry."""
         def __init__(self, navigation: DirectoryNavigation) -> None:
@@ -686,6 +697,23 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
                     break
 
         self.post_message(self.SearchCountChanged(self, self.option_count, query))
+
+        # Count entries excluded *specifically* by the active file_filter
+        # (task-431 AC#2) -- a real file that passes the show-hidden/dotfile
+        # check but fails the filter. Reuses the same filter-check condition
+        # as the vendored ``DirectoryNavigation.hide()`` (directory_navigation.py)
+        # rather than reinventing it, guarded by an explicit "not already
+        # dotfile-hidden" check so dotfiles aren't double-counted as
+        # filter-hidden.
+        filter_hidden = sum(
+            1
+            for entry in self._entries
+            if is_file(entry.location)
+            and not (self.is_hidden(entry.location) and not self.show_hidden)
+            and self.file_filter is not None
+            and not self.file_filter(entry.location)
+        )
+        self.post_message(self.FilterHiddenCountChanged(self, filter_hidden))
 
     def _on_option_list_option_selected(
         self, event: OptionList.OptionSelected
@@ -961,6 +989,14 @@ class EnhancedFileDialog(BaseFileDialog):
         text-align: center;
     }
 
+    EnhancedFileDialog #filter-hidden-notice {
+        height: auto;
+        padding: 1;
+        color: $text-muted;
+        text-style: italic;
+        text-align: center;
+    }
+
     EnhancedFileDialog #multi-select-info {
         height: auto;
         min-height: 1;
@@ -1141,6 +1177,9 @@ class EnhancedFileDialog(BaseFileDialog):
 
                     # Shown when a search returns no results.
                     yield Static("", id="search-no-match", classes="hidden")
+
+                    # Shown when the active file filter excludes entries (task-431 AC#2).
+                    yield Static("", id="filter-hidden-notice", classes="hidden")
 
                     # Multi-select status (visible only in multi-select mode).
                     yield Static("", id="multi-select-info")
@@ -1963,6 +2002,22 @@ class EnhancedFileDialog(BaseFileDialog):
             else:
                 status.update("")
                 no_match.styles.display = "none"
+        except Exception:
+            pass
+
+    @on(SearchableDirectoryNavigation.FilterHiddenCountChanged)
+    def _on_filter_hidden_count_changed(
+        self, event: SearchableDirectoryNavigation.FilterHiddenCountChanged
+    ) -> None:
+        """Update the 'N hidden by filter' notice (task-431 AC#2)."""
+        try:
+            notice = self.query_one("#filter-hidden-notice", Static)
+            if event.count:
+                notice.update(f"{event.count} hidden by filter")
+                notice.styles.display = "block"
+            else:
+                notice.update("")
+                notice.styles.display = "none"
         except Exception:
             pass
 

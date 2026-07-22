@@ -17,7 +17,7 @@ from typing import Optional
 import pytest
 from textual import events
 from textual.app import App, ComposeResult
-from textual.widgets import Input
+from textual.widgets import Input, Static
 
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
 from tldw_chatbook.Widgets.enhanced_file_picker import (
@@ -31,6 +31,12 @@ from tldw_chatbook.Widgets.enhanced_file_picker import (
 def _make_filters() -> Filters:
     return Filters(
         ("All Files", lambda _path: True),
+    )
+
+
+def _make_json_only_filter() -> Filters:
+    return Filters(
+        ("JSON files", lambda path: path.suffix == ".json"),
     )
 
 
@@ -139,6 +145,39 @@ async def test_search_filter_filters_directory_entries():
         dialog.query_one("#clear-search").press()
         await pilot.pause()
         assert dir_nav.search_filter == ""
+
+
+@pytest.mark.asyncio
+async def test_filter_hidden_count(tmp_path):
+    """The '#filter-hidden-notice' reports how many files the active file
+    filter excludes (task-431 AC#2), separately from search/dotfile hiding.
+    """
+    for name in ("a.json", "b.json", "c.txt", "d.txt", "e.txt"):
+        (tmp_path / name).write_text("x")
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Filter Hidden Count",
+        filters=_make_json_only_filter(),
+        context="test_filter_hidden_count",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        await _wait_for_options(dir_nav, pilot)
+
+        notice = dialog.query_one("#filter-hidden-notice", Static)
+        for _ in range(20):
+            if "hidden" in str(notice.renderable):
+                break
+            await pilot.pause()
+
+        # 3 .txt files are excluded by the JSON-only filter; the 2 .json
+        # files pass it and are not counted.
+        assert "3 hidden" in str(notice.renderable)
 
 
 @pytest.mark.asyncio
