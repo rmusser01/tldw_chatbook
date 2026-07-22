@@ -153,3 +153,18 @@ def test_switcher_shows_recency_when_updated_label_absent():
     )
     # 2 minutes before `now`.
     assert "2m" in entries[0].subtitle
+
+
+def test_search_matches_the_friendly_status_label_now_shown():
+    """TASK-356 follow-up (Qodo #4): the subtitle now shows the friendly status
+    ('saved chat'), so a query for the VISIBLE word must match — searching the
+    raw 'in-progress' string would silently return nothing for the exact states
+    this change made user-facing. The raw status stays searchable too."""
+    rows = [_row(row_key="a", conversation_id="a", status="in-progress")]
+    assert [e.row_key for e in build_console_switcher_entries(rows, query="saved")] == [
+        "a"
+    ]
+    # Back-compat: the underlying status token still matches.
+    assert [
+        e.row_key for e in build_console_switcher_entries(rows, query="in-progress")
+    ] == ["a"]

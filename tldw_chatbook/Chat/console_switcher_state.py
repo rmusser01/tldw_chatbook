@@ -39,6 +39,12 @@ def _matches(row: ConsoleConversationBrowserInputRow, tokens: list[str]) -> bool
     ``workspace_label``, and ``status`` are coerced through ``str(... or "")``
     before joining -- a ``None`` in any field must not raise ``TypeError``.
 
+    The haystack includes BOTH the raw ``status`` and its friendly detail
+    (``console_conversation_status_detail``): TASK-356 made that friendly label
+    the one shown in the subtitle, so a query for the visible word ("saved")
+    must match even though the persisted status is still "in-progress"; the raw
+    token stays searchable for back-compat.
+
     Args:
         row: Candidate browser input row.
         tokens: Lowercased query tokens that must all match.
@@ -47,7 +53,13 @@ def _matches(row: ConsoleConversationBrowserInputRow, tokens: list[str]) -> bool
         True if every token is a substring of the row's joined text.
     """
     haystack = " ".join(
-        str(part or "") for part in (row.title, row.workspace_label, row.status)
+        str(part or "")
+        for part in (
+            row.title,
+            row.workspace_label,
+            row.status,
+            console_conversation_status_detail(row.status),
+        )
     ).lower()
     return all(token in haystack for token in tokens)
 
