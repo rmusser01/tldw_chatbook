@@ -519,6 +519,20 @@ class ConfigProfileManager:
                 with open(path, "r") as f:
                     profile = ProfileConfig.from_dict(json.load(f))
                 profile.read_only = False
+                existing = self._profiles.get(profile.id)
+                if existing is not None and existing.read_only:
+                    # A hand-placed or stale file is shadowing a read-only
+                    # builtin id. Never let it win: reassign to a unique id
+                    # and self-heal the on-disk file so this can't recur.
+                    old_id = profile.id
+                    profile.id = self._unique_id(profile.id)
+                    self._save_one(profile)
+                    if path.exists():
+                        path.unlink()
+                    logger.warning(
+                        f"Profile file {path.name} collided with read-only "
+                        f"builtin '{old_id}'; reassigned to id '{profile.id}'"
+                    )
                 self._profiles[profile.id] = profile
             except Exception as e:
                 logger.error(f"Failed to load profile {path.name}: {e}")
@@ -534,6 +548,11 @@ class ConfigProfileManager:
             for pdata in data.get("profiles", []):
                 profile = ProfileConfig.from_dict(pdata)
                 profile.read_only = False
+                existing = self._profiles.get(profile.id)
+                if existing is not None and existing.read_only:
+                    # Never let a migrated user profile shadow a read-only
+                    # builtin id -- write it to a uniquified file instead.
+                    profile.id = self._unique_id(profile.id)
                 target = self._profile_path(profile.id)
                 if not target.exists():  # never clobber an existing per-file profile
                     with open(target, "w") as out:
@@ -565,7 +584,7 @@ class ConfigProfileManager:
         existing = self._profiles.get(profile.id)
         if existing is not None and existing is not profile and existing.read_only:
             raise ValueError(
-                f"Profile id '{profile.id}' collides with read-only builtin '{profile.id}'"
+                f"Profile id '{profile.id}' collides with read-only builtin '{existing.name}'"
             )
         self._profiles[profile.id] = profile
         self._save_one(profile)
@@ -630,7 +649,7 @@ class ConfigProfileManager:
             name=name,
             description=f"Custom profile based on {base_profile}",
             profile_type="custom",
-            rag_config=RAGConfig(**asdict(base.rag_config)),
+            rag_config=RAGConfig.from_dict(asdict(base.rag_config)),
             reranking_config=RerankingConfig(**asdict(base.reranking_config))
             if base.reranking_config
             else None,
